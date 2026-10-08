@@ -28,10 +28,16 @@ use crate::wire::{self, CallStatus, Carried, End, Ticket, Up};
 
 /// How one try of a call ended.
 enum Tried {
-    Done(Result<RemoteResult, CallFailure>),
+    Done(Box<Result<RemoteResult, CallFailure>>),
     /// The member did not have the session the call came on, so it did not
     /// open the call and nothing of it ran.
     UnknownSession,
+}
+
+impl Tried {
+    fn done(result: Result<RemoteResult, CallFailure>) -> Self {
+        Self::Done(Box::new(result))
+    }
 }
 
 /// What a call does beside waiting for its answer.
@@ -68,7 +74,7 @@ impl Inner {
         for again in [false, true] {
             let keys = self.session(&connection, to, &seal).await?;
             match self.try_call(&connection, to, &keys, &call, &mut feed).await {
-                Tried::Done(result) => return result,
+                Tried::Done(result) => return *result,
                 Tried::UnknownSession => {
                     self.sessions.forget(to, keys.session).await;
                     if again {
@@ -141,7 +147,7 @@ impl Inner {
     ) -> Tried {
         let n = match self.number(to) {
             Ok(n) => n,
-            Err(failure) => return Tried::Done(Err(failure)),
+            Err(failure) => return Tried::done(Err(failure)),
         };
         let header = envelope::header(
             &self.membership.world,
@@ -183,7 +189,7 @@ impl Inner {
         let (message, side) = if feed.is_some() {
             let (ticket, key) = match ticket() {
                 Ok(ticket) => ticket,
-                Err(failure) => return Tried::Done(Err(failure)),
+                Err(failure) => return Tried::done(Err(failure)),
             };
             let message = seal(&Body::StreamCall { call: call.clone(), ticket: ticket.clone(), key: key.clone() });
             let (opened, opening) = oneshot::channel();
@@ -203,7 +209,7 @@ impl Inner {
                 let bytes = serde_json::to_vec(call).expect("calls serialize");
                 let (ticket, key) = match ticket() {
                     Ok(ticket) => ticket,
-                    Err(failure) => return Tried::Done(Err(failure)),
+                    Err(failure) => return Tried::done(Err(failure)),
                 };
                 let carried = Carried {
                     ticket: ticket.clone(),
@@ -226,9 +232,9 @@ impl Inner {
         let had_feed = feed.is_some();
         let reply = match self.route(connection, to, n, message, side, feed).await {
             Ok(reply) => reply,
-            Err(failure) => return Tried::Done(Err(failure)),
+            Err(failure) => return Tried::done(Err(failure)),
         };
-        let broken = |reason: String| Tried::Done(Err(CallFailure::Unknown { name: to.clone(), reason }));
+        let broken = |reason: String| Tried::done(Err(CallFailure::Unknown { name: to.clone(), reason }));
         match reply.kind {
             // Its end of the data connection opens only once it opened the
             // call; a feed already handed its stream cannot be tried again.
@@ -236,7 +242,7 @@ impl Inner {
                 broken("it said it did not have the session after its data connection opened".to_string())
             }
             Kind::UnknownSession => Tried::UnknownSession,
-            Kind::Refused => Tried::Done(Ok(Err(fastctx_types::ipc::Failure::new(format!(
+            Kind::Refused => Tried::done(Ok(Err(fastctx_types::ipc::Failure::new(format!(
                 "{to} refused the call: {}",
                 String::from_utf8_lossy(&reply.sealed.0)
             ))))),
@@ -246,9 +252,9 @@ impl Inner {
                     Err(error) => return broken(format!("its answer: {error}")),
                 };
                 match body {
-                    Ok(Body::Answer { result }) => Tried::Done(Ok(result)),
+                    Ok(Body::Answer { result }) => Tried::done(Ok(result)),
                     Ok(Body::LargeAnswer { carried }) => match self.fetch(to, &carried).await {
-                        Ok(result) => Tried::Done(Ok(result)),
+                        Ok(result) => Tried::done(Ok(result)),
                         Err(reason) => {
                             broken(format!("its answer was too large for a message, and fetching it failed: {reason}"))
                         }

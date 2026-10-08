@@ -183,6 +183,7 @@ fn exercise() -> Result {
             let request = RunRequest {
                 script: format!("exec {} child {address}\n", quote(&executable)),
                 cwd: Some(display(&root)),
+                writes_off: false,
             };
             let launch = run::Launch { request: &request, ..launch };
             let job = run::launch(&launch)?;
