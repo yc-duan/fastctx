@@ -9,6 +9,7 @@
 //! protocol, which `run` turns back into images.
 
 mod decode;
+mod office;
 mod pdf;
 mod text;
 
@@ -31,8 +32,14 @@ use crate::run::window::{BUDGET, IMAGE_COST, RUN_NOTES};
 pub struct Options {
     /// Lines `first..=last`, counting from 1, of every text file.
     pub lines: Option<(u64, u64)>,
-    /// PDF pages `first..=last`, counting from 1.
+    /// PDF pages or PowerPoint slides `first..=last`, counting from 1.
     pub pages: Option<(u64, u64)>,
+    /// Excel worksheet name.
+    pub sheet: Option<String>,
+    /// Excel worksheet index, counting from one.
+    pub sheet_index: Option<usize>,
+    /// Excel rectangle in A1 notation.
+    pub range: Option<fastctx_office::CellRange>,
     /// Render PDF pages instead of extracting their text layer.
     pub image: bool,
     /// The encoding to read text in, by its WHATWG label, such as `gbk`.
@@ -162,6 +169,18 @@ fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> 
     let read = read_up_to(&mut file, &mut start)?;
     start.truncate(read);
     let detected_image = sniff(&start);
+    if let Some(format) = fastctx_office::format(path) {
+        let result = office::look(path, options, budget, file, &metadata, format)?;
+        if result.0.cost > budget {
+            let mut note = not_shown(path, options);
+            note.partial = true;
+            return Ok((note, None));
+        }
+        return Ok(result);
+    }
+    if options.sheet.is_some() || options.sheet_index.is_some() || options.range.is_some() {
+        return Ok((Section::note(path, options, "--sheet and --range apply to Excel workbooks"), None));
+    }
     if start.starts_with(b"%PDF-")
         || (detected_image.is_none() && path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("pdf")))
     {
@@ -174,7 +193,10 @@ fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> 
         return Ok(result);
     }
     if options.pages.is_some() || options.image {
-        return Ok((Section::note(path, options, "not a PDF; --pages and --image select PDF pages"), None));
+        return Ok((
+            Section::note(path, options, "--pages selects PDF pages or PowerPoint slides; --image renders PDF pages"),
+            None,
+        ));
     }
     if let Some((mime, width, height)) = detected_image {
         return image(path, options, budget, file, start, mime, width, height, metadata.len());
