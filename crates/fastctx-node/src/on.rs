@@ -404,17 +404,96 @@ fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::OpenOptions::new().create(true).append(true).open(path)?.write_all(bytes)
 }
 
+/// A stop of a job on another machine that has not reached it yet.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PendingStop {
+    machine: MachineName,
+    job: JobId,
+    origin: OnOrigin,
+}
+
+/// Where stops not yet delivered wait, so that a node that restarts still
+/// sends them.
+fn pending_stops(node: &Node) -> PathBuf {
+    node.world.path().join("on-stops")
+}
+
 /// Asks `machine` to stop `job`, until it has or the job is gone: the stop
-/// was meant, so it is not dropped for a broken connection.
+/// was meant, so it is not dropped for a broken connection, nor for this
+/// node restarting before the connection came back.
 async fn stop_there(node: &Arc<Node>, machine: &MachineName, origin: &OnOrigin, job: &JobId) {
+    let pending = PendingStop { machine: machine.clone(), job: job.clone(), origin: origin.clone() };
+    let kept = keep_stop(node, &pending).await;
+    if let Err(error) = &kept {
+        node.log.line(format_args!("could not keep the stop of {job} on {machine} for after a restart: {error}"));
+    }
+    deliver_stop(node, &pending).await;
+    if let Ok(path) = kept
+        && let Err(error) = tokio::fs::remove_file(&path).await
+    {
+        node.log.line(format_args!("{}: {error}", path.display()));
+    }
+}
+
+async fn keep_stop(node: &Node, pending: &PendingStop) -> std::io::Result<PathBuf> {
+    let directory = pending_stops(node);
+    let path = directory.join(format!("{}.json", random_name()?));
+    let bytes = serde_json::to_vec(pending).map_err(std::io::Error::other)?;
+    let written = path.clone();
+    tokio::task::spawn_blocking(move || {
+        fastctx_platform::ensure_private_dir(&directory)?;
+        fastctx_platform::publish(&written, &bytes, fastctx_platform::Permissions::Private)
+    })
+    .await
+    .map_err(std::io::Error::other)??;
+    Ok(path)
+}
+
+async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) {
     let Some(link) = node.link() else { return };
     let mut delay = Backoff::default();
     loop {
-        let call = RemoteCall::StopOn { origin: origin.clone(), job: job.clone() };
-        match link.call(machine, call).await {
+        let call = RemoteCall::StopOn { origin: pending.origin.clone(), job: pending.job.clone() };
+        match link.call(&pending.machine, call).await {
             Ok(_) | Err(CallFailure::NotMember { .. }) => return,
             Err(_) => tokio::time::sleep(delay.next()).await,
         }
+    }
+}
+
+/// Sends again the stops a node that stopped had not delivered.
+pub async fn resume_stops(node: &Arc<Node>) {
+    let directory = pending_stops(node);
+    let mut entries = match tokio::fs::read_dir(&directory).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            node.log.line(format_args!("{}: {error}", directory.display()));
+            return;
+        }
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let read = tokio::fs::read(&path).await.map_err(|error| error.to_string()).and_then(|bytes| {
+            serde_json::from_slice::<PendingStop>(&bytes).map_err(|error| error.to_string())
+        });
+        let pending = match read {
+            Ok(pending) => pending,
+            Err(error) => {
+                node.log.line(format_args!("{}: {error}", path.display()));
+                continue;
+            }
+        };
+        let node = node.clone();
+        tokio::spawn(async move {
+            deliver_stop(&node, &pending).await;
+            if let Err(error) = tokio::fs::remove_file(&path).await {
+                node.log.line(format_args!("{}: {error}", path.display()));
+            }
+        });
     }
 }
 

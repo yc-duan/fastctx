@@ -322,6 +322,7 @@ pub async fn run_replacing(
         node.log.line(format_args!("a member of the World {} as {}", membership.world, membership.name));
         world::start(&node, membership, key).context("starting the link to the hub")?;
         relay::resume(&node).await;
+        on::resume_stops(&node).await;
     }
     codex::adopt(&node).await;
     codex::listen(node.clone(), codex_events);
