@@ -22,7 +22,9 @@ pub(super) fn detail(looked: &LookedUp, now: Timestamp) -> String {
             }
         }
     }
-    if !looked.unasked.is_empty() {
+    // Only when nothing answered with it can it be on a machine that did not
+    // answer; a random id found once does not need the rest of the World.
+    if looked.found.is_empty() && !looked.unasked.is_empty() {
         text.push_str(&format!("not answered: {}\n", looked.unasked.join(", ")));
     }
     for job in &looked.jobs {
@@ -166,9 +168,10 @@ fn job_detail(record: &JobRecord, now: Timestamp) -> String {
     };
     text.push_str(&format!("state    {state}\n"));
     text.push_str(&format!("command  {}\n", first_line(&record.script)));
-    text.push_str(&format!("output   {} {}\n", record.machine, record.output));
+    let shown = fastctx_hands::run::present::display_path;
+    text.push_str(&format!("output   {} {}\n", record.machine, shown(&record.output)));
     if let Some(stderr) = &record.stderr {
-        text.push_str(&format!("stderr   {} {stderr}\n", record.machine));
+        text.push_str(&format!("stderr   {} {}\n", record.machine, shown(stderr)));
     }
     text
 }
