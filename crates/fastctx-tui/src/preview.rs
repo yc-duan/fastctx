@@ -79,6 +79,7 @@ fn resident(
         here: true,
         now: None,
         last_action: None,
+        tools: Vec::new(),
         moved: None,
         removed: None,
     }
@@ -93,8 +94,11 @@ fn state(now: Timestamp, activity: Activity, since: i64) -> Now {
         answering: Vec::new(),
         trouble: None,
         desk: false,
+        desk_since: None,
         waiting_for_user: false,
+        waiting_since: None,
         title: None,
+        last_tool_at: None,
     }
 }
 
@@ -182,6 +186,7 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
 
     let jobs = vec![
         RunningJob {
+            town: Some(town("mark50")),
             job: JobId::try_from("j-k3x9a2").expect("a job id"),
             machine: machine("laptop"),
             owner: address("codex-7f3a", "laptop").into(),
@@ -191,6 +196,7 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
             output: "~/.fastctx/world/towns/mark50/residents/codex-7f3a/out/j-k3x9a2.log".into(),
         },
         RunningJob {
+            town: Some(town("mark50")),
             job: JobId::try_from("j-p0q1r2").expect("a job id"),
             machine: machine("desktop"),
             owner: address("codex-0d1e", "desktop").into(),
@@ -239,14 +245,16 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
     let (desktop_jobs, laptop_jobs): (Vec<_>, Vec<_>) =
         jobs.into_iter().partition(|job| job.machine.as_str() == "desktop");
     WorldWho {
+        history: None,
+        you: None,
         machine: machine("desktop"),
         scope,
         machines: vec![
             MachineWho::Answered {
-                reply: WhoReply { machine: machine("desktop"), residents: desktop, jobs: desktop_jobs },
+                reply: WhoReply { history: None, machine: machine("desktop"), residents: desktop, jobs: desktop_jobs },
             },
             MachineWho::Answered {
-                reply: WhoReply { machine: machine("laptop"), residents: laptop, jobs: laptop_jobs },
+                reply: WhoReply { history: None, machine: machine("laptop"), residents: laptop, jobs: laptop_jobs },
             },
             MachineWho::Offline { machine: machine("hangzhou"), since: Some(ago(now, 95)) },
         ],

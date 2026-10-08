@@ -40,9 +40,12 @@ export interface Now {
   answering: Address[];
   trouble: Trouble | null;
   desk: boolean;
+  desk_since?: Timestamp | null;
   waiting_for_user: boolean;
+  waiting_since?: Timestamp | null;
   /** The conversation's name, as its host last gave it. */
   title: string | null;
+  last_tool_at?: Timestamp | null;
 }
 
 export interface Action {
@@ -61,6 +64,7 @@ export interface ResidentNow {
   removed?: Timestamp | null;
   now: Now | null;
   last_action: Action | null;
+  tools?: { turn: string; id: string; started_at: Timestamp | null; name: string; machine: MachineName | null; detail: string }[];
   moved: Moved | null;
 }
 
@@ -71,6 +75,7 @@ export interface Moved {
 
 export interface RunningJob {
   job: JobId;
+  town?: TownName | null;
   machine: MachineName;
   owner: JobOwner;
   started_at: Timestamp;
@@ -83,6 +88,7 @@ export interface WhoReply {
   machine: MachineName;
   residents: ResidentNow[];
   jobs: RunningJob[];
+  history?: import("./since").SinceCoverage & { events: import("./since").SinceEvent[]; undated: import("./since").UndatedFact[] };
 }
 
 export type MachineWho =
@@ -97,10 +103,13 @@ export type WhoScope =
 export interface WorldWho {
   machine: MachineName;
   scope: WhoScope;
+  you?: Address;
+  history?: import("./since").WorldSince;
   machines: MachineWho[];
 }
 
 export interface MachineFacts {
+  shell: string;
   name: MachineName;
   os: string;
   arch: string;
@@ -392,6 +401,7 @@ export type Looked = { kind: "resident" } & ResidentDetail | { kind: "job"; reco
 
 /** One id looked up across the World. */
 export interface LookedUp {
+  jobs?: RunningJob[];
   id: string;
   found: Looked[];
   unasked: string[];

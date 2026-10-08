@@ -944,8 +944,11 @@ pub async fn open_here(
         answering: Vec::new(),
         trouble: None,
         desk: false,
+        desk_since: None,
         waiting_for_user: false,
+        waiting_since: None,
         title: None,
+        last_tool_at: None,
     };
     node.residents
         .create(&node.world, about, town.clone(), now)

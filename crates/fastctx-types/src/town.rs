@@ -16,6 +16,9 @@ pub struct WhoReply {
     pub machine: MachineName,
     pub residents: Vec<ResidentNow>,
     pub jobs: Vec<RunningJob>,
+    /// The same local history reader used by `Since`, included in this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<crate::since::SinceReply>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +31,9 @@ pub struct ResidentNow {
     /// What its host reports it doing, when its host tells the World.
     pub now: Option<Now>,
     pub last_action: Option<Action>,
+    /// Current host tool calls, including tools outside the World.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<CurrentTool>,
     /// It lived in `town` and moved away: what it did there stays there.
     #[serde(default)]
     pub moved: Option<Moved>,
@@ -37,8 +43,21 @@ pub struct ResidentNow {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurrentTool {
+    pub turn: String,
+    pub id: String,
+    pub started_at: Option<Timestamp>,
+    pub name: String,
+    pub machine: Option<MachineName>,
+    /// The command first line, affected paths, or a named host argument.
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunningJob {
     pub job: JobId,
+    #[serde(default)]
+    pub town: Option<TownName>,
     /// Where it runs.
     pub machine: MachineName,
     pub owner: crate::run::JobOwner,
@@ -57,7 +76,11 @@ pub struct WorldWho {
     /// The machine that asked.
     pub machine: MachineName,
     pub scope: WhoScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub you: Option<crate::Address>,
     pub machines: Vec<MachineWho>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<crate::since::WorldSince>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,4 +142,105 @@ pub struct LookedUp {
     pub id: String,
     pub found: Vec<Looked>,
     pub unasked: Vec<String>,
+    /// Jobs whose owner could not be looked up, still reported by their execution machine.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jobs: Vec<RunningJob>,
+}
+
+impl WorldWho {
+    /// Merge the history obtained with each machine's current activity.
+    pub fn collect_history(&mut self, since: Timestamp, town: Option<TownName>) {
+        use crate::since::*;
+        let mut history = WorldSince {
+            machine: self.machine.clone(),
+            since,
+            town,
+            machines: Vec::new(),
+            events: Vec::new(),
+            undated: Vec::new(),
+            issues: Vec::new(),
+            limitations: limitations(),
+        };
+        for machine in &mut self.machines {
+            history.machines.push(match machine {
+                MachineWho::Answered { reply } => match reply.history.take() {
+                    Some(mut read) => {
+                        history.events.append(&mut read.events);
+                        history.undated.append(&mut read.undated);
+                        MachineSince::Answered { reply: read.coverage }
+                    }
+                    None => MachineSince::NoAnswer {
+                        machine: reply.machine.clone(),
+                        reason: "answered current activity without the requested history".into(),
+                    },
+                },
+                MachineWho::Offline { machine, since } => {
+                    MachineSince::Offline { machine: machine.clone(), since: *since }
+                }
+                MachineWho::NoAnswer { machine, reason } => {
+                    MachineSince::NoAnswer { machine: machine.clone(), reason: reason.clone() }
+                }
+            });
+        }
+        history.events = merge_events(history.events, &mut history.issues);
+        self.history = Some(history);
+    }
+}
+
+impl LookedUp {
+    pub fn attach_jobs(&mut self) {
+        for found in &mut self.found {
+            if let Looked::Resident(detail) = found {
+                let owner = crate::Address {
+                    resident: detail.resident.about.id.clone(),
+                    machine: detail.resident.about.machine.clone(),
+                };
+                for job in &self.jobs {
+                    if job.owner == owner
+                        && !detail.jobs.iter().any(|held| held.machine == job.machine && held.job == job.job)
+                    {
+                        detail.jobs.push(job.clone());
+                    }
+                }
+                self.jobs.retain(|job| job.owner != owner);
+                detail.jobs.sort_by_key(|job| (job.machine.clone(), job.started_at));
+            }
+        }
+    }
+}
+
+impl CurrentTool {
+    pub fn from_item(turn: &str, item: &crate::session::Item) -> Option<Self> {
+        use crate::session::{Does, What};
+        let What::Tool(tool) = &item.what else { return None };
+        let line = |text: &str| {
+            let mut lines = text.lines();
+            let first = lines.next().unwrap_or_default();
+            if lines.next().is_some() { format!("{first} …") } else { first.to_string() }
+        };
+        let detail = match &tool.does {
+            Does::Command { command, .. } => line(command),
+            Does::Edit { changes } => changes.iter().map(|change| change.path.as_str()).collect::<Vec<_>>().join(", "),
+            Does::Search { query } => line(query),
+            Does::Image { path } => path.clone().unwrap_or_default(),
+            Does::Colleague { to, task } => task.as_ref().or(to.as_ref()).map(|text| line(text)).unwrap_or_default(),
+            Does::Call => ["cmd", "command", "script", "file_path", "path", "query", "url", "description"]
+                .into_iter()
+                .find_map(|key| {
+                    tool.input
+                        .get(key)
+                        .and_then(serde_json::Value::as_str)
+                        .map(|value| format!("{key}: {}", line(value)))
+                })
+                .unwrap_or_default(),
+        };
+        Some(Self {
+            turn: turn.to_string(),
+            id: item.id.clone(),
+            started_at: item.started_at,
+            name: tool.name.clone(),
+            machine: tool.machine.clone(),
+            detail,
+        })
+    }
 }

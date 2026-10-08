@@ -283,7 +283,7 @@ impl Scan<'_> {
                     files,
                     finished.turn,
                     Turn {
-                        at: finished.at,
+                        at: finished.ended_at.unwrap_or(finished.at),
                         end: finished.end,
                         readers: Some(finished.readers),
                         rank: 3,
@@ -369,6 +369,25 @@ impl Scan<'_> {
         });
         let path = directory.join("actions");
         self.lines::<Action>(&path, |scan, action, number| {
+            if matches!(action.hand.as_str(), "write" | "edit" | "apply_patch") {
+                scan.events.push(SinceEvent {
+                    id: identity(
+                        "write",
+                        &[&address.tag(), &original.join("actions").to_string_lossy(), &number.to_string()],
+                    ),
+                    at: action.at,
+                    machine: action.machine,
+                    town: known(town),
+                    sources: vec![scan.location(&path)],
+                    what: SinceKind::FileAction {
+                        resident: address.clone(),
+                        hand: action.hand,
+                        paths: action.what,
+                        result: action.result,
+                    },
+                });
+                return;
+            }
             if action.hand != "ask_colleague" {
                 return;
             }

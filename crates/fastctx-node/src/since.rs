@@ -176,3 +176,68 @@ pub async fn query(node: &Arc<Node>, since: Timestamp, town: Option<TownName>) -
     let events = merge_events(events, &mut issues);
     Ok(WorldSince { machine, since, town, machines: answers, events, undated, issues, limitations: limitations() })
 }
+
+/// Reuses the GUI's local record reader without starting a node.
+pub(crate) fn local_records(
+    world: &fastctx_types::layout::WorldDir,
+    machine: &MachineName,
+    since: Timestamp,
+    town: Option<&TownName>,
+) -> std::io::Result<SinceReply> {
+    records::read(world, machine, since, town, None)
+}
+
+/// Current hub endpoints supplement the history carried with Who replies.
+pub(crate) async fn presence_for_who(
+    node: &Node,
+    who: &mut fastctx_types::town::WorldWho,
+    presence_known: bool,
+) -> Result<(), Failure> {
+    use fastctx_types::town::MachineWho;
+    let Some(history) = &mut who.history else { return Ok(()) };
+    if presence_known && let Some(link) = node.link() {
+        let (_, presence) = link.members();
+        for seen in presence {
+            let included = who.machines.iter().any(|machine| match machine {
+                MachineWho::Answered { reply } => reply.machine == seen.name,
+                MachineWho::Offline { machine, .. } => *machine == seen.name,
+                MachineWho::NoAnswer { .. } => false,
+            });
+            if included && let Some(at) = seen.since.filter(|at| *at > history.since) {
+                history.events.push(SinceEvent {
+                    id: records::identity(
+                        "presence",
+                        &[seen.name.as_str(), &at.to_string(), if seen.online { "on" } else { "off" }],
+                    ),
+                    at,
+                    machine: seen.name,
+                    town: SinceTown::Unrecorded { recorded_in: Vec::new() },
+                    sources: Vec::new(),
+                    what: if seen.online { SinceKind::MachineConnected } else { SinceKind::MachineOffline },
+                });
+            }
+        }
+    }
+    // A queried town's ledger can be present even when none of its machines
+    // answered. Include that copy just as the standalone Since does.
+    if !who
+        .machines
+        .iter()
+        .any(|machine| matches!(machine, MachineWho::Answered { reply } if reply.machine == who.machine))
+    {
+        if let Some(town) = &history.town {
+            let (world, machine, town, since) = (node.world.clone(), node.machine(), town.clone(), history.since);
+            let membership = node.link().map(|link| link.membership().world.clone());
+            let _syncing = node.syncing.lock().await;
+            let (events, issues) = tokio::task::spawn_blocking(move || {
+                records::ledger(&world, &machine, since, &town, membership.as_ref())
+            })
+            .await
+            .map_err(|error| Failure::new(format!("reading town history: {error}")))?;
+            history.events.extend(events);
+            history.issues.extend(issues);
+        }
+    }
+    history.events = merge_events(std::mem::take(&mut history.events), &mut history.issues);
+    Ok(())
+}

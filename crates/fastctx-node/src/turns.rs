@@ -38,10 +38,26 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
         &event.happened
     {
-        node.residents.change_now(&node.world, id, |now| now.waiting_for_user = *waiting)?;
+        node.residents.change_now(&node.world, id, |now| {
+            if *waiting && !now.waiting_for_user {
+                now.waiting_since = Some(event.at);
+            }
+            if !waiting {
+                now.waiting_since = None;
+            }
+            now.waiting_for_user = *waiting;
+        })?;
         if !waiting {
             crate::composer::changed(node, id);
         }
+    }
+    if let Happened::Began { item, .. } | Happened::Updated { item, .. } = &event.happened
+        && matches!(item.what, fastctx_types::session::What::Tool(_))
+    {
+        let at = item.started_at.unwrap_or(event.at);
+        node.residents.change_now(&node.world, id, |now| {
+            now.last_tool_at = Some(now.last_tool_at.map_or(at, |prior| prior.max(at)))
+        })?;
     }
     // Its name, for those who list the World rather than watch it.
     if let Happened::Titled { title } = &event.happened {
@@ -59,7 +75,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
         Happened::TurnEnded { turn, end } => {
             let speaking = node.residents.speaking(id).expect("known resident");
             let _speaking = speaking.lock().await;
-            finish_locked(node, id, &turn, end, &[]).await
+            finish_at(node, id, &turn, end, &[], Some(event.at)).await
         }
         Happened::Health { turn, health: report } => {
             let speaking = node.residents.speaking(id).expect("known resident");
@@ -76,7 +92,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
                     if crate::delivery::terminal(&directory, turn)?.is_some() {
                         return Ok(());
                     }
-                    node.residents.turn_started(&node.world, id, turn)?;
+                    node.residents.turn_started(&node.world, id, turn, event.at)?;
                     format!("started:{turn}")
                 }
                 _ => serde_json::to_string(&event).map_err(std::io::Error::other)?,
@@ -123,6 +139,17 @@ pub async fn finish_locked(
     end: TurnEnd,
     additional: &[Address],
 ) -> std::io::Result<()> {
+    finish_at(node, id, turn, end, additional, None).await
+}
+
+async fn finish_at(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    turn: &str,
+    end: TurnEnd,
+    additional: &[Address],
+    ended_at: Option<Timestamp>,
+) -> std::io::Result<()> {
     let Some((about, town)) = node.residents.about(id) else { return Ok(()) };
     let directory = node.world.resident(town.as_ref(), id);
     let mut readers = node.residents.readers(id, turn);
@@ -134,7 +161,7 @@ pub async fn finish_locked(
     for handover in &accepted {
         readers.extend(handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()));
     }
-    let (finished, first) = crate::delivery::finish(&directory, turn, end, &readers)?;
+    let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at)?;
     keep_answers(node, id, &about.origin, &directory, turn, turn, &finished.end, &finished.readers).await?;
     let (pay_node, pay_id, pay_directory) = (node.clone(), id.clone(), directory.clone());
     tokio::spawn(async move { pay(&pay_node, &pay_id, &pay_directory).await });
@@ -156,7 +183,7 @@ pub async fn finish_locked(
         }
     }
     let event = SessionEvent {
-        at: finished.at,
+        at: finished.ended_at.unwrap_or(finished.at),
         happened: Happened::TurnEnded { turn: turn.to_string(), end: finished.end.clone() },
     };
     let recorded = crate::delivery::event(&directory, &format!("ended:{turn}"), &event)?;

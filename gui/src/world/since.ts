@@ -47,6 +47,7 @@ export type EndedHow =
 export type Outcome = { kind: "delivered" } | { kind: "waiting"; why: string | null } | { kind: "sent" } | { kind: "failed"; reason: string };
 
 export type SinceKind =
+  | { kind: "file_action"; resident: Address; hand: string; paths: string; result: string }
   | { kind: "resident_born"; resident: Address; host: Host; origin: Origin }
   | { kind: "turn_ended"; resident: Address; turn: string; end: TurnEnd; readers: Address[] | null }
   | {

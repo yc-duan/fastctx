@@ -21,6 +21,21 @@ struct Watching {
 }
 
 impl Watchers {
+    /// A projection of the same in-flight items delivered to a joining watcher.
+    pub fn tools(&self, id: &ResidentId) -> Vec<fastctx_types::town::CurrentTool> {
+        use fastctx_types::session::Happened;
+        let watching = self.watching.lock().expect("never poisoned");
+        watching
+            .get(id)
+            .into_iter()
+            .flat_map(|session| session.live.snapshots())
+            .filter_map(|event| {
+                let Happened::Began { turn, item } = &event.happened else { return None };
+                fastctx_types::town::CurrentTool::from_item(turn, item)
+            })
+            .collect()
+    }
+
     /// Ends as soon as no current watcher remains. Newly opened watches
     /// participate on the next check; no polling lease can keep one alive.
     pub async fn unwatched(&self, id: &ResidentId) {

@@ -72,6 +72,8 @@ pub enum RemoteCall {
     Who {
         all: bool,
         town: Option<TownName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<jiff::Timestamp>,
     },
     /// Existing local records strictly after this timestamp. Large replies
     /// use the telephone's existing authenticated data connection.
@@ -242,6 +244,8 @@ pub enum RemoteReply {
     },
     Looked {
         looked: Option<Looked>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        jobs: Vec<crate::town::RunningJob>,
     },
     Said {
         landed: Landed,

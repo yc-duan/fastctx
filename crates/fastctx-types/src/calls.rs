@@ -100,6 +100,8 @@ pub enum Call {
     Who {
         all: bool,
         town: Option<TownName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<jiff::Timestamp>,
     },
     /// Existing records strictly after `since`, from every machine of `town`
     /// or the whole World when absent. No caller-town default is applied.

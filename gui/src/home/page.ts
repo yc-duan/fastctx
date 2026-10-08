@@ -257,6 +257,11 @@ export class HomePage {
     let detail = "";
     let tone = "";
     switch (event.kind) {
+      case "file_action":
+        line = `${this.nameOf(event.who)} ${event.hand} ${event.paths}`;
+        detail = `<span class="detail">${escape(event.result)}</span>`;
+        mark = "edit";
+        break;
       case "turn_ended":
         if (event.how === "completed") {
           line = words.turnEnded(this.nameOf(event.who));

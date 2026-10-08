@@ -29,6 +29,8 @@ function happening(event: SinceEvent): Happening[] {
   const at = event.at;
   const town = townOf(event.town);
   switch (event.kind) {
+    case "file_action":
+      return [{ kind: "file_action", at, who: event.resident, town, hand: event.hand, paths: event.paths, result: event.result }];
     case "turn_ended":
       return [{ kind: "turn_ended", at, who: event.resident, town, how: event.end.how, reason: event.end.reason, said: event.end.last_message }];
     case "job_ended":

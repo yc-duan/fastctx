@@ -53,7 +53,7 @@ const address = (machine: string, resident: string): Address => ({ machine, resi
 function facts(name: string, os: string, home: string): MachineFacts {
   return {
     name, os, arch: "x86_64", home, temp: os === "windows" ? `${home}/AppData/Local/Temp` : "/tmp",
-    path_separator: os === "windows" ? "\\" : "/", case_sensitive: os !== "windows", version: "1.0.0",
+    shell: "", path_separator: os === "windows" ? "\\" : "/", case_sensitive: os !== "windows", version: "1.0.0",
   };
 }
 

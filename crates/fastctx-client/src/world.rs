@@ -122,7 +122,7 @@ impl World {
     /// Who is in `town`, or in the caller's, or across the World for a
     /// caller in none; with `all`, also those who are not here.
     pub async fn who(&self, town: Option<TownName>, all: bool) -> Result<WorldWho, Error> {
-        match self.ask(Call::Who { all, town }).await? {
+        match self.ask(Call::Who { all, town, since: None }).await? {
             Reply::Who(who) => Ok(who),
             other => Err(unexpected(other)),
         }

@@ -1,0 +1,235 @@
+use super::*;
+use fastctx_types::town::CurrentTool;
+
+pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: Timestamp, local_only: bool) -> String {
+    let mut machines = Vec::new();
+    let online = view
+        .machines
+        .iter()
+        .filter_map(|state| match state {
+            MachineState::Answered(machine) => Some(machine.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if !online.is_empty() {
+        machines.push(format!(
+            "{} {}",
+            online.join(", "),
+            if local_only { "local records; node not running" } else { "online" }
+        ));
+    }
+    for state in &view.machines {
+        match state {
+            MachineState::Answered(_) => {}
+            MachineState::Offline { machine, since: Some(since) } => {
+                machines.push(format!("{machine} offline since {}", clock(*since, now)))
+            }
+            MachineState::Offline { machine, since: None } => machines.push(format!("{machine} offline")),
+            MachineState::NoAnswer { machine, reason } => machines.push(format!("{machine} did not answer ({reason})")),
+        }
+    }
+    let place = match &view.scope {
+        Scope::Town { town, .. } => town.as_str(),
+        Scope::World { .. } => "the World",
+    };
+    let mut text = format!("=== w: {place} ({}) ===\n", machines.join("; "));
+    if let Scope::Town { town, record: None } = &view.scope {
+        text.push_str(&format!("{} has no record of {town}; every reachable machine was asked.\n", view.machine));
+    }
+    if let Scope::World { towns } = &view.scope {
+        if !towns.is_empty() {
+            text.push_str("towns\n");
+        }
+        for town in towns {
+            let description = town
+                .summary
+                .as_ref()
+                .map(|summary| {
+                    format!(
+                        "  {}  ({})",
+                        summary.record.name,
+                        summary.record.machines.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+                    )
+                })
+                .unwrap_or_default();
+            text.push_str(&format!("  {}{description}  {} working, {} running\n", town.town, town.busy, town.running));
+        }
+    }
+    let this = std::env::var("FASTCTX_JOB").ok();
+    let mut running = Vec::new();
+    for job in &view.jobs {
+        if this.as_deref() == Some(job.job.as_str()) && job.machine == view.machine {
+            continue;
+        }
+        let owner = match job.owner.resident() {
+            Some(owner) => {
+                let absence = match view.known(owner) {
+                    Some(r) if !r.here => match r.removed.or(r.moved.as_ref().map(|m| m.at)) {
+                        Some(at) => format!(" (left {} ago)", ago(at, now)),
+                        None => " (not here; departure time unrecorded)".into(),
+                    },
+                    None if !view.answered(&owner.machine) => " (owner's machine did not answer)".into(),
+                    _ => String::new(),
+                };
+                format!("{}{absence}", person(owner, &job.machine))
+            }
+            None => job.owner.to_string(),
+        };
+        running.push((
+            job.machine.clone(),
+            format!("  {}  {}  {}  {owner}  {}\n", job.machine, job.job, ago(job.started_at, now), job.command),
+        ));
+    }
+    for resident in &view.residents {
+        if let Some(state) = &resident.now
+            && resident.here
+            && state.desk
+        {
+            let time = state
+                .desk_since
+                .map(|at| format!(">={}", ago(at, now)))
+                .unwrap_or_else(|| "duration unrecorded".into());
+            running.push((
+                resident.about.machine.clone(),
+                format!("  {}  desk  {time}  {}  Computer Use\n", resident.about.machine, resident.about.id),
+            ));
+        }
+    }
+    running.sort_by(|a, b| a.0.cmp(&b.0));
+    if !running.is_empty() {
+        text.push_str("running\n");
+    }
+    for (_, line) in running {
+        text.push_str(&line);
+    }
+    let mut working = String::new();
+    let mut waiting = String::new();
+    let mut resting = String::new();
+    for resident in &view.residents {
+        if busy(resident) || (resident.here && resident.now.is_none()) {
+            let mark = if Some(&address(resident)) == you { " (you)" } else { "" };
+            working.push_str(&format!(
+                "  {}{mark}  {}  {}{}  {}\n",
+                resident.about.id,
+                resident.about.machine,
+                host(&resident.about.host),
+                task(resident),
+                step(resident, now)
+            ));
+        } else if all {
+            let state = if let Some(at) = resident.removed {
+                format!("removed {} ago", ago(at, now))
+            } else if let Some(moved) = &resident.moved {
+                format!("moved to {} {} ago", moved.to.as_ref().map_or("outside", |t| t.as_str()), ago(moved.at, now))
+            } else if let Some(state) = &resident.now {
+                format!(
+                    "{} {}",
+                    match state.activity {
+                        Activity::Busy if !resident.here => "not here; last recorded turn",
+                        Activity::Busy => "turn",
+                        Activity::Idle => "idle",
+                        Activity::Asleep => "asleep",
+                    },
+                    ago(state.since, now)
+                )
+            } else {
+                "left; departure time unrecorded".into()
+            };
+            let last = resident
+                .last_action
+                .as_ref()
+                .map(|action| {
+                    format!("; {} {} ago: {} -> {}", action.hand, ago(action.at, now), action.what, action.result)
+                })
+                .unwrap_or_default();
+            resting.push_str(&format!(
+                "  {}  {}  {}{}  {state}{last}\n",
+                resident.about.id,
+                resident.about.machine,
+                host(&resident.about.host),
+                task(resident)
+            ));
+        }
+        if let Some(state) = &resident.now {
+            for (turn, readers) in &state.owed {
+                for reader in readers {
+                    let time = if state.turn.as_ref() == Some(turn) {
+                        format!(", turn {}", ago(state.since, now))
+                    } else {
+                        String::new()
+                    };
+                    waiting.push_str(&format!(
+                        "  {} on {} owes {} an answer{time}\n",
+                        resident.about.id,
+                        resident.about.machine,
+                        person(reader, &resident.about.machine)
+                    ));
+                }
+            }
+            if resident.here && state.waiting_for_user {
+                let time = state.waiting_since.map(|at| format!(", {}", ago(at, now))).unwrap_or_default();
+                waiting.push_str(&format!(
+                    "  {} on {} waits for the user to answer{time}\n",
+                    resident.about.id, resident.about.machine
+                ));
+            }
+        }
+    }
+    for (label, body) in [("working", working), ("waiting", waiting), ("inactive", resting)] {
+        if !body.is_empty() {
+            text.push_str(&format!("{label}\n{body}"));
+        }
+    }
+    text
+}
+
+pub(super) fn person(address: &Address, machine: &MachineName) -> String {
+    if &address.machine == machine { address.resident.to_string() } else { address.to_string() }
+}
+
+pub(super) fn task(resident: &ResidentNow) -> String {
+    match &resident.about.origin {
+        Origin::Colleague { asked_by, label } => {
+            format!("  for {} \"{label}\"", person(asked_by, &resident.about.machine))
+        }
+        Origin::User => resident
+            .now
+            .as_ref()
+            .and_then(|state| state.title.as_ref())
+            .map(|title| format!("  \"{title}\""))
+            .unwrap_or_default(),
+    }
+}
+
+pub(super) fn step(resident: &ResidentNow, now: Timestamp) -> String {
+    match &resident.now {
+        Some(state) if state.activity == Activity::Busy => {
+            let tools = resident
+                .tools
+                .iter()
+                .filter(|tool| state.turn.as_ref() == Some(&tool.turn))
+                .map(tool)
+                .collect::<Vec<_>>();
+            let doing = if tools.is_empty() { String::new() } else { format!(": {}", tools.join("; ")) };
+            format!("turn {}{doing}", ago(state.since, now))
+        }
+        Some(state) => format!(
+            "{} {}",
+            match state.activity {
+                Activity::Idle => "idle",
+                Activity::Asleep => "asleep",
+                Activity::Busy => unreachable!(),
+            },
+            ago(state.since, now)
+        ),
+        None => resident
+            .last_action
+            .as_ref()
+            .map(|action| format!("last World action {} ago: {} {}", ago(action.at, now), action.hand, action.what))
+            .unwrap_or_default(),
+    }
+}
+
+pub(super) fn tool(tool: &CurrentTool) -> String {
+    if tool.detail.is_empty() { tool.name.clone() } else { format!("{} {}", tool.name, tool.detail) }
+}
