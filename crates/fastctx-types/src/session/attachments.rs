@@ -8,7 +8,7 @@ use crate::{MachineName, NoticeId};
 use super::{Happened, SessionEvent, Speaker, UserMessage};
 
 const HEAD: &str = "=== from fastctx (user attachments, v2) ===\n";
-/// The head written before 2026-10-09; histories still hold it.
+/// The head written before 2026-10-09 (UTC); histories still hold it.
 const HEAD_V1: &str = "=== from the World (user attachments, v1) ===\n";
 const WORDS: &str = "\n=== user's words (verbatim) ===\n";
 const EXPLANATION: &str = "The user attached these files. Each path is on the machine named with it; sizes are in bytes. Look at them with `fastctx view` on that machine (`on MACHINE fastctx view PATH`); images come back as images.";

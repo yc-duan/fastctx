@@ -48,7 +48,7 @@ const MOD: &str = include_str!("world.js");
 /// How words the World says on its own account begin, as the model reads
 /// them; the mod frames them the same way (`world.js`).
 const FRAME: &str = "A message from fastctx, not typed by the user:";
-/// The frame written before 2026-10-09; session histories still hold it.
+/// The frame written before 2026-10-09 (UTC); session histories still hold it.
 const FRAME_V1: &str = "The fastctx plugin delivers a message from the World.";
 
 /// Words the World says on its own account, as the model reads them.
