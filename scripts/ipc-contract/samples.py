@@ -1,0 +1,176 @@
+"""Boundary samples for the admitted tool contract, including nested variants.
+
+The decoder is taken from git, not implemented here. GUI wire fixtures supply
+rich, shared world/page/attachment records; this corpus adds tool-only shapes.
+"""
+
+from copy import deepcopy
+import json
+
+AT = "2026-10-04T12:00:00Z"
+ADDRESS = {"machine": "desktop", "resident": "codex-ab12"}
+HOST = {"agent": "codex", "client": "ipc-contract", "version": "1"}
+PEER = {"kind": "session", "host": HOST}
+
+
+def frame(reply):
+    return {"kind": "reply", "id": 37, "reply": {"Ok": reply}}
+
+
+def replies(fixtures):
+    yield {"reply": "done"}
+    yield {"reply": "arrived", "resident": ADDRESS["resident"], "town": "project"}
+    yield {"reply": "machines", "here": "desktop", "others": ["laptop"]}
+    yield {"reply": "asked", "colleague": ADDRESS}
+    for landed in [{"kind": "uncertain", "why": "interrupted"}, {"kind": "new_turn", "turn": "a"},
+                   {"kind": "joined_turn", "turn": "b"}, {"kind": "waiting", "why": "offline", "answered": True},
+                   {"kind": "sent"}, {"kind": "handed", "id": "notice-ab12"}]:
+        yield {"reply": "spoken", "to": ADDRESS, "landed": landed}
+    changes = [{"path": "C:/data/example.txt", "kind": kind, "before_hash": None,
+                "after_hash": "a" * 64, "encoding": "UTF-8"} for kind in ["added", "modified", "deleted"]]
+    yield {"reply": "written", "outcome": {"Ok": {"text": "committed", "changes": changes,
+                                                    "changed_since_seen": ["C:/data/example.txt"]}}}
+    yield {"reply": "written", "outcome": {"Err": {"message": "later section failed", "changes": changes}}}
+    yield {"reply": "copied", "from": "C:/a", "from_machine": "desktop", "to": "C:/b", "to_machine": "laptop",
+           "files": 1, "bytes": 9, "directories": 1, "links": 1, "unchanged": 1, "problems": ["missing file"]}
+    pieces = [{"kind": "text", "first_line": 1, "text": "hello\n"},
+              {"kind": "part_of_line", "line": 2, "from": 1, "to": 4, "of": 900, "text": "part"},
+              {"kind": "omitted", "first_line": 3, "last_line": 6},
+              {"kind": "image", "mime": "image/png", "width": 1, "height": 1, "base64": "AA=="},
+              {"kind": "unreadable", "line": 7, "reason": "unsupported graphics"}]
+    states = [{"kind": "ended", "status": {"code": 0}}, {"kind": "ended", "status": {"code": 3221225477}},
+              {"kind": "exited", "status": {"signal": 9}, "remaining": 2}, {"kind": "running"},
+              {"kind": "stopped"}, {"kind": "interrupted", "reason": "supervisor ended"},
+              {"kind": "failed", "error": "spawn failed"}]
+    for state in states:
+        for legacy in [[], [{"encoding": "GBK", "lines": 2}],
+                       [{"encoding": "GBK", "lines": 2}, {"encoding": "windows-1252", "lines": 3}]]:
+            yield {"reply": "run", "machine": "desktop", "job": "j-abc123", "state": state,
+                   "output": {"log": "C:/job.log", "bytes": 900, "lines": 7, "pieces": pieces,
+                              "legacy": legacy, "escaped_lines": 1}, "visited": [["laptop", "j-def456"]]}
+    notices = []
+    for how in [{"kind": "finished"}, {"kind": "stopped"}, {"kind": "interrupted", "reason": "restart"},
+                {"kind": "failed", "error": "disk full"}]:
+        notices.append({"kind": "job_ended", "job": "j-abc123", "machine": "desktop", "how": how,
+                        "status": {"code": 17}, "at": AT, "output": "C:/job.log",
+                        "last": {"text": "last output\n", "whole": False}})
+    for how in ["completed", "failed", "interrupted", "provider-other"]:
+        notices.append({"kind": "answer", "colleague": ADDRESS, "label": "task", "turn": "turn-1",
+                        "end": {"how": how, "reason": "reason", "error": {"code": "err", "from": {"kind": "page"}, "owner": {"page": "opaque host detail"}},
+                                "duration_ms": 123, "last_message": "answer"}})
+    for kind in ["reconnecting", "safety", "rerouted", "tools_missing", "tool_server", "warning", "error"]:
+        notices.append({"kind": "health", "colleague": ADDRESS, "label": "task", "health": {"kind": kind, "text": kind}})
+    for speaker in [{"kind": "user", "machine": "desktop"}, {"kind": "resident", "address": ADDRESS},
+                    {"kind": "world"}, fixtures["pages"]["speaker"]]:
+        notices.append({"kind": "words", "from": speaker, "text": "verbatim words"})
+    for i, notice in enumerate(notices):
+        yield {"reply": "notices", "notices": [{"id": f"notice-{i}", "at": AT, "notice": notice}], "notes": ["town note"]}
+    yield next(r for r in fixtures["attachments"]["replies"] if r["reply"] == "notices")
+    for who in fixtures["world"]["who"]:
+        yield {"reply": "who", **who}
+    for nodes in fixtures["world"]["nodes"]:
+        yield {"reply": "nodes", **nodes}
+    yield {"reply": "towns", "towns": fixtures["world"]["towns"]}
+    yield {"reply": "journals", "town": "project", "journals": fixtures["world"]["journals"]}
+    page_map = fixtures["pages"]["map"]
+    for writer in [{"kind": "user"}, {"kind": "resident", "address": ADDRESS},
+                   {"kind": "session", "agent": "claude"}, fixtures["pages"]["writer"]]:
+        record = {**page_map["record"], "by": writer}
+        stamp = {"by": writer, "on": "desktop", "at": AT}
+        yield {"reply": "record", "town": "project", "record": record, "opened": stamp}
+        for canon in [None, {"Ok": [{"file": "design.md", "title": "Design", "scope": "system"}]}, {"Err": "missing"}]:
+            mapping = {**page_map, "record": record, "opened": stamp, "canon": canon}
+            yield {"reply": "map", "map": mapping}
+            yield {"reply": "entered", "town": "project", "map": mapping}
+        attachments = [{"name": "file", "kind": kind, "bytes": 17, "sha256": "b" * 64, "kept": kept}
+                       for kind in ["text", "image", "pdf", "binary"]
+                       for kept in [{"kind": "in_entry"}, {"kind": "on_machine", "location": {"machine": "desktop", "path": "C:/file"}}]]
+        entry = {"id": "20261004T120000Z-desktop", "at": AT, "machine": "desktop", "by": writer,
+                 "agent": HOST, "model": {"name": "model", "self_reported": True}, "session": "thread",
+                 "cites": ["20261003T120000Z-desktop"], "attachments": attachments}
+        yield {"reply": "entry_added", "town": "project", "journal": "notes", "id": entry["id"], "attachments": attachments}
+        yield {"reply": "journal", "view": {"town": "project", "journal": "notes", "directory": "C:/notes",
+               "description": {"version": 1, "text": "notes", **stamp}, "first": 1,
+               "entries": [{"stamp": entry, "text": "entry", "mentioned_by": []}], "total": 1, "writers": 1}}
+    for reply in fixtures["pages"]["replies"]:
+        if reply["reply"] in ["page", "pages"]:
+            yield reply
+    record = {"id": "j-abc123", "machine": "desktop", "owner": ADDRESS, "town": "project", "script": "echo hello",
+              "cwd": "C:/data", "output": "C:/job.log", "started_at": AT, "supervisor": None, "pid": 17,
+              "exit": {"status": {"code": 0}, "at": AT}, "output_ended_at": AT, "remaining": 0,
+              "output_lost": {"kept_bytes": 5, "error": "disk full"}, "end": {"at": AT, "how": {"kind": "finished"}},
+              "ends_with_node": False, "stderr": "C:/job.err", "stderr_lost": {"kept_bytes": 4, "error": "full"}}
+    resident = fixtures["world"]["who"][0]["machines"][0]["reply"]["residents"][0]
+    jobs = fixtures["world"]["who"][0]["machines"][0]["reply"]["jobs"]
+    for owner in [ADDRESS, fixtures["pages"]["job_owner"]]:
+        yield {"reply": "looked", "looked": [{"id": "j-abc123", "found": [{"kind": "job", "record": {**record, "owner": owner}}], "unasked": ["offline"]}]}
+        who = deepcopy(fixtures["world"]["who"][0])
+        who["machines"][0]["reply"]["jobs"][0]["owner"] = owner
+        yield {"reply": "who", **who}
+    for speaker in [{"kind": "world"}, fixtures["pages"]["speaker"]]:
+        detail = {"resident": resident, "records": "C:/resident", "actions": [resident["last_action"]],
+                  "actions_total": 1, "asked": "task", "answers": [{"at": AT, "kind": "heard", "from": speaker, "turn": "turn-1", "text": "words"}], "jobs": jobs}
+        yield {"reply": "looked", "looked": [{"id": ADDRESS["resident"], "found": [{"kind": "resident", **detail}], "unasked": []}]}
+
+
+def calls(fixtures):
+    yield {"call": "arrive", "host": HOST, "hints": {"resident": None, "thread": "test", "was": None}}, PEER, True
+    yield {"call": "run", "resident": ADDRESS["resident"], "request": {"script": "echo hello", "cwd": None}, "node": None}, PEER, True
+    for op in [{"tool": "write", "file_path": "C:/a", "content": "hello"},
+               {"tool": "edit", "file_path": "C:/a", "old_string": "a", "new_string": "b", "replace_all": True},
+               {"tool": "apply_patch", "input": "*** Begin Patch\n*** End Patch"}]:
+        yield {"call": "write", "resident": ADDRESS["resident"], "op": op, "node": None}, PEER, True
+    yield {"call": "copy", "from": {"machine": "desktop", "path": "C:/a"}, "to": {"machine": "laptop", "path": "C:/b"}}, PEER, True
+    yield {"call": "ask", "resident": ADDRESS["resident"], "label": "test", "prompt": "test", "node": None}, PEER, True
+    yield {"call": "message", "resident": ADDRESS["resident"], "to": "codex-ab34", "machine": None, "text": "test"}, PEER, True
+    yield {"call": "collect", "resident": ADDRESS["resident"]}, PEER, True
+    yield {"call": "taken", "resident": ADDRESS["resident"], "ids": ["notice-a"]}, PEER, True
+    yield {"call": "who", "all": True, "town": None}, PEER, True
+    yield {"call": "look", "ids": [ADDRESS["resident"], "j-abc123"]}, PEER, True
+    yield {"call": "saw", "owner": ADDRESS, "town": None, "seen": [{"path": "C:/a", "at": AT, "sha256": None, "size": 1, "modified": None, "encoding": "UTF-8"}]}, PEER, True
+    for action in ["new", "edit", "list", "show", "map", "enter"]:
+        yield {"call": "project", "do": action, "town": "project", "fields": {}}, PEER, True
+    for action in ["add", "describe", "read", "list"]:
+        yield {"call": "journal", "do": action, "town": "project", "journal": "notes", "text": "entry",
+               "description": "notes", "cites": [], "attach": [], "model": None, "before": None}, PEER, True
+    for name in ["nodes", "machines"]:
+        for peer in [PEER, {"kind": "command", "resident": ADDRESS, "session": None},
+                     {"kind": "command", "resident": None, "session": {"kind": "codex", "thread": "test"}}]:
+            yield {"call": name}, peer, True
+    for peer in [{"kind": "supervisor", "job": "j-abc123"}, {"kind": "supervisor", "job": "j-def456"}]:
+        yield {"call": "job_changed", "job": "j-abc123", "owner": ADDRESS, "town": None}, peer, peer["job"] == "j-abc123"
+        yield {"call": "nodes"}, peer, False
+    yield {"call": "nodes"}, {"kind": "command", "resident": None, "session": None}, False
+    yield {"call": "watch", "resident": ADDRESS["resident"], "machine": None}, PEER, False
+    yield {"call": "since", "since": AT, "town": None}, PEER, False
+    yield {"call": "agents", "machine": None}, PEER, False
+    for call in fixtures["pages"]["calls"]:
+        yield call, PEER, call["do"] in ["publish", "read", "list"]
+
+
+def page_identity(value):
+    if isinstance(value, dict):
+        return any((key == "owner" and isinstance(item, dict) and "page" in item)
+                   or (key in ["by", "from"] and isinstance(item, dict) and item.get("kind") == "page")
+                   or page_identity(item) for key, item in value.items())
+    return isinstance(value, list) and any(map(page_identity, value))
+
+
+def samples(root):
+    fixtures = json.loads((root / "gui/fixtures/wire.json").read_text(encoding="utf-8"))
+    for protocol in [5, 6, 7]:
+        for reply in replies(fixtures):
+            if protocol == 5 and reply["reply"] in ["page", "pages", "machines"]:
+                continue  # These calls did not exist in the frozen protocol-5 binary.
+            case = {"mode": "reply", "protocol": protocol, "value": frame(reply)}
+            if reply["reply"] == "run":
+                case["encodings"] = [part["encoding"] for part in reply["output"]["legacy"]]
+            case["attached"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "attached"
+            case["text_result"] = protocol == 5 and reply["reply"] != "notices" and page_identity(reply)
+            yield case
+        yield {"mode": "reply", "protocol": protocol, "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}
+        for call, peer, admitted in calls(fixtures):
+            if protocol == 5 and call["call"] in ["page", "machines"]:
+                continue
+            yield {"mode": "request", "protocol": protocol, "peer": peer, "admitted": admitted,
+                   "value": {"kind": "call", "id": 37, "call": call}}

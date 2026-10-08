@@ -15,7 +15,12 @@ use crate::residents::Host;
 use crate::{Address, JobId, MachineName};
 
 /// Raised whenever a change would make an older client or node misread a
-/// frame. A node refuses a client speaking another protocol.
+/// frame, including a nested reply type. Tool adapters and job supervisors
+/// already running keep the protocol they started with across a node
+/// upgrade, so the node answers each in the shape it reads
+/// (`fastctx-node`'s `renewal_legacy`); other mismatched clients are refused
+/// before any call executes. `scripts/check-ipc-contract.py` decodes today's
+/// replies with the readers of the protocols released so far.
 pub const PROTOCOL: u32 = 7;
 
 /// The first frame on every connection.
