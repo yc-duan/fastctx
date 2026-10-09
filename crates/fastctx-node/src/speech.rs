@@ -133,7 +133,7 @@ pub(crate) async fn tell_here_locked(
     // The end of the resident's own job waits for whatever call is waiting
     // now; words for it end the wait (`world-run.md`).
     if !matches!(pending.delivery.notice, Notice::JobEnded { .. }) {
-        node.words.came(to);
+        node.words.came(&fastctx_types::Address { machine: node.machine(), resident: to.clone() });
     }
     hand_over_locked(node, to, &about, &directory, pending).await
 }

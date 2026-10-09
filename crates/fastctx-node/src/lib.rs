@@ -30,6 +30,7 @@ mod devices;
 mod file_read;
 mod file_search;
 pub mod handoff;
+mod here;
 mod inbox;
 mod job_watch;
 mod jobs;
@@ -122,8 +123,12 @@ pub(crate) struct Node {
     /// The `on` jobs here whose sender is following them now: their end
     /// goes to it, not in a letter, unless it leaves first (`on`).
     following: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
-    /// Words coming for residents here, for the `run` calls waiting.
+    /// Words coming for residents here, and for residents elsewhere that
+    /// work here, for the `run` calls waiting.
     words: words::Words,
+    /// Jobs run for residents here on the machines they work on, answered
+    /// whole, until their hosts have the answers (`here`).
+    dispatched: here::Dispatched,
     /// The jobs `on` sent from here to other machines, by machine and id,
     /// as a letter telling one's end finds them (`on`).
     on_deliveries: on_delivery::Deliveries,
@@ -326,6 +331,7 @@ pub async fn run_replacing(
         taking: Default::default(),
         following: Default::default(),
         words: Default::default(),
+        dispatched: Default::default(),
         on_deliveries: Default::default(),
         on_stopping: Default::default(),
         on_delivering: Default::default(),

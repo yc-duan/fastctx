@@ -59,6 +59,9 @@ export interface DetailsOptions {
   /** "hangzhou · ada" for each account it works for; empty for this
    *  computer's logins. */
   actingFor(resident: ResidentNow): string[];
+  /** The machines, as written, it may work on, and setting it: a machine,
+   *  or with null the one it lives on. None for a colleague. */
+  worksOn?: { places(): string[]; set(worksOn: string | null): Promise<void> } | undefined;
 }
 
 export interface Colleagues {
@@ -67,7 +70,7 @@ export interface Colleagues {
   set(livesOn: string | null): Promise<void>;
 }
 
-type Managing = "sleep" | "wake" | "move" | "colleagues";
+type Managing = "sleep" | "wake" | "move" | "colleagues" | "works";
 
 export class Details {
   readonly element: HTMLElement;
@@ -84,6 +87,9 @@ export class Details {
   /** Whether the machines its colleagues may live on are shown. */
   private choosing = false;
   private colleaguesNote = "";
+  /** Whether the machines it may work on are shown. */
+  private placing = false;
+  private worksNote = "";
   private confirm: Confirm | null = null;
   private shown: { detail: ResidentDetail; colleagues: ResidentNow[]; now: Date } | null = null;
 
@@ -157,6 +163,37 @@ export class Details {
           this.choosing = !this.choosing;
           this.redraw();
           return;
+        case "works":
+          this.placing = !this.placing;
+          this.redraw();
+          return;
+        case "works-on": {
+          const works = options.worksOn;
+          if (!works || !this.shown) return;
+          const place = button.dataset.place || null;
+          const lives = this.shown.detail.resident.about.machine;
+          this.placing = false;
+          this.managing = "works";
+          this.worksNote = "";
+          this.redraw();
+          works
+            .set(place)
+            .then(() => {
+              const about = this.shown?.detail.resident.about;
+              if (about && place) about.works_on = place;
+              else if (about) delete about.works_on;
+              this.worksNote = words.worksOnSet(place ?? lives, !place);
+            })
+            .catch((error: unknown) => {
+              this.worksNote = words.failed(error instanceof Error ? error.message : String(error));
+            })
+            .finally(() => {
+              this.managing = null;
+              this.spoken.textContent = this.worksNote;
+              this.redraw();
+            });
+          return;
+        }
         case "colleagues-on": {
           const colleagues = options.colleagues;
           if (!colleagues || !this.shown) return;
@@ -250,6 +287,7 @@ export class Details {
     if (!shown) {
       this.moving = false;
       this.choosing = false;
+      this.placing = false;
     }
   }
 
@@ -294,7 +332,6 @@ export class Details {
       [words.state, state],
       [words.model, about.model ? about.model : ""],
       [words.machine, about.machine],
-      [words.worksOn, about.works_on && about.works_on !== about.machine ? about.works_on : ""],
       [words.actingFor, acting.join(words.separator)],
       [words.host, `${agentName(about.host.agent)} ${about.host.version}${about.world_started ? ` · ${words.startedByWorld}` : ""}`],
       [words.origin, origin],
@@ -348,11 +385,42 @@ export class Details {
         <span class="details-note">${escape(this.note)}</span>
       </div>
       ${section(words.manage, this.manageBody(r), " details-manage")}
+      ${section(words.worksOn, this.worksBody(r))}
       ${section(words.task, task)}
       ${section(words.colleagues, this.colleaguesBody(detail) + asked)}
       ${section(words.running, running)}
       ${section(words.actions(detail.actions.length, detail.actions_total), actions)}
       <p class="details-records"><span>${escape(words.records)}</span><code>${escape(`${about.machine}:${detail.records}`)}</code></p>`;
+  }
+
+  /** Where its commands start, with the machines to choose from when
+   *  asked; a colleague works where it lives. */
+  private worksBody(r: ResidentNow): string {
+    const { words, worksOn } = this.options;
+    const about = r.about;
+    const elsewhere = about.works_on && about.works_on !== about.machine ? about.works_on : null;
+    // Only a conversation the World opened chose where it works.
+    const changeable = !!worksOn && !r.removed && about.origin.kind !== "colleague" && about.world_started;
+    const doing = this.managing === "works";
+    const said = `<p class="details-colleagues"><span>${escape(elsewhere ? words.worksOnThere(elsewhere) : words.worksOnLives)}</span>${
+      changeable
+        ? `<button class="text-button" type="button" data-act="works" aria-expanded="${this.placing}"${doing ? " disabled" : ""}>${glyph("machine", 14)}<span>${escape(doing ? words.working : words.changeWorksOn)}</span></button>`
+        : ""
+    }</p>`;
+    const choices =
+      this.placing && worksOn
+        ? `<div class="details-move" role="group" aria-label="${escape(words.worksOn)}"><span class="details-faint">${escape(words.worksOn)}</span><div class="choice-options">${[
+            `<button type="button" class="choice${elsewhere ? "" : " chosen"}" data-act="works-on" data-place=""${elsewhere ? "" : ` disabled aria-current="true"`}>${escape(words.livesHere(about.machine))}</button>`,
+            ...worksOn
+              .places()
+              .filter((machine) => machine !== about.machine)
+              .map(
+                (machine) =>
+                  `<button type="button" class="choice${machine === elsewhere ? " chosen" : ""}" data-act="works-on" data-place="${escape(machine)}"${machine === elsewhere ? ` disabled aria-current="true"` : ""}>${escape(machine)}</button>`,
+              ),
+          ].join("")}</div></div>`
+        : "";
+    return `${said}${choices}${this.worksNote ? `<p class="details-note">${escape(this.worksNote)}</p>` : ""}`;
   }
 
   /** Whether it may ask for colleagues and where they live, with the

@@ -34,11 +34,25 @@ pub enum RemoteCall {
         source: crate::pages::PageSource,
         action: crate::pages::PageInvocation,
     },
-    /// Run a script there for a resident of the calling machine.
+    /// Run a script there for a resident of the calling machine that works
+    /// there (`world-run.md`, 这里): a job of that machine's, answered as
+    /// it would be answered there.
     Run {
         resident: ResidentId,
         town: Option<TownName>,
         request: RunRequest,
+    },
+    /// Words came for a resident of the calling machine: a `Run` of it
+    /// waiting there answers now, as one here would.
+    WordsCame {
+        resident: ResidentId,
+    },
+    /// The answer to a `Run` of a resident of the calling machine showed its
+    /// ended job whole, and its host has it: the job's files go.
+    Forget {
+        resident: ResidentId,
+        town: Option<TownName>,
+        job: JobId,
     },
     /// Run a part of a script there (`world-run.md`, `on`). The package
     /// follows on the data connection, `sizes` long; then the machine says
@@ -131,6 +145,12 @@ pub enum RemoteCall {
     Colleagues {
         resident: ResidentId,
         lives_on: Option<crate::access::Written>,
+    },
+    /// The user sets where a resident there works: another machine, or
+    /// the one it lives on.
+    WorksOn {
+        resident: ResidentId,
+        works_on: Option<crate::access::Written>,
     },
     /// Whether a resident with this id lives there.
     Find {
@@ -237,6 +257,8 @@ impl RemoteCall {
     pub fn purpose(&self) -> Purpose {
         match self {
             RemoteCall::Run { .. }
+            | RemoteCall::WordsCame { .. }
+            | RemoteCall::Forget { .. }
             | RemoteCall::Write { .. }
             | RemoteCall::On { .. }
             | RemoteCall::OnReceipt { .. }
@@ -257,6 +279,7 @@ impl RemoteCall {
             | RemoteCall::ClaudeConsent { .. }
             | RemoteCall::Open { .. }
             | RemoteCall::Colleagues { .. }
+            | RemoteCall::WorksOn { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Manage { .. }
             | RemoteCall::Control { .. }

@@ -57,7 +57,7 @@ import {
   readerWords } from "./app/words";
 import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, zhAccount, zhAdmin, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
-import { colleagueHomes, groupsOf, loginLabel, machinesOf, sameLogin } from "./app/reach";
+import { colleagueHomes, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import { Details, type Manage } from "./conversation/details";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/model";
@@ -132,6 +132,7 @@ import {
   accountChange,
   serverCommand,
   setColleagues,
+  setWorksOn,
 } from "./world/bridge";
 import { en, zh } from "./words";
 import { updating } from "./world/updater";
@@ -420,6 +421,10 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
         homes: () => homesFor(address),
         set: (livesOn) => (live ? setColleagues(address, livesOn) : Promise.reject(new Error(specimenSaid))),
       },
+      worksOn: {
+        places: () => worksPlacesFor(address),
+        set: (worksOn) => (live ? setWorksOn(address, worksOn) : Promise.reject(new Error(specimenSaid))),
+      },
       actingFor: (r) => {
         const acting = r.about.acting;
         if (!acting || acting.kind === "here") return [];
@@ -442,17 +447,31 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
   };
 }
 
-/** Where the colleagues of the agent at `address` may live: machines whose
- *  agents an account it works for may use. */
-function homesFor(address: Address): string[] {
+/** The machine the agent at `address` lives on, and the login it works
+ *  for among this computer's, as this computer reaches them. */
+function livesFor(address: Address): { lives: Machine; login: Login | null } | null {
   const world = store.world.peek();
   const lives = machinesOf(world).find((machine) => machine.name === address.machine);
-  if (!lives) return [];
+  if (!lives) return null;
   const acting = residentAt(world, address)?.about.acting;
   const logins = loginsOf(world?.accounts);
   const login =
     acting?.kind === "accounts" ? (logins.find((one) => acting.accounts.some((a) => sameLogin(one, a))) ?? null) : (logins[0] ?? null);
-  return colleagueHomes(world, lives, login).map((machine) => machine.written);
+  return { lives, login };
+}
+
+/** Where the colleagues of the agent at `address` may live: machines whose
+ *  agents an account it works for may use. */
+function homesFor(address: Address): string[] {
+  const found = livesFor(address);
+  return found ? colleagueHomes(store.world.peek(), found.lives, found.login).map((machine) => machine.written) : [];
+}
+
+/** Where the agent at `address` may work: machines an account it works for
+ *  may work on. */
+function worksPlacesFor(address: Address): string[] {
+  const found = livesFor(address);
+  return found ? workPlaces(store.world.peek(), found.lives, found.login).map((machine) => machine.written) : [];
 }
 
 /** The projects an agent on `machine` can be in: those spanning it. */

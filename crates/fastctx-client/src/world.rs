@@ -420,6 +420,16 @@ impl World {
         done(self.ask(Call::Colleagues { resident, machine, lives_on }).await?)
     }
 
+    /// Sets where `resident` works: `works_on`, or the machine it lives on.
+    pub async fn works_on(
+        &self,
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        works_on: Option<fastctx_types::access::Written>,
+    ) -> Result<(), Error> {
+        done(self.ask(Call::WorksOn { resident, machine, works_on }).await?)
+    }
+
     /// Every hub this computer is on, with what it sees of each.
     pub async fn accounts(&self) -> Result<AccountsReply, Error> {
         match self.ask(Call::Accounts).await? {

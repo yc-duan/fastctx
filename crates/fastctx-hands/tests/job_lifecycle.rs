@@ -73,6 +73,7 @@ fn exercise() -> Result {
         executable: &executable,
         environment: &environment,
         on: None,
+        account: None,
     };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let notified = Arc::new(Mutex::new(Vec::<JobRecord>::new()));

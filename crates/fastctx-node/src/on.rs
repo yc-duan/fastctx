@@ -795,7 +795,7 @@ async fn start(
     let registration = Arc::new(Mutex::new(None));
     let launched = node
         .jobs
-        .launch(node, owner, origin.town.clone(), request, Some((on, staged.input)), Some(registration.clone()))
+        .launch(node, owner, origin.town.clone(), request, Some((on, staged.input)), Some(registration.clone()), None)
         .await?;
     let follower = registration.lock().expect("never poisoned").take().expect("registered before spawn");
     Ok((launched.job, launched.record, follower))

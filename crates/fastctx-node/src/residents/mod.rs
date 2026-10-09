@@ -26,6 +26,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use fastctx_types::access::Written;
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{About, Activity, Hints, Host, Moved, Now, Origin, Trouble, Whereabouts};
@@ -529,6 +530,23 @@ impl Residents {
         live.about = about;
         state.record_session(prior_session.as_deref(), session);
         state.threads.insert(session.to_string(), id.clone());
+        Ok(())
+    }
+
+    /// Where the resident `id` works from now on: `works_on`, or the
+    /// machine it lives on.
+    pub fn set_works_on(&self, world: &WorldDir, id: &ResidentId, works_on: Option<Written>) -> io::Result<()> {
+        let mut state = self.lock();
+        let Some(live) = state.live.get_mut(id) else {
+            return Ok(());
+        };
+        if live.removed.is_some() || live.about.works_on == works_on {
+            return Ok(());
+        }
+        let mut about = live.about.clone();
+        about.works_on = works_on;
+        records::write_about(&world.resident(live.town.as_ref(), id), &about)?;
+        live.about = about;
         Ok(())
     }
 

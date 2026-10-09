@@ -37,6 +37,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::Composer { .. }
             | RemoteCall::Open { .. }
             | RemoteCall::Colleagues { .. }
+            | RemoteCall::WorksOn { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Control { .. }
             | RemoteCall::Manage {

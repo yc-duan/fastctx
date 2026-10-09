@@ -149,6 +149,18 @@ pub(crate) fn frame(protocol: u32, id: u64, reply: &Result<Reply, fastctx_types:
     }
     let reply = reply.as_ref().map(|reply| Answer { protocol, reply });
     let frame = Frame { kind: "reply", id, reply };
+    // The machines hub by hub (`world-network.md`) have no shape in these
+    // protocols, which knew one World through one hub: the reply is said
+    // whole, as text, rather than fitted into a shape that would misstate it.
+    if frame.reply.as_ref().is_ok_and(|answer| matches!(answer.reply, Reply::Nodes(_))) {
+        let value = serde_json::to_value(&frame).expect("the World's types always serialize");
+        let failure = fastctx_types::ipc::Failure::new(format!(
+            "The call completed. This fastctx is older than the node and cannot show the machines hub by hub. The complete result follows as JSON (do not repeat the call):\n{}",
+            serde_json::to_string_pretty(&value["reply"]).expect("JSON serializes")
+        ));
+        return serde_json::to_vec(&Frame { kind: "reply", id, reply: Err(&failure) })
+            .expect("the World's types always serialize");
+    }
     if protocol == 5 && frame.reply.as_ref().is_ok_and(|answer| page_identity::present(answer.reply)) {
         let value = serde_json::to_value(&frame).expect("the World's types always serialize");
         // Protocol 5 has no truthful value for a page author or owner.

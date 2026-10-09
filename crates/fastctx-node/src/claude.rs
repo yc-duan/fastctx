@@ -1018,7 +1018,8 @@ pub async fn open_here(
         crate::colleagues::setting::keep(node, &id, lives_on)?;
     }
     let Command { program, env, .. } = command(node)?;
-    let (words, heard) = crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User).await?;
+    let (words, heard) =
+        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, opened.works_on.as_ref()).await?;
     let born_at = Timestamp::now();
     let about = About {
         id: id.clone(),

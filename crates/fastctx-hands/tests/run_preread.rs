@@ -29,6 +29,7 @@ fn rejection_precedes_all_job_side_effects() {
         };
         let result = run::launch(&run::Launch {
             on: None,
+            account: None,
             world: &world,
             machine: &machine,
             owner: &owner,

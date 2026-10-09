@@ -98,6 +98,13 @@ pub enum Call {
         machine: Option<MachineName>,
         lives_on: Option<crate::access::Written>,
     },
+    /// The user sets where a resident on any machine works: another
+    /// machine, or the one it lives on with `None` (`world-run.md`, 这里).
+    WorksOn {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        works_on: Option<crate::access::Written>,
+    },
     /// On a session's own connection: a `ToolsChanged` frame each time the
     /// tools `resident`, the session's resident when it is known, is
     /// offered may have changed, for as long as the connection stays open.
@@ -451,7 +458,8 @@ pub enum Reply {
     },
     Nodes(NodesReply),
     Machines {
-        here: MachineName,
+        /// Where the session's shell is, as written: the machine it works on.
+        here: String,
         others: Vec<String>,
         /// Where the calling session's colleagues live, when it may ask
         /// for them.

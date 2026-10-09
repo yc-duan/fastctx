@@ -61,6 +61,7 @@ impl Jobs {
     }
 
     /// Starts `request` for `owner` and returns at once.
+    #[allow(clippy::too_many_arguments)]
     pub async fn launch(
         &self,
         node: &Arc<Node>,
@@ -69,6 +70,7 @@ impl Jobs {
         request: RunRequest,
         on: Option<(fastctx_types::run::OnJob, Option<PathBuf>)>,
         registration: Option<crate::on::Registration>,
+        account: Option<fastctx_types::access::HubAccount>,
     ) -> Result<run::Launched, Failure> {
         let (world, machine, executable) = (node.world.clone(), node.machine(), node.fastctx.clone());
         let registering = node.clone();
@@ -92,6 +94,7 @@ impl Jobs {
                 executable: &executable,
                 environment: &environment,
                 on: on.as_ref(),
+                account: account.as_ref(),
             };
             let launched = run::launch::launch_with_io_registered(&launch, mode, input.as_deref(), |path| {
                 if let Some(registration) = registration {
@@ -115,6 +118,7 @@ impl Jobs {
         owner: fastctx_types::run::JobOwner,
         town: Option<TownName>,
         request: RunRequest,
+        account: Option<fastctx_types::access::HubAccount>,
     ) -> Result<(RunReply, JobRecord), Failure> {
         let (world, machine) = (&node.world, &node.machine());
         let wait = match request.wait {
@@ -131,11 +135,10 @@ impl Jobs {
         let deadline = started + wait;
         // Listening before the job exists, so its first change is not missed.
         let mut changes = self.changes.subscribe();
-        let mut words = owner
-            .resident()
-            .filter(|address| address.machine == *machine)
-            .map(|address| node.words.watch(&address.resident));
-        let launched = self.launch(node, owner, town, request, None, None).await?;
+        // Words for a resident of another machine that works here come
+        // from where it lives.
+        let mut words = owner.resident().map(|address| node.words.watch(address));
+        let launched = self.launch(node, owner, town, request, None, None, account).await?;
         let mut answered = None;
         loop {
             let record = read(&launched.record).await?;

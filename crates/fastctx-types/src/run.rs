@@ -262,6 +262,10 @@ pub struct JobRecord {
     /// Set for a job an `on` sent here from another machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on: Option<OnJob>,
+    /// The account a job run here for a resident of another machine works
+    /// for, which its end is told as (`world-run.md`, 这里).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
 }
 
 /// Log offsets acknowledged by both output readers after the shell exited.

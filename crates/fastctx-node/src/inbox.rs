@@ -357,11 +357,12 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
         // An older job may already have posted this id before an upgrade.
         NoticeId::try_from(format!("{}-{}", record.machine, record.id)).expect("a machine and a job make an id")
     };
-    // The end is news for the account the job was sent for.
+    // The end is news for the account the job was sent for, or run for.
     let acting = record
         .on
         .as_ref()
         .and_then(|on| on.account.clone())
+        .or_else(|| record.account.clone())
         .map(|account| fastctx_types::access::Acting::one(account.hub, account.account))
         .unwrap_or_default();
     tell(node, &acting, owner, id, notice, Owed::Working).await.map_err(|failure| io::Error::other(failure.message))?;

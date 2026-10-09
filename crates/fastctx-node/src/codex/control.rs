@@ -131,7 +131,8 @@ async fn fork(
 ) -> Result<Controlled, Failure> {
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
     let id = node.residents.new_id(&source.host.agent)?;
-    let (spec, heard) = crate::colleagues::thread_spec(node, &id, &Origin::User, town.as_ref()).await?;
+    let (spec, heard) =
+        crate::colleagues::thread_spec(node, &id, &Origin::User, town.as_ref(), source.works_on.as_ref()).await?;
     let (fork, model) = node.codex.fork(thread, through.as_deref(), spec).await.map_err(Failure::new)?;
     let at = Timestamp::now();
     let about = About {

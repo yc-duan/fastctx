@@ -134,6 +134,7 @@ fn exercise() -> anyhow::Result<()> {
         let _lock = FileLock::acquire(&world.node_lock())?;
         run::launch(&run::Launch {
             on: None,
+            account: None,
             world: &world,
             machine: &machine,
             owner: &owner.clone().into(),

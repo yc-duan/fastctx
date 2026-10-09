@@ -268,6 +268,12 @@ export function serverCommand(hub: string | null, account: string, name: string 
   return invoke("server_command", { hubName: hub, accountName: account, name, hours });
 }
 
+/** Sets where a conversation works: a machine as written, or with null
+ *  the one it lives on. */
+export function setWorksOn(who: Address, worksOn: string | null): Promise<void> {
+  return invoke("works_on", { residentId: who.resident, machineName: who.machine, worksOn });
+}
+
 /** Turns asking for colleagues on for a conversation, with the machine
  *  they live on, or off with null. */
 export function setColleagues(who: Address, livesOn: string | null): Promise<void> {

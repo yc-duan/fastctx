@@ -745,6 +745,7 @@ pub fn run() {
             accounts::account_change,
             accounts::server_command,
             accounts::colleagues,
+            accounts::works_on,
             world_now,
             since,
             agents,

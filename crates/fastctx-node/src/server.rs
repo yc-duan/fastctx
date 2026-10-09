@@ -512,7 +512,9 @@ async fn taken(
         node.residents.acknowledge_heard(owner, heard.clone());
         false
     });
-    if let Some(job) = shown {
+    if let Some(job) = shown
+        && !crate::here::forget(node, &resident, town.clone(), &job)
+    {
         let (node, owner) = (node.clone(), fastctx_types::Address { machine: node.machine(), resident });
         tokio::spawn(async move { crate::jobs::forget(&node, town, owner, job).await });
     }
@@ -743,6 +745,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::colleagues::set(node, resident, machine, lives_on).await.map(|()| Reply::Done)
         }
+        Call::WorksOn { resident, machine, works_on } => {
+            users_voice(node, peer)?;
+            crate::here::set_anywhere(node, resident, machine, works_on).await.map(|()| Reply::Done)
+        }
         Call::WatchTools { .. } => Err(Failure::new("a tools watch is answered as it goes, not at once")),
     }
 }
@@ -789,8 +795,15 @@ async fn run(
     }
     let script = request.script.clone();
     let started_at = jiff::Timestamp::now();
-    let owner = Address { machine: here.clone(), resident: resident.clone() };
-    let reply = node.jobs.run(node, owner.into(), town.clone(), request).await?.0;
+    // A resident that works on another machine starts its scripts there,
+    // and a script of one `on` goes where it names (`world-run.md`, 这里).
+    let reply = match crate::here::start(node, &resident, request) {
+        (Some(works_on), request) => crate::here::run(node, &resident, town.clone(), request, &works_on).await?,
+        (None, request) => {
+            let owner = Address { machine: here.clone(), resident: resident.clone() };
+            node.jobs.run(node, owner.into(), town.clone(), request, None).await?.0
+        }
+    };
     let action = crate::jobs::action(&reply, &script, started_at);
     let world = node.world.clone();
     blocking("recording the action", move || {
@@ -937,7 +950,20 @@ async fn who(
 fn machines(node: &Arc<Node>, resident: Option<&ResidentId>) -> Result<Reply, Failure> {
     let about = resident.and_then(|resident| node.residents.about(resident)).map(|(about, _)| about);
     let acting = about.as_ref().map(|about| about.acting.clone()).unwrap_or_default();
-    let (here, others) = crate::world::machines(node, &acting);
+    let (here, mut others) = crate::world::machines(node, &acting);
+    // The session's shell is where it works: that machine is "this one",
+    // and the one it lives on is among the others (`world-run.md`, 这里).
+    let works_on = about.as_ref().and_then(|about| about.works_on.clone()).filter(|works_on| !node.is_here(works_on));
+    let here = match works_on {
+        Some(works_on) => {
+            let written = works_on.to_string();
+            others.retain(|other| *other != written);
+            others.push(here.to_string());
+            others.sort();
+            written
+        }
+        None => here.to_string(),
+    };
     let colleagues = match resident.filter(|_| about.is_some()) {
         Some(resident) => crate::colleagues::setting::read(node, resident)
             .map_err(|error| Failure::new(format!("reading the colleague setting: {error}")))?,

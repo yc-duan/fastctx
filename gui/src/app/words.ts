@@ -550,6 +550,13 @@ export interface DetailsWords {
   task: string;
   colleagues: string;
   worksOn: string;
+  /** Where its commands start: the machine it lives on, or another. */
+  worksOnLives: string;
+  worksOnThere(machine: string): string;
+  changeWorksOn: string;
+  /** The choice of the machine it lives on. */
+  livesHere(machine: string): string;
+  worksOnSet(machine: string, lives: boolean): string;
   actingFor: string;
   separator: string;
   /** Where its colleagues live, when it may ask for them. */
@@ -629,6 +636,11 @@ export const zhDetails: DetailsWords = {
   task: "它接的活",
   colleagues: "同事",
   worksOn: "在哪台干活",
+  worksOnLives: "就在它住的那台：它的命令从那里开始",
+  worksOnThere: (machine) => `在 ${machine}：它的命令从那里开始，它住的那台用 on 去`,
+  changeWorksOn: "改…",
+  livesHere: (machine) => `它住的那台（${machine}）`,
+  worksOnSet: (machine, lives) => (lives ? `从下一次起，它的命令在它住的那台（${machine}）上跑` : `从下一次起，它的命令在 ${machine} 上跑`),
   actingFor: "替谁干活",
   separator: "、",
   colleaguesLive: (machine) => `能请同事，同事住在 ${machine}`,
@@ -703,6 +715,11 @@ export const enDetails: DetailsWords = {
   task: "Its task",
   colleagues: "Colleagues",
   worksOn: "Works on",
+  worksOnLives: "the machine it lives on: its commands start there",
+  worksOnThere: (machine) => `${machine}: its commands start there, and it reaches the machine it lives on with on`,
+  changeWorksOn: "Change…",
+  livesHere: (machine) => `where it lives (${machine})`,
+  worksOnSet: (machine, lives) => (lives ? `From its next command it works where it lives (${machine})` : `From its next command it works on ${machine}`),
   actingFor: "Works for",
   separator: ", ",
   colleaguesLive: (machine) => `may ask colleagues, who live on ${machine}`,

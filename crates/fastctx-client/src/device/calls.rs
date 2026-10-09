@@ -84,6 +84,10 @@ impl Device {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Colleagues { resident: resident.clone(), lives_on }, Some(resident))
             }
+            Call::WorksOn { resident, machine, works_on } => {
+                let machine = self.find(&resident, machine).await?;
+                (machine, RemoteCall::WorksOn { resident: resident.clone(), works_on }, Some(resident))
+            }
             Call::Stop { resident, machine } => {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Stop { resident: resident.clone() }, Some(resident))
@@ -162,7 +166,7 @@ impl Device {
             (RemoteCall::Offers { .. }, RemoteReply::Offers(offers)) => {
                 Reply::Offers { resident: address.expect("offers resident"), offers }
             }
-            (RemoteCall::Colleagues { .. }, RemoteReply::Set) => Reply::Done,
+            (RemoteCall::Colleagues { .. } | RemoteCall::WorksOn { .. }, RemoteReply::Set) => Reply::Done,
             _ => {
                 return Err(failed(format!(
                     "{machine} answered something other than the requested conversation operation"

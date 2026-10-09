@@ -35,6 +35,8 @@ pub struct Launch<'a> {
     /// What an `on` sent with the script; the files are in the resident's
     /// directory already.
     pub on: Option<&'a fastctx_types::run::OnJob>,
+    /// The account a job run for a resident of another machine works for.
+    pub account: Option<&'a fastctx_types::access::HubAccount>,
 }
 
 /// A job whose supervisor has been started.
@@ -162,6 +164,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
         ends_with_node: false,
         writes_off: launch.request.writes_off,
         on: launch.on.cloned(),
+        account: launch.account.cloned(),
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
     if launch.on.is_some() {

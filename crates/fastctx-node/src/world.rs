@@ -421,10 +421,20 @@ impl fastctx_net::link::Node for Handler {
                     .await
                     .map(|result| RemoteReply::PageAction { result }),
                 RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
-                // What an older fastctx sends: commands and files go to another
-                // machine only as `on` now (`world-run.md`).
-                RemoteCall::Run { .. } | RemoteCall::Write { .. } => Err(Failure::new(format!(
-                    "{machine} takes commands and files from other machines only through `on`; the fastctx on {from} is older and needs updating"
+                // A resident of the calling machine works here (`world-run.md`,
+                // 这里).
+                RemoteCall::Run { resident, town, request } => {
+                    let account = HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                    crate::here::serve(&node, from, account, resident, town, request).await
+                }
+                RemoteCall::WordsCame { resident } => Ok(crate::here::words_came(&node, from, resident)),
+                RemoteCall::Forget { resident, town, job } => {
+                    Ok(crate::here::forget_here(&node, from, resident, town, job).await)
+                }
+                // What an older fastctx sends: files go to another machine only
+                // as `on` now (`world-run.md`).
+                RemoteCall::Write { .. } => Err(Failure::new(format!(
+                    "{machine} takes files from other machines only through `on`; the fastctx on {from} is older and needs updating"
                 ))),
                 RemoteCall::On { mut origin, sizes, writes_off } => {
                     let stream = stream.ok_or_else(|| Failure::new("an on comes with a data connection"))?;
@@ -503,6 +513,9 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::Colleagues { resident, lives_on } => {
                     crate::colleagues::setting::set(&node, &resident, lives_on).map(|()| RemoteReply::Set)
+                }
+                RemoteCall::WorksOn { resident, works_on } => {
+                    crate::here::set(&node, &resident, works_on).await.map(|()| RemoteReply::Set)
                 }
                 RemoteCall::Stop { resident } => {
                     crate::talk::stop_here(&node, &resident).await.map(|stopped| RemoteReply::Stopped { stopped })

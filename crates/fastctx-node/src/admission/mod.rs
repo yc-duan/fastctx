@@ -44,6 +44,7 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::Manage { resident: who, .. }
         | RemoteCall::Offers { resident: who }
         | RemoteCall::Colleagues { resident: who, .. }
+        | RemoteCall::WorksOn { resident: who, .. }
         | RemoteCall::Upload {
             target:
                 fastctx_types::attachments::UploadTarget::Resident { resident: who }
