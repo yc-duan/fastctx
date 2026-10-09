@@ -77,4 +77,57 @@ fn released_ownership_is_bound_and_retired_with_the_host_files() {
     apply::apply(&places, hosts, Approval::Require).unwrap();
     apply::unapply(&places, hosts).unwrap();
     assert!(!places.codex_home.exists());
+    home_lifecycle(&places);
+}
+
+fn home_lifecycle(base: &Places) {
+    use fastctx_install::apply::{Host, Standing};
+
+    let first = base.at_home(Host::Codex, &base.root.parent().unwrap().join("first-home")).unwrap();
+    let second = base.at_home(Host::Codex, &base.root.parent().unwrap().join("new-parent/second-home")).unwrap();
+    let third = base.at_home(Host::Codex, &second.codex_home.parent().unwrap().join("third-home")).unwrap();
+    fs::create_dir(&first.codex_home).unwrap();
+    let original =
+        b"# user\r\nmodel = 'first'\r\ntool_output_token_limit = 10000\r\n[features]\r\nshell_tool = true\r\n";
+    fs::write(first.codex_home.join("config.toml"), original).unwrap();
+    fs::write(first.codex_home.join("AGENTS.md"), b"first user's words\r\n").unwrap();
+    let hosts = Host::Codex.only();
+    apply::apply(&first, hosts, Approval::RaiseOutputLimit).unwrap();
+
+    let record_path = first.root.join("applied.json");
+    let registry: serde_json::Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    let mut old = registry["homes"][0]["receipt"].clone();
+    old["created"] = registry["created"].clone();
+    fs::write(&record_path, serde_json::to_vec_pretty(&old).unwrap()).unwrap();
+    assert_eq!(apply::status_at(base, Host::Codex, &first.codex_home).unwrap(), Standing::In);
+    assert_eq!(apply::status_at(base, Host::Codex, &second.codex_home).unwrap(), Standing::Absent);
+    let first_config = fs::read(first.codex_home.join("config.toml")).unwrap();
+    apply::apply(&second, hosts, Approval::Require).unwrap();
+    apply::apply(&third, hosts, Approval::Require).unwrap();
+    assert_eq!(fs::read(first.codex_home.join("config.toml")).unwrap(), first_config);
+    let second_config = fs::read(second.codex_home.join("config.toml")).unwrap();
+    let second_agents = fs::read(second.codex_home.join("AGENTS.md")).unwrap();
+
+    let rewritten: toml::Value = toml::from_str(std::str::from_utf8(&first_config).unwrap()).unwrap();
+    fs::write(first.codex_home.join("config.toml"), toml::to_string_pretty(&rewritten).unwrap()).unwrap();
+    apply::apply(&first, hosts, Approval::Require).unwrap();
+    apply::unapply(&first, hosts).unwrap();
+    let restored: toml::Value =
+        toml::from_str(&fs::read_to_string(first.codex_home.join("config.toml")).unwrap()).unwrap();
+    assert_eq!(restored["model"].as_str(), Some("first"));
+    assert_eq!(restored["tool_output_token_limit"].as_integer(), Some(10000));
+    assert_eq!(restored["features"]["shell_tool"].as_bool(), Some(true));
+    assert!(restored.get("mcp_servers").and_then(|servers| servers.get("fastctx")).is_none());
+    assert_eq!(fs::read(first.codex_home.join("AGENTS.md")).unwrap(), b"first user's words\r\n");
+    assert_eq!(fs::read(second.codex_home.join("config.toml")).unwrap(), second_config);
+    assert_eq!(fs::read(second.codex_home.join("AGENTS.md")).unwrap(), second_agents);
+    assert_eq!(apply::status_at(base, Host::Codex, &first.codex_home).unwrap(), Standing::Out);
+    assert_eq!(apply::status_at(base, Host::Codex, &second.codex_home).unwrap(), Standing::In);
+    apply::unapply(&second, hosts).unwrap();
+    assert!(!second.codex_home.exists());
+    assert!(second.codex_home.parent().unwrap().exists());
+    assert_eq!(apply::status_at(base, Host::Codex, &third.codex_home).unwrap(), Standing::In);
+    apply::unapply(&third, hosts).unwrap();
+    assert!(!second.codex_home.parent().unwrap().exists());
+    assert!(!record_path.exists());
 }
