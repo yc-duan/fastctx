@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 
 use fastctx_types::project::*;
 use fastctx_types::residents::*;
-use fastctx_types::scope::{Action as Act, Scope, Set};
 use fastctx_types::town::*;
 use fastctx_types::world::*;
 use fastctx_types::{Address, MachineName};
@@ -90,6 +89,12 @@ fn residents() -> Vec<ResidentNow> {
                 session: (i != 0).then(|| "thread-1".into()),
                 world_started: i != 0,
                 model: (i != 0).then(|| "model-a".into()),
+                acting: if i == 0 {
+                    fastctx_types::access::Acting::Here
+                } else {
+                    fastctx_types::access::Acting::one("w-0123456789abcdef".parse().unwrap(), "ada".parse().unwrap())
+                },
+                works_on: (i == 1).then(|| "laptop.home".parse().unwrap()),
             },
             town: (i != 0).then(|| "project-0".parse().unwrap()),
             here: i != 2,
@@ -217,117 +222,78 @@ fn nodes() -> Vec<NodesReply> {
         relay: Some("la".parse().unwrap()),
         route: Route::System,
     });
-    links
+    let facts = |name: &str, os: &str, lifetime: bool| MachineFacts {
+        name: name.parse().unwrap(),
+        os: os.into(),
+        arch: if os == "windows" { "x86_64".into() } else { "aarch64".into() },
+        home: if os == "windows" { "C:/Users/example".into() } else { "/home/example".into() },
+        temp: if os == "windows" { "C:/Temp".into() } else { "/tmp".into() },
+        path_separator: if os == "windows" { '\\' } else { '/' },
+        case_sensitive: os != "windows",
+        version: "fixture-version".into(),
+        shell: String::new(),
+        node_lifetime: lifetime.then(|| {
+            Box::new(fastctx_types::node_lifetime::NodeLifetime {
+                process: fastctx_types::ProcessIdentity { pid: 123, token: "node-created".into() },
+                starter: Some(fastctx_types::node_lifetime::NodeStarter {
+                    process: fastctx_types::ProcessIdentity { pid: 122, token: "serve-created".into() },
+                    session: Some(Host {
+                        agent: "codex".parse().unwrap(),
+                        client: "codex-fixture".into(),
+                        version: "fixture-version".into(),
+                    }),
+                }),
+                supervised: false,
+                windows_job: Some(fastctx_types::node_lifetime::WindowsJob {
+                    kill_on_close: true,
+                    breakaway_allowed: false,
+                    silent_breakaway: false,
+                }),
+            })
+        }),
+    };
+    let me: fastctx_types::AccountName = "ada".parse().unwrap();
+    let all = fastctx_types::access::Rights { hands: true, agents: true };
+    let agents = fastctx_types::access::Rights { hands: false, agents: true };
+    let mut replies: Vec<NodesReply> = links
         .into_iter()
         .enumerate()
         .map(|(i, link)| NodesReply {
             machine: machine(),
-            world: (i != 0).then(|| "Example world".into()),
-            link,
-            machines: vec![
-                Node {
-                    name: machine(),
-                    online: Some(true),
-                    since: Some(at()),
-                    revoked: None,
-                    device: false,
-                    standing: Some(Standing {
-                        scope: Scope {
-                            machines: Set::All,
-                            agents: Set::All,
-                            projects: Set::All,
-                            actions: Set::All,
-                            invite: true,
-                        },
-                        manage: true,
-                        invited_by: None,
-                        delegated: false,
-                        sealing: true,
-                    }),
-                    place: Some(Place { via: vec![Upstream::Hub], relays_at: vec!["203.0.113.5:7444".into()] }),
-                    facts: Ok(MachineFacts {
-                        name: machine(),
-                        os: "windows".into(),
-                        arch: "x86_64".into(),
-                        home: "C:/Users/example".into(),
-                        temp: "C:/Temp".into(),
-                        path_separator: '\\',
-                        case_sensitive: false,
-                        version: "fixture-version".into(),
-                        shell: String::new(),
-                        node_lifetime: Some(Box::new(fastctx_types::node_lifetime::NodeLifetime {
-                            process: fastctx_types::ProcessIdentity { pid: 123, token: "node-created".into() },
-                            starter: Some(fastctx_types::node_lifetime::NodeStarter {
-                                process: fastctx_types::ProcessIdentity { pid: 122, token: "serve-created".into() },
-                                session: Some(Host {
-                                    agent: "codex".parse().unwrap(),
-                                    client: "codex-fixture".into(),
-                                    version: "fixture-version".into(),
-                                }),
-                            }),
-                            supervised: false,
-                            windows_job: Some(fastctx_types::node_lifetime::WindowsJob {
-                                kill_on_close: true,
-                                breakaway_allowed: false,
-                                silent_breakaway: false,
-                            }),
-                        })),
-                    }),
-                },
-                Node {
-                    name: "lab".parse().unwrap(),
-                    online: None,
-                    since: None,
-                    revoked: None,
-                    device: true,
-                    standing: Some(Standing {
-                        scope: Scope {
-                            machines: Set::Only([machine()].into()),
-                            agents: Set::Only(["codex".parse().unwrap()].into()),
-                            projects: Set::Only(["garden".to_string(), "t-0123456789abcdef".to_string()].into()),
-                            actions: Set::Only([Act::Talk, Act::W].into()),
-                            invite: false,
-                        },
-                        manage: false,
-                        invited_by: Some(machine()),
-                        delegated: true,
-                        sealing: false,
-                    }),
-                    place: Some(Place {
-                        via: vec![Upstream::Relay { machine: machine() }, Upstream::Hub],
-                        relays_at: Vec::new(),
-                    }),
-                    facts: Ok(MachineFacts {
+            facts: Some(facts("desktop", "windows", true)),
+            hubs: vec![HubNodes {
+                hub: "w-0123456789abcdef".parse().unwrap(),
+                name: "home".parse().unwrap(),
+                link,
+                logins: vec![me.clone()],
+                home: Some(me.clone()),
+                machines: vec![
+                    Node {
                         name: "lab".parse().unwrap(),
-                        os: "linux".into(),
-                        arch: "aarch64".into(),
-                        home: "/home/example".into(),
-                        temp: "/tmp".into(),
-                        path_separator: '/',
-                        case_sensitive: true,
-                        version: "fixture-version".into(),
-                        shell: String::new(),
-                        node_lifetime: None,
-                    }),
-                },
-                Node {
-                    name: "laptop".parse().unwrap(),
-                    online: Some(false),
-                    since: Some(at()),
-                    facts: Err("offline".into()),
-                    revoked: Some(Revoked { by: machine(), at: at(), reason: "retired".into() }),
-                    device: false,
-                    standing: None,
-                    place: None,
-                },
-            ],
-            joined: if i == 1 {
-                vec![Joined { name: "lab".parse().unwrap(), device: true, noticed_at: at() }]
-            } else {
-                Vec::new()
-            },
+                        written: if i == 1 { "lab.home".into() } else { "lab".into() },
+                        online: None,
+                        since: None,
+                        through: Some("la".into()),
+                        facts: Ok(facts("lab", "linux", false)),
+                        owner: Some("grace".parse().unwrap()),
+                        rights: vec![(me.clone(), agents)],
+                    },
+                    Node {
+                        name: "laptop".parse().unwrap(),
+                        written: "laptop".into(),
+                        online: Some(false),
+                        since: Some(at()),
+                        through: None,
+                        facts: Err("offline".into()),
+                        owner: Some(me.clone()),
+                        rights: vec![(me.clone(), all)],
+                    },
+                ],
+            }],
         })
-        .collect()
+        .collect();
+    replies.push(NodesReply { machine: machine(), facts: Some(facts("desktop", "windows", false)), hubs: Vec::new() });
+    replies
 }
 
 fn journals() -> Vec<JournalSummary> {

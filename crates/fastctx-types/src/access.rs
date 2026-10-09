@@ -96,6 +96,14 @@ impl From<HubId> for String {
     }
 }
 
+impl std::str::FromStr for HubId {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        Self::try_from(text.to_string())
+    }
+}
+
 impl std::fmt::Display for HubId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -248,6 +256,14 @@ impl TryFrom<String> for Written {
 
     fn try_from(text: String) -> Result<Self, NameError> {
         Self::parse(&text)
+    }
+}
+
+impl std::str::FromStr for Written {
+    type Err = NameError;
+
+    fn from_str(text: &str) -> Result<Self, NameError> {
+        Self::parse(text)
     }
 }
 

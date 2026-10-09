@@ -93,6 +93,14 @@ pub fn fixtures() -> Fixtures {
                 model: Some("model-a".into()),
                 reasoning_effort: Some("medium".into()),
                 attachments: Vec::new(),
+                choices: fastctx_types::agents::Choices {
+                    account: Some(fastctx_types::access::HubAccount {
+                        hub: "w-0123456789abcdef".parse().unwrap(),
+                        account: "ada".parse().unwrap(),
+                    }),
+                    works_on: Some("laptop".parse().unwrap()),
+                    colleagues: Some("lab.home".parse().unwrap()),
+                },
             },
             Call::Open {
                 agent: "claude".parse().unwrap(),
@@ -102,6 +110,7 @@ pub fn fixtures() -> Fixtures {
                 model: None,
                 reasoning_effort: None,
                 attachments: Vec::new(),
+                choices: Default::default(),
             },
         ],
         replies: vec![Reply::Agents(WorldAgents {
@@ -122,6 +131,8 @@ pub fn fixtures() -> Fixtures {
                 model: Some("opus".into()),
                 reasoning_effort: Some("high".into()),
                 attachments: Vec::new(),
+                works_on: None,
+                colleagues: Some("desktop".parse().unwrap()),
             },
         ],
         remote_replies: vec![RemoteReply::Agents(answer)],

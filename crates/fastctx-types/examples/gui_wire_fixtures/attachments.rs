@@ -69,6 +69,7 @@ pub fn fixtures() -> Fixtures {
                 model: None,
                 reasoning_effort: None,
                 attachments: attachments.clone(),
+                choices: Default::default(),
             },
         ],
         replies: vec![
@@ -92,6 +93,8 @@ pub fn fixtures() -> Fixtures {
                 model: None,
                 reasoning_effort: None,
                 attachments,
+                works_on: None,
+                colleagues: None,
             },
         ],
         remote_replies: vec![RemoteReply::Uploaded(attachment)],
