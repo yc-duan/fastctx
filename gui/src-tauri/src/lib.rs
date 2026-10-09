@@ -693,9 +693,23 @@ async fn apply_hosts(
     claude: bool,
     raise: bool,
     into: bool,
+    home: Option<std::path::PathBuf>,
 ) -> Result<Vec<String>, String> {
     shell.connection.local_program()?;
-    tauri::async_runtime::spawn_blocking(move || setup::hosts(codex, claude, raise, into))
+    tauri::async_runtime::spawn_blocking(move || setup::hosts(codex, claude, raise, into, home))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+async fn apply_host_status(
+    shell: tauri::State<'_, Shell>,
+    host: fastctx_install::apply::Host,
+    home: std::path::PathBuf,
+) -> Result<&'static str, String> {
+    shell.connection.local_program()?;
+    tauri::async_runtime::spawn_blocking(move || setup::host_status(host, home))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -795,6 +809,8 @@ pub fn run() {
             renew_guardian_here,
             #[cfg(desktop)]
             apply_hosts,
+            #[cfg(desktop)]
+            apply_host_status,
             #[cfg(desktop)]
             attach_here,
             #[cfg(desktop)]

@@ -19,6 +19,12 @@ pub struct Receipt {
     document: Option<DocumentInsertion>,
 }
 
+impl Receipt {
+    pub(crate) fn settings_path(&self) -> &std::path::Path {
+        std::path::Path::new(&self.path)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Added {
