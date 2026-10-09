@@ -19,6 +19,9 @@ use crate::Node;
 #[derive(Serialize, Deserialize)]
 struct Setting {
     lives_on: Written,
+    /// The Codex home there they use, when not the default one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    home: Option<PathBuf>,
 }
 
 fn path(world: &WorldDir, id: &ResidentId) -> PathBuf {
@@ -32,9 +35,24 @@ pub fn read(node: &Node, id: &ResidentId) -> io::Result<Option<Written>> {
 
 /// The same, read from the World's directory alone.
 pub(crate) fn read_in(world: &WorldDir, id: &ResidentId) -> io::Result<Option<Written>> {
+    Ok(setting(world, id)?.map(|setting| setting.lives_on))
+}
+
+/// The Codex home `id`'s colleagues use where they live, when it may ask
+/// for them and it is not the default one there.
+pub fn home(node: &Node, id: &ResidentId) -> io::Result<Option<PathBuf>> {
+    home_in(&node.world, id)
+}
+
+/// The same, read from the World's directory alone.
+pub(crate) fn home_in(world: &WorldDir, id: &ResidentId) -> io::Result<Option<PathBuf>> {
+    Ok(setting(world, id)?.and_then(|setting| setting.home))
+}
+
+fn setting(world: &WorldDir, id: &ResidentId) -> io::Result<Option<Setting>> {
     match std::fs::read(path(world, id)) {
         Ok(bytes) => serde_json::from_slice::<Setting>(&bytes)
-            .map(|setting| Some(setting.lives_on))
+            .map(Some)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -42,8 +60,9 @@ pub(crate) fn read_in(world: &WorldDir, id: &ResidentId) -> io::Result<Option<Wr
 }
 
 /// Turns asking for colleagues on for `id`, a resident of this machine,
-/// with where they live, or off. A colleague never asks for colleagues.
-pub fn set(node: &Node, id: &ResidentId, lives_on: Option<Written>) -> Result<(), Failure> {
+/// with where they live and in which Codex home there, or off. A colleague
+/// never asks for colleagues.
+pub fn set(node: &Node, id: &ResidentId, lives_on: Option<Written>, home: Option<PathBuf>) -> Result<(), Failure> {
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::not_run(format!("no resident {id} lives here")))?;
     if let Origin::Colleague { asked_by, .. } = &about.origin {
         return Err(Failure::not_run(format!(
@@ -51,7 +70,7 @@ pub fn set(node: &Node, id: &ResidentId, lives_on: Option<Written>) -> Result<()
         )));
     }
     match &lives_on {
-        Some(lives_on) => keep(node, id, lives_on)?,
+        Some(lives_on) => keep(node, id, lives_on, home)?,
         None => {
             let path = path(&node.world, id);
             match std::fs::remove_file(&path) {
@@ -68,17 +87,18 @@ pub fn set(node: &Node, id: &ResidentId, lives_on: Option<Written>) -> Result<()
 
 /// A fork of `parent` asks for colleagues as `parent` does.
 pub fn inherit(node: &Node, parent: &ResidentId, id: &ResidentId) -> Result<(), Failure> {
-    match read(node, parent) {
-        Ok(Some(lives_on)) => keep(node, id, &lives_on),
+    match setting(&node.world, parent) {
+        Ok(Some(setting)) => keep(node, id, &setting.lives_on, setting.home),
         Ok(None) => Ok(()),
         Err(error) => Err(Failure::new(format!("reading {parent}'s colleague setting: {error}"))),
     }
 }
 
 /// Keeps where `id`'s colleagues live, for a resident being born.
-pub fn keep(node: &Node, id: &ResidentId, lives_on: &Written) -> Result<(), Failure> {
+pub fn keep(node: &Node, id: &ResidentId, lives_on: &Written, home: Option<PathBuf>) -> Result<(), Failure> {
     let path = path(&node.world, id);
-    let mut bytes = serde_json::to_vec_pretty(&Setting { lives_on: lives_on.clone() }).expect("a setting serializes");
+    let setting = Setting { lives_on: lives_on.clone(), home };
+    let mut bytes = serde_json::to_vec_pretty(&setting).expect("a setting serializes");
     bytes.push(b'\n');
     ensure_private_dir(path.parent().expect("the colleagues directory"))
         .and_then(|()| publish(&path, &bytes, Permissions::Private))

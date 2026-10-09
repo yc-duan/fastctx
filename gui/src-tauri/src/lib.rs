@@ -477,9 +477,11 @@ async fn claude_consent(
     shell: tauri::State<'_, Shell>,
     machine_name: String,
     accept: bool,
+    home: Option<std::path::PathBuf>,
 ) -> Result<ClaudeConsent, String> {
     let machine = machine_name.parse().map_err(|error| format!("{error}"))?;
-    let (accepted, changed) = shell.world().claude_consent(machine, accept).await.map_err(|error| error.to_string())?;
+    let (accepted, changed) =
+        shell.world().claude_consent(machine, accept, home).await.map_err(|error| error.to_string())?;
     Ok(ClaudeConsent { accepted, changed })
 }
 
@@ -745,6 +747,7 @@ pub fn run() {
             accounts::account_change,
             accounts::server_command,
             accounts::colleagues,
+            accounts::agent_homes,
             accounts::works_on,
             world_now,
             since,

@@ -1,12 +1,13 @@
 //! Read-only probes of official commands. Authentication output is reduced
-//! to status; account identifiers and even masked keys never leave this layer.
+//! to its status and the account's name, organization and plan, which tell a
+//! machine's accounts apart; keys, even masked, never leave this layer.
 
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::Instant;
 
-use fastctx_types::agents::{Fact, LoginStatus, ProbeTime};
+use fastctx_types::agents::{AgentAccount, Fact, LoginStatus, ProbeTime};
 
 pub fn elapsed(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).expect("probe duration fits in milliseconds")
@@ -47,13 +48,15 @@ pub fn version(program: &Path, cwd: &Path, env: &[(OsString, OsString)]) -> Fact
     }
 }
 
-pub fn login(program: &Path, cwd: &Path, env: &[(OsString, OsString)], codex: bool) -> Fact<LoginStatus> {
-    let args: &[&str] = if codex { &["login", "status"] } else { &["auth", "status", "--json"] };
+/// Codex's `login status`: whether someone is logged in, and how; Codex
+/// names the account only through its app-server (`codex::account`).
+pub fn login(program: &Path, cwd: &Path, env: &[(OsString, OsString)]) -> Fact<LoginStatus> {
+    let args: &[&str] = &["login", "status"];
     let answer = match output(program, args, cwd, env) {
         Ok(answer) => answer,
         Err(error) => return Fact::failed(error),
     };
-    if codex {
+    {
         // Codex 0.160 writes status to stderr. API-key status includes a
         // masked key, so neither full stream is exposed, including on errors.
         let text = format!("{}\n{}", String::from_utf8_lossy(&answer.stdout), String::from_utf8_lossy(&answer.stderr));
@@ -72,15 +75,40 @@ pub fn login(program: &Path, cwd: &Path, env: &[(OsString, OsString)], codex: bo
         if answer.status.code() == Some(1) && lines.contains(&"Not logged in") {
             return Fact::known(LoginStatus::LoggedOut);
         }
-    } else if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&answer.stdout) {
+    }
+    Fact::failed(format!("{} exited {} without a recognized login status", args.join(" "), answer.status))
+}
+
+/// Claude Code's `auth status --json`, for the home its environment names:
+/// whether a login is configured (it does not check that it still works),
+/// and, for a claude.ai login, whose. A long-lived token names no one.
+pub fn claude_login(
+    program: &Path,
+    cwd: &Path,
+    env: &[(OsString, OsString)],
+) -> (Fact<LoginStatus>, Fact<AgentAccount>) {
+    let args = ["auth", "status", "--json"];
+    let answer = match output(program, &args, cwd, env) {
+        Ok(answer) => answer,
+        Err(error) => return (Fact::failed(error.clone()), Fact::failed(error)),
+    };
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&answer.stdout) {
+        let text = |key: &str| value.get(key).and_then(serde_json::Value::as_str).map(str::to_string);
         match (value.get("loggedIn").and_then(serde_json::Value::as_bool), answer.status.code()) {
             (Some(true), Some(0)) => {
-                let method = value.get("authMethod").and_then(serde_json::Value::as_str).map(str::to_string);
-                return Fact::known(LoginStatus::LoggedIn { method });
+                let account =
+                    AgentAccount { email: text("email"), organization: text("orgName"), plan: text("subscriptionType") };
+                return (Fact::known(LoginStatus::LoggedIn { method: text("authMethod") }), Fact::known(account));
             }
-            (Some(false), Some(1)) => return Fact::known(LoginStatus::LoggedOut),
+            (Some(false), Some(1)) => {
+                return (
+                    Fact::known(LoginStatus::LoggedOut),
+                    Fact::unavailable("no one is logged in to this Claude Code home"),
+                );
+            }
             _ => {}
         }
     }
-    Fact::failed(format!("{} exited {} without a recognized login status", args.join(" "), answer.status))
+    let failed = format!("{} exited {} without a recognized login status", args.join(" "), answer.status);
+    (Fact::failed(failed.clone()), Fact::failed(failed))
 }

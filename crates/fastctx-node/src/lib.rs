@@ -31,6 +31,7 @@ mod file_read;
 mod file_search;
 pub mod handoff;
 mod here;
+mod homes;
 mod inbox;
 mod job_watch;
 mod jobs;
@@ -76,7 +77,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Context as _, anyhow};
-use fastctx_hosts::codex::{CodexHost, launch};
+use fastctx_hosts::codex::launch;
 use fastctx_net::ids::HubId;
 use fastctx_net::link::Link;
 use fastctx_platform::ipc::{Endpoint, Listener};
@@ -101,7 +102,7 @@ pub(crate) struct Node {
     residents: residents::Residents,
     /// This machine's Codex app-server, holding the Codex residents the
     /// World started.
-    codex: Arc<CodexHost>,
+    codex: codex::hosts::CodexHosts,
     unclaimed: codex::Unclaimed,
     /// Claude sessions, as the World's plugin reports them.
     claude: claude::Claude,
@@ -303,7 +304,7 @@ pub async fn run_replacing(
     }
     let home = fastctx_platform::user_home().context("finding the home directory")?;
     let codex_log = log.clone();
-    let (codex, codex_events) = CodexHost::new(
+    let (codex, codex_events) = codex::hosts::CodexHosts::new(
         launch::codex_home(&home, &environment),
         world.path().join("codex"),
         environment,

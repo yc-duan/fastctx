@@ -476,11 +476,211 @@
   color: var(--caution);
 }
 
-.host-line .text-button {
+.host-line .text-button,
+.host-home .text-button {
   margin-left: auto;
   min-height: 0;
   height: auto;
   padding: 0 var(--space-1);
+  font-size: var(--size-small);
+}
+
+/* An agent on a machine, then each of its logins under it, set in by a
+   hairline: who is logged in and on what plan, where the login is kept
+   when there are several, how much of each usage window is spent and when
+   that was read, then what can be done in it. */
+.host-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.host-agent + .host-agent {
+  margin-top: var(--space-1);
+}
+
+.host-homes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.host-home {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--hairline);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.home-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
+}
+
+.home-who {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.home-who.caution {
+  color: var(--caution);
+}
+
+.home-plan {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  font-size: calc(var(--size-small) - 1px);
+  line-height: 1.55;
+  color: var(--text-3);
+}
+
+.home-dir {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.home-dir code {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  color: var(--text-3);
+}
+
+.home-dir > span::before {
+  content: "·";
+  margin-right: 6px;
+}
+
+.host-home .home-hide {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity var(--hover) ease;
+}
+
+.host-home:hover .home-hide,
+.home-hide:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .host-home .home-hide {
+    opacity: 1;
+  }
+}
+
+.home-limits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-4);
+  row-gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.limit-bar {
+  display: block;
+  width: 52px;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.limit-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.limit-used {
+  min-width: 3ch;
+  color: var(--text-2);
+}
+
+.limit.high .limit-bar > span {
+  background: var(--caution);
+}
+
+.limit.high .limit-used {
+  color: var(--caution);
+}
+
+.limit.spent .limit-bar > span {
+  background: var(--wrong);
+}
+
+.limit.spent .limit-used {
+  color: var(--wrong);
+}
+
+.limit-seen {
+  opacity: 0.8;
+}
+
+.home-limits-said {
+  margin: 0;
+}
+
+.home-add-open {
+  align-self: flex-start;
+  margin-left: calc(var(--space-3) - var(--space-1));
+}
+
+.home-add {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+}
+
+.home-add-dir {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 5px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-s);
+  outline: 0;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--text);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  transition: box-shadow var(--hover) ease;
+}
+
+.home-add-dir:focus {
+  box-shadow: inset 0 0 0 1px var(--focus);
+}
+
+.home-add-dir::placeholder {
+  color: var(--text-3);
+  font-family: var(--font-reading);
+  font-size: var(--size-small);
+}
+
+.home-add .text-button {
+  height: 28px;
   font-size: var(--size-small);
 }
 

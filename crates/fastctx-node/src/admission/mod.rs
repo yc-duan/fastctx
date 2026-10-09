@@ -107,11 +107,12 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         }
     }
     // Consent to Claude Code's bypass mode is for the Claude logged in on
-    // this machine, and so its owner's alone.
-    if matches!(call, RemoteCall::ClaudeConsent { .. }) && view.me().and_then(|me| me.home.as_ref()) != Some(&caller.account)
-    {
+    // this machine, and so its owner's alone; so is which of its agents'
+    // homes the World knows.
+    let owners = matches!(call, RemoteCall::ClaudeConsent { .. } | RemoteCall::Homes { .. });
+    if owners && view.me().and_then(|me| me.home.as_ref()) != Some(&caller.account) {
         return Err(refuse(format!(
-            "only the account this machine is registered under gives that consent, not {}",
+            "only the account this machine is registered under does that, not {}",
             caller.account
         )));
     }

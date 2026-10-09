@@ -263,6 +263,59 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
     }
 }
 
+/// This computer's agents: two Codex logins, the second nearly spent; a
+/// Claude Code login read a while ago, and one nobody is logged in to.
+fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
+    use fastctx_types::agents::*;
+    let window = |name: &str, minutes: u32, used_tenths: u32, hours: i64| LimitWindow {
+        name: name.into(),
+        minutes: Some(minutes),
+        used_tenths,
+        resets_at: Some(now + SignedDuration::from_hours(hours)),
+    };
+    let base = |agent: &str, dir: &str, found: HomeFound| AgentFacts {
+        agent: agent.parse().unwrap(),
+        home: Some(AgentHome { dir: dir.into(), found }),
+        account: Fact::unavailable("not logged in"),
+        limits: Fact::unavailable("not read"),
+        program: Fact::known(Some(AgentProgram { path: "C:/Users/me/bin/agent.exe".into(), source: ProgramSource::Path, exists: true })),
+        version: Fact::known("1.0.0".into()),
+        launch: Fact::unavailable("not checked"),
+        login: Fact::known(LoginStatus::LoggedIn { method: None }),
+        models: Fact::unavailable("not listed"),
+        integration: Fact::known(Integration::In),
+        unattended: Fact::known(true),
+        timings: Vec::new(),
+    };
+    let account = |email: &str, plan: &str| {
+        Fact::known(AgentAccount { email: Some(email.into()), organization: None, plan: Some(plan.into()) })
+    };
+    let mut codex = base("codex", "C:/Users/me/.codex", HomeFound::Default);
+    codex.account = account("me@example.com", "plus");
+    codex.limits = Fact::known(AgentLimits {
+        observed_at: now - SignedDuration::from_mins(2),
+        windows: vec![window("codex", 300, 423, 2), window("codex", 10_080, 182, 80)],
+    });
+    let mut work = base("codex", "C:/Users/me/.codex-work", HomeFound::Found);
+    work.account = account("me@acme.example", "team");
+    work.integration = Fact::known(Integration::Out);
+    work.limits = Fact::known(AgentLimits {
+        observed_at: now - SignedDuration::from_mins(1),
+        windows: vec![window("codex", 300, 912, 1), window("codex", 10_080, 655, 50)],
+    });
+    let mut claude = base("claude", "C:/Users/me/.claude", HomeFound::Default);
+    claude.account = account("me@example.com", "max");
+    claude.limits = Fact::known(AgentLimits {
+        observed_at: now - SignedDuration::from_mins(26),
+        windows: vec![window("five_hour", 300, 618, 3), window("seven_day", 10_080, 341, 100)],
+    });
+    let mut personal = base("claude", "D:/agents/claude-personal", HomeFound::Added);
+    personal.login = Fact::known(LoginStatus::LoggedOut);
+    personal.integration = Fact::known(Integration::Out);
+    personal.unattended = Fact::known(false);
+    AgentsReply { machine: "desktop".parse().unwrap(), checked_at: now, elapsed_ms: 900, agents: vec![codex, claude, work, personal] }
+}
+
 fn nodes(now: Timestamp) -> NodesReply {
     let facts = |name: &str, os: &str, home: &str| MachineFacts {
         name: machine(name),
@@ -754,6 +807,8 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
             waiting: 1,
         }),
     })));
+
+    machines.data(Data::Agents(Ok(agents(now))));
 
     vec![
         ("world", Page::World(WorldPage::with(world_view, nodes(now)))),

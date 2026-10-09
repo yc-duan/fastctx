@@ -94,6 +94,56 @@ pub fn transcript(directory: &Path) -> io::Result<Option<PathBuf>> {
     }
 }
 
+/// What every session here last read of its account's limits, newest
+/// first, each with where Claude Code keeps that session's record: the
+/// record is under its account's home (`<home>/projects/`), which is how a
+/// reading is told to belong to an account. Windows already past their
+/// reset are left out, never shown as 0% used.
+pub fn limits(world: &Path) -> Vec<(PathBuf, fastctx_types::agents::AgentLimits)> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Reading {
+        at: Timestamp,
+        rate_limits: Vec<Limit>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Limit {
+        kind: String,
+        percent_used: f64,
+        resets_at: Option<Timestamp>,
+    }
+    let now = Timestamp::now();
+    let Ok(entries) = std::fs::read_dir(sessions(world)) else { return Vec::new() };
+    let mut readings = Vec::new();
+    for directory in entries.flatten().map(|entry| entry.path()) {
+        let (Ok(bytes), Ok(Some(transcript))) = (std::fs::read(directory.join("limits.json")), transcript(&directory))
+        else {
+            continue;
+        };
+        let Ok(reading) = serde_json::from_slice::<Reading>(&bytes) else { continue };
+        let windows = reading
+            .rate_limits
+            .into_iter()
+            .filter(|limit| limit.resets_at.is_none_or(|resets_at| resets_at > now) && limit.percent_used >= 0.0)
+            .map(|limit| fastctx_types::agents::LimitWindow {
+                minutes: match limit.kind.as_str() {
+                    "five_hour" => Some(300),
+                    "seven_day" => Some(10_080),
+                    _ => None,
+                },
+                // At most one decimal, as Claude Code rounds it.
+                used_tenths: (limit.percent_used * 10.0).round() as u32,
+                name: limit.kind,
+                resets_at: limit.resets_at,
+            })
+            .collect();
+        readings.push((transcript, fastctx_types::agents::AgentLimits { observed_at: reading.at, windows }));
+    }
+    readings.sort_by(|(_, a), (_, b)| b.observed_at.cmp(&a.observed_at));
+    readings
+}
+
 /// What the mod reported, in the World's terms.
 #[derive(Debug)]
 pub enum Reported {

@@ -95,6 +95,7 @@ fn residents() -> Vec<ResidentNow> {
                     fastctx_types::access::Acting::one("w-0123456789abcdef".parse().unwrap(), "ada".parse().unwrap())
                 },
                 works_on: (i == 1).then(|| "laptop.home".parse().unwrap()),
+                home: (i == 1).then(|| "C:/Users/ada/.codex-work".into()),
             },
             town: (i != 0).then(|| "project-0".parse().unwrap()),
             here: i != 2,

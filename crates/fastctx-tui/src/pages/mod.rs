@@ -2,6 +2,7 @@
 
 pub mod form;
 pub mod journal;
+mod logins;
 pub mod machines;
 pub mod project;
 pub mod talk;

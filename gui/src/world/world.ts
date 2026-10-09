@@ -29,6 +29,9 @@ export interface About {
   /** The machine its scripts start on, as written, when not the one it
    *  lives on. */
   works_on?: string;
+  /** The agent's home it works in, as its machine writes it, when not the
+   *  default one there: which of that machine's logins it uses. */
+  home?: string;
 }
 
 export type Activity = "busy" | "idle" | "asleep";
@@ -383,6 +386,8 @@ export interface ResidentDetail {
   jobs: RunningJob[];
   /** Where its colleagues live, when the user let it ask for them. */
   colleagues?: string;
+  /** The Codex home they use there, when not the default one. */
+  colleagues_home?: string;
 }
 
 export type Looked = { kind: "resident" } & ResidentDetail | { kind: "job"; record: JobRecord };

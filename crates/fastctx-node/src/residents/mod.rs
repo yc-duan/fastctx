@@ -421,6 +421,7 @@ impl Residents {
             model: None,
             acting: Default::default(),
             works_on: None,
+            home: None,
         };
         records::create(&world.resident(None, &resident), &about)
             .map_err(|error| Failure::new(format!("recording a new resident: {error}")))?;

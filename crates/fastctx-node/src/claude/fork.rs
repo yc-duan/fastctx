@@ -26,7 +26,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     // live reading, leave the resumed session's model selection to Claude.
     let model = super::control::offers(node, resident).await?.model;
     let id = node.residents.new_id(&source.host.agent)?;
-    let super::Command { program, env, .. } = super::command(node)?;
+    let super::Command { program, env, .. } = super::command(node, source.home.as_deref())?;
     let (words, heard) =
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, source.works_on.as_ref())
             .await?;
@@ -52,7 +52,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
             model: selected_model.as_deref(),
             reasoning_effort: None,
         };
-        super::trust(&world)?;
+        super::trust(&world, &env)?;
         background::claude(&program, &background::fork_args(&source_session, &start), &cwd, &env)
     })
     .await
@@ -76,6 +76,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         model,
         acting: source.acting,
         works_on: source.works_on,
+        home: source.home,
     };
     crate::colleagues::setting::inherit(node, &source.id, &id)?;
     node.residents.create(&node.world, about, town, crate::residents::idle(at)).map_err(failure)?;

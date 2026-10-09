@@ -482,6 +482,86 @@ impl Words {
         self.pick("你自己开的会话", "Your own sessions")
     }
 
+    /// This computer's agents, a line for each of their logins.
+    pub fn agents_here(&self) -> &'static str {
+        self.pick("这台电脑上的智能体", "Agents on this computer")
+    }
+
+    pub fn agent_not_installed(&self) -> &'static str {
+        self.pick("没装", "not installed")
+    }
+
+    pub fn agent_logged_in(&self) -> &'static str {
+        self.pick("已登录", "logged in")
+    }
+
+    pub fn agent_logged_out(&self) -> &'static str {
+        self.pick("没登录", "not logged in")
+    }
+
+    pub fn agent_login_unknown(&self) -> &'static str {
+        self.pick("登没登录说不准", "login not known")
+    }
+
+    /// How the World knows of a login.
+    pub fn login_found(&self, found: fastctx_types::agents::HomeFound) -> &'static str {
+        use fastctx_types::agents::HomeFound;
+        match found {
+            HomeFound::Default => self.pick("默认", "default"),
+            HomeFound::Found => self.pick("自动找到", "found"),
+            HomeFound::Added => self.pick("你添加的", "added by you"),
+        }
+    }
+
+    /// Whether sessions the user opens in a login have the World's tools.
+    pub fn login_tools(&self, standing: fastctx_types::agents::Integration) -> &'static str {
+        use fastctx_types::agents::Integration;
+        match standing {
+            Integration::In => self.pick("已接入", "tools in"),
+            Integration::Out => self.pick("没接入", "tools not in"),
+            Integration::Old => self.pick("里是旧版 fastctx", "an old fastctx is in"),
+            Integration::Absent => self.pick("没装", "not installed"),
+        }
+    }
+
+    pub fn login_needs_consent(&self) -> &'static str {
+        self.pick("还没许可不经审批干活", "not yet allowed to work without asking")
+    }
+
+    /// When the usage shown was read: `3 分钟前读到`.
+    pub fn read_ago(&self, ago: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("{ago}读到"),
+            Lang::En => format!("read {ago}"),
+        }
+    }
+
+    pub fn limits_failed(&self, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("额度没读到：{why}"),
+            Lang::En => format!("limits not read: {why}"),
+        }
+    }
+
+    /// One usage window, by its length or the agent's name for it: `5h`.
+    pub fn window(&self, name: &str, minutes: Option<u32>) -> String {
+        let minutes = minutes.or(match name {
+            "five_hour" => Some(300),
+            "seven_day" => Some(10_080),
+            _ => None,
+        });
+        if let Some(model) = name.strip_prefix("seven_day_") {
+            return format!("7d {model}");
+        }
+        match minutes {
+            Some(m) if m % 1440 == 0 => format!("{}d", m / 1440),
+            Some(m) if m % 60 == 0 => format!("{}h", m / 60),
+            Some(m) => format!("{m}m"),
+            None if name == "spend_limit" => self.pick("花费上限", "spend").to_string(),
+            None => name.to_string(),
+        }
+    }
+
     /// How a host stands: `Codex 已接入`.
     pub fn standing(&self, host: &str, standing: Standing) -> String {
         match (self.lang, standing) {
@@ -609,6 +689,15 @@ impl Words {
 
     pub fn key_unapply(&self) -> &'static str {
         self.pick("拿出来", "take out")
+    }
+
+    /// The keys on one login: put the World's tools into it, take them out.
+    pub fn key_apply_login(&self) -> &'static str {
+        self.pick("接入这个登录", "put in this login")
+    }
+
+    pub fn key_unapply_login(&self) -> &'static str {
+        self.pick("从这个登录拿出来", "take out of this login")
     }
 
     pub fn key_raise(&self) -> &'static str {

@@ -303,12 +303,25 @@ export function specimenNow(two = false): { world: WorldNow; now: Date; lastVisi
 
 
 /** What the programs on a specimen machine say of themselves: Codex from
- *  the desktop app with its models, Claude Code logged in; on lab, Claude
- *  Code installed but not logged in. */
-export function specimenAgents(machine: string): WorldAgents {
+ *  the desktop app with its models, Claude Code logged in; on this
+ *  computer, a second Codex login for work, nearly spent, and a second
+ *  Claude login that was logged out; on lab, Claude Code installed but not
+ *  logged in. */
+export function specimenAgents(machine: string, at: Date = new Date()): WorldAgents {
   const efforts = (names: string[]) => names.map((effort) => ({ effort, description: "" }));
+  const now = at.getTime();
+  const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
+  const later = (minutes: number) => new Date(now + minutes * 60_000).toISOString();
+  const window = (name: string, minutes: number, used: number, resets: number) => ({ name, minutes, used_tenths: used, resets_at: later(resets) });
+  const home = machine === "desktop" ? "C:/Users/me" : "/home/me";
   const codex: AgentFacts = {
     agent: "codex",
+    home: { dir: `${home}/.codex`, found: "default" },
+    account: { kind: "known", value: { email: "me@example.com", plan: "plus" } },
+    limits: {
+      kind: "known",
+      value: { observed_at: ago(3), windows: [window("codex", 300, 423, 131), window("codex", 10080, 182, 3 * 1440 + 400)] },
+    },
     program: { kind: "known", value: { path: "C:/Program Files/WindowsApps/OpenAI.Codex/app/codex.exe", source: "desktop_app", exists: true } },
     version: { kind: "known", value: "codex-cli 0.160.0" },
     launch: { kind: "known", value: { kind: "codex_app_server", program: "codex.exe", pid: 4120 } },
@@ -323,20 +336,45 @@ export function specimenAgents(machine: string): WorldAgents {
       ],
     },
     integration: { kind: "known", value: "in" },
+    unattended: { kind: "known", value: true },
     timings: [],
+  };
+  const work: AgentFacts = {
+    ...codex,
+    home: { dir: `${home}/.codex-work`, found: "found" },
+    account: { kind: "known", value: { email: "me@acme.example", plan: "team" } },
+    limits: { kind: "known", value: { observed_at: ago(1), windows: [window("codex", 300, 912, 47), window("codex", 10080, 655, 2 * 1440 + 90)] } },
+    integration: { kind: "known", value: "out" },
   };
   const claude: AgentFacts = {
     agent: "claude",
+    home: { dir: `${home}/.claude`, found: "default" },
+    account: { kind: "known", value: machine === "lab" ? {} : { email: "me@example.com", organization: "me@example.com's Organization", plan: "max" } },
+    limits:
+      machine === "lab"
+        ? { kind: "unavailable", reason: "no session in this home has reported its limits yet" }
+        : { kind: "known", value: { observed_at: ago(26), windows: [window("five_hour", 300, 618, 188), window("seven_day", 10080, 341, 4 * 1440 + 220)] } },
     program: { kind: "known", value: { path: "C:/Users/me/.local/bin/claude.exe", source: "path", exists: true } },
     version: { kind: "known", value: "2.1.289 (Claude Code)" },
     launch: { kind: "known", value: { kind: "claude_command" } },
     login: { kind: "known", value: machine === "lab" ? { kind: "logged_out" } : { kind: "logged_in", method: "claude.ai" } },
     models: { kind: "unavailable", reason: "no public non-session CLI catalog" },
     integration: { kind: "known", value: "in" },
+    unattended: { kind: "known", value: true },
     timings: [],
   };
+  const personal: AgentFacts = {
+    ...claude,
+    home: { dir: `${home}/.claude-personal`, found: "added" },
+    account: { kind: "unavailable", reason: "not logged in" },
+    limits: { kind: "unavailable", reason: "no session in this home has reported its limits yet" },
+    login: { kind: "known", value: { kind: "logged_out" } },
+    integration: { kind: "known", value: "out" },
+    unattended: { kind: "known", value: false },
+  };
+  const agents = machine === "desktop" ? [codex, claude, work, personal] : [codex, claude];
   return {
     machine,
-    machines: [{ kind: "answered", reply: { machine, checked_at: new Date().toISOString(), elapsed_ms: 180, agents: [codex, claude] } }],
+    machines: [{ kind: "answered", reply: { machine, checked_at: at.toISOString(), elapsed_ms: 180, agents } }],
   };
 }

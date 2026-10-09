@@ -134,6 +134,15 @@ pub enum Job {
     },
     /// Take them out again.
     Unapply,
+    /// Put the World's tools into one login of an agent on this machine,
+    /// `machine`, or take them out.
+    ApplyHome {
+        host: crate::sessions::Host,
+        home: std::path::PathBuf,
+        into: bool,
+        raise: bool,
+        machine: MachineName,
+    },
 }
 
 /// What the World answered a job.
@@ -220,6 +229,8 @@ pub enum Data {
     Around(Result<Around, String>),
     /// Whether the user's own sessions here have the World's tools.
     Sessions(Result<Status, String>),
+    /// This computer's agents, a line for each of their logins.
+    Agents(Result<fastctx_types::agents::AgentsReply, String>),
     /// What the World answered a job the page asked for.
     Done {
         job: Job,

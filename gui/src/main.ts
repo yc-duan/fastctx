@@ -25,6 +25,7 @@ import { AccountPage } from "./app/account";
 import { AdminPage } from "./app/admin";
 import { LoginPage } from "./app/login";
 import { MachinesPage } from "./app/machines";
+import { accountOf, enHomes, homeChoice, homeLabel, homesOf, installed, loggedOut, zhHomes } from "./app/agent-homes";
 import { Tokens } from "./app/tokens";
 import { NewTalk } from "./app/new-talk";
 import { Palette, type PaletteItem } from "./app/palette";
@@ -130,6 +131,7 @@ import {
   loginToken,
   openAccount,
   accountChange,
+  agentHomes,
   serverCommand,
   setColleagues,
   setWorksOn,
@@ -155,6 +157,7 @@ const language: "zh" | "en" = (() => {
 const english = language === "en";
 const words = english ? en : zh;
 const homeWords = english ? enHome : zhHome;
+const agentHomeWords = english ? enHomes : zhHomes;
 const projectWords = english ? enProject : zhProject;
 const pageWords = english ? enPages : zhPages;
 const presenceWords = english ? enPresence : zhPresence;
@@ -190,20 +193,45 @@ if (live && onComputer()) {
 
 // Letting Claude work without asking on a machine: only the user's press,
 // on one of the user's devices, writes it there.
-const consent = new ClaudeConsent(english ? enConsent : zhConsent, (machine, accept) =>
-  live ? claudeConsent(machine, accept) : Promise.reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")),
+const consent = new ClaudeConsent(english ? enConsent : zhConsent, (machine, accept, home) =>
+  live ? claudeConsent(machine, accept, home) : Promise.reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")),
 );
+
+/** What a machine's own programs say of its agents, as a live World or
+ *  the specimen answers. */
+function agentsOn(machine: string | null) {
+  return live ? agents(machine) : Promise.resolve(specimenAgents(machine ?? specimen.world.here, specimen.now));
+}
+
+/** The logins of `agent` on a machine, named or as written, as choices:
+ *  each home's directory, "" for the default one, with who is logged in. */
+async function loginsOn(machine: string, agent: string) {
+  const named = machinesOf(store.world.peek() ?? (live ? null : specimen.world)).find((m) => m.name === machine || m.written === machine)?.name ?? machine;
+  const answer = (await agentsOn(named)).machines.find((m) => m.kind === "answered" && m.reply.machine === named);
+  const facts = answer?.kind === "answered" ? answer.reply.agents : [];
+  return homesOf(facts, agent)
+    .filter(installed)
+    .map((home) => ({
+      value: homeChoice(home) ?? "",
+      label: homeLabel(home, agentHomeWords),
+      note: loggedOut(home) ? (english ? enNewTalk : zhNewTalk).loggedOut : (accountOf(home).plan ?? undefined),
+      disabled: loggedOut(home),
+    }));
+}
 
 const newTalk = new NewTalk({
   store,
   words: english ? enNewTalk : zhNewTalk,
-  agents: (machine) => (live ? agents(machine) : Promise.resolve(specimenAgents(machine))),
-  async begin({ agent, machine, town, text, model, effort, attachments, account, worksOn, colleagues }) {
+  homeWords: agentHomeWords,
+  agents: (machine) => agentsOn(machine),
+  async begin({ agent, machine, town, text, model, effort, attachments, account, worksOn, colleagues, home, colleaguesHome }) {
     if (!live) throw new Error(specimenSaid);
     const { to } = await openAgent(agent, machine, town, text, model, effort, attachments, {
       ...(account ? { account } : {}),
       ...(worksOn ? { works_on: worksOn } : {}),
       ...(colleagues ? { colleagues } : {}),
+      ...(home ? { home } : {}),
+      ...(colleagues && colleaguesHome ? { colleagues_home: colleaguesHome } : {}),
     });
     void store.refresh();
     return to;
@@ -211,7 +239,7 @@ const newTalk = new NewTalk({
   opened(address) {
     location.hash = talkLink(address);
   },
-  allowClaude: (machine, go) => consent.allow(machine, go),
+  allowClaude: (machine, go, home) => consent.allow(machine, go, home),
   attach: {
     words: (english ? enComposer : zhComposer).attach,
     async upload(machine, target, source, progress) {
@@ -419,8 +447,9 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
       manage: live ? liveManage(address) : specimenManage(),
       colleagues: {
         homes: () => homesFor(address),
-        set: (livesOn) => (live ? setColleagues(address, livesOn) : Promise.reject(new Error(specimenSaid))),
+        set: (livesOn, home) => (live ? setColleagues(address, livesOn, home) : Promise.reject(new Error(specimenSaid))),
       },
+      logins: loginsOn,
       worksOn: {
         places: () => worksPlacesFor(address),
         set: (worksOn) => (live ? setWorksOn(address, worksOn) : Promise.reject(new Error(specimenSaid))),
@@ -1049,6 +1078,7 @@ function show(next: Place): void {
         head,
         focus: next.kind === "machine" ? next.name : null,
         when,
+        homeWords: agentHomeWords,
         agents: () =>
           live
             ? agents(null)
@@ -1056,13 +1086,14 @@ function show(next: Place): void {
                 machine: specimen.world.here,
                 machines: machinesOf(specimen.world)
                   .filter((machine) => machine.here || machine.online)
-                  .flatMap((machine) => specimenAgents(machine.name).machines),
+                  .flatMap((machine) => specimenAgents(machine.name, specimen.now).machines),
               }),
-        applyHere: (agent, into) => (live ? applyHosts(agent === "codex", agent === "claude", false, into) : notLive()),
+        applyHere: (agent, into, home) => (live ? applyHosts(agent === "codex", agent === "claude", false, into, home) : notLive()),
         consent: {
-          allow: (machine) => consent.allow(machine, (english ? enConsent : zhConsent).allow),
-          withdraw: (machine) => consent.withdraw(machine),
+          allow: (machine, home) => consent.allow(machine, (english ? enConsent : zhConsent).allow, home),
+          withdraw: (machine, home) => consent.withdraw(machine, home),
         },
+        homes: (machine, change) => (live ? agentHomes(machine, change) : notLive()),
         change,
         invite: (login) => tokens.open(login),
         confirm: accountConfirm,

@@ -188,15 +188,16 @@ pub async fn watch_here(
         |directory: &ResidentDir| crate::delivery::history(directory).map_err(|error| Failure::new(error.to_string()));
     let (recorded, hosted) = match &about.session {
         Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
-            let history = node.codex.history(thread).await.map_err(Failure::new)?;
-            node.codex.flush_events(thread).await.map_err(Failure::new)?;
+            let codex = node.codex.of(&about);
+            let history = codex.history(thread).await.map_err(Failure::new)?;
+            codex.flush_events(thread).await.map_err(Failure::new)?;
             // Reverted turns remain in the World's audit record, but no
             // longer belong to the host's current conversation.
             let recorded = crate::codex::watch::recorded(recorded(&directory)?, &history);
             // A request can arrive and resolve while history is loading.
             // Only currently unanswered requests may enter a new view; the
             // subscription already covers changes after this snapshot.
-            events = crate::codex::watch::requests(node.codex.clone(), thread.clone(), events);
+            events = crate::codex::watch::requests(codex, thread.clone(), events);
             (recorded, Some(history))
         }
         // Claude Code's own record of the session, placed in the turns the
@@ -213,7 +214,7 @@ pub async fn watch_here(
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
     {
-        history.extend(node.codex.requests(thread));
+        history.extend(node.codex.of(&about).requests(thread));
     }
     Ok((history, events))
 }
@@ -479,6 +480,8 @@ pub async fn open(
                 attachments,
                 works_on: choices.works_on,
                 colleagues: choices.colleagues,
+                home: choices.home,
+                colleagues_home: choices.colleagues_home,
             };
             let reply = node.call(&acting, &(&target).into(), Purpose::Agents, call).await;
             match reply.map_err(|failure| Failure::new(failure.to_string()))? {
@@ -518,7 +521,24 @@ pub async fn open_here(
             Failure::not_run(format!("{why}, so a conversation opened here for it works on another machine: choose one"))
         })?,
     }
-    let opened = Opened { acting, works_on, colleagues: choices.colleagues };
+    // The home it is born in must be one this machine has; the default one
+    // is recorded as none, so that it follows the user's environment.
+    let home = match choices.home {
+        None => None,
+        Some(dir) => {
+            let env = crate::claude::environment()?;
+            let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
+            let home = crate::homes::find(node, &env, &user_home, agent.as_str(), Some(&dir))?;
+            (home.found != fastctx_types::agents::HomeFound::Default).then_some(home.dir)
+        }
+    };
+    let opened = Opened {
+        acting,
+        works_on,
+        colleagues: choices.colleagues,
+        home,
+        colleagues_home: choices.colleagues_home,
+    };
     match agent.as_str() {
         "codex" => {}
         "claude" => return crate::claude::open_here(node, typed_on, opened, town, text, options, attachments).await,
@@ -536,11 +556,11 @@ pub async fn open_here(
     let origin = Origin::User;
     crate::session_options::keep(node, &id, &options)?;
     if let Some(lives_on) = &opened.colleagues {
-        crate::colleagues::setting::keep(node, &id, lives_on)?;
+        crate::colleagues::setting::keep(node, &id, lives_on, opened.colleagues_home.clone())?;
     }
     let (spec, heard) =
         crate::colleagues::thread_spec(node, &id, &origin, town.as_ref(), &opened.acting, opened.works_on.as_ref()).await?;
-    let (thread, model) = node.codex.start_thread(spec).await.map_err(Failure::new)?;
+    let (thread, model) = node.codex.home(opened.home.as_deref()).start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {
         id: id.clone(),
@@ -553,6 +573,7 @@ pub async fn open_here(
         model,
         acting: opened.acting,
         works_on: opened.works_on,
+        home: opened.home,
     };
     let now = Now {
         activity: Activity::Idle,
@@ -613,7 +634,7 @@ pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, 
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
     match (about.host.agent.as_str(), about.world_started, &about.session) {
-        ("codex", true, Some(thread)) => node.codex.interrupt(thread).await.map_err(Failure::new),
+        ("codex", true, Some(thread)) => node.codex.of(&about).interrupt(thread).await.map_err(Failure::new),
         ("claude", _, _) => crate::claude::stop(node, resident),
         _ => Err(Failure::new(format!("{resident} is a session the World does not hold; stop it where it is open"))),
     }
@@ -636,4 +657,9 @@ pub struct Opened {
     pub acting: Acting,
     pub works_on: Option<Written>,
     pub colleagues: Option<Written>,
+    /// The agent's home here it is born in, when not the default one.
+    pub home: Option<std::path::PathBuf>,
+    /// The Codex home its colleagues use where they live, when not the
+    /// default one there.
+    pub colleagues_home: Option<std::path::PathBuf>,
 }

@@ -822,7 +822,7 @@ pub async fn deliver(
     }
     let asleep = node.residents.now(to).is_some_and(|now| now.activity == Activity::Asleep);
     let stopped_background = if !about.world_started && asleep {
-        match management::background_session(node, &session).await {
+        match management::background_session(node, about.home.as_deref(), &session).await {
             Ok(found) => found.is_some(),
             Err(error) => return Some(Err(error)),
         }
@@ -834,7 +834,7 @@ pub async fn deliver(
         // when the session runs, and when the user opens it again.
         return Some(into_inbox(node, &session, directory, pending));
     }
-    Some(match running(node, &session).await {
+    Some(match running(node, about.home.as_deref(), &session).await {
         Ok(true) => into_inbox(node, &session, directory, pending),
         // Its supervisor stopped it: the words wake it, as they are, and its
         // next turn takes them.
@@ -858,6 +858,7 @@ pub async fn deliver(
                 Ok(true) => {
                     match wake(
                         node,
+                        about.home.as_deref(),
                         &session,
                         if as_user { text } else { claude::framed(&text) },
                         pending.delivery.id.clone(),
@@ -939,9 +940,10 @@ fn words(notice: &Notice) -> (String, bool) {
     }
 }
 
-/// Whether the background session has a running process.
-async fn running(node: &Arc<Node>, session: &str) -> Result<bool, Failure> {
-    let Command { program, cwd, env } = command(node)?;
+/// Whether the background session, of the home `home`, has a running
+/// process.
+async fn running(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<bool, Failure> {
+    let Command { program, cwd, env } = command(node, home)?;
     let session = session.to_string();
     tokio::task::spawn_blocking(move || {
         let args: Vec<OsString> = vec!["agents".into(), "--json".into(), "--all".into()];
@@ -953,29 +955,43 @@ async fn running(node: &Arc<Node>, session: &str) -> Result<bool, Failure> {
     .map_err(Failure::new)
 }
 
-async fn wake(node: &Arc<Node>, session: &str, words: String, id: fastctx_types::NoticeId) -> Result<Landed, Failure> {
-    let Command { program, cwd, env } = command(node)?;
+async fn wake(
+    node: &Arc<Node>,
+    home: Option<&Path>,
+    session: &str,
+    words: String,
+    id: fastctx_types::NoticeId,
+) -> Result<Landed, Failure> {
+    let Command { program, cwd, env } = command(node, home)?;
     let args = background::wake_args(session, &words);
     let world = node.world.path().to_path_buf();
     // Not tried twice: a resume refused for trust may already have queued
     // the words.
-    tokio::task::spawn_blocking(move || trust(&world).and_then(|()| background::claude(&program, &args, &cwd, &env)))
-        .await
-        .map_err(|error| Failure::new(format!("waking the session: {error}")))?
-        .map_err(Failure::new)?;
+    tokio::task::spawn_blocking(move || {
+        trust(&world, &env).and_then(|()| background::claude(&program, &args, &cwd, &env))
+    })
+    .await
+    .map_err(|error| Failure::new(format!("waking the session: {error}")))?
+    .map_err(Failure::new)?;
     Ok(Landed::Handed { id })
 }
 
 /// The `claude` command, where to run it, and the environment it gets: the
-/// user's own, as for every program the node starts.
+/// user's own, as for every program the node starts, naming the home of the
+/// account it works in when that is not the default one: a session, its
+/// supervisor and every command about it must see the same home.
 struct Command {
     program: PathBuf,
     cwd: PathBuf,
     env: Vec<(OsString, OsString)>,
 }
 
-fn command(node: &Node) -> Result<Command, Failure> {
-    let env = environment()?;
+fn command(node: &Node, home: Option<&Path>) -> Result<Command, Failure> {
+    let mut env = environment()?;
+    if let Some(home) = home {
+        env.retain(|(name, _)| !name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"));
+        env.push(("CLAUDE_CONFIG_DIR".into(), home.as_os_str().to_owned()));
+    }
     let path = std::env::var_os("PATH");
     let program = background::find(path.as_ref()).ok_or_else(|| {
         Failure::new(format!("Claude Code is not installed on {}: no claude command", node.machine()))
@@ -1016,9 +1032,9 @@ pub async fn open_here(
     let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
     let _birth = crate::here::born(node, &id, opened.acting.clone(), opened.works_on.clone());
     if let Some(lives_on) = &opened.colleagues {
-        crate::colleagues::setting::keep(node, &id, lives_on)?;
+        crate::colleagues::setting::keep(node, &id, lives_on, opened.colleagues_home.clone())?;
     }
-    let Command { program, env, .. } = command(node)?;
+    let Command { program, env, .. } = command(node, opened.home.as_deref())?;
     let (words, heard) =
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting, opened.works_on.as_ref())
             .await?;
@@ -1034,6 +1050,7 @@ pub async fn open_here(
         model: None,
         acting: opened.acting,
         works_on: opened.works_on,
+        home: opened.home,
     };
     let now = Now {
         activity: Activity::Busy,
@@ -1087,13 +1104,13 @@ pub async fn open_here(
             reasoning_effort: options.reasoning_effort.as_deref(),
         };
         let args = background::start_args(&start);
-        trust(&world)?;
+        trust(&world, &env)?;
         match background::claude(&program, &args, &cwd, &env) {
             // A Claude Code that was running can write its state back over
             // the trust a moment after it was written; a new session refused
             // for exactly that was not created, so it is started once more.
             Err(why) if why.contains(background::UNTRUSTED) => {
-                trust(&world)?;
+                trust(&world, &env)?;
                 background::claude(&program, &args, &cwd, &env)
             }
             started => started,
@@ -1136,7 +1153,7 @@ pub async fn open_here(
 /// user's Claude Code is then not run at all, since running it, even to
 /// validate, reads its login.
 fn check_plugin(node: &Node, plugin: &Path) {
-    let Ok(Command { program, cwd, env }) = command(node) else { return };
+    let Ok(Command { program, cwd, env }) = command(node, None) else { return };
     let places = crate::agents::places(node, &env, &cwd, Some(program.clone()));
     match fastctx_install::apply::status(&places) {
         Ok(status) if status.claude == fastctx_install::apply::Standing::In => {}
@@ -1162,9 +1179,10 @@ fn check_plugin(node: &Node, plugin: &Path) {
 
 /// The World's directory, where every session the World starts stands, is
 /// trusted in Claude Code, so it starts sessions there without asking
-/// (`world-projects.md`).
-fn trust(world: &Path) -> Result<(), String> {
-    claude::trust::ensure_trusted(world)
+/// (`world-projects.md`): by the home the session starts with in `env`.
+fn trust(world: &Path, env: &[(OsString, OsString)]) -> Result<(), String> {
+    let home = env.iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR")).map(|(_, value)| value.as_os_str());
+    claude::trust::ensure_trusted(world, home)
         .map(|_| ())
         .map_err(|error| format!("trusting {} in Claude Code: {error}", world.display()))
 }

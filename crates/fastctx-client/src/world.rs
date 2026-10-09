@@ -174,11 +174,16 @@ impl World {
         }
     }
 
-    /// The user's word on whether Claude Code on `machine` may run the
-    /// World's sessions without approvals. Answers what it now records and
-    /// whether that changed.
-    pub async fn claude_consent(&self, machine: MachineName, accept: bool) -> Result<(bool, bool), Error> {
-        match self.ask(Call::ClaudeConsent { machine, accept }).await? {
+    /// The user's word on whether Claude Code on `machine`, in its home
+    /// `home` or its default one, may run the World's sessions without
+    /// approvals. Answers what it now records and whether that changed.
+    pub async fn claude_consent(
+        &self,
+        machine: MachineName,
+        accept: bool,
+        home: Option<std::path::PathBuf>,
+    ) -> Result<(bool, bool), Error> {
+        match self.ask(Call::ClaudeConsent { machine, accept, home }).await? {
             Reply::ClaudeConsent { accepted, changed, .. } => Ok((accepted, changed)),
             other => Err(unexpected(other)),
         }
@@ -416,8 +421,14 @@ impl World {
         resident: ResidentId,
         machine: Option<MachineName>,
         lives_on: Option<fastctx_types::access::Written>,
+        home: Option<std::path::PathBuf>,
     ) -> Result<(), Error> {
-        done(self.ask(Call::Colleagues { resident, machine, lives_on }).await?)
+        done(self.ask(Call::Colleagues { resident, machine, lives_on, home }).await?)
+    }
+
+    /// Adds an agent's home on `machine`, or hides one or shows it again.
+    pub async fn homes(&self, machine: MachineName, change: fastctx_types::agents::HomeChange) -> Result<(), Error> {
+        done(self.ask(Call::Homes { machine, change }).await?)
     }
 
     /// Sets where `resident` works: `works_on`, or the machine it lives on.

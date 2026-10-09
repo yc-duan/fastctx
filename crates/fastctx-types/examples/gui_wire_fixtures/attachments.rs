@@ -95,6 +95,8 @@ pub fn fixtures() -> Fixtures {
                 attachments,
                 works_on: None,
                 colleagues: None,
+                home: None,
+                colleagues_home: None,
             },
         ],
         remote_replies: vec![RemoteReply::Uploaded(attachment)],

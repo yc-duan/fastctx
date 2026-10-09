@@ -13,7 +13,7 @@ fn host() -> (Arc<CodexHost>, tokio::sync::mpsc::UnboundedReceiver<HostEvent>) {
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    CodexHost::new(PathBuf::new(), root, Vec::new(), Arc::new(|_| {}))
+    CodexHost::new(PathBuf::new(), None, root, Vec::new(), Arc::new(|_| {}))
 }
 
 #[test]

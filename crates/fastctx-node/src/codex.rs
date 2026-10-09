@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 use crate::Node;
 
 pub mod control;
+pub mod hosts;
 pub mod watch;
 
 /// Makes the World's own Codex threads known to the host again. Idle
@@ -47,7 +48,7 @@ pub async fn adopt(node: &Arc<Node>) {
         )
         .await
         {
-            Ok((spec, _)) => node.codex.adopt(thread, spec),
+            Ok((spec, _)) => node.codex.of(about).adopt(thread, spec),
             Err(failure) => {
                 node.log.line(format_args!("{} cannot be resumed: {failure}", about.id));
                 continue;
@@ -236,7 +237,7 @@ async fn drain(node: &Arc<Node>, thread: &str) {
         let result = match event {
             HostEvent::Synchronized { .. } => unreachable!("barriers do not enter the durable queue"),
             HostEvent::Unloaded { .. } => {
-                if !node.codex.loaded(thread) {
+                if !node.codex.thread(thread).loaded(thread) {
                     node.residents.change_now(&node.world, &id, |now| {
                         now.activity = Activity::Asleep;
                         now.since = jiff::Timestamp::now();
@@ -409,7 +410,7 @@ pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
     let Some(thread) = &about.session else { return };
     match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), &about.acting, about.works_on.as_ref()).await
     {
-        Ok((spec, _)) => node.codex.adopt(thread, spec),
+        Ok((spec, _)) => node.codex.of(&about).adopt(thread, spec),
         Err(failure) => node.log.line(format_args!("{id} moved, and its thread cannot be told: {failure}")),
     }
 }

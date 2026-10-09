@@ -14,8 +14,19 @@ pub struct Fixtures {
 pub fn fixtures() -> Fixtures {
     let machine: fastctx_types::MachineName = "desktop".parse().unwrap();
     let checked_at = "2026-10-04T12:06:07Z".parse().unwrap();
+    let reset = |at: &str| Some(at.parse().unwrap());
     let codex = AgentFacts {
         agent: "codex".parse().unwrap(),
+        home: Some(AgentHome { dir: "C:/Users/ada/.codex".into(), found: HomeFound::Default }),
+        account: Fact::known(AgentAccount { email: Some("ada@example.com".into()), organization: None, plan: Some("plus".into()) }),
+        limits: Fact::known(AgentLimits {
+            observed_at: checked_at,
+            windows: vec![
+                LimitWindow { name: "codex".into(), minutes: Some(300), used_tenths: 423, resets_at: reset("2026-10-04T14:00:00Z") },
+                LimitWindow { name: "codex".into(), minutes: Some(10080), used_tenths: 1000, resets_at: reset("2026-10-09T00:00:00Z") },
+                LimitWindow { name: "codex_other".into(), minutes: None, used_tenths: 0, resets_at: None },
+            ],
+        }),
         program: Fact::known(Some(AgentProgram {
             path: "C:/app/codex.exe".into(),
             source: ProgramSource::DesktopApp,
@@ -39,6 +50,21 @@ pub fn fixtures() -> Fixtures {
     };
     let claude = AgentFacts {
         agent: "claude".parse().unwrap(),
+        home: Some(AgentHome { dir: "/home/ada/.claude-work".into(), found: HomeFound::Found }),
+        account: Fact::known(AgentAccount {
+            email: Some("ada@example.org".into()),
+            organization: Some("Example Org".into()),
+            plan: Some("max".into()),
+        }),
+        limits: Fact::known(AgentLimits {
+            observed_at: checked_at,
+            windows: vec![LimitWindow {
+                name: "five_hour".into(),
+                minutes: Some(300),
+                used_tenths: 1013,
+                resets_at: reset("2026-10-04T15:00:00Z"),
+            }],
+        }),
         program: Fact::known(Some(AgentProgram {
             path: "/usr/bin/claude".into(),
             source: ProgramSource::Path,
@@ -53,6 +79,10 @@ pub fn fixtures() -> Fixtures {
         timings: vec![],
     };
     let mut missing = codex.clone();
+    // What a machine that knew one home per agent answers.
+    missing.home = None;
+    missing.account = Fact::unavailable("this machine's World does not report it");
+    missing.limits = Fact::unavailable("this machine's World does not report it");
     missing.program = Fact::known(None);
     missing.version = Fact::unavailable("not installed");
     missing.launch = Fact::unavailable("not installed");
@@ -71,6 +101,10 @@ pub fn fixtures() -> Fixtures {
     broken.models = Fact::failed("model/list failed");
     broken.integration = Fact::known(Integration::Old);
     let mut unknown = claude.clone();
+    unknown.home = Some(AgentHome { dir: "D:/agents/claude-token".into(), found: HomeFound::Added });
+    // A long-lived token names no one.
+    unknown.account = Fact::known(AgentAccount::default());
+    unknown.limits = Fact::unavailable("no session in this home has reported its limits yet");
     unknown.program = Fact::failed("configuration unreadable");
     unknown.integration = Fact::failed("receipt unreadable");
     unknown.login = Fact::known(LoginStatus::LoggedIn { method: None });
@@ -100,6 +134,8 @@ pub fn fixtures() -> Fixtures {
                     }),
                     works_on: Some("laptop".parse().unwrap()),
                     colleagues: Some("lab.home".parse().unwrap()),
+                    home: Some("C:/Users/ada/.codex-work".into()),
+                    colleagues_home: Some("/home/ada/.codex-lab".into()),
                 },
             },
             Call::Open {
@@ -111,6 +147,20 @@ pub fn fixtures() -> Fixtures {
                 reasoning_effort: None,
                 attachments: Vec::new(),
                 choices: Default::default(),
+            },
+            Call::ClaudeConsent { machine: machine.clone(), accept: true, home: None },
+            Call::ClaudeConsent { machine: machine.clone(), accept: false, home: Some("/home/ada/.claude-work".into()) },
+            Call::Homes {
+                machine: machine.clone(),
+                change: HomeChange::Add { agent: "claude".parse().unwrap(), dir: "D:/agents/claude-token".into() },
+            },
+            Call::Homes {
+                machine: machine.clone(),
+                change: HomeChange::Hide { agent: "codex".parse().unwrap(), dir: "C:/Users/ada/.codex-old".into() },
+            },
+            Call::Homes {
+                machine: machine.clone(),
+                change: HomeChange::Show { agent: "codex".parse().unwrap(), dir: "C:/Users/ada/.codex-old".into() },
             },
         ],
         replies: vec![Reply::Agents(WorldAgents {
@@ -133,8 +183,14 @@ pub fn fixtures() -> Fixtures {
                 attachments: Vec::new(),
                 works_on: None,
                 colleagues: Some("desktop".parse().unwrap()),
+                home: Some("/home/ada/.claude-work".into()),
+                colleagues_home: None,
+            },
+            RemoteCall::ClaudeConsent { accept: true, home: Some("/home/ada/.claude-work".into()) },
+            RemoteCall::Homes {
+                change: HomeChange::Add { agent: "codex".parse().unwrap(), dir: "/srv/codex-team".into() },
             },
         ],
-        remote_replies: vec![RemoteReply::Agents(answer)],
+        remote_replies: vec![RemoteReply::Agents(answer), RemoteReply::Set],
     }
 }

@@ -53,12 +53,15 @@ pub async fn ask(
                 "asking for colleagues is off for this conversation; the user turns it on, and chooses the machine colleagues live on, in the conversation's details",
             )
         })?;
+    let home = setting::home(node, &asker)
+        .map_err(|error| Failure::not_run(format!("reading which Codex home colleagues use: {error}")))?;
     let colleague = if node.is_here(&lives_on) {
         let address = Address { machine: here.clone(), resident: asker.clone() };
-        let id = ask_here(node, address, about.acting.clone(), town.clone(), label.clone(), prompt).await?;
+        let id = ask_here(node, address, about.acting.clone(), town.clone(), label.clone(), prompt, home).await?;
         Address { machine: here, resident: id }
     } else {
-        let Address { machine, resident } = ask_there(node, &about, &lives_on, town.clone(), label.clone(), prompt).await?;
+        let Address { machine, resident } =
+            ask_there(node, &about, &lives_on, town.clone(), label.clone(), prompt, home).await?;
         Address { machine, resident }
     };
     let action = Action {
@@ -81,6 +84,7 @@ async fn ask_there(
     town: Option<TownName>,
     label: String,
     prompt: String,
+    home: Option<std::path::PathBuf>,
 ) -> Result<Address, Failure> {
     let set = "the user chooses the machine colleagues live on in this conversation's details";
     let (link, account) = node.speaking(&asker.acting, lives_on, Purpose::Agents).map_err(|failure| {
@@ -97,7 +101,7 @@ async fn ask_there(
     // outside it.
     let hub = link.membership().id.clone();
     let town = town.filter(|town| crate::ledger::names::place(&node.world, town).ok().flatten().is_some_and(|place| place.hub == hub));
-    let call = RemoteCall::Ask { asker: asker.id.clone(), town, label, prompt, accounts };
+    let call = RemoteCall::Ask { asker: asker.id.clone(), town, label, prompt, accounts, home };
     match link.call(&lives_on.name, &account, Purpose::Agents, call).await {
         Ok(Ok(RemoteReply::Asked { colleague })) => Ok(Address { machine: lives_on.name.clone(), resident: colleague }),
         Ok(Ok(_)) => Err(Failure::new(format!("{lives_on} answered something other than a colleague"))),
@@ -122,17 +126,31 @@ pub async fn ask_here(
     town: Option<TownName>,
     label: String,
     prompt: String,
+    home: Option<std::path::PathBuf>,
 ) -> Result<ResidentId, Failure> {
     node.residents.set_departed(asker.clone(), false);
     if let Some(town) = &town {
         crate::town::project::spans_here(node, town).await?;
     }
+    // The Codex home it is born in must be one this machine has, so the
+    // account the user chose is the one that answers.
+    let home = match home {
+        None => None,
+        Some(dir) => {
+            let env = crate::claude::environment()?;
+            let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
+            let home = crate::homes::find(node, &env, &user_home, "codex", Some(&dir)).map_err(|failure| {
+                Failure::not_run(format!("{}; the user chooses it in the conversation's details", failure.message))
+            })?;
+            (home.found != fastctx_types::agents::HomeFound::Default).then_some(home.dir)
+        }
+    };
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
     let _birth = crate::here::born(node, &id, acting.clone(), None);
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, None).await?;
-    let (thread, model) = node.codex.start_thread(spec).await.map_err(|error| {
+    let (thread, model) = node.codex.home(home.as_deref()).start_thread(spec).await.map_err(|error| {
         Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
     })?;
     let born_at = Timestamp::now();
@@ -147,6 +165,7 @@ pub async fn ask_here(
         model,
         acting,
         works_on: None,
+        home,
     };
     let now = Now {
         activity: Activity::Busy,
@@ -360,6 +379,7 @@ pub async fn set(
     resident: ResidentId,
     machine: Option<MachineName>,
     lives_on: Option<Written>,
+    home: Option<std::path::PathBuf>,
 ) -> Result<(), Failure> {
     let machine = match machine {
         Some(machine) => machine,
@@ -367,9 +387,9 @@ pub async fn set(
         None => find_for(node, &Acting::Here, &resident).await?,
     };
     if machine == node.machine() {
-        return setting::set(node, &resident, lives_on);
+        return setting::set(node, &resident, lives_on, home);
     }
-    let call = RemoteCall::Colleagues { resident, lives_on };
+    let call = RemoteCall::Colleagues { resident, lives_on, home };
     match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await {
         Ok(Ok(RemoteReply::Set)) => Ok(()),
         Ok(Ok(_)) => Err(Failure::new(format!("{machine} answered something other than the setting"))),

@@ -238,7 +238,9 @@
           "account": "ada"
         },
         "works_on": "lab.home",
-        "colleagues": "gpu"
+        "colleagues": "gpu",
+        "home": "C:/Users/ada/.claude-work",
+        "colleagues_home": "/home/ada/.codex-gpu"
       }
     ]
   },
@@ -4276,7 +4278,8 @@
                         }
                       ]
                     },
-                    "works_on": "laptop.home"
+                    "works_on": "laptop.home",
+                    "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
                   "here": true,
@@ -4539,7 +4542,11 @@
                   "started_at": "2026-10-04T12:06:07Z",
                   "pid": 4294967295,
                   "command": "echo fixture",
-                  "output": "C:/example/job.log"
+                  "output": "C:/example/job.log",
+                  "account": {
+                    "hub": "w-0123456789abcdef",
+                    "account": "bob"
+                  }
                 }
               ]
             }
@@ -5539,7 +5546,16 @@
           "limitations": [
             "No earlier presence intervals are retained."
           ]
-        }
+        },
+        "others": [
+          {
+            "machine": "desktop",
+            "id": "j-abc123",
+            "accounts": [
+              "bob"
+            ]
+          }
+        ]
       },
       {
         "machine": "desktop",
@@ -5677,7 +5693,8 @@
                         }
                       ]
                     },
-                    "works_on": "laptop.home"
+                    "works_on": "laptop.home",
+                    "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
                   "here": true,
@@ -5940,7 +5957,11 @@
                   "started_at": "2026-10-04T12:06:07Z",
                   "pid": 4294967295,
                   "command": "echo fixture",
-                  "output": "C:/example/job.log"
+                  "output": "C:/example/job.log",
+                  "account": {
+                    "hub": "w-0123456789abcdef",
+                    "account": "bob"
+                  }
                 }
               ]
             }
@@ -5959,6 +5980,15 @@
             "kind": "no_answer",
             "machine": "lab",
             "reason": "node disconnected"
+          }
+        ],
+        "others": [
+          {
+            "machine": "desktop",
+            "id": "j-abc123",
+            "accounts": [
+              "bob"
+            ]
           }
         ]
       },
@@ -6077,7 +6107,8 @@
                         }
                       ]
                     },
-                    "works_on": "laptop.home"
+                    "works_on": "laptop.home",
+                    "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
                   "here": true,
@@ -6340,7 +6371,11 @@
                   "started_at": "2026-10-04T12:06:07Z",
                   "pid": 4294967295,
                   "command": "echo fixture",
-                  "output": "C:/example/job.log"
+                  "output": "C:/example/job.log",
+                  "account": {
+                    "hub": "w-0123456789abcdef",
+                    "account": "bob"
+                  }
                 }
               ]
             }
@@ -6359,6 +6394,15 @@
             "kind": "no_answer",
             "machine": "lab",
             "reason": "node disconnected"
+          }
+        ],
+        "others": [
+          {
+            "machine": "desktop",
+            "id": "j-abc123",
+            "accounts": [
+              "bob"
+            ]
           }
         ]
       }
@@ -9650,7 +9694,9 @@
           "account": "ada"
         },
         "works_on": "laptop",
-        "colleagues": "lab.home"
+        "colleagues": "lab.home",
+        "home": "C:/Users/ada/.codex-work",
+        "colleagues_home": "/home/ada/.codex-lab"
       },
       {
         "call": "open",
@@ -9660,6 +9706,44 @@
         "text": "Defaults",
         "model": null,
         "reasoning_effort": null
+      },
+      {
+        "call": "claude_consent",
+        "machine": "desktop",
+        "accept": true
+      },
+      {
+        "call": "claude_consent",
+        "machine": "desktop",
+        "accept": false,
+        "home": "/home/ada/.claude-work"
+      },
+      {
+        "call": "homes",
+        "machine": "desktop",
+        "change": {
+          "change": "add",
+          "agent": "claude",
+          "dir": "D:/agents/claude-token"
+        }
+      },
+      {
+        "call": "homes",
+        "machine": "desktop",
+        "change": {
+          "change": "hide",
+          "agent": "codex",
+          "dir": "C:/Users/ada/.codex-old"
+        }
+      },
+      {
+        "call": "homes",
+        "machine": "desktop",
+        "change": {
+          "change": "show",
+          "agent": "codex",
+          "dir": "C:/Users/ada/.codex-old"
+        }
       }
     ],
     "replies": [
@@ -9676,6 +9760,41 @@
               "agents": [
                 {
                   "agent": "codex",
+                  "home": {
+                    "dir": "C:/Users/ada/.codex",
+                    "found": "default"
+                  },
+                  "account": {
+                    "kind": "known",
+                    "value": {
+                      "email": "ada@example.com",
+                      "plan": "plus"
+                    }
+                  },
+                  "limits": {
+                    "kind": "known",
+                    "value": {
+                      "observed_at": "2026-10-04T12:06:07Z",
+                      "windows": [
+                        {
+                          "name": "codex",
+                          "minutes": 300,
+                          "used_tenths": 423,
+                          "resets_at": "2026-10-04T14:00:00Z"
+                        },
+                        {
+                          "name": "codex",
+                          "minutes": 10080,
+                          "used_tenths": 1000,
+                          "resets_at": "2026-10-09T00:00:00Z"
+                        },
+                        {
+                          "name": "codex_other",
+                          "used_tenths": 0
+                        }
+                      ]
+                    }
+                  },
                   "program": {
                     "kind": "known",
                     "value": {
@@ -9739,6 +9858,32 @@
                 },
                 {
                   "agent": "claude",
+                  "home": {
+                    "dir": "/home/ada/.claude-work",
+                    "found": "found"
+                  },
+                  "account": {
+                    "kind": "known",
+                    "value": {
+                      "email": "ada@example.org",
+                      "organization": "Example Org",
+                      "plan": "max"
+                    }
+                  },
+                  "limits": {
+                    "kind": "known",
+                    "value": {
+                      "observed_at": "2026-10-04T12:06:07Z",
+                      "windows": [
+                        {
+                          "name": "five_hour",
+                          "minutes": 300,
+                          "used_tenths": 1013,
+                          "resets_at": "2026-10-04T15:00:00Z"
+                        }
+                      ]
+                    }
+                  },
                   "program": {
                     "kind": "known",
                     "value": {
@@ -9779,6 +9924,14 @@
                 },
                 {
                   "agent": "codex",
+                  "account": {
+                    "kind": "unavailable",
+                    "reason": "this machine's World does not report it"
+                  },
+                  "limits": {
+                    "kind": "unavailable",
+                    "reason": "this machine's World does not report it"
+                  },
                   "program": {
                     "kind": "known",
                     "value": null
@@ -9816,6 +9969,41 @@
                 },
                 {
                   "agent": "codex",
+                  "home": {
+                    "dir": "C:/Users/ada/.codex",
+                    "found": "default"
+                  },
+                  "account": {
+                    "kind": "known",
+                    "value": {
+                      "email": "ada@example.com",
+                      "plan": "plus"
+                    }
+                  },
+                  "limits": {
+                    "kind": "known",
+                    "value": {
+                      "observed_at": "2026-10-04T12:06:07Z",
+                      "windows": [
+                        {
+                          "name": "codex",
+                          "minutes": 300,
+                          "used_tenths": 423,
+                          "resets_at": "2026-10-04T14:00:00Z"
+                        },
+                        {
+                          "name": "codex",
+                          "minutes": 10080,
+                          "used_tenths": 1000,
+                          "resets_at": "2026-10-09T00:00:00Z"
+                        },
+                        {
+                          "name": "codex_other",
+                          "used_tenths": 0
+                        }
+                      ]
+                    }
+                  },
                   "program": {
                     "kind": "known",
                     "value": {
@@ -9857,6 +10045,18 @@
                 },
                 {
                   "agent": "claude",
+                  "home": {
+                    "dir": "D:/agents/claude-token",
+                    "found": "added"
+                  },
+                  "account": {
+                    "kind": "known",
+                    "value": {}
+                  },
+                  "limits": {
+                    "kind": "unavailable",
+                    "reason": "no session in this home has reported its limits yet"
+                  },
                   "program": {
                     "kind": "failed",
                     "reason": "configuration unreadable"
@@ -9924,7 +10124,21 @@
         "text": "First words",
         "model": "opus",
         "reasoning_effort": "high",
-        "colleagues": "desktop"
+        "colleagues": "desktop",
+        "home": "/home/ada/.claude-work"
+      },
+      {
+        "call": "claude_consent",
+        "accept": true,
+        "home": "/home/ada/.claude-work"
+      },
+      {
+        "call": "homes",
+        "change": {
+          "change": "add",
+          "agent": "codex",
+          "dir": "/srv/codex-team"
+        }
       }
     ],
     "remote_replies": [
@@ -9936,6 +10150,41 @@
         "agents": [
           {
             "agent": "codex",
+            "home": {
+              "dir": "C:/Users/ada/.codex",
+              "found": "default"
+            },
+            "account": {
+              "kind": "known",
+              "value": {
+                "email": "ada@example.com",
+                "plan": "plus"
+              }
+            },
+            "limits": {
+              "kind": "known",
+              "value": {
+                "observed_at": "2026-10-04T12:06:07Z",
+                "windows": [
+                  {
+                    "name": "codex",
+                    "minutes": 300,
+                    "used_tenths": 423,
+                    "resets_at": "2026-10-04T14:00:00Z"
+                  },
+                  {
+                    "name": "codex",
+                    "minutes": 10080,
+                    "used_tenths": 1000,
+                    "resets_at": "2026-10-09T00:00:00Z"
+                  },
+                  {
+                    "name": "codex_other",
+                    "used_tenths": 0
+                  }
+                ]
+              }
+            },
             "program": {
               "kind": "known",
               "value": {
@@ -9999,6 +10248,32 @@
           },
           {
             "agent": "claude",
+            "home": {
+              "dir": "/home/ada/.claude-work",
+              "found": "found"
+            },
+            "account": {
+              "kind": "known",
+              "value": {
+                "email": "ada@example.org",
+                "organization": "Example Org",
+                "plan": "max"
+              }
+            },
+            "limits": {
+              "kind": "known",
+              "value": {
+                "observed_at": "2026-10-04T12:06:07Z",
+                "windows": [
+                  {
+                    "name": "five_hour",
+                    "minutes": 300,
+                    "used_tenths": 1013,
+                    "resets_at": "2026-10-04T15:00:00Z"
+                  }
+                ]
+              }
+            },
             "program": {
               "kind": "known",
               "value": {
@@ -10039,6 +10314,14 @@
           },
           {
             "agent": "codex",
+            "account": {
+              "kind": "unavailable",
+              "reason": "this machine's World does not report it"
+            },
+            "limits": {
+              "kind": "unavailable",
+              "reason": "this machine's World does not report it"
+            },
             "program": {
               "kind": "known",
               "value": null
@@ -10076,6 +10359,41 @@
           },
           {
             "agent": "codex",
+            "home": {
+              "dir": "C:/Users/ada/.codex",
+              "found": "default"
+            },
+            "account": {
+              "kind": "known",
+              "value": {
+                "email": "ada@example.com",
+                "plan": "plus"
+              }
+            },
+            "limits": {
+              "kind": "known",
+              "value": {
+                "observed_at": "2026-10-04T12:06:07Z",
+                "windows": [
+                  {
+                    "name": "codex",
+                    "minutes": 300,
+                    "used_tenths": 423,
+                    "resets_at": "2026-10-04T14:00:00Z"
+                  },
+                  {
+                    "name": "codex",
+                    "minutes": 10080,
+                    "used_tenths": 1000,
+                    "resets_at": "2026-10-09T00:00:00Z"
+                  },
+                  {
+                    "name": "codex_other",
+                    "used_tenths": 0
+                  }
+                ]
+              }
+            },
             "program": {
               "kind": "known",
               "value": {
@@ -10117,6 +10435,18 @@
           },
           {
             "agent": "claude",
+            "home": {
+              "dir": "D:/agents/claude-token",
+              "found": "added"
+            },
+            "account": {
+              "kind": "known",
+              "value": {}
+            },
+            "limits": {
+              "kind": "unavailable",
+              "reason": "no session in this home has reported its limits yet"
+            },
             "program": {
               "kind": "failed",
               "reason": "configuration unreadable"
@@ -10153,6 +10483,9 @@
             "timings": []
           }
         ]
+      },
+      {
+        "reply": "set"
       }
     ]
   },

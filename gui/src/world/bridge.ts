@@ -5,7 +5,7 @@
 
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { WorldAgents } from "./agents";
+import type { HomeChange, WorldAgents } from "./agents";
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
@@ -123,6 +123,12 @@ export interface Choices {
   works_on?: string;
   /** Where its colleagues live; without it, it asks for none. */
   colleagues?: string;
+  /** The agent's home, as the machine it lives on writes it, when not the
+   *  default one there. */
+  home?: string;
+  /** The Codex home its colleagues use where they live, when not the
+   *  default one there. */
+  colleagues_home?: string;
 }
 
 /** Opens a conversation with an agent; the model and reasoning effort are
@@ -181,12 +187,23 @@ export function connectionState(): Promise<ConnectionState> {
   return invoke("connection_state");
 }
 
-/** Residents or jobs in detail, from every machine that has them. */
-/** The user's word on whether Claude Code on a machine may run the World's
- *  sessions without approvals; what it now records, and whether it changed. */
-export function claudeConsent(machine: MachineName, accept: boolean): Promise<{ accepted: boolean; changed: boolean }> {
-  return invoke("claude_consent", { machineName: machine, accept });
+/** The user's word on whether Claude Code on a machine, in one of its
+ *  homes or its default one, may run the World's sessions without
+ *  approvals; what it now records, and whether it changed. */
+export function claudeConsent(
+  machine: MachineName,
+  accept: boolean,
+  home: string | null = null,
+): Promise<{ accepted: boolean; changed: boolean }> {
+  return invoke("claude_consent", { machineName: machine, accept, home });
 }
+
+/** Adds an agent's home on a machine, or hides one or shows it again. */
+export function agentHomes(machine: MachineName, change: HomeChange): Promise<void> {
+  return invoke("agent_homes", { machineName: machine, change });
+}
+
+/** Residents or jobs in detail, from every machine that has them. */
 
 export function look(ids: string[]): Promise<LookedUp[]> {
   return invoke("look", { ids });
@@ -275,9 +292,9 @@ export function setWorksOn(who: Address, worksOn: string | null): Promise<void> 
 }
 
 /** Turns asking for colleagues on for a conversation, with the machine
- *  they live on, or off with null. */
-export function setColleagues(who: Address, livesOn: string | null): Promise<void> {
-  return invoke("colleagues", { residentId: who.resident, machineName: who.machine, livesOn });
+ *  they live on and the Codex home they use there, or off with null. */
+export function setColleagues(who: Address, livesOn: string | null, home: string | null = null): Promise<void> {
+  return invoke("colleagues", { residentId: who.resident, machineName: who.machine, livesOn, home });
 }
 
 /** Where this computer stands with the World (`src-tauri/src/setup.rs`). */
@@ -330,8 +347,8 @@ export function attachHere(resident: string): Promise<void> {
   return invoke("attach_here", { residentId: resident });
 }
 
-export function applyHosts(codex: boolean, claude: boolean, raise: boolean, into: boolean): Promise<string[]> {
-  return invoke("apply_hosts", { codex, claude, raise, into });
+export function applyHosts(codex: boolean, claude: boolean, raise: boolean, into: boolean, home: string | null = null): Promise<string[]> {
+  return invoke("apply_hosts", { codex, claude, raise, into, home });
 }
 
 /** Does something to a resident's conversation, besides speaking into it. */

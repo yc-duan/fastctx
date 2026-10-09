@@ -1,10 +1,12 @@
 //! This computer's hubs and machines (`world-network.md`): each hub it is
 //! logged in to, how it is linked to it and with which accounts, each
-//! machine there and what it is like; logging in and out, tokens for other
-//! devices, and who came into its accounts, with 「不是我」.
+//! machine there and what it is like; this computer's agents, a line for
+//! each of their logins (`world-agent-logins.md`); logging in and out,
+//! tokens for other devices, and who came into its accounts, with 「不是我」.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use fastctx_types::accounts::Arrival;
+use fastctx_types::agents::{AgentsReply, Integration};
 use fastctx_types::world::{HubNodes, LinkState, NodesReply};
 use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
@@ -12,6 +14,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 
+use super::logins::{self, Login};
 use super::{List, Page, Sheet, quiet, sheet, title, wrong};
 use crate::app::{Act, Ctx, Data, Done, Job};
 use crate::design::Role;
@@ -30,12 +33,15 @@ pub struct MachinesPage {
     list: List,
     /// Whether the user's own sessions here have the World's tools.
     sessions: Option<Result<Status, String>>,
+    /// This computer's agents, a line for each of their logins.
+    agents: Option<Result<AgentsReply, String>>,
     /// What the latest apply or unapply came to, or that one is under way.
     outcome: Option<Outcome>,
 }
 
 /// What a row the keys can be on stands for.
 enum Entry {
+    Login(usize),
     Arrival(usize),
     Machine { hub: usize, machine: usize },
 }
@@ -73,7 +79,11 @@ impl MachinesPage {
             }
             Data::Done { job: Job::Seen { .. } | Job::Remove { .. }, result: Err(why) } => self.failed = Some(why),
             Data::Sessions(sessions) => self.sessions = Some(sessions),
-            Data::Done { job: Job::Apply { .. } | Job::Unapply, result } => {
+            Data::Agents(agents) => {
+                self.agents = Some(agents);
+                self.list.clamp(self.entries().len());
+            }
+            Data::Done { job: Job::Apply { .. } | Job::Unapply | Job::ApplyHome { .. }, result } => {
                 self.outcome = Some(match result {
                     Ok(Done::Applied(report)) => Outcome::Applied(report),
                     Ok(Done::Unapplied(report)) => Outcome::Unapplied(report),
@@ -100,9 +110,24 @@ impl MachinesPage {
         matches!(&self.sessions, Some(Ok(status)) if status.codex != Standing::Absent || status.claude != Standing::Absent)
     }
 
+    /// The logins of this computer's agents, as drawn.
+    fn logins_here(&self) -> Vec<Login> {
+        match &self.agents {
+            Some(Ok(reply)) => logins::logins(reply),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The login the keys are on.
+    fn selected_home(&self) -> Option<Login> {
+        let Entry::Login(index) = self.entries().into_iter().nth(self.list.selected)? else { return None };
+        self.logins_here().into_iter().nth(index)
+    }
+
     /// The rows the keys can be on, in the order they are drawn.
     fn entries(&self) -> Vec<Entry> {
-        let mut entries: Vec<Entry> = (0..self.arrivals.len()).map(Entry::Arrival).collect();
+        let mut entries: Vec<Entry> = (0..self.logins_here().len()).map(Entry::Login).collect();
+        entries.extend((0..self.arrivals.len()).map(Entry::Arrival));
         if let Some(nodes) = &self.nodes {
             for (hub, nodes) in nodes.hubs.iter().enumerate() {
                 entries.extend((0..nodes.machines.len()).map(|machine| Entry::Machine { hub, machine }));
@@ -131,6 +156,7 @@ impl MachinesPage {
                 let arrival = self.arrivals.get(*index)?;
                 return Some((nodes.hubs.iter().find(|hub| hub.hub == arrival.hub)?.name.clone(), arrival.account.clone()));
             }
+            Entry::Login(_) => nodes.hubs.first()?,
         };
         Some((hub.name.clone(), hub.logins.first()?.clone()))
     }
@@ -189,6 +215,22 @@ impl MachinesPage {
                 }
                 None => Act::Stay,
             },
+            KeyCode::Char('u' | 'x' | 'U') if !self.busy() && self.selected_home().is_some() => {
+                let login = self.selected_home().expect("a login is selected");
+                let into = key.code != KeyCode::Char('x');
+                let raise = key.code == KeyCode::Char('U');
+                let can = match (into, login.standing) {
+                    (true, Some(Integration::Out | Integration::Old)) => true,
+                    (true, Some(Integration::In)) => raise,
+                    (false, Some(Integration::In | Integration::Old)) => true,
+                    _ => false,
+                };
+                let Some(machine) = self.nodes.as_ref().map(|nodes| nodes.machine.clone()).filter(|_| can) else {
+                    return Act::Stay;
+                };
+                self.outcome = Some(if into { Outcome::Applying } else { Outcome::Unapplying });
+                Act::Do(Job::ApplyHome { host: login.host, home: login.home, into, raise, machine })
+            }
             KeyCode::Char('u') if !self.busy() && self.any_installed() => {
                 self.outcome = Some(Outcome::Applying);
                 Act::Do(Job::Apply { raise: false })
@@ -337,6 +379,13 @@ impl MachinesPage {
             }
             rows.extend(self.sessions_rows(ctx, width));
             rows.push(Row::blank());
+            paint::open_section(&mut rows, paint::section(words.agents_here(), look));
+            match &self.agents {
+                Some(Ok(reply)) => rows.extend(logins::rows(ctx, reply, &mut item, width)),
+                Some(Err(why)) => rows.push(logins::asking(ctx, Some(why))),
+                None => rows.push(logins::asking(ctx, None)),
+            }
+            rows.push(Row::blank());
             if !self.arrivals.is_empty() {
                 paint::open_section(&mut rows, paint::section(words.arrivals(), look));
                 for arrival in &self.arrivals {
@@ -379,13 +428,22 @@ impl MachinesPage {
         } else if self.removable().is_some() {
             keys.push(("r", words.key_remove()));
         }
-        if matches!(self.outcome, Some(Outcome::NeedsRaise { .. })) {
+        if let Some(login) = self.selected_home().filter(|_| !self.busy()) {
+            match login.standing {
+                Some(Integration::Out | Integration::Old) => keys.push(("u", words.key_apply_login())),
+                Some(Integration::In) => keys.push(("x", words.key_unapply_login())),
+                _ => {}
+            }
+            if matches!(self.outcome, Some(Outcome::NeedsRaise { .. })) {
+                keys.push(("U", words.key_raise()));
+            }
+        } else if matches!(self.outcome, Some(Outcome::NeedsRaise { .. })) {
             keys.push(("U", words.key_raise()));
         } else if self.any_installed() && !self.busy() {
             let old = matches!(&self.sessions, Some(Ok(status)) if status.codex == Standing::Old);
             keys.push(("u", if old { words.key_replace_old() } else { words.key_apply() }));
         }
-        if self.any_in() && !self.busy() {
+        if self.any_in() && !self.busy() && self.selected_home().is_none() {
             keys.push(("x", words.key_unapply()));
         }
         keys.push(("Esc", words.key_back()));
