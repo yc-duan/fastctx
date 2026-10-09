@@ -86,7 +86,7 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
                     quoted(&sheet.name),
                     rel.rel_type.rsplit('/').next().unwrap_or(&rel.rel_type)
                 ),
-                &format!("use --sheet-index {}", index + 1),
+                &format!("the rest starts at sheet {}", index + 1),
             ) {
                 break;
             }
@@ -162,7 +162,7 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
         let Some(header) = out.header(
             &format!("sheet {} {}", index + 1, quoted(&sheet.name)),
             &crate::spreadsheet::sheet_reserve(),
-            &format!("use --sheet-index {}", index + 1),
+            &format!("the rest starts at sheet {}", index + 1),
         ) else {
             break;
         };
@@ -176,7 +176,7 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
                 && !out.line(
                     "",
                     &format!("merged {merge}"),
-                    &format!("use --sheet-index {} --range {merge}", index + 1),
+                    &format!("the rest starts at sheet {}, merged {merge}", index + 1),
                 )
             {
                 break;
@@ -187,7 +187,7 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
                 && !out.line(
                     "",
                     &format!("array {}:{}", range.first, range.last),
-                    &format!("use --sheet-index {} --range {}:{}", index + 1, range.first, range.last),
+                    &format!("the rest starts at sheet {}, array {}:{}", index + 1, range.first, range.last),
                 )
             {
                 break;

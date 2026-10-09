@@ -48,7 +48,7 @@ pub(crate) fn read(
         let Some(header) = out.header(
             &format!("sheet {} {}", index + 1, quoted(&sheet.name)),
             &spreadsheet::sheet_reserve(),
-            &format!("use --sheet-index {}", index + 1),
+            &format!("the rest starts at sheet {}", index + 1),
         ) else {
             break;
         };
@@ -65,7 +65,7 @@ pub(crate) fn read(
                 && !out.line(
                     "",
                     &format!("merged {}:{}", merged.first, merged.last),
-                    &format!("use --sheet-index {} --range {}:{}", index + 1, merged.first, merged.last),
+                    &format!("the rest starts at sheet {}, merged {}:{}", index + 1, merged.first, merged.last),
                 )
             {
                 break;
@@ -76,7 +76,7 @@ pub(crate) fn read(
                 && !out.line(
                     "",
                     &format!("array {}:{}", range.first, range.last),
-                    &format!("use --sheet-index {} --range {}:{}", index + 1, range.first, range.last),
+                    &format!("the rest starts at sheet {}, array {}:{}", index + 1, range.first, range.last),
                 )
             {
                 break;

@@ -21,24 +21,25 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
     answer.line(&format!("=== run on {} ({}) ===", reply.machine, facts(reply)));
     let output = &reply.output;
     let log = display_path(&output.log);
-    let quoted_log = format!("'{}'", log.replace('\'', "'\"'\"'"));
+    // What was left out is told as facts, where it is and how much; how to
+    // read it is the model's to choose, so no command is put in its mouth.
+    let mut partial = false;
     for piece in &output.pieces {
         match piece {
             OutputPiece::Text { text, .. } => answer.text(text),
             OutputPiece::PartOfLine { line, from, to, of, text } => {
-                answer.line(&format!("=== line {line}: characters {from}-{to} of {of}; read with: fastctx view --lines {line}-{line} -- {quoted_log} ==="));
+                partial = true;
+                answer.line(&format!("=== line {line}: characters {from}-{to} of {of} ==="));
                 answer.text(text);
             }
             OutputPiece::Omitted { first_line, last_line } => {
+                partial = true;
                 let lines = if first_line == last_line {
                     format!("line {first_line}")
                 } else {
                     format!("lines {first_line}-{last_line}")
                 };
-                answer.line(&format!(
-                    "=== output from {lines} of {} not shown; read with: fastctx view --lines {first_line}-{last_line} -- {quoted_log} ===",
-                    output.lines
-                ));
+                answer.line(&format!("=== {lines} of {} not shown ===", output.lines));
             }
             OutputPiece::Image { mime, width, height, base64 } => {
                 let caption = format!("(image {width}x{height}, {mime}) ===");
@@ -54,11 +55,12 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
     }
     match &reply.state {
         RunState::Running => {
-            answer.line(&format!("=== {} goes on in the background; its output continues in {log} ===", reply.job))
+            answer.line(&format!("=== {} goes on in the background; all of its output is in {log} ===", reply.job))
         }
         RunState::Exited { remaining, .. } if *remaining > 0 => {
             answer.line(&format!("=== what it started goes on as {}; further output goes to {log} ===", reply.job))
         }
+        _ if partial => answer.line(&format!("=== all of its output is in {log} ===")),
         _ => {}
     }
     answer.finish()

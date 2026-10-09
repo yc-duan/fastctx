@@ -3,8 +3,9 @@
 //! At most one encoded line is decoded at a time: lines inside the
 //! window and the budget are kept, and every other line is only counted, so
 //! the head note can say `of N` for a file of any size. A line longer than
-//! what is left of the budget is shown up to there, and the note says which
-//! characters of it are shown and how to read on with `--chars`.
+//! what is left of the budget is shown up to there; the head note says which
+//! characters of it are shown, in the numbering `--chars` takes, and a note
+//! after the lines says what of the selection was not shown.
 
 use std::fs::{File, Metadata};
 use std::io::{self, Seek as _};
@@ -147,6 +148,9 @@ pub fn look(
     }
     let mut text = format!("{}\n", head(path, options, &facts));
     text.push_str(&read.body);
+    if let Some(rest) = rest(&read, options) {
+        text.push_str(&rest);
+    }
     let cost = text.len();
     let seen = Seen {
         path: path.to_string_lossy().into_owned(),
@@ -162,18 +166,30 @@ pub fn look(
     Ok((Section { text, cost, shown, partial: read.cut.is_some() || read.out_of_budget }, shown.then_some(seen)))
 }
 
-/// Which characters of a line too long to show were shown, and the options
-/// that read on from there.
+/// Which characters of a line too long to show were shown.
 fn cut_facts(cut: &Cut) -> String {
-    format!(
-        "line {line}: characters {}-{} of {} shown, the rest with --lines {line} --chars {}-{}",
-        cut.from,
-        cut.to,
-        cut.length,
-        cut.to + 1,
-        cut.length,
-        line = cut.line
-    )
+    format!("line {}: characters {}-{} of {} shown", cut.line, cut.from, cut.to, cut.length)
+}
+
+/// What of the lines asked for was not shown, said again after them: a
+/// reader that went through all the text meets it last. Facts only; how to
+/// read the rest is the reader's to choose.
+fn rest(read: &Read, options: &Options) -> Option<String> {
+    let (first, last) = options.lines.unwrap_or((1, read.total_lines));
+    let end = last.min(read.total_lines);
+    let lines = |from: u64| if from == end { format!("line {from}") } else { format!("lines {from}-{end}") };
+    match &read.cut {
+        Some(cut) => {
+            let to = options.chars.map_or(cut.length, |(_, to)| to.min(cut.length));
+            let later = if cut.line < end { format!(", and {}", lines(cut.line + 1)) } else { String::new() };
+            Some(format!("=== line {}: characters {}-{to}{later} not shown ===\n", cut.line, cut.to + 1))
+        }
+        None if read.out_of_budget => {
+            let next = if read.shown_lines > 0 { read.first_shown + read.shown_lines } else { first };
+            Some(format!("=== {} not shown ===\n", lines(next)))
+        }
+        None => None,
+    }
 }
 
 /// What a file's first bytes say it is, for a binary file.
@@ -208,7 +224,9 @@ fn budget_for_body(path: &Path, options: &Options, budget: usize) -> usize {
     let cut = cut_facts(&Cut { line: n, from: n, to: n - 1, length: n });
     let longest_facts = format!("{encoding}{}lines {n}-{n} of {n} shown; {cut}", line_endings(u64::MAX, u64::MAX));
     let head = head(path, options, &longest_facts).len() + 1;
-    budget.saturating_sub(head)
+    // The note after the lines, at its longest.
+    let rest = format!("=== line {n}: characters {n}-{n}, and lines {n}-{n} not shown ===\n").len();
+    budget.saturating_sub(head + rest)
 }
 
 /// How the lines read end, when that is not plain LF: what a program that

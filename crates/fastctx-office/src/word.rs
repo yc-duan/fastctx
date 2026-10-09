@@ -17,7 +17,7 @@ pub(crate) fn read(document: &Document, selection: &Selection, out: &mut Output)
     }
     let text = document.to_markdown();
     out.reserve_facts(line_reserve().len());
-    let lines = out.numbered(&text, selection.lines, |n, total| format!("use --lines {n}-{total}"));
+    let lines = out.numbered(&text, selection.lines, |n, total| format!("the rest is lines {n}-{total}"));
     out.facts(lines.facts(selection.lines.is_some()));
     Ok(())
 }

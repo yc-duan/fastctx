@@ -62,16 +62,10 @@ pub(crate) fn selected_sheet(names: &[&str], selection: &Selection) -> Result<Op
     Ok(None)
 }
 
-pub(crate) fn resume(sheet: usize, cell: &CellRef, range: Option<&CellRange>) -> String {
-    let last = range.map(|r| r.last.clone()).unwrap_or(CellRef { row: 1_048_575, col: 16_383 });
-    let row_end = CellRef { row: cell.row, col: last.col };
-    let mut hint = format!("use --sheet-index {} --range {cell}:{row_end}", sheet + 1);
-    if cell.row < last.row {
-        let next = CellRef { row: cell.row + 1, col: range.map_or(0, |r| r.first.col) };
-        hint.push_str(&format!("; then --range {next}:{last} on that sheet"));
-    }
-    hint.push_str("; later sheets: --sheet-index NUMBER");
-    hint
+/// Where the cells not shown start: a fact, not a command, so the reader
+/// picks its own way to read on.
+pub(crate) fn resume(sheet: usize, cell: &CellRef, _range: Option<&CellRange>) -> String {
+    format!("the rest starts at {cell} on sheet {}", sheet + 1)
 }
 
 #[derive(Default)]

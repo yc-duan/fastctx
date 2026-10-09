@@ -55,7 +55,7 @@ pub(crate) fn read(
             let Some(header) = out.header(
                 &format!("slide {page}"),
                 &format!("{}; hidden", line_reserve()),
-                &format!("use --pages {page}"),
+                &format!("the rest starts at slide {page}"),
             ) else {
                 break;
             };
@@ -64,7 +64,7 @@ pub(crate) fn read(
             }
             shown_last = page;
             let lines =
-                out.numbered(&text, selection.lines, |n, total| format!("use --pages {page} --lines {n}-{total}"));
+                out.numbered(&text, selection.lines, |n, _| format!("the rest starts at slide {page}, line {n}"));
             let mut facts = lines.facts(selection.lines.is_some());
             if hidden {
                 facts.push_str("; hidden");
@@ -78,9 +78,12 @@ pub(crate) fn read(
     if !out.stopped()
         && (selection.master || selection.pages.is_none() || (first <= total as u64 && last >= total as u64))
         && (!master.is_empty() || selection.master)
-        && let Some(header) = out.header("master and layout text", &line_reserve(), "use --master")
+        && let Some(header) =
+            out.header("master and layout text", &line_reserve(), "the rest is the master and layout text")
     {
-        let lines = out.numbered(&master, selection.lines, |n, total| format!("use --master --lines {n}-{total}"));
+        let lines = out.numbered(&master, selection.lines, |n, _| {
+            format!("the rest starts at line {n} of the master and layout text")
+        });
         out.update_header(header, &lines.facts(selection.lines.is_some()));
     }
     let facts = if selection.master {

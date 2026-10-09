@@ -112,7 +112,7 @@ const RUN_SHELL: &str = "\
 Shell:
 - Every machine runs bash with the GNU tools and `rg`, Windows ones too (Git Bash). Write Windows paths like C:/Users/me, and use `ls`, `find`, `du` and `df` rather than PowerShell.
 - Git Bash rewrites arguments that look like Unix paths, such as /FI, before a Windows program sees them. Put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
-- Each call is a fresh login shell, starting in the home directory, or in `cwd`. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together.
+- Each call is a fresh login shell, starting in the home directory, or in `cwd`. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together; output too long to show whole comes back as its start and end, and the answer names the file that holds all of it.
 - Calls share nothing, so you can make several at once, and call this tool from your scripts and subagents like any other. The steps of one piece of work belong in one script; separate pieces of work can go in separate calls.
 - Images a program draws with the kitty or iTerm2 terminal protocols come back as images.
 - A call answers as soon as the script ends. A script still running after 15 seconds, or after `wait` seconds when you set it (up to 600), goes on by itself in the background as a job: it is never stopped for taking long, and the answer names the job and the file its output continues in. `wait` 0 sends the script to the background at once, before it has printed anything: for work you will not wait for.
@@ -131,14 +131,14 @@ The most seconds to wait for the script; the call answers as soon as it ends. 15
 
 const RUN_FILES: &str = "\
 Files:
-- `fastctx view PATH...` shows files, each as its kind is read: text with line numbers; an image as the image itself, for you to see; a PDF as its text, page by page; Word, PowerPoint and Excel as their content, with Excel cells by address. It shows a lot at once, so give it all the files you need in one call rather than one by one; read the ones the work needs, not everything in sight. When not all of it fits, the head lines say exactly what was shown and how to read on. Use it for any file you need to look at:
+- `fastctx view PATH...` shows files, each as its kind is read: text with line numbers; an image as the image itself, for you to see; a PDF as its text, page by page; Word, PowerPoint and Excel as their content, with Excel cells by address. It shows a lot at once, so give it all the files you need in one call rather than one by one; read the ones the work needs, not everything in sight. When not all of it fits, it says what was shown and what was not. Use it for any file you need to look at:
     fastctx view /srv/app/src/main.rs /srv/app/README.md
     fastctx view --lines 120-180 /srv/app/src/main.rs
     fastctx view C:/Users/me/Pictures/chart.png
     fastctx view --pages 3-5 /srv/app/design.pdf
     fastctx view --image --pages 3 /srv/app/design.pdf
     fastctx view --sheet Sales --range B2:F40 C:/Users/me/q3.xlsx
-  `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--image` shows PDF pages as pictures, for layout and figures. Text in any encoding is shown as text, its encoding named in the head line when it is not UTF-8; `--encoding gbk` reads it in an encoding you name, when the one shown is wrong.
+  `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--chars 300001-600000` shows those characters of each line, counted as the head lines count them, for a line too long to show at once; `rg -o '.{0,200}WORD.{0,200}'` shows just what is around a match in one. `--image` shows PDF pages as pictures, for layout and figures. Text in any encoding is shown as text, its encoding named in the head line when it is not UTF-8; `--encoding gbk` reads it in an encoding you name, when the one shown is wrong.
 - To see how large files or directories are before reading them, use `wc -l`, `ls -lh` or `du -sh` as usual.
 ";
 

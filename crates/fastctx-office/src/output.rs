@@ -50,10 +50,15 @@ impl Output {
         // Reserve it once so a later long line cannot erase earlier output
         // because its stopping note is longer than the previous line's.
         let n = u64::MAX;
-        let line = notice(
-            &format!("{n}\t{n} of {n} characters shown; remaining selected content not shown"),
-            &format!("use --pages {n} --lines {n}-{n}"),
-        );
+        let line = [
+            format!("the rest starts at line {n} of the master and layout text"),
+            format!("the rest starts at slide {n}, line {n}"),
+            format!("the rest starts at sheet {n}, merged XFD1048576:XFD1048576"),
+        ]
+        .iter()
+        .map(|rest| notice(&format!("{n}\t{n} of {n} characters shown; remaining selected content not shown"), rest))
+        .max_by_key(String::len)
+        .expect("candidates");
         let cell = office_oxide::xlsx::CellRef { row: 1_048_574, col: 16_383 };
         let cells = notice(
             "from XFD1048576; remaining selected content not shown",

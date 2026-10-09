@@ -53,9 +53,9 @@ fn addresses_caches_and_continuations_survive_the_budget() {
 
     let bounded = read(file.try_clone().unwrap(), Format::Xlsx, &Selection::default(), 1_000).unwrap();
     assert!(bounded.stopped);
-    assert!(bounded.facts.chars().count() + bounded.text.chars().count() <= 1_000);
+    assert!(bounded.facts.len() + bounded.text.len() <= 1_000);
     assert!(bounded.text.contains("remaining selected content not shown"));
-    assert!(bounded.text.contains("--sheet-index 1 --range "));
+    assert!(bounded.text.contains("the rest starts at "), "{}", bounded.text);
     let selection =
         Selection { sheet: Some("数据".into()), range: Some("B1:C2".parse().unwrap()), ..Default::default() };
     let selected = read(file, Format::Xlsx, &selection, 1_000).unwrap();
