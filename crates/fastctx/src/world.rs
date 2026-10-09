@@ -310,7 +310,7 @@ pub fn accounts() -> anyhow::Result<()> {
 
 pub fn nodes() -> anyhow::Result<()> {
     match call(Call::Nodes)? {
-        Reply::Nodes(reply) => print!("{}", render_nodes(&reply, Timestamp::now())),
+        Reply::Nodes(reply) => crate::output::print(&render_nodes(&reply, Timestamp::now()))?,
         other => anyhow::bail!("the node answered something else: {other:?}"),
     }
     Ok(())

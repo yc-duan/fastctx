@@ -15,6 +15,7 @@ mod copy;
 mod journal;
 mod keep;
 mod on;
+mod output;
 mod page;
 mod paths;
 mod project;
@@ -309,7 +310,7 @@ fn main() -> ExitCode {
 }
 
 fn print_licenses() -> ExitCode {
-    finish(fastctx_ripgrep::licenses::write(std::io::stdout().lock()).map(|()| ExitCode::SUCCESS).map_err(Into::into))
+    finish(fastctx_ripgrep::licenses::write(output::out()).map(|()| ExitCode::SUCCESS).map_err(Into::into))
 }
 
 /// The commands a person runs on a machine: its node, joining and managing
