@@ -85,8 +85,6 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
 
     let mut statistics = Statistics::new();
     let mut line = Spool::default();
-    let mut line_utf8 = TextDecoder::new(TextEncoding::utf8());
-    let mut line_valid = true;
     let mut utf8 = Validation::new("utf-8");
     let mut le = Validation::new("utf-16le");
     let mut be = Validation::new("utf-16be");
@@ -100,26 +98,12 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
         utf8.feed(bytes, end);
         for piece in bytes.split_inclusive(|byte| *byte == b'\n') {
             line.write_all(piece).map_err(|e| e.to_string())?;
-            line_valid &= line_utf8.feed(piece, piece.ends_with(b"\n")).is_ok();
             if piece.ends_with(b"\n") {
-                let bytes = std::mem::take(&mut line).finish();
-                if !line_valid {
-                    for chunk in bytes.chunks() {
-                        statistics.feed(&chunk.map_err(|e| e.to_string())?, false);
-                    }
-                }
-                line_utf8 = TextDecoder::new(TextEncoding::utf8());
-                line_valid = true;
+                inspect_line(&mut line, &mut statistics)?;
             }
         }
         if end {
-            line_valid &= line_utf8.feed(&[], true).is_ok();
-            let bytes = std::mem::take(&mut line).finish();
-            if !line_valid {
-                for chunk in bytes.chunks() {
-                    statistics.feed(&chunk.map_err(|e| e.to_string())?, false);
-                }
-            }
+            inspect_line(&mut line, &mut statistics)?;
             statistics.feed(&[], true);
         }
         le.feed(bytes, end);
@@ -181,6 +165,30 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
         ordered: false,
         legacy: statistics.leaders(),
     })
+}
+
+fn inspect_line(line: &mut Spool, statistics: &mut Statistics) -> Result<(), String> {
+    if let Some(bytes) = line.as_slice() {
+        if std::str::from_utf8(bytes).is_err() {
+            statistics.feed(bytes, false);
+        }
+        line.clear();
+        return Ok(());
+    }
+    let bytes = std::mem::take(line).finish();
+    let mut decoder = TextDecoder::new(TextEncoding::utf8());
+    let mut valid = true;
+    for chunk in bytes.chunks() {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        valid = valid && decoder.feed(&chunk, false).is_ok();
+    }
+    valid = valid && decoder.feed(&[], true).is_ok();
+    if !valid {
+        for chunk in bytes.chunks() {
+            statistics.feed(&chunk.map_err(|e| e.to_string())?, false);
+        }
+    }
+    Ok(())
 }
 
 impl TextEncoding {

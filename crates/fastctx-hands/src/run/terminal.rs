@@ -10,14 +10,14 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
 #[derive(Debug, Clone)]
-pub struct Line {
+pub struct Line<'a> {
     pub number: u64,
     pub through: u64,
     pub offset: usize,
     pub characters: usize,
     pub images: u64,
     pub graphics: u64,
-    pub parts: Parts,
+    pub parts: Parts<'a>,
     pub decoding: Decoding,
     pub view: u64,
     pub newline: bool,
@@ -80,6 +80,7 @@ pub struct Lines<R> {
     closed_views: ViewSet,
     queued: Spool,
     ready: Option<Queue>,
+    tracker: super::unfinished::Tracker,
 }
 
 impl<R: Read> Lines<R> {
@@ -105,9 +106,10 @@ impl<R: Read> Lines<R> {
             closed_views: ViewSet::default(),
             queued: Spool::default(),
             ready: None,
+            tracker: Default::default(),
         }
     }
-    pub fn next_line(&mut self) -> io::Result<Option<Line>> {
+    pub fn next_line(&mut self) -> io::Result<Option<Line<'_>>> {
         let mut sequence = Spool::default();
         loop {
             if let Some(ready) = self.ready.as_mut() {
@@ -132,6 +134,40 @@ impl<R: Read> Lines<R> {
                 }
                 self.start = 0;
                 self.end = read;
+                self.tracker.feed(&self.buffer[..read]);
+            }
+            if matches!(self.state, State::Normal)
+                && self.text.len() == 0
+                && self.pending.len() == 0
+                && let Some(length) = memchr::memchr(b'\n', &self.buffer[self.start..self.end])
+                && let Some(row) = super::plain::text(&self.buffer[self.start..self.start + length])
+            {
+                let start = self.start;
+                self.start += length + 1;
+                self.raw_newlines += 1;
+                self.raw_unterminated = false;
+                let number = self.line_number;
+                self.number += 1;
+                self.line_number = self.number + 1;
+                self.line_view = self.view;
+                let text = match row {
+                    super::plain::Row::Original(length) => std::borrow::Cow::Borrowed(
+                        std::str::from_utf8(&self.buffer[start..start + length]).expect("validated row"),
+                    ),
+                    super::plain::Row::Rendered(text) => std::borrow::Cow::Owned(text),
+                };
+                return Ok(Some(Line {
+                    number,
+                    through: self.number,
+                    offset: 0,
+                    characters: text.chars().count(),
+                    images: 0,
+                    graphics: 0,
+                    parts: Parts::from_text(text),
+                    decoding: Decoding::default(),
+                    view: self.view,
+                    newline: true,
+                }));
             }
             let available = &self.buffer[self.start..self.end];
             let span = match self.state {
@@ -216,6 +252,9 @@ impl<R: Read> Lines<R> {
     }
     pub(super) fn closed_views(&self) -> &ViewSet {
         &self.closed_views
+    }
+    pub(super) fn unfinished(&self) -> Option<super::unfinished::Unfinished> {
+        self.tracker.unfinished()
     }
 
     fn finish(&mut self, sequence: Bytes) -> io::Result<()> {
@@ -361,6 +400,20 @@ impl<R: Read> Lines<R> {
                 }
             }
         }
+        // Streaming is valid only when the entire row has no horizontal edits.
+        // A later cursor operation can still overwrite an earlier literal span.
+        let mut linear = !plain && matches!(encoding, Encoding::Utf8);
+        if linear {
+            for record in Records::new(pending.clone()) {
+                let record = record?;
+                if matches!(record.kind, TEXT | LITERAL)
+                    && !super::linear::check(&record.payload, record.kind == LITERAL)?
+                {
+                    linear = false;
+                    break;
+                }
+            }
+        }
         let decoding = encoding.facts();
         let mut display = Display::default();
         display.view = self.line_view;
@@ -372,6 +425,10 @@ impl<R: Read> Lines<R> {
                 TEXT | LITERAL => {
                     if plain {
                         record.payload.utf8(|text| fragments.push(display.view, Part::Text(text.to_string())))?;
+                    } else if linear {
+                        super::linear::render(&record.payload, record.kind == LITERAL, |text| {
+                            fragments.push(display.view, Part::Text(text.to_string()))
+                        })?;
                     } else {
                         encoding.render(&record.payload, record.kind == LITERAL, &mut display)?;
                     }
@@ -420,7 +477,7 @@ impl Queue {
     fn new(bytes: Bytes) -> Self {
         Self { bytes, at: 0 }
     }
-    fn next(&mut self) -> io::Result<Option<Line>> {
+    fn next(&mut self) -> io::Result<Option<Line<'static>>> {
         if self.at == self.bytes.len() {
             return Ok(None);
         }
@@ -433,7 +490,7 @@ impl Queue {
         let length =
             u64::from_le_bytes(self.bytes.slice(self.at..self.at + 8).to_vec()?.try_into().expect("length")) as usize;
         self.at += 8;
-        let parts = Parts(self.bytes.slice(self.at..self.at + length));
+        let parts = Parts::from_records(self.bytes.slice(self.at..self.at + length));
         self.at += length;
         Ok(Some(Line {
             number: header.number,
@@ -538,6 +595,9 @@ enum Encoding {
 }
 impl Encoding {
     fn of(bytes: &Bytes) -> io::Result<(Self, bool)> {
+        if bytes.as_slice().is_some_and(|bytes| std::str::from_utf8(bytes).is_ok()) {
+            return Ok((Self::Utf8, true));
+        }
         let mut utf8 = TextDecoder::new(TextEncoding::utf8());
         let mut valid = true;
         for chunk in bytes.chunks() {

@@ -133,6 +133,11 @@ fn decode(raw: &Bytes, decoder: &mut TextDecoder, end: bool) -> Result<std::resu
 }
 
 fn reading(raw: &Bytes, codec: TextEncoding) -> Result<std::result::Result<Bytes, EncodingError>> {
+    if codec.without_bom() == TextEncoding::utf8()
+        && raw.as_slice().is_some_and(|bytes| std::str::from_utf8(bytes).is_ok())
+    {
+        return Ok(Ok(raw.clone()));
+    }
     decode(raw, &mut TextDecoder::new(codec.without_bom()), true)
 }
 fn decoded(text: Bytes, codec: TextEncoding, basis: &'static str) -> Line {

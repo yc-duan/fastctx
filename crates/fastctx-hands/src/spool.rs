@@ -36,6 +36,21 @@ impl Spool {
         self.length
     }
 
+    pub fn as_slice(&self) -> Option<&[u8]> {
+        match &self.storage {
+            Storage::Memory(bytes) => Some(bytes),
+            Storage::File { .. } => None,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        match &mut self.storage {
+            Storage::Memory(bytes) => bytes.clear(),
+            Storage::File { .. } => self.storage = Storage::Memory(Vec::new()),
+        }
+        self.length = 0;
+    }
+
     pub fn finish(self) -> Bytes {
         Bytes { storage: Arc::new(self.storage), range: 0..self.length }
     }
@@ -83,6 +98,13 @@ impl Write for Spool {
 }
 
 impl Bytes {
+    pub fn as_slice(&self) -> Option<&[u8]> {
+        match self.storage.as_ref() {
+            Storage::Memory(bytes) => Some(&bytes[self.range.start as usize..self.range.end as usize]),
+            Storage::File { .. } => None,
+        }
+    }
+
     pub fn len(&self) -> usize {
         usize::try_from(self.range.end - self.range.start).expect("addressable input")
     }
@@ -103,6 +125,9 @@ impl Bytes {
         Chunks(self.reader())
     }
     pub fn to_vec(&self) -> io::Result<Vec<u8>> {
+        if let Some(bytes) = self.as_slice() {
+            return Ok(bytes.to_vec());
+        }
         let mut bytes = Vec::new();
         self.reader().read_to_end(&mut bytes)?;
         Ok(bytes)
@@ -122,6 +147,9 @@ impl Bytes {
         Ok(self.len() >= suffix.len() && self.slice(self.len() - suffix.len()..self.len()).to_vec()? == suffix)
     }
     pub fn is_ascii(&self) -> io::Result<bool> {
+        if let Some(bytes) = self.as_slice() {
+            return Ok(bytes.is_ascii());
+        }
         for chunk in self.chunks() {
             if !chunk?.is_ascii() {
                 return Ok(false);
@@ -209,7 +237,11 @@ pub(crate) struct Chunks(Reader);
 impl Iterator for Chunks {
     type Item = io::Result<Vec<u8>>;
     fn next(&mut self) -> Option<Self::Item> {
-        let mut buffer = vec![0; BLOCK];
+        let remaining = self.0.bytes.len() - self.0.position as usize;
+        if remaining == 0 {
+            return None;
+        }
+        let mut buffer = vec![0; remaining.min(BLOCK)];
         match self.0.read(&mut buffer) {
             Ok(0) => None,
             Ok(n) => {
@@ -223,6 +255,11 @@ impl Iterator for Chunks {
 
 impl Bytes {
     pub fn utf8(&self, mut consume: impl FnMut(&str) -> io::Result<()>) -> io::Result<()> {
+        if let Some(bytes) = self.as_slice()
+            && let Ok(text) = std::str::from_utf8(bytes)
+        {
+            return consume(text);
+        }
         let mut decoder = crate::encoding::TextDecoder::new(crate::encoding::TextEncoding::utf8());
         for bytes in self.chunks() {
             consume(&decoder.feed(&bytes?, false).map_err(io::Error::other)?)?;

@@ -13,8 +13,10 @@ mod graphics;
 mod heredoc;
 pub mod last;
 pub mod launch;
+mod linear;
 mod output;
 mod pieces;
+mod plain;
 pub mod preread;
 pub mod present;
 pub mod program;
@@ -24,6 +26,7 @@ mod records;
 pub mod shell;
 pub mod supervisor;
 pub mod terminal;
+mod unfinished;
 mod view_set;
 pub mod window;
 

@@ -104,12 +104,33 @@ fn tail(log: &Path, line_limit: usize, character_limit: usize) -> io::Result<Opt
         }
     }
     let mut whole = kept.len() as u64 == read;
-    let text = if kept.len() == 1 && kept[0].characters > character_limit {
+    let mut text = if kept.len() == 1 && kept[0].characters > character_limit {
         whole = false;
         let last = kept.pop_front().expect("one");
         format!("…{}", last.tail.into_iter().skip(1).collect::<String>())
     } else {
         kept.into_iter().map(|line| line.tail.into_iter().collect::<String>()).collect::<Vec<_>>().join("\n")
     };
+    if let Some(unfinished) = lines.unfinished() {
+        let note = format!("[{}]", unfinished.description());
+        let mut rows: Vec<_> = text.split('\n').collect();
+        if rows.len() >= line_limit {
+            rows.drain(..rows.len() - line_limit + 1);
+            whole = false;
+        }
+        text = rows.join("\n");
+        let available = character_limit - note.chars().count() - 1;
+        if text.chars().count() > available {
+            text = format!(
+                "…{}",
+                text.chars().rev().take(available - 1).collect::<Vec<_>>().into_iter().rev().collect::<String>()
+            );
+            whole = false;
+        }
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&note);
+    }
     Ok((!text.is_empty()).then_some(LastLines { text, whole }))
 }

@@ -142,6 +142,12 @@ fn snapshot(log: &Path, through: Option<u64>) -> io::Result<OutputWindow> {
     if let Some((first, last)) = omitted {
         assembly.omitted(first, last);
     }
+    if let Some(unfinished) = lines.unfinished() {
+        assembly.pieces.push(OutputPiece::Unreadable {
+            line: unfinished.line,
+            reason: format!("{}; raw bytes: {}", unfinished.description(), log.display()),
+        });
+    }
     Ok(assembly.finish(log, size, lines.raw_lines()))
 }
 
@@ -191,6 +197,10 @@ struct Entry {
 impl Entry {
     fn of(id: u64, line: &Line) -> io::Result<Self> {
         let newline = usize::from(line.newline);
+        if let Some(text) = line.parts.text() {
+            let characters = line.characters + newline;
+            return Ok(Self { id, chars: characters, text: characters, bytes: text.len() + newline });
+        }
         let mut entry = Self { id, chars: newline, text: newline, bytes: newline };
         for part in line.parts.iter() {
             let part = part?;
@@ -383,6 +393,13 @@ struct Assembly {
 impl Assembly {
     fn whole(&mut self, line: &Line) -> io::Result<()> {
         self.count(line);
+        if let Some(text) = line.parts.text() {
+            self.text(line.number, text);
+            if line.newline {
+                self.text(line.number, "\n");
+            }
+            return Ok(());
+        }
         for part in line.parts.iter() {
             let part = part?;
             match &part {

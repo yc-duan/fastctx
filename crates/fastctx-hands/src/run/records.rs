@@ -43,8 +43,8 @@ impl Iterator for Records {
         let read = || -> io::Result<Record> {
             let mut header = [0; 40];
             self.data.slice(self.at..self.at + 40).reader().read_exact(&mut header)?;
-            let words: Vec<_> =
-                header.chunks_exact(8).map(|b| u64::from_le_bytes(b.try_into().expect("word"))).collect();
+            let words: [u64; 5] =
+                std::array::from_fn(|i| u64::from_le_bytes(header[i * 8..(i + 1) * 8].try_into().expect("word")));
             let start = self.at + 40;
             let end = start.checked_add(words[4] as usize).ok_or_else(|| io::Error::other("record length overflow"))?;
             Ok(Record { kind: words[0], a: words[1], b: words[2], c: words[3], payload: self.data.slice(start..end) })
@@ -60,10 +60,32 @@ impl Iterator for Records {
 }
 
 #[derive(Debug, Clone)]
-pub struct Parts(pub(crate) Bytes);
-impl Parts {
-    pub fn iter(&self) -> impl Iterator<Item = io::Result<Part>> {
-        Records::new(self.0.clone()).map(|record| {
+pub struct Parts<'a>(Data<'a>);
+
+#[derive(Debug, Clone)]
+enum Data<'a> {
+    Text(std::borrow::Cow<'a, str>),
+    Records(Bytes),
+}
+impl<'a> Parts<'a> {
+    pub(super) fn from_text(text: std::borrow::Cow<'a, str>) -> Self {
+        Self(Data::Text(text))
+    }
+    pub(super) fn from_records(bytes: Bytes) -> Self {
+        Self(Data::Records(bytes))
+    }
+    pub fn text(&self) -> Option<&str> {
+        match &self.0 {
+            Data::Text(text) => Some(text),
+            Data::Records(_) => None,
+        }
+    }
+    pub fn iter(&self) -> impl Iterator<Item = io::Result<Part>> + '_ {
+        let (text, records) = match &self.0 {
+            Data::Text(text) => (Some(Ok(Part::Text(text.to_string()))), None),
+            Data::Records(bytes) => (None, Some(Records::new(bytes.clone()))),
+        };
+        text.into_iter().chain(records.into_iter().flatten().map(|record| {
             let record = record?;
             Ok(match record.kind {
                 0 => Part::Text(record.payload.text()?),
@@ -77,7 +99,7 @@ impl Parts {
                 3 => Part::Unreadable(record.payload.text()?),
                 _ => return Err(io::Error::other("invalid terminal part")),
             })
-        })
+        }))
     }
     pub(super) fn write(out: &mut Spool, part: &Part) -> io::Result<()> {
         match part {
