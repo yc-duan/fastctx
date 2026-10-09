@@ -28,6 +28,36 @@ pub struct Dispatched {
     jobs: Mutex<HashMap<(ResidentId, JobId), Written>>,
 }
 
+/// Every machine `script` names literally after `on` must be one this
+/// machine can reach for `acting` now, known, online and allowed, before
+/// any of it runs: otherwise a script would leave half its work done
+/// (`world-run.md`, 去别的机器). A name in a variable is checked only when its
+/// `on` runs, and so is a machine that leaves after this.
+pub(crate) fn check_named(node: &Node, acting: &Acting, script: &str) -> Result<(), Failure> {
+    let mut checked = std::collections::HashSet::new();
+    for (name, line) in fastctx_hands::run::preread::machines_named(script) {
+        if !checked.insert(name.clone()) {
+            continue;
+        }
+        let refuse = |why: String| Failure::not_run(format!("nothing ran: line {line} names {name} after `on`, and {why}"));
+        let written = Written::parse(&name).map_err(|error| refuse(error.to_string()))?;
+        if node.is_here(&written) {
+            continue;
+        }
+        let speakers = node.speakers(acting, &written, Purpose::Hands).map_err(|failure| refuse(failure.to_string()))?;
+        let seen: Vec<(bool, Option<jiff::Timestamp>)> = speakers
+            .iter()
+            .filter_map(|(link, _)| link.view().member(&written.name).map(|member| (member.online, member.since)))
+            .collect();
+        if !seen.iter().any(|(online, _)| *online) {
+            let last_seen = seen.iter().filter_map(|(_, since)| *since).max();
+            let offline = fastctx_net::link::CallFailure::Offline { name: written.name.clone(), last_seen };
+            return Err(refuse(offline.to_string()));
+        }
+    }
+    Ok(())
+}
+
 /// Where `resident`, of this machine, works when it is not here.
 pub(crate) fn elsewhere(node: &Node, resident: &ResidentId) -> Option<Written> {
     let (about, _) = node.residents.about(resident)?;
@@ -221,15 +251,16 @@ pub(crate) async fn set(node: &Arc<Node>, resident: &ResidentId, works_on: Optio
             about.machine
         )));
     }
-    let works_on = match works_on {
-        Some(works_on) if node.is_here(&works_on) => None,
+    let works_on = works_on.filter(|works_on| !node.is_here(works_on));
+    match &works_on {
         Some(works_on) => {
-            node.speaking(&about.acting, &works_on, Purpose::Hands)
+            node.speaking(&about.acting, works_on, Purpose::Hands)
                 .map_err(|failure| Failure::not_run(format!("it cannot work on {works_on}: {failure}")))?;
-            Some(works_on)
         }
-        None => None,
-    };
+        None => node.works_here(&about.acting).map_err(|why| {
+            Failure::not_run(format!("it cannot work on {}, where it lives: {why}", node.machine()))
+        })?,
+    }
     node.residents
         .set_works_on(&node.world, resident, works_on.clone())
         .map_err(|error| Failure::new(format!("recording where it works: {error}")))?;
@@ -240,7 +271,9 @@ pub(crate) async fn set(node: &Arc<Node>, resident: &ResidentId, works_on: Optio
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
     {
-        let (spec, _) = crate::colleagues::thread_spec(node, resident, &about.origin, town.as_ref(), works_on.as_ref()).await?;
+        let (spec, _) =
+            crate::colleagues::thread_spec(node, resident, &about.origin, town.as_ref(), &about.acting, works_on.as_ref())
+                .await?;
         node.codex.adopt(thread, spec);
     }
     node.tools_changed(Some(resident));

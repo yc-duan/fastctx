@@ -135,6 +135,19 @@ impl Jobs {
         let deadline = started + wait;
         // Listening before the job exists, so its first change is not missed.
         let mut changes = self.changes.subscribe();
+        // The machines the script names after `on` are reached for whom the
+        // job works: its resident here, or the account a resident of
+        // another machine sent it for. A page's acts are its own.
+        let acting = match owner.resident() {
+            Some(address) if address.machine == *machine => {
+                node.residents.about(&address.resident).map(|(about, _)| about.acting)
+            }
+            Some(_) => account.as_ref().map(|account| fastctx_types::access::Acting::one(account.hub.clone(), account.account.clone())),
+            None => None,
+        };
+        if let Some(acting) = &acting {
+            crate::here::check_named(node, acting, &request.script)?;
+        }
         // Words for a resident of another machine that works here come
         // from where it lives.
         let mut words = owner.resident().map(|address| node.words.watch(address));

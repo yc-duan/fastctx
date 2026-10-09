@@ -41,7 +41,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "grant", "relays", "trust", "palette", "login", "token-login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "new-codex", "new-attach", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "grant", "relays", "trust", "palette", "login", "token-login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "new-codex", "new-attach", "new-lent", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -133,7 +133,7 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named === "drawer" || named === "palette" ? "home" : named === "service" ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" ? "new" : named === "manage" ? "about" : named === "token-login" ? "login" : named === "grant" || named === "relays" || named === "trust" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
+      const shown = named === "drawer" || named === "palette" ? "home" : named === "service" ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" ? "new" : named === "manage" ? "about" : named === "token-login" ? "login" : named === "grant" || named === "relays" || named === "trust" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
       const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
@@ -213,6 +213,10 @@ for (const session of sessions) {
       }
       if (session === "new-codex") {
         await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-choice=agent][data-value=codex]')?.click())", awaitPromise: true });
+      }
+      if (session === "new-lent") {
+        // Living on a machine whose agents alone are lent, it must work on another.
+        await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-choice=machine][data-value=gpu]')?.click())", awaitPromise: true });
       }
       if (session === "new-attach") {
         // A picture and a log dropped on the sheet wait there; beginning

@@ -124,6 +124,8 @@ export class NewTalk {
   /** Where it works and where its colleagues live, as written; null for
    *  the machine it lives on, and for no colleagues. */
   private worksOn: string | null = null;
+  /** It cannot work where it lives, so where it works must be chosen. */
+  private placeNeeded = false;
   private colleagues: string | null = null;
   private asked = new Map<string, Asked>();
   private busy = false;
@@ -461,6 +463,8 @@ export class NewTalk {
         }))
       : [];
     if (this.worksOn && !places.some((choice) => choice.value === this.worksOn)) this.worksOn = null;
+    // An account lent only the agents where it lives has it work elsewhere.
+    this.placeNeeded = !!lives && !places.some((choice) => choice.value === "");
     const homes: Choice[] = lives
       ? [
           { value: "", label: words.noColleagues },
@@ -526,7 +530,8 @@ export class NewTalk {
         : "",
       efforts.length > 1 ? row("effort", words.effort, efforts.map((e) => ({ value: e, label: e })), this.effort) : "",
       row("town", words.project, towns, this.town),
-      places.length > 1 ? row("works", words.worksOn, places, this.worksOn ?? "") : "",
+      places.length > 1 || this.placeNeeded ? row("works", words.worksOn, places, this.worksOn ?? "") : "",
+      this.placeNeeded && lives ? `<p class="choice-said">${escape(words.lentOnly(lives.written))}</p>` : "",
       homes.length > 1 ? row("colleagues", words.colleagues, homes, this.colleagues ?? "") : "",
       this.colleagues ? `<p class="choice-said">${escape(words.colleaguesWhat(this.colleagues))}</p>` : "",
     ].join("");
@@ -542,7 +547,7 @@ export class NewTalk {
   private drawStart(): void {
     const chosen = this.agents().find((choice) => choice.value === this.agent);
     const said = this.input.value.trim() !== "" || (this.tray?.count ?? 0) > 0;
-    this.start.disabled = this.busy || !this.machine || !!chosen?.disabled || !said;
+    this.start.disabled = this.busy || !this.machine || !!chosen?.disabled || !said || (this.placeNeeded && !this.worksOn);
   }
 
   /** Claude starts on a machine only once the user has let it work

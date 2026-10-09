@@ -163,10 +163,11 @@ export function openersOn(world: WorldNow | null, machine: Machine): Login[] {
 /** Where a conversation living on `lives` and working for `login` may
  *  run its commands: machines the account may work on, reached from where
  *  it lives. This computer is reached from elsewhere only where it is the
- *  account's own. */
+ *  account's own; where it lives is not among them when the account may
+ *  only use the agents there (`world-network.md`). */
 export function workPlaces(world: WorldNow | null, lives: Machine, login: Login | null): Machine[] {
   return machinesOf(world).filter((machine) => {
-    if (machine.written === lives.written) return true;
+    if (machine.written === lives.written) return !login || rightsOn(machine, login).hands;
     if (!login) return false;
     if (machine.here) return lives.here || owns(machine, login);
     return rightsOn(machine, login).hands;

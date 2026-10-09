@@ -37,7 +37,16 @@ pub async fn adopt(node: &Arc<Node>) {
             continue;
         }
         let Some(thread) = &about.session else { continue };
-        match crate::colleagues::thread_spec(node, &about.id, &about.origin, resident.town.as_ref(), about.works_on.as_ref()).await {
+        match crate::colleagues::thread_spec(
+            node,
+            &about.id,
+            &about.origin,
+            resident.town.as_ref(),
+            &about.acting,
+            about.works_on.as_ref(),
+        )
+        .await
+        {
             Ok((spec, _)) => node.codex.adopt(thread, spec),
             Err(failure) => {
                 node.log.line(format_args!("{} cannot be resumed: {failure}", about.id));
@@ -398,7 +407,8 @@ pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
         return;
     }
     let Some(thread) = &about.session else { return };
-    match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), about.works_on.as_ref()).await {
+    match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), &about.acting, about.works_on.as_ref()).await
+    {
         Ok((spec, _)) => node.codex.adopt(thread, spec),
         Err(failure) => node.log.line(format_args!("{id} moved, and its thread cannot be told: {failure}")),
     }

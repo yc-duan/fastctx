@@ -62,6 +62,8 @@ export interface NewTalkWords {
   noColleagues: string;
   /** What choosing where colleagues live means. */
   colleaguesWhat(machine: string): string;
+  /** Why it must work on another machine than the one it lives on. */
+  lentOnly(machine: string): string;
   agent: string;
   project: string;
   noProject: string;
@@ -102,6 +104,7 @@ export const zhNewTalk: NewTalkWords = {
   colleagues: "同事住哪台",
   noColleagues: "不请同事",
   colleaguesWhat: (machine) => `它能请同事来分担活儿，同事是住在 ${machine} 上的 Codex；以后在对话的详情里也能改、能关掉。`,
+  lentOnly: (machine) => `这个账号在 ${machine} 上只能用智能体、不能干活，所以对话要在另一台它能干活的机器上干活。`,
   agent: "用哪一位",
   project: "进哪个项目",
   noProject: "不进项目",
@@ -137,6 +140,7 @@ export const enNewTalk: NewTalkWords = {
   colleagues: "Colleagues on",
   noColleagues: "no colleagues",
   colleaguesWhat: (machine) => `It can ask colleagues to share the work: Codex living on ${machine}. You can change or turn this off later in the conversation's details.`,
+  lentOnly: (machine) => `This account may use the agents on ${machine} but not work on it, so the conversation works on another machine the account works on.`,
   agent: "With whom",
   project: "In which project",
   noProject: "No project",

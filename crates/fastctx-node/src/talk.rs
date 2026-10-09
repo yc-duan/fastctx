@@ -504,16 +504,19 @@ pub async fn open_here(
     attachments: Vec<Attachment>,
     choices: Choices,
 ) -> Result<(ResidentId, Landed), Failure> {
-    let works_on = match choices.works_on {
-        Some(works_on) if node.is_here(&works_on) => None,
+    let works_on = choices.works_on.filter(|works_on| !node.is_here(works_on));
+    match &works_on {
         Some(works_on) => {
-            node.speaking(&acting, &works_on, Purpose::Hands).map_err(|failure| {
+            node.speaking(&acting, works_on, Purpose::Hands).map_err(|failure| {
                 Failure::not_run(format!("it cannot work on {works_on}: {failure}"))
             })?;
-            Some(works_on)
         }
-        None => None,
-    };
+        // An account lent only the agents here has a conversation opened
+        // here work elsewhere (`world-network.md`, 一台机器给几个账号用).
+        None => node.works_here(&acting).map_err(|why| {
+            Failure::not_run(format!("{why}, so a conversation opened here for it works on another machine: choose one"))
+        })?,
+    }
     let opened = Opened { acting, works_on, colleagues: choices.colleagues };
     match agent.as_str() {
         "codex" => {}
@@ -533,7 +536,8 @@ pub async fn open_here(
     if let Some(lives_on) = &opened.colleagues {
         crate::colleagues::setting::keep(node, &id, lives_on)?;
     }
-    let (spec, heard) = crate::colleagues::thread_spec(node, &id, &origin, town.as_ref(), opened.works_on.as_ref()).await?;
+    let (spec, heard) =
+        crate::colleagues::thread_spec(node, &id, &origin, town.as_ref(), &opened.acting, opened.works_on.as_ref()).await?;
     let (thread, model) = node.codex.start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {

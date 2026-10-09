@@ -130,7 +130,7 @@ pub async fn ask_here(
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
-    let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), None).await?;
+    let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, None).await?;
     let (thread, model) = node.codex.start_thread(spec).await.map_err(|error| {
         Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
     })?;
@@ -228,6 +228,7 @@ pub async fn thread_spec(
     id: &ResidentId,
     origin: &Origin,
     town: Option<&TownName>,
+    acting: &Acting,
     works_on: Option<&Written>,
 ) -> Result<(ThreadSpec, Heard), Failure> {
     let here = node.machine();
@@ -250,7 +251,7 @@ pub async fn thread_spec(
     };
     let mut config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
-    let (developer_instructions, heard) = instructions(node, id, town, origin, works_on).await?;
+    let (developer_instructions, heard) = instructions(node, id, town, origin, acting, works_on).await?;
     Ok((ThreadSpec { cwd, developer_instructions, config, name }, heard))
 }
 
@@ -286,11 +287,16 @@ pub(crate) async fn instructions(
     id: &ResidentId,
     town: Option<&TownName>,
     origin: &Origin,
+    acting: &Acting,
     works_on: Option<&Written>,
 ) -> Result<(String, Heard), Failure> {
     let heard = heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
     let works_on = works_on.filter(|works_on| !node.is_here(works_on));
-    let words = words(id, &node.machine(), works_on, town, origin);
+    let lent = (works_on.is_none() && node.works_here(acting).is_err()).then_some(match acting {
+        Acting::Accounts { accounts } if accounts.len() > 1 => "The accounts you work for",
+        _ => "The account you work for",
+    });
+    let words = words(id, &node.machine(), works_on, lent, town, origin);
     let text = match town {
         Some(town) => format!("{words}\n\n{}", crate::town::map::brief(node, town).await?),
         None => words,
@@ -298,7 +304,16 @@ pub(crate) async fn instructions(
     Ok((text, heard))
 }
 
-fn words(id: &ResidentId, machine: &MachineName, works_on: Option<&Written>, town: Option<&TownName>, origin: &Origin) -> String {
+/// `lent` names whom it works for when they may use the agents here but
+/// not work here, so that none of its scripts starts here.
+fn words(
+    id: &ResidentId,
+    machine: &MachineName,
+    works_on: Option<&Written>,
+    lent: Option<&str>,
+    town: Option<&TownName>,
+    origin: &Origin,
+) -> String {
     let place = match (town, origin) {
         (Some(town), _) => format!(
             " You work in the user's project {town}: a fastctx project, which is not a folder or a repository but a named piece of work that can span several machines. Its map follows: what it is for, its machines, where its code and data are on each, and its journals."
@@ -314,18 +329,26 @@ fn words(id: &ResidentId, machine: &MachineName, works_on: Option<&Written>, tow
         Origin::User => "The user started this session from fastctx and talks to you here.".to_string(),
     };
     // Where it lives and where its shell is, when they differ (`world-run.md`,
-    // 这里).
-    let (shell, elsewhere) = match works_on {
-        Some(works_on) => (
-            format!("on {works_on}, where you work"),
+    // 这里), or that it has none where it lives (`world-network.md`,
+    // 一台机器给几个账号用).
+    let on = "`on MACHINE` in the script runs a part of it on another machine";
+    let (runs, elsewhere) = match (works_on, lent) {
+        (Some(works_on), _) => (
+            format!("It runs bash on {works_on}, where you work, and {on}"),
             format!(
                 " You work on {works_on}: your shell and the files you work on are there. Your own program runs on {machine}, so its built-in tools act on {machine}, not on {works_on}."
             ),
         ),
-        None => ("on this machine".to_string(), String::new()),
+        (None, Some(whom)) => (
+            "A script that is a single `on MACHINE` and nothing else, such as `on MACHINE <<'EOF'`, the script, then `EOF`, runs whole on that machine".to_string(),
+            format!(
+                " {whom} may use the agents on {machine} but not work on it, so no script of yours starts there: each goes whole to a machine you work on. Your own program runs on {machine}, so its built-in tools act on {machine}."
+            ),
+        ),
+        (None, None) => (format!("It runs bash on this machine, and {on}"), String::new()),
     };
     format!(
-        "You are {id}, an agent session on {machine}, one of the user's machines connected by fastctx.{elsewhere}{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. It runs bash {shell}, and `on MACHINE` in the script runs a part of it on another machine; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
+        "You are {id}, an agent session on {machine}, one of the user's machines connected by fastctx.{elsewhere}{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. {runs}; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
     )
 }
 

@@ -136,6 +136,38 @@ pub(super) fn check(source: &str) -> Result<(), Failure> {
     Ok(())
 }
 
+/// The machine names a script writes literally after `on`, where `on` is
+/// the command, each with its line (`world-run.md`, 去别的机器). A name in a
+/// variable, or anything inside a here-document's body, which runs where it
+/// is sent, is not among them; nor is anything in a script this scanner
+/// cannot follow, whose names are checked as each `on` runs.
+pub(super) fn on_machines(source: &str) -> Vec<(String, usize)> {
+    let mut scanner = Scanner {
+        source: source.as_bytes(),
+        offset: 0,
+        line: 1,
+        commands: Vec::new(),
+        documents: Vec::new(),
+        flows: Vec::new(),
+        word_owner: 0,
+        functions: std::collections::HashSet::new(),
+    };
+    if scanner.shell(None).is_err() {
+        return Vec::new();
+    }
+    let mut named = Vec::new();
+    for command in &scanner.commands {
+        let mut words = command.words.iter().skip_while(|word| word.assignment);
+        let (Some(on), Some(machine)) = (words.next(), words.next()) else { continue };
+        if on.text == b"on" && !on.quoted && !on.dynamic && !machine.dynamic && !machine.text.starts_with(b"-")
+            && let Ok(name) = String::from_utf8(machine.text.clone())
+        {
+            named.push((name, machine.line));
+        }
+    }
+    named
+}
+
 impl Scanner<'_> {
     fn at(&self, text: &[u8]) -> bool {
         self.source[self.offset..].starts_with(text)

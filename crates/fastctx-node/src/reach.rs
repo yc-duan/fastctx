@@ -117,6 +117,27 @@ impl Node {
         }
     }
 
+    /// Whether scripts may start on this computer for `acting`: for a
+    /// session the user opened here, or for an account logged in here or
+    /// that may work here. An account lent only the agents here works
+    /// elsewhere (`world-network.md`, 一台机器给几个账号用); when not, why.
+    pub(crate) fn works_here(&self, acting: &Acting) -> Result<(), String> {
+        let Acting::Accounts { accounts } = acting else { return Ok(()) };
+        let here = self.machine();
+        let may = accounts.iter().any(|account| {
+            self.link_of(&account.hub).is_some_and(|link| {
+                let view = link.view();
+                view.logged_in(&here, &account.account) || view.rights(&account.account, &here).hands
+            })
+        });
+        if may {
+            return Ok(());
+        }
+        let names: Vec<&str> = accounts.iter().map(|account| account.account.as_str()).collect();
+        let whom = if names.len() == 1 { "the account" } else { "the accounts" };
+        Err(format!("{whom} {} may not work on {here}", names.join(", ")))
+    }
+
     /// Calls `to`, for whom `acting` works, asking `purpose` of it: for each
     /// account `acting` may speak for there that may, in turn, until one is
     /// let in. What a call about a resident there may do depends on whom the

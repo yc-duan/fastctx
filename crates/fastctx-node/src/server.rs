@@ -800,6 +800,15 @@ async fn run(
     let reply = match crate::here::start(node, &resident, request) {
         (Some(works_on), request) => crate::here::run(node, &resident, town.clone(), request, &works_on).await?,
         (None, request) => {
+            // For an account lent only the agents here, nothing starts here
+            // (`world-network.md`, 一台机器给几个账号用).
+            if let Some((about, _)) = node.residents.about(&resident) {
+                node.works_here(&about.acting).map_err(|why| {
+                    Failure::not_run(format!(
+                        "nothing ran: {why}, where you live; only a script that is a single `on MACHINE` and nothing else runs, on that machine"
+                    ))
+                })?;
+            }
             let owner = Address { machine: here.clone(), resident: resident.clone() };
             node.jobs.run(node, owner.into(), town.clone(), request, None).await?.0
         }

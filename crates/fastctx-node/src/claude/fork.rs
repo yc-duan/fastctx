@@ -28,7 +28,8 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let id = node.residents.new_id(&source.host.agent)?;
     let super::Command { program, env, .. } = super::command(node)?;
     let (words, heard) =
-        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, source.works_on.as_ref()).await?;
+        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, source.works_on.as_ref())
+            .await?;
     let directory = node.world.resident(town.as_ref(), &id);
     fastctx_platform::ensure_private_dir(directory.path()).map_err(failure)?;
     let settings = directory.path().join("claude-settings.json");

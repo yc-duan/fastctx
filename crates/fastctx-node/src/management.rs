@@ -228,7 +228,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 && about.host.agent.as_str() == "codex"
                 && let Some(thread) = &about.session
             {
-                match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), about.works_on.as_ref()).await {
+                match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), &about.acting, about.works_on.as_ref()).await {
                     Ok((spec, _)) => node.codex.adopt(thread, spec),
                     Err(error) => step(
                         &mut result,
