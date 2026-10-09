@@ -44,11 +44,11 @@ fn typed() -> anyhow::Result<String> {
 /// A new password, typed twice to be sure of it.
 pub fn new_password(prompt: &str) -> anyhow::Result<String> {
     let first = read_password(prompt)?;
-    if !std::io::stdin().is_terminal() {
-        return Ok(first);
-    }
     if first.is_empty() {
         anyhow::bail!("the password is empty");
+    }
+    if !std::io::stdin().is_terminal() {
+        return Ok(first);
     }
     if read_password("Again: ")? != first {
         anyhow::bail!("the two passwords differ");
