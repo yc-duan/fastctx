@@ -114,7 +114,7 @@ Shell:
 - Each call is a fresh login shell, starting in the home directory, or in `cwd`. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together.
 - Calls share nothing, so you can make several at once, and call this tool from your scripts and subagents like any other. The steps of one piece of work belong in one script; separate pieces of work can go in separate calls.
 - Images a program draws with the kitty or iTerm2 terminal protocols come back as images.
-- By default a call waits 15 seconds for the script; `wait` sets another wait, up to 600 seconds, or 0 to answer at once. A script still running when the wait is over goes on by itself in the background as a job: it is never stopped for taking long, and the answer names the job and the file its output continues in.
+- A call answers as soon as the script ends. A script still running after 15 seconds, or after `wait` seconds when you set it (up to 600), goes on by itself in the background as a job: it is never stopped for taking long, and the answer names the job and the file its output continues in. `wait` 0 sends the script to the background at once, before it has printed anything: for work you will not wait for.
 ";
 
 const RUN_ENDS_WOKEN: &str = "\
@@ -126,7 +126,7 @@ const RUN_ENDS_ASKED: &str = "\
 - While jobs of yours run, each answer ends with a line naming them.";
 
 const WAIT_DESCRIPTION: &str = "\
-Seconds to wait for the script before answering: 15 by default, at most 600, 0 to answer at once. A script still running then goes on in the background by itself.";
+The most seconds to wait for the script; the call answers as soon as it ends. 15 by default, at most 600. A script still running then goes on in the background by itself; 0 sends it there at once, before any output.";
 
 const RUN_FILES: &str = "\
 Files:
