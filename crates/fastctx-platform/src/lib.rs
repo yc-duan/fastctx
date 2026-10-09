@@ -19,6 +19,7 @@ pub mod host_process;
 pub mod hostname;
 pub mod identity;
 pub mod ipc;
+pub mod job_membership;
 pub mod legacy_text;
 pub mod local_path;
 pub mod lock;

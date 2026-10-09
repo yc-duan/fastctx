@@ -110,6 +110,12 @@ export interface WorldWho {
 }
 
 export interface MachineFacts {
+  node_lifetime?: {
+    process: { pid: number; token: string };
+    starter: { process: { pid: number; token: string }; session: Host | null } | null;
+    supervised: boolean;
+    windows_job: { kill_on_close: boolean; breakaway_allowed: boolean; silent_breakaway: boolean } | null;
+  };
   shell: string;
   name: MachineName;
   os: string;

@@ -32,8 +32,8 @@ pub fn world_process_environment() -> io::Result<Vec<(OsString, OsString)>> {
     Ok(env)
 }
 
-/// Whether this process belongs to a job object, which ends it when the
-/// job ends. Never on Unix.
+/// Whether this process belongs to any job object. Job membership alone
+/// does not say whether closing a handle kills it. Never on Unix.
 pub fn in_job() -> io::Result<bool> {
     #[cfg(windows)]
     {

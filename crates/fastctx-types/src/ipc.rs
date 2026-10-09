@@ -71,6 +71,8 @@ pub enum Welcome {
     Accepted {
         machine: MachineName,
         version: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node_lifetime: Option<Box<crate::node_lifetime::NodeLifetime>>,
     },
     Refused {
         reason: String,

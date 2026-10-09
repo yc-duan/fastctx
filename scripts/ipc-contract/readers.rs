@@ -30,6 +30,22 @@ fn main() {
         let protocol = case["protocol"].as_u64().unwrap();
         let value = case["value"].clone();
         let answer = match case["mode"].as_str().unwrap() {
+            "welcome" => {
+                let current: fastctx_types::ipc::Welcome = serde_json::from_value(value).unwrap();
+                let wire = serde_json::to_value(current).unwrap();
+                macro_rules! welcome {
+                    ($version:ident) => {
+                        serde_json::to_value(serde_json::from_value::<$version::ipc::Welcome>(wire).unwrap()).unwrap()
+                    };
+                }
+                let read = match protocol {
+                    5 => welcome!(v5),
+                    6 => welcome!(v6),
+                    7 => welcome!(v7),
+                    _ => panic!("no frozen reader for {protocol}"),
+                };
+                json!({"read": read})
+            }
             "request" => {
                 let old = decode(protocol, value, true);
                 let fastctx_types::ipc::ClientFrame::Call { call, .. } = serde_json::from_value(old).unwrap();

@@ -255,6 +255,23 @@ fn nodes() -> Vec<NodesReply> {
                         case_sensitive: false,
                         version: "fixture-version".into(),
                         shell: String::new(),
+                        node_lifetime: Some(Box::new(fastctx_types::node_lifetime::NodeLifetime {
+                            process: fastctx_types::ProcessIdentity { pid: 123, token: "node-created".into() },
+                            starter: Some(fastctx_types::node_lifetime::NodeStarter {
+                                process: fastctx_types::ProcessIdentity { pid: 122, token: "serve-created".into() },
+                                session: Some(Host {
+                                    agent: "codex".parse().unwrap(),
+                                    client: "codex-fixture".into(),
+                                    version: "fixture-version".into(),
+                                }),
+                            }),
+                            supervised: false,
+                            windows_job: Some(fastctx_types::node_lifetime::WindowsJob {
+                                kill_on_close: true,
+                                breakaway_allowed: false,
+                                silent_breakaway: false,
+                            }),
+                        })),
                     }),
                 },
                 Node {
@@ -290,6 +307,7 @@ fn nodes() -> Vec<NodesReply> {
                         case_sensitive: true,
                         version: "fixture-version".into(),
                         shell: String::new(),
+                        node_lifetime: None,
                     }),
                 },
                 Node {

@@ -274,6 +274,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         case_sensitive: false,
         version: "1.0.0".into(),
         shell: String::new(),
+        node_lifetime: None,
     };
     NodesReply {
         machine: machine("desktop"),

@@ -35,6 +35,7 @@ mod jobs;
 mod leases;
 mod ledger;
 mod letters;
+mod lifetime;
 mod log;
 mod look;
 mod machine;
@@ -141,6 +142,7 @@ pub(crate) struct Node {
     handoff: Arc<handoff::Handoff>,
     renewal: renewal::Startup,
     supervised: bool,
+    lifetime: fastctx_types::node_lifetime::NodeLifetime,
 }
 
 impl Node {
@@ -252,6 +254,13 @@ pub async fn run_replacing(
     std::panic::set_hook(Box::new(move |info| panics.line(format_args!("panicked: {info}"))));
     let machine = machine::name(&world)?;
     log.line(format_args!("node {} starting as {machine}", env!("CARGO_PKG_VERSION")));
+    let lifetime = lifetime::inspect(supervision.is_some())
+        .inspect_err(|error| log.line(format_args!("could not check the node's process containment: {error}")))
+        .context("checking the node's process containment")?;
+    if let Some(warning) = lifetime.warning() {
+        log.line(&warning);
+        eprintln!("fastctx: {warning}");
+    }
     let (fastctx, kept) = own::pin(&world).context("copying fastctx under the World")?;
     for (path, error) in &kept {
         log.line(format_args!("kept an older copy of fastctx, {}: {error}", path.display()));
@@ -329,6 +338,7 @@ pub async fn run_replacing(
         handoff: Arc::new(handoff::Handoff::default()),
         renewal,
         supervised: supervision.is_some(),
+        lifetime,
     });
     for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
         node.log.line(format_args!("could not finish a ledger entry: {problem}"));

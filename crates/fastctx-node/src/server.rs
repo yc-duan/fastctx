@@ -52,7 +52,11 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         writer.send(&json(&Welcome::Refused { reason, mismatch })).await?;
         return Ok(());
     }
-    let welcome = Welcome::Accepted { machine: node.machine(), version: env!("CARGO_PKG_VERSION").to_string() };
+    let welcome = Welcome::Accepted {
+        machine: node.machine(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        node_lifetime: Some(Box::new(node.lifetime.clone())),
+    };
     writer.send(&json(&welcome)).await?;
     // The residents that arrived on this connection are here until it
     // closes, however it closes; what was collected for them and not taken
@@ -350,6 +354,9 @@ async fn collect_notes(
     let (node, id) = (node.clone(), resident.clone());
     let (notes, heard) = blocking("reading the town", move || {
         let (mut notes, heard) = crate::town::notes::notes(&node, &id)?;
+        if let Some(warning) = node.lifetime.warning() {
+            notes.push(format!("=== {warning} ==="));
+        }
         notes.extend(crate::jobs::still_running(&node.world, &node.machine(), &id, answering.as_ref())?);
         Ok((notes, heard))
     })
@@ -939,7 +946,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
         name: here.clone(),
         online: Some(true),
         since: None,
-        facts: Ok(crate::world::facts(&here)),
+        facts: Ok(crate::world::facts(node)),
         revoked: None,
         device: false,
         standing: link.as_ref().and_then(|link| link.me()).as_ref().map(standing),

@@ -1,8 +1,9 @@
 //! Starting a process that outlives its starter.
 //!
-//! A detached process shares nothing with the process that started it: not
-//! its session or console, not its environment, not a single inherited
-//! handle, and nothing to be reaped. The environment is given whole by the
+//! A detached process inherits no console, environment or handles and
+//! leaves nothing to be reaped. Windows host job restrictions still apply:
+//! detaching from a console does not detach from a job. The environment is
+//! given whole by the
 //! caller because the starter's own may belong to someone else: a client
 //! started inside an agent's session carries that session's variables, and
 //! a node that inherited them would hand them to every command it runs.
@@ -22,9 +23,9 @@ use fastctx_types::ProcessIdentity;
 pub struct DetachedProcess {
     /// `None` when it had already ended by the time it was looked at.
     pub identity: Option<ProcessIdentity>,
-    /// Windows put the starter in a job that forbids leaving it (the Task
-    /// Scheduler does this to its tasks): the new process is in that job
-    /// too and ends when the job ends.
+    /// The new process still belongs to a Windows job. A successful
+    /// breakaway may leave it in an ancestor job; killing that job kills
+    /// this process too. Closing a handle kills it only with kill-on-close.
     pub ends_with_starters_job: bool,
 }
 
@@ -143,8 +144,8 @@ mod imp {
     use std::path::Path;
     use std::ptr;
 
-    use fastctx_types::ProcessIdentity;
     use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED};
+    use windows_sys::Win32::System::JobObjects::IsProcessInJob;
     use windows_sys::Win32::System::Threading::{
         CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
         DETACHED_PROCESS, PROCESS_INFORMATION, STARTUPINFOW,
@@ -161,17 +162,23 @@ mod imp {
     ) -> io::Result<DetachedProcess> {
         let line = command_line(program.as_os_str(), args)?;
         let block = environment_block(env);
-        let (identity, ends_with_starters_job) = match create(program, &line, cwd, &block, true) {
-            Ok(identity) => (identity, false),
+        let info = match create(program, &line, cwd, &block, true) {
+            Ok(info) => info,
             Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
-                (create(program, &line, cwd, &block, false)?, true)
+                create(program, &line, cwd, &block, false)?
             }
             Err(error) => return Err(error),
         };
-        Ok(DetachedProcess { identity: Some(identity), ends_with_starters_job })
+        observe(info)
     }
 
-    fn create(program: &Path, line: &[u16], cwd: &Path, block: &[u16], breakaway: bool) -> io::Result<ProcessIdentity> {
+    fn create(
+        program: &Path,
+        line: &[u16],
+        cwd: &Path,
+        block: &[u16],
+        breakaway: bool,
+    ) -> io::Result<PROCESS_INFORMATION> {
         let application = wide(program);
         let mut line = line.to_vec();
         let directory = wide(cwd);
@@ -204,15 +211,28 @@ mod imp {
         if created == 0 {
             return Err(io::Error::last_os_error());
         }
+        Ok(info)
+    }
+
+    // A failed observation after creation must never retry process creation.
+    fn observe(info: PROCESS_INFORMATION) -> io::Result<DetachedProcess> {
         // The handle keeps the creation time readable even if the process
         // has already exited.
         let identity = crate::identity::of_handle(info.hProcess, info.dwProcessId);
+        let mut in_job = 0;
+        // SAFETY: the process handle remains open; NULL asks about any job
+        // in the child's hierarchy, including a nonbreakaway ancestor.
+        let membership = if unsafe { IsProcessInJob(info.hProcess, ptr::null_mut(), &mut in_job) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(in_job != 0)
+        };
         // SAFETY: handles returned by CreateProcessW, closed once; closing
         // them does not affect the process.
         unsafe {
             CloseHandle(info.hThread);
             CloseHandle(info.hProcess);
         }
-        identity
+        Ok(DetachedProcess { identity: Some(identity?), ends_with_starters_job: membership? })
     }
 }

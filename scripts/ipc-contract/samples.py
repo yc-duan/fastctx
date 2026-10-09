@@ -171,6 +171,11 @@ def page_identity(value):
 def samples(root):
     fixtures = json.loads((root / "gui/fixtures/wire.json").read_text(encoding="utf-8"))
     for protocol in [5, 6, 7]:
+        for lifetime in [None, fixtures["world"]["nodes"][0]["machines"][0]["facts"]["Ok"]["node_lifetime"]]:
+            welcome = {"kind": "accepted", "machine": "desktop", "version": "1.0.0"}
+            if lifetime is not None:
+                welcome["node_lifetime"] = lifetime
+            yield {"mode": "welcome", "protocol": protocol, "value": welcome}
         for reply in replies(fixtures):
             if protocol == 5 and reply["reply"] in ["page", "pages", "machines"]:
                 continue  # These calls did not exist in the frozen protocol-5 binary.
