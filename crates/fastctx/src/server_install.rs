@@ -1,4 +1,4 @@
-//! Installing a verified release as a persistent Linux World member.
+//! Installing a verified release as a Linux machine of an account.
 //! Each operation is repeatable: atomic placement, the node's enrollment,
 //! and the system service manager's registration. No enrollment receipt is needed.
 
@@ -17,10 +17,11 @@ use fastctx_types::{Call, Reply};
 
 #[derive(Subcommand)]
 pub enum ServerCommand {
-    /// Install this verified release, join with the code, and enable the
-    /// node at boot. Only service registration asks for sudo.
+    /// Install this verified release, log in with the token as a machine of
+    /// its account, and enable the node at boot. Only service registration
+    /// asks for sudo.
     Install {
-        /// An opaque World invitation; interpreted by the node.
+        /// A one-time enrollment token; interpreted by the node.
         code: String,
         #[arg(long)]
         name: Option<MachineName>,
@@ -53,9 +54,9 @@ fn install(code: String, name: Option<MachineName>) -> anyhow::Result<()> {
     } else {
         println!("Installed fastctx {} at {}", env!("CARGO_PKG_VERSION"), installed.display());
     }
-    match crate::ask::call(Call::Join { code, name })?.0 {
-        Reply::Joined { world, name, already: true } => println!("This machine is {name} in the World {world} already"),
-        Reply::Joined { world, name, .. } => println!("Joined the World {world} as {name}"),
+    // The same token again, from this computer, finds it logged in already.
+    match crate::ask::call(Call::LoginWithToken { token: code, name })?.0 {
+        Reply::LoggedIn { hub, name, account } => println!("This machine is {name}, a machine of {account} on the hub {hub}"),
         other => bail!("the node answered something else: {other:?}"),
     }
     let service = Service::new(Kind::Node, &installed, &root);

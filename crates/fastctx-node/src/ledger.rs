@@ -37,6 +37,7 @@ use names::Place;
 
 pub(crate) mod names;
 pub(crate) mod query;
+pub(crate) mod third;
 
 pub use query::query;
 
@@ -272,7 +273,7 @@ pub fn joined(node: &Arc<Node>, hub: &HubId) {
 /// registered under at `hub`: each entry written to the hub again, in
 /// order, by this machine under the name it has now. Returns what could
 /// not be carried.
-async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
+pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
     let Some(link) = node.link_of(hub) else { return Vec::new() };
     if let Err(error) = link.refresh().await {
         return vec![format!("asking the hub: {error}")];
@@ -285,6 +286,10 @@ async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
     let towns = match node.world.towns() {
         Ok(towns) => towns,
         Err(error) => return vec![format!("reading the projects: {error}")],
+    };
+    let key = match own_key(&node.world) {
+        Ok(key) => key,
+        Err(error) => return vec![format!("this computer's key: {error}")],
     };
     let _syncing = node.syncing.lock().await;
     let mut problems = Vec::new();
@@ -305,7 +310,7 @@ async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
                 continue;
             }
         };
-        if let Err(error) = carry_town(node, &link, &home, &town, &place.town, &entries).await {
+        if let Err(error) = carry_town(node, &link, &home, &town, &place.town, &entries, &key.public()).await {
             problems.push(error);
             continue;
         }
@@ -323,6 +328,11 @@ async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
     problems
 }
 
+/// Entries this computer wrote, signed with `own`, are carried under the
+/// name it has now; those of other machines, kept from the network's third
+/// version (`third`), as their authors wrote them. Several computers may
+/// carry one such project at once: each writes an entry only when the
+/// hub has the ones before it, and one another wrote first is theirs.
 async fn carry_town(
     node: &Arc<Node>,
     link: &Link,
@@ -330,6 +340,7 @@ async fn carry_town(
     town: &TownName,
     id: &TownId,
     entries: &[(u64, Entry, Signed)],
+    own: &fastctx_net::sign::PublicKey,
 ) -> Result<(), String> {
     let here = node.machine();
     let open = fastctx_net::wire::Change::OpenProject { town: id.clone(), name: town.clone() };
@@ -338,25 +349,38 @@ async fn carry_town(
     {
         return Err(format!("{town} was not carried: {error}"));
     }
-    // A carry cut short wrote some of them already.
-    let written = link.ledger_catalog().await?.into_iter().find(|(town, _)| town == id).map(|(_, latest)| latest).unwrap_or(0);
-    for (_, entry, _) in entries.iter().skip(written as usize) {
-        // Each entry as the hub gets it: by this machine, under the name it
-        // has now.
+    let latest = |catalog: Vec<(TownId, u64)>| catalog.into_iter().find(|(town, _)| town == id).map(|(_, latest)| latest).unwrap_or(0);
+    // A carry cut short, or another computer's, wrote some of them already.
+    let mut written = latest(link.ledger_catalog().await?);
+    for (index, (_, entry, _)) in entries.iter().enumerate() {
+        let index = index as u64;
+        if index < written {
+            continue;
+        }
+        // Each entry as the hub gets it: by this machine; one it wrote, under
+        // the name it has now.
         let old = &entry.author;
-        let renamed = |name: &MachineName| if name == old { here.clone() } else { name.clone() };
+        let ours = entry.key == *own && *old != here;
+        let renamed = |name: &MachineName| if ours && name == old { here.clone() } else { name.clone() };
         let mut files = Vec::new();
         for file in &entry.files {
-            let bytes = if *old == here {
-                file.bytes.clone()
-            } else {
+            let bytes = if ours {
                 Bytes(crate::town::rename::file(&file.path, &file.bytes.0, old, &here)?)
+            } else {
+                file.bytes.clone()
             };
             files.push(File { path: file.path.clone(), bytes });
         }
         let mut carried = link.entry(id, entry.machines.as_ref().map(|machines| machines.iter().map(renamed).collect()), files);
         carried.at = entry.at;
-        link.ledger_write(id, link.sign_entry(&carried)).await.map_err(|error| format!("carrying {town}: {error}"))?;
+        if let Err(error) = link.ledger_write(id, link.sign_entry(&carried)).await {
+            written = latest(link.ledger_catalog().await?);
+            if written > index {
+                continue;
+            }
+            return Err(format!("carrying {town}: {error}"));
+        }
+        written = index + 1;
     }
     Ok(())
 }

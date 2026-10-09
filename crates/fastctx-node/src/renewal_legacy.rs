@@ -1,5 +1,5 @@
-//! The frozen protocol-5/6 subset used by already running tool adapters and
-//! job supervisors. A GUI is never admitted through this compatibility path.
+//! The frozen protocol-5/6/7 subset used by already running tool adapters
+//! and job supervisors. A GUI is never admitted through this compatibility path.
 //! It can discover the mismatch and renew through the maintenance envelope.
 
 use fastctx_types::ipc::Peer;
@@ -14,7 +14,7 @@ use std::borrow::Cow;
 mod page_identity;
 
 pub(crate) fn enabled(protocol: u32, peer: &Peer) -> bool {
-    matches!(protocol, 5 | 6) && self::peer(peer)
+    matches!(protocol, 5..=7) && self::peer(peer)
 }
 
 pub(crate) fn peer(peer: &Peer) -> bool {

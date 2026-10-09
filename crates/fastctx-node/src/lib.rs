@@ -340,6 +340,15 @@ pub async fn run_replacing(
         supervised: supervision.is_some(),
         lifetime,
     });
+    // The third version's projects are kept as this computer's own, to be
+    // carried into its account at its hub.
+    let (kept, problems) = ledger::third::migrate(&node.world, &node.machine()).context("keeping the third version's projects")?;
+    for town in kept {
+        node.log.line(format_args!("kept {town}, a project of the network's third version, to carry into the hub"));
+    }
+    for problem in problems {
+        node.log.line(format_args!("could not keep a project of the network's third version: {problem}"));
+    }
     for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
         node.log.line(format_args!("could not finish a ledger entry: {problem}"));
     }

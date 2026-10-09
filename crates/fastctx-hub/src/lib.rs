@@ -22,6 +22,7 @@ mod log;
 mod login;
 mod manage;
 pub mod relay;
+pub mod third;
 mod releases;
 mod store;
 mod views;
@@ -77,12 +78,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
     }
     let certificate = HubCertificate::generate().map_err(anyhow::Error::msg)?;
     let secrets = HubSecrets::generate();
-    // The administrator's password is set as any password is, both halves
-    // of OPAQUE in this process: the hub keeps only what it leaves.
-    let (state, request) = fastctx_net::login::password_start(&new.password).map_err(anyhow::Error::msg)?;
-    let response = secrets.register_start(&new.admin, &request).map_err(anyhow::Error::msg)?;
-    let upload = fastctx_net::login::password_finish(state, &new.password, &response).map_err(anyhow::Error::msg)?;
-    let record = HubSecrets::register_finish(&upload).map_err(anyhow::Error::msg)?;
+    let record = password_record(&secrets, &new.admin, &new.password)?;
     let mut book = Book::default();
     book.directory.accounts.push(Account {
         name: new.admin.clone(),
@@ -112,13 +108,19 @@ pub fn reset_password(dir: &Path, account: &AccountName, password: &str) -> anyh
         anyhow::bail!("there is no account {account} on this hub");
     }
     let secrets = HubSecrets::from_bytes(&std::fs::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
+    store.book.passwords.insert(account.clone(), Bytes(password_record(&secrets, account, password)?));
+    store.save_book()?;
+    Ok(())
+}
+
+/// What setting `account`'s password to `password` leaves with the hub: a
+/// password is set as any is, both halves of OPAQUE here, and the hub keeps
+/// only what it leaves.
+fn password_record(secrets: &HubSecrets, account: &AccountName, password: &str) -> anyhow::Result<Vec<u8>> {
     let (state, request) = fastctx_net::login::password_start(password).map_err(anyhow::Error::msg)?;
     let response = secrets.register_start(account, &request).map_err(anyhow::Error::msg)?;
     let upload = fastctx_net::login::password_finish(state, password, &response).map_err(anyhow::Error::msg)?;
-    let record = HubSecrets::register_finish(&upload).map_err(anyhow::Error::msg)?;
-    store.book.passwords.insert(account.clone(), Bytes(record));
-    store.save_book()?;
-    Ok(())
+    HubSecrets::register_finish(&upload).map_err(anyhow::Error::msg)
 }
 
 /// The hub's settings and the pin of its certificate.

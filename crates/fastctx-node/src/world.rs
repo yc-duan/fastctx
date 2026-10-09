@@ -635,6 +635,13 @@ impl fastctx_net::link::Node for Handler {
         let Some(node) = self.node.upgrade() else { return };
         let hub = self.hub.clone();
         tokio::spawn(async move {
+            // Connected again: the projects this computer kept on no hub go
+            // into its account first.
+            if town.is_none() {
+                for problem in crate::ledger::carry(&node, &hub).await {
+                    node.log.line(format_args!("carrying a project into the hub: {problem}"));
+                }
+            }
             if let Err(error) = crate::ledger::sync(&node, &hub, town).await {
                 node.log.line(format_args!("taking the projects' ledgers: {error}"));
             }

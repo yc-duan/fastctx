@@ -165,6 +165,21 @@ pub enum HubCommand {
         #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
+    /// Make the hub kept in --dir, of the network's third version, a hub of
+    /// the fourth: its id and certificate stay, so every machine reconnects
+    /// with the key it has; its machines and devices go into one new
+    /// account, an administrator, whose password is asked for. The third
+    /// version's files are kept beside it. The hub must not be running.
+    Migrate {
+        /// The hub's short name: lowercase letters, digits and hyphens.
+        #[arg(long)]
+        name: HubName,
+        /// The account the machines go into.
+        #[arg(long)]
+        admin: AccountName,
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
     /// The hub's name, id, addresses and certificate pin.
     Show {
         #[arg(long, value_parser = crate::paths::parser())]
@@ -326,6 +341,33 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             let password = crate::secret::new_password(&format!("A new password for {account}: "))?;
             fastctx_hub::reset_password(&dir(chosen), &account, &password)?;
             println!("{account}'s password is set; devices already logged in stay logged in");
+        }
+        HubCommand::Migrate { name, admin, dir: chosen } => {
+            let dir = dir(chosen);
+            let file_name = dir.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            let fourth = dir.with_file_name(format!("{file_name}-fourth"));
+            let third = dir.with_file_name(format!("{file_name}-third"));
+            if third.exists() {
+                anyhow::bail!("{} exists already: the hub was migrated once", third.display());
+            }
+            let password = crate::secret::new_password(&format!("A password for {admin}: "))?;
+            let migrated = fastctx_hub::third::Migrated { name: name.clone(), admin: admin.clone(), password };
+            let report = fastctx_hub::third::migrate(&dir, &fourth, migrated)?;
+            std::fs::rename(&dir, &third)?;
+            std::fs::rename(&fourth, &dir)?;
+            let list = |names: &[MachineName]| names.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+            println!("the hub {name} in {} is of the fourth version; its administrator is {admin}", dir.display());
+            println!("machines of {admin}: {}", list(&report.machines));
+            if !report.devices.is_empty() {
+                println!("devices logged in to {admin}: {}", list(&report.devices));
+            }
+            for (member, why) in &report.left {
+                println!("left out {member}: {why}");
+            }
+            if report.letters > 0 {
+                println!("{} letters the third version still held stay in {}", report.letters, third.display());
+            }
+            eprintln!("The third version's files are in {}. Start the hub again; each machine reconnects once it runs the fourth version.", third.display());
         }
         HubCommand::Show { dir: chosen } => {
             let (hub, pin) = fastctx_hub::describe(&dir(chosen))?;

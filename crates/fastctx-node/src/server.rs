@@ -79,7 +79,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer
                 .send(&json(&NodeFrame::Reply {
                     id,
-                    reply: Err(Failure::new("this call is outside the frozen protocol-5/6 tool and job contract")),
+                    reply: Err(Failure::new("this call is outside the frozen protocol-5/6/7 tool and job contract")),
                 }))
                 .await?;
             return writer.drain().await;
