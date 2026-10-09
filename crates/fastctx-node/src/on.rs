@@ -876,20 +876,22 @@ async fn hand_over(
         // last byte before, so reading the logs after it misses nothing.
         let record = crate::jobs::read(record_path).await.map_err(|failure| failure.message)?;
         let errors = record.stderr.clone();
+        let boundary = record.output_drained.filter(|_| record.end.is_none() && through(&record).is_some());
         let mut sent = false;
-        if let Some(bytes) = read_from(&record.output, out).await? {
+        if let Some(bytes) = read_from(&record.output, out, boundary.map(|b| b.stdout)).await? {
             out += bytes.len() as u64;
             sink.bytes(false, &bytes).await?;
             sent = true;
         }
         if let Some(path) = &errors
-            && let Some(bytes) = read_from(path, err).await?
+            && let Some(bytes) = read_from(path, err, boundary.map(|b| b.stderr)).await?
         {
             err += bytes.len() as u64;
             sink.bytes(true, &bytes).await?;
             sent = true;
         }
-        if sent {
+        let drained = boundary.is_some_and(|b| out >= b.stdout && err >= b.stderr);
+        if sent && !drained {
             quiet_since = Instant::now();
             continue;
         }
@@ -918,13 +920,14 @@ async fn hand_over(
 }
 
 /// How the job stands for `on`, once its shell has exited and its output
-/// has ended, or it ended otherwise: an `on` ends as a subshell does.
+/// has drained, or it ended otherwise: an `on` ends as a subshell does.
 fn through(record: &JobRecord) -> Option<OnEnd> {
     let status = record.exit.map(|exit| exit.status);
     // Output the log could not take was never handed over: the `on` did not
     // carry the job through, whatever its code.
     if let Some(lost) = record.output_lost.as_ref().or(record.stderr_lost.as_ref())
-        && record.end.is_some()
+        && (record.end.is_some()
+            || (record.output_drained.is_some() && record.remaining.is_some_and(|remaining| remaining > 0)))
     {
         let error = format!("its output there stopped being kept after {} bytes: {}", lost.kept_bytes, lost.error);
         return Some(OnEnd::Otherwise { how: EndedHow::Failed { error }, status });
@@ -935,8 +938,11 @@ fn through(record: &JobRecord) -> Option<OnEnd> {
             (how, status) => OnEnd::Otherwise { how: how.clone(), status },
         });
     }
-    match (status, &record.output_ended_at) {
-        (Some(status), Some(_)) if record.remaining.is_some_and(|remaining| remaining > 0) => {
+    match status {
+        Some(status)
+            if (record.output_drained.is_some() || record.output_ended_at.is_some())
+                && record.remaining.is_some_and(|remaining| remaining > 0) =>
+        {
             Some(OnEnd::Exited { status, remaining: record.remaining.expect("checked") })
         }
         _ => None,
@@ -945,7 +951,7 @@ fn through(record: &JobRecord) -> Option<OnEnd> {
 
 /// Up to `CHUNK` bytes of the file at `path` from `offset`, when there are
 /// any.
-async fn read_from(path: &str, offset: u64) -> Result<Option<Vec<u8>>, String> {
+async fn read_from(path: &str, offset: u64, through: Option<u64>) -> Result<Option<Vec<u8>>, String> {
     let path = PathBuf::from(path);
     tokio::task::spawn_blocking(move || -> std::io::Result<Option<Vec<u8>>> {
         let mut file = match std::fs::File::open(&path) {
@@ -953,11 +959,12 @@ async fn read_from(path: &str, offset: u64) -> Result<Option<Vec<u8>>, String> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
-        if file.metadata()?.len() <= offset {
+        let end = through.unwrap_or(file.metadata()?.len());
+        if end <= offset {
             return Ok(None);
         }
         file.seek(SeekFrom::Start(offset))?;
-        let mut buffer = vec![0u8; CHUNK];
+        let mut buffer = vec![0u8; (end - offset).min(CHUNK as u64) as usize];
         let read = file.read(&mut buffer)?;
         buffer.truncate(read);
         Ok((read > 0).then_some(buffer))

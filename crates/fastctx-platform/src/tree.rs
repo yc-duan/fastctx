@@ -30,8 +30,8 @@ pub struct ProcessTree(imp::Tree);
 
 /// Reading ends owned by the caller; EOF means every writer has closed.
 pub struct TreeOutput {
-    pub stdout: io::PipeReader,
-    pub stderr: Option<io::PipeReader>,
+    pub stdout: crate::output_pipe::Reader,
+    pub stderr: Option<crate::output_pipe::Reader>,
 }
 
 impl ProcessTree {
@@ -42,7 +42,7 @@ impl ProcessTree {
         args: &[&OsStr],
         cwd: &Path,
         env: &[(OsString, OsString)],
-    ) -> io::Result<(Self, io::PipeReader)> {
+    ) -> io::Result<(Self, crate::output_pipe::Reader)> {
         let (tree, output) =
             Self::spawn_with_io(program, args, cwd, env, fastctx_types::run::OutputMode::Merged, None)?;
         Ok((tree, output.stdout))
@@ -58,11 +58,11 @@ impl ProcessTree {
         mode: fastctx_types::run::OutputMode,
         stdin: Option<&Path>,
     ) -> io::Result<(Self, TreeOutput)> {
-        let (stdout, writer) = io::pipe()?;
+        let (stdout, writer) = crate::output_pipe::pipe()?;
         let (stderr, error) = match mode {
             fastctx_types::run::OutputMode::Merged => (None, writer.try_clone()?),
             fastctx_types::run::OutputMode::Separate => {
-                let (reader, writer) = io::pipe()?;
+                let (reader, writer) = crate::output_pipe::pipe()?;
                 (Some(reader), writer)
             }
         };
@@ -78,6 +78,13 @@ impl ProcessTree {
     /// Waits for the program itself to exit.
     pub fn wait_main(&self) -> io::Result<ExitStatus> {
         self.0.wait_main()
+    }
+
+    /// Counts survivors after `wait_main`, before starting `wait_empty`.
+    /// On Linux this also reaps exited children so an empty sampled process
+    /// graph is never mistaken for the kernel's proof that no child remains.
+    pub fn remaining(&self) -> io::Result<usize> {
+        self.0.remaining()
     }
 
     /// Waits until no process of the tree remains, after `wait_main`.
@@ -193,6 +200,26 @@ mod imp {
             Ok(())
         }
 
+        pub fn remaining(&self) -> io::Result<usize> {
+            loop {
+                if reap_ready()? {
+                    return Ok(0);
+                }
+                let count = self.count()?;
+                if reap_ready()? {
+                    return Ok(0);
+                }
+                if count > 0 {
+                    return Ok(count);
+                }
+                // Reparenting can temporarily disconnect the sampled /proc
+                // graph; exiting children may not yet be waitable. Neither
+                // proves an empty tree. Reap and observe again, without a
+                // guessed grace period or counting a dying child as alive.
+                std::thread::yield_now();
+            }
+        }
+
         pub fn count(&self) -> io::Result<usize> {
             Ok(descendants()?.iter().filter(|process| !process.is_ending()).count())
         }
@@ -232,6 +259,27 @@ mod imp {
             Some(libc::ECHILD) => Ok(true),
             Some(libc::EINTR) => Ok(false),
             _ => Err(io::Error::last_os_error()),
+        }
+    }
+
+    /// Reaps all available statuses; true only for the kernel's ECHILD.
+    fn reap_ready() -> io::Result<bool> {
+        loop {
+            let mut status = 0;
+            // SAFETY: the main status has already been consumed and no other
+            // thread reaps until remaining returns.
+            let pid = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+            if pid > 0 {
+                continue;
+            }
+            if pid == 0 {
+                return Ok(false);
+            }
+            match io::Error::last_os_error().raw_os_error() {
+                Some(libc::ECHILD) => return Ok(true),
+                Some(libc::EINTR) => continue,
+                _ => return Err(io::Error::last_os_error()),
+            }
         }
     }
 
@@ -409,6 +457,10 @@ mod imp {
                 count += 1;
             }
             Ok(count)
+        }
+
+        pub fn remaining(&self) -> io::Result<usize> {
+            self.count()
         }
 
         pub fn kill(&self) -> io::Result<()> {

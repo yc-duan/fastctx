@@ -14,7 +14,7 @@ use fastctx_types::Call;
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::run::{
-    Ended, EndedHow, ExitStatus, Exited, JobRecord, OutputLost, OutputMode, StopRequest, StopRequested,
+    Ended, EndedHow, ExitStatus, Exited, JobRecord, OutputDrained, OutputLost, OutputMode, StopRequest, StopRequested,
 };
 use jiff::Timestamp;
 use tokio::sync::mpsc;
@@ -91,6 +91,12 @@ struct Job {
 
 enum Event {
     Main(io::Result<std::process::ExitStatus>),
+    Drained {
+        stderr: bool,
+        bytes: u64,
+        lost: Option<OutputLost>,
+    },
+    Remaining(io::Result<usize>),
     Output {
         stderr: bool,
         result: io::Result<Option<OutputLost>>,
@@ -143,32 +149,48 @@ impl Job {
         let tree = Arc::new(tree);
         self.record.pid = Some(tree.main_pid());
         let (sender, mut events) = mpsc::unbounded_channel();
+        let (resume, after_drain) = std::sync::mpsc::channel();
+        let mut resume = Some(resume);
+        let mut checkpoints = vec![output.stdout.checkpoint()];
         let mut workers = Vec::new();
         {
             let (tree, sender) = (tree.clone(), sender.clone());
             workers.push(std::thread::spawn(move || {
                 let _ = sender.send(Event::Main(tree.wait_main()));
+                // Keep reaping and counting on one thread. Dropping the gate
+                // also resumes reaping, including during stop/error cleanup.
+                if after_drain.recv().is_ok() {
+                    let _ = sender.send(Event::Remaining(tree.remaining()));
+                }
                 let _ = sender.send(Event::Empty(tree.wait_empty()));
             }));
         }
         let mut streams = 1;
         if let (Some(reader), Some(log)) = (output.stderr, stderr) {
             streams += 1;
+            checkpoints.push(reader.checkpoint());
             let sender = sender.clone();
             workers.push(std::thread::spawn(move || {
-                let _ = sender.send(Event::Output { stderr: true, result: output::copy(reader, log) });
+                let result = output::copy(reader, log, |bytes, lost| {
+                    let _ = sender.send(Event::Drained { stderr: true, bytes, lost });
+                });
+                let _ = sender.send(Event::Output { stderr: true, result });
             }));
         }
         {
             let sender = sender.clone();
             workers.push(std::thread::spawn(move || {
-                let _ = sender.send(Event::Output { stderr: false, result: output::copy(output.stdout, log) });
+                let result = output::copy(output.stdout, log, |bytes, lost| {
+                    let _ = sender.send(Event::Drained { stderr: false, bytes, lost });
+                });
+                let _ = sender.send(Event::Output { stderr: false, result });
             }));
         }
         #[cfg(unix)]
         signals::stop_on_signal(stop_signals, sender.clone());
         drop(sender);
-        let result = self.observe(&tree, &mut server, &mut events, streams).await;
+        let result = self.observe(&tree, &mut server, &mut events, streams, &checkpoints, &mut resume).await;
+        drop(resume);
         if let Err(error) = &result {
             // Linux has no kill-on-close tree handle. Clean up explicitly,
             // and never report a successful stop if cleanup itself failed.
@@ -190,20 +212,40 @@ impl Job {
         server: &mut control::Server,
         events: &mut mpsc::UnboundedReceiver<Event>,
         mut streams: usize,
+        checkpoints: &[fastctx_platform::output_pipe::Checkpoint],
+        resume: &mut Option<std::sync::mpsc::Sender<()>>,
     ) -> io::Result<()> {
         self.publish().await?;
         let mut empty = false;
+        let mut drained_out = None;
+        let mut drained_err = (streams == 1).then_some(0);
         loop {
             tokio::select! {
                 request = server.next() => {
                     let (connection, request) = request?;
                     self.waiting.push(connection);
+                    resume.take();
                     self.stop(tree, request).await?;
                 }
                 event = events.recv() => {
                     match event.ok_or_else(|| io::Error::other("the job's lifecycle channel closed before it ended"))? {
                         Event::Main(status) => {
                             self.record.exit = Some(Exited { status: exit_status(status?), at: Timestamp::now() });
+                            for checkpoint in checkpoints {
+                                checkpoint.request()?;
+                            }
+                        }
+                        Event::Drained { stderr, bytes, lost } => {
+                            if stderr {
+                                drained_err = Some(bytes);
+                                self.record.stderr_lost = lost;
+                            } else {
+                                drained_out = Some(bytes);
+                                self.record.output_lost = lost;
+                            }
+                        }
+                        Event::Remaining(count) => {
+                            self.record.remaining = Some(u32::try_from(count?).map_err(io::Error::other)?);
                         }
                         Event::Output { stderr, result } => {
                             if stderr { self.record.stderr_lost = result?; } else { self.record.output_lost = result?; }
@@ -215,14 +257,21 @@ impl Job {
                         Event::Empty(result) => { result?; empty = true; }
                         #[cfg(unix)]
                         Event::Stop(request) => {
+                            resume.take();
                             self.stop(tree, request?).await?;
                             continue;
                         },
                     }
-                    if self.record.exit.is_some() && streams == 0 {
-                        self.record.remaining = Some(u32::try_from(tree.count()?).map_err(io::Error::other)?);
+                    if self.record.exit.is_some()
+                        && let (Some(stdout), Some(stderr)) = (drained_out, drained_err)
+                    {
+                        self.record.output_drained = Some(OutputDrained { stdout, stderr });
+                        if let Some(resume) = resume.take() {
+                            resume.send(()).map_err(|_| io::Error::other("the job's process waiter closed"))?;
+                        }
                     }
                     if empty && streams == 0 {
+                        self.record.remaining = Some(0);
                         let how = if self.record.stop.is_some() { EndedHow::Stopped } else { EndedHow::Finished };
                         self.record.end = Some(Ended { at: Timestamp::now(), how });
                         return self.publish().await;

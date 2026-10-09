@@ -62,12 +62,26 @@ pub const RUN_NOTES: usize = 1_024;
 /// The part of the output at `log` one answer shows: what `fastctx view`
 /// wrote up to the whole budget, any other output in `OUTPUT_WINDOW`.
 pub fn window(log: &Path) -> io::Result<OutputWindow> {
+    snapshot(log, None)
+}
+
+/// Shows a retained prefix acknowledged by the output reader. Descendants
+/// may keep appending while this answer is assembled.
+pub fn window_through(log: &Path, bytes: u64) -> io::Result<OutputWindow> {
+    snapshot(log, Some(bytes))
+}
+
+fn snapshot(log: &Path, through: Option<u64>) -> io::Result<OutputWindow> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = File::open(log)?;
-    let size = file.metadata()?.len();
+    let available = file.metadata()?.len();
+    let size = through.unwrap_or(available);
+    if size > available {
+        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the log is shorter than its retained output prefix"));
+    }
     // Which regions `fastctx view` wrote and closed, read in a pass of its
     // own; output that never ran it, nearly all, skips that pass.
-    let closed_views = if holds_view_mark(&mut file)? {
+    let closed_views = if holds_view_mark((&mut file).take(size))? {
         file.seek(SeekFrom::Start(0))?;
         let mut scan = Lines::new((&mut file).take(size));
         while scan.next_line()?.is_some() {}
@@ -134,8 +148,7 @@ pub fn window(log: &Path) -> io::Result<OutputWindow> {
 
 /// Whether the log holds the mark `fastctx view` writes first, read in
 /// chunks that overlap by the mark's length less one.
-fn holds_view_mark(file: &mut File) -> io::Result<bool> {
-    use std::io::Read;
+fn holds_view_mark(mut file: impl io::Read) -> io::Result<bool> {
     let mark = &VIEW_MARK.as_bytes()[..VIEW_MARK.len() - 1];
     let finder = memchr::memmem::Finder::new(mark);
     let mut buffer = vec![0u8; 1 << 20];

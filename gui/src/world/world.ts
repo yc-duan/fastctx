@@ -374,6 +374,7 @@ export interface JobRecord {
   pid: number | null;
   exit: { status: ExitStatus; at: Timestamp } | null;
   output_ended_at: Timestamp | null;
+  output_drained?: { stdout: number; stderr: number };
   remaining: number | null;
   end: { at: Timestamp; how: EndedHow } | null;
 }
