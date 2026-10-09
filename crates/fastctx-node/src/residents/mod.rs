@@ -51,9 +51,27 @@ struct State {
     /// speaking again.
     departed: cache::Index,
     inboxes: cache::Index,
+    /// The colleagues each asker started, kept as residents are admitted:
+    /// a resident's origin never changes, and finding them by walking every
+    /// resident on record read the whole history back from disk each time
+    /// a session left.
+    colleagues: HashMap<Address, Vec<ResidentId>>,
 }
 
 impl State {
+    /// Puts a resident in the cache and, when it is a colleague, under the
+    /// one who asked for it.
+    fn admit(&mut self, live: Live) {
+        let id = live.about.id.clone();
+        if let Origin::Colleague { asked_by, .. } = &live.about.origin {
+            let started = self.colleagues.entry(asked_by.clone()).or_default();
+            if !started.contains(&id) {
+                started.push(id.clone());
+            }
+        }
+        self.live.insert(id, live);
+    }
+
     fn record_session(&self, before: Option<&str>, after: &str) {
         if before == Some(after) {
             return;
@@ -183,6 +201,7 @@ impl Residents {
             current_sessions: cache::Index::new(root.join("current-sessions"))?,
             departed: cache::Index::new(root.join("departed"))?,
             inboxes: cache::Index::new(root.join("inboxes"))?,
+            colleagues: HashMap::new(),
         };
         let mut problems = Vec::new();
         // Each resident's directories, one in each town it lived in.
@@ -276,7 +295,7 @@ impl Residents {
             let mut live = Live::new(about, town.clone(), now);
             live.removed = removal(world, &id)?;
             live.former = former;
-            state.live.insert(live.about.id.clone(), live);
+            state.admit(live);
             state.live.release()?;
         }
         std::fs::remove_dir_all(home_index)?;
@@ -408,7 +427,7 @@ impl Residents {
         }
         let mut live = Live::new(about, None, None);
         live.connections = 1;
-        state.live.insert(resident.clone(), live);
+        state.admit(live);
         Ok(Whereabouts { resident, town: None })
     }
 
@@ -440,7 +459,7 @@ impl Residents {
         }
         // The durable identity already exists even if its initial activity
         // could not be written. Retain it so a retry cannot create a second one.
-        state.live.insert(about.id.clone(), Live::new(about, town, recorded.as_ref().ok().map(|()| now)));
+        state.admit(Live::new(about, town, recorded.as_ref().ok().map(|()| now)));
         recorded
     }
 
@@ -549,16 +568,19 @@ impl Residents {
     /// Every resident on record.
     pub fn everyone(&self) -> impl Iterator<Item = OnRecord> + '_ {
         let ids = self.lock().live.ids();
-        ids.filter_map(|id| {
-            let mut state = self.lock();
-            state.live.get(&id).map(|live| OnRecord {
-                id,
-                removed: live.removed,
-                town: live.town.clone(),
-                here: here(live),
-                about: live.about.clone(),
-                now: live.now.clone(),
-            })
+        ids.filter_map(|id| self.on_record(&id))
+    }
+
+    /// One resident on record, read alone rather than found among everyone.
+    pub fn on_record(&self, id: &ResidentId) -> Option<OnRecord> {
+        let mut state = self.lock();
+        state.live.get(id).map(|live| OnRecord {
+            id: id.clone(),
+            removed: live.removed,
+            town: live.town.clone(),
+            here: here(live),
+            about: live.about.clone(),
+            now: live.now.clone(),
         })
     }
 
@@ -585,10 +607,7 @@ impl Residents {
 
     /// Every resident the World started whose words come from `asker`.
     pub fn colleagues_of(&self, asker: &Address) -> Vec<ResidentId> {
-        self.everyone()
-            .filter(|live| matches!(&live.about.origin, Origin::Colleague { asked_by, .. } if asked_by == asker))
-            .map(|live| live.about.id)
-            .collect()
+        self.lock().colleagues.get(asker).cloned().unwrap_or_default()
     }
 
     /// Whether the resident a colleague works for is here: one of this

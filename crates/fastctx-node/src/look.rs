@@ -83,7 +83,11 @@ pub async fn look_here(
     node: &Arc<Node>,
     id: &str,
 ) -> Result<(Option<Looked>, Vec<fastctx_types::town::RunningJob>), Failure> {
-    let record = node.residents.everyone().into_iter().find(|record| record.id.as_str() == id);
+    let record = id
+        .parse::<fastctx_types::ResidentId>()
+        .ok()
+        .filter(|parsed| parsed.as_str() == id)
+        .and_then(|parsed| node.residents.on_record(&parsed));
     let tools = record.as_ref().map(|r| node.watchers.tools(&r.id)).unwrap_or_default();
     let (world, id) = (node.world.clone(), id.to_string());
     tokio::task::spawn_blocking(move || {
