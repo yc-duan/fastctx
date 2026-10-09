@@ -4,6 +4,7 @@
 //! watched conversation streams the session's events to the page as they
 //! come. The page speaks as the person at this machine, never as a session.
 
+mod accounts;
 #[cfg(target_os = "android")]
 mod android;
 mod composer;
@@ -25,7 +26,6 @@ use std::sync::{Arc, Mutex};
 #[cfg(not(target_os = "android"))]
 use fastctx_client::Conversation;
 use fastctx_client::World;
-use fastctx_types::device::DeviceJoined;
 use fastctx_types::file_search::{FileSearchReply, FileSearchRequest};
 use fastctx_types::management::{Managed, Management};
 use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
@@ -45,7 +45,6 @@ mod binary_reading;
 mod desktop_presence;
 mod pages;
 mod reading;
-mod server_invitation;
 mod uploading;
 
 #[cfg(windows)]
@@ -123,27 +122,6 @@ async fn select_connection(
     Ok(state)
 }
 
-/// A scanned code and a pasted code take the same path. No service is installed.
-#[tauri::command]
-async fn join_device(
-    shell: tauri::State<'_, Shell>,
-    code: String,
-    name: Option<String>,
-) -> Result<DeviceJoined, String> {
-    let world = shell.world();
-    if world.device().is_none() {
-        return Err("select the device connection before joining with a device invitation".into());
-    }
-    let name = machine(name)?;
-    #[cfg(target_os = "android")]
-    android::joining(true)?;
-    let joined = world.join(code, name).await.map_err(|error| error.to_string());
-    #[cfg(target_os = "android")]
-    android::joining(false)?;
-    let (world, name) = joined?;
-    Ok(DeviceJoined { world, name })
-}
-
 /// Also callable by the native application's network/resume callbacks.
 #[tauri::command]
 fn reconnect(shell: tauri::State<'_, Shell>) -> Result<(), String> {
@@ -163,13 +141,15 @@ fn reconnect_world(world: &World) -> Result<(), String> {
     Ok(())
 }
 
-/// The World as the front page reads it, asked in one go.
+/// The World as the front page reads it, asked in one go: who is where, the
+/// machines hub by hub, the projects, and the accounts with what they see.
 #[derive(Serialize)]
 struct WorldNow {
     here: MachineName,
     who: WorldWho,
     nodes: NodesReply,
     towns: Vec<TownSummary>,
+    accounts: fastctx_types::accounts::AccountsReply,
 }
 
 /// One piece of a watched conversation, as the page receives it.
@@ -216,15 +196,16 @@ fn machine(name: Option<String>) -> Result<Option<MachineName>, String> {
 #[tauri::command]
 async fn world_now(shell: tauri::State<'_, Shell>) -> Result<WorldNow, String> {
     let world = shell.world();
-    let (who, nodes) = tokio::join!(world.who(None, true), world.nodes());
+    let (who, nodes, accounts) = tokio::join!(world.who(None, true), world.nodes(), world.accounts());
     let nodes = nodes.map_err(|error| error.to_string())?;
     let who = who.map_err(|error| error.to_string())?;
+    let accounts = accounts.map_err(|error| error.to_string())?;
     // Asked of the whole World, `who` lists its towns as well: the same
     // list `towns` would read again.
     let WhoScope::World { towns } = &who.scope else {
         return Err("the node answered about one town when asked about the World".to_string());
     };
-    Ok(WorldNow { here: nodes.machine.clone(), towns: towns.clone(), who, nodes })
+    Ok(WorldNow { here: nodes.machine.clone(), towns: towns.clone(), who, nodes, accounts })
 }
 
 /// Starts watching a resident: returns what came before, and sends each
@@ -308,9 +289,10 @@ async fn upload_path(
     sent: Channel<u64>,
 ) -> Result<fastctx_types::attachments::Attachment, String> {
     let world = shell.world();
+    let machine = machine(machine_name)?;
     #[cfg(target_os = "android")]
-    android::readiness::wait(&world).await?;
-    uploading::from_path(&world, target, machine(machine_name)?, std::path::Path::new(&path), sent).await
+    android::readiness::wait(&world, machine.as_ref()).await?;
+    uploading::from_path(&world, target, machine, std::path::Path::new(&path), sent).await
 }
 
 /// Carries bytes the page holds to a machine. The bytes are the body; whom
@@ -338,7 +320,7 @@ async fn upload_bytes(
     let bytes = bytes.clone();
     let world = shell.world();
     #[cfg(target_os = "android")]
-    android::readiness::wait(&world).await?;
+    android::readiness::wait(&world, machine.as_ref()).await?;
     uploading::from_bytes(&world, target, machine, header("name")?, header("type")?, bytes).await
 }
 
@@ -403,13 +385,15 @@ async fn open(
     model: Option<String>,
     effort: Option<String>,
     attachments: Option<Vec<fastctx_types::attachments::Attachment>>,
+    choices: Option<fastctx_types::agents::Choices>,
 ) -> Result<Spoken, String> {
     let agent = AgentName::try_from(agent.as_str()).map_err(|error| error.to_string())?;
     let town = town.map(|town| TownName::try_from(town).map_err(|error| error.to_string())).transpose()?;
     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort: effort };
+    let (attachments, choices) = (attachments.unwrap_or_default(), choices.unwrap_or_default());
     let said = shell
         .world()
-        .open_with_attachments(agent, town, machine(machine_name)?, text, options, attachments.unwrap_or_default())
+        .open_with_attachments(agent, town, machine(machine_name)?, text, options, attachments, choices)
         .await
         .map_err(|error| error.to_string())?;
     Ok(Spoken { to: said.to, landed: said.landed })
@@ -580,10 +564,19 @@ fn town(name: String) -> Result<TownName, String> {
     TownName::try_from(name).map_err(|error| error.to_string())
 }
 
-/// Opens a project with the first version of its record.
+/// Opens a project with the first version of its record, in the account
+/// named, of the hub named, or in the one account this computer is in.
 #[tauri::command]
-async fn project_new(shell: tauri::State<'_, Shell>, name: String, fields: RecordFields) -> Result<TownRecord, String> {
-    let made = shell.world().open_town(town(name)?, fields).await.map_err(|error| error.to_string())?;
+async fn project_new(
+    shell: tauri::State<'_, Shell>,
+    name: String,
+    fields: RecordFields,
+    account_name: Option<String>,
+    hub_name: Option<String>,
+) -> Result<TownRecord, String> {
+    let account = account_name.map(fastctx_types::AccountName::try_from).transpose().map_err(|error| error.to_string())?;
+    let hub = hub_name.map(fastctx_types::HubName::try_from).transpose().map_err(|error| error.to_string())?;
+    let made = shell.world().open_town(town(name)?, fields, account, hub).await.map_err(|error| error.to_string())?;
     Ok(TownRecord { town: made.town, record: made.record, opened: made.opened })
 }
 
@@ -623,108 +616,6 @@ async fn journal_add(
         fastctx_types::Reply::EntryAdded { id, .. } => Ok(id.to_string()),
         other => Err(format!("the node answered {other:?}")),
     }
-}
-
-/// A one-use code that lets one more machine join, valid for `hours`.
-#[tauri::command]
-async fn invite(
-    shell: tauri::State<'_, Shell>,
-    name: Option<String>,
-    hours: u32,
-    device: Option<bool>,
-    scope: Option<fastctx_types::scope::NamedScope>,
-) -> Result<String, String> {
-    let expires = jiff::Timestamp::now()
-        .checked_add(jiff::SignedDuration::from_hours(i64::from(hours)))
-        .map_err(|error| error.to_string())?;
-    shell
-        .world()
-        .invite(machine(name)?, expires, device.unwrap_or(false), scope)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-/// What `member` may do from now on, and whether it holds management rights.
-#[tauri::command]
-async fn grant(
-    shell: tauri::State<'_, Shell>,
-    member: String,
-    scope: fastctx_types::scope::NamedScope,
-    manage: bool,
-) -> Result<(), String> {
-    let member = member.parse::<MachineName>().map_err(|error| error.to_string())?;
-    shell.world().grant(member, scope, manage).await.map_err(|error| error.to_string())
-}
-
-/// Where `member` connects from now on: through the relays `via`, in
-/// order, then the hub; straight to the hub when there are none.
-#[tauri::command]
-async fn route(shell: tauri::State<'_, Shell>, member: String, via: Vec<String>) -> Result<(), String> {
-    use fastctx_types::world::Upstream;
-    let member = member.parse::<MachineName>().map_err(|error| error.to_string())?;
-    let via = via
-        .into_iter()
-        .map(|machine| machine.parse::<MachineName>().map(|machine| Upstream::Relay { machine }))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    let via = if via.is_empty() { vec![Upstream::Hub] } else { via };
-    shell.world().route(member, via).await.map_err(|error| error.to_string())
-}
-
-/// Makes `machine` relay, dialed at `public` and listening at `listen`
-/// (every address, on the first public port, when not given), or stop
-/// relaying when `public` is empty. Returns where it relays now.
-#[tauri::command]
-async fn set_relay(
-    shell: tauri::State<'_, Shell>,
-    machine: String,
-    public: Vec<String>,
-    listen: Option<String>,
-) -> Result<Vec<String>, String> {
-    let machine = machine.parse::<MachineName>().map_err(|error| error.to_string())?;
-    let address = |text: &str| {
-        text.trim().parse::<std::net::SocketAddr>().map_err(|_| format!("{} is not an address as IP:port", text.trim()))
-    };
-    let public = public
-        .iter()
-        .filter(|text| !text.trim().is_empty())
-        .map(|text| address(text))
-        .collect::<Result<Vec<_>, _>>()?;
-    let relay = match public.first() {
-        None => None,
-        Some(first) => {
-            let listen = match listen.as_deref().map(str::trim).filter(|text| !text.is_empty()) {
-                Some(text) => address(text)?,
-                None if first.is_ipv4() => {
-                    std::net::SocketAddr::new(std::net::Ipv4Addr::UNSPECIFIED.into(), first.port())
-                }
-                None => std::net::SocketAddr::new(std::net::Ipv6Addr::UNSPECIFIED.into(), first.port()),
-            };
-            Some(fastctx_types::world::RelaySetting { listen, public })
-        }
-    };
-    shell.world().set_relay(machine, relay).await.map_err(|error| error.to_string())
-}
-
-/// The user has been shown that `member` came in with this machine's
-/// invitation.
-#[tauri::command]
-async fn seen(shell: tauri::State<'_, Shell>, member: String) -> Result<(), String> {
-    let member = member.parse::<MachineName>().map_err(|error| error.to_string())?;
-    shell.world().seen(member).await.map_err(|error| error.to_string())
-}
-
-/// No machine trusts `name`'s key any more.
-#[tauri::command]
-async fn revoke(shell: tauri::State<'_, Shell>, name: String, reason: String) -> Result<(), String> {
-    let name = name.parse::<MachineName>().map_err(|error| error.to_string())?;
-    shell.world().revoke(name, reason).await.map_err(|error| error.to_string())
-}
-
-/// This machine leaves its World and becomes a World of one again.
-#[tauri::command]
-async fn leave(shell: tauri::State<'_, Shell>) -> Result<(), String> {
-    shell.world().leave().await.map_err(|error| error.to_string())
 }
 
 /// Opens a resident on this computer in its own official interface, in a
@@ -776,18 +667,6 @@ async fn renew_guardian_here(shell: tauri::State<'_, Shell>) -> Result<(), Strin
     tauri::async_runtime::spawn_blocking(renewal::guardian).await.map_err(|error| error.to_string())?
 }
 
-/// Joins a World with a code, under `name` or the name this machine has.
-#[cfg(desktop)]
-#[tauri::command]
-async fn join_world(
-    shell: tauri::State<'_, Shell>,
-    code: String,
-    name: Option<String>,
-) -> Result<setup::Joined, String> {
-    let world = shell.connection.local_world()?;
-    setup::join(&world, code.trim().to_string(), machine(name)?).await
-}
-
 /// Has a system service keep this computer's node, asking once for
 /// administrator rights.
 #[cfg(desktop)]
@@ -803,14 +682,6 @@ async fn keep_here(shell: tauri::State<'_, Shell>) -> Result<setup::KeptNow, Str
 #[tauri::command]
 async fn release_here() -> Result<setup::KeptNow, String> {
     tauri::async_runtime::spawn_blocking(setup::release).await.map_err(|error| error.to_string())?
-}
-
-/// Founds a hub on this computer; returns the code that founds its World.
-#[cfg(desktop)]
-#[tauri::command]
-async fn hub_here(shell: tauri::State<'_, Shell>, public: Vec<String>) -> Result<String, String> {
-    shell.connection.local_program()?;
-    tauri::async_runtime::spawn_blocking(move || setup::hub_here(public)).await.map_err(|error| error.to_string())?
 }
 
 /// Puts the World's tools into this computer's hosts, or takes them out.
@@ -866,8 +737,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             connection_state,
             select_connection,
-            join_device,
             reconnect,
+            accounts::login,
+            accounts::login_token,
+            accounts::open_account,
+            accounts::accounts,
+            accounts::account_change,
+            accounts::server_command,
+            accounts::colleagues,
+            accounts::works_on,
             world_now,
             since,
             agents,
@@ -905,14 +783,6 @@ pub fn run() {
             read_binary,
             control,
             offers,
-            invite,
-            server_invitation::invite_server,
-            grant,
-            route,
-            set_relay,
-            seen,
-            revoke,
-            leave,
             #[cfg(desktop)]
             setup_state,
             #[cfg(desktop)]
@@ -923,10 +793,6 @@ pub fn run() {
             renew_here,
             #[cfg(desktop)]
             renew_guardian_here,
-            #[cfg(desktop)]
-            join_world,
-            #[cfg(desktop)]
-            hub_here,
             #[cfg(desktop)]
             apply_hosts,
             #[cfg(desktop)]

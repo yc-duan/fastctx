@@ -1,12 +1,15 @@
 //! What the hub keeps on disk.
 //!
 //! ```text
-//! <hub>/hub.json              the World's id, the hub's addresses, the founding secret until it is used
-//! <hub>/tls/certificate.der   the hub's certificate, pinned by every machine
+//! <hub>/hub.json              the hub's id and short name, its addresses, where it listens
+//! <hub>/tls/certificate.der   the hub's certificate, pinned by every member
 //! <hub>/tls/key.der
-//! <hub>/members.json          every record, revocation, invitation, grant and route
+//! <hub>/login.secret          the hub's OPAQUE secrets (`fastctx_net::login::HubSecrets`)
+//! <hub>/directory.json        accounts and their password records, members, grants, trust,
+//!                             projects, enrollment tokens, removed members
 //! <hub>/letters.json          where each member's letters stand
 //! <hub>/outbox/<name>/<seq>   letters waiting for a member, one file each
+//! <hub>/ledger/<town>/<seq>.json   the projects' ledgers (`crate::ledger`)
 //! ```
 //!
 //! Every file is replaced whole, so a crash leaves the old state or the new
@@ -18,55 +21,75 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use fastctx_net::sign::{PublicKey, Secret, Signed};
-use fastctx_net::trust::{self, Credential, Known, Record, Table, WorldId};
+use fastctx_net::directory::{Directory, Kind, Project};
+use fastctx_net::envelope::Envelope;
+use fastctx_net::ids::HubId;
+use fastctx_net::sign::{Bytes, PublicKey};
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
-use fastctx_types::MachineName;
+use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-/// The hub's settings, written when it is created.
+/// The hub's settings.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HubFile {
-    pub world: WorldId,
-    /// Where machines reach the hub, written into every code.
+    pub id: HubId,
+    pub name: HubName,
+    /// Where machines reach the hub, written into every token.
     pub public: Vec<SocketAddr>,
     /// Where the hub listens.
     pub listen: SocketAddr,
-    /// Present until the first machine founds the World with it.
-    pub founding: Option<Secret>,
-    /// The SHA-256 of the founding secret once it was used: the founder,
-    /// asking again with it, is told it joined.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub founded_with: Option<fastctx_net::sign::Digest>,
+    /// Whether anyone who reaches the hub may open an account.
+    #[serde(default)]
+    pub self_registration: bool,
 }
 
+/// The directory as the hub keeps it: what every member sees a cut of, and
+/// what only the hub holds.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Members {
-    pub records: Vec<Admitted>,
-    pub revocations: Vec<Signed>,
-    pub invitations: Vec<Invitation>,
+pub struct Book {
+    #[serde(flatten)]
+    pub directory: Directory,
+    /// What setting each account's password left with the hub.
     #[serde(default)]
-    pub grants: Vec<Signed>,
+    pub passwords: BTreeMap<AccountName, Bytes>,
     #[serde(default)]
-    pub routes: Vec<Signed>,
+    pub tokens: Vec<TokenRecord>,
+    /// Members taken off the hub, by key, so one that connects again is
+    /// told so.
+    #[serde(default)]
+    pub removed: Vec<Removed>,
+    /// Projects of accounts that were deleted, kept whole for an
+    /// administrator to hand to another account.
+    #[serde(default)]
+    pub archived: Vec<Project>,
 }
 
+/// An enrollment token, by the public half of its key.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Admitted {
-    pub name: MachineName,
-    pub record: Signed,
-    pub joined_at: Timestamp,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Invitation {
-    pub endorsement: Signed,
-    pub invite: PublicKey,
-    pub inviter: MachineName,
+pub struct TokenRecord {
+    pub key: PublicKey,
+    pub account: AccountName,
+    pub register: bool,
+    /// The name the device takes; its own choice when `None`.
+    pub name: Option<MachineName>,
+    pub kind: Kind,
     pub expires: Timestamp,
-    pub used_by: Option<MachineName>,
+    pub made_by: MachineName,
+    pub made_at: Timestamp,
+    /// The key of the device that used it, which may use it again to the
+    /// same end, as when its first try was cut off.
+    pub used_by: Option<PublicKey>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Removed {
+    pub key: PublicKey,
+    pub name: MachineName,
+    pub by: Option<AccountName>,
+    pub at: Timestamp,
+    pub reason: String,
 }
 
 /// Where one member's letters stand.
@@ -90,11 +113,12 @@ pub struct Letters {
 pub struct Store {
     dir: PathBuf,
     pub hub: HubFile,
-    pub members: Members,
+    pub book: Book,
     pub letters: BTreeMap<MachineName, Letters>,
-    /// The members as the hub's own list checks out.
-    table: Table,
-    founder: Option<PublicKey>,
+    /// Which machine was called to work for which resident: what it tells
+    /// that resident of the work goes on after the account's right on the
+    /// machine is taken back (`world-network.md`, 一台机器给几个账号用).
+    pub worked: std::collections::BTreeSet<(MachineName, fastctx_types::Address)>,
 }
 
 impl Store {
@@ -110,19 +134,35 @@ impl Store {
         dir.join("tls").join("key.der")
     }
 
+    pub fn secrets_file(dir: &Path) -> PathBuf {
+        dir.join("login.secret")
+    }
+
+    pub fn directory_file(dir: &Path) -> PathBuf {
+        dir.join("directory.json")
+    }
+
     /// Creates a hub's files in `dir`, which must not hold a hub already.
-    pub fn create(dir: &Path, hub: &HubFile, certificate: &fastctx_net::tls::HubCertificate) -> io::Result<()> {
+    pub fn create(
+        dir: &Path,
+        hub: &HubFile,
+        certificate: &fastctx_net::tls::HubCertificate,
+        secrets: &[u8],
+        book: &Book,
+    ) -> io::Result<()> {
         ensure_private_dir(dir)?;
         ensure_private_dir(&dir.join("tls"))?;
-        publish_new(&Self::hub_file(dir), &json(hub)?, Permissions::Private)?;
         publish_new(&Self::certificate_file(dir), &certificate.certificate, Permissions::Private)?;
         publish_new(&Self::key_file(dir), &certificate.key, Permissions::Private)?;
-        Ok(())
+        publish_new(&Self::secrets_file(dir), secrets, Permissions::Private)?;
+        publish_new(&Self::directory_file(dir), &json(book)?, Permissions::Private)?;
+        // Last: a directory with `hub.json` is a hub.
+        publish_new(&Self::hub_file(dir), &json(hub)?, Permissions::Private)
     }
 
     pub fn open(dir: &Path) -> io::Result<Self> {
         let hub: HubFile = read(&Self::hub_file(dir))?;
-        let members: Members = read_or_default(&dir.join("members.json"))?;
+        let book: Book = read(&Self::directory_file(dir))?;
         let mut letters: BTreeMap<MachineName, Letters> = read_or_default(&dir.join("letters.json"))?;
         let mut changed = false;
         for (name, entry) in &mut letters {
@@ -140,53 +180,27 @@ impl Store {
                 changed = true;
             }
         }
-        let mut store = Self { dir: dir.to_path_buf(), hub, members, letters, table: Table::default(), founder: None };
-        store.recheck();
+        let worked = read_or_default(&dir.join("worked.json"))?;
+        let store = Self { dir: dir.to_path_buf(), hub, book, letters, worked };
         if changed {
             store.save_letters()?;
         }
         Ok(store)
     }
 
-    pub fn table(&self) -> &Table {
-        &self.table
-    }
-
-    pub fn founder(&self) -> Option<PublicKey> {
-        self.founder
-    }
-
-    /// Checks the hub's own list the way every machine checks it.
-    pub fn recheck(&mut self) {
-        let records: Vec<Signed> = self.members.records.iter().map(|admitted| admitted.record.clone()).collect();
-        self.founder = self.members.records.iter().find_map(|admitted| {
-            let record = admitted.record.claim::<Record>().ok()?;
-            matches!(record.credential, Credential::Founder).then_some(record.key)
-        });
-        self.table = match &self.founder {
-            Some(founder) => {
-                trust::check(
-                    &self.hub.world,
-                    founder,
-                    &records,
-                    &self.members.revocations,
-                    &self.members.grants,
-                    &self.members.routes,
-                    &Known::default(),
-                )
-                .0
-            }
-            None => Table::default(),
-        };
-    }
-
     pub fn save_hub(&self) -> io::Result<()> {
         publish(&Self::hub_file(&self.dir), &json(&self.hub)?, Permissions::Private)
     }
 
-    pub fn save_members(&mut self) -> io::Result<()> {
-        publish(&self.dir.join("members.json"), &json(&self.members)?, Permissions::Private)?;
-        self.recheck();
+    pub fn save_book(&self) -> io::Result<()> {
+        publish(&Self::directory_file(&self.dir), &json(&self.book)?, Permissions::Private)
+    }
+
+    /// Notes that `machine` was called to work for `resident`.
+    pub fn note_worked(&mut self, machine: &MachineName, resident: fastctx_types::Address) -> io::Result<()> {
+        if self.worked.insert((machine.clone(), resident)) {
+            publish(&self.dir.join("worked.json"), &json(&self.worked)?, Permissions::Private)?;
+        }
         Ok(())
     }
 
@@ -194,23 +208,27 @@ impl Store {
         publish(&self.dir.join("letters.json"), &json(&self.letters)?, Permissions::Private)
     }
 
-    /// The letter numbers of a new member, starting fresh.
-    pub fn new_letters() -> io::Result<Letters> {
-        Ok(Letters {
-            epoch: 0,
-            taken: 0,
-            out_epoch: u64::from_le_bytes(fastctx_net::sign::random::<8>()?),
-            next: 1,
-            last_seen: None,
-            connected_at: None,
-        })
+    /// The letter records of a member, made when it first connects.
+    pub fn letters_of(&mut self, name: &MachineName) -> io::Result<&mut Letters> {
+        if !self.letters.contains_key(name) {
+            let fresh = Letters {
+                epoch: 0,
+                taken: 0,
+                out_epoch: u64::from_le_bytes(fastctx_net::sign::random::<8>()?),
+                next: 1,
+                last_seen: None,
+                connected_at: None,
+            };
+            self.letters.insert(name.clone(), fresh);
+        }
+        Ok(self.letters.get_mut(name).expect("just made"))
     }
 
     /// Keeps `message` for `to` and returns its number.
-    pub fn keep_letter(&mut self, to: &MachineName, message: &Signed) -> io::Result<u64> {
-        let entry = self.letters.get_mut(to).ok_or_else(|| io::Error::other(format!("no letter records for {to}")))?;
-        let seq = entry.next;
+    pub fn keep_letter(&mut self, to: &MachineName, message: &Envelope) -> io::Result<u64> {
         let directory = self.dir.join("outbox").join(to.as_str());
+        let entry = self.letters_of(to)?;
+        let seq = entry.next;
         ensure_private_dir(&directory)?;
         publish(&directory.join(format!("{seq:020}")), &json(message)?, Permissions::Private)?;
         entry.next = seq + 1;
@@ -218,7 +236,7 @@ impl Store {
     }
 
     /// The letters waiting for `name` after `after`, in order.
-    pub fn letters_after(&self, name: &MachineName, after: u64) -> io::Result<Vec<(u64, Signed)>> {
+    pub fn letters_after(&self, name: &MachineName, after: u64) -> io::Result<Vec<(u64, Envelope)>> {
         let mut letters = Vec::new();
         for (seq, path) in outbox_entries(&self.dir, name)? {
             if seq > after {
@@ -241,43 +259,14 @@ impl Store {
         Ok(())
     }
 
-    /// Drops every letter waiting for `name`, as when it is revoked.
-    pub fn drop_letters(&self, name: &MachineName) -> io::Result<()> {
+    /// Drops every letter waiting for `name` and its letter records, as
+    /// when it is taken off the hub.
+    pub fn forget_letters(&mut self, name: &MachineName) -> io::Result<()> {
+        self.letters.remove(name);
         match std::fs::remove_dir_all(self.dir.join("outbox").join(name.as_str())) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
         }
-    }
-
-    /// When the latest grant, route or revocation held was made.
-    /// Invitations are not counted: how a member came in depends only on its
-    /// inviter's standing, which grants and revocations change, and a member
-    /// that may invite must not hold up everyone's grants by dating
-    /// invitations ahead.
-    pub fn latest(&self) -> Option<Timestamp> {
-        let grants = self
-            .members
-            .grants
-            .iter()
-            .filter_map(|signed| signed.claim::<fastctx_net::scope::Grant>().ok())
-            .map(|grant| grant.at);
-        let routes = self
-            .members
-            .routes
-            .iter()
-            .filter_map(|signed| signed.claim::<fastctx_net::tree::Route>().ok())
-            .map(|route| route.at);
-        let revocations = self
-            .members
-            .revocations
-            .iter()
-            .filter_map(|signed| signed.claim::<fastctx_net::trust::Revocation>().ok())
-            .map(|revocation| revocation.at);
-        grants.chain(routes).chain(revocations).max()
-    }
-
-    pub fn invitation(&self, invite: &PublicKey) -> Option<&Invitation> {
-        self.members.invitations.iter().find(|invitation| invitation.invite == *invite)
     }
 }
 
@@ -301,13 +290,13 @@ fn outbox_entries(dir: &Path, name: &MachineName) -> io::Result<Vec<(u64, PathBu
     Ok(found)
 }
 
-fn json(value: &impl Serialize) -> io::Result<Vec<u8>> {
+pub(crate) fn json(value: &impl Serialize) -> io::Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     bytes.push(b'\n');
     Ok(bytes)
 }
 
-fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
+pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
     let bytes = std::fs::read(path)?;
     serde_json::from_slice(&bytes)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))

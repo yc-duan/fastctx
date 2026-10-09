@@ -22,7 +22,11 @@ import { ConversationView } from "./view";
 export interface Someone {
   /** "Claude" or "Codex": the agent by the name it goes by. */
   agent: string;
+  /** The machine it lives on. */
   machine: string;
+  /** The machine its commands start on, as written, when not the one it
+   *  lives on (`world-run.md`, 这里). */
+  worksOn?: string | null;
   model: string | null;
   /** The project it is in, by the name the user gave it. */
   project: string | null;
@@ -992,9 +996,11 @@ export class ConversationPage {
     // its words as they stream would be too many to hear.
     if (this.said !== null && this.said !== now) this.spoken.textContent = `${someone.agent} · ${now}`;
     this.said = now;
+    // Under the title, where it lives and, when elsewhere, where it works.
     const facts = [
       now,
       title ? `${someone.agent} · ${someone.machine}` : null,
+      someone.worksOn ? words.worksOn(someone.worksOn) : null,
       someone.project,
       someone.model,
     ].filter(Boolean) as string[];

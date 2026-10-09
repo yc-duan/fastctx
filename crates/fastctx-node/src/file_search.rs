@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use fastctx_file_search::Search;
 use fastctx_types::MachineName;
 use fastctx_types::file_search::{FileSearchReply, FileSearchRequest, FileSearchResult, FileSearchScope};
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 
@@ -65,13 +66,16 @@ impl Lease {
 
 pub(crate) async fn open(
     node: &Arc<Node>,
+    acting: &Acting,
     from: MachineName,
     machine: Option<MachineName>,
     scope: FileSearchScope,
 ) -> Result<(FileSearchReply, Lease), Failure> {
     if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
-        let link = node.link().ok_or_else(|| Failure::new("this machine is not connected to a World"))?;
-        let (reply, lease) = fastctx_net::file_search::open(link, machine, scope).await?;
+        let (link, account) = node
+            .speaking(acting, &(&machine).into(), Purpose::Hands)
+            .map_err(|failure| Failure::new(failure.to_string()))?;
+        let (reply, lease) = fastctx_net::file_search::open(link, machine, account, scope).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
     let roots = roots(node, &scope).await?;
@@ -99,12 +103,12 @@ pub(crate) async fn open(
 
 pub(crate) async fn serve(
     node: &Arc<Node>,
+    link: &Arc<fastctx_net::link::Link>,
     from: MachineName,
     scope: FileSearchScope,
     mut stream: fastctx_net::data::Stream,
 ) -> Result<RemoteReply, Failure> {
-    let (reply, mut lease) = open(node, from, None, scope).await?;
-    let link = node.link().ok_or_else(|| Failure::new("this machine is not connected to a World"))?;
+    let (reply, mut lease) = open(node, &Acting::Here, from, None, scope).await?;
     stream.say(&link.sign(fastctx_net::sign::Domain::Event, &reply)).await.map_err(failed)?;
     tokio::select! { () = stream.closed() => {}, () = lease.closed() => {} }
     Ok(RemoteReply::FilesFound(FileSearchReply { machine: node.machine(), result: FileSearchResult::Closed }))
@@ -112,6 +116,7 @@ pub(crate) async fn serve(
 
 pub(crate) async fn call(
     node: &Arc<Node>,
+    acting: &Acting,
     machine: Option<MachineName>,
     request: FileSearchRequest,
 ) -> Result<FileSearchReply, Failure> {
@@ -119,8 +124,8 @@ pub(crate) async fn call(
     let Some(target) = machine.filter(|machine| *machine != local) else {
         return here(node, local, request).await;
     };
-    let link = node.link().ok_or_else(|| Failure::new(format!("{local} is not connected to any other machine")))?;
-    match link.call(&target, RemoteCall::FindFiles { request }).await.map_err(failed)?? {
+    let call = RemoteCall::FindFiles { request };
+    match node.call(acting, &(&target).into(), Purpose::Hands, call).await.map_err(failed)?? {
         RemoteReply::FilesFound(reply) => Ok(reply),
         _ => Err(Failure::new(format!("{target} answered something other than a file search"))),
     }
@@ -133,7 +138,7 @@ pub(crate) async fn here(
 ) -> Result<FileSearchReply, Failure> {
     let result = match request {
         FileSearchRequest::Start { scope } => {
-            let (reply, mut lease) = open(node, from, None, scope).await?;
+            let (reply, mut lease) = open(node, &Acting::Here, from, None, scope).await?;
             if let Lease::Local { close_on_drop, .. } = &mut lease {
                 *close_on_drop = false;
             }

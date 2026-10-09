@@ -23,13 +23,12 @@ impl Device {
         composer: Option<fastctx_types::composer::UploadScope>,
         mut source: impl AsyncRead + Unpin,
     ) -> Result<Uploaded, Error> {
-        let session = self.connected()?;
-        session.check_identity().await?;
         let machine = match &target {
-            UploadTarget::Resident { resident } => session.locate(resident, machine).await?,
+            UploadTarget::Resident { resident } => self.find(resident, machine).await?,
             _ => machine.ok_or_else(|| failed("choose a machine for the attachment; a device has no local node"))?,
         };
-        session.machine(&machine)?;
+        let session = self.reaching(&machine)?;
+        let account = session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
         let size = file.size;
         let (sender, mut receiver) = mpsc::channel::<Option<Vec<u8>>>(1);
         let stream_error = Arc::new(Mutex::new(None));
@@ -58,7 +57,7 @@ impl Device {
             })
         });
         let remote = RemoteCall::Upload { target: target.clone(), file: file.clone(), composer };
-        let answer = session.link.call_with_stream(&machine, remote, feed);
+        let answer = session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, remote, feed);
         let sending = async {
             let mut buffer = vec![0u8; UPLOAD_CHUNK];
             let mut sent = 0u64;

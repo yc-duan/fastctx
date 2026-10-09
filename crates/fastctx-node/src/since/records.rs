@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 
 use fastctx_net::ledger::Entry;
 use fastctx_net::sign::Signed;
-use fastctx_net::trust::WorldId;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::project::{Description, EntryStamp, Location, Record, version_of};
 use fastctx_types::residents::{About, Action, Activity, MessageKind, MessageLine, Moved};
@@ -40,7 +39,6 @@ pub(super) fn read(
     machine: &MachineName,
     since: Timestamp,
     town: Option<&TownName>,
-    membership: Option<&WorldId>,
 ) -> io::Result<SinceReply> {
     let started = Timestamp::now();
     let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
@@ -114,7 +112,7 @@ pub(super) fn read(
         None => world.towns()?,
     };
     for town in towns {
-        scan.ledger(world, &town, membership);
+        scan.ledger(world, &town);
     }
     scan.events.retain(|event| {
         event.at > since
@@ -142,10 +140,9 @@ pub(super) fn ledger(
     machine: &MachineName,
     since: Timestamp,
     town: &TownName,
-    membership: Option<&WorldId>,
 ) -> (Vec<SinceEvent>, Vec<SinceIssue>) {
     let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
-    scan.ledger(world, town, membership);
+    scan.ledger(world, town);
     scan.events.retain(|event| event.at > since);
     (scan.events, scan.issues)
 }
@@ -578,38 +575,40 @@ impl Scan<'_> {
         }
     }
 
-    fn ledger(&mut self, world: &WorldDir, town: &TownName, membership: Option<&WorldId>) {
+    fn ledger(&mut self, world: &WorldDir, town: &TownName) {
+        let place = match crate::ledger::names::place(world, town) {
+            Ok(Some(place)) => place,
+            Ok(None) => return,
+            Err(error) => {
+                self.issue(&world.town(town).path().join("project.json"), error);
+                return;
+            }
+        };
         for path in self.json_files(&world.town(town).signed()) {
             let Some(signed) = self.optional::<Signed>(&path) else { continue };
-            let entry = match signed.claim::<Entry>() {
-                Ok(entry) if entry.town == *town => entry,
-                Ok(_) => {
-                    self.issue(&path, "entry belongs to another town");
-                    continue;
-                }
-                Err(error) => {
-                    self.issue(&path, error);
-                    continue;
-                }
-            };
-            if membership.is_some_and(|current| *current != entry.world) {
-                continue;
+            match signed.claim::<Entry>() {
+                Ok(entry) if entry.hub == place.hub && entry.town == place.town => self.ledger_entry(town, &path, entry),
+                Ok(_) => self.issue(&path, "entry belongs to another project"),
+                Err(error) => self.issue(&path, error),
             }
-            // These are the signed payloads checked on intake, as read by
-            // ledger::entries_after. The editable projections are not evidence.
-            for file in entry.files {
-                match ledger_fact(town, &file.path, &file.bytes.0) {
-                    Ok(Some((at, machine, what))) => self.events.push(SinceEvent {
-                        id: identity("ledger-fact", &[town.as_str(), &file.path]),
-                        at,
-                        machine,
-                        town: known(Some(town)),
-                        sources: vec![self.location(&path)],
-                        what,
-                    }),
-                    Ok(None) => {}
-                    Err(error) => self.issue(&path, format!("{}: {error}", file.path)),
-                }
+        }
+    }
+
+    // These are the signed payloads checked on intake, as read by
+    // ledger::entries_after. The editable projections are not evidence.
+    fn ledger_entry(&mut self, town: &TownName, path: &Path, entry: Entry) {
+        for file in entry.files {
+            match ledger_fact(town, &file.path, &file.bytes.0) {
+                Ok(Some((at, machine, what))) => self.events.push(SinceEvent {
+                    id: identity("ledger-fact", &[town.as_str(), &file.path]),
+                    at,
+                    machine,
+                    town: known(Some(town)),
+                    sources: vec![self.location(path)],
+                    what,
+                }),
+                Ok(None) => {}
+                Err(error) => self.issue(path, format!("{}: {error}", file.path)),
             }
         }
     }

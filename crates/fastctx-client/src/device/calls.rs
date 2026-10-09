@@ -1,8 +1,11 @@
-//! The local World contract carried to a resident's machine, asked of each
-//! machine (`around`), or, for the projects' ledgers, to one machine that
-//! answers from its own copy.
+//! The local World contract carried by a device: to a resident's machine,
+//! asked of each machine (`around`), or, for the projects' ledgers, to one
+//! machine that acts for the device's account and answers from its copy.
+
+use std::sync::Arc;
 
 use fastctx_net::link::CallFailure;
+use fastctx_types::accounts::{AccountChange, AccountsReply};
 use fastctx_types::pages::PageCall;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::town::Looked;
@@ -12,69 +15,104 @@ use super::{Device, Session, failed};
 use crate::Error;
 
 impl Device {
-    pub(crate) async fn call(self: &std::sync::Arc<Self>, call: Call) -> Result<(Reply, MachineName), Error> {
-        if let Call::Join { code, name } = call {
-            let (world, name) = self.join(code, name).await?;
-            return Ok((Reply::Joined { world, name: name.clone(), already: false }, name));
+    pub(crate) async fn call(self: &Arc<Self>, call: Call) -> Result<(Reply, MachineName), Error> {
+        let here = || self.state().name.unwrap_or_else(|| MachineName::try_from("device").expect("a valid name"));
+        match call {
+            Call::Login { hub, account, password, name, .. } => {
+                let joined = self.login(hub, account, password, name).await?;
+                let name = joined.name.clone();
+                return Ok((Reply::LoggedIn { hub: joined.hub, name: joined.name, account: joined.account }, name));
+            }
+            Call::LoginWithToken { token, name } => {
+                let joined = self.login_with_token(token, name).await?;
+                let name = joined.name.clone();
+                return Ok((Reply::LoggedIn { hub: joined.hub, name: joined.name, account: joined.account }, name));
+            }
+            Call::Account { hub, account, change: AccountChange::Logout } => {
+                self.logout(hub, account).await?;
+                return Ok((Reply::Changed { token: None }, here()));
+            }
+            Call::Account { hub, account, change: AccountChange::Seen { name } } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let path = self.store.arrivals(&session.link.membership().id);
+                fastctx_net::arrivals::shown(&path, &account, &name).map_err(failed)?;
+                return Ok((Reply::Changed { token: None }, here()));
+            }
+            Call::Account { hub, account, change } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let token = session.link.account_change(&account, change).await.map_err(failed)?;
+                return Ok((Reply::Changed { token }, here()));
+            }
+            Call::Accounts => {
+                let mut hubs = Vec::new();
+                for session in self.sessions() {
+                    let mut accounts = session.link.accounts();
+                    accounts.arrivals = fastctx_net::arrivals::fresh(&self.store.arrivals(&accounts.hub)).map_err(failed)?;
+                    hubs.push(accounts);
+                }
+                return Ok((Reply::Accounts(AccountsReply { machine: here(), hubs }), here()));
+            }
+            _ => {}
         }
-        let session = self.connected()?;
-        if matches!(call, Call::Leave) {
-            let name = session.link.membership().name.clone();
-            self.leave().await?;
-            return Ok((Reply::Done, name));
-        }
-        session.check_identity().await?;
-        let here = session.link.membership().name.clone();
+        // The account a conversation the user opens works for, when they
+        // chose one.
+        let mut chosen = None;
         let (machine, remote, resident) = match call {
             Call::Composer { resident, machine, request } => {
-                let machine = session.locate(&resident, machine).await?;
+                let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Composer { resident: resident.clone(), request }, Some(resident))
             }
             Call::FindFiles { machine, request } => {
                 let machine =
                     machine.ok_or_else(|| failed("choose a machine for file search; a device has no local files"))?;
-                session.machine(&machine)?;
                 (machine, RemoteCall::FindFiles { request }, None)
             }
-            Call::ClaudeConsent { machine, accept } => {
-                session.machine(&machine)?;
-                (machine, RemoteCall::ClaudeConsent { accept }, None)
-            }
+            Call::ClaudeConsent { machine, accept } => (machine, RemoteCall::ClaudeConsent { accept }, None),
             Call::Talk { to, machine, text, attachments } => {
-                let machine = session.locate(&to, machine).await?;
+                let machine = self.find(&to, machine).await?;
                 (machine, RemoteCall::Talk { to: to.clone(), text, attachments }, Some(to))
             }
-            Call::Open { agent, town, node, text, model, reasoning_effort, attachments } => {
+            Call::Open { agent, town, node, text, model, reasoning_effort, attachments, choices } => {
                 let machine =
                     node.ok_or_else(|| failed("choose a machine to open a conversation; no agents live on a device"))?;
-                session.machine(&machine)?;
-                (machine, RemoteCall::Open { agent, town, text, model, reasoning_effort, attachments }, None)
+                chosen = choices.account;
+                let (works_on, colleagues) = (choices.works_on, choices.colleagues);
+                let open = RemoteCall::Open { agent, town, text, model, reasoning_effort, attachments, works_on, colleagues };
+                (machine, open, None)
+            }
+            Call::Colleagues { resident, machine, lives_on } => {
+                let machine = self.find(&resident, machine).await?;
+                (machine, RemoteCall::Colleagues { resident: resident.clone(), lives_on }, Some(resident))
+            }
+            Call::WorksOn { resident, machine, works_on } => {
+                let machine = self.find(&resident, machine).await?;
+                (machine, RemoteCall::WorksOn { resident: resident.clone(), works_on }, Some(resident))
             }
             Call::Stop { resident, machine } => {
-                let machine = session.locate(&resident, machine).await?;
+                let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Stop { resident: resident.clone() }, Some(resident))
             }
             Call::Manage { resident, machine, action } => {
-                let machine = session.locate(&resident, machine).await?;
+                let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Manage { resident: resident.clone(), action }, Some(resident))
             }
             Call::Control { resident, machine, control } => {
-                let machine = session.locate(&resident, machine).await?;
+                let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Control { resident: resident.clone(), control }, Some(resident))
             }
             Call::Offers { resident, machine } => {
-                let machine = session.locate(&resident, machine).await?;
+                let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Offers { resident: resident.clone() }, Some(resident))
             }
             // What asks of the whole World, the device asks of each machine
             // itself (`around`).
-            Call::Who { all, town, since } => return Ok((Reply::Who(session.who(all, town, since).await?), here)),
-            Call::Since { since, town } => return Ok((Reply::Since(session.since(since, town).await?), here)),
-            Call::Look { ids } => return Ok((Reply::Looked { looked: session.look(ids).await? }, here)),
-            Call::Agents { machine } => return Ok((Reply::Agents(session.agents(machine).await?), here)),
-            Call::Nodes => return Ok((Reply::Nodes(session.nodes().await?), here)),
+            Call::Who { all, town, since } => return Ok((Reply::Who(self.who(all, town, since).await?), here())),
+            Call::Since { since, town } => return Ok((Reply::Since(self.since(since, town).await?), here())),
+            Call::Look { ids } => return Ok((Reply::Looked { looked: self.look(ids).await? }, here())),
+            Call::Agents { machine } => return Ok((Reply::Agents(self.agents(machine).await?), here())),
+            Call::Nodes => return Ok((Reply::Nodes(self.nodes().await?), here())),
             // What only the projects' ledgers hold, one machine answers from
-            // its own copy, for what this device's scope covers.
+            // its own copy, for what this device's account may use.
             call @ (Call::Project(_)
             | Call::Journal(_)
             | Call::Page(
@@ -85,10 +123,24 @@ impl Device {
                 | PageCall::Act { .. }
                 | PageCall::Withdraw { .. }
                 | PageCall::Restore { .. },
-            )) => return session.relay(call).await,
+            )) => return self.relay(call).await,
             _ => return Err(failed("this call belongs to a local node, not a device")),
         };
-        let answer = session.link.call(&machine, remote.clone()).await.map_err(failed)?.map_err(failed)?;
+        let session = self.reaching(&machine)?;
+        let purpose = remote.purpose();
+        let account = match chosen {
+            Some(chosen) if chosen.hub != session.link.membership().id => {
+                return Err(failed(format!("{machine} is not on the hub of the account {}", chosen.account)));
+            }
+            Some(chosen) => {
+                let view = session.link.view();
+                view.admits(&session.link.membership().name, &chosen.account, &machine, purpose).map_err(failed)?;
+                chosen.account
+            }
+            None => session.account_for(&machine, purpose)?,
+        };
+        let answer =
+            session.link.call(&machine, &account, purpose, remote.clone()).await.map_err(failed)?.map_err(failed)?;
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),
@@ -114,6 +166,7 @@ impl Device {
             (RemoteCall::Offers { .. }, RemoteReply::Offers(offers)) => {
                 Reply::Offers { resident: address.expect("offers resident"), offers }
             }
+            (RemoteCall::Colleagues { .. } | RemoteCall::WorksOn { .. }, RemoteReply::Set) => Reply::Done,
             _ => {
                 return Err(failed(format!(
                     "{machine} answered something other than the requested conversation operation"
@@ -122,24 +175,11 @@ impl Device {
         };
         Ok((reply, machine))
     }
-}
 
-impl Session {
-    pub(super) fn machine(&self, machine: &MachineName) -> Result<(), Error> {
-        match self.link.members().0.get(machine) {
-            Some(member) if member.kind.is_machine() => Ok(()),
-            Some(_) => Err(failed(format!("{machine} is a device; no agents live on it"))),
-            None => Err(failed(format!("{machine} is not a trusted machine of this World"))),
-        }
-    }
-
-    pub(super) async fn locate(
-        &self,
-        resident: &ResidentId,
-        machine: Option<MachineName>,
-    ) -> Result<MachineName, Error> {
+    /// The machine the resident `resident` lives on: `machine` when given,
+    /// otherwise the one machine whose answer says so.
+    pub(super) async fn find(&self, resident: &ResidentId, machine: Option<MachineName>) -> Result<MachineName, Error> {
         if let Some(machine) = machine {
-            self.machine(&machine)?;
             return Ok(machine);
         }
         let looked = self.look(vec![resident.to_string()]).await?;
@@ -156,9 +196,7 @@ impl Session {
             }
         }
         if machines.len() == 1 {
-            let machine = machines.pop_first().expect("one machine");
-            self.machine(&machine)?;
-            return Ok(machine);
+            return Ok(machines.pop_first().expect("one machine"));
         }
         if machines.is_empty() {
             return Err(failed(format!(
@@ -172,16 +210,9 @@ impl Session {
         )))
     }
 
+    /// Asks one online machine that may act for this device's account to
+    /// make `call` as a node would for its own user.
     pub(super) async fn relay(&self, call: Call) -> Result<(Reply, MachineName), Error> {
-        let (table, presence) = self.link.members();
-        let machines: Vec<_> = table
-            .machines()
-            .filter(|member| presence.iter().any(|present| present.name == member.name && present.online))
-            .map(|member| member.name.clone())
-            .collect();
-        if machines.is_empty() {
-            return Err(failed("no machines of this World are online; the device cannot ask a node to act for it"));
-        }
         let repeatable = matches!(
             call,
             Call::Project(ProjectCall::List | ProjectCall::Show { .. } | ProjectCall::Map { .. })
@@ -190,23 +221,49 @@ impl Session {
         );
         let remote = RemoteCall::Relay { made: serde_json::to_value(&call).map_err(failed)? };
         let mut unanswered = Vec::new();
-        for machine in machines {
-            // Heartbeats establish connection liveness, not a deadline for
-            // completing a query or transferring its answer. Only a reported
-            // delivery/connection failure permits trying another machine.
-            match self.link.call(&machine, remote.clone()).await {
-                Ok(Ok(RemoteReply::Relayed { answer })) => {
-                    return Ok((serde_json::from_value(answer).map_err(failed)?, machine));
+        let mut asked = false;
+        for session in self.sessions() {
+            for (machine, account) in actors(&session) {
+                asked = true;
+                // Heartbeats establish connection liveness, not a deadline
+                // for completing a query or transferring its answer. Only a
+                // reported delivery or connection failure permits trying
+                // another machine.
+                match session.link.call(&machine, &account, remote.purpose(), remote.clone()).await {
+                    Ok(Ok(RemoteReply::Relayed { answer })) => {
+                        return Ok((serde_json::from_value(answer).map_err(failed)?, machine));
+                    }
+                    Ok(Ok(_)) => return Err(failed(format!("{machine} answered something other than a relayed call"))),
+                    Ok(Err(error)) => return Err(failed(format!("on {machine}: {error}"))),
+                    Err(error @ CallFailure::NotConnected { .. }) => return Err(failed(error)),
+                    Err(error @ CallFailure::Unknown { .. }) if !repeatable => {
+                        return Err(failed(format!("{error}; this write was not sent again")));
+                    }
+                    Err(error) => unanswered.push(error.to_string()),
                 }
-                Ok(Ok(_)) => return Err(failed(format!("{machine} answered something other than a relayed call"))),
-                Ok(Err(error)) => return Err(failed(format!("on {machine}: {error}"))),
-                Err(error @ CallFailure::NotConnected { .. }) => return Err(failed(error)),
-                Err(error @ CallFailure::Unknown { .. }) if !repeatable => {
-                    return Err(failed(format!("{error}; this write was not sent again")));
-                }
-                Err(error) => unanswered.push(error.to_string()),
             }
+        }
+        if !asked {
+            return Err(failed(
+                "no machine that may act for this device's accounts is online; a device cannot read a project's ledger itself",
+            ));
         }
         Err(failed(format!("no online machine answered: {}", unanswered.join("; "))))
     }
+}
+
+/// The online machines of a session's hub that may act for one of the
+/// device's logins there, each with that account.
+fn actors(session: &Session) -> Vec<(MachineName, fastctx_types::AccountName)> {
+    let view = session.link.view();
+    let logins: Vec<_> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
+    view.machines()
+        .filter(|machine| machine.online)
+        .filter_map(|machine| {
+            logins
+                .iter()
+                .find(|account| view.trusts(account, &machine.name) && view.rights(account, &machine.name).any())
+                .map(|account| (machine.name.clone(), account.clone()))
+        })
+        .collect()
 }

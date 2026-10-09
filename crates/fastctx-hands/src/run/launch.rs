@@ -35,6 +35,8 @@ pub struct Launch<'a> {
     /// What an `on` sent with the script; the files are in the resident's
     /// directory already.
     pub on: Option<&'a fastctx_types::run::OnJob>,
+    /// The account a job run for a resident of another machine works for.
+    pub account: Option<&'a fastctx_types::access::HubAccount>,
 }
 
 /// A job whose supervisor has been started.
@@ -132,7 +134,9 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
     };
     let record_path = resident.job_record(&job);
     let script = resident.job_script(&job);
-    publish_new(&script, launch.request.script.as_bytes(), Permissions::Private)
+    // Bash reads the script with its `on`-to-`on` pipes marked; the record
+    // keeps it as it was written.
+    publish_new(&script, super::heredoc::mark_on_pipes(&launch.request.script).as_bytes(), Permissions::Private)
         .map_err(|error| failure("could not write the script", &error))?;
     let record = JobRecord {
         id: job.clone(),
@@ -162,6 +166,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
         ends_with_node: false,
         writes_off: launch.request.writes_off,
         on: launch.on.cloned(),
+        account: launch.account.cloned(),
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
     if launch.on.is_some() {

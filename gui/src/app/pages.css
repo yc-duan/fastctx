@@ -744,15 +744,8 @@ a.details-job {
 }
 
 
-/* The hub every machine reaches, said once above the machines. */
-.machines-hub {
-  margin-top: var(--space-4);
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-/* Members that just came in with this machine's invitations: each a line
-   saying who and when, with what can be done about it, until it is seen. */
+/* Who came into an account lately: each a line saying who and when, with
+   what can be done about it, until it is seen. */
 .joined-lines {
   list-style: none;
   padding: 0;
@@ -790,119 +783,11 @@ a.details-job {
   color: var(--wrong);
 }
 
-/* Where a member stands, under its facts: its rights, what it may use,
-   who brought it in. */
+/* What an account may do on a machine, or whom its owner lent it to,
+   under its facts. */
 .machine-standing {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: var(--space-2);
   margin: var(--space-1) 0 0;
   padding-left: calc(8px + 2px + var(--space-2));
   font-size: var(--size-small);
   color: var(--text-2);
-}
-
-.machine-standing .sep,
-.machine-standing .standing-from {
-  color: var(--text-3);
-}
-
-.machine-standing.caution {
-  color: var(--caution);
-}
-
-.tag.tag-manage {
-  align-self: center;
-  background: var(--accent-wash);
-  color: var(--text);
-}
-
-/* Where a member hangs in the tree: said only when it is more than
-   straight below the hub. */
-.machine-place {
-  margin: 2px 0 0;
-  padding-left: calc(8px + 2px + var(--space-2));
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.machine-line .tag.tag-relay {
-  box-shadow: inset 0 0 0 1px var(--hairline);
-  background: transparent;
-  color: var(--text-2);
-}
-
-/* The World's tree, drawn once some machine relays: the hub at the root,
-   each member under the relay it connects through, ruled like an outline. */
-.machines-tree {
-  margin-top: var(--space-4);
-  margin-bottom: var(--space-2);
-}
-
-.machines-tree-title {
-  margin: 0 0 var(--space-2);
-  font-size: var(--size-small);
-  font-weight: 400;
-  color: var(--text-3);
-}
-
-.machines-tree ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.machines-tree li li {
-  position: relative;
-  padding-left: 1.4em;
-}
-
-.machines-tree li li::before {
-  content: "";
-  position: absolute;
-  left: 0.45em;
-  top: 0;
-  bottom: 0;
-  border-left: 1px solid var(--rule);
-}
-
-.machines-tree li li:last-child::before {
-  bottom: auto;
-  height: 0.95em;
-}
-
-.machines-tree li li::after {
-  content: "";
-  position: absolute;
-  left: 0.45em;
-  top: 0.95em;
-  width: 0.65em;
-  border-top: 1px solid var(--rule);
-}
-
-.tree-hub,
-.tree-node {
-  font-size: var(--size-ui);
-  line-height: 1.9;
-  color: var(--text);
-}
-
-.tree-node {
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-
-.tree-node:hover {
-  color: var(--text-strong);
-  text-decoration: underline dotted;
-  text-underline-offset: 3px;
-}
-
-.tree-tag {
-  margin-left: var(--space-2);
-  font-size: var(--size-small);
-  color: var(--text-3);
 }

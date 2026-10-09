@@ -1,9 +1,9 @@
-//! Replicated towns are read locally; other towns are queried on demand.
+//! Projects this machine spans are kept here as they change; others are
+//! taken on demand.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use fastctx_net::ledger::TownId;
 use fastctx_types::TownName;
 use fastctx_types::ipc::Failure;
 use fastctx_types::project::{Record, TownSummary};
@@ -11,10 +11,10 @@ use fastctx_types::project::{Record, TownSummary};
 use crate::Node;
 use crate::town::read;
 
-/// A town that spans this machine already has background replication. A
-/// World-wide query discovers other towns at the hub when connected, and
-/// takes those this machine can open. Without that connection it returns
-/// the copies already here; Nodes reports the disconnected state. Explicit
+/// A project that spans this machine is kept here already. A wider query
+/// asks each hub for the projects this computer's accounts may use, and
+/// takes those it does not have. Without a connection it returns the copies
+/// already here; `fastctx nodes` reports the disconnected state. Explicit
 /// refusals and corrupt data still fail.
 pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<TownName>, String> {
     let local = available(node, town).await?;
@@ -23,31 +23,31 @@ pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<Town
     {
         return Ok(vec![town.clone()]);
     }
-    let Some(link) = node.link() else { return Ok(local.into_keys().collect()) };
     let _syncing = node.syncing.lock().await;
-    super::names::load(node, &link);
-    let Some(catalog) = link.try_ledger_catalog().await? else { return Ok(local.into_keys().collect()) };
-    // The towns kept and replicated here already, by their ids.
-    let replicated: Vec<TownId> = local
-        .iter()
-        .filter(|(_, record)| record.machines.contains(&node.machine()))
-        .filter_map(|(name, _)| super::names::town_id(node, name))
-        .collect();
-    let wanted = town.and_then(|town| super::names::town_id(node, town));
-    for (id, latest) in catalog {
-        if id == TownId::world() || replicated.contains(&id) || wanted.as_ref().is_some_and(|wanted| *wanted != id) {
-            continue;
-        }
-        if !super::take(node, &link, &id, latest, true).await? {
-            break;
+    for link in node.links() {
+        let Some(catalog) = link.try_ledger_catalog().await? else { continue };
+        for (id, latest) in catalog {
+            let Some(name) = link.view().project(&id).map(|project| project.name.clone()) else { continue };
+            if town.is_some_and(|town| *town != name) {
+                continue;
+            }
+            let have = crate::ledger::seq(&node.world, &name).map_err(|error| format!("reading {name}: {error}"))?;
+            if have >= latest {
+                continue;
+            }
+            let name = super::local_name(node, &link, &id)?;
+            super::take(node, &link, &name, &id, latest).await?;
         }
     }
     Ok(available(node, town).await?.into_keys().collect())
 }
 
+/// The projects this machine has a record of, kept for a hub it is on, or
+/// for itself.
 pub(crate) async fn available(node: &Node, town: Option<&TownName>) -> Result<BTreeMap<TownName, Record>, String> {
     let world = node.world.clone();
-    let membership = node.link().map(|link| link.membership().world.clone());
+    let mut hubs: Vec<_> = node.links().iter().map(|link| link.membership().id.clone()).collect();
+    hubs.push(super::alone(&world).map_err(|error| format!("reading this computer's own id: {error}"))?);
     let town = town.cloned();
     tokio::task::spawn_blocking(move || {
         let names = match town {
@@ -56,9 +56,8 @@ pub(crate) async fn available(node: &Node, town: Option<&TownName>) -> Result<BT
         };
         let mut records = BTreeMap::new();
         for name in names {
-            if let Some(expected) = &membership
-                && super::origin(&world.town(&name))?.as_ref() != Some(expected)
-            {
+            let Some(place) = super::names::place(&world, &name)? else { continue };
+            if !hubs.contains(&place.hub) {
                 continue;
             }
             if let Some(record) = read::latest(&world, &name)? {
@@ -73,7 +72,7 @@ pub(crate) async fn available(node: &Node, town: Option<&TownName>) -> Result<BT
 }
 
 pub async fn list(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
-    let standalone = node.link().is_none();
+    let alone = !node.connected_anywhere();
     let here = node.machine();
     let towns = query(node, None).await.map_err(Failure::new)?;
     let world = node.world.clone();
@@ -82,7 +81,7 @@ pub async fn list(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
         for town in towns {
             let record = read::latest(&world, &town)?
                 .ok_or_else(|| std::io::Error::other(format!("{town} has no project record in its ledger")))?;
-            if standalone && !record.machines.contains(&here) {
+            if alone && !record.machines.contains(&here) {
                 continue;
             }
             let journals = read::journal_names(&world, &town)?.len();
@@ -91,6 +90,6 @@ pub async fn list(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
         std::io::Result::Ok(listed)
     })
     .await
-    .map_err(|error| Failure::new(format!("reading the World directory: {error}")))?
-    .map_err(|error| Failure::new(format!("reading the World directory: {error}")))
+    .map_err(|error| Failure::new(format!("reading the projects: {error}")))?
+    .map_err(|error| Failure::new(format!("reading the projects: {error}")))
 }

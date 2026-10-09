@@ -1,91 +1,146 @@
-//! The commands that make machines into one World: joining, inviting,
-//! revoking, leaving, and seeing the machines (`world-network.md`).
+//! The commands that put this computer on hubs and look after its accounts
+//! (`world-network.md`): logging in and out, tokens for other devices, what
+//! an account's machines let other accounts do, and the hub and relays
+//! themselves.
 
 use clap::{Args, Subcommand};
-use fastctx_types::world::{LinkState, NodesReply, RelaySetting, Upstream};
-use fastctx_types::{Call, MachineName, Reply};
+use fastctx_types::accounts::{AccountChange, AccountsReply, MemberKind, Relay};
+use fastctx_types::world::{HubNodes, LinkState, NodesReply};
+use fastctx_types::{AccountName, Call, HubName, MachineName, Reply};
 use jiff::{SignedDuration, Timestamp};
 
 #[derive(Args)]
-pub struct JoinArgs {
-    /// The code: a hub's founding code, or an invitation a member made.
-    code: String,
-    /// The name to join under; this machine's own name when not given.
+pub struct LoginArgs {
+    /// The hub, as host:port.
+    #[arg(required_unless_present = "token")]
+    hub: Option<String>,
+    /// The account.
+    #[arg(required_unless_present = "token")]
+    account: Option<AccountName>,
+    /// Log in with a one-time token another device made instead.
+    #[arg(long, conflicts_with_all = ["hub", "account", "open"])]
+    token: Option<String>,
+    /// Register this computer as one of the account's machines, so other
+    /// devices of the account can use it.
+    #[arg(long)]
+    register: bool,
+    /// Open the account first, on a hub that lets anyone.
+    #[arg(long)]
+    open: bool,
+    /// What this computer is called on the hub; its host name when not
+    /// given. It has this name on every hub it is on.
     #[arg(long)]
     name: Option<MachineName>,
 }
 
 #[derive(Args)]
-pub struct InviteArgs {
-    /// The name the joining machine must take.
+pub struct LogoutArgs {
+    account: AccountName,
+    /// The hub, when this computer is on more than one.
+    #[arg(long)]
+    hub: Option<HubName>,
+}
+
+#[derive(Args)]
+pub struct TokenArgs {
+    /// The account it logs in to.
+    account: AccountName,
+    #[arg(long)]
+    hub: Option<HubName>,
+    /// What logs in with it: a phone or another computer only logs in; for
+    /// a server, the line that installs it and registers it as a machine
+    /// is printed instead.
+    #[arg(long = "for", default_value = "computer", value_parser = ["phone", "computer", "server"])]
+    used_by: String,
+    /// How many hours it stays valid.
+    #[arg(long, default_value_t = 1, value_parser = hours)]
+    hours: u32,
+    /// For a server: the name it takes.
     #[arg(long)]
     name: Option<MachineName>,
-    /// How many hours the invitation stays valid.
-    #[arg(long, default_value_t = 1)]
-    hours: u32,
-    /// What it may do; everything when nothing is limited.
-    #[command(flatten)]
-    scope: crate::scope_args::ScopeArgs,
-    /// Print, instead of the code, the one line a Linux server runs to
-    /// download fastctx from the hub, check it, install it and join.
-    #[arg(long)]
-    server: bool,
 }
 
 #[derive(Args)]
 pub struct GrantArgs {
-    /// The member whose scope this sets.
-    member: MachineName,
-    /// It holds management rights from now on, and may do everything.
+    /// One of the account's machines.
+    machine: MachineName,
+    /// The account it is given to.
+    to: AccountName,
+    /// It may work there: run commands, read and write files.
     #[arg(long)]
-    manage: bool,
-    /// What it may do; everything when nothing is limited.
-    #[command(flatten)]
-    scope: crate::scope_args::ScopeArgs,
+    hands: bool,
+    /// It may use the agents there.
+    #[arg(long)]
+    agents: bool,
+    /// The account the machine is registered under; the one this computer
+    /// is logged in to when not given.
+    #[arg(long = "as")]
+    owner: Option<AccountName>,
+    #[arg(long)]
+    hub: Option<HubName>,
 }
 
 #[derive(Args)]
-pub struct RouteArgs {
-    /// The member whose route this sets.
-    member: MachineName,
-    /// A relay it connects through; give it once for each, in the order it
-    /// tries them. The hub comes after them; with none, it connects straight
-    /// to the hub.
+pub struct TrustArgs {
+    /// A machine another account lets this one use.
+    machine: MachineName,
+    /// Take the trust back.
+    #[arg(long)]
+    off: bool,
+    #[arg(long = "as")]
+    account: Option<AccountName>,
+    #[arg(long)]
+    hub: Option<HubName>,
+}
+
+#[derive(Args)]
+pub struct RemoveArgs {
+    /// A device logged in to the account, or one of its machines.
+    name: MachineName,
+    #[arg(long = "as")]
+    account: Option<AccountName>,
+    #[arg(long)]
+    hub: Option<HubName>,
+    #[arg(long, default_value = "removed by the user")]
+    reason: String,
+}
+
+#[derive(Args)]
+pub struct RelaysArgs {
+    /// One of the account's machines.
+    machine: MachineName,
+    /// A relay it connects through, as LABEL=HOST:PORT; give it once for
+    /// each, in the order it tries them. The hub comes after them; with
+    /// none, it connects straight to the hub.
     #[arg(long = "via")]
-    via: Vec<MachineName>,
+    via: Vec<String>,
+    #[arg(long = "as")]
+    account: Option<AccountName>,
+    #[arg(long)]
+    hub: Option<HubName>,
 }
 
 #[derive(Args)]
 pub struct RelayArgs {
-    /// The machine that relays; this one when not given.
+    /// Where it listens, as IP:PORT.
     #[arg(long)]
-    machine: Option<MachineName>,
-    /// An address the machines below it dial, as IP:PORT; give it once for
-    /// each.
-    #[arg(long = "public", required_unless_present = "off")]
-    public: Vec<std::net::SocketAddr>,
-    /// Where it listens; all addresses, on the first public port, when not
-    /// given.
-    #[arg(long)]
-    listen: Option<std::net::SocketAddr>,
-    /// Stop relaying.
-    #[arg(long, conflicts_with_all = ["public", "listen"])]
-    off: bool,
-}
-
-#[derive(Args)]
-pub struct RevokeArgs {
-    /// The machine whose key no machine should trust any more.
-    machine: MachineName,
-    /// Why, kept with the revocation.
-    #[arg(long, default_value = "revoked")]
-    reason: String,
+    listen: std::net::SocketAddr,
+    /// The hub it forwards to, as host:port; give it once for each address.
+    #[arg(long = "hub", required = true)]
+    hub: Vec<String>,
 }
 
 #[derive(Subcommand)]
 pub enum HubCommand {
-    /// Create a hub on this machine and print the code that founds its World.
+    /// Create a hub on this machine, with its first account, an
+    /// administrator, whose password is asked for.
     Init {
+        /// The hub's short name: lowercase letters, digits and hyphens.
+        #[arg(long)]
+        name: HubName,
+        /// The administrator's account.
+        #[arg(long)]
+        admin: AccountName,
         /// An address machines reach the hub at, as IP:PORT; give it once for
         /// each.
         #[arg(long = "public", required = true)]
@@ -103,115 +158,151 @@ pub enum HubCommand {
         #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
-    /// Print the founding code again, until a machine has used it.
-    Code {
+    /// Set an account's password from the hub's own machine, as for an
+    /// administrator who forgot theirs. The hub must not be running.
+    Password {
+        account: AccountName,
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
+    /// Make the hub kept in --dir, of the network's third version, a hub of
+    /// the fourth: its id and certificate stay, so every machine reconnects
+    /// with the key it has; its machines and devices go into one new
+    /// account, an administrator, whose password is asked for. The third
+    /// version's files are kept beside it. The hub must not be running.
+    Migrate {
+        /// The hub's short name: lowercase letters, digits and hyphens.
+        #[arg(long)]
+        name: HubName,
+        /// The account the machines go into.
+        #[arg(long)]
+        admin: AccountName,
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
+    /// The hub's name, id, addresses and certificate pin.
+    Show {
         #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
 }
 
-pub fn join(args: JoinArgs) -> anyhow::Result<()> {
-    match call(Call::Join { code: args.code, name: args.name })? {
-        Reply::Joined { world, name, .. } => println!("joined the World {world} as {name}"),
+pub fn login(args: LoginArgs) -> anyhow::Result<()> {
+    let reply = match args.token {
+        Some(token) => call(Call::LoginWithToken { token, name: args.name })?,
+        None => {
+            let (hub, account) = (args.hub.expect("clap requires it"), args.account.expect("clap requires it"));
+            let addresses = runtime()?.block_on(fastctx_client::hub_addresses(&hub)).map_err(anyhow::Error::msg)?;
+            if args.open {
+                let password = crate::secret::new_password(&format!("A password for {account}: "))?;
+                call(Call::OpenAccount { hub: addresses, account, password, register: args.register, name: args.name })?
+            } else {
+                let password = crate::secret::read_password(&format!("{account}'s password: "))?;
+                call(Call::Login { hub: addresses, account, password, register: args.register, name: args.name })?
+            }
+        }
+    };
+    match reply {
+        Reply::LoggedIn { hub, name, account } => {
+            println!("logged in to {account} on the hub {hub}; this computer is {name} there")
+        }
         other => anyhow::bail!("the node answered something else: {other:?}"),
     }
     crate::keep::keep_connected()
 }
 
-pub fn invite(args: InviteArgs) -> anyhow::Result<()> {
+pub fn logout(args: LogoutArgs) -> anyhow::Result<()> {
+    change(args.hub, args.account.clone(), AccountChange::Logout)?;
+    println!("logged out of {}", args.account);
+    Ok(())
+}
+
+pub fn token(args: TokenArgs) -> anyhow::Result<()> {
     let expires = Timestamp::now() + SignedDuration::from_hours(i64::from(args.hours));
     let until = expires.to_zoned(jiff::tz::TimeZone::system()).strftime("%Y-%m-%d %H:%M %Z");
-    if args.server {
-        match call(Call::InviteServer { name: args.name.clone(), expires, scope: args.scope.scope() })? {
+    if args.used_by == "server" {
+        match call(Call::ServerCommand { hub: args.hub, account: args.account, name: args.name, expires })? {
             Reply::ServerInvitation { command } => {
                 println!("{command}");
-                eprintln!("Paste this line into the server's terminal. It works once, until {until}.");
+                eprintln!("Paste this line into the server's terminal, as the user it is for. It works once, until {until}.");
             }
             other => anyhow::bail!("the node answered something else: {other:?}"),
         }
         return Ok(());
     }
-    match call(Call::Invite { name: args.name.clone(), expires, device: false, scope: args.scope.scope() })? {
-        Reply::Code { code } => {
-            println!("{code}");
-            let named = args.name.map(|name| format!(" as {name}")).unwrap_or_default();
-            eprintln!(
-                "On the machine to invite, run `fastctx join <code>`{named}. The code works once, until {until}."
-            );
-        }
-        other => anyhow::bail!("the node answered something else: {other:?}"),
-    }
+    let kind = if args.used_by == "phone" { MemberKind::Phone } else { MemberKind::Computer };
+    let token = change(args.hub, args.account, AccountChange::Token { register: false, name: None, kind, expires })?
+        .ok_or_else(|| anyhow::anyhow!("the hub made no token"))?;
+    println!("{token}");
+    eprintln!("On the other device, run `fastctx login --token <token>`, or scan it in the World app. It works once, until {until}.");
     Ok(())
 }
 
 pub fn grant(args: GrantArgs) -> anyhow::Result<()> {
-    match call(Call::Grant { member: args.member.clone(), scope: args.scope.scope_or_all(), manage: args.manage })? {
-        Reply::Done => println!("{} has its new scope; every machine of the World holds it to that", args.member),
-        other => anyhow::bail!("the node answered something else: {other:?}"),
+    let owner = account_or_owner(args.hub.as_ref(), args.owner, Some(&args.machine))?;
+    let rights = fastctx_types::access::Rights { hands: args.hands, agents: args.agents };
+    let change = AccountChange::Grant { machine: args.machine.clone(), to: args.to.clone(), rights };
+    self::change(args.hub, owner, change)?;
+    let said = match (args.hands, args.agents) {
+        (true, true) => "may work on it and use its agents",
+        (true, false) => "may work on it",
+        (false, true) => "may use its agents",
+        (false, false) => "may not use it any more",
+    };
+    println!("{} {said}: {}", args.to, args.machine);
+    Ok(())
+}
+
+pub fn trust(args: TrustArgs) -> anyhow::Result<()> {
+    let account = account_or_owner(args.hub.as_ref(), args.account, None)?;
+    self::change(args.hub, account.clone(), AccountChange::Trust { machine: args.machine.clone(), trusted: !args.off })?;
+    if args.off {
+        println!("{account} no longer trusts {}: its sessions and jobs there no longer act for {account}", args.machine);
+    } else {
+        println!("{account} trusts {}: its sessions and jobs there for {account} may go to {account}'s other machines", args.machine);
     }
     Ok(())
 }
 
-pub fn route(args: RouteArgs) -> anyhow::Result<()> {
-    let via: Vec<Upstream> = args.via.iter().cloned().map(|machine| Upstream::Relay { machine }).collect();
-    let said = if via.is_empty() {
+pub fn remove(args: RemoveArgs) -> anyhow::Result<()> {
+    let account = account_or_owner(args.hub.as_ref(), args.account, Some(&args.name))?;
+    self::change(args.hub, account.clone(), AccountChange::Remove { name: args.name.clone(), reason: args.reason })?;
+    println!("{} is out of {account}", args.name);
+    Ok(())
+}
+
+pub fn relays(args: RelaysArgs) -> anyhow::Result<()> {
+    let account = account_or_owner(args.hub.as_ref(), args.account, Some(&args.machine))?;
+    let runtime = runtime()?;
+    let mut relays = Vec::new();
+    for via in &args.via {
+        let (label, address) =
+            via.split_once('=').ok_or_else(|| anyhow::anyhow!("write each relay as LABEL=HOST:PORT, not {via}"))?;
+        let addresses = runtime.block_on(fastctx_client::hub_addresses(address)).map_err(anyhow::Error::msg)?;
+        relays.push(Relay { label: label.to_string(), addresses });
+    }
+    let said = if relays.is_empty() {
         "straight to the hub".to_string()
     } else {
-        let relays: Vec<String> = args.via.iter().map(ToString::to_string).collect();
-        format!("through {}, then the hub", relays.join(", then "))
+        format!("through {}, then the hub", relays.iter().map(|relay| relay.label.as_str()).collect::<Vec<_>>().join(", then "))
     };
-    let via = if via.is_empty() { vec![Upstream::Hub] } else { via };
-    match call(Call::Route { member: args.member.clone(), via })? {
-        Reply::Done => println!("{} connects {said} from now on", args.member),
-        other => anyhow::bail!("the node answered something else: {other:?}"),
-    }
+    self::change(args.hub, account, AccountChange::Relays { machine: args.machine.clone(), relays })?;
+    println!("{} connects {said} from now on", args.machine);
     Ok(())
 }
 
 pub fn relay(args: RelayArgs) -> anyhow::Result<()> {
-    let machine = match args.machine {
-        Some(machine) => machine,
-        None => match call(Call::Nodes)? {
-            Reply::Nodes(reply) => reply.machine,
-            other => anyhow::bail!("the node answered something else: {other:?}"),
-        },
-    };
-    let relay = if args.off {
-        None
-    } else {
-        let first = args.public.first().expect("clap requires a public address");
-        let listen = args.listen.unwrap_or_else(|| {
-            let any = if first.is_ipv4() {
-                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
-            } else {
-                std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
-            };
-            std::net::SocketAddr::new(any, first.port())
-        });
-        Some(RelaySetting { listen, public: args.public })
-    };
-    match call(Call::SetRelay { machine: machine.clone(), relay })? {
-        Reply::Relaying { relays_at } if relays_at.is_empty() => println!("{machine} relays for no machine now"),
-        Reply::Relaying { relays_at } => println!(
-            "{machine} relays at {}; `fastctx route <member> --via {machine}` puts a machine below it",
-            relays_at.join(", ")
-        ),
-        other => anyhow::bail!("the node answered something else: {other:?}"),
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let mut hub = Vec::new();
+    for address in &args.hub {
+        hub.extend(runtime.block_on(fastctx_client::hub_addresses(address)).map_err(anyhow::Error::msg)?);
     }
-    Ok(())
+    runtime.block_on(fastctx_hub::relay::run(args.listen, hub))
 }
 
-pub fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
-    match call(Call::Revoke { name: args.machine.clone(), reason: args.reason })? {
-        Reply::Done => println!("revoked {}: no machine of the World trusts its key any more", args.machine),
-        other => anyhow::bail!("the node answered something else: {other:?}"),
-    }
-    Ok(())
-}
-
-pub fn leave() -> anyhow::Result<()> {
-    match call(Call::Leave)? {
-        Reply::Done => println!("left the World; this machine is a World of one again"),
+pub fn accounts() -> anyhow::Result<()> {
+    match call(Call::Accounts)? {
+        Reply::Accounts(reply) => print!("{}", render_accounts(&reply, Timestamp::now())),
         other => anyhow::bail!("the node answered something else: {other:?}"),
     }
     Ok(())
@@ -227,92 +318,190 @@ pub fn nodes() -> anyhow::Result<()> {
 
 pub fn hub(command: HubCommand) -> anyhow::Result<()> {
     let root = fastctx_platform::fastctx_root()?;
+    let dir = |dir: Option<std::path::PathBuf>| dir.unwrap_or_else(|| fastctx_hub::default_dir(&root));
     match command {
-        HubCommand::Init { public, listen, dir } => {
-            let dir = dir.unwrap_or_else(|| fastctx_hub::default_dir(&root));
+        HubCommand::Init { name, admin, public, listen, dir: chosen } => {
+            let dir = dir(chosen);
             let listen = listen.unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], public[0].port())));
-            let code = fastctx_hub::init(&dir, public, listen)?;
-            println!("{}", code.to_text());
+            let password = crate::secret::new_password(&format!("A password for {admin}: "))?;
+            let new = fastctx_hub::New { name: name.clone(), public: public.clone(), listen, admin: admin.clone(), password };
+            fastctx_hub::init(&dir, new)?;
+            let at = public.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+            println!("the hub {name} is in {}; its administrator is {admin}", dir.display());
             eprintln!(
-                "A hub for the World {} is in {}. Start it with `fastctx hub serve`; then run `fastctx join <code>` on the first machine.",
-                code.world(),
-                dir.display()
+                "Start it with `fastctx hub serve` (or install its service); then log in from a computer with `fastctx login {} {admin}`. It is reached at {at}.",
+                public[0]
             );
         }
-        HubCommand::Serve { dir } => {
-            let dir = dir.unwrap_or_else(|| fastctx_hub::default_dir(&root));
+        HubCommand::Serve { dir: chosen } => {
+            let dir = dir(chosen);
             tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_hub::serve(&dir))?;
         }
-        HubCommand::Code { dir } => {
-            let dir = dir.unwrap_or_else(|| fastctx_hub::default_dir(&root));
-            println!("{}", fastctx_hub::founding_code(&dir)?.to_text());
+        HubCommand::Password { account, dir: chosen } => {
+            let password = crate::secret::new_password(&format!("A new password for {account}: "))?;
+            fastctx_hub::reset_password(&dir(chosen), &account, &password)?;
+            println!("{account}'s password is set; devices already logged in stay logged in");
+        }
+        HubCommand::Migrate { name, admin, dir: chosen } => {
+            let dir = dir(chosen);
+            let file_name = dir.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            let fourth = dir.with_file_name(format!("{file_name}-fourth"));
+            let third = dir.with_file_name(format!("{file_name}-third"));
+            if third.exists() {
+                anyhow::bail!("{} exists already: the hub was migrated once", third.display());
+            }
+            let password = crate::secret::new_password(&format!("A password for {admin}: "))?;
+            let migrated = fastctx_hub::third::Migrated { name: name.clone(), admin: admin.clone(), password };
+            let report = fastctx_hub::third::migrate(&dir, &fourth, migrated)?;
+            std::fs::rename(&dir, &third)?;
+            std::fs::rename(&fourth, &dir)?;
+            let list = |names: &[MachineName]| names.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+            println!("the hub {name} in {} is of the fourth version; its administrator is {admin}", dir.display());
+            println!("machines of {admin}: {}", list(&report.machines));
+            if !report.devices.is_empty() {
+                println!("devices logged in to {admin}: {}", list(&report.devices));
+            }
+            for (member, why) in &report.left {
+                println!("left out {member}: {why}");
+            }
+            if report.letters > 0 {
+                println!("{} letters the third version still held stay in {}", report.letters, third.display());
+            }
+            eprintln!("The third version's files are in {}. Start the hub again; each machine reconnects once it runs the fourth version.", third.display());
+        }
+        HubCommand::Show { dir: chosen } => {
+            let (hub, pin) = fastctx_hub::describe(&dir(chosen))?;
+            let public = hub.public.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+            println!("hub {} ({})\nreached at {public}\nlistens on {}\ncertificate {pin}", hub.name, hub.id, hub.listen);
+            if hub.self_registration {
+                println!("anyone who reaches it may open an account");
+            }
         }
     }
     Ok(())
+}
+
+/// Makes `change` as `account`, on `hub` or the one hub; a token, when it
+/// made one.
+fn change(hub: Option<HubName>, account: AccountName, change: AccountChange) -> anyhow::Result<Option<String>> {
+    match call(Call::Account { hub, account, change })? {
+        Reply::Changed { token } => Ok(token),
+        other => anyhow::bail!("the node answered something else: {other:?}"),
+    }
+}
+
+/// The account a change is made as: the one named, or the one that holds
+/// `machine` among this computer's logins, or this computer's one login.
+fn account_or_owner(
+    hub: Option<&HubName>,
+    named: Option<AccountName>,
+    machine: Option<&MachineName>,
+) -> anyhow::Result<AccountName> {
+    if let Some(named) = named {
+        return Ok(named);
+    }
+    let Reply::Accounts(reply) = call(Call::Accounts)? else { anyhow::bail!("the node answered something else") };
+    let hubs: Vec<_> = reply.hubs.iter().filter(|seen| hub.is_none_or(|hub| seen.name == *hub)).collect();
+    let [seen] = hubs.as_slice() else {
+        anyhow::bail!("this computer is on {} hubs; name one with --hub", hubs.len());
+    };
+    if let Some(machine) = machine
+        && let Some(owner) = seen.members.iter().find(|member| member.name == *machine).and_then(|member| {
+            member.home.clone().or_else(|| member.logins.iter().find(|login| seen.logins.contains(login)).cloned())
+        })
+        && seen.logins.contains(&owner)
+    {
+        return Ok(owner);
+    }
+    match seen.logins.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => anyhow::bail!("this computer is logged in to no account on {}", seen.name),
+        _ => anyhow::bail!("this computer is logged in to several accounts on {}; name one with --as", seen.name),
+    }
+}
+
+/// A token stays valid an hour, a day or three.
+fn hours(text: &str) -> Result<u32, String> {
+    match text {
+        "1" | "24" | "72" => Ok(text.parse().expect("listed")),
+        _ => Err("a token stays valid 1, 24 or 72 hours".to_string()),
+    }
 }
 
 fn call(call: Call) -> anyhow::Result<Reply> {
     Ok(crate::ask::call(call)?.0)
 }
 
-fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
-    let link = match (&reply.world, &reply.link) {
-        (_, LinkState::Alone) => "a World of one machine".to_string(),
-        (Some(_), LinkState::Online { since, hub, relay: None, route }) => {
+fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
+    Ok(tokio::runtime::Builder::new_current_thread().enable_all().build()?)
+}
+
+fn link(link: &LinkState, now: Timestamp) -> String {
+    match link {
+        LinkState::Alone => "not connected".to_string(),
+        LinkState::Online { since, hub, relay: None, route } => {
             format!("connected to the hub at {hub}, {route}, for {}", age(*since, now))
         }
-        (Some(_), LinkState::Online { since, hub, relay: Some(relay), route }) => {
+        LinkState::Online { since, hub, relay: Some(relay), route } => {
             format!("connected through the relay {relay} at {hub}, {route}, for {}", age(*since, now))
         }
-        (Some(_), LinkState::Connecting { last_error: None, .. }) => "connecting to the hub".to_string(),
-        (Some(_), LinkState::Connecting { since, last_error: Some(error) }) => {
+        LinkState::Connecting { last_error: None, .. } => "connecting to the hub".to_string(),
+        LinkState::Connecting { since, last_error: Some(error) } => {
             format!("not connected to the hub for {}: {error}", age(*since, now))
         }
-        (Some(_), LinkState::Stopped { reason }) => format!("the hub refused this machine: {reason}"),
-        (None, _) => "in a World".to_string(),
-    };
-    let mut text = format!("=== nodes: {} ({link}) ===\n", reply.machine);
-    let width = reply.machines.iter().map(|node| node.name.len()).max().unwrap_or(0);
-    for node in &reply.machines {
-        let state = match node.online {
-            _ if node.name == reply.machine => "this machine".to_string(),
-            _ if node.revoked.is_some() => {
-                let revoked = node.revoked.as_ref().expect("checked");
-                format!("revoked by {} {} ago: {}", revoked.by, age(revoked.at, now), revoked.reason)
-            }
-            Some(true) => match node.since {
-                Some(since) => format!("online for {}", age(since, now)),
-                None => "online".to_string(),
-            },
-            Some(false) => match node.since {
-                Some(since) => format!("offline for {}", age(since, now)),
-                None => "offline".to_string(),
-            },
-            None => "not known".to_string(),
+        LinkState::Stopped { reason } => format!("the hub removed this computer: {reason}"),
+    }
+}
+
+fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
+    let mut text = format!("=== nodes: {} ===\n", reply.machine);
+    if let Some(facts) = &reply.facts {
+        text.push_str(&format!("{}  this computer  {}\n", reply.machine, facts_line(facts)));
+    }
+    if reply.hubs.is_empty() {
+        text.push_str("logged in to no hub: `fastctx login HUB ACCOUNT` logs in\n");
+    }
+    for hub in &reply.hubs {
+        text.push_str(&hub_nodes(hub, now));
+    }
+    text
+}
+
+fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
+    let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+    let home = hub.home.as_ref().map(|home| format!("; registered under {home}")).unwrap_or_default();
+    let mut text = format!("\n--- hub {} ({}) · logged in to {logins}{home}\n", hub.name, link(&hub.link, now));
+    let width = hub.machines.iter().map(|node| node.written.len()).max().unwrap_or(0);
+    for node in &hub.machines {
+        let state = match (node.online, node.since) {
+            (Some(true), Some(since)) => format!("online for {}", age(since, now)),
+            (Some(true), None) => "online".to_string(),
+            (Some(false), Some(since)) => format!("offline for {}", age(since, now)),
+            (Some(false), None) => "offline".to_string(),
+            (None, _) => "not known".to_string(),
         };
+        let through = node.through.as_ref().map(|relay| format!(" · through {relay}")).unwrap_or_default();
+        let owner = node.owner.as_ref().map(|owner| format!(" · {owner}'s")).unwrap_or_default();
+        let rights: Vec<String> = node
+            .rights
+            .iter()
+            .filter(|(_, rights)| rights.any())
+            .map(|(account, rights)| match (rights.hands, rights.agents) {
+                (true, true) => format!("{account}: work, agents"),
+                (true, false) => format!("{account}: work"),
+                _ => format!("{account}: agents"),
+            })
+            .collect();
         let facts = match &node.facts {
-            Ok(facts) => {
-                let shell = if facts.shell.is_empty() { String::new() } else { format!(" · {}", facts.shell) };
-                format!(
-                    "{} {}{shell} · home {} · temp {} · file names {} · fastctx {}",
-                    facts.os,
-                    facts.arch,
-                    facts.home,
-                    facts.temp,
-                    if facts.case_sensitive { "case-sensitive" } else { "ignore case" },
-                    facts.version
-                )
-            }
-            Err(_) if node.online == Some(false) || node.revoked.is_some() => String::new(),
-            Err(error) => format!("not known: {error}"),
+            Ok(facts) => format!("  {}", facts_line(facts)),
+            Err(_) if node.online == Some(false) => String::new(),
+            Err(error) => format!("  not known: {error}"),
         };
-        let place = node.place.as_ref().map(place).unwrap_or_default();
-        let line = format!("{:width$}  {state}{place}", node.name);
-        if facts.is_empty() {
-            text.push_str(&format!("{line}\n"));
-        } else {
-            text.push_str(&format!("{line}  {facts}\n"));
-        }
+        text.push_str(&format!(
+            "{:width$}  {state}{through}{owner} · {}{facts}\n",
+            node.written,
+            rights.join("; ")
+        ));
         if let Ok(facts) = &node.facts
             && let Some(warning) = facts.node_lifetime.as_ref().and_then(|lifetime| lifetime.warning())
         {
@@ -322,25 +511,80 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
     text
 }
 
-/// Where a machine hangs in the tree, when that is more than straight below
-/// the hub.
-fn place(place: &fastctx_types::world::Place) -> String {
-    let relays: Vec<String> = place
-        .via
-        .iter()
-        .filter_map(|upstream| match upstream {
-            Upstream::Relay { machine } => Some(machine.to_string()),
-            Upstream::Hub => None,
-        })
-        .collect();
-    let mut said = String::new();
-    if !relays.is_empty() {
-        said.push_str(&format!(" · through {}", relays.join(", then ")));
+fn facts_line(facts: &fastctx_types::world::MachineFacts) -> String {
+    let shell = if facts.shell.is_empty() { String::new() } else { format!(" · {}", facts.shell) };
+    format!(
+        "{} {}{shell} · home {} · temp {} · file names {} · fastctx {}",
+        facts.os,
+        facts.arch,
+        facts.home,
+        facts.temp,
+        if facts.case_sensitive { "case-sensitive" } else { "ignore case" },
+        facts.version
+    )
+}
+
+fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
+    let mut text = format!("=== accounts: {} ===\n", reply.machine);
+    if reply.hubs.is_empty() {
+        text.push_str("logged in to no hub\n");
     }
-    if !place.relays_at.is_empty() {
-        said.push_str(&format!(" · relays at {}", place.relays_at.join(", ")));
+    for hub in &reply.hubs {
+        let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        text.push_str(&format!("\n--- hub {} ({}) · logged in to {logins}\n", hub.name, link(&hub.link, now)));
+        for arrival in &hub.arrivals {
+            let what = if arrival.device { "logged in to" } else { "was registered under" };
+            text.push_str(&format!(
+                "new: {} {what} {} {} ago; `fastctx remove {} --as {}` if it was not you\n",
+                arrival.name,
+                arrival.account,
+                age(arrival.noticed_at, now),
+                arrival.name,
+                arrival.account
+            ));
+        }
+        for account in &hub.accounts {
+            let mut marks = Vec::new();
+            if account.admin {
+                marks.push("administrator");
+            }
+            if !account.may_register {
+                marks.push("registers no machines");
+            }
+            if account.locked {
+                marks.push("locked");
+            }
+            let marks = if marks.is_empty() { String::new() } else { format!(" ({})", marks.join(", ")) };
+            text.push_str(&format!("account {}{marks}\n", account.name));
+            for member in hub.members.iter().filter(|member| member.home.as_ref() == Some(&account.name)) {
+                text.push_str(&format!("  machine {} [{}]\n", member.name, member.key));
+            }
+            for member in hub.members.iter().filter(|member| member.home.as_ref() != Some(&account.name) && member.logins.contains(&account.name)) {
+                text.push_str(&format!("  logged in on {} [{}]\n", member.name, member.key));
+            }
+        }
+        for grant in &hub.grants {
+            let rights = match (grant.rights.hands, grant.rights.agents) {
+                (true, true) => "work and agents",
+                (true, false) => "work",
+                (false, true) => "agents",
+                (false, false) => continue,
+            };
+            text.push_str(&format!("grant {} may use {} for {rights}\n", grant.account, grant.machine));
+        }
+        for trust in &hub.trust {
+            text.push_str(&format!("trust {} trusts {}\n", trust.account, trust.machine));
+        }
+        for project in &hub.projects {
+            let granted = if project.granted.is_empty() {
+                String::new()
+            } else {
+                format!(", shared with {}", project.granted.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))
+            };
+            text.push_str(&format!("project {} of {}{granted}\n", project.name, project.owner));
+        }
     }
-    said
+    text
 }
 
 /// How long ago a moment was, written as `w` writes it: the machines of a

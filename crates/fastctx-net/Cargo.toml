@@ -1,6 +1,6 @@
 [package]
 name = "fastctx-net"
-description = "Machines and the hub: keys and signatures, membership, the wire, and each machine's link to the hub"
+description = "Machines and the hub: keys, accounts and logins, the directory, the wire, and each machine's link to the hub"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,9 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+# The password stretching of OPAQUE logins (`crate::login`).
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 base64 = "0.22"
-chacha20poly1305 = "0.11"
 ed25519-dalek = "3.0.0"
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
@@ -18,19 +19,16 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 getrandom = { version = "0.3", features = ["std"] }
 hkdf = "0.12"
 hmac = "0.12"
-# RFC 9180 sealing for letters and ledger entries: X25519, HKDF-SHA256 and
-# ChaCha20-Poly1305 only, without the post-quantum KEMs the defaults pull in.
-hpke = { version = "0.14", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha", "hkdfsha2"] }
 jiff.workspace = true
+# Password logins without the hub ever holding the password (RFC 9807).
+opaque-ke = { version = "3.0.0", default-features = false, features = ["argon2", "ristretto255-voprf"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 rcgen = { version = "0.14.10", default-features = false, features = ["ring", "crypto"] }
 # The ring provider throughout: aws-lc-rs needs cmake and NASM to build.
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
-# The handshake of the sessions between members
-# (`Noise_IK_25519_ChaChaPoly_SHA256`); its split keys seal what follows.
-snow = { version = "0.10", default-features = false, features = ["std", "use-curve25519", "use-chacha20poly1305", "use-sha2", "use-getrandom", "risky-raw-split"] }
 socket2 = { version = "0.6.5", features = ["all"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }

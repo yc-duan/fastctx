@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use fastctx_net::link::CallFailure;
 use fastctx_types::TownName;
+use fastctx_types::access::{Acting, HubId, Purpose, TownId};
 use fastctx_types::ipc::Failure;
 use fastctx_types::project::{CanonHead, Location, MapView, Stamp};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -56,11 +57,41 @@ pub async fn brief(node: &Arc<Node>, town: &TownName) -> Result<String, Failure>
 /// on its way to it, as right after the town was opened on another machine.
 /// A town it has no record of yet is taken from the hub before anything
 /// about it is answered.
+/// The hub that keeps the project `town`, and its id there, as this
+/// computer's accounts see them: one of a name, or none.
+fn find(node: &Node, town: &TownName) -> Result<(HubId, TownId), Failure> {
+    if let Some(place) = crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))? {
+        return Ok((place.hub, place.town));
+    }
+    let mut found = Vec::new();
+    for link in node.links() {
+        let view = link.view();
+        let mine = view.mine();
+        for project in view.projects.iter().filter(|project| project.name == *town) {
+            if mine.iter().any(|account| view.in_project(account, &project.town)) {
+                found.push((link.membership().id.clone(), link.membership().hub_name.clone(), project.town.clone()));
+            }
+        }
+    }
+    match found.len() {
+        0 => Err(no_ledger(node, town)),
+        1 => {
+            let (hub, _, id) = found.pop().expect("one");
+            Ok((hub, id))
+        }
+        _ => Err(Failure::new(format!(
+            "projects named {town} are on several hubs ({}); this computer keeps one project of a name",
+            found.iter().map(|(_, name, _)| name.to_string()).collect::<Vec<_>>().join(", ")
+        ))),
+    }
+}
+
 pub async fn catch_up(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
     if crate::ledger::query::available(node, Some(town)).await.map_err(Failure::new)?.contains_key(town) {
         return Ok(());
     }
-    crate::ledger::sync(node, Some(town.clone()))
+    let (hub, id) = find(node, town)?;
+    crate::ledger::sync(node, &hub, Some(id))
         .await
         .map_err(|error| Failure::new(format!("taking {town}'s ledger from the hub: {error}")))?;
     if crate::ledger::query::available(node, Some(town)).await.map_err(Failure::new)?.contains_key(town) {
@@ -93,10 +124,8 @@ async fn canon(node: &Arc<Node>, location: &Location) -> Result<Vec<CanonHead>, 
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string());
     }
-    let Some(link) = node.link() else {
-        return Err(format!("{} is in no World with {}", node.machine(), location.machine));
-    };
-    match link.call(&location.machine, RemoteCall::Canon { path: location.path.clone() }).await {
+    let call = RemoteCall::Canon { path: location.path.clone() };
+    match node.call(&Acting::Here, &(&location.machine).into(), Purpose::Hands, call).await {
         Ok(Ok(RemoteReply::Canon { heads })) => Ok(heads),
         Ok(Ok(_)) => Err(format!("{} answered something else", location.machine)),
         Ok(Err(failure)) => Err(failure.message),

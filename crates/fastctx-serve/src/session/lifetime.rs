@@ -43,11 +43,11 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
         reply(&mut connection, id, Reply::Arrived(Whereabouts { resident: "codex-cafe".parse().unwrap(), town: None }))
             .await;
         let (id, call) = request(&mut connection).await;
-        assert!(matches!(call, Call::Machines));
+        assert!(matches!(call, Call::Machines { .. }));
         probing.send(()).unwrap();
         released.await.unwrap();
         let machines =
-            NodeFrame::Reply { id, reply: Ok(Reply::Machines { here: "fixture".parse().unwrap(), others: vec![] }) };
+            NodeFrame::Reply { id, reply: Ok(Reply::Machines { here: "fixture".parse().unwrap(), others: vec![], colleagues: None }) };
         let sent = connection.send(&serde_json::to_vec(&machines).unwrap()).await.map_err(|error| error.to_string());
         let retained = sent.is_ok();
         probe_finished.send(sent).unwrap();
@@ -55,8 +55,8 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
             return;
         }
         let next = request(&mut connection).await;
-        assert!(matches!(next.1, Call::Machines), "a cancelled tool must not register a new arrival");
-        reply(&mut connection, next.0, Reply::Machines { here: "fixture".parse().unwrap(), others: vec![] }).await;
+        assert!(matches!(next.1, Call::Machines { .. }), "a cancelled tool must not register a new arrival");
+        reply(&mut connection, next.0, Reply::Machines { here: "fixture".parse().unwrap(), others: vec![], colleagues: None }).await;
         answered.send(()).unwrap();
         assert!(connection.recv().await.unwrap().is_none());
     });

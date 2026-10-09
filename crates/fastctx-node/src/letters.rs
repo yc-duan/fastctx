@@ -4,18 +4,40 @@
 use std::io;
 use std::sync::Mutex;
 
-use fastctx_net::link::Link;
 use fastctx_net::message::LetterId;
 use fastctx_platform::{Permissions, ensure_private_dir, publish_new};
+use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::remote::Letter;
+use fastctx_types::residents::Notice;
 use fastctx_types::{MachineName, NoticeId};
+
+use crate::Node;
 
 static SENDING: Mutex<()> = Mutex::new(());
 
-pub fn send(link: &Link, to: &MachineName, id: NoticeId, letter: Letter) -> io::Result<()> {
+/// What a letter is sent for: words, or news of the sending machine
+/// (`admission::letters`, which checks the same on the other side).
+fn purpose(letter: &Letter) -> Purpose {
+    match letter {
+        Letter::Speak { .. } | Letter::Notice { notice: Notice::Words { .. } | Notice::Attached { .. }, .. } => {
+            Purpose::Words
+        }
+        Letter::Left { .. } | Letter::Fragment { .. } | Letter::Notice { .. } => Purpose::Echo,
+    }
+}
+
+/// Sends `letter` to `to` for whom `acting` works, in parts when it does
+/// not fit one message.
+pub fn send(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut letter: Letter) -> io::Result<()> {
+    let purpose = purpose(&letter);
+    let (link, account) = node.speaking(acting, to, purpose).map_err(|failure| io::Error::other(failure.to_string()))?;
+    if let Letter::Speak { accounts, .. } = &mut letter {
+        *accounts = node.accounts_on(&link, acting).into_iter().filter(|other| *other != account).collect();
+    }
+    let to = &to.name;
     let _sending = SENDING.lock().expect("never poisoned");
-    if link.letter_size(to, &letter) <= fastctx_net::wire::MAX_CONTROL_FRAME {
-        return link.send_letter(to, LetterId::try_from(id.to_string()).expect("notice id"), letter);
+    if link.letter_size(to, &account, &letter) <= fastctx_net::wire::MAX_CONTROL_FRAME {
+        return link.send_letter(to, &account, purpose, LetterId::try_from(id.to_string()).expect("notice id"), letter);
     }
     let text = serde_json::to_string(&letter).map_err(io::Error::other)?;
     let mut rest = text.as_str();
@@ -25,6 +47,7 @@ pub fn send(link: &Link, to: &MachineName, id: NoticeId, letter: Letter) -> io::
         let fits = |end: usize| {
             link.letter_size(
                 to,
+                &account,
                 &Letter::Fragment {
                     id: id.clone(),
                     index: usize::MAX,
@@ -51,6 +74,8 @@ pub fn send(link: &Link, to: &MachineName, id: NoticeId, letter: Letter) -> io::
         let part = crate::speech::fixed_id("part", &[id.as_str(), &index.to_string()]);
         link.send_letter(
             to,
+            &account,
+            purpose,
             LetterId::try_from(part.to_string()).expect("notice id"),
             Letter::Fragment { id: id.clone(), index, total, text },
         )?;
@@ -59,7 +84,7 @@ pub fn send(link: &Link, to: &MachineName, id: NoticeId, letter: Letter) -> io::
 }
 
 pub fn receive(
-    node: &crate::Node,
+    node: &Node,
     from: &MachineName,
     id: &NoticeId,
     index: usize,

@@ -59,6 +59,9 @@ pub enum Call {
     StopJob {
         job: JobId,
         machine: Option<MachineName>,
+        /// The hub of `machine`, when it was written as `name.hub`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<crate::HubName>,
     },
     /// Waits until jobs of this machine end (`fastctx wait`). The end of a
     /// job the caller started is taken by the wait: it is not told again.
@@ -82,14 +85,35 @@ pub enum Call {
         request: crate::file_search::FileSearchRequest,
     },
     /// Asks for a colleague for a resident of this machine
-    /// (`ask_colleague`): a Codex resident started on this machine or on
-    /// the machine `node` names, with `prompt` as its first words. `label`
-    /// is the task's few words.
+    /// (`ask_colleague`): a Codex resident started where the user set the
+    /// resident's colleagues to live, with `prompt` as its first words.
+    /// `label` is the task's few words.
     Ask {
         resident: ResidentId,
         label: String,
         prompt: String,
-        node: Option<MachineName>,
+    },
+    /// The user turns asking for colleagues on for a resident on any
+    /// machine, with where they live, or off (`world-colleagues.md`, 同事从
+    /// 哪里来、能去哪里).
+    Colleagues {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        lives_on: Option<crate::access::Written>,
+    },
+    /// The user sets where a resident on any machine works: another
+    /// machine, or the one it lives on with `None` (`world-run.md`, 这里).
+    WorksOn {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        works_on: Option<crate::access::Written>,
+    },
+    /// On a session's own connection: a `ToolsChanged` frame each time the
+    /// tools `resident`, the session's resident when it is known, is
+    /// offered may have changed, for as long as the connection stays open.
+    WatchTools {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resident: Option<ResidentId>,
     },
     /// Words from a resident of this machine to another resident, on any
     /// machine (`message_colleague`); `machine` is where it lives, when the
@@ -176,6 +200,8 @@ pub enum Call {
         reasoning_effort: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<crate::attachments::Attachment>,
+        #[serde(flatten)]
+        choices: crate::agents::Choices,
     },
     /// Stops the turn a resident on any machine is running, for the user.
     Stop {
@@ -240,71 +266,63 @@ pub enum Call {
         owner: JobOwner,
         town: Option<TownName>,
     },
-    /// Joins this machine to a World with a code, under `name` or the name
-    /// it has.
-    Join {
-        code: String,
+    /// Logs this computer in to `account` on the hub at `hub` with its
+    /// password, and registers it as one of the account's machines when
+    /// `register` and the account may. A computer new to the hub asks for
+    /// its own name there, or `name`.
+    Login {
+        hub: Vec<std::net::SocketAddr>,
+        account: crate::AccountName,
+        password: String,
+        register: bool,
         name: Option<MachineName>,
     },
-    /// Makes an invitation for one more machine, or for a device such as a
-    /// phone, which carries the user's words and looks and runs nothing.
-    Invite {
+    /// Logs this computer in with an enrollment token.
+    LoginWithToken {
+        token: String,
+        name: Option<MachineName>,
+    },
+    /// Opens `account` with `password` on a hub that lets anyone, then
+    /// logs in to it as `Login` would.
+    OpenAccount {
+        hub: Vec<std::net::SocketAddr>,
+        account: crate::AccountName,
+        password: String,
+        register: bool,
+        name: Option<MachineName>,
+    },
+    /// Makes `change` as `account` on the hub named `hub`, or on the one
+    /// hub this computer is on when `None`.
+    Account {
+        hub: Option<crate::HubName>,
+        account: crate::AccountName,
+        change: crate::accounts::AccountChange,
+    },
+    /// Every hub this computer is on, with what it sees of each.
+    Accounts,
+    /// An enrollment token that registers a Linux server as a machine of
+    /// `account`, and the line that installs it there with this node's
+    /// version.
+    ServerCommand {
+        hub: Option<crate::HubName>,
+        account: crate::AccountName,
         name: Option<MachineName>,
         expires: Timestamp,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        device: bool,
-        /// What it may do until a grant says otherwise; everything when not
-        /// given.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        scope: Option<crate::scope::NamedScope>,
     },
-    /// Checks the hub's release, then invites a Linux server with a complete
-    /// installation command using this node's version.
-    InviteServer {
-        name: Option<MachineName>,
-        expires: Timestamp,
-        scope: Option<crate::scope::NamedScope>,
-    },
-    /// Sets what a member may do, and whether it holds management rights,
-    /// as this machine, which must hold them.
-    Grant {
-        member: MachineName,
-        scope: crate::scope::NamedScope,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        manage: bool,
-    },
-    /// The user has seen that `member` joined with this machine's invitation.
-    Seen {
-        member: MachineName,
-    },
-    /// Sets where the member `member` connects: through `via`, in order, as
-    /// this machine, which must hold management rights.
-    Route {
-        member: MachineName,
-        via: Vec<crate::world::Upstream>,
-    },
-    /// Makes `machine` relay for the machines whose routes lead through it,
-    /// as `relay` says, or stop relaying: this machine itself, or another,
-    /// asked as a member with management rights.
-    SetRelay {
-        machine: MachineName,
-        relay: Option<crate::world::RelaySetting>,
-    },
-    /// Revokes a member's key, so no machine trusts it any more.
-    Revoke {
-        name: MachineName,
-        reason: String,
-    },
-    /// This machine leaves its World and becomes a World of one again.
-    Leave,
     /// The node hands the World over once idle and exits: a system service
     /// now keeps this World's node, and its node waits to take over.
     HandOver,
-    /// This machine's link and every machine of the World (`fastctx nodes`).
+    /// This computer's links and every machine its accounts may use
+    /// (`fastctx nodes`).
     Nodes,
-    /// The names of the machines a session here works on: this one, and the
-    /// others its scope reaches, as the members table holds them now.
-    Machines,
+    /// The machines a session here may work on, as it writes them: this
+    /// one, and the others its accounts may use, `name.hub` where a name
+    /// is on more than one hub; for `resident`, the session's resident when
+    /// it is known, also where its colleagues live.
+    Machines {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resident: Option<ResidentId>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -425,23 +443,31 @@ pub enum Reply {
     Looked {
         looked: Vec<LookedUp>,
     },
-    Joined {
-        world: String,
+    /// This computer is the member `name` of the hub `hub`, logged in to
+    /// `account`.
+    LoggedIn {
+        hub: crate::HubName,
         name: MachineName,
-        /// It was in that World before this join.
-        #[serde(default)]
-        already: bool,
+        account: crate::AccountName,
     },
-    Code {
-        code: String,
+    /// An account change was made; a token, when it made one.
+    Changed {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
     },
+    Accounts(crate::accounts::AccountsReply),
     ServerInvitation {
         command: String,
     },
     Nodes(NodesReply),
     Machines {
-        here: MachineName,
-        others: Vec<MachineName>,
+        /// Where the session's shell is, as written: the machine it works on.
+        here: String,
+        others: Vec<String>,
+        /// Where the calling session's colleagues live, when it may ask
+        /// for them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        colleagues: Option<crate::access::Written>,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.
@@ -461,10 +487,15 @@ pub enum Reply {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "do")]
 pub enum ProjectCall {
-    /// Opens a town with the first version of its record.
+    /// Opens a town with the first version of its record, in `account` of
+    /// `hub`, or in the one account whoever asks works for.
     New {
         town: TownName,
         fields: RecordFields,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<crate::HubName>,
     },
     /// Writes the next version of a town's record; what is not given stays.
     Edit {

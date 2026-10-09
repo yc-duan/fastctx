@@ -70,6 +70,9 @@ pub struct RunningJob {
     /// Separate standard error, when the job keeps it apart from stdout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stderr: Option<String>,
+    /// The account it runs for, when another machine sent it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
 }
 
 /// `fastctx w` in a town or across the World: each machine's answer, or why
@@ -84,6 +87,21 @@ pub struct WorldWho {
     pub machines: Vec<MachineWho>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<crate::since::WorldSince>,
+    /// The residents and jobs shown that work for none of the asker's
+    /// accounts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub others: Vec<WhoFor>,
+}
+
+/// A resident or a job on `machine`, by its id, that works for other
+/// accounts than the asker's: a machine lent to several accounts shows them
+/// all to those that may work on it, each marked with whom it works for
+/// (`world-network.md`, 一台机器给几个账号用).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WhoFor {
+    pub machine: MachineName,
+    pub id: String,
+    pub accounts: Vec<crate::AccountName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +154,9 @@ pub struct ResidentDetail {
     pub answers: Vec<MessageLine>,
     /// What it started that still runs on its machine.
     pub jobs: Vec<RunningJob>,
+    /// Where its colleagues live, when the user let it ask for them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colleagues: Option<crate::access::Written>,
 }
 
 /// One id looked up across the World: what each machine that has it said,
@@ -151,6 +172,54 @@ pub struct LookedUp {
 }
 
 impl WorldWho {
+    /// Marks the residents and jobs the machines answered with that work
+    /// for none of the reader's accounts, each with whom it works for
+    /// (`world-network.md`, 一台机器给几个账号用). `mine` says whether the
+    /// reader works for an account; `logged_in` names the accounts logged in
+    /// on a machine, for whom a session the user opened there works.
+    pub fn mark_others(
+        &mut self,
+        mine: impl Fn(&crate::access::HubAccount) -> bool,
+        logged_in: impl Fn(&MachineName) -> Vec<crate::access::HubAccount>,
+    ) {
+        use crate::access::{Acting, HubAccount};
+        let names = |accounts: &[HubAccount]| {
+            let mut names: Vec<crate::AccountName> = accounts.iter().map(|account| account.account.clone()).collect();
+            names.dedup();
+            names
+        };
+        let mut others = Vec::new();
+        for machine in &self.machines {
+            let MachineWho::Answered { reply } = machine else { continue };
+            let mut working = std::collections::HashMap::new();
+            for resident in &reply.residents {
+                let accounts = match &resident.about.acting {
+                    Acting::Accounts { accounts } => accounts.clone(),
+                    Acting::Here => logged_in(&reply.machine),
+                };
+                if !accounts.is_empty() && !accounts.iter().any(&mine) {
+                    let id = resident.about.id.to_string();
+                    others.push(WhoFor { machine: reply.machine.clone(), id, accounts: names(&accounts) });
+                }
+                working.insert(resident.about.id.clone(), accounts);
+            }
+            for job in &reply.jobs {
+                let accounts = match (&job.account, job.owner.resident()) {
+                    (Some(account), _) => vec![account.clone()],
+                    (None, Some(owner)) if owner.machine == reply.machine => {
+                        working.get(&owner.resident).cloned().unwrap_or_default()
+                    }
+                    _ => Vec::new(),
+                };
+                if !accounts.is_empty() && !accounts.iter().any(&mine) {
+                    let id = job.job.to_string();
+                    others.push(WhoFor { machine: reply.machine.clone(), id, accounts: names(&accounts) });
+                }
+            }
+        }
+        self.others = others;
+    }
+
     /// Merge the history obtained with each machine's current activity.
     pub fn collect_history(&mut self, since: Timestamp, town: Option<TownName>) {
         use crate::since::*;

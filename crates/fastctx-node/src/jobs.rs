@@ -61,6 +61,7 @@ impl Jobs {
     }
 
     /// Starts `request` for `owner` and returns at once.
+    #[allow(clippy::too_many_arguments)]
     pub async fn launch(
         &self,
         node: &Arc<Node>,
@@ -69,6 +70,7 @@ impl Jobs {
         request: RunRequest,
         on: Option<(fastctx_types::run::OnJob, Option<PathBuf>)>,
         registration: Option<crate::on::Registration>,
+        account: Option<fastctx_types::access::HubAccount>,
     ) -> Result<run::Launched, Failure> {
         let (world, machine, executable) = (node.world.clone(), node.machine(), node.fastctx.clone());
         let registering = node.clone();
@@ -92,6 +94,7 @@ impl Jobs {
                 executable: &executable,
                 environment: &environment,
                 on: on.as_ref(),
+                account: account.as_ref(),
             };
             let launched = run::launch::launch_with_io_registered(&launch, mode, input.as_deref(), |path| {
                 if let Some(registration) = registration {
@@ -115,6 +118,7 @@ impl Jobs {
         owner: fastctx_types::run::JobOwner,
         town: Option<TownName>,
         request: RunRequest,
+        account: Option<fastctx_types::access::HubAccount>,
     ) -> Result<(RunReply, JobRecord), Failure> {
         let (world, machine) = (&node.world, &node.machine());
         let wait = match request.wait {
@@ -131,11 +135,23 @@ impl Jobs {
         let deadline = started + wait;
         // Listening before the job exists, so its first change is not missed.
         let mut changes = self.changes.subscribe();
-        let mut words = owner
-            .resident()
-            .filter(|address| address.machine == *machine)
-            .map(|address| node.words.watch(&address.resident));
-        let launched = self.launch(node, owner, town, request, None, None).await?;
+        // The machines the script names after `on` are reached for whom the
+        // job works: its resident here, or the account a resident of
+        // another machine sent it for. A page's acts are its own.
+        let acting = match owner.resident() {
+            Some(address) if address.machine == *machine => {
+                node.residents.about(&address.resident).map(|(about, _)| about.acting)
+            }
+            Some(_) => account.as_ref().map(|account| fastctx_types::access::Acting::one(account.hub.clone(), account.account.clone())),
+            None => None,
+        };
+        if let Some(acting) = &acting {
+            crate::here::check_named(node, acting, &request.script)?;
+        }
+        // Words for a resident of another machine that works here come
+        // from where it lives.
+        let mut words = owner.resident().map(|address| node.words.watch(address));
+        let launched = self.launch(node, owner, town, request, None, None, account).await?;
         let mut answered = None;
         loop {
             let record = read(&launched.record).await?;
@@ -220,9 +236,15 @@ pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_typ
     }
 }
 
-/// Removes the files of the ended job whose record is at `path`.
+/// Removes the files of the ended job whose record is at `path`; those of
+/// a job an `on` sent here include the package it came in and what was
+/// kept of its end. Gone already, there is nothing to remove.
 pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
-    let record = record::read(path)?;
+    let record = match record::read(path) {
+        Ok(record) => record,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
     // The supervisor writes its last record and then lets go of the log; on
     // Windows a file it still holds cannot go.
     if let Some(supervisor) = &record.supervisor {
@@ -231,6 +253,11 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
     // The record goes last: a log without one would be found by nobody.
     let mut files = vec![PathBuf::from(&record.output), path.with_extension("sh"), record::lock_path(path)];
     files.extend(record.stderr.as_deref().map(PathBuf::from));
+    if let Some(on) = &record.on {
+        files.push(PathBuf::from(&on.state));
+        files.extend(record.stdin.as_deref().map(PathBuf::from));
+        files.extend(["notice", "owed", "on-taken", "on-piped"].map(|extension| path.with_extension(extension)));
+    }
     files.push(path.to_path_buf());
     for file in files {
         match std::fs::remove_file(&file) {
@@ -348,6 +375,7 @@ pub fn still_running(
     here: &fastctx_types::MachineName,
     resident: &fastctx_types::ResidentId,
     answering: Option<&JobId>,
+    elsewhere: Vec<(String, Timestamp, String)>,
 ) -> std::io::Result<Option<String>> {
     let owner = fastctx_types::run::JobOwner::Resident(fastctx_types::Address {
         machine: here.clone(),
@@ -367,23 +395,55 @@ pub fn still_running(
                 Err(error) => return Err(error),
             };
             if job.end.is_none() && job.owner == owner && Some(&job.id) != answering {
-                running.push(job);
+                running.push((job.id.to_string(), job.started_at, first_line(&job.script)));
             }
         }
     }
+    running.extend(elsewhere);
     if running.is_empty() {
         return Ok(None);
     }
-    running.sort_by_key(|job| job.started_at);
+    running.sort_by_key(|(_, started_at, _)| *started_at);
     let now = Timestamp::now();
     let jobs: Vec<String> = running
         .iter()
-        .map(|job| {
-            let ran = now.as_second().saturating_sub(job.started_at.as_second()).max(0) as u64;
-            format!("{} ({}) {}", job.id, fastctx_hands::told::duration(ran), short(&first_line(&job.script)))
+        .map(|(job, started_at, command)| {
+            let ran = now.as_second().saturating_sub(started_at.as_second()).max(0) as u64;
+            format!("{job} ({}) {}", fastctx_hands::told::duration(ran), short(command))
         })
         .collect();
     Ok(Some(format!("=== your jobs still running: {} ===", jobs.join("; "))))
+}
+
+/// The accounts the jobs still running here of `owner`, a resident of
+/// another machine, were sent for: an `on`'s hop, or a run handed over to
+/// where it works.
+pub(crate) fn running_for(
+    world: &WorldDir,
+    here: &fastctx_types::MachineName,
+    owner: &fastctx_types::Address,
+) -> Vec<fastctx_types::access::HubAccount> {
+    let owner = fastctx_types::run::JobOwner::Resident(owner.clone());
+    let towns = world.towns().unwrap_or_default();
+    let mut accounts = Vec::new();
+    for town in std::iter::once(None).chain(towns.iter().map(Some)) {
+        let Ok(entries) = std::fs::read_dir(world.job_owner(here, town, &owner).jobs()) else { continue };
+        for path in entries.flatten().map(|entry| entry.path()) {
+            if path.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            let Ok(record) = record::read(&path) else { continue };
+            if record.end.is_some() || record.owner != owner {
+                continue;
+            }
+            if let Some(account) = record.on.and_then(|on| on.account).or(record.account)
+                && !accounts.contains(&account)
+            {
+                accounts.push(account);
+            }
+        }
+    }
+    accounts
 }
 
 /// A command cut to what names it in a line of several.

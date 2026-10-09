@@ -15,20 +15,23 @@ import "./conversation/conversation.css";
 import "./app/shell.css";
 import "./app/sheet.css";
 import "./app/pages.css";
+import "./app/accounts.css";
 import "./app.css";
 import "./home/home.css";
 import "./project/project.css";
 import "./pages/pages.css";
 
-import { Devices } from "./app/devices";
+import { AccountPage } from "./app/account";
+import { AdminPage } from "./app/admin";
+import { LoginPage } from "./app/login";
 import { MachinesPage } from "./app/machines";
+import { Tokens } from "./app/tokens";
 import { NewTalk } from "./app/new-talk";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
 import { SettingsPage, legacySaid } from "./app/settings";
 import { ReaderPage } from "./app/reader";
-import { WelcomePage } from "./app/welcome";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { effect, signal } from "./app/signals";
 import { addressOf, createStore, jobsOf, residentAt, residentsOf, sameAddress } from "./app/store";
@@ -37,30 +40,24 @@ import {
   enConsent,
   enPresence,
   enDetails,
-  enDevices,
-  enScope,
-  enMachines,
-  enTree,
   enNewTalk,
   enPalette,
   enProjectForm,
   enSettings,
   enShell,
-  enWelcome,
   zhComposer,
   zhConsent,
   zhPresence,
   zhDetails,
-  zhDevices,
-  zhScope,
-  zhMachines,
-  zhTree,
   zhNewTalk,
   zhPalette,
   zhProjectForm,
   zhSettings,
   zhShell,
-  zhWelcome, readerWords } from "./app/words";
+  readerWords } from "./app/words";
+import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, zhAccount, zhAdmin, zhLogin, zhMachines, zhToken } from "./app/account-words";
+import { loginsOf, type AccountChange, type Login } from "./world/accounts";
+import { colleagueHomes, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import { Details, type Manage } from "./conversation/details";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/model";
@@ -98,19 +95,13 @@ import { agentName, titleOf } from "./world/names";
 import {
   applyHosts,
   control,
-  hubHere,
   offers,
-  grant,
-  invite,
-  inviteServer,
-  joinWorld,
   placeFastctx,
   setupState,
   onComputer,
   connectionState,
-  joinDevice,
   canScan,
-  scanInvitation,
+  scanToken,
   readText,
   uploadBytes,
   uploadPath,
@@ -119,7 +110,6 @@ import {
   releaseHere,
   journal as readJournal,
   journalAdd,
-  leave as leaveWorld,
   look,
   projectEdit,
   projectNew,
@@ -130,16 +120,19 @@ import {
   openOutside,
   since,
   project as readProject,
-  revoke,
-  seen as seenJoined,
   stop,
   talk,
   unwatch,
   watch,
   type Piece,
   type WorldNow,
-  route as routeMember,
-  setRelay,
+  login,
+  loginToken,
+  openAccount,
+  accountChange,
+  serverCommand,
+  setColleagues,
+  setWorksOn,
 } from "./world/bridge";
 import { en, zh } from "./words";
 import { updating } from "./world/updater";
@@ -168,7 +161,7 @@ const presenceWords = english ? enPresence : zhPresence;
 const shellWords = english ? enShell : zhShell;
 document.documentElement.lang = english ? "en" : "zh-CN";
 
-const specimen = specimenNow();
+const specimen = specimenNow(params.get("accounts") === "2");
 const store = createStore(() => ({ world: specimen.world, now: specimen.now }));
 const live = store.live;
 /** Whether this interface reaches the World as a device (a phone, or a
@@ -205,9 +198,13 @@ const newTalk = new NewTalk({
   store,
   words: english ? enNewTalk : zhNewTalk,
   agents: (machine) => (live ? agents(machine) : Promise.resolve(specimenAgents(machine))),
-  async begin({ agent, machine, town, text, model, effort, attachments }) {
-    if (!live) throw new Error(english ? "this is a specimen" : "这是样例，没有连着世界");
-    const { to } = await openAgent(agent, machine, town, text, model, effort, attachments);
+  async begin({ agent, machine, town, text, model, effort, attachments, account, worksOn, colleagues }) {
+    if (!live) throw new Error(specimenSaid);
+    const { to } = await openAgent(agent, machine, town, text, model, effort, attachments, {
+      ...(account ? { account } : {}),
+      ...(worksOn ? { works_on: worksOn } : {}),
+      ...(colleagues ? { colleagues } : {}),
+    });
     void store.refresh();
     return to;
   },
@@ -228,12 +225,14 @@ const newTalk = new NewTalk({
   },
 });
 
+const specimenSaid = english ? "this is a specimen" : "这是样例，没有连着世界";
+
 const projectForm = new ProjectForm({
   store,
   words: english ? enProjectForm : zhProjectForm,
-  create(town, fields) {
-    if (!live) return Promise.reject(new Error((english ? "this is a specimen" : "这是样例，没有连着世界")));
-    return projectNew(town, fields);
+  create(town, fields, login) {
+    if (!live) return Promise.reject(new Error(specimenSaid));
+    return projectNew(town, fields, login?.account ?? null, login?.hubName ?? null);
   },
   edit(town, fields) {
     if (!live) return Promise.reject(new Error((english ? "this is a specimen" : "这是样例，没有连着世界")));
@@ -247,31 +246,32 @@ const projectForm = new ProjectForm({
   },
 });
 
-const deviceWords = english ? enDevices : zhDevices;
-const scopeWords = english ? enScope : zhScope;
-const notLive = () => Promise.reject(new Error(deviceWords.specimen));
-/** Whether this machine holds management rights. A World that says nothing
- *  of standing is one from before scopes, where every machine could. */
-const manages = (): boolean => {
-  const world = store.world.peek();
-  const me = world?.nodes.machines.find((node) => node.name === world.here);
-  return !me?.standing || me.standing.manage === true;
+const notLive = () => Promise.reject(new Error(specimenSaid));
+/** Makes a change as a login, and asks the World again. */
+const change = async (login: Login, made: AccountChange): Promise<void> => {
+  if (!live) return notLive();
+  await accountChange(login.hubName, login.account, made);
+  void store.refresh();
 };
-const devices = new Devices({
-  words: deviceWords,
-  scopeWords,
-  // A specimen shows what a code looks like; it admits nobody.
-  invite: (name, hours, device, scope) =>
-    live ? invite(name, hours, device, scope) : Promise.resolve(`FX4${"0SPECIMENN0TAREAL1NVITAT10N".repeat(5)}${hours}`),
-  inviteServer: (name, hours, scope) =>
-    live ? inviteServer(name, hours, scope) : Promise.resolve("echo 'Specimen: no real server invitation or download'"),
-  revoke: (name, reason) => (live ? revoke(name, reason) : notLive()),
-  leave: () => (live ? leaveWorld() : notLive()),
-  machines: () => (store.world.peek()?.nodes.machines ?? []).filter((node) => !node.device && !node.revoked).map((node) => node.name),
-  projects: () => (store.world.peek()?.towns ?? []).map((town) => town.town),
-  manages,
+const accountConfirm = new Confirm(english ? enAccess : zhAccess);
+const tokens = new Tokens({
+  words: english ? enToken : zhToken,
+  // A specimen shows what a token looks like; it lets nobody in.
+  token: (login, kind, register, name, hours) =>
+    live
+      ? accountChange(login.hubName, login.account, {
+          change: "token",
+          register,
+          name,
+          kind,
+          expires: new Date(Date.now() + hours * 3_600_000).toISOString(),
+        }).then((token) => token ?? Promise.reject(new Error("the hub made no token")))
+      : Promise.resolve(`FX5${"0SPECIMEN0NOT0A0REAL0TOKEN".repeat(4)}${hours}`),
+  server: (login, name, hours) =>
+    live ? serverCommand(login.hubName, login.account, name, hours) : Promise.resolve("echo 'Specimen: no real token or download'"),
+  mayRegister: (login) =>
+    store.world.peek()?.accounts.hubs.find((hub) => hub.hub === login.hub)?.accounts.find((account) => account.name === login.account)?.may_register ?? false,
   when: (at) => when(at, new Date()),
-  changed: () => void store.refresh(),
 });
 
 const journalForm = new JournalForm({
@@ -288,7 +288,7 @@ const shell = new Shell({
   store,
   words: shellWords,
   newTalk: () => newTalk.open(place.kind === "project" ? place.town : null),
-  newProject: () => projectForm.open(),
+  newProject: (login) => projectForm.open(null, login),
 });
 document.getElementById("app")!.append(shell.element);
 
@@ -314,7 +314,7 @@ const seen = {
 };
 
 function stateOf(world: WorldNow, away: Away | null): WorldState {
-  return { here: world.here, machines: world.who.machines, nodes: world.nodes.machines, towns: world.towns, away };
+  return { here: world.here, machines: world.who.machines, others: world.who.others ?? [], nodes: machinesOf(world), towns: world.towns, away };
 }
 
 /** The parts of the World's present whose change leaves something behind
@@ -324,7 +324,7 @@ function shapeOf(world: WorldNow): string {
   return JSON.stringify([
     residentsOf(world).map((r) => [r.about.id, r.about.machine, r.now?.activity ?? null, r.now?.turn ?? null, r.town]),
     jobsOf(world).map((job) => job.job),
-    world.nodes.machines.map((node) => [node.name, node.online]),
+    machinesOf(world).map((machine) => [machine.written, machine.online]),
     world.towns.map((town) => [town.town, town.journals]),
   ]);
 }
@@ -417,6 +417,23 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
           : () => new Promise<void>((resolve) => setTimeout(resolve, 2400)),
       markdown,
       manage: live ? liveManage(address) : specimenManage(),
+      colleagues: {
+        homes: () => homesFor(address),
+        set: (livesOn) => (live ? setColleagues(address, livesOn) : Promise.reject(new Error(specimenSaid))),
+      },
+      worksOn: {
+        places: () => worksPlacesFor(address),
+        set: (worksOn) => (live ? setWorksOn(address, worksOn) : Promise.reject(new Error(specimenSaid))),
+      },
+      actingFor: (r) => {
+        const acting = r.about.acting;
+        if (!acting || acting.kind === "here") return [];
+        const logins = loginsOf(store.world.peek()?.accounts);
+        return acting.accounts.map((one) => {
+          const known = logins.find((login) => sameLogin(login, one));
+          return known ? loginLabel(known) : one.account;
+        });
+      },
     }),
     label: detailsWords.open,
     look,
@@ -428,6 +445,33 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
           r.about.origin.asked_by.machine === address.machine,
       ),
   };
+}
+
+/** The machine the agent at `address` lives on, and the login it works
+ *  for among this computer's, as this computer reaches them. */
+function livesFor(address: Address): { lives: Machine; login: Login | null } | null {
+  const world = store.world.peek();
+  const lives = machinesOf(world).find((machine) => machine.name === address.machine);
+  if (!lives) return null;
+  const acting = residentAt(world, address)?.about.acting;
+  const logins = loginsOf(world?.accounts);
+  const login =
+    acting?.kind === "accounts" ? (logins.find((one) => acting.accounts.some((a) => sameLogin(one, a))) ?? null) : (logins[0] ?? null);
+  return { lives, login };
+}
+
+/** Where the colleagues of the agent at `address` may live: machines whose
+ *  agents an account it works for may use. */
+function homesFor(address: Address): string[] {
+  const found = livesFor(address);
+  return found ? colleagueHomes(store.world.peek(), found.lives, found.login).map((machine) => machine.written) : [];
+}
+
+/** Where the agent at `address` may work: machines an account it works for
+ *  may work on. */
+function worksPlacesFor(address: Address): string[] {
+  const found = livesFor(address);
+  return found ? workPlaces(store.world.peek(), found.lives, found.login).map((machine) => machine.written) : [];
 }
 
 /** The projects an agent on `machine` can be in: those spanning it. */
@@ -652,6 +696,7 @@ function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address)
   return {
     agent: agentName(known.about.host.agent),
     machine: address.machine,
+    worksOn: known.about.works_on && known.about.works_on !== address.machine ? known.about.works_on : null,
     model: known.about.model ?? null,
     project: known.town ? (world?.towns.find((t) => t.town === known.town)?.record.name ?? known.town) : null,
   };
@@ -835,7 +880,7 @@ function liveTalk(address: Address): Page {
         const who = someoneOf(now, address);
         if (!known || !who || left) return;
         page.presence(known.removed ? "removed" : known.now?.activity === "asleep" ? "asleep" : null);
-        if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model) return;
+        if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model && who.worksOn === shown.worksOn) return;
         shown = who;
         page.identify(who);
       });
@@ -1000,15 +1045,7 @@ function show(next: Place): void {
       page = new MachinesPage({
         store,
         words: english ? enMachines : zhMachines,
-        devices,
-        deviceWords,
-        scopeWords,
-        treeWords: english ? enTree : zhTree,
-        manages,
-        grant: (member, scope, manage) => (live ? grant(member, scope, manage) : notLive()),
-        route: (member, via) => (live ? routeMember(member, via) : notLive()),
-        setRelay: (machine, publicAt, listen) => (live ? setRelay(machine, publicAt, listen).then(() => {}) : notLive()),
-        seen: (member) => (live ? seenJoined(member) : notLive()),
+        access: english ? enAccess : zhAccess,
         head,
         focus: next.kind === "machine" ? next.name : null,
         when,
@@ -1017,40 +1054,62 @@ function show(next: Place): void {
             ? agents(null)
             : Promise.resolve({
                 machine: specimen.world.here,
-                machines: specimen.world.nodes.machines
-                  .filter((node) => node.online)
-                  .flatMap((node) => specimenAgents(node.name).machines),
+                machines: machinesOf(specimen.world)
+                  .filter((machine) => machine.here || machine.online)
+                  .flatMap((machine) => specimenAgents(machine.name).machines),
               }),
-        applyHere: (agent, into) =>
-          live ? applyHosts(agent === "codex", agent === "claude", false, into) : Promise.reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")),
+        applyHere: (agent, into) => (live ? applyHosts(agent === "codex", agent === "claude", false, into) : notLive()),
         consent: {
           allow: (machine) => consent.allow(machine, (english ? enConsent : zhConsent).allow),
           withdraw: (machine) => consent.withdraw(machine),
         },
+        change,
+        invite: (login) => tokens.open(login),
+        confirm: accountConfirm,
       });
       break;
-    case "welcome":
-      page = new WelcomePage({
+    case "login":
+      page = new LoginPage({
         store,
-        words: english ? enWelcome : zhWelcome,
+        words: english ? enLogin : zhLogin,
         head,
         device: asDevice,
-        setup: () => (live ? setupState() : Promise.reject(new Error("specimen"))),
+        setup: asDevice ? undefined : () => (live ? setupState() : Promise.reject(new Error("specimen"))),
+        place: asDevice ? undefined : () => (live ? placeFastctx() : notLive()),
         legacy: (legacy) => legacySaid(legacy, english ? enSettings : zhSettings),
-        place: () => (live ? placeFastctx() : notLive()),
-        join: (code, name) =>
-          live && asDevice
-            ? joinDevice(code, name).then((joined) => ({ ...joined, kept: null }))
-            : (live ? joinWorld(code, name) : notLive()),
-        // A phone reads the invitation off the computer's screen; a
-        // specimen shows the button when asked as a phone.
-        scan: canScan() ? scanInvitation : !live && params.has("phone") ? async () => "fxw3.specimen" : undefined,
-        hubHere: (addresses) => (live ? hubHere(addresses) : notLive()),
-        applyHosts: (codex, claude) => (live ? applyHosts(codex, claude, false, true) : notLive()),
+        login: (hub, account, password, register, name) => (live ? login(hub, account, password, register, name) : notLive()),
+        loginToken: (token, name) => (live ? loginToken(token, name) : notLive()),
+        openAccount: asDevice ? undefined : (hub, account, password, register, name) => (live ? openAccount(hub, account, password, register, name) : notLive()),
+        // A phone reads the token off the computer's screen; a specimen
+        // shows the button when asked as a phone.
+        scan: canScan() ? scanToken : !live && params.has("phone") ? async () => "FX5SPECIMEN" : undefined,
+        applyHosts: asDevice ? undefined : (codex, claude) => (live ? applyHosts(codex, claude, false, true) : notLive()),
         enter() {
           welcomed.now();
           location.hash = link({ kind: "home" });
         },
+      });
+      break;
+    case "account":
+      page = new AccountPage({
+        store,
+        words: english ? enAccount : zhAccount,
+        machines: english ? enMachines : zhMachines,
+        head,
+        when,
+        change,
+        invite: (login, kind) => tokens.open(login, kind),
+        confirm: accountConfirm,
+      });
+      break;
+    case "admin":
+      page = new AdminPage({
+        store,
+        words: english ? enAdmin : zhAdmin,
+        head,
+        when,
+        change,
+        confirm: accountConfirm,
       });
       break;
     case "file":
@@ -1061,7 +1120,7 @@ function show(next: Place): void {
         tail: next.tail,
         head,
         read: (machine, path, range) => (live ? readText(machine, path, range) : specimenRead(machine, path, range)),
-        readBytes: (machine, path) => (live ? readBytes(machine, path) : Promise.reject(new Error(deviceWords.specimen))),
+        readBytes: (machine, path) => (live ? readBytes(machine, path) : notLive()),
         ago: (at) => homeWords.ago(Date.now() - at.getTime()),
       });
       break;
@@ -1132,9 +1191,14 @@ function specimenPlace(): Place | null {
     case "machines":
       return { kind: "machine", name: "laptop" };
     case "invite":
-      return { kind: "machines" };
+      return { kind: "account" };
     case "welcome":
-      return { kind: "welcome" };
+    case "login":
+      return { kind: "login" };
+    case "account":
+      return { kind: "account" };
+    case "admin":
+      return { kind: "admin" };
     case "settings":
       return { kind: "settings" };
     case "codex":
@@ -1165,7 +1229,11 @@ new Palette({
     const items: PaletteItem[] = [
       { group: paletteWords.actions, label: shellWords.newTalk, note: "Ctrl N", run: () => newTalk.open(place.kind === "project" ? place.town : null) },
       { group: paletteWords.actions, label: shellWords.newProject, run: () => projectForm.open() },
-      { group: paletteWords.actions, label: deviceWords.invite, run: () => devices.invite() },
+      ...loginsOf(world?.accounts).map((login) => ({
+        group: paletteWords.actions,
+        label: paletteWords.invite(loginLabel(login)),
+        run: () => tokens.open(login),
+      })),
       { group: paletteWords.actions, label: paletteWords.fold, note: "Ctrl B", run: () => shell.toggleSidebar() },
       ...(place.kind === "talk"
         ? [
@@ -1182,7 +1250,8 @@ new Palette({
       ...(world?.towns ?? []).map((town) => ({ group: paletteWords.places, label: town.record.name, note: town.town, run: go({ kind: "project", town: town.town }) })),
       { group: paletteWords.places, label: shellWords.machines, run: go({ kind: "machines" }) },
       { group: paletteWords.places, label: shellWords.settings, run: go({ kind: "settings" }) },
-      { group: paletteWords.places, label: homeWords.setUp, run: go({ kind: "welcome" }) },
+      ...(loginsOf(world?.accounts).length ? [{ group: paletteWords.places, label: shellWords.account, run: go({ kind: "account" }) }] : []),
+      { group: paletteWords.places, label: shellWords.logIn, run: go({ kind: "login" }) },
       ...residentsOf(world)
         .filter((r) => r.here || r.now?.waiting_for_user)
         .map((r) => ({
@@ -1191,17 +1260,19 @@ new Palette({
           note: [titleOf(r) ? shellWords.someone(agentName(r.about.host.agent), r.about.machine) : null, r.town].filter(Boolean).join(" · "),
           run: go({ kind: "talk", address: { resident: r.about.id, machine: r.about.machine } }),
         })),
-      ...(world?.nodes.machines ?? [])
-        .filter((node) => !node.revoked)
-        .map((node) => ({ group: paletteWords.machines, label: node.name, note: node.online ? "" : shellWords.offline, run: go({ kind: "machine", name: node.name }) })),
+      ...machinesOf(world).map((machine) => ({
+        group: paletteWords.machines,
+        label: machine.written,
+        note: machine.here || machine.online ? "" : shellWords.offline,
+        run: go({ kind: "machine", name: machine.name }),
+      })),
     ];
     return items;
   },
 });
 
-/** Whether this device has been shown the way into a World: a computer
- *  on its own is shown it once, by itself, and after that from the
- *  sidebar. */
+/** Whether this computer has been shown the way to log in: on its own it
+ *  is shown it once, by itself, and after that from the sidebar. */
 const welcomed = {
   read(): boolean {
     try {
@@ -1226,7 +1297,7 @@ if (live) {
     const world = store.world.get();
     if (!world || decided) return;
     decided = true;
-    if (!world.nodes.world && !welcomed.read() && place.kind === "home") location.hash = link({ kind: "welcome" });
+    if (!loginsOf(world.accounts).length && !welcomed.read() && place.kind === "home") location.hash = link({ kind: "login" });
   });
   // A computer the World cannot be asked on at all, before any answer: when
   // fastctx is not on it yet, the way on is to put it there.
@@ -1236,7 +1307,7 @@ if (live) {
     decided = true;
     void setupState()
       .then((setup) => {
-        if (!setup.installed && place.kind === "home") location.hash = link({ kind: "welcome" });
+        if (!setup.installed && place.kind === "home") location.hash = link({ kind: "login" });
       })
       .catch(() => {});
   });
@@ -1254,17 +1325,20 @@ applyTheme(() => {
   openPage?.contextChanged();
 });
 show(specimenPlace() ?? placeOf(location.hash));
-// A device that has not joined has nothing to show but the way in.
+// A device logged in nowhere has nothing to show but the way in.
 if (live) {
   void connectionState().then((state) => {
     asDevice = state.mode === "device";
-    if (asDevice && !state.device?.world && place.kind === "home") location.hash = link({ kind: "welcome" });
-    else if (place.kind === "welcome") show(place);
+    if (asDevice && !state.device?.hubs.length && place.kind === "home") location.hash = link({ kind: "login" });
+    else if (place.kind === "login") show(place);
   });
 }
 if (!live && params.get("s") === "new") newTalk.open();
 if (!live && params.get("s") === "new-project") projectForm.open();
-if (!live && params.get("s") === "invite") devices.invite();
+if (!live && params.get("s") === "invite") {
+  const [first] = groupsOf(specimen.world);
+  if (first) tokens.open(first.login);
+}
 
 // On a phone the app's own process calls the user, from the rules and
 // words the page gives it; a tap on a call opens what it was about.

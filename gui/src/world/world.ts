@@ -2,6 +2,7 @@
 // and `nodes` answer (`fastctx_types::town`, `::residents`, `::project`,
 // `::world`). These are serialized replies, before any presentation model.
 
+import type { AccountName, Acting, HubId, HubName, Rights } from "./accounts";
 import type { Speaker, TurnEnd } from "./events";
 import type { PageSource, PageSummary } from "./pages";
 import type { Address, AgentName, EntryId, JobId, JournalName, MachineName, ResidentId, Result, Timestamp, TownName } from "./wire";
@@ -23,6 +24,11 @@ export interface About {
   session: string | null;
   world_started: boolean;
   model: string | null;
+  /** Whom it works for: this computer's logins, or these accounts. */
+  acting: Acting;
+  /** The machine its scripts start on, as written, when not the one it
+   *  lives on. */
+  works_on?: string;
 }
 
 export type Activity = "busy" | "idle" | "asleep";
@@ -83,6 +89,8 @@ export interface RunningJob {
   command: string;
   output: string;
   stderr?: string;
+  /** The account it runs for, when another machine sent it. */
+  account?: { hub: string; account: string };
 }
 
 export interface WhoReply {
@@ -107,6 +115,16 @@ export interface WorldWho {
   you?: Address;
   history?: import("./since").WorldSince;
   machines: MachineWho[];
+  /** The residents and jobs shown that work for none of the asker's accounts. */
+  others?: WhoFor[];
+}
+
+/** A resident or a job, by its id, that works for other accounts than the
+ *  asker's, with whom it works for. */
+export interface WhoFor {
+  machine: MachineName;
+  id: string;
+  accounts: string[];
 }
 
 export interface MachineFacts {
@@ -136,85 +154,44 @@ export type Route =
 export type LinkState =
   | { kind: "alone" }
   | { kind: "connecting"; since: Timestamp; last_error: string | null }
-  | { kind: "online"; since: Timestamp; hub: string; relay?: MachineName | null; route: Route }
+  /** `relay` is the label of the relay it connects through. */
+  | { kind: "online"; since: Timestamp; hub: string; relay?: string | null; route: Route }
   | { kind: "stopped"; reason: string };
 
+/** This computer, and hub by hub the machines its logins may use
+ *  (`fastctx_types::world::NodesReply`). */
 export interface NodesReply {
   machine: MachineName;
-  world: string | null;
+  /** What this computer is like; a device has nothing to say. */
+  facts?: MachineFacts;
+  hubs: HubNodes[];
+}
+
+export interface HubNodes {
+  hub: HubId;
+  name: HubName;
   link: LinkState;
+  /** The accounts this computer is logged in to there. */
+  logins: AccountName[];
+  /** The account this computer is registered under there. */
+  home: AccountName | null;
   machines: Node[];
-  /** Members that came in with this machine's invitations, not yet shown
-   *  to the user. */
-  joined?: Joined[];
 }
 
 export interface Node {
   name: MachineName;
+  /** How it is written: `name.hub` where another hub has a different
+   *  computer of that name. */
+  written: string;
   online: boolean | null;
   since: Timestamp | null;
+  /** The relay it is connected through. */
+  through?: string | null;
   facts: Result<MachineFacts, string>;
-  revoked: Revoked | null;
-  /** A phone or another device: nothing runs on it, and it is not asked. */
-  device?: boolean;
-  /** What it may do; absent when it is revoked or the World is one machine. */
-  standing?: Standing | null;
-  /** Where it hangs in the World's tree; absent as `standing` is. */
-  place?: Place | null;
-}
-
-/** One upstream a machine connects to (`fastctx_types::world::Upstream`). */
-export type Upstream = { kind: "hub" } | { kind: "relay"; machine: MachineName };
-
-/** Where a member hangs in the tree (`fastctx_types::world::Place`). */
-export interface Place {
-  /** The upstreams it connects through, in order; the hub is the last of any. */
-  via: Upstream[];
-  /** Where machines below it dial it, when it relays. */
-  relays_at?: string[];
-}
-
-/** Everything, or only these (`fastctx_types::scope::Set`). */
-export type ScopeSet<T> = "all" | T[];
-
-/** What a member does on a machine, named after the hand that does it. */
-export type ScopeAction = "run" | "write" | "copy" | "ask_colleague" | "w" | "talk" | "read" | "consent" | "page";
-
-export const scopeActions: ScopeAction[] = ["talk", "w", "read", "run", "write", "copy", "ask_colleague", "page", "consent"];
-
-/** What one member may use and do (`fastctx_types::scope::Scope`), projects
- *  by their short names; one this machine cannot name, by its id. */
-export interface Scope {
-  machines: ScopeSet<MachineName>;
-  agents: ScopeSet<AgentName>;
-  projects: ScopeSet<string>;
-  actions: ScopeSet<ScopeAction>;
-  invite: boolean;
-}
-
-/** Where a member stands (`fastctx_types::world::Standing`). */
-export interface Standing {
-  scope: Scope;
-  manage?: boolean;
-  /** Who invited it; null for the machine that founded the World. */
-  invited_by: MachineName | null;
-  /** The branch of an inviter without management rights. */
-  delegated?: boolean;
-  /** Whether it has a key others can seal to yet. */
-  sealing: boolean;
-}
-
-/** A member that came in with this machine's invitation. */
-export interface Joined {
-  name: MachineName;
-  device?: boolean;
-  noticed_at: Timestamp;
-}
-
-export interface Revoked {
-  by: MachineName;
-  at: Timestamp;
-  reason: string;
+  /** The account it is registered under. */
+  owner: AccountName | null;
+  /** What each of this computer's accounts may do on it. */
+  rights: [AccountName, Rights][];
 }
 
 export type Writer =
@@ -404,6 +381,8 @@ export interface ResidentDetail {
   asked: string | null;
   answers: MessageLine[];
   jobs: RunningJob[];
+  /** Where its colleagues live, when the user let it ask for them. */
+  colleagues?: string;
 }
 
 export type Looked = { kind: "resident" } & ResidentDetail | { kind: "job"; record: JobRecord };

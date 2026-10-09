@@ -7,12 +7,14 @@ use fastctx_hosts::agents::{elapsed, measured};
 use fastctx_install::apply::{self, Places, Standing};
 use fastctx_net::link::CallFailure;
 use fastctx_types::MachineName;
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::agents::*;
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use jiff::Timestamp;
 
 use crate::Node;
+use crate::around::Heard;
 
 pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
     let start = Instant::now();
@@ -79,74 +81,36 @@ fn integration(standing: Standing) -> Integration {
     }
 }
 
-pub async fn query(node: &Arc<Node>, machine: Option<MachineName>) -> Result<WorldAgents, Failure> {
+/// The agents on `machine`, or on this machine and each machine whoever
+/// asks (`acting`) may use.
+pub async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<MachineName>) -> Result<WorldAgents, Failure> {
     let here = node.machine();
     let mut machines = Vec::new();
-    let mut asks = Vec::new();
     if machine.as_ref().is_none_or(|machine| *machine == here) {
-        let node = node.clone();
-        asks.push(tokio::spawn(async move {
-            match self::here(&node).await {
-                Ok(reply) => MachineAgents::Answered { reply },
-                Err(error) => MachineAgents::NoAnswer { machine: node.machine(), reason: error.message },
-            }
-        }));
+        machines.push(match self::here(node).await {
+            Ok(reply) => MachineAgents::Answered { reply },
+            Err(error) => MachineAgents::NoAnswer { machine: here.clone(), reason: error.message },
+        });
     }
-    if machine.as_ref().is_some_and(|machine| *machine == here) {
-        // Asking this machine does not require reaching the hub.
-    } else if let Some(link) = node.link() {
-        let refreshed = link.refresh().await;
-        let (table, presence) = link.members();
-        let names: Vec<_> = match &machine {
-            Some(name) => vec![name.clone()],
-            None => table
-                .machines()
-                .filter(|member| member.name != here && crate::admission::reaches(node, &table, &member.name))
-                .map(|member| member.name.clone())
-                .collect(),
-        };
-        for name in names {
-            if let Err(error) = &refreshed {
-                machines.push(MachineAgents::NoAnswer {
-                    machine: name,
-                    reason: format!("whether it is connected is not known: the hub could not be asked ({error})"),
-                });
-                continue;
-            }
-            if !table.machines().any(|member| member.name == name) {
-                return Err(Failure::new(format!("no machine {name} belongs to this World")));
-            }
-            match presence.iter().find(|seen| seen.name == name) {
-                Some(seen) if seen.online => {
-                    let link = link.clone();
-                    asks.push(tokio::spawn(async move {
-                        match link.call(&name, RemoteCall::Agents).await {
-                            Ok(Ok(RemoteReply::Agents(reply))) if reply.machine == name => {
-                                MachineAgents::Answered { reply }
-                            }
-                            Ok(Ok(_)) => {
-                                MachineAgents::NoAnswer { machine: name, reason: "it answered something else".into() }
-                            }
-                            Ok(Err(error)) => MachineAgents::NoAnswer { machine: name, reason: error.message },
-                            Err(CallFailure::Offline { name, last_seen }) => {
-                                MachineAgents::Offline { machine: name, since: last_seen }
-                            }
-                            Err(error) => MachineAgents::NoAnswer { machine: name, reason: error.to_string() },
-                        }
-                    }));
-                }
-                Some(seen) => machines.push(MachineAgents::Offline { machine: name, since: seen.since }),
-                None => machines.push(MachineAgents::NoAnswer {
-                    machine: name,
-                    reason: "the hub did not say whether it is connected".into(),
-                }),
-            }
+    let heard = match machine.filter(|machine| *machine != here) {
+        None => crate::around::ask_each(crate::around::reachable(node, acting, Purpose::Look), |_| RemoteCall::Agents).await,
+        Some(name) => {
+            let heard = match node.call(acting, &(&name).into(), Purpose::Look, RemoteCall::Agents).await {
+                Ok(Ok(reply)) => Heard::Answered(reply),
+                Ok(Err(failure)) => Heard::NoAnswer(failure.message),
+                Err(CallFailure::Offline { last_seen, .. }) => Heard::Offline(last_seen),
+                Err(failure) => return Err(Failure::new(failure.to_string())),
+            };
+            vec![(name, heard)]
         }
-    } else if let Some(machine) = machine {
-        return Err(Failure::new(format!("there is no machine {machine}: {here} is in no World with other machines")));
-    }
-    for ask in asks {
-        machines.push(ask.await.map_err(|error| Failure::new(format!("asking agents: {error}")))?);
+    };
+    for (name, heard) in heard {
+        machines.push(match heard {
+            Heard::Answered(RemoteReply::Agents(reply)) if reply.machine == name => MachineAgents::Answered { reply },
+            Heard::Answered(_) => MachineAgents::NoAnswer { machine: name, reason: "it answered something else".into() },
+            Heard::Offline(since) => MachineAgents::Offline { machine: name, since },
+            Heard::NoAnswer(reason) => MachineAgents::NoAnswer { machine: name, reason },
+        });
     }
     Ok(WorldAgents { machine: here, machines })
 }

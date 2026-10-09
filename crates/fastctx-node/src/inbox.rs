@@ -290,14 +290,21 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
         })
         .transpose()?
         .unwrap_or(false);
-    if record_path.with_extension("on-taken").try_exists()?
-        || record_path.with_extension("on-stopped").try_exists()?
-        || cancelled
-    {
-        return match std::fs::remove_file(&owed) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        };
+    let taken = record_path.with_extension("on-taken").try_exists()?;
+    if taken || record_path.with_extension("on-stopped").try_exists()? || cancelled {
+        match std::fs::remove_file(&owed) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        // Whoever followed it took every byte and its end, so they are
+        // part of the hop that followed it now: one copy of an output stays,
+        // there (`world-run.md`, 输出).
+        // Output that went straight on goes once it got there too.
+        let piped = record.on.as_ref().is_some_and(|on| on.piped);
+        if taken && (!piped || record_path.with_extension("on-piped").try_exists()?) {
+            crate::job_watch::forget(node, &record_path);
+        }
+        return Ok(());
     }
     let notice_path = record_path.with_extension("notice");
     let notice = if notice_path.try_exists()? {
@@ -357,7 +364,15 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
         // An older job may already have posted this id before an upgrade.
         NoticeId::try_from(format!("{}-{}", record.machine, record.id)).expect("a machine and a job make an id")
     };
-    tell(node, owner, id, notice, Owed::Working).await.map_err(|failure| io::Error::other(failure.message))?;
+    // The end is news for the account the job was sent for, or run for.
+    let acting = record
+        .on
+        .as_ref()
+        .and_then(|on| on.account.clone())
+        .or_else(|| record.account.clone())
+        .map(|account| fastctx_types::access::Acting::one(account.hub, account.account))
+        .unwrap_or_default();
+    tell(node, &acting, owner, id, notice, Owed::Working).await.map_err(|failure| io::Error::other(failure.message))?;
     match std::fs::remove_file(&owed) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),

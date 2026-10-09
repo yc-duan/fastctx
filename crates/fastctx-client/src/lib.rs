@@ -12,6 +12,7 @@
 //! that runs no node, keeping its identity and network connection in the
 //! application's own directory.
 
+mod address;
 pub mod attachments;
 pub mod composer;
 pub mod conversation;
@@ -26,6 +27,7 @@ pub mod shown;
 pub mod town;
 pub mod world;
 
+pub use address::hub_addresses;
 pub use conversation::{Conversation, Following, Moment};
 pub use file_read::Reading;
 pub use town::TownView;
@@ -207,7 +209,7 @@ impl Client {
             NodeFrame::Reply { id: answered, .. } => {
                 Err(broken(format!("the node answered call {answered}, not {id}")))
             }
-            NodeFrame::Watched { .. } | NodeFrame::On { .. } => {
+            NodeFrame::Watched { .. } | NodeFrame::On { .. } | NodeFrame::ToolsChanged { .. } => {
                 Err(broken("the node answered a call as a stream".to_string()))
             }
             NodeFrame::FileRead { .. } => Err(broken("use read_file to consume a file byte stream".to_string())),
@@ -229,6 +231,43 @@ impl Client {
         let id = self.next;
         self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
         Ok(Watching { transport: WatchingTransport::Local { client: self, id } })
+    }
+
+    /// Sends a `WatchTools` call; the connection says from then on each
+    /// time the session's tools may have changed.
+    pub async fn watch_tools(mut self, call: Call) -> Result<ToolsWatch, CallError> {
+        self.next += 1;
+        let id = self.next;
+        self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
+        Ok(ToolsWatch { client: self, id })
+    }
+}
+
+/// A session's tools watch; dropping it ends the watch.
+pub struct ToolsWatch {
+    client: Client,
+    id: u64,
+}
+
+impl ToolsWatch {
+    /// Returns when the tools may have changed; fails once the watch ended.
+    pub async fn next(&mut self) -> Result<(), CallError> {
+        let frame = self
+            .client
+            .connection
+            .recv()
+            .await
+            .map_err(CallError::Broken)?
+            .ok_or_else(|| CallError::Broken(std::io::ErrorKind::UnexpectedEof.into()))?;
+        let broken = |what: String| CallError::Broken(std::io::Error::other(what));
+        match serde_json::from_slice::<NodeFrame>(&frame).map_err(|error| broken(error.to_string()))? {
+            NodeFrame::ToolsChanged { id } if id == self.id => Ok(()),
+            NodeFrame::Reply { id, reply } if id == self.id => match reply {
+                Ok(_) => Err(broken("the tools watch ended".to_string())),
+                Err(failure) => Err(CallError::Failed(failure)),
+            },
+            _ => Err(broken("the node answered another call on a tools watch".to_string())),
+        }
     }
 }
 

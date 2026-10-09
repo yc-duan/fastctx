@@ -11,6 +11,10 @@ use crate::{Address, JobId, MachineName, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnRequest {
     pub machine: MachineName,
+    /// The hub of `machine`, when the script wrote it as `name.hub`
+    /// (`world-network.md`, 机器的名字).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub: Option<crate::HubName>,
     /// The client explicitly acknowledges Ended before the node releases
     /// the completion debt. Old clients only consumed the output stream.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -22,6 +26,18 @@ pub struct OnRequest {
     /// World's shell runs it: its answer names where the script went.
     pub job: Option<JobId>,
     pub package: OnPackage,
+    /// The machine of the `on` the script pipes this one's output into
+    /// (`world-run.md`, 数据跟着命令走): the output may go there without
+    /// passing here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipe_to: Option<MachineName>,
+}
+
+impl OnRequest {
+    /// The machine as the script wrote it.
+    pub fn written(&self) -> crate::access::Written {
+        crate::access::Written { name: self.machine.clone(), hub: self.hub.clone() }
+    }
 }
 
 /// The files `fastctx on` collected on this machine, each written whole
@@ -36,6 +52,11 @@ pub struct OnPackage {
     pub script: String,
     /// The command's standard input, read to its end; `None` for none.
     pub input: Option<String>,
+    /// The `on` whose output is the command's standard input, when that
+    /// output went straight on and stays where it was written until the
+    /// machine running this command takes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<OnSource>,
     /// The World's write commands are off in the shell this came from, so
     /// they are off there too.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -148,6 +169,53 @@ pub struct OnOrigin {
     /// The machine whose CLI follows this hop, which may differ from the resident's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follower: Option<MachineName>,
+    /// The account the hop runs for, as the machine it runs on was called
+    /// for: set there, from the call, never taken from the sender's word.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
+}
+
+/// Where the output of an `on` that went straight on is kept: the job on
+/// that machine, and the dispatch it was.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnSource {
+    pub machine: MachineName,
+    pub job: JobId,
+    pub request: crate::NoticeId,
+}
+
+/// What an `on` whose output went straight on writes on its standard
+/// output, as the one line there, for the `on` that reads it: this, then
+/// the source as JSON.
+const PIPE_MARK: &str = "\u{1b}fastctx on output ";
+
+/// The most a line of `PIPE_MARK` takes: the longest names and ids fit.
+pub const PIPE_LINE_MAX: u64 = 512;
+
+impl OnSource {
+    pub fn line(&self) -> String {
+        format!("{PIPE_MARK}{}\n", serde_json::to_string(self).expect("sources serialize"))
+    }
+
+    /// The source `input` names, when it is nothing but such a line.
+    pub fn read(input: &[u8]) -> Option<Self> {
+        let json = std::str::from_utf8(input).ok()?.strip_prefix(PIPE_MARK)?.strip_suffix('\n')?;
+        if json.contains('\n') {
+            return None;
+        }
+        serde_json::from_str(json).ok()
+    }
+}
+
+/// What the machine an `on`'s output went straight on from says as another
+/// machine takes it: the bytes as they are written, `Still` while there are
+/// none, and at the end how many there were and their SHA-256, in hex.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum PipeWord {
+    Out { bytes: u64 },
+    Still,
+    End { bytes: u64, sha256: String },
 }
 
 /// What the node hands `fastctx on` as the job goes.
@@ -157,6 +225,11 @@ pub enum OnPiece {
     Started {
         machine: MachineName,
         job: JobId,
+    },
+    /// The job's standard output goes to the `on` reading it, from where
+    /// it is kept: this is all of it that comes here.
+    Piped {
+        source: OnSource,
     },
     /// Standard output, base64.
     Out {

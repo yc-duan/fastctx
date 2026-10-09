@@ -13,8 +13,10 @@
 use std::sync::Arc;
 
 use fastctx_net::data::Stream;
-use fastctx_net::link::Feed;
+use fastctx_net::link::{Feed, Link};
 use fastctx_net::sign::Domain;
+use fastctx_types::access::{Acting, Purpose, Written};
+use fastctx_types::agents::Choices;
 use fastctx_types::attachments::Attachment;
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::ResidentDir;
@@ -54,9 +56,8 @@ pub async fn talk(
         let landed = talk_here(node, &here, &to, text, attachments).await?;
         return Ok((Address { machine: here, resident: to }, landed));
     }
-    let link = link(node)?;
     let call = RemoteCall::Talk { to: to.clone(), text, attachments };
-    match link.call(&machine, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
+    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
         Ok(RemoteReply::Said { landed }) => Ok((Address { machine, resident: to }, landed)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than a talk"))),
         Err(failure) => Err(failure),
@@ -72,6 +73,7 @@ pub async fn talk_here(
     attachments: Vec<Attachment>,
 ) -> Result<Landed, Failure> {
     crate::attachments::resolve(node, to, &attachments).await?;
+    let attachments = crate::attachments::place(node, to, attachments).await?;
     let delivery = crate::attachments::delivery(typed_on, text, attachments);
     speech::tell_here(node, to, delivery, Owed::Nobody).await
 }
@@ -119,37 +121,44 @@ pub async fn watch(
         });
         return Ok(receiver);
     }
-    let link = link(node)?;
     let watch = u64::from_le_bytes(
         fastctx_net::sign::random::<8>().map_err(|error| Failure::new(format!("naming the watch: {error}")))?,
     );
-    let (feeding, link_for_feed, from) = (sender.clone(), link.clone(), machine.clone());
-    let feed: Feed = Box::new(move |mut stream: Stream| {
-        Box::pin(async move {
-            let mut n = 0;
-            loop {
-                let signed = tokio::select! {
-                    signed = stream.hear::<fastctx_net::sign::Signed>() => signed?,
-                    () = feeding.closed() => return Ok(()),
-                };
-                let piece: Piece = link_for_feed.unseal(&from, Domain::Event, &signed).await?;
-                if piece.watch != watch || piece.n != n {
-                    return Err(format!(
-                        "{from} sent a piece out of place (watch {:x}, number {}; expected {watch:x}, {n})",
-                        piece.watch, piece.n
-                    ));
-                }
-                n += 1;
-                if feeding.send(Ok(piece.watched)).is_err() {
-                    return Ok(());
-                }
-            }
-        })
-    });
+    let written: Written = (&machine).into();
+    let links = node.locate(&written)?;
+    let feed = {
+        let (sender, from) = (sender.clone(), machine.clone());
+        move || -> Feed {
+            let (feeding, links, from) = (sender.clone(), links.clone(), from.clone());
+            Box::new(move |mut stream: Stream| {
+                Box::pin(async move {
+                    let mut n = 0;
+                    loop {
+                        let signed = tokio::select! {
+                            signed = stream.hear::<fastctx_net::sign::Signed>() => signed?,
+                            () = feeding.closed() => return Ok(()),
+                        };
+                        let piece: Piece = unseal(&links, &from, &signed).await?;
+                        if piece.watch != watch || piece.n != n {
+                            return Err(format!(
+                                "{from} sent a piece out of place (watch {:x}, number {}; expected {watch:x}, {n})",
+                                piece.watch, piece.n
+                            ));
+                        }
+                        n += 1;
+                        if feeding.send(Ok(piece.watched)).is_err() {
+                            return Ok(());
+                        }
+                    }
+                })
+            })
+        }
+    };
     let call = RemoteCall::Watch { resident, watch, composer };
+    let node = node.clone();
     tokio::spawn(async move {
         let result = tokio::select! {
-            result = link.call_with_stream(&machine, call, feed) => result,
+            result = node.call_with_stream(&Acting::Here, &written, Purpose::Agents, call, feed) => result,
             () = sender.closed() => return,
         };
         let ended = match result {
@@ -347,16 +356,29 @@ pub(crate) fn turn_of(happened: &fastctx_types::session::Happened) -> Option<&st
     }
 }
 
-/// Hands a watch of a resident of this machine to `from`, over `stream`,
-/// until `from` closes it.
+/// A piece of a watch, as the machine it came from signed it: its key is
+/// the same on every hub it is on, so any of them can tell.
+async fn unseal(links: &[Arc<Link>], from: &MachineName, signed: &fastctx_net::sign::Signed) -> Result<Piece, String> {
+    let mut why = Vec::new();
+    for link in links {
+        match link.unseal(from, Domain::Event, signed).await {
+            Ok(piece) => return Ok(piece),
+            Err(error) => why.push(error),
+        }
+    }
+    Err(why.join("; "))
+}
+
+/// Hands a watch of a resident of this machine to whoever asked through
+/// `link`, over `stream`, until they close it; each piece is signed here.
 pub async fn serve_watch(
     node: &Arc<Node>,
+    link: &Arc<Link>,
     resident: ResidentId,
     watch: u64,
     composer: Option<String>,
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
-    let link = link(node)?;
     let opening = async {
         let lease = match composer {
             Some(name) => Some(crate::composer::watch(node, &resident, name).await?),
@@ -396,7 +418,10 @@ pub async fn serve_watch(
     }
 }
 
-/// Opens a session for the user on this machine or on `target`.
+/// Opens a session for the user on this machine or on `target`, working
+/// for the account the user chose, or for this computer's logins where it
+/// lives here and they chose none.
+#[allow(clippy::too_many_arguments)]
 pub async fn open(
     node: &Arc<Node>,
     agent: AgentName,
@@ -405,15 +430,46 @@ pub async fn open(
     text: String,
     options: fastctx_types::agents::SessionOptions,
     attachments: Vec<Attachment>,
+    choices: Choices,
 ) -> Result<(Address, Landed), Failure> {
     let here = node.machine();
+    let acting = match &choices.account {
+        Some(account) => {
+            if !node.serves(&Acting::Here, &account.hub, &account.account) {
+                return Err(Failure::not_run(format!("this computer is not logged in to the account {}", account.account)));
+            }
+            Acting::one(account.hub.clone(), account.account.clone())
+        }
+        None => {
+            // A conversation opened from the World's interface works for one
+            // account; with one logged in here, that one.
+            let logins: Vec<_> = node
+                .links()
+                .iter()
+                .flat_map(|link| {
+                    let hub = link.membership().id.clone();
+                    let logins = link.view().me().map(|me| me.logins.clone()).unwrap_or_default();
+                    logins.into_iter().map(move |account| fastctx_types::access::HubAccount { hub: hub.clone(), account })
+                })
+                .collect();
+            match logins.as_slice() {
+                [] => Acting::Here,
+                [only] => Acting::one(only.hub.clone(), only.account.clone()),
+                _ => {
+                    return Err(Failure::not_run(
+                        "this computer is logged in to more than one account; choose the one the conversation works for",
+                    ));
+                }
+            }
+        }
+    };
     match target.filter(|target| *target != here) {
         None => {
-            let (id, landed) = open_here(node, &here, agent, town, text, options, attachments).await?;
+            let (id, landed) =
+                open_here(node, &here, acting, agent, town, text, options, attachments, choices).await?;
             Ok((Address { machine: here, resident: id }, landed))
         }
         Some(target) => {
-            let link = link(node)?;
             let call = RemoteCall::Open {
                 agent,
                 town,
@@ -421,8 +477,11 @@ pub async fn open(
                 model: options.model,
                 reasoning_effort: options.reasoning_effort,
                 attachments,
+                works_on: choices.works_on,
+                colleagues: choices.colleagues,
             };
-            match link.call(&target, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
+            let reply = node.call(&acting, &(&target).into(), Purpose::Agents, call).await;
+            match reply.map_err(|failure| Failure::new(failure.to_string()))? {
                 Ok(RemoteReply::Opened { resident, landed }) => Ok((Address { machine: target, resident }, landed)),
                 Ok(_) => Err(Failure::new(format!("{target} answered something other than an opened session"))),
                 // What went wrong there is said of that machine, not this one.
@@ -433,19 +492,36 @@ pub async fn open(
 }
 
 /// Opens a session on this machine for the user typing on `typed_on`, with
-/// their words as its first.
+/// their words as its first, working for `acting`.
+#[allow(clippy::too_many_arguments)]
 pub async fn open_here(
     node: &Arc<Node>,
     typed_on: &MachineName,
+    acting: Acting,
     agent: AgentName,
     town: Option<TownName>,
     text: String,
     options: fastctx_types::agents::SessionOptions,
     attachments: Vec<Attachment>,
+    choices: Choices,
 ) -> Result<(ResidentId, Landed), Failure> {
+    let works_on = choices.works_on.filter(|works_on| !node.is_here(works_on));
+    match &works_on {
+        Some(works_on) => {
+            node.speaking(&acting, works_on, Purpose::Hands).map_err(|failure| {
+                Failure::not_run(format!("it cannot work on {works_on}: {failure}"))
+            })?;
+        }
+        // An account lent only the agents here has a conversation opened
+        // here work elsewhere (`world-network.md`, 一台机器给几个账号用).
+        None => node.works_here(&acting).map_err(|why| {
+            Failure::not_run(format!("{why}, so a conversation opened here for it works on another machine: choose one"))
+        })?,
+    }
+    let opened = Opened { acting, works_on, colleagues: choices.colleagues };
     match agent.as_str() {
         "codex" => {}
-        "claude" => return crate::claude::open_here(node, typed_on, town, text, options, attachments).await,
+        "claude" => return crate::claude::open_here(node, typed_on, opened, town, text, options, attachments).await,
         _ => {
             return Err(Failure::new(format!(
                 "the World opens codex and claude sessions; it cannot open {agent} ones"
@@ -456,9 +532,14 @@ pub async fn open_here(
         crate::town::project::spans_here(node, town).await?;
     }
     let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
+    let _birth = crate::here::born(node, &id, opened.acting.clone(), opened.works_on.clone());
     let origin = Origin::User;
     crate::session_options::keep(node, &id, &options)?;
-    let (spec, heard) = crate::colleagues::thread_spec(node, &id, &origin, town.as_ref()).await?;
+    if let Some(lives_on) = &opened.colleagues {
+        crate::colleagues::setting::keep(node, &id, lives_on)?;
+    }
+    let (spec, heard) =
+        crate::colleagues::thread_spec(node, &id, &origin, town.as_ref(), &opened.acting, opened.works_on.as_ref()).await?;
     let (thread, model) = node.codex.start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {
@@ -470,6 +551,8 @@ pub async fn open_here(
         session: Some(thread.clone()),
         world_started: true,
         model,
+        acting: opened.acting,
+        works_on: opened.works_on,
     };
     let now = Now {
         activity: Activity::Idle,
@@ -510,9 +593,9 @@ pub async fn stop(
         let stopped = stop_here(node, &resident).await?;
         return Ok((Address { machine: here, resident }, stopped));
     }
-    let link = link(node)?;
     let call = RemoteCall::Stop { resident: resident.clone() };
-    match link.call(&machine, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
+    let reply = node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await;
+    match reply.map_err(|failure| Failure::new(failure.to_string()))? {
         Ok(RemoteReply::Stopped { stopped }) => Ok((Address { machine, resident }, stopped)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than a stop"))),
         Err(failure) => Err(failure),
@@ -542,9 +625,15 @@ async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<MachineName, Failur
     if node.residents.about(id).is_some() {
         return Ok(node.machine());
     }
-    crate::colleagues::find(node, id).await
+    if !node.connected_anywhere() {
+        return Err(Failure::new(format!("no resident {id} lives on {}", node.machine())));
+    }
+    crate::colleagues::find_for(node, &Acting::Here, id).await
 }
 
-fn link(node: &Node) -> Result<Arc<fastctx_net::link::Link>, Failure> {
-    node.link().ok_or_else(|| Failure::new(format!("{} is in no World with other machines", node.machine())))
+/// What the user chose for a session opened here, as this machine keeps it.
+pub struct Opened {
+    pub acting: Acting,
+    pub works_on: Option<Written>,
+    pub colleagues: Option<Written>,
 }

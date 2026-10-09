@@ -1,6 +1,6 @@
 [package]
 name = "fastctx-hub"
-description = "The hub: the one machine every machine of a World connects to"
+description = "The hub: accounts, logins and the directory, and the one machine every member connects to; and the relay that forwards to it"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,7 +22,7 @@ jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
-tokio = { workspace = true, features = ["macros", "net", "rt", "signal", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"] }
 tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 tokio-util = { version = "0.7", features = ["io"] }

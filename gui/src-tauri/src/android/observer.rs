@@ -212,15 +212,18 @@ pub(super) async fn run(world: World, directory: PathBuf, bridge: Arc<Bridge>) {
     let mut last_error = None;
     loop {
         let state = world.device().expect("Android device").state();
+        // The World this phone sees is the hubs it is logged in to.
+        let hubs = (!state.hubs.is_empty())
+            .then(|| state.hubs.iter().map(|hub| hub.hub.to_string()).collect::<Vec<_>>().join(","));
         let result = async {
-            if observed.world != state.world {
+            if observed.world != hubs {
                 for key in observed.residents.keys() {
                     bridge.action("dismissNotice", &format!("{key}:waiting"))?;
                     bridge.action("dismissNotice", &format!("{key}:finished"))?;
                 }
-                observed = Observed { world: state.world.clone(), ..Observed::default() };
+                observed = Observed { world: hubs.clone(), ..Observed::default() };
             }
-            if matches!(state.link, LinkState::Online { .. }) {
+            if state.hubs.iter().any(|hub| matches!(hub.link, LinkState::Online { .. })) {
                 observe(&world, &bridge, &mut observed).await?;
             }
             let bytes = serde_json::to_vec(&observed).map_err(|error| error.to_string())?;

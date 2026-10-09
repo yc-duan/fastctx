@@ -23,15 +23,14 @@ impl Device {
     ) -> Result<Reading, Error> {
         let machine =
             machine.ok_or_else(|| failed("choose the machine that has the file; a device has no local node"))?;
-        let session = self.connected()?;
-        session.check_identity().await?;
-        session.machine(&machine)?;
+        let session = self.reaching(&machine)?;
+        let account = session.account_for(&machine, fastctx_types::access::Purpose::Hands)?;
         // One queued block is the same backpressure boundary as local IPC.
         let (sender, parts) = mpsc::channel(1);
         let task = tokio::spawn(async move {
             tokio::select! {
                 () = sender.closed() => {},
-                result = fastctx_net::file_read::read(&session.link, machine, request, &sender) => {
+                result = fastctx_net::file_read::read(&session.link, machine, account, request, &sender) => {
                     let _ = sender.send(result.map(Part::Finished)).await;
                 }
             }

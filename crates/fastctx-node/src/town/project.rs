@@ -3,9 +3,10 @@
 
 use std::sync::Arc;
 
+use fastctx_types::access::{HubAccount, HubId};
 use fastctx_types::ipc::Failure;
 use fastctx_types::project::{Record, RecordFields, Stamp, record_path};
-use fastctx_types::{MachineName, ProjectCall, Reply, TownName};
+use fastctx_types::{AccountName, HubName, MachineName, ProjectCall, Reply, TownName};
 use jiff::Timestamp;
 
 use crate::Node;
@@ -15,7 +16,7 @@ use crate::town::{map, read};
 
 pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Result<Reply, Failure> {
     match call {
-        ProjectCall::New { town, fields } => new(node, caller, town, fields).await,
+        ProjectCall::New { town, fields, account, hub } => new(node, caller, town, fields, account, hub).await,
         ProjectCall::Edit { town, fields } => {
             let town = caller.town_or(node, town)?;
             edit(node, caller, town, fields).await
@@ -40,8 +41,17 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
     }
 }
 
-/// Opens a town: the first version of its record.
-async fn new(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordFields) -> Result<Reply, Failure> {
+/// Opens a town: the first version of its record, in the account it is
+/// opened in (`owner`).
+async fn new(
+    node: &Arc<Node>,
+    caller: &Caller,
+    town: TownName,
+    fields: RecordFields,
+    account: Option<AccountName>,
+    hub: Option<HubName>,
+) -> Result<Reply, Failure> {
+    let owner = owner(node, caller, account, hub)?;
     let _writing = node.writing.lock().await;
     crate::ledger::query(node, Some(&town)).await.map_err(Failure::new)?;
     if blocking(node, &town, read::latest).await?.is_some() {
@@ -62,7 +72,8 @@ async fn new(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordFi
         on: node.machine(),
         at: Timestamp::now(),
     };
-    let record = checked(node, record).await?;
+    let record = checked(node, owner.as_ref().map(|owner| &owner.hub), record).await?;
+    crate::ledger::open(node, &town, owner).await?;
     write(node, &town, &record).await.map_err(|failure| {
         if failure.message.contains("already") {
             Failure::new(format!("a project named {town} exists already ({failure})"))
@@ -97,7 +108,8 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
         on: node.machine(),
         at: Timestamp::now(),
     };
-    let record = checked(node, record).await?;
+    let hub = crate::ledger::names::place(&node.world, &town).ok().flatten().map(|place| place.hub);
+    let record = checked(node, hub.as_ref(), record).await?;
     write(node, &town, &record).await.map_err(|failure| {
         if failure.message.contains("already") {
             Failure::new(format!(
@@ -114,11 +126,11 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
 
 /// The record with its machines checked against the World's, and its paths
 /// written the way their machines write them.
-async fn checked(node: &Arc<Node>, mut record: Record) -> Result<Record, Failure> {
+async fn checked(node: &Arc<Node>, hub: Option<&HubId>, mut record: Record) -> Result<Record, Failure> {
     if record.machines.is_empty() {
         return Err(Failure::new("a project spans at least one machine"));
     }
-    let known = machines(node).await;
+    let known = machines(node, hub).await;
     let unknown = |machine: &MachineName| !known.contains(machine);
     let named = record
         .machines
@@ -155,16 +167,57 @@ async fn checked(node: &Arc<Node>, mut record: Record) -> Result<Record, Failure
     Ok(record)
 }
 
-/// The machines of the World as this machine knows them now; a device is
-/// never one of a town's machines.
-async fn machines(node: &Arc<Node>) -> Vec<MachineName> {
-    match node.link() {
+/// The machines of the hub a project is kept at, as this machine knows them
+/// now; a device is never one of a project's machines, and a project spans
+/// one hub. A project of a computer on no hub spans that computer.
+async fn machines(node: &Arc<Node>, hub: Option<&HubId>) -> Vec<MachineName> {
+    match hub.and_then(|hub| node.link_of(hub)) {
         Some(link) => {
             // Asked afresh, or as last heard when the hub cannot be asked.
             let _ = link.refresh().await;
-            link.members().0.machines().map(|member| member.name.clone()).collect()
+            link.view().machines().map(|member| member.name.clone()).collect()
         }
         None => vec![node.machine()],
+    }
+}
+
+/// The account a project whoever asks opens is opened in: the one named,
+/// of the hub named, when whoever asks works for it, or the one account they
+/// work for. None on a computer that is on no hub, which keeps its projects
+/// itself.
+fn owner(
+    node: &Node,
+    caller: &Caller,
+    named: Option<AccountName>,
+    hub: Option<HubName>,
+) -> Result<Option<HubAccount>, Failure> {
+    let acting = crate::around::acting_of(node, caller);
+    let mut accounts = Vec::new();
+    for link in node.links().into_iter().filter(|link| hub.as_ref().is_none_or(|hub| link.membership().hub_name == *hub)) {
+        let id = link.membership().id.clone();
+        for account in node.accounts_on(&link, &acting) {
+            if named.as_ref().is_none_or(|named| *named == account) {
+                accounts.push(HubAccount { hub: id.clone(), account });
+            }
+        }
+    }
+    match named {
+        Some(named) => match accounts.len() {
+            1 => Ok(accounts.pop()),
+            0 => Err(Failure::not_run(format!("this does not work for an account {named} on any hub this computer is on"))),
+            _ => Err(Failure::not_run(format!("accounts named {named} are on several hubs; name the hub"))),
+        },
+        None => match accounts.len() {
+            0 if node.connected_anywhere() => {
+                Err(Failure::not_run("this works for no account a project could be opened in"))
+            }
+            0 => Ok(None),
+            1 => Ok(accounts.pop()),
+            _ => Err(Failure::not_run(format!(
+                "this works for several accounts; name the one the project is opened in ({})",
+                accounts.iter().map(|account| account.account.to_string()).collect::<Vec<_>>().join(", ")
+            ))),
+        },
     }
 }
 
@@ -207,6 +260,24 @@ pub async fn spans_here(node: &Arc<Node>, town: &TownName) -> Result<(), Failure
     }
 }
 
+/// Refuses unless the resident `id` works for an account that may use
+/// `town`: a town's residents work for its accounts.
+fn works_in(node: &Node, id: &fastctx_types::ResidentId, town: &TownName) -> Result<(), Failure> {
+    let Some(place) = crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?
+    else {
+        return Err(map::no_ledger(node, town));
+    };
+    // A project of a computer on no hub is its own.
+    let Some(link) = node.link_of(&place.hub) else { return Ok(()) };
+    let acting = node.residents.about(id).map(|(about, _)| about.acting).unwrap_or_default();
+    let view = link.view();
+    if node.accounts_on(&link, &acting).iter().any(|account| view.in_project(account, &place.town)) {
+        Ok(())
+    } else {
+        Err(Failure::not_run(format!("{id} works for no account that may use the project {town}")))
+    }
+}
+
 /// The calling resident lives in `town` from now on, and is given its map.
 async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Reply, Failure> {
     let here = node.machine();
@@ -234,6 +305,7 @@ async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Repl
     let _writing = gate.write().await;
     node.residents.active(&id)?;
     map::catch_up(node, &town).await?;
+    works_in(node, &id, &town)?;
     let record = blocking(node, &town, read::latest).await?.ok_or_else(|| map::no_ledger(node, &town))?;
     if !record.machines.contains(&here) {
         return Err(Failure::new(format!(

@@ -1,0 +1,406 @@
+//! Where a resident's scripts start (`world-run.md`, 这里): the machine it
+//! works on, which need not be the one it lives on. A `run` of a resident
+//! that works elsewhere is handed whole, with its wait, to that machine,
+//! which runs it as a job of its own, keeps its output there and answers
+//! as it would answer there; only the answer crosses. Words that come for
+//! the resident where it lives end the wait there as they would here, and
+//! a job the answer showed whole goes there once its host has it.
+//!
+//! A script that is a single `on MACHINE` and nothing else has nothing to do
+//! where it starts, so it is handed whole to that machine instead, the same
+//! way: it runs even while the machine it would start on sleeps.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use fastctx_types::access::{Acting, HubAccount, Purpose, Written};
+use fastctx_types::ipc::Failure;
+use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::run::{RunReply, RunRequest, RunState};
+use fastctx_types::{Address, JobId, MachineName, ResidentId, TownName};
+
+use crate::Node;
+
+/// The jobs a `run` from here ran on the machine its resident works on and
+/// answered whole, with the project they went under there, until its host
+/// has the answer: then they go there.
+#[derive(Default)]
+pub struct Dispatched {
+    jobs: Mutex<HashMap<(ResidentId, JobId), Went>>,
+}
+
+/// Where a job a `run` handed over went: the machine, and the project it is
+/// under there.
+type Went = (Written, Option<TownName>);
+
+/// Residents being born here, with whom they work for and where: their host
+/// starts their tool server before their record is written, and the tools
+/// it lists then must already be theirs, as Codex does not list them again
+/// (`world-colleagues.md`, 同事从哪里来、能去哪里).
+#[derive(Default)]
+pub struct Births(Mutex<HashMap<ResidentId, (Acting, Option<Written>)>>);
+
+/// A resident being born, until its record is written: dropping it ends
+/// the birth, written or not.
+pub(crate) struct Birth {
+    node: Arc<Node>,
+    id: ResidentId,
+}
+
+impl Drop for Birth {
+    fn drop(&mut self) {
+        self.node.births.0.lock().expect("never poisoned").remove(&self.id);
+    }
+}
+
+/// `id` is being born here, working for `acting`, on `works_on`.
+pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting, works_on: Option<Written>) -> Birth {
+    node.births.0.lock().expect("never poisoned").insert(id.clone(), (acting, works_on));
+    Birth { node: node.clone(), id: id.clone() }
+}
+
+/// Whom `id` works for and where it works, as its record says, or as its
+/// birth does until the record is written.
+pub(crate) fn placed(node: &Node, id: &ResidentId) -> Option<(Acting, Option<Written>)> {
+    match node.residents.about(id) {
+        Some((about, _)) => Some((about.acting, about.works_on)),
+        None => node.births.0.lock().expect("never poisoned").get(id).cloned(),
+    }
+}
+
+/// A job a run of a resident started on the machine it works on and left
+/// running there, kept here until word of its end comes: the line of jobs
+/// still running, at the end of each answer, names it (`world-run.md`, 怎样
+/// 看它).
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct Elsewhere {
+    pub(crate) machine: Written,
+    pub(crate) job: JobId,
+    pub(crate) command: String,
+    pub(crate) started_at: jiff::Timestamp,
+}
+
+fn elsewhere_path(node: &Node, resident: &ResidentId, machine: &MachineName, job: &JobId) -> PathBuf {
+    node.world.path().join("elsewhere").join(resident.as_str()).join(format!("{machine}-{job}.json"))
+}
+
+fn left_running(node: &Node, resident: &ResidentId, kept: &Elsewhere) {
+    let path = elsewhere_path(node, resident, &kept.machine.name, &kept.job);
+    let bytes = serde_json::to_vec(kept).expect("records serialize");
+    let written = fastctx_platform::ensure_private_dir(path.parent().expect("a resident's directory"))
+        .and_then(|()| fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private));
+    if let Err(error) = written {
+        node.log.line(format_args!("keeping {} as still running: {error}", kept.job));
+    }
+}
+
+/// Word of the end of `job` on `machine` came for `resident`.
+pub(crate) fn ended_elsewhere(node: &Node, resident: &ResidentId, machine: &MachineName, job: &JobId) {
+    match std::fs::remove_file(elsewhere_path(node, resident, machine, job)) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            node.log.line(format_args!("forgetting {job} on {machine} as still running: {error}"));
+        }
+        _ => {}
+    }
+}
+
+/// What runs of `resident` left running on the machine it works on.
+pub(crate) fn running_elsewhere(node: &Node, resident: &ResidentId) -> Vec<Elsewhere> {
+    let Ok(entries) = std::fs::read_dir(node.world.path().join("elsewhere").join(resident.as_str())) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| std::fs::read(entry.ok()?.path()).ok())
+        .filter_map(|bytes| serde_json::from_slice(&bytes).ok())
+        .collect()
+}
+
+/// Every machine `script` names literally after `on` must be one this
+/// machine can reach for `acting` now, known, online and allowed, before
+/// any of it runs: otherwise a script would leave half its work done
+/// (`world-run.md`, 去别的机器). A name in a variable is checked only when its
+/// `on` runs, and so is a machine that leaves after this.
+pub(crate) fn check_named(node: &Node, acting: &Acting, script: &str) -> Result<(), Failure> {
+    let mut checked = std::collections::HashSet::new();
+    for (name, line) in fastctx_hands::run::preread::machines_named(script) {
+        if !checked.insert(name.clone()) {
+            continue;
+        }
+        let refuse = |why: String| Failure::not_run(format!("nothing ran: line {line} names {name} after `on`, and {why}"));
+        let written = Written::parse(&name).map_err(|error| refuse(error.to_string()))?;
+        if node.is_here(&written) {
+            continue;
+        }
+        let speakers = node.speakers(acting, &written, Purpose::Hands).map_err(|failure| refuse(failure.to_string()))?;
+        let seen: Vec<(bool, Option<jiff::Timestamp>)> = speakers
+            .iter()
+            .filter_map(|(link, _)| link.view().member(&written.name).map(|member| (member.online, member.since)))
+            .collect();
+        if !seen.iter().any(|(online, _)| *online) {
+            let last_seen = seen.iter().filter_map(|(_, since)| *since).max();
+            let offline = fastctx_net::link::CallFailure::Offline { name: written.name.clone(), last_seen };
+            return Err(refuse(offline.to_string()));
+        }
+    }
+    Ok(())
+}
+
+/// Where `resident`, of this machine, works when it is not here.
+pub(crate) fn elsewhere(node: &Node, resident: &ResidentId) -> Option<Written> {
+    let (about, _) = node.residents.about(resident)?;
+    about.works_on.filter(|works_on| !node.is_here(works_on))
+}
+
+/// Where a run of `resident`, of this machine, goes, and what runs there:
+/// another machine, or here when it is `None`.
+pub(crate) fn start(node: &Node, resident: &ResidentId, request: RunRequest) -> (Option<Written>, RunRequest) {
+    if let Some((machine, script)) = single_on(&request.script) {
+        // The part sent there starts in that machine's home, whatever the
+        // script would have started in.
+        let whole = RunRequest { script, cwd: None, ..request };
+        return ((!node.is_here(&machine)).then_some(machine), whole);
+    }
+    (elsewhere(node, resident), request)
+}
+
+/// The machine and the script of a script that is one `on` and nothing
+/// else, written as a here-document with a quoted delimiter, which bash
+/// leaves as written, or as plain words: `on gpu <<'EOF' … EOF`, `on gpu
+/// nvidia-smi`. Any other shape, such as an unquoted delimiter that the
+/// sending shell would expand, is left to the shell.
+pub(crate) fn single_on(script: &str) -> Option<(Written, String)> {
+    let script = script.trim_matches(|c: char| c == '\n' || c == '\r' || c == ' ' || c == '\t');
+    let (first, rest) = match script.split_once('\n') {
+        Some((first, rest)) => (first.trim_end_matches('\r'), Some(rest)),
+        None => (script, None),
+    };
+    let mut words = first.split_whitespace();
+    if words.next() != Some("on") {
+        return None;
+    }
+    let machine = Written::parse(words.next()?).ok()?;
+    let words: Vec<&str> = words.collect();
+    match (words.as_slice(), rest) {
+        ([redirect], Some(rest)) | (["<<", redirect], Some(rest)) => {
+            let redirect = if words.len() == 1 { redirect.strip_prefix("<<")? } else { redirect };
+            let delimiter = quoted(redirect)?;
+            let mut body = Vec::new();
+            let mut lines = rest.split('\n').map(|line| line.trim_end_matches('\r'));
+            for line in lines.by_ref() {
+                if line == delimiter {
+                    // Nothing may follow the here-document.
+                    return lines.all(|line| line.trim().is_empty()).then(|| (machine, body.join("\n")));
+                }
+                body.push(line);
+            }
+            None
+        }
+        (words, None) if !words.is_empty() && words.iter().all(|word| plain(word)) => Some((machine, words.join(" "))),
+        _ => None,
+    }
+}
+
+/// A here-document's delimiter written quoted, so its body is left as
+/// written: 'EOF', "EOF" or \EOF.
+fn quoted(word: &str) -> Option<&str> {
+    let inner = word
+        .strip_prefix('\'')
+        .and_then(|word| word.strip_suffix('\''))
+        .or_else(|| word.strip_prefix('"').and_then(|word| word.strip_suffix('"')))
+        .or_else(|| word.strip_prefix('\\'))?;
+    (!inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(inner)
+}
+
+/// A word bash reads back as itself: no quoting, expansion or operator.
+fn plain(word: &str) -> bool {
+    word.chars().all(|c| c.is_ascii_alphanumeric() || "_./:=@%+,-".contains(c))
+}
+
+/// Runs `request` for `resident`, of this machine, on `works_on`: where it
+/// works, or the one machine a script of one `on` names. It waits there as
+/// a run here waits and answers what that machine answered.
+pub(crate) async fn run(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    town: Option<TownName>,
+    request: RunRequest,
+    works_on: &Written,
+) -> Result<RunReply, Failure> {
+    let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
+    let here = Address { machine: node.machine(), resident: resident.clone() };
+    // Listening before the call goes, so words that come meanwhile are not
+    // missed here.
+    let mut words = node.words.watch(&here);
+    let town = match node.speaking(&acting, works_on, Purpose::Hands) {
+        Ok((link, _)) => node.town_across(&link, town.as_ref()),
+        Err(_) => town,
+    };
+    let (script, started_at) = (request.script.clone(), jiff::Timestamp::now());
+    let call = RemoteCall::Run { resident: resident.clone(), town: town.clone(), request };
+    let answer = node.call(&acting, works_on, Purpose::Hands, call);
+    tokio::pin!(answer);
+    let mut told = false;
+    let answered = loop {
+        tokio::select! {
+            answered = &mut answer => break answered,
+            // The node holds every sender, so the watch never closes.
+            _ = words.changed(), if !told => {
+                told = true;
+                let (node, acting, works_on, resident) = (node.clone(), acting.clone(), works_on.clone(), resident.clone());
+                tokio::spawn(async move {
+                    // When it does not get there, the run answers when its
+                    // wait is over, and the words are read then.
+                    let nudge = RemoteCall::WordsCame { resident };
+                    if let Err(failure) = node.call(&acting, &works_on, Purpose::Hands, nudge).await {
+                        node.log.line(format_args!("telling {} that words came: {failure}", works_on.name));
+                    }
+                });
+            }
+        }
+    };
+    let reply = match answered {
+        Ok(Ok(RemoteReply::Run(reply))) => reply,
+        Ok(Ok(_)) => return Err(Failure::new(format!("{} answered something other than a run", works_on.name))),
+        // What went wrong there is said of that machine, where the script
+        // was to start.
+        Ok(Err(failure)) => {
+            return Err(Failure { message: format!("on {}: {}", works_on.name, failure.message), ..failure });
+        }
+        Err(failure) => return Err(Failure::new(format!("the script starts on {}: {failure}", works_on.name))),
+    };
+    if reply.state != RunState::Running {
+        node.dispatched
+            .jobs
+            .lock()
+            .expect("never poisoned")
+            .insert((resident.clone(), reply.job.clone()), (works_on.clone(), town));
+    } else {
+        let command = crate::jobs::first_line(&script);
+        left_running(node, resident, &Elsewhere { machine: works_on.clone(), job: reply.job.clone(), command, started_at });
+    }
+    Ok(reply)
+}
+
+/// The answer that showed `job` whole reached its host: where it ran, if
+/// it ran elsewhere, its files go.
+pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bool {
+    let Some((works_on, town)) = node.dispatched.jobs.lock().expect("never poisoned").remove(&(resident.clone(), job.clone()))
+    else {
+        return false;
+    };
+    let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
+    let (node, call) = (node.clone(), RemoteCall::Forget { resident: resident.clone(), town, job: job.clone() });
+    tokio::spawn(async move {
+        match node.call(&acting, &works_on, Purpose::Hands, call).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(failure)) => node.log.line(format_args!("removing a job shown whole on {}: {}", works_on.name, failure.message)),
+            Err(failure) => node.log.line(format_args!("removing a job shown whole on {}: {failure}", works_on.name)),
+        }
+    });
+    true
+}
+
+/// A run here for `resident` of `from`, which works here, for `account`.
+pub(crate) async fn serve(
+    node: &Arc<Node>,
+    from: MachineName,
+    account: HubAccount,
+    resident: ResidentId,
+    town: Option<TownName>,
+    request: RunRequest,
+) -> Result<RemoteReply, Failure> {
+    let owner = Address { machine: from, resident };
+    let (reply, _) = node.jobs.run(node, owner.into(), town, request, Some(account)).await?;
+    Ok(RemoteReply::Run(reply))
+}
+
+/// Words came for `resident` of `from`: its runs waiting here answer.
+pub(crate) fn words_came(node: &Node, from: MachineName, resident: ResidentId) -> RemoteReply {
+    node.words.came(&Address { machine: from, resident });
+    RemoteReply::Set
+}
+
+/// The answer to a run here of `resident` of `from` showed its ended job
+/// whole, and its host has it.
+pub(crate) async fn forget_here(
+    node: &Arc<Node>,
+    from: MachineName,
+    resident: ResidentId,
+    town: Option<TownName>,
+    job: JobId,
+) -> RemoteReply {
+    crate::jobs::forget(node, town, Address { machine: from, resident }, job).await;
+    RemoteReply::Set
+}
+
+/// The user sets where `resident`, of this machine, works: `works_on`, or
+/// here. The machine must be one its accounts may work on, from here; its
+/// session is told, and its tools say where its shell is from now on.
+pub(crate) async fn set(node: &Arc<Node>, resident: &ResidentId, works_on: Option<Written>) -> Result<(), Failure> {
+    let (about, town) =
+        node.residents.about(resident).ok_or_else(|| Failure::not_run(format!("no resident {resident} lives here")))?;
+    // Only a conversation the World opened chose where it works; a session
+    // the user opened works where it was opened, and a colleague where it
+    // lives (`world-run.md`, 这里).
+    if let fastctx_types::residents::Origin::Colleague { .. } = about.origin {
+        return Err(Failure::not_run(format!("{resident} is a colleague: it works where it lives, and goes elsewhere with `on`")));
+    }
+    if !about.world_started {
+        return Err(Failure::not_run(format!(
+            "{resident} is a session the user opened on {}; it works where it was opened",
+            about.machine
+        )));
+    }
+    let works_on = works_on.filter(|works_on| !node.is_here(works_on));
+    match &works_on {
+        Some(works_on) => {
+            node.speaking(&about.acting, works_on, Purpose::Hands)
+                .map_err(|failure| Failure::not_run(format!("it cannot work on {works_on}: {failure}")))?;
+        }
+        None => node.works_here(&about.acting).map_err(|why| {
+            Failure::not_run(format!("it cannot work on {}, where it lives: {why}", node.machine()))
+        })?,
+    }
+    node.residents
+        .set_works_on(&node.world, resident, works_on.clone())
+        .map_err(|error| Failure::new(format!("recording where it works: {error}")))?;
+    // A Codex thread the World holds takes its new instructions at its next
+    // turn; a Claude session keeps the ones it started with, and its tools
+    // say where its shell is.
+    if about.world_started
+        && about.host.agent.as_str() == "codex"
+        && let Some(thread) = &about.session
+    {
+        let (spec, _) =
+            crate::colleagues::thread_spec(node, resident, &about.origin, town.as_ref(), &about.acting, works_on.as_ref())
+                .await?;
+        node.codex.adopt(thread, spec);
+    }
+    node.tools_changed(Some(resident));
+    Ok(())
+}
+
+/// The user sets where a resident on any machine works.
+pub(crate) async fn set_anywhere(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    machine: Option<MachineName>,
+    works_on: Option<Written>,
+) -> Result<(), Failure> {
+    let machine = match machine {
+        Some(machine) => machine,
+        None if node.residents.about(&resident).is_some() => node.machine(),
+        None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
+    };
+    if machine == node.machine() {
+        return set(node, &resident, works_on).await;
+    }
+    let call = RemoteCall::WorksOn { resident, works_on };
+    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await {
+        Ok(Ok(RemoteReply::Set)) => Ok(()),
+        Ok(Ok(_)) => Err(Failure::new(format!("{machine} answered something other than the setting"))),
+        Ok(Err(failure)) => Err(failure),
+        Err(failure) => Err(Failure::new(failure.to_string())),
+    }
+}

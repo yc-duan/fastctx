@@ -1,0 +1,738 @@
+/* Accounts and the machines they use (`world-gui.md`, 账号、机器与授权):
+   logging in, the machines page grouped by account, the sheets that lend
+   a machine and set its relays, the account page, an administrator's page,
+   and the sidebar's parts, one an account. */
+
+/* A tick with what it means beside it, said in a line under its name. */
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.check-row input {
+  flex: none;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+.check-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.check-title {
+  color: var(--text);
+}
+
+.check-row.compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.check-row.compact input {
+  margin: 0;
+}
+
+.check-row.compact .check-title {
+  color: var(--text-2);
+}
+
+a.text-button {
+  text-decoration: none;
+}
+
+.text-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.text-link:hover {
+  color: var(--text-strong);
+}
+
+/* Logging in: the three fields, the ways in beside the button, and, the
+   first time, the way past it, ruled off below. */
+.login-what {
+  margin: var(--space-2) 0 0;
+}
+
+.login-ways {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-1);
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.login-ways .login-way {
+  height: 30px;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.login-form .welcome-foot,
+.token-form .welcome-foot {
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.login-form .welcome-foot .sheet-go,
+.token-form .welcome-foot .sheet-go {
+  margin-left: auto;
+}
+
+.token-form .scan-code {
+  margin-top: var(--space-4);
+}
+
+.login-alone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin: var(--space-8) 0 0;
+  padding-top: var(--space-5);
+}
+
+.login-alone::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  background: var(--pen-rule);
+  opacity: 0.7;
+  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+}
+
+.login-alone .text-button {
+  margin-left: calc(-1 * var(--space-3));
+}
+
+/* The machines page, account by account: a quiet head over each part. */
+.machines-section {
+  margin-top: var(--space-6);
+}
+
+.machines-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-family: var(--font-reading);
+  font-weight: 400;
+  font-size: var(--size-small);
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+}
+
+.machines-group .glyph {
+  color: var(--text-3);
+}
+
+.machines-group::after {
+  content: "";
+  flex: 1;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+}
+
+.machines-none,
+.machines-alone {
+  margin: var(--space-3) 0 var(--space-8);
+  font-size: var(--size-ui);
+  line-height: var(--leading-prose);
+  color: var(--text-3);
+}
+
+.machines-alone {
+  margin-top: var(--space-6);
+}
+
+.machine-entries.machine-here {
+  padding-bottom: 0;
+}
+
+/* With one account there is no head between this computer and the rest:
+   the first of them is ruled off as every next one is. */
+.machine-here + .machines-section > .machine-entries:first-child {
+  padding-top: var(--space-4);
+}
+
+.machine-here + .machines-section > .machine-entries:first-child > .machine-entry:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  background: var(--pen-rule);
+  opacity: 0.7;
+  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+}
+
+.machine-here + .machines-section {
+  margin-top: 0;
+}
+
+/* This computer, hub by hub: how it reaches each, whose machine it is
+   there, and what its owner sets on it. */
+.machine-hubs {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0 0 0 calc(8px + 2px + var(--space-2));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.machine-hub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-3);
+}
+
+.machine-hub-text {
+  flex: 1 1 18em;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.machine-hub-name {
+  font-size: var(--size-small);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.machine-hub.stopped .machine-hub-name {
+  color: var(--caution);
+}
+
+.machine-hub.connecting .machine-hub-name {
+  color: var(--text-3);
+}
+
+.machine-hub-stand {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.machine-hub-acts {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity var(--hover) ease;
+}
+
+.machine-entry:hover .machine-hub-acts,
+.machine-hub-acts:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .machine-hub-acts {
+    opacity: 1;
+  }
+}
+
+.machine-line .tag {
+  align-self: center;
+}
+
+.tag.tag-own {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  background: transparent;
+  color: var(--text-2);
+}
+
+.tag.tag-trust {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: transparent;
+}
+
+.tag.tag-trust .glyph {
+  color: var(--accent);
+}
+
+.quiet-button[data-danger] {
+  color: var(--wrong);
+}
+
+.quiet-button[data-danger]:hover {
+  color: color-mix(in srgb, var(--wrong) 80%, var(--text));
+}
+
+/* Lending a machine: the line on what its owner sees, those it is lent
+   to with a switch for each right, then whom to lend it to. */
+.grant-sees {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: var(--space-3) 0 0;
+}
+
+.grant-sees .glyph {
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.grant-list {
+  margin-top: var(--space-5);
+}
+
+.grant-list .field-label {
+  margin: 0 0 var(--space-2);
+  font-weight: 400;
+}
+
+.grant-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.grant-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 38px;
+  border-top: 1px solid var(--hairline);
+}
+
+.grant-row:last-child {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.grant-who {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.grant-new {
+  margin-top: var(--space-2);
+}
+
+@media (max-width: 760px) {
+  .grant-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: var(--space-2) 0;
+  }
+
+  .grant-row .check-row {
+    grid-column: 1;
+  }
+}
+
+/* The relays a machine connects through, in the order it tries them. */
+.relay-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.relay-row {
+  display: grid;
+  grid-template-columns: 22px 8.5em minmax(0, 1fr) 32px;
+  gap: 6px;
+  align-items: center;
+}
+
+.relay-order {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.add-relay {
+  align-self: flex-start;
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.relay-last {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.relay-last .glyph {
+  color: var(--text-3);
+}
+
+@media (max-width: 760px) {
+  .relay-row {
+    grid-template-columns: 22px minmax(0, 1fr) 32px;
+  }
+
+  .relay-row .relay-addresses {
+    grid-column: 2 / 3;
+    grid-row: 2;
+  }
+}
+
+/* The account page and the administrator's: one section a login, its
+   parts each under a small head. */
+.account-title {
+  color: var(--text-2);
+  font-size: var(--size-ui);
+}
+
+.account-title .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.account-part {
+  margin: var(--space-6) 0 var(--space-1);
+  font-family: var(--font-reading);
+  font-weight: 400;
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.account-part + .field-hint {
+  display: block;
+  margin: 0 0 var(--space-2);
+}
+
+.account-section .joined-lines {
+  margin-top: var(--space-4);
+}
+
+.account-devices,
+.account-projects,
+.admin-accounts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.account-device {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.account-device:last-child,
+.admin-account:last-child,
+.account-project:last-child {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.account-device .dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: calc((var(--size-ui) * var(--leading-ui) - 7px) / 2);
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.account-device.offline .dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.2px var(--text-3);
+}
+
+.account-device-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.account-device-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.account-device-facts {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+/* A fact keeps together; a line breaks between facts. */
+.account-fact {
+  white-space: nowrap;
+}
+
+.account-device-facts .sep,
+.account-project .sep {
+  margin: 0 6px;
+}
+
+.account-device .quiet-button {
+  flex: none;
+}
+
+.account-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-1);
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.account-logout .glyph {
+  color: var(--wrong);
+}
+
+.account-project {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-height: 40px;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.account-project-name {
+  font-size: var(--size-ui);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.account-project-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.account-shared {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* An account a project is shared with: its name, and the cross that
+   stops sharing. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 4px 0 9px;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.chip-x {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  color: var(--text-3);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.chip-x:hover {
+  color: var(--wrong);
+  background: var(--hairline);
+}
+
+.admin-section .check-row {
+  margin-top: var(--space-2);
+}
+
+.admin-account {
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.admin-account.locked .admin-account-name {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.admin-account-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.admin-account-name {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.admin-account-opened {
+  margin-left: auto;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+/* An administrator acts on accounts often enough that what can be done
+   is always shown, quietly. */
+.admin-account .machine-acts {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 2px 0 0 calc(-1 * var(--space-3));
+  padding-left: 0;
+  opacity: 1;
+}
+
+.admin-account .quiet-button {
+  height: 26px;
+}
+
+/* The sidebar, logged in to more than one account: a part for each, under
+   its hub and name, folded shut on a press. */
+.sidebar-account {
+  margin-top: var(--space-5);
+}
+
+.sidebar-account + .sidebar-account {
+  margin-top: var(--space-4);
+}
+
+.side-account-title {
+  margin: 0;
+  font: inherit;
+}
+
+.side-account-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 2px var(--space-3) 2px calc(var(--space-3) - 4px);
+  border-radius: var(--radius-s);
+  font-size: var(--size-ui);
+  color: var(--text-2);
+  text-align: left;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.side-account-fold:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.side-account-fold .glyph {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--fold) var(--fold-easing);
+}
+
+.sidebar-account.shut .side-account-fold .glyph {
+  transform: rotate(-90deg);
+}
+
+.side-account-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-account-sep {
+  margin: 0 5px;
+  color: var(--text-3);
+}
+
+.side-account-body {
+  margin-left: var(--space-2);
+  padding-left: 2px;
+  border-left: 1px solid var(--hairline);
+}
+
+.side-account-body .sidebar-group {
+  margin-top: var(--space-2);
+}
+
+.side-account-body .side-group-title {
+  padding-left: calc(var(--space-3) - 2px);
+}
+
+/* What choosing where colleagues live means, under the choices. */
+.choice-said {
+  margin: 0 0 var(--space-1) calc(6.5em + var(--space-4));
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+@media (max-width: 760px) {
+  .choice-said {
+    margin-left: 0;
+  }
+}
+
+/* Whether the agent may ask for colleagues, in the details card. */
+.details-colleagues {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.details-colleagues .text-button {
+  height: 28px;
+  font-size: var(--size-small);
+}

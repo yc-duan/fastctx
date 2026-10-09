@@ -35,10 +35,10 @@ impl Device {
         machine: Option<MachineName>,
         composer: Option<String>,
     ) -> Result<Watching, Error> {
-        let session = self.connected()?;
-        session.check_identity().await?;
-        let machine = session.locate(&resident, machine).await?;
-        Watching::start(session, machine, resident, composer)
+        let machine = self.find(&resident, machine).await?;
+        let session = self.reaching(&machine)?;
+        let account = session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
+        Watching::start(session, machine, account, resident, composer)
     }
 }
 
@@ -46,6 +46,7 @@ impl Watching {
     fn start(
         session: Arc<Session>,
         machine: MachineName,
+        account: fastctx_types::AccountName,
         resident: ResidentId,
         composer: Option<String>,
     ) -> Result<Self, Error> {
@@ -56,7 +57,7 @@ impl Watching {
         let task = tokio::spawn(async move {
             let ended = tokio::select! {
                 () = sender.closed() => return,
-                result = session.link.call_with_stream(&machine, RemoteCall::Watch { resident, watch, composer }, feed) => result,
+                result = session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, RemoteCall::Watch { resident, watch, composer }, feed) => result,
             };
             let error = match ended {
                 Ok(Ok(RemoteReply::Watched)) => return,

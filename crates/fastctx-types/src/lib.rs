@@ -7,6 +7,8 @@
 //! results. Other crates refer to these types and never redefine them; what
 //! is written to disk and what travels on the wire is their serde form.
 
+pub mod access;
+pub mod accounts;
 pub mod agents;
 pub mod attachments;
 pub mod calls;
@@ -30,7 +32,6 @@ pub mod remote;
 pub mod renewal;
 pub mod residents;
 pub mod run;
-pub mod scope;
 pub mod session;
 pub mod since;
 pub mod town;
@@ -39,6 +40,7 @@ pub mod write;
 
 pub use calls::{Attach, Call, JournalCall, ProjectCall, Reply};
 pub use names::{
-    Address, AgentName, EntryId, JobId, JournalName, MachineName, NameError, NoticeId, PageName, ResidentId, TownName,
+    AccountName, Address, AgentName, EntryId, HubName, JobId, JournalName, MachineName, NameError, NoticeId, PageName,
+    ResidentId, TownName,
 };
 pub use process::ProcessIdentity;

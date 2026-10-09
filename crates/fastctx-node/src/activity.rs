@@ -104,6 +104,7 @@ pub fn who(
         local.history = Some(crate::since::local_records(world, &machine.name, since, town.as_ref())?);
     }
     let mut who = WorldWho {
+        others: Vec::new(),
         machine: machine.name,
         scope,
         machines: vec![MachineWho::Answered { reply: local }],

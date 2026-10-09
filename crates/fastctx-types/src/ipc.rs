@@ -21,7 +21,7 @@ use crate::{Address, JobId, MachineName};
 /// (`fastctx-node`'s `renewal_legacy`); other mismatched clients are refused
 /// before any call executes. `scripts/check-ipc-contract.py` decodes today's
 /// replies with the readers of the protocols released so far.
-pub const PROTOCOL: u32 = 7;
+pub const PROTOCOL: u32 = 8;
 
 /// The first frame on every connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +101,8 @@ pub enum NodeFrame {
     FileRead { id: u64, part: crate::file_read::FileReadPart },
     /// Part of what an `On` call hands over, until its `Reply`.
     On { id: u64, piece: crate::on::OnPiece },
+    /// The tools a `WatchTools` session is offered may have changed.
+    ToolsChanged { id: u64 },
 }
 
 /// Why a call did not do what it asked, in words for whoever reads the

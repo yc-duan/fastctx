@@ -98,7 +98,8 @@ def verify(reader):
             if case.get("encodings"):
                 for encoding in case["encodings"]:
                     assert encoding in json.dumps(answer["read"]), (case, answer)
-            if case["protocol"] == 7:
+            # Protocol 7 reads today's replies as they are, but for those said as text.
+            if case["protocol"] == 7 and not case.get("text_result"):
                 assert wire == answer["current"], (case, answer)
             if case.get("attached") and case["protocol"] >= 6:
                 assert wire["reply"]["Ok"]["notices"] == case["value"]["reply"]["Ok"]["notices"]

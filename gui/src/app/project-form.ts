@@ -2,20 +2,25 @@
 // (`world-projects.md`, 开一个项目): its name, its short name, what it is,
 // the machines it spans, the address book of where things are, and where
 // its decisions are kept. The World stamps who wrote each version, where
-// and when; every version is kept.
+// and when; every version is kept. Logged in to more than one account, a
+// new project is opened in the one chosen, and spans only machines that
+// account may work on (`world-network.md`, 项目也照同一个规矩).
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
 import type { RecordFields, TownRecord } from "../world/bridge";
+import type { Login } from "../world/accounts";
 import type { ProjectRecord } from "../world/world";
+import { groupsOf, loginLabel, machinesOf, rightsOn, sameLogin } from "./reach";
 import type { Store } from "./store";
 import type { ProjectFormWords } from "./words";
 
 export interface ProjectFormOptions {
   store: Store;
   words: ProjectFormWords;
-  create(town: string, fields: RecordFields): Promise<TownRecord>;
+  /** Opens a project in `login`'s account, or in the one account. */
+  create(town: string, fields: RecordFields, login: Login | null): Promise<TownRecord>;
   edit(town: string, fields: RecordFields): Promise<TownRecord>;
   /** The project was written: go to it, or show it again. */
   done(town: string): void;
@@ -44,6 +49,8 @@ export class ProjectForm {
   private readonly dialog: HTMLDialogElement;
   private readonly body: HTMLElement;
   private editing: { town: string; record: ProjectRecord } | null = null;
+  /** The account a new project opens in. */
+  private login: Login | null = null;
   private machines = new Set<string>();
   private places: Place[] = [];
   private slugTouched = false;
@@ -59,6 +66,13 @@ export class ProjectForm {
       if (event.target === this.dialog) this.close();
       const target = event.target as HTMLElement;
       if (target.closest(".sheet-close")) this.close();
+      const account = target.closest<HTMLButtonElement>("[data-login]");
+      if (account) {
+        this.read();
+        this.login = groupsOf(this.options.store.world.peek()).map((group) => group.login).find((login) => `${login.hub}/${login.account}` === account.dataset.login) ?? null;
+        redrawKeepingFocus(this.body, () => this.draw());
+        return;
+      }
       const machine = target.closest<HTMLButtonElement>("[data-machine]");
       if (machine) {
         const name = machine.dataset.machine!;
@@ -94,9 +108,12 @@ export class ProjectForm {
     });
   }
 
-  /** Opens the form for a new project, or for the next version of one. */
-  open(editing: { town: string; record: ProjectRecord } | null = null): void {
+  /** Opens the form for a new project, in `login`'s account where one is
+   *  named, or for the next version of one. */
+  open(editing: { town: string; record: ProjectRecord } | null = null, login: Login | null = null): void {
     this.editing = editing;
+    const logins = groupsOf(this.options.store.world.peek()).map((group) => group.login);
+    this.login = (login && logins.find((known) => sameLogin(known, login))) ?? logins[0] ?? null;
     this.slugTouched = false;
     const here = this.options.store.world.peek()?.here;
     this.machines = new Set(editing ? editing.record.machines : here ? [here] : []);
@@ -122,7 +139,15 @@ export class ProjectForm {
   private draw(record: ProjectRecord | null = null): void {
     const { words, store } = this.options;
     const world = store.world.peek();
-    const nodes = (world?.nodes.machines ?? []).filter((node) => !node.revoked && !node.device).map((node) => node.name);
+    // A project spans machines its account may work on: the chosen one for a
+    // new project; for one already open, the account it is in.
+    const groups = groupsOf(world);
+    const group = this.editing
+      ? groups.find((group) => group.towns.includes(this.editing!.town))
+      : groups.find((group) => this.login && sameLogin(group.login, this.login));
+    const nodes = (group ? group.machines.filter((machine) => rightsOn(machine, group.login).hands) : machinesOf(world)).map((machine) => machine.name);
+    // Another account chosen: what it may not work on is let go.
+    if (!this.editing) for (const machine of [...this.machines]) if (!nodes.includes(machine)) this.machines.delete(machine);
     // A machine the record names that this one no longer knows stays a
     // choice, so writing the next version does not drop it unawares.
     const names = [...new Set([...nodes, ...this.machines])];
@@ -143,6 +168,17 @@ export class ProjectForm {
         <button class="icon-button sheet-close" type="button" aria-label="${escape(words.cancel)}">${glyph("close", 18)}</button>
       </header>
       <div class="form-scroll">
+        ${
+          !this.editing && groups.length > 1
+            ? `<div class="field"><span class="field-label">${escape(words.account)}</span>
+          <div class="choice-options" role="radiogroup" aria-label="${escape(words.account)}">${groups
+            .map((group) => {
+              const on = !!this.login && sameLogin(group.login, this.login);
+              return `<button type="button" class="choice${on ? " chosen" : ""}" role="radio" aria-checked="${on}" data-login="${escape(`${group.login.hub}/${group.login.account}`)}">${escape(loginLabel(group.login))}</button>`;
+            })
+            .join("")}</div></div>`
+            : ""
+        }
         <label class="field"><span class="field-label">${escape(words.name)}</span>
           <input name="name" autocomplete="off" required placeholder="${escape(words.namePlaceholder)}" value="${escape(kept.name)}"></label>
         ${
@@ -206,7 +242,7 @@ export class ProjectForm {
     go.textContent = words.saving;
     note.hidden = true;
     try {
-      const written = this.editing ? await this.options.edit(town, fields) : await this.options.create(town, fields);
+      const written = this.editing ? await this.options.edit(town, fields) : await this.options.create(town, fields, this.login);
       this.busy = false;
       this.dialog.close();
       this.options.done(written.town);

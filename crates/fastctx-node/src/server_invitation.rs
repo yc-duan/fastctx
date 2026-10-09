@@ -1,33 +1,39 @@
-//! An invitation is issued only after its pinned hub can supply the release.
+//! The one line that installs fastctx on a Linux server and registers it as
+//! a machine of an account (`world-network.md`, 登录与入网): a token is made
+//! only after the hub showed it can hand out this release.
 
 use std::sync::Arc;
 
-use fastctx_install::server::{Kernel, Source, certificate_pin, command};
-use fastctx_types::MachineName;
+use fastctx_install::server::{Kernel, Source, certificate_pin, command as line};
+use fastctx_types::accounts::{AccountChange, MemberKind};
 use fastctx_types::ipc::Failure;
-use fastctx_types::scope::NamedScope;
+use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
 
 use crate::Node;
 
-pub async fn invite(
+pub async fn command(
     node: &Arc<Node>,
+    hub: Option<&HubName>,
+    account: &AccountName,
     name: Option<MachineName>,
     expires: Timestamp,
-    scope: Option<NamedScope>,
 ) -> Result<String, Failure> {
-    let link = node.link().ok_or_else(|| Failure::new("this machine belongs to no World with a hub"))?;
+    let link = crate::world::hub_link(node, hub)?;
     let version = env!("CARGO_PKG_VERSION");
     let (release, certificate) = link.kernel_release(version).await.map_err(Failure::new)?;
     let pin = certificate_pin(&certificate).map_err(|error| Failure::new(error.to_string()))?;
-    let address =
-        link.membership().hub.first().ok_or_else(|| Failure::new("this membership has no root hub address"))?;
+    let address = link.membership().addresses.first().ok_or_else(|| Failure::new("this membership has no hub address"))?;
     let directory = format!("https://{address}{}/v{version}", fastctx_types::kernel::RELEASE_PATH);
     let kernel = Kernel { version, x86_64_sha256: &release.x86_64_sha256, aarch64_sha256: &release.aarch64_sha256 };
     let source = Source::Hub { release_directory: &directory, spki_sha256: &pin };
-    // Validate every command input before spending an invitation.
-    command(kernel, "invitation", source).map_err(|error| Failure::new(error.to_string()))?;
-    let scope = scope.map(|scope| crate::ledger::names::by_id(node, scope)).transpose().map_err(Failure::new)?;
-    let code = link.invite(name, expires, fastctx_net::trust::Kind::Machine, scope).await.map_err(Failure::new)?;
-    command(kernel, &code.to_text(), source).map_err(|error| Failure::new(error.to_string()))
+    // Every input of the line is checked before a token is spent on it.
+    line(kernel, "token", source).map_err(|error| Failure::new(error.to_string()))?;
+    let change = AccountChange::Token { register: true, name, kind: MemberKind::Computer, expires };
+    let token = link
+        .account_change(account, change)
+        .await
+        .map_err(Failure::new)?
+        .ok_or_else(|| Failure::new("the hub made no token"))?;
+    line(kernel, &token, source).map_err(|error| Failure::new(error.to_string()))
 }

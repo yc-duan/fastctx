@@ -27,6 +27,9 @@ pub struct TownView {
     /// Everyone here on the machines that answered, shown or not.
     present: BTreeSet<Address>,
     known: BTreeMap<Address, ResidentNow>,
+    /// Whom the residents and jobs that work for other accounts than the
+    /// asker's work for, by machine and id.
+    others: BTreeMap<(MachineName, String), Vec<fastctx_types::AccountName>>,
 }
 
 #[derive(Clone, Debug)]
@@ -74,6 +77,7 @@ impl TownView {
         let mut machines = Vec::new();
         let mut residents = Vec::new();
         let mut jobs = Vec::new();
+        let others = who.others.into_iter().map(|other| ((other.machine, other.id), other.accounts)).collect();
         for machine in who.machines {
             match machine {
                 MachineWho::Answered { reply } => {
@@ -115,7 +119,14 @@ impl TownView {
             }
         };
         residents.sort_by_key(|resident| (Some(&address(resident)) != you, std::cmp::Reverse(latest(resident))));
-        Self { machine: who.machine, scope, machines, residents, jobs, present, known }
+        Self { machine: who.machine, scope, machines, residents, jobs, present, known, others }
+    }
+
+    /// Whom the resident or job `id` on `machine` works for, when that is
+    /// other accounts than the asker's: `bob`, or `bob, carol`.
+    pub fn works_for(&self, machine: &MachineName, id: &str) -> Option<String> {
+        let accounts = self.others.get(&(machine.clone(), id.to_string()))?;
+        Some(accounts.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))
     }
 
     pub fn known(&self, address: &Address) -> Option<&ResidentNow> {

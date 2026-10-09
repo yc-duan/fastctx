@@ -1,5 +1,6 @@
-//! A user's device: its own identity and a persistent link, with no node,
-//! agent host, command runner or ledger replica.
+//! A user's device, such as a phone: its own key and a link to each hub it
+//! is logged in to, with no node, agent host, command runner or ledger
+//! replica. A device only logs in; it is never registered as a machine.
 
 mod around;
 mod calls;
@@ -10,35 +11,36 @@ mod store;
 mod upload;
 pub(crate) mod watch;
 
+use std::collections::BTreeMap;
 use std::io;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use fastctx_net::code::Code;
-use fastctx_net::link::{BoxFuture, Keys, Link, Membership, Status};
-use fastctx_net::sign::PublicKey;
-use fastctx_net::trust::Kind;
-use fastctx_types::MachineName;
-pub use fastctx_types::device::DeviceState;
+use fastctx_net::directory::Kind;
+use fastctx_net::ids::HubId;
+use fastctx_net::link::{BoxFuture, Caller, Link, Membership, Status};
+use fastctx_net::login::{Device as Joining, Joined};
+use fastctx_types::access::Purpose;
+pub use fastctx_types::device::{DeviceHub, DeviceJoined, DeviceState};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
-use fastctx_types::world::LinkState;
+use fastctx_types::{AccountName, HubName, MachineName};
 
 use crate::world::Error;
-use store::{Identity, Store};
+use store::Store;
 
-/// The application supplies the directory. Opening it resumes its identity
-/// and starts reconnecting; cloning the World shares that single link.
+/// The application supplies the directory. Opening it resumes every
+/// membership and starts reconnecting; cloning the World shares its links.
 pub struct Device {
     store: Arc<Store>,
-    session: RwLock<Option<Arc<Session>>>,
+    sessions: RwLock<BTreeMap<HubId, Arc<Session>>>,
     lifecycle: tokio::sync::Mutex<()>,
     managed: bool,
 }
 
 pub(super) struct Session {
     link: Arc<Link>,
-    key: PublicKey,
 }
 
 impl Drop for Session {
@@ -63,12 +65,10 @@ impl Device {
 
     fn open_with_notifications(directory: PathBuf, managed: bool) -> io::Result<Arc<Self>> {
         let store = Arc::new(Store::open(directory)?);
-        let identity = store.load()?;
-        let device =
-            Arc::new(Self { store, session: RwLock::new(None), lifecycle: tokio::sync::Mutex::new(()), managed });
-        if let Some(identity) = identity {
-            let keys = device.store.keys(&identity)?;
-            device.start(identity, keys)?;
+        let memberships = store.memberships()?;
+        let device = Arc::new(Self { store, sessions: RwLock::new(BTreeMap::new()), lifecycle: tokio::sync::Mutex::new(()), managed });
+        for membership in memberships {
+            device.start(membership)?;
         }
         Ok(device)
     }
@@ -78,192 +78,182 @@ impl Device {
     }
 
     pub fn state(&self) -> DeviceState {
-        match self.session.read().expect("device session").as_ref() {
-            Some(session) => DeviceState {
-                name: Some(session.link.membership().name.clone()),
-                world: Some(session.link.membership().world.to_string()),
-                link: link_state(&session.link),
-            },
-            None => DeviceState { name: None, world: None, link: LinkState::Alone },
+        let sessions = self.sessions();
+        DeviceState {
+            name: sessions.first().map(|session| session.link.membership().name.clone()),
+            hubs: sessions
+                .iter()
+                .map(|session| DeviceHub {
+                    hub: session.link.hub_name(),
+                    link: session.link.state(),
+                    logins: session.link.view().me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),
+                })
+                .collect(),
         }
     }
 
     /// The native layer calls this on network changes and on returning to
-    /// the foreground. It cannot revive a revoked membership.
+    /// the foreground. It cannot revive a removed membership.
     pub fn reconnect(&self) {
-        if let Some(session) = self.session.read().expect("device session").as_ref() {
+        for session in self.sessions() {
             session.link.reconnect();
         }
     }
 
-    /// Joins only with a device invitation. A name fixed by the invitation
-    /// is used unless the caller supplies the same name. Otherwise a name
-    /// is required. Cancellation of the UI request does not abandon admission.
-    pub async fn join(
+    /// Logs this device in to `account` on the hub at `hub`. Cancellation
+    /// of the UI request does not abandon the login.
+    pub async fn login(
         self: &Arc<Self>,
-        code: String,
+        hub: Vec<SocketAddr>,
+        account: AccountName,
+        password: String,
         name: Option<MachineName>,
-    ) -> Result<(String, MachineName), Error> {
-        let device = self.clone();
-        tokio::spawn(async move { device.join_inner(code, name).await }).await.map_err(failed)?
-    }
-
-    async fn join_inner(&self, text: String, name: Option<MachineName>) -> Result<(String, MachineName), Error> {
-        let _changing = self.lifecycle.lock().await;
-        let code = Code::parse(&text).map_err(failed)?;
-        let Code::Invitation { founder, .. } = &code else {
-            return Err(failed("a device joins with a device invitation, not a founding code"));
-        };
-        let of_this_code = |membership: &Membership| {
-            membership.world == *code.world() && membership.hub == code.hub() && membership.cert == code.cert()
-        };
-        let existing = self.store.load()?;
-        self.restore()?;
-        let retrying = existing.is_some();
-        // An identity made by an earlier try of this code keeps its name and
-        // keys: its admission may have happened without its reply arriving.
-        let (earlier, directory, keys) = match existing {
-            Some(identity) if !identity.pending && of_this_code(&identity.membership) => {
-                self.connected()?.check_identity().await?;
-                return Ok((identity.membership.world.to_string(), identity.membership.name));
-            }
-            Some(mut identity) if identity.pending && of_this_code(&identity.membership) => {
-                let session = self.connected()?;
-                if session.check_identity().await.is_ok() {
-                    identity.pending = false;
-                    self.store.save(Some(&identity))?;
-                    return Ok((identity.membership.world.to_string(), identity.membership.name));
-                }
-                session.link.stop();
-                *self.session.write().expect("device session") = None;
-                let keys = self.store.keys(&identity)?;
-                (Some(identity), None, keys)
-            }
-            Some(_) => return Err(failed("this device has a World identity already; leave it before joining another")),
-            None => {
-                let (directory, keys) = self.store.create()?;
-                (None, Some(directory), keys)
-            }
-        };
-        let asking = fastctx_net::join::Asking {
-            name: earlier.as_ref().map(|identity| identity.membership.name.clone()).or(name),
-            fallback: None,
-            kind: Kind::Device,
-        };
-        let adopted = std::sync::Mutex::new(earlier);
-        let before = |chosen: &MachineName| -> Result<(), String> {
-            let mut adopted = adopted.lock().expect("never poisoned");
-            if adopted.is_none() {
-                let membership = Membership {
-                    world: code.world().clone(),
-                    name: chosen.clone(),
-                    founder: *founder,
-                    hub: code.hub().to_vec(),
-                    cert: code.cert(),
-                };
-                let directory = directory.clone().expect("a new identity has its directory");
-                *adopted = Some(self.store.adopt(directory, membership).map_err(|error| error.to_string())?);
-            }
-            Ok(())
-        };
-        let admission = fastctx_net::join::attempt(&code, asking, &keys, before).await;
-        let identity = adopted.into_inner().expect("never poisoned");
-        match (admission, identity) {
-            (Err(fastctx_net::join::JoinError::Refused(reason) | fastctx_net::join::JoinError::NotSent(reason)), _)
-                if !retrying =>
-            {
-                self.store.save(None)?;
-                if let Some(directory) = &directory {
-                    self.store.discard(directory);
-                }
-                Err(failed(reason))
-            }
-            (result, Some(mut identity)) => {
-                let (world, name) = (identity.membership.world.to_string(), identity.membership.name.clone());
-                if result.is_ok() {
-                    identity.pending = false;
-                    self.store.save(Some(&identity))?;
-                }
-                self.start(identity, keys)?;
-                result.map_err(failed)?;
-                // Check the inviter-signed kind from the actual member table,
-                // not just what the hub handed this device.
-                let session = self.connected()?;
-                session.check_identity().await?;
-                Ok((world, name))
-            }
-            (result, None) => Err(failed(result.err().map(|error| error.to_string()).unwrap_or_default())),
-        }
-    }
-
-    /// Revokes this device directly at the hub, even when no machines are
-    /// online. An offline failure keeps the identity for the next attempt.
-    pub async fn leave(self: &Arc<Self>) -> Result<(), Error> {
+    ) -> Result<DeviceJoined, Error> {
         let device = self.clone();
         tokio::spawn(async move {
             let _changing = device.lifecycle.lock().await;
-            device.restore()?;
-            let session = device.connected()?;
-            if !matches!(session.link.status(), Status::Stopped { .. }) {
-                session.link.revoke(&session.link.membership().name, "left").await.map_err(failed)?;
+            let key = device.store.key()?;
+            let joining = Joining { name: device.name(name)?, key: &key, kind: Kind::Phone, register: false };
+            let joined =
+                fastctx_net::login::with_password(&hub, &account, &password, joining).await.map_err(failed)?;
+            device.logged_in(joined).await
+        })
+        .await
+        .map_err(failed)?
+    }
+
+    /// Logs this device in with an enrollment token, as a phone scanning a
+    /// QR code does.
+    pub async fn login_with_token(self: &Arc<Self>, token: String, name: Option<MachineName>) -> Result<DeviceJoined, Error> {
+        let device = self.clone();
+        tokio::spawn(async move {
+            let _changing = device.lifecycle.lock().await;
+            let token = fastctx_net::token::Token::parse(&token).map_err(failed)?;
+            let key = device.store.key()?;
+            let joining = Joining { name: device.name(name)?, key: &key, kind: Kind::Phone, register: false };
+            let joined = fastctx_net::login::with_token(&token, joining).await.map_err(failed)?;
+            device.logged_in(joined).await
+        })
+        .await
+        .map_err(failed)?
+    }
+
+    /// The name this device logs in under: the one it has on its hubs, or
+    /// the one asked for while it is on none.
+    fn name(&self, asked: Option<MachineName>) -> Result<MachineName, Error> {
+        let existing = self.sessions().first().map(|session| session.link.membership().name.clone());
+        match (existing, asked) {
+            (Some(existing), Some(asked)) if existing != asked => Err(failed(format!(
+                "this device is {existing} on the hubs it is on, and takes the same name on every hub"
+            ))),
+            (Some(existing), _) => Ok(existing),
+            (None, Some(asked)) => Ok(asked),
+            (None, None) => Err(failed("a device logging in for the first time needs a name, such as `phone`")),
+        }
+    }
+
+    async fn logged_in(&self, joined: Joined) -> Result<DeviceJoined, Error> {
+        let Joined { hub, hub_name, name, account, addresses, cert } = joined;
+        match self.session(&hub) {
+            Some(session) => session.link.refresh().await.map_err(failed)?,
+            None => {
+                let membership =
+                    Membership { id: hub.clone(), hub_name: hub_name.clone(), name: name.clone(), addresses, cert, kind: Kind::Phone };
+                self.store.keep(&membership)?;
+                self.start(membership)?;
             }
-            device.store.save(None)?;
-            session.link.stop();
-            *device.session.write().expect("device session") = None;
+        }
+        Ok(DeviceJoined { hub: hub_name, name, account })
+    }
+
+    /// Logs this device out of `account` on the hub `hub`, or the one hub;
+    /// with no login left there, the link stops and its records go aside.
+    pub async fn logout(self: &Arc<Self>, hub: Option<HubName>, account: AccountName) -> Result<(), Error> {
+        let device = self.clone();
+        tokio::spawn(async move {
+            let _changing = device.lifecycle.lock().await;
+            let session = device.on_hub(hub.as_ref())?;
+            let last = session.link.view().me().is_none_or(|me| me.logins.iter().all(|login| *login == account));
+            let answer = session.link.account_change(&account, fastctx_types::accounts::AccountChange::Logout).await;
+            if !last {
+                return answer.map(|_| ()).map_err(failed);
+            }
+            if answer.is_err() && !matches!(session.link.status(), Status::Stopped { .. }) {
+                answer.map_err(failed)?;
+            }
+            let id = session.link.membership().id.clone();
+            device.sessions.write().expect("device sessions").remove(&id);
+            drop(session);
+            device.store.forget(&id)?;
             Ok(())
         })
         .await
         .map_err(failed)?
     }
 
-    fn start(&self, identity: Identity, keys: Keys) -> io::Result<()> {
+    fn start(&self, membership: Membership) -> io::Result<()> {
         let start = if self.managed { Link::start_managed } else { Link::start };
-        let public = keys.sign.public();
-        let handler = Arc::new(Handler { _store: self.store.clone() });
-        let link = Arc::new(start(self.store.net(&identity), identity.membership, keys, handler)?);
-        *self.session.write().expect("device session") = Some(Arc::new(Session { link, key: public }));
+        let key = self.store.key()?;
+        let id = membership.id.clone();
+        let arrivals = self.store.arrivals(&id);
+        let handler = Arc::new(Handler { _store: self.store.clone(), link: std::sync::OnceLock::new(), arrivals });
+        let link = Arc::new(start(self.store.net(&id), membership, key, handler.clone())?);
+        let _ = handler.link.set(Arc::downgrade(&link));
+        self.sessions.write().expect("device sessions").insert(id, Arc::new(Session { link }));
         Ok(())
     }
 
-    /// Called under the lifecycle lock after a previous link startup failed.
-    /// Admission on disk remains authoritative even when opening its local
-    /// counter or OS notifications failed in this process.
-    fn restore(&self) -> io::Result<()> {
-        if self.session.read().expect("device session").is_none()
-            && let Some(identity) = self.store.load()?
-        {
-            let keys = self.store.keys(&identity)?;
-            self.start(identity, keys)?;
+    fn sessions(&self) -> Vec<Arc<Session>> {
+        self.sessions.read().expect("device sessions").values().cloned().collect()
+    }
+
+    fn session(&self, hub: &HubId) -> Option<Arc<Session>> {
+        self.sessions.read().expect("device sessions").get(hub).cloned()
+    }
+
+    /// The session of the hub named `hub`, or of the one hub.
+    fn on_hub(&self, hub: Option<&HubName>) -> Result<Arc<Session>, Error> {
+        let sessions = self.sessions();
+        match hub {
+            Some(hub) => sessions
+                .into_iter()
+                .find(|session| session.link.hub_name() == *hub)
+                .ok_or_else(|| failed(format!("this device is not logged in to a hub named {hub}"))),
+            None => match sessions.len() {
+                0 => Err(failed("this device is logged in to no hub")),
+                1 => Ok(sessions.into_iter().next().expect("one")),
+                _ => Err(failed("this device is on more than one hub; name one")),
+            },
         }
-        Ok(())
     }
 
-    fn connected(&self) -> Result<Arc<Session>, Error> {
-        self.session.read().expect("device session").clone().ok_or_else(|| failed("this device has not joined a World"))
+    /// The session of the hub `machine` is on.
+    fn reaching(&self, machine: &MachineName) -> Result<Arc<Session>, Error> {
+        let sessions = self.sessions();
+        if sessions.is_empty() {
+            return Err(failed("this device is logged in to no hub"));
+        }
+        let holding: Vec<Arc<Session>> =
+            sessions.into_iter().filter(|session| session.link.view().member(machine).is_some()).collect();
+        match holding.len() {
+            1 => Ok(holding.into_iter().next().expect("one")),
+            0 => Err(failed(format!("no hub this device is on has a machine named {machine}"))),
+            _ => Err(failed(format!("{machine} is a machine on more than one hub this device is on"))),
+        }
     }
 }
 
 impl Session {
-    async fn check_identity(&self) -> Result<(), Error> {
-        self.link.refresh().await.map_err(failed)?;
-        let membership = self.link.membership();
-        let (table, _) = self.link.members();
-        let member =
-            table.get(&membership.name).ok_or_else(|| failed("the World does not trust this device's membership"))?;
-        if member.kind != Kind::Device || member.key != self.key {
-            return Err(failed("this identity was admitted as a machine, not a device"));
-        }
-        Ok(())
-    }
-}
-
-pub(super) fn link_state(link: &Link) -> LinkState {
-    match link.status() {
-        Status::Connecting { since, last_error } => LinkState::Connecting { since, last_error },
-        Status::Online { since, address, relay, route } => {
-            LinkState::Online { since, hub: address.to_string(), relay, route }
-        }
-        Status::Stopped { reason } => LinkState::Stopped { reason },
+    /// The account this device speaks for to ask `purpose` of `machine`.
+    pub(super) fn account_for(&self, machine: &MachineName, purpose: Purpose) -> Result<AccountName, Error> {
+        let view = self.link.view();
+        let me = self.link.membership().name.clone();
+        let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
+        view.account_for(&logins, &me, machine, purpose).ok_or_else(|| {
+            let why: Vec<String> =
+                logins.iter().filter_map(|account| view.admits(&me, account, machine, purpose).err()).collect();
+            failed(if why.is_empty() { format!("this device is logged in to no account that may use {machine}") } else { why.join("; ") })
+        })
     }
 }
 
@@ -276,6 +266,10 @@ struct Handler {
     // finishing disk writes. The link's handler lives with its last task,
     // so the identity remains locked until all its network work has ended.
     _store: Arc<Store>,
+    /// The link it handles for, set once it is made.
+    link: std::sync::OnceLock<std::sync::Weak<Link>>,
+    /// Where who came into this device's accounts there is kept.
+    arrivals: std::path::PathBuf,
 }
 
 impl fastctx_net::link::Node for Handler {
@@ -283,20 +277,28 @@ impl fastctx_net::link::Node for Handler {
         Err(Failure::new("this member is a device; nothing runs on it"))
     }
 
-    fn call(&self, _: MachineName, _: RemoteCall, _: Option<fastctx_net::data::Stream>) -> BoxFuture<RemoteResult> {
+    fn call(&self, _: Caller, _: RemoteCall, _: Option<fastctx_net::data::Stream>) -> BoxFuture<RemoteResult> {
         Box::pin(async { Err(Failure::new("this member is a device; it accepts no incoming calls")) })
     }
 
     fn letter(
         &self,
-        _: MachineName,
+        _: Caller,
+        _: Purpose,
         _: fastctx_net::message::LetterId,
         _: Letter,
     ) -> BoxFuture<io::Result<Result<(), String>>> {
         Box::pin(async { Ok(Err("a device receives no letters".to_string())) })
     }
 
-    fn ledger_changed(&self, _: Option<fastctx_net::ledger::TownId>) {}
+    fn ledger_changed(&self, _: Option<fastctx_types::access::TownId>) {}
+
+    fn directory_changed(&self) {
+        let Some(link) = self.link.get().and_then(std::sync::Weak::upgrade) else { return };
+        if let Err(error) = fastctx_net::arrivals::notice(&self.arrivals, &link.view()) {
+            eprintln!("World device: keeping who came into this device's accounts: {error}");
+        }
+    }
 
     fn log(&self, line: String) {
         eprintln!("World device: {line}");

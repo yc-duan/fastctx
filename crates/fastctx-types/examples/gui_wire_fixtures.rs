@@ -4,6 +4,8 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
+#[path = "gui_wire_fixtures/accounts.rs"]
+mod accounts;
 #[path = "gui_wire_fixtures/agents.rs"]
 mod agents;
 #[path = "gui_wire_fixtures/attachments.rs"]
@@ -32,6 +34,7 @@ mod management;
 
 #[derive(Serialize)]
 struct Fixtures {
+    accounts: accounts::Fixtures,
     pages: pages::Fixtures,
     session: session::Fixtures,
     world: world::Fixtures,
@@ -48,6 +51,7 @@ struct Fixtures {
 
 fn main() {
     let fixtures = Fixtures {
+        accounts: accounts::fixtures(),
         pages: pages::fixtures(),
         session: session::fixtures(),
         world: world::fixtures(),

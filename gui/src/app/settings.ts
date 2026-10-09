@@ -226,22 +226,24 @@ export class SettingsPage implements Page {
       this.device.innerHTML = `<p class="quiet">${escape(words.notInShell)}</p>`;
       return;
     }
-    const link = world.nodes.link;
-    const linked =
-      link.kind === "alone"
-        ? words.alone
-        : link.kind === "online"
-          ? words.online(link.hub, this.options.ago(new Date(link.since), now))
-          : link.kind === "connecting"
-            ? words.connecting(link.last_error)
-            : words.stopped(link.reason);
-    const here = world.nodes.machines.find((node) => node.name === world.here);
-    const version = here && "Ok" in here.facts && here.facts.Ok ? here.facts.Ok.version : "";
+    // How this computer or device reaches each hub it is logged in to, and
+    // as whom.
+    const hubs = world.nodes.hubs.map((hub): [string, string] => {
+      const link = hub.link;
+      const linked =
+        link.kind === "alone"
+          ? words.alone
+          : link.kind === "online"
+            ? words.online(link.hub, this.options.ago(new Date(link.since), now))
+            : link.kind === "connecting"
+              ? words.connecting(link.last_error)
+              : words.stopped(link.reason);
+      return [words.hub(hub.name), [linked, words.as(hub.logins.join(", "))].filter(Boolean).join(" · ")];
+    });
     const facts: [string, string][] = [
       [words.machine, world.here],
-      [words.world, world.nodes.world ?? words.alone],
-      [words.link, linked],
-      [words.version, version],
+      ...(hubs.length ? hubs : [[words.link, words.alone] as [string, string]]),
+      [words.version, world.nodes.facts?.version ?? ""],
     ];
     this.device.innerHTML = facts
       .filter(([, value]) => value)

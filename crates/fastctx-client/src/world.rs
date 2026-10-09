@@ -10,9 +10,10 @@ use fastctx_types::residents::Landed;
 use fastctx_types::session::control::{Control, Controlled, Offers};
 use fastctx_types::town::{LookedUp, WorldWho};
 use fastctx_types::world::NodesReply;
+use fastctx_types::accounts::{AccountChange, AccountsReply};
 use fastctx_types::{
-    Address, AgentName, Attach, Call, EntryId, JournalCall, JournalName, MachineName, ProjectCall, Reply, ResidentId,
-    TownName,
+    AccountName, Address, AgentName, Attach, Call, EntryId, HubName, JournalCall, JournalName, MachineName,
+    ProjectCall, Reply, ResidentId, TownName,
 };
 use jiff::Timestamp;
 
@@ -33,6 +34,9 @@ pub enum Error {
     /// a node of another version, or a fault in it.
     #[error("the node answered something else: {0}")]
     Unexpected(String),
+    /// What was given could not be used, as said.
+    #[error("{0}")]
+    Other(String),
 }
 
 /// A World reached through a local node or an application's device identity.
@@ -201,9 +205,16 @@ impl World {
         }
     }
 
-    /// Opens a town with the first version of its record.
-    pub async fn open_town(&self, town: TownName, fields: RecordFields) -> Result<TownRecord, Error> {
-        record(self.ask(Call::Project(ProjectCall::New { town, fields })).await?)
+    /// Opens a town with the first version of its record, in `account` of
+    /// `hub`, or in the one account the caller works for.
+    pub async fn open_town(
+        &self,
+        town: TownName,
+        fields: RecordFields,
+        account: Option<AccountName>,
+        hub: Option<HubName>,
+    ) -> Result<TownRecord, Error> {
+        record(self.ask(Call::Project(ProjectCall::New { town, fields, account, hub })).await?)
     }
 
     /// Writes the next version of a town's record.
@@ -276,6 +287,7 @@ impl World {
                 model: options.model,
                 reasoning_effort: options.reasoning_effort,
                 attachments: Vec::new(),
+                choices: Default::default(),
             })
             .await?
         {
@@ -349,83 +361,97 @@ impl World {
         }
     }
 
-    /// Joins a World with a code; returns the World's id and this machine's
-    /// name in it.
-    pub async fn join(&self, code: String, name: Option<MachineName>) -> Result<(String, MachineName), Error> {
-        match self.ask(Call::Join { code, name }).await? {
-            Reply::Joined { world, name, .. } => Ok((world, name)),
+    /// Logs this computer in to `account` on the hub at `hub`; returns the
+    /// hub's name, this computer's name there and the account.
+    pub async fn login(
+        &self,
+        hub: Vec<std::net::SocketAddr>,
+        account: AccountName,
+        password: String,
+        register: bool,
+        name: Option<MachineName>,
+    ) -> Result<(HubName, MachineName, AccountName), Error> {
+        logged_in(self.ask(Call::Login { hub, account, password, register, name }).await?)
+    }
+
+    /// Logs this computer in with an enrollment token.
+    pub async fn login_with_token(
+        &self,
+        token: String,
+        name: Option<MachineName>,
+    ) -> Result<(HubName, MachineName, AccountName), Error> {
+        logged_in(self.ask(Call::LoginWithToken { token, name }).await?)
+    }
+
+    /// Opens an account on a hub that lets anyone, and logs in to it.
+    pub async fn open_account(
+        &self,
+        hub: Vec<std::net::SocketAddr>,
+        account: AccountName,
+        password: String,
+        register: bool,
+        name: Option<MachineName>,
+    ) -> Result<(HubName, MachineName, AccountName), Error> {
+        logged_in(self.ask(Call::OpenAccount { hub, account, password, register, name }).await?)
+    }
+
+    /// Makes `change` as `account` on the hub `hub`, or the one hub; a
+    /// token, when it made one.
+    pub async fn account(
+        &self,
+        hub: Option<HubName>,
+        account: AccountName,
+        change: AccountChange,
+    ) -> Result<Option<String>, Error> {
+        match self.ask(Call::Account { hub, account, change }).await? {
+            Reply::Changed { token } => Ok(token),
             other => Err(unexpected(other)),
         }
     }
 
-    /// A code for one more machine, or a device, to join with, until
-    /// `expires`, with what it may do when not everything.
-    pub async fn invite(
+    /// Turns asking for colleagues on for `resident`, with where they live,
+    /// or off.
+    pub async fn colleagues(
         &self,
-        name: Option<MachineName>,
-        expires: Timestamp,
-        device: bool,
-        scope: Option<fastctx_types::scope::NamedScope>,
-    ) -> Result<String, Error> {
-        match self.ask(Call::Invite { name, expires, device, scope }).await? {
-            Reply::Code { code } => Ok(code),
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        lives_on: Option<fastctx_types::access::Written>,
+    ) -> Result<(), Error> {
+        done(self.ask(Call::Colleagues { resident, machine, lives_on }).await?)
+    }
+
+    /// Sets where `resident` works: `works_on`, or the machine it lives on.
+    pub async fn works_on(
+        &self,
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        works_on: Option<fastctx_types::access::Written>,
+    ) -> Result<(), Error> {
+        done(self.ask(Call::WorksOn { resident, machine, works_on }).await?)
+    }
+
+    /// Every hub this computer is on, with what it sees of each.
+    pub async fn accounts(&self) -> Result<AccountsReply, Error> {
+        match self.ask(Call::Accounts).await? {
+            Reply::Accounts(accounts) => Ok(accounts),
             other => Err(unexpected(other)),
         }
     }
 
-    /// A verified hub-hosted installation line for a Linux server. Missing
-    /// releases fail before the node issues an invitation.
-    pub async fn invite_server(
+    /// A verified hub-hosted installation line that registers a Linux
+    /// server as a machine of `account`. Missing releases fail before the
+    /// node makes a token.
+    pub async fn server_command(
         &self,
+        hub: Option<HubName>,
+        account: AccountName,
         name: Option<MachineName>,
         expires: Timestamp,
-        scope: Option<fastctx_types::scope::NamedScope>,
     ) -> Result<String, Error> {
-        match self.ask(Call::InviteServer { name, expires, scope }).await? {
+        match self.ask(Call::ServerCommand { hub, account, name, expires }).await? {
             Reply::ServerInvitation { command } => Ok(command),
             other => Err(unexpected(other)),
         }
-    }
-
-    /// Sets what `member` may do, and whether it holds management rights.
-    pub async fn grant(
-        &self,
-        member: MachineName,
-        scope: fastctx_types::scope::NamedScope,
-        manage: bool,
-    ) -> Result<(), Error> {
-        done(self.ask(Call::Grant { member, scope, manage }).await?)
-    }
-
-    /// Sets where `member` connects: through `via`, in order.
-    pub async fn route(&self, member: MachineName, via: Vec<fastctx_types::world::Upstream>) -> Result<(), Error> {
-        done(self.ask(Call::Route { member, via }).await?)
-    }
-
-    /// Makes `machine` relay as `relay` says, or stop relaying; returns
-    /// where it relays now.
-    pub async fn set_relay(
-        &self,
-        machine: MachineName,
-        relay: Option<fastctx_types::world::RelaySetting>,
-    ) -> Result<Vec<String>, Error> {
-        match self.ask(Call::SetRelay { machine, relay }).await? {
-            Reply::Relaying { relays_at } => Ok(relays_at),
-            other => Err(unexpected(other)),
-        }
-    }
-
-    /// The user has seen that `member` joined with this machine's invitation.
-    pub async fn seen(&self, member: MachineName) -> Result<(), Error> {
-        done(self.ask(Call::Seen { member }).await?)
-    }
-
-    pub async fn revoke(&self, name: MachineName, reason: String) -> Result<(), Error> {
-        done(self.ask(Call::Revoke { name, reason }).await?)
-    }
-
-    pub async fn leave(&self) -> Result<(), Error> {
-        done(self.ask(Call::Leave).await?)
     }
 
     /// Asks the node to hand the World over once idle and exit: a service
@@ -460,6 +486,13 @@ fn record(reply: Reply) -> Result<TownRecord, Error> {
 fn done(reply: Reply) -> Result<(), Error> {
     match reply {
         Reply::Done => Ok(()),
+        other => Err(unexpected(other)),
+    }
+}
+
+fn logged_in(reply: Reply) -> Result<(HubName, MachineName, AccountName), Error> {
+    match reply {
+        Reply::LoggedIn { hub, name, account } => Ok((hub, name, account)),
         other => Err(unexpected(other)),
     }
 }

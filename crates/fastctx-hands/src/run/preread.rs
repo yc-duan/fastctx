@@ -5,6 +5,12 @@ use std::process::{Command, Stdio};
 
 use fastctx_types::ipc::Failure;
 
+/// The machine names written literally after `on` in `script`, each with
+/// its line, for checking before anything runs.
+pub fn machines_named(script: &str) -> Vec<(String, usize)> {
+    super::heredoc::on_machines(script)
+}
+
 /// Checks source with the machine's own bash and checks here-document hazards.
 /// No startup files or source commands are executed. This checks literal source,
 /// not programs generated at runtime by `eval`, `source`, or another interpreter.

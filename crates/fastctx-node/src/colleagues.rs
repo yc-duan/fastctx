@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use fastctx_hosts::codex::{self, ThreadSpec};
 use fastctx_net::link::CallFailure;
-use fastctx_net::message::LetterId;
+use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{Letter, RemoteCall, RemoteReply};
 use fastctx_types::residents::{
@@ -20,46 +20,46 @@ use fastctx_types::residents::{
     PendingState,
 };
 use fastctx_types::session::{Speaker, TurnHow};
-use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
+use fastctx_types::{AccountName, Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 
 use crate::Node;
 use crate::residents::Heard;
 use crate::speech::{self, Owed};
 
-/// Asks for a colleague for `asker`, a resident of this machine, on this
-/// machine or on `target`. Returns where the colleague lives.
+pub mod setting;
+
+/// Asks for a colleague for `asker`, a resident of this machine, where the
+/// user set its colleagues to live. Returns where the colleague lives.
 pub async fn ask(
     node: &Arc<Node>,
     asker: ResidentId,
     town: Option<TownName>,
     label: String,
     prompt: String,
-    target: Option<MachineName>,
 ) -> Result<Address, Failure> {
     let here = node.machine();
     let at = Timestamp::now();
-    let mut _reaching = None;
-    let colleague = match target.filter(|target| *target != here) {
-        None => {
-            let address = Address { machine: here.clone(), resident: asker.clone() };
-            let id = ask_here(node, address, town.clone(), label.clone(), prompt).await?;
-            Address { machine: here, resident: id }
-        }
-        Some(target) => {
-            let link = node.link().ok_or_else(|| {
-                Failure::new(format!("there is no machine {target}: {here} is in no World with other machines"))
-            })?;
-            // Held until the asking is recorded, below.
-            _reaching = Some(node.reaching.hold(&asker, &target));
-            let call = RemoteCall::Ask { asker: asker.clone(), town: town.clone(), label: label.clone(), prompt };
-            match link.call(&target, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
-                Ok(RemoteReply::Asked { colleague }) => Address { machine: target, resident: colleague },
-                Ok(_) => return Err(Failure::new(format!("{target} answered something other than a colleague"))),
-                // What went wrong there is said of that machine, not the asker's.
-                Err(failure) => return Err(Failure::new(format!("on {target}: {}", failure.message))),
-            }
-        }
+    let (about, _) = node.residents.about(&asker).ok_or_else(|| Failure::not_run(format!("no resident {asker} lives here")))?;
+    if let Origin::Colleague { asked_by, .. } = &about.origin {
+        return Err(Failure::not_run(format!(
+            "you are a colleague {asked_by} asked for, and a colleague does not ask for colleagues; say what you need in your last message"
+        )));
+    }
+    let lives_on = setting::read(node, &asker)
+        .map_err(|error| Failure::not_run(format!("reading whether this conversation may ask for colleagues: {error}")))?
+        .ok_or_else(|| {
+            Failure::not_run(
+                "asking for colleagues is off for this conversation; the user turns it on, and chooses the machine colleagues live on, in the conversation's details",
+            )
+        })?;
+    let colleague = if node.is_here(&lives_on) {
+        let address = Address { machine: here.clone(), resident: asker.clone() };
+        let id = ask_here(node, address, about.acting.clone(), town.clone(), label.clone(), prompt).await?;
+        Address { machine: here, resident: id }
+    } else {
+        let Address { machine, resident } = ask_there(node, &about, &lives_on, town.clone(), label.clone(), prompt).await?;
+        Address { machine, resident }
     };
     let action = Action {
         at,
@@ -72,6 +72,45 @@ pub async fn ask(
     Ok(colleague)
 }
 
+/// Asks `lives_on`, another machine, for a colleague for `asker`: working
+/// for those of the asker's accounts that may use the agents there.
+async fn ask_there(
+    node: &Arc<Node>,
+    asker: &About,
+    lives_on: &Written,
+    town: Option<TownName>,
+    label: String,
+    prompt: String,
+) -> Result<Address, Failure> {
+    let set = "the user chooses the machine colleagues live on in this conversation's details";
+    let (link, account) = node.speaking(&asker.acting, lives_on, Purpose::Agents).map_err(|failure| {
+        Failure::not_run(format!("{lives_on}, where this conversation's colleagues live, cannot be asked: {failure}; {set}"))
+    })?;
+    let view = link.view();
+    let here = node.machine();
+    let accounts: Vec<AccountName> = node
+        .accounts_on(&link, &asker.acting)
+        .into_iter()
+        .filter(|other| *other != account && view.admits(&here, other, &lives_on.name, Purpose::Agents).is_ok())
+        .collect();
+    // A project is of one hub; a colleague asked on another is born
+    // outside it.
+    let hub = link.membership().id.clone();
+    let town = town.filter(|town| crate::ledger::names::place(&node.world, town).ok().flatten().is_some_and(|place| place.hub == hub));
+    let call = RemoteCall::Ask { asker: asker.id.clone(), town, label, prompt, accounts };
+    match link.call(&lives_on.name, &account, Purpose::Agents, call).await {
+        Ok(Ok(RemoteReply::Asked { colleague })) => Ok(Address { machine: lives_on.name.clone(), resident: colleague }),
+        Ok(Ok(_)) => Err(Failure::new(format!("{lives_on} answered something other than a colleague"))),
+        // What went wrong there is said of that machine, not the asker's.
+        Ok(Err(failure)) => Err(Failure { message: format!("on {lives_on}: {}", failure.message), not_run: failure.not_run }),
+        Err(CallFailure::Offline { last_seen, .. }) => Err(Failure::not_run(format!(
+            "{lives_on}, where this conversation's colleagues live, is offline{}; {set}",
+            last_seen.map(|at| format!(" (since {at})")).unwrap_or_default()
+        ))),
+        Err(failure) => Err(Failure::new(format!("asking {lives_on}: {failure}"))),
+    }
+}
+
 /// Starts a colleague on this machine for `asker`, which may live on
 /// another, with `prompt` as its first words. Returns its id once its
 /// thread exists; the words go in after, as its tools may take a while to
@@ -79,6 +118,7 @@ pub async fn ask(
 pub async fn ask_here(
     node: &Arc<Node>,
     asker: Address,
+    acting: Acting,
     town: Option<TownName>,
     label: String,
     prompt: String,
@@ -90,8 +130,11 @@ pub async fn ask_here(
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
-    let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref()).await?;
-    let (thread, model) = node.codex.start_thread(spec).await.map_err(Failure::new)?;
+    let _birth = crate::here::born(node, &id, acting.clone(), None);
+    let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, None).await?;
+    let (thread, model) = node.codex.start_thread(spec).await.map_err(|error| {
+        Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
+    })?;
     let born_at = Timestamp::now();
     let about = About {
         id: id.clone(),
@@ -102,6 +145,8 @@ pub async fn ask_here(
         session: Some(thread.clone()),
         world_started: true,
         model,
+        acting,
+        works_on: None,
     };
     let now = Now {
         activity: Activity::Busy,
@@ -184,12 +229,14 @@ pub async fn thread_spec(
     id: &ResidentId,
     origin: &Origin,
     town: Option<&TownName>,
+    acting: &Acting,
+    works_on: Option<&Written>,
 ) -> Result<(ThreadSpec, Heard), Failure> {
     let here = node.machine();
     let cwd = standing(node, town)?;
     let binary = node.fastctx.clone();
     let address = Address { machine: here.clone(), resident: id.clone() };
-    let mut env = vec![
+    let env = vec![
         ("FASTCTX_HOME".to_string(), node.root.to_string_lossy().into_owned()),
         ("FASTCTX_RESIDENT".to_string(), address.tag()),
     ];
@@ -197,10 +244,7 @@ pub async fn thread_spec(
     // A colleague's thread is listed under its task; a session the user
     // opens is named by whichever client shows it first, as Codex does.
     let name = match origin {
-        Origin::Colleague { label, .. } => {
-            env.push(("FASTCTX_COLLEAGUE".to_string(), "1".to_string()));
-            Some(label.clone()).filter(|label| !label.trim().is_empty())
-        }
+        Origin::Colleague { label, .. } => Some(label.clone()).filter(|label| !label.trim().is_empty()),
         Origin::User => {
             tools.extend(["ask_colleague", "message_colleague"]);
             None
@@ -208,7 +252,7 @@ pub async fn thread_spec(
     };
     let mut config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
-    let (developer_instructions, heard) = instructions(node, id, town, origin).await?;
+    let (developer_instructions, heard) = instructions(node, id, town, origin, acting, works_on).await?;
     Ok((ThreadSpec { cwd, developer_instructions, config, name }, heard))
 }
 
@@ -244,9 +288,16 @@ pub(crate) async fn instructions(
     id: &ResidentId,
     town: Option<&TownName>,
     origin: &Origin,
+    acting: &Acting,
+    works_on: Option<&Written>,
 ) -> Result<(String, Heard), Failure> {
     let heard = heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
-    let words = words(id, &node.machine(), town, origin);
+    let works_on = works_on.filter(|works_on| !node.is_here(works_on));
+    let lent = (works_on.is_none() && node.works_here(acting).is_err()).then_some(match acting {
+        Acting::Accounts { accounts } if accounts.len() > 1 => "The accounts you work for",
+        _ => "The account you work for",
+    });
+    let words = words(id, &node.machine(), works_on, lent, town, origin);
     let text = match town {
         Some(town) => format!("{words}\n\n{}", crate::town::map::brief(node, town).await?),
         None => words,
@@ -254,7 +305,16 @@ pub(crate) async fn instructions(
     Ok((text, heard))
 }
 
-fn words(id: &ResidentId, machine: &MachineName, town: Option<&TownName>, origin: &Origin) -> String {
+/// `lent` names whom it works for when they may use the agents here but
+/// not work here, so that none of its scripts starts here.
+fn words(
+    id: &ResidentId,
+    machine: &MachineName,
+    works_on: Option<&Written>,
+    lent: Option<&str>,
+    town: Option<&TownName>,
+    origin: &Origin,
+) -> String {
     let place = match (town, origin) {
         (Some(town), _) => format!(
             " You work in the user's project {town}: a fastctx project, which is not a folder or a repository but a named piece of work that can span several machines. Its map follows: what it is for, its machines, where its code and data are on each, and its journals."
@@ -269,9 +329,53 @@ fn words(id: &ResidentId, machine: &MachineName, town: Option<&TownName>, origin
         ),
         Origin::User => "The user started this session from fastctx and talks to you here.".to_string(),
     };
+    // Where it lives and where its shell is, when they differ (`world-run.md`,
+    // 这里), or that it has none where it lives (`world-network.md`,
+    // 一台机器给几个账号用).
+    let on = "`on MACHINE` in the script runs a part of it on another machine";
+    let (runs, elsewhere) = match (works_on, lent) {
+        (Some(works_on), _) => (
+            format!("It runs bash on {works_on}, where you work, and {on}"),
+            format!(
+                " You work on {works_on}: your shell and the files you work on are there. Your own program runs on {machine}, so its built-in tools act on {machine}, not on {works_on}."
+            ),
+        ),
+        (None, Some(whom)) => (
+            "A script that is a single `on MACHINE` and nothing else, such as `on MACHINE <<'EOF'`, the script, then `EOF`, runs whole on that machine".to_string(),
+            format!(
+                " {whom} may use the agents on {machine} but not work on it, so no script of yours starts there: each goes whole to a machine you work on. Your own program runs on {machine}, so its built-in tools act on {machine}."
+            ),
+        ),
+        (None, None) => (format!("It runs bash on this machine, and {on}"), String::new()),
+    };
     format!(
-        "You are {id}, an agent session on {machine}, one of the user's machines connected by fastctx.{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. It runs bash on this machine, and `on MACHINE` in the script runs a part of it on another machine; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
+        "You are {id}, an agent session on {machine}, one of the user's machines connected by fastctx.{elsewhere}{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. {runs}; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
     )
+}
+
+/// The user turns asking for colleagues on for `resident`, on any machine,
+/// with where they live, or off.
+pub async fn set(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    machine: Option<MachineName>,
+    lives_on: Option<Written>,
+) -> Result<(), Failure> {
+    let machine = match machine {
+        Some(machine) => machine,
+        None if node.residents.about(&resident).is_some() => node.machine(),
+        None => find_for(node, &Acting::Here, &resident).await?,
+    };
+    if machine == node.machine() {
+        return setting::set(node, &resident, lives_on);
+    }
+    let call = RemoteCall::Colleagues { resident, lives_on };
+    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await {
+        Ok(Ok(RemoteReply::Set)) => Ok(()),
+        Ok(Ok(_)) => Err(Failure::new(format!("{machine} answered something other than the setting"))),
+        Ok(Err(failure)) => Err(failure),
+        Err(failure) => Err(Failure::new(failure.to_string())),
+    }
 }
 
 /// Words from `from`, a resident of this machine, to `to`, on any machine.
@@ -290,11 +394,10 @@ pub async fn message(
         None => locate(node, &from, town.as_ref(), &to).await?,
     };
     let to = Address { machine, resident: to };
-    // Held until the words are recorded: its answer may come quickly.
-    let _reaching = (to.machine != here).then(|| node.reaching.hold(&from, &to.machine));
     let sender = Address { machine: here, resident: from.clone() };
+    let acting = crate::around::acting_of(node, &crate::town::caller::Caller::Resident(sender.clone()));
     let notice = Notice::Words { from: Speaker::Resident { address: sender.clone() }, text };
-    let landed = speech::tell(node, &to, speech::new_id("words"), notice, Owed::Speaker(sender)).await?;
+    let landed = speech::tell(node, &acting, &to, speech::new_id("words"), notice, Owed::Speaker(sender)).await?;
     let result = match &landed {
         Landed::NewTurn { .. } => "started a turn".to_string(),
         Landed::JoinedTurn { .. } => "joined its turn".to_string(),
@@ -337,43 +440,34 @@ async fn locate(
     if node.residents.about(to).is_some() {
         return Ok(here);
     }
-    find(node, to).await
+    find(node, from, to).await
 }
 
-/// Which other machine says the resident `to` lives there. One id on
-/// several machines is said as it is, never chosen between.
-pub async fn find(node: &Arc<Node>, to: &ResidentId) -> Result<MachineName, Failure> {
+/// Which other machine says the resident `to` lives there, of those
+/// `from`, a resident here, may look at. One id on several machines is said
+/// as it is, never chosen between.
+pub async fn find(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Result<MachineName, Failure> {
     let here = node.machine();
-    let Some(link) = node.link() else {
-        return Err(Failure::new(format!("no resident {to} lives on {here}")));
-    };
-    let _ = link.refresh().await;
-    let (table, presence) = link.members();
-    let mut asks = Vec::new();
-    let mut offline = Vec::new();
-    for member in
-        table.machines().filter(|member| member.name != here && crate::admission::reaches(node, &table, &member.name))
-    {
-        if presence.iter().any(|presence| presence.name == member.name && presence.online) {
-            let (link, name, to) = (link.clone(), member.name.clone(), to.clone());
-            asks.push(tokio::spawn(async move {
-                let found = link.call(&name, RemoteCall::Find { resident: to }).await;
-                (name, found)
-            }));
-        } else {
-            offline.push(member.name.to_string());
-        }
-    }
+    let acting = node.residents.about(from).map(|(about, _)| about.acting).unwrap_or_default();
+    find_for(node, &acting, to).await.map_err(|failure| {
+        if node.connected_anywhere() { failure } else { Failure::new(format!("no resident {to} lives on {here}")) }
+    })
+}
+
+/// Which machine `acting` may look at says the resident `to` lives there.
+pub async fn find_for(node: &Arc<Node>, acting: &Acting, to: &ResidentId) -> Result<MachineName, Failure> {
+    let machines = crate::around::reachable(node, acting, Purpose::Look);
+    use crate::around::Heard as Answer;
+    let heard = crate::around::ask_each(machines, |_| RemoteCall::Find { resident: to.clone() }).await;
     let mut found = Vec::new();
+    let mut offline = Vec::new();
     let mut unanswered = Vec::new();
-    for ask in asks {
-        let Ok((name, answer)) = ask.await else { continue };
-        match answer {
-            Ok(Ok(RemoteReply::Found { lives_here: true })) => found.push(name),
-            Ok(Ok(_)) => {}
-            Ok(Err(failure)) => unanswered.push(format!("{name} ({failure})")),
-            Err(CallFailure::Offline { name, .. }) => offline.push(name.to_string()),
-            Err(failure) => unanswered.push(format!("{name} ({failure})")),
+    for (name, heard) in heard {
+        match heard {
+            Answer::Answered(RemoteReply::Found { lives_here: true }) => found.push(name),
+            Answer::Answered(_) => {}
+            Answer::Offline(_) => offline.push(name.to_string()),
+            Answer::NoAnswer(reason) => unanswered.push(format!("{name} ({reason})")),
         }
     }
     match found.as_slice() {
@@ -407,13 +501,13 @@ pub fn left(node: &Arc<Node>, resident: ResidentId) {
         let address = Address { machine: node.machine(), resident: resident.clone() };
         sleep_idle(&node, &address);
         let Some(town) = node.residents.town_of(&resident) else { return };
+        let acting = node.residents.about(&resident).map(|(about, _)| about.acting).unwrap_or_default();
         let actions = node.world.resident(town.as_ref(), &resident).actions();
         let machines = tokio::task::spawn_blocking(move || asked_machines(&actions)).await.unwrap_or_default();
-        let Some(link) = node.link() else { return };
         for machine in machines.into_iter().filter(|machine| *machine != address.machine) {
-            let id = LetterId::try_from(format!("left-{resident}-{}", Timestamp::now().as_millisecond()))
-                .expect("a resident id and digits make a letter id");
-            if let Err(error) = link.send_letter(&machine, id, Letter::Left { resident: resident.clone() }) {
+            let id = speech::fixed_id("left", &[resident.as_str(), &Timestamp::now().as_millisecond().to_string()]);
+            let letter = Letter::Left { resident: resident.clone() };
+            if let Err(error) = crate::letters::send(&node, &acting, &Written::from(&machine), id, letter) {
                 node.log.line(format_args!("telling {machine} that {resident} left: {error}"));
             }
         }

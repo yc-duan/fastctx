@@ -74,10 +74,15 @@ pub enum FieldName {
     Machines,
     Places,
     Canon,
-    InviteName,
+    HubAddress,
+    Account,
+    Password,
+    Register,
+    LoginName,
+    Token,
+    HubAccount,
+    TokenFor,
     Hours,
-    Code,
-    JoinName,
     Reason,
 }
 
@@ -87,10 +92,10 @@ pub enum Finish {
     Open,
     Create,
     Save,
-    Invite,
-    Join,
-    Revoke,
-    Leave,
+    Login,
+    Token,
+    Logout,
+    Remove,
 }
 
 /// The words of one language.
@@ -466,13 +471,6 @@ impl Words {
         }
     }
 
-    pub fn revoked(&self, by: &str, at: &str, reason: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("已被 {by} 于 {at} 吊销：{reason}"),
-            Lang::En => format!("revoked by {by} {at}: {reason}"),
-        }
-    }
-
     pub fn not_asked(&self, why: &str) -> String {
         match self.lang {
             Lang::Zh => format!("没问到：{why}"),
@@ -623,8 +621,8 @@ impl Words {
 
     pub fn link_alone(&self) -> String {
         self.pick(
-            "独自一台：还没有和别的机器组成世界。在别的机器上按 i 邀请它，或者在这里按 j 用邀请码加入一个世界。",
-            "On its own: it is in no World with other machines yet. Invite it from another machine with i, or join a World here with j and a code.",
+            "还没登录任何中枢：它自己一台。按 l 用中枢地址和账号口令登录，或者按 k 用另一台设备给的入网令牌登录。",
+            "Logged in to no hub: it is on its own. Log in with l, with the hub's address and an account's password, or with k and a token another device made.",
         )
         .to_string()
     }
@@ -641,7 +639,7 @@ impl Words {
     pub fn link_online(
         &self,
         hub: &str,
-        relay: Option<&fastctx_types::MachineName>,
+        relay: Option<&str>,
         route: &Route,
         since: &str,
     ) -> String {
@@ -1050,66 +1048,193 @@ impl Words {
         }
     }
 
-    pub fn form_invite(&self) -> &'static str {
-        self.pick("邀请一台机器", "Invite a machine")
+    pub fn form_login(&self) -> &'static str {
+        self.pick("登录一个账号", "Log in to an account")
     }
 
-    pub fn form_join(&self) -> &'static str {
-        self.pick("加入一个世界", "Join a World")
+    pub fn form_token_login(&self) -> &'static str {
+        self.pick("用入网令牌登录", "Log in with a token")
     }
 
-    pub fn form_revoke(&self, name: &str) -> String {
+    pub fn form_token(&self) -> &'static str {
+        self.pick("给另一台设备的入网令牌", "A token for another device")
+    }
+
+    pub fn form_logout(&self) -> &'static str {
+        self.pick("退出一个账号", "Log out of an account")
+    }
+
+    pub fn form_remove(&self, name: &str, account: &str) -> String {
         match self.lang {
-            Lang::Zh => format!("吊销 {name}"),
-            Lang::En => format!("Revoke {name}"),
+            Lang::Zh => format!("把 {name} 移出账号 {account}"),
+            Lang::En => format!("Remove {name} from the account {account}"),
         }
     }
 
-    pub fn form_leave(&self) -> &'static str {
-        self.pick("离开这个世界", "Leave this World")
-    }
-
-    pub fn revoke_warning(&self, name: &str) -> String {
+    pub fn remove_warning(&self, name: &str, account: &str) -> String {
         match self.lang {
             Lang::Zh => format!(
-                "吊销之后，世界里的每台机器都不再认 {name} 的钥匙：它说的话不再被执行，它也连不上中枢。这用在机器丢了或者不再信任它的时候。"
+                "移除之后，{name} 不再替账号 {account} 干活：是设备，就退出了这个账号；是这个账号的机器，就离开了中枢，要回来得重新登录。这用在设备丢了，或者进来的不是你的时候。"
             ),
             Lang::En => format!(
-                "Once revoked, no machine of the World trusts {name}'s key: nothing it says is carried out, and it cannot reach the hub. This is for a machine that is lost or no longer trusted."
+                "Once removed, {name} no longer works for the account {account}: a device is logged out of it; a machine of the account leaves the hub, and comes back only by logging in again. This is for a lost device, or one that came in and was not you."
             ),
         }
     }
 
-    pub fn leave_warning(&self) -> &'static str {
+    pub fn logout_warning(&self) -> &'static str {
         self.pick(
-            "离开之后，这台机器又是独自一台，别的机器上的智能体、项目与手记从这里都看不到了；它自己的项目留在它身上。",
-            "Once it leaves, this machine is on its own again: the agents, projects and journals of other machines are out of sight from here; its own projects stay with it.",
+            "退出之后，这个账号能用的机器、智能体与项目从这台电脑上都看不到了；这台电脑上替它干活的会话也不再替它干活。这台电脑登记在这个账号名下时，它也就离开了那个中枢。",
+            "Once logged out, the machines, agents and projects of the account are out of sight from this computer, and its sessions here no longer work for it. Where this computer is registered under the account, it leaves that hub too.",
         )
     }
 
-    pub fn enter_to_confirm(&self) -> &'static str {
-        self.pick("按 Enter 确认，Esc 取消。", "Press Enter to confirm, Esc to cancel.")
+    pub fn register_no(&self) -> &'static str {
+        self.pick("只登录", "log in only")
     }
 
-    pub fn invite_how(&self) -> &'static str {
-        self.pick(
-            "在要加入的机器上运行 fastctx join <这串码>，或者在那台机器的 TUI 里按 m、再按 j。这串码只能用一次。",
-            "On the machine to invite, run fastctx join <this code>, or press m then j in its TUI. The code works once.",
-        )
+    pub fn register_yes(&self) -> &'static str {
+        self.pick("登录并登记成这个账号的机器", "log in and register as the account's machine")
     }
 
-    pub fn invite_until(&self, until: &str) -> String {
+    pub fn token_for_phone(&self) -> &'static str {
+        self.pick("手机：只登录", "a phone: log in only")
+    }
+
+    pub fn token_for_computer(&self) -> &'static str {
+        self.pick("另一台电脑：只登录", "another computer: log in only")
+    }
+
+    pub fn token_for_server(&self) -> &'static str {
+        self.pick("没有界面的服务器：装上并登记成机器", "a server with no screen: install and register it")
+    }
+
+    pub fn hours(&self, hours: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("{hours} 小时"),
+            Lang::En if hours == "1" => "1 hour".to_string(),
+            Lang::En => format!("{hours} hours"),
+        }
+    }
+
+    pub fn token_how(&self, server: bool) -> &'static str {
+        if server {
+            self.pick(
+                "在服务器上以要装它的用户粘贴运行这一整行：它核对发布包的摘要，装上 fastctx，登记成这个账号的机器，再装开机服务。令牌只能用一次。",
+                "Paste and run this whole line on the server, as the user it is for: it checks the release's digest, installs fastctx, registers it as a machine of the account and installs the boot service. The token works once.",
+            )
+        } else {
+            self.pick(
+                "在另一台设备上用它登录：TUI 里按 m 再按 k，或者运行 fastctx login --token <这串令牌>。它只能用一次。",
+                "Log in with it on the other device: press m then k in its TUI, or run fastctx login --token <this token>. It works once.",
+            )
+        }
+    }
+
+    pub fn token_until(&self, until: &str) -> String {
         match self.lang {
             Lang::Zh => format!("有效到 {until}"),
             Lang::En => format!("valid until {until}"),
         }
     }
 
-    pub fn joined(&self, world: &str, name: &str) -> String {
+    pub fn logged_in(&self, hub: &str, name: &str, account: &str) -> String {
         match self.lang {
-            Lang::Zh => format!("已加入世界 {world}，这台机器在里面叫 {name}。"),
-            Lang::En => format!("Joined the World {world}; this machine is {name} in it."),
+            Lang::Zh => format!("已登录中枢 {hub} 上的账号 {account}，这台电脑在那里叫 {name}。"),
+            Lang::En => format!("Logged in to the account {account} on the hub {hub}; this computer is {name} there."),
         }
+    }
+
+    pub fn login_needs(&self) -> &'static str {
+        self.pick("要写中枢地址、账号和口令", "the hub, the account and the password are needed")
+    }
+
+    pub fn token_needed(&self) -> &'static str {
+        self.pick("要粘贴入网令牌", "paste the token")
+    }
+
+    pub fn hub_section(&self, hub: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("中枢 {hub}"),
+            Lang::En => format!("The hub {hub}"),
+        }
+    }
+
+    pub fn logins_line(&self, logins: &str, home: Option<&str>) -> String {
+        match (self.lang, home) {
+            (Lang::Zh, Some(home)) => format!("登录着 {logins}；这台电脑登记在 {home} 名下"),
+            (Lang::Zh, None) => format!("登录着 {logins}"),
+            (Lang::En, Some(home)) => format!("logged in to {logins}; this computer is registered under {home}"),
+            (Lang::En, None) => format!("logged in to {logins}"),
+        }
+    }
+
+    pub fn owner_and_rights(&self, owner: Option<&str>, rights: &str) -> String {
+        match (self.lang, owner) {
+            (Lang::Zh, Some(owner)) => format!("{owner} 的机器  ·  {rights}"),
+            (Lang::Zh, None) => rights.to_string(),
+            (Lang::En, Some(owner)) => format!("{owner}'s machine  ·  {rights}"),
+            (Lang::En, None) => rights.to_string(),
+        }
+    }
+
+    /// What `account` may do on a machine, in a few words.
+    pub fn rights(&self, account: &str, hands: bool, agents: bool) -> String {
+        match (self.lang, hands, agents) {
+            (Lang::Zh, true, true) => format!("{account} 能在上面干活、用智能体"),
+            (Lang::Zh, true, false) => format!("{account} 能在上面干活"),
+            (Lang::Zh, false, true) => format!("{account} 能用上面的智能体"),
+            (Lang::Zh, false, false) => format!("{account} 不能用它"),
+            (Lang::En, true, true) => format!("{account} may work on it and use its agents"),
+            (Lang::En, true, false) => format!("{account} may work on it"),
+            (Lang::En, false, true) => format!("{account} may use its agents"),
+            (Lang::En, false, false) => format!("{account} may not use it"),
+        }
+    }
+
+    pub fn arrivals(&self) -> &'static str {
+        self.pick("新进来的", "Who came in")
+    }
+
+    pub fn arrival(&self, name: &str, device: bool, account: &str, hub: &str, at: &str) -> String {
+        match (self.lang, device) {
+            (Lang::Zh, true) => format!("设备 {name} 在 {at} 登录了 {hub} 上的账号 {account}"),
+            (Lang::Zh, false) => format!("机器 {name} 在 {at} 登记到了 {hub} 上的账号 {account} 名下"),
+            (Lang::En, true) => format!("the device {name} logged in to {account} on {hub} at {at}"),
+            (Lang::En, false) => format!("the machine {name} was registered under {account} on {hub} at {at}"),
+        }
+    }
+
+    pub fn key_login(&self) -> &'static str {
+        self.pick("登录", "log in")
+    }
+
+    pub fn key_token_login(&self) -> &'static str {
+        self.pick("用令牌登录", "log in with a token")
+    }
+
+    pub fn key_token(&self) -> &'static str {
+        self.pick("给设备的令牌", "token")
+    }
+
+    pub fn key_logout(&self) -> &'static str {
+        self.pick("退出账号", "log out")
+    }
+
+    pub fn key_remove(&self) -> &'static str {
+        self.pick("移出账号", "remove")
+    }
+
+    pub fn not_me_reason(&self) -> &'static str {
+        self.pick("用户说进来的不是他", "the user said it was not them")
+    }
+
+    pub fn key_its_me(&self) -> &'static str {
+        self.pick("是我", "it was me")
+    }
+
+    pub fn key_not_me(&self) -> &'static str {
+        self.pick("不是我", "not me")
     }
 
     /// What came of keeping this machine connected after it joined.
@@ -1150,10 +1275,6 @@ impl Words {
         self.pick("有效时长要写成小时数，比如 24", "write how long it stays valid in hours, such as 24")
     }
 
-    pub fn code_needed(&self) -> &'static str {
-        self.pick("要先填邀请码", "the code is needed")
-    }
-
     pub fn name_and_what_needed(&self) -> &'static str {
         self.pick("名字和「它是什么」都要写", "a name and what it is are both needed")
     }
@@ -1184,10 +1305,15 @@ impl Words {
             FieldName::Machines => self.pick("机器", "Machines"),
             FieldName::Places => self.pick("在哪里能找到什么", "Where things are"),
             FieldName::Canon => self.pick("定论在哪", "Decisions"),
-            FieldName::InviteName => self.pick("它叫什么", "Its name"),
-            FieldName::Hours => self.pick("有效几小时", "Valid for hours"),
-            FieldName::Code => self.pick("邀请码", "Code"),
-            FieldName::JoinName => self.pick("这台机器叫什么", "This machine's name"),
+            FieldName::HubAddress => self.pick("中枢地址", "Hub"),
+            FieldName::Account => self.pick("账号", "Account"),
+            FieldName::Password => self.pick("口令", "Password"),
+            FieldName::Register => self.pick("这台电脑", "This computer"),
+            FieldName::LoginName => self.pick("这台电脑叫什么", "This computer's name"),
+            FieldName::Token => self.pick("入网令牌", "Token"),
+            FieldName::HubAccount => self.pick("哪个账号", "Account"),
+            FieldName::TokenFor => self.pick("给谁用", "For"),
+            FieldName::Hours => self.pick("有效多久", "Valid for"),
             FieldName::Reason => self.pick("为什么", "Why"),
         }
     }
@@ -1208,8 +1334,18 @@ impl Words {
                 self.pick("一行一样东西：是什么 | 机器 | 路径", "one thing a line: what | machine | path")
             }
             FieldName::Canon => self.pick("机器 | 路径；没有就空着", "machine | path; empty when there are none"),
-            FieldName::InviteName => self.pick("可以空着，由它自己起", "may be empty: it names itself"),
-            FieldName::JoinName => self.pick("可以空着，用这台机器的主机名", "may be empty: the host name is used"),
+            FieldName::HubAddress => {
+                self.pick("主机:端口，比如 hub.example.com:7443", "host:port, such as hub.example.com:7443")
+            }
+            FieldName::Register => self.pick("← → 选择", "← → to choose"),
+            FieldName::LoginName => self.pick(
+                "可以空着，用这台电脑的主机名；它在每个中枢上都叫这个名字",
+                "may be empty: the host name is used; it has this name on every hub",
+            ),
+            FieldName::Token => self.pick(
+                "在一台已经登录的设备上生成，只能用一次",
+                "made on a device already logged in; it works once",
+            ),
             _ => return None,
         })
     }
@@ -1295,22 +1431,6 @@ impl Words {
         self.pick("更早的", "earlier")
     }
 
-    pub fn key_invite(&self) -> &'static str {
-        self.pick("邀请一台机器", "invite")
-    }
-
-    pub fn key_join(&self) -> &'static str {
-        self.pick("加入一个世界", "join")
-    }
-
-    pub fn key_revoke(&self) -> &'static str {
-        self.pick("吊销选中的", "revoke")
-    }
-
-    pub fn key_leave(&self) -> &'static str {
-        self.pick("离开世界", "leave")
-    }
-
     pub fn key_confirm(&self) -> &'static str {
         self.pick("确认", "confirm")
     }
@@ -1337,10 +1457,10 @@ impl Words {
             Finish::Open => self.pick("请它进来", "bring it in"),
             Finish::Create => self.pick("开项目", "open it"),
             Finish::Save => self.pick("写下新的一版", "write the new version"),
-            Finish::Invite => self.pick("生成邀请码", "make the code"),
-            Finish::Join => self.pick("加入", "join"),
-            Finish::Revoke => self.pick("吊销", "revoke"),
-            Finish::Leave => self.pick("离开", "leave"),
+            Finish::Login => self.pick("登录", "log in"),
+            Finish::Token => self.pick("生成", "make it"),
+            Finish::Logout => self.pick("退出登录", "log out"),
+            Finish::Remove => self.pick("移除", "remove"),
         }
     }
 

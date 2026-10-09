@@ -1,45 +1,43 @@
 //! What a device may ask of this machine. A device, such as a phone, is a
-//! member of the World that carries the user's own words and looks and runs
-//! nothing (`fastctx_net::trust::Kind`). What concerns one resident it asks
-//! of that resident's machine itself, as a machine does for its user: so
-//! the words are known to have been typed on the device, and a watch comes
-//! straight from where the conversation lives; a file the user reads, it
-//! reads from the machine that has it. Who is here and what happened, it
-//! asks of each machine its scope covers itself, each answering what that
-//! scope may see. What only the projects' ledgers know, a project's record,
-//! its journals and its pages, it asks one machine to answer from its own
-//! copy, within the device's scope: that machine makes the call for it as
-//! for a user at that machine, about one project the scope includes, and
-//! makes no call to another machine on its behalf that the device could not
-//! make itself. A device never runs, writes, copies, asks a colleague or
-//! sends a letter: those are a machine's and its residents' own. No machine invites
-//! or revokes for it either: a machine's invitation is a machine's word,
-//! so a lost phone could bring a stranger in through one; a device revokes
-//! only itself, over its own link, when it leaves.
+//! member of a hub that carries the user's own words and looks and runs
+//! nothing (`fastctx_net::directory::Kind`). What concerns one resident it
+//! asks of that resident's machine itself, as a machine does for its user:
+//! so the words are known to have been typed on the device, and a watch
+//! comes straight from where the conversation lives; a file the user reads,
+//! it reads from the machine that has it. Who is here and what happened, it
+//! asks of each machine its accounts may use itself. What only the
+//! projects' ledgers know, a project's record, its journals and its pages,
+//! it asks one machine to answer from its own copy, for the account it
+//! speaks for: that machine answers about a project of that account only,
+//! and what the call reaches on other machines, the account must reach
+//! too. A device never runs, writes, copies, asks a colleague or sends a
+//! letter: those are a machine's and its residents' own.
 
 use std::sync::Arc;
 
-use fastctx_net::scope::{Action, Denied};
-use fastctx_net::trust::Member;
+use fastctx_net::directory::View;
+use fastctx_types::access::Purpose;
 use fastctx_types::calls::Call;
 use fastctx_types::ipc::{Failure, Peer};
 use fastctx_types::management::Management;
 use fastctx_types::pages::{PageCall, PageInvocation};
 use fastctx_types::remote::{RemoteCall, RemoteReply, RemoteResult};
-use fastctx_types::{JournalCall, ProjectCall, Reply, TownName};
+use fastctx_types::{JournalCall, MachineName, ProjectCall, Reply, TownName};
 
 use crate::Node;
+use crate::admission::Asker;
 
-/// Refuses a call `member` may not make: a device asks only for the user's
+/// Refuses a call `from` may not make: a device asks only for the user's
 /// own calls, and only a device has its calls made for it.
-pub fn admit(member: &Member, call: &RemoteCall) -> Result<(), Failure> {
-    let from = &member.name;
-    let device = !member.kind.is_machine();
+pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), Failure> {
+    let device = view.member(from).is_some_and(|member| !member.is_machine());
     let users_own = matches!(
         call,
         RemoteCall::Talk { .. }
             | RemoteCall::Composer { .. }
             | RemoteCall::Open { .. }
+            | RemoteCall::Colleagues { .. }
+            | RemoteCall::WorksOn { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Control { .. }
             | RemoteCall::Manage {
@@ -61,71 +59,87 @@ pub fn admit(member: &Member, call: &RemoteCall) -> Result<(), Failure> {
             // which only the user gives, on the machine it is about.
             | RemoteCall::ClaudeConsent { .. }
             | RemoteCall::Relay { .. }
+            // What is there, as the account may see it.
+            | RemoteCall::Agents
+            | RemoteCall::Look { .. }
+            | RemoteCall::Find { .. }
+            | RemoteCall::Who { .. }
+            | RemoteCall::Since { .. }
+            | RemoteCall::Facts
     );
     if device && !users_own {
-        return Err(Failure::new(format!(
+        return Err(Failure::not_run(format!(
             "{from} is a device; a device asks for the user's own calls, and runs, writes and copies nothing"
         )));
     }
     if !device && matches!(call, RemoteCall::Relay { .. }) {
-        return Err(Failure::new(format!("{from} is a machine; only a device has its calls made for it")));
+        return Err(Failure::not_run(format!("{from} is a machine; only a device has its calls made for it")));
     }
     Ok(())
 }
 
 /// Makes a device's call about a project, as for a user at this machine,
-/// when the device's scope covers it.
-pub async fn relay(node: &Arc<Node>, member: &Member, call: serde_json::Value) -> RemoteResult {
-    let from = &member.name;
+/// for the account it speaks for, when that account may use the project.
+pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> RemoteResult {
+    let from = &asker.machine;
     let here = node.machine();
     let call: Call = serde_json::from_value(call)
         .map_err(|error| Failure::new(format!("{from} asked an unreadable call: {error}")))?;
-    let refuse = |denied: Denied| Failure::new(format!("{here} refused {from}: {denied}"));
-    // The action the call is, and the project it is about: `None` for the
-    // projects as a whole, `Some(None)` for "the caller's", which a device
-    // has none of.
-    let (action, town): (Action, Option<Option<&TownName>>) = match &call {
-        Call::Project(ProjectCall::List) => (Action::W, None),
-        Call::Project(ProjectCall::Show { town } | ProjectCall::Map { town }) => (Action::W, Some(town.as_ref())),
-        Call::Project(ProjectCall::New { town, .. }) => (Action::Write, Some(Some(town))),
-        Call::Project(ProjectCall::Edit { town, .. }) => (Action::Write, Some(town.as_ref())),
-        Call::Journal(JournalCall::Read { town, .. } | JournalCall::List { town }) => (Action::W, Some(town.as_ref())),
-        Call::Journal(JournalCall::Add { town, .. } | JournalCall::Describe { town, .. }) => {
-            (Action::Write, Some(town.as_ref()))
+    let refuse = |why: String| Failure::not_run(format!("{here} refused {from}: {why}"));
+    let link = node.link_of(&asker.hub).ok_or_else(|| Failure::new("the link that brought the call is gone"))?;
+    let view = link.view();
+    let account = &asker.account;
+    // The project the call is about: `None` for the projects as a whole,
+    // `Some(None)` for "the caller's", which a device has none of.
+    let town: Option<Option<&TownName>> = match &call {
+        Call::Project(ProjectCall::List) => None,
+        Call::Project(
+            ProjectCall::Show { town } | ProjectCall::Map { town } | ProjectCall::Edit { town, .. },
+        ) => Some(town.as_ref()),
+        Call::Project(ProjectCall::New { .. }) => {
+            return Err(refuse("a project is opened in an account from a computer logged in to it".into()));
         }
-        Call::Page(PageCall::Read { town, .. } | PageCall::List { town } | PageCall::History { town, .. }) => {
-            (Action::W, Some(town.as_ref()))
-        }
+        Call::Journal(
+            JournalCall::Read { town, .. }
+            | JournalCall::List { town }
+            | JournalCall::Add { town, .. }
+            | JournalCall::Describe { town, .. },
+        ) => Some(town.as_ref()),
         Call::Page(
-            PageCall::Consent { town, .. }
+            PageCall::Read { town, .. }
+            | PageCall::List { town }
+            | PageCall::History { town, .. }
+            | PageCall::Consent { town, .. }
             | PageCall::Act { town, .. }
             | PageCall::Withdraw { town, .. }
             | PageCall::Restore { town, .. },
-        ) => (Action::Page, Some(town.as_ref())),
+        ) => Some(town.as_ref()),
         _ => {
             return Err(Failure::new(
                 "a device asks this of the machine it concerns itself, or not at all: only calls about a project are made for it",
             ));
         }
     };
-    member.scope.allows(&here, action, None).map_err(refuse)?;
+    let may_use = |town: &TownName| {
+        crate::ledger::names::town_id(node, town).is_some_and(|id| view.in_project(account, &id))
+    };
     match town {
-        Some(Some(town)) if !crate::admission::in_scope(node, &member.scope, town) => {
-            return Err(refuse(Denied::Project));
+        Some(Some(town)) if !may_use(town) => {
+            return Err(refuse(format!("the account {account} may not use the project {town}")));
         }
         Some(None) => return Err(Failure::new(format!("{from} named no project; a device names the one it means"))),
         _ => {}
     }
-    // What the call reaches on other machines, the device's scope must
-    // reach too: this machine reaches them as itself.
+    // What the call reaches on other machines, the account must reach too:
+    // this machine reaches them as itself.
     match &call {
         Call::Page(PageCall::Act { action, .. }) => {
-            let target = match action {
-                PageInvocation::Run { machine, .. } => machine,
-                PageInvocation::Say { to, .. } => &to.machine,
-                PageInvocation::Journal { .. } => &here,
+            let (target, purpose) = match action {
+                PageInvocation::Run { machine, .. } => (machine, Purpose::Hands),
+                PageInvocation::Say { to, .. } => (&to.machine, Purpose::Words),
+                PageInvocation::Journal { .. } => (&here, Purpose::Look),
             };
-            member.scope.allows(target, Action::Page, None).map_err(refuse)?;
+            view.admits(from, account, target, purpose).map_err(refuse)?;
         }
         Call::Journal(JournalCall::Add { attach, .. }) => {
             for attached in attach {
@@ -134,7 +148,9 @@ pub async fn relay(node: &Arc<Node>, member: &Member, call: serde_json::Value) -
                         "{from} attached a file of another machine; a device attaches what it uploads to this one"
                     )));
                 }
-                member.scope.allows(&here, Action::Read, None).map_err(refuse)?;
+            }
+            if !attach.is_empty() {
+                view.admits(from, account, &here, Purpose::Hands).map_err(refuse)?;
             }
         }
         _ => {}
@@ -146,16 +162,16 @@ pub async fn relay(node: &Arc<Node>, member: &Member, call: serde_json::Value) -
             Reply::Towns { towns } => Reply::Towns {
                 towns: towns
                     .into_iter()
-                    .filter(|summary| crate::admission::in_scope(node, &member.scope, &summary.town))
+                    .filter(|summary| may_use(&summary.town))
                     .collect(),
             },
             // The canon lives on a machine of its own, which this machine
             // read as itself: the device sees it only if it may read there.
             Reply::Map { mut map } => {
                 if let Some(canon) = &map.record.canon
-                    && let Err(denied) = member.scope.allows(&canon.machine, Action::Read, None)
+                    && let Err(refused) = view.admits(from, account, &canon.machine, Purpose::Hands)
                 {
-                    map.canon = Some(Err(format!("{from} may not read on {}: {denied}", canon.machine)));
+                    map.canon = Some(Err(refused));
                 }
                 Reply::Map { map }
             }

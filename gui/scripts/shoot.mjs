@@ -8,7 +8,8 @@
 //   node scripts/shoot.mjs [--url http://localhost:5317] [--only claude] [--theme warm-black] [--width phone] [--out shots]
 //
 // `drawer` is the front page with the sidebar pulled out as a drawer;
-// `about` is a conversation with the card about its agent open.
+// `about` is a conversation with the card about its agent open; a name
+// ending in `-2` is its page logged in to two accounts on two hubs.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -40,7 +41,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "route", "relay", "palette", "welcome", "join", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "new-codex", "new-attach", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "grant", "relays", "trust", "palette", "login", "token-login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "new-codex", "new-attach", "new-lent", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -130,8 +131,10 @@ for (const session of sessions) {
       });
       await send("Emulation.setTouchEmulationEnabled", { enabled: size.mobile });
       const loaded = once("Page.loadEventFired");
-      const shown = session === "drawer" || session === "palette" ? "home" : session === "service" ? "settings" : session === "slash" || session === "mention" || session === "find" || session === "attach" || session === "rewind" || session === "usage" ? "codex" : session.startsWith("asks") ? "asks" : session === "new-codex" || session === "new-attach" ? "new" : session === "manage" ? "about" : session === "join" ? "welcome" : session === "route" || session === "relay" ? "machines" : session === "queue" ? "codex" : session.startsWith("page") ? "page" : session;
-      const ask = session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "";
+      const two = session.endsWith("-2");
+      const named = two ? session.slice(0, -2) : session;
+      const shown = named === "drawer" || named === "palette" ? "home" : named === "service" ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" ? "new" : named === "manage" ? "about" : named === "token-login" ? "login" : named === "grant" || named === "relays" || named === "trust" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
+      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
       const url = written ? `${base}/page-specimen.html?theme=${theme}${extra ? `&${extra}` : ""}` : `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}`;
@@ -211,6 +214,10 @@ for (const session of sessions) {
       if (session === "new-codex") {
         await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-choice=agent][data-value=codex]')?.click())", awaitPromise: true });
       }
+      if (session === "new-lent") {
+        // Living on a machine whose agents alone are lent, it must work on another.
+        await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-choice=machine][data-value=gpu]')?.click())", awaitPromise: true });
+      }
       if (session === "new-attach") {
         // A picture and a log dropped on the sheet wait there; beginning
         // sends them first, then asks the agent in (a specimen stops there).
@@ -237,13 +244,17 @@ for (const session of sessions) {
           })()`,
         });
       }
-      if (session === "route" || session === "relay") {
-        // Where a member connects, and a machine made a relay.
-        const button = session === "route" ? '[data-route="lab"]' : '[data-relay="server"]';
+      if (session === "grant" || session === "relays" || session === "trust") {
+        // Lending lab, the relays it connects through, and trusting a
+        // machine lent by another account.
+        const button = session === "trust" ? '[data-machine="gpu"] [data-act="trust"]' : `[data-machine="lab"] [data-act="${session}"]`;
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('${button}')?.click())` });
       }
+      if (session === "token-login") {
+        await send("Runtime.evaluate", { expression: "document.querySelector('[data-way=token]')?.click()" });
+      }
       if (session === "invite") {
-        await send("Runtime.evaluate", { expression: "document.querySelector('.device-sheet .sheet-go')?.click()" });
+        await send("Runtime.evaluate", { awaitPromise: true, expression: "new Promise(r => setTimeout(r, 200)).then(() => document.querySelector('.token-sheet .sheet-go')?.click())" });
       }
       if (session === "mention") {
         // A file being mentioned: `@` and a few letters of its name.

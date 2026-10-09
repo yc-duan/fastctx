@@ -1,51 +1,78 @@
-//! This machine's copies of the ledgers of the towns it spans
-//! (`world-network.md`, 共享账本), kept in each town's directory
-//! (`fastctx_types::layout::TownDir`).
+//! This machine's copies of the projects' ledgers (`world-network.md`, 共享
+//! 账本), kept in each project's directory (`fastctx_types::layout::TownDir`).
 //!
 //! What counts is the signed entry; the files are what it says, written for
-//! residents to read with the tools they have. The hub keeps entries
-//! sealed (`fastctx_net::ledger::sealed`); this machine keeps what it takes
-//! from the hub as it came (`items`) and opens each entry it has a key for
-//! into its town (`open`): its signed form first, then its files, so a node
-//! that stopped in between finds the entry and finishes its files when it
-//! starts again; a file already there must hold the same bytes. Each entry
-//! is taken once, and the files are left read-only.
+//! residents to read with the tools they have. Each entry taken is kept in
+//! its signed form first, then its files, so a node that stopped in between
+//! finds the entry and finishes its files when it starts again; a file
+//! already there must hold the same bytes. Each entry is taken once, and
+//! the files are left read-only. An entry whose signature does not check
+//! out is noted with why (`refused.json`) and never taken.
 //!
-//! A World of one machine keeps its ledgers itself, numbers entries as it
-//! writes them, and signs them with its own key, made the first time it
-//! needs one; nothing leaves the machine, so nothing is sealed. When it
-//! joins a World, the towns it kept alone are carried into it: each entry
-//! written again, in order, signed and sealed for that World.
+//! A project's ledger is kept at the hub of the account it was opened in
+//! (`names::Place`). A computer on no hub keeps its projects itself, numbers
+//! their entries as it writes them and signs them with its own key; when it
+//! is first registered as a machine of an account, those projects are
+//! carried into that account: each entry written again at the hub, in order,
+//! under the name the computer has there.
 
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fastctx_net::ledger::{self, Entry, File, Item, TownId};
+use fastctx_net::ids::HubId;
+use fastctx_net::ledger::{self, Entry, File};
 use fastctx_net::link::Link;
 use fastctx_net::sign::{Bytes, SecretKey, Signed};
-use fastctx_net::trust::WorldId;
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
+use fastctx_types::access::{HubAccount, TownId};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::{TownDir, WorldDir};
 use fastctx_types::{MachineName, TownName};
 use jiff::Timestamp;
 
 use crate::Node;
+use names::Place;
 
-mod items;
 pub(crate) mod names;
-mod open;
 pub(crate) mod query;
-mod share;
+pub(crate) mod third;
 
 pub use query::query;
 
+/// Opens the project `town`: at the hub, in `owner`'s account, or kept here
+/// when this computer is on no hub.
+pub async fn open(node: &Arc<Node>, town: &TownName, owner: Option<HubAccount>) -> Result<(), Failure> {
+    if names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?.is_some() {
+        return Err(Failure::new(format!("the project {town} exists already")));
+    }
+    let id = TownId::from_bytes(fastctx_net::sign::random::<8>().map_err(|error| Failure::new(error.to_string()))?);
+    let place = match owner {
+        Some(owner) => {
+            let link = node
+                .link_of(&owner.hub)
+                .ok_or_else(|| Failure::new(format!("this computer is not on the hub {}", owner.hub)))?;
+            let change = fastctx_net::wire::Change::OpenProject { town: id.clone(), name: town.clone() };
+            link.manage(&owner.account, change).await.map_err(Failure::new)?;
+            Place { hub: owner.hub, town: id }
+        }
+        None => {
+            if node.connected_anywhere() {
+                return Err(Failure::new(
+                    "a project is opened in an account; say which, as this computer is logged in to some",
+                ));
+            }
+            Place { hub: alone(&node.world).map_err(|error| Failure::new(error.to_string()))?, town: id }
+        }
+    };
+    names::set_place(&node.world, town, &place).map_err(|error| Failure::new(format!("recording {town}: {error}")))
+}
+
 /// Writes an entry into `town`'s ledger: `files`, at paths relative to the
-/// ledger, and for a version of the town's record the machines it spans
+/// ledger, and for a version of the project's record the machines it spans
 /// from then on. Returns once this machine has the accepted entry, including
-/// when it wrote on behalf of a device into a town that does not span it.
+/// when it wrote on behalf of a device into a project that does not span it.
 pub async fn write(
     node: &Arc<Node>,
     town: &TownName,
@@ -56,64 +83,45 @@ pub async fn write(
         ledger::check_path(path).map_err(Failure::new)?;
     }
     let files: Vec<File> = files.into_iter().map(|(path, bytes)| File { path, bytes: Bytes(bytes) }).collect();
-    match node.link() {
+    let place = names::place(&node.world, town)
+        .map_err(|error| Failure::new(format!("reading {town}: {error}")))?
+        .ok_or_else(|| Failure::new(format!("there is no project {town} on this machine")))?;
+    match node.link_of(&place.hub) {
         Some(link) => {
-            let id = names::require(node, town).map_err(Failure::new)?;
-            let naming = node.naming.read().expect("never poisoned").clone();
-            let paths: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
-            let entry = Entry {
-                world: link.membership().world.clone(),
-                town: town.clone(),
-                author: node.machine(),
-                at: Timestamp::now(),
-                machines: machines.clone(),
-                files,
-            };
-            check_size(&entry, readers(&link, &id)).map_err(Failure::new)?;
-            let inner = link.sign_entry(&entry);
-            let item = link.seal_entry(&id, naming.as_ref(), &paths, machines, &inner).map_err(Failure::new)?;
-            let accepted = link.ledger_write(item).await.map_err(Failure::new)?;
+            let entry = link.entry(&place.town, machines, files);
+            check_size(&entry).map_err(Failure::new)?;
+            let signed = link.sign_entry(&entry);
+            let accepted = link.ledger_write(&place.town, signed).await.map_err(Failure::new)?;
             let _syncing = node.syncing.lock().await;
-            if take(node, &link, &id, accepted, true).await.map_err(Failure::new)? {
-                Ok(())
-            } else {
-                Err(Failure::new(format!(
-                    "the hub accepted item {accepted} of {town}, but its connection ended before the local copy arrived"
-                )))
-            }
+            take(node, &link, town, &place.town, accepted).await.map_err(Failure::new)
         }
-        None => {
+        None if place.hub == alone(&node.world).map_err(|error| Failure::new(error.to_string()))? => {
             let (world, here, town) = (node.world.clone(), node.machine(), town.clone());
             let _writing = node.syncing.lock().await;
-            tokio::task::spawn_blocking(move || write_alone(&world, &here, &town, files, machines))
+            tokio::task::spawn_blocking(move || write_alone(&world, &here, &town, &place, files, machines))
                 .await
                 .map_err(|error| Failure::new(format!("writing the ledger: {error}")))?
                 .map_err(Failure::new)
         }
+        None => Err(Failure::new(format!(
+            "the project {town} is kept on the hub {}, which this computer is not logged in to",
+            place.hub
+        ))),
     }
 }
 
-/// How many members an entry of `town` is sealed for.
-fn readers(link: &Link, town: &TownId) -> usize {
-    fastctx_net::ledger::sealed::readers(&link.members().0, town).len()
+/// The room an entry has before it no longer fits in one message.
+pub fn fits(entry: &Entry) -> Result<usize, usize> {
+    ledger::fits(entry)
 }
 
-/// The room an entry of `town` has before it no longer fits in one message,
-/// as `ledger::fits` measures it for the readers it is sealed for here.
-pub fn fits(node: &Node, town: &TownName, entry: &Entry) -> Result<usize, usize> {
-    let readers = match (node.link(), names::town_id(node, town)) {
-        (Some(link), Some(id)) => readers(&link, &id),
-        _ => 1,
-    };
-    ledger::fits(entry, readers)
-}
-
-/// A World of one machine: the entry is checked as the hub would check it,
+/// A computer on no hub: the entry is checked as the hub would check it,
 /// numbered, and taken here.
 fn write_alone(
     world: &WorldDir,
     here: &MachineName,
     town: &TownName,
+    place: &Place,
     files: Vec<File>,
     machines: Option<Vec<MachineName>>,
 ) -> Result<(), String> {
@@ -125,7 +133,7 @@ fn write_alone(
     if let Some(machines) = &machines
         && let Some(stranger) = machines.iter().find(|machine| *machine != here)
     {
-        return Err(format!("there is no machine named {stranger}; this machine, {here}, is not connected to others"));
+        return Err(format!("there is no machine named {stranger}; this machine, {here}, is logged in to no hub"));
     }
     let known: Vec<&str> =
         entries.iter().flat_map(|(_, entry, _)| entry.files.iter().map(|file| file.path.as_str())).collect();
@@ -139,163 +147,161 @@ fn write_alone(
     }
     let key = own_key(world).map_err(|error| format!("this machine's key: {error}"))?;
     let entry = Entry {
-        world: alone_world(world).map_err(|error| format!("this machine's World: {error}"))?,
-        town: town.clone(),
+        hub: place.hub.clone(),
+        town: place.town.clone(),
         author: here.clone(),
+        key: key.public(),
         at: Timestamp::now(),
         machines,
         files,
     };
-    check_size(&entry, 1)?;
+    check_size(&entry)?;
     let signed = ledger::sign(&key, &entry);
     let seq = entries.last().map(|(seq, _, _)| *seq).unwrap_or(0) + 1;
-    apply(world, seq, &entry, &signed).map_err(|error| format!("keeping the entry: {error}"))
+    apply(world, town, seq, &entry, &signed).map_err(|error| format!("keeping the entry: {error}"))
 }
 
-/// Both standalone and connected writers measure the complete wire item
-/// before publishing any of its files.
-fn check_size(entry: &Entry, readers: usize) -> Result<(), String> {
-    match ledger::fits(entry, readers) {
+/// An entry is checked against the one message it must fit in before any
+/// of its files is kept.
+fn check_size(entry: &Entry) -> Result<(), String> {
+    match ledger::fits(entry) {
         Ok(_) => Ok(()),
         Err(over) => {
             let limit = fastctx_net::wire::MAX_CONTROL_FRAME;
             Err(format!(
-                "the ledger entry is {} bytes once sealed; the limit is {limit} bytes (256 KiB), including its signature, keys and message encoding",
+                "the ledger entry is {} bytes as it travels; the limit is {limit} bytes (256 KiB), including its signature and message encoding",
                 limit + over
             ))
         }
     }
 }
 
-/// Takes what the hub has that this machine does not, for `town` or for
-/// every town it spans, after carrying in the towns kept while alone. A
-/// machine with management rights takes every town, and seals keys again
-/// for the readers that lack them. One sync runs at a time.
-pub async fn sync(node: &Arc<Node>, town: Option<TownName>) -> Result<(), String> {
-    match town {
-        Some(town) => {
-            let Some(link) = node.link() else { return Ok(()) };
-            names::load(node, &link);
-            let id = names::require(node, &town)?;
-            sync_ids(node, Some(id)).await
-        }
-        None => sync_ids(node, None).await,
-    }
-}
-
-/// As `sync`, for a town by its id.
-pub async fn sync_ids(node: &Arc<Node>, town: Option<TownId>) -> Result<(), String> {
-    let Some(link) = node.link() else { return Ok(()) };
+/// Takes what the hub `hub` has that this machine does not, for `town` or
+/// for every project this machine spans there. One sync runs at a time.
+pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result<(), String> {
+    let Some(link) = node.link_of(hub) else { return Ok(()) };
     let _syncing = node.syncing.lock().await;
-    names::load(node, &link);
     let mut problems = Vec::new();
-    if let Err(error) = names::ensure(node, &link).await {
-        problems.push(format!("writing the World's naming key: {error}"));
-    }
-    let mut at_hub: BTreeMap<TownId, (u64, bool)> =
-        link.ledger_towns().await?.into_iter().map(|(town, latest)| (town, (latest, false))).collect();
-    if link.me().is_some_and(|me| me.manage) {
-        for (town, latest) in link.ledger_catalog().await? {
-            at_hub.entry(town).or_insert((latest, true));
-        }
-    }
-    // The World's own ledger first: the naming key it holds tells which
-    // town every other entry is of.
-    let mut order: Vec<(TownId, (u64, bool))> = at_hub.into_iter().collect();
-    order.sort_by_key(|(town, _)| *town != TownId::world());
-    for (id, (latest, query)) in order {
-        if town.as_ref().is_some_and(|town| *town != id && id != TownId::world()) {
+    for (id, latest) in link.ledger_towns().await? {
+        if town.as_ref().is_some_and(|town| *town != id) {
             continue;
         }
-        if let Err(error) = take(node, &link, &id, latest, query).await {
-            problems.push(error);
+        match local_name(node, &link, &id) {
+            Ok(name) => {
+                if let Err(error) = take(node, &link, &name, &id, latest).await {
+                    problems.push(error);
+                }
+            }
+            Err(error) => problems.push(error),
         }
     }
-    if town.is_none() {
-        problems.extend(carry(node, &link).await);
-    }
-    problems.extend(share::reconcile(node, &link).await);
     if problems.is_empty() { Ok(()) } else { Err(problems.join("; ")) }
 }
 
-/// Takes `town`'s items through `latest` and opens what this machine can.
-/// False means an explicit query's control connection ended; refusals,
-/// invalid items and disk errors fail.
-pub(crate) async fn take(
-    node: &Arc<Node>,
-    link: &Arc<Link>,
-    town: &TownId,
-    latest: u64,
-    query: bool,
-) -> Result<bool, String> {
-    let store = items::Items::new(&node.world);
-    let mut after = store.cursor(town).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
-    let mut state = store.state(town).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
+/// The short name this machine keeps the project `id` of `link`'s hub
+/// under, recording where it is kept the first time.
+pub(crate) fn local_name(node: &Node, link: &Link, id: &TownId) -> Result<TownName, String> {
+    let view = link.view();
+    let project = view.project(id).ok_or_else(|| format!("the hub {} names no project {id}", link.hub_name()))?;
+    let place = Place { hub: link.membership().id.clone(), town: id.clone() };
+    match names::place(&node.world, &project.name).map_err(|error| format!("reading {}: {error}", project.name))? {
+        Some(kept) if kept == place => {}
+        Some(kept) => {
+            return Err(format!(
+                "this machine keeps another project named {} (of the hub {}); the hub {}'s is not taken here",
+                project.name,
+                kept.hub,
+                link.hub_name()
+            ));
+        }
+        None => names::set_place(&node.world, &project.name, &place)
+            .map_err(|error| format!("recording {}: {error}", project.name))?,
+    }
+    Ok(project.name.clone())
+}
+
+/// Takes `town`'s entries through `latest`.
+pub(crate) async fn take(node: &Arc<Node>, link: &Arc<Link>, name: &TownName, town: &TownId, latest: u64) -> Result<(), String> {
+    let directory = node.world.town(name);
+    let mut refused = refused(&directory).map_err(|error| format!("reading {name}'s ledger: {error}"))?;
+    let mut after = cursor(&directory, &refused).map_err(|error| format!("reading {name}'s ledger: {error}"))?;
     while after < latest {
-        let page =
-            if query { link.try_ledger_query(town, after).await? } else { Some(link.ledger_read(town, after).await?) };
-        let Some((items, more)) = page else { return Ok(false) };
+        let (items, more) = link.ledger_read(town, after).await?;
         if items.is_empty() {
-            return Err(format!("the hub promised {latest} items of {town}, but stopped after {after}"));
+            return Err(format!("the hub promised {latest} entries of {name}, but stopped after {after}"));
         }
         for taken in items {
             let seq = taken.seq;
             if seq != after + 1 {
-                return Err(format!("the hub gave item {seq} of {town} after {after}"));
+                return Err(format!("the hub gave entry {seq} of {name} after {after}"));
             }
-            store.keep(town, seq, &taken.signed).map_err(|error| format!("keeping item {seq} of {town}: {error}"))?;
-            match (&taken.item, taken.refused) {
-                (Item::Entry(_), Some(reason)) => {
-                    node.log.line(format_args!("refused from the ledger: item {seq} of {town}: {reason}"));
-                    state.refused.insert(seq, reason);
+            match (taken.entry, taken.refused) {
+                (Some(entry), None) => apply(&node.world, name, seq, &entry, &taken.signed)
+                    .map_err(|error| format!("keeping entry {seq} of {name}: {error}"))?,
+                (_, reason) => {
+                    let reason = reason.unwrap_or_else(|| "it cannot be read".to_string());
+                    node.log.line(format_args!("refused from the ledger: entry {seq} of {name}: {reason}"));
+                    refused.insert(seq, reason);
+                    set_refused(&directory, &refused).map_err(|error| format!("keeping {name}'s ledger: {error}"))?;
                 }
-                (Item::Entry(_), None) => {
-                    state.unopened.insert(seq);
-                }
-                // A copy sealed for this machine may open an entry waiting;
-                // one that does not open it is tried and passed over.
-                (Item::Share(_), _) => {}
             }
             after = seq;
         }
-        store.set_state(town, &state).map_err(|error| format!("keeping {town}'s ledger: {error}"))?;
         if !more && after < latest {
-            return Err(format!("the hub ended {town}'s ledger at {after}, before its promised {latest}"));
+            return Err(format!("the hub ended {name}'s ledger at {after}, before its promised {latest}"));
         }
     }
-    let (node_, link_, town_) = (node.clone(), link.clone(), town.clone());
-    let problems = tokio::task::spawn_blocking(move || open::town(&node_, &link_, &town_))
-        .await
-        .map_err(|error| format!("opening {town}'s entries: {error}"))??;
-    for problem in problems {
-        node.log.line(format_args!("refused from the ledger: {problem}"));
-    }
-    Ok(true)
+    Ok(())
 }
 
-/// Carries only towns created under this node's standalone World identity:
-/// its entries are written to the hub again, in order, by this machine and
-/// for this World, and the copies signed for the old one are let go. A town
-/// the hub has some of these entries of already, from a carry cut short, is
-/// carried on from there. Returns what could not be carried.
-async fn carry(node: &Arc<Node>, link: &Arc<Link>) -> Vec<String> {
-    let world = link.membership().world.clone();
-    let alone = match std::fs::read(node.world.path().join("alone.json")) {
-        Ok(bytes) => match serde_json::from_slice::<WorldId>(&bytes) {
-            Ok(alone) if alone != world => alone,
-            Ok(_) => return Vec::new(),
-            Err(error) => return vec![format!("reading the standalone World identity: {error}")],
-        },
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Vec::new(),
-        Err(error) => return vec![format!("reading the standalone World identity: {error}")],
+/// After this computer logged in to the hub `hub`: the projects it kept
+/// while on no hub go into the account it is registered under there, and
+/// what the hub has for it is taken.
+pub fn joined(node: &Arc<Node>, hub: &HubId) {
+    let (node, hub) = (node.clone(), hub.clone());
+    tokio::spawn(async move {
+        for problem in carry(&node, &hub).await {
+            node.log.line(format_args!("carrying a project into the hub: {problem}"));
+        }
+        if let Err(error) = sync(&node, &hub, None).await {
+            node.log.line(format_args!("taking the projects' ledgers: {error}"));
+        }
+    });
+}
+
+/// Carries the projects this computer kept on no hub into the account it is
+/// registered under at `hub`: each entry written to the hub again, in
+/// order, by this machine under the name it has now. Returns what could
+/// not be carried.
+pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
+    let Some(link) = node.link_of(hub) else { return Vec::new() };
+    if let Err(error) = link.refresh().await {
+        return vec![format!("asking the hub: {error}")];
+    }
+    let Some(home) = link.view().me().and_then(|me| me.home.clone()) else { return Vec::new() };
+    let alone = match alone(&node.world) {
+        Ok(alone) => alone,
+        Err(error) => return vec![format!("reading this computer's own id: {error}")],
     };
-    let here = node.machine();
     let towns = match node.world.towns() {
         Ok(towns) => towns,
-        Err(error) => return vec![format!("reading the towns: {error}")],
+        Err(error) => return vec![format!("reading the projects: {error}")],
     };
+    let key = match own_key(&node.world) {
+        Ok(key) => key,
+        Err(error) => return vec![format!("this computer's key: {error}")],
+    };
+    let _syncing = node.syncing.lock().await;
     let mut problems = Vec::new();
     for town in towns {
+        let place = match names::place(&node.world, &town) {
+            Ok(Some(place)) if place.hub == alone => place,
+            Ok(_) => continue,
+            Err(error) => {
+                problems.push(format!("reading {town}: {error}"));
+                continue;
+            }
+        };
         let directory = node.world.town(&town);
         let entries = match read_all(&directory) {
             Ok(entries) => entries,
@@ -304,112 +310,79 @@ async fn carry(node: &Arc<Node>, link: &Arc<Link>) -> Vec<String> {
                 continue;
             }
         };
-        let own = entries.iter().filter(|(_, entry, _)| entry.world == alone).count();
-        if own == 0 {
-            continue;
-        }
-        if own < entries.len() {
-            problems.push(format!(
-                "{town} mixes standalone entries with another World; it is left as it is in {}",
-                directory.path().display()
-            ));
-            continue;
-        }
-        if let Err(error) = carry_town(node, link, &world, &here, &town, &entries).await {
+        if let Err(error) = carry_town(node, &link, &home, &town, &place.town, &entries, &key.public()).await {
             problems.push(error);
             continue;
         }
-        // The World's copy is taken afresh: it may call this machine by
+        // The hub's copy is taken afresh: it may call this machine by
         // another name than the files here do.
-        if let Err(error) = remove(&directory.signed()).and_then(|()| remove(&directory.ledger())) {
-            problems.push(format!("letting go of {town}'s ledger of its old World: {error}"));
+        let moved = names::set_place(&node.world, &town, &Place { hub: hub.clone(), town: place.town.clone() })
+            .and_then(|()| remove(&directory.signed()))
+            .and_then(|()| remove(&directory.ledger()));
+        if let Err(error) = moved {
+            problems.push(format!("letting go of {town}'s own ledger: {error}"));
             continue;
         }
-        // The World's copy comes back as the hub tells this machine of the
-        // items just written.
-        node.log.line(format_args!("carried {town} into the World {world}: {} entries", entries.len()));
+        node.log.line(format_args!("carried {town} into the account {home}: {} entries", entries.len()));
     }
     problems
 }
 
+/// Entries this computer wrote, signed with `own`, are carried under the
+/// name it has now; those of other machines, kept from the network's third
+/// version (`third`), as their authors wrote them. Several computers may
+/// carry one such project at once: each writes an entry only when the
+/// hub has the ones before it, and one another wrote first is theirs.
 async fn carry_town(
     node: &Arc<Node>,
     link: &Link,
-    world: &WorldId,
-    here: &MachineName,
+    home: &fastctx_types::AccountName,
     town: &TownName,
+    id: &TownId,
     entries: &[(u64, Entry, Signed)],
+    own: &fastctx_net::sign::PublicKey,
 ) -> Result<(), String> {
-    let taken = format!("a town named {town} is in this World already; this machine's own {town} was not carried");
-    let id = names::require(node, town)?;
-    let naming = node.naming.read().expect("never poisoned").clone();
-    for (_, entry, _) in entries {
-        // Each entry as the World gets it: by this machine, under the name
-        // it has now.
+    let here = node.machine();
+    let open = fastctx_net::wire::Change::OpenProject { town: id.clone(), name: town.clone() };
+    if let Err(error) = link.manage(home, open).await
+        && link.view().project(id).is_none_or(|project| project.name != *town)
+    {
+        return Err(format!("{town} was not carried: {error}"));
+    }
+    let latest = |catalog: Vec<(TownId, u64)>| catalog.into_iter().find(|(town, _)| town == id).map(|(_, latest)| latest).unwrap_or(0);
+    // A carry cut short, or another computer's, wrote some of them already.
+    let mut written = latest(link.ledger_catalog().await?);
+    for (index, (_, entry, _)) in entries.iter().enumerate() {
+        let index = index as u64;
+        if index < written {
+            continue;
+        }
+        // Each entry as the hub gets it: by this machine; one it wrote, under
+        // the name it has now.
         let old = &entry.author;
-        let renamed = |name: &MachineName| if name == old { here.clone() } else { name.clone() };
+        let ours = entry.key == *own && *old != here;
+        let renamed = |name: &MachineName| if ours && name == old { here.clone() } else { name.clone() };
         let mut files = Vec::new();
         for file in &entry.files {
-            let bytes = if old == here {
-                file.bytes.clone()
+            let bytes = if ours {
+                Bytes(crate::town::rename::file(&file.path, &file.bytes.0, old, &here)?)
             } else {
-                Bytes(crate::town::rename::file(&file.path, &file.bytes.0, old, here)?)
+                file.bytes.clone()
             };
             files.push(File { path: file.path.clone(), bytes });
         }
-        let carried = Entry {
-            world: world.clone(),
-            town: town.clone(),
-            author: here.clone(),
-            at: entry.at,
-            machines: entry.machines.as_ref().map(|machines| machines.iter().map(renamed).collect()),
-            files,
-        };
-        let paths: Vec<String> = carried.files.iter().map(|file| file.path.clone()).collect();
-        let inner = link.sign_entry(&carried);
-        let item = link.seal_entry(&id, naming.as_ref(), &paths, carried.machines.clone(), &inner)?;
-        match link.ledger_write(item).await {
-            Ok(_) => {}
-            Err(error) if error.contains("written twice") => {
-                // Carried before by a carry cut short, or another machine's
-                // town of that name: what is there says which.
-                if !carried_before(node, link, &id, &carried).await? {
-                    return Err(taken);
-                }
-            }
-            Err(error) => return Err(format!("carrying {town}: {error}")),
-        }
-    }
-    Ok(())
-}
-
-/// Whether the hub's ledger of `town` has `entry` as this machine carried it.
-async fn carried_before(node: &Arc<Node>, link: &Link, town: &TownId, entry: &Entry) -> Result<bool, String> {
-    let mut after = 0;
-    loop {
-        let (items, more) = link.ledger_query(town, after).await?;
-        let shares: Vec<_> = items
-            .iter()
-            .filter_map(|taken| match &taken.item {
-                Item::Share(share) => Some(share.clone()),
-                Item::Entry(_) => None,
-            })
-            .collect();
-        for taken in &items {
-            after = taken.seq;
-            let Item::Entry(sealed) = &taken.item else { continue };
-            if sealed.author != node.machine() || taken.refused.is_some() {
+        let mut carried = link.entry(id, entry.machines.as_ref().map(|machines| machines.iter().map(renamed).collect()), files);
+        carried.at = entry.at;
+        if let Err(error) = link.ledger_write(id, link.sign_entry(&carried)).await {
+            written = latest(link.ledger_catalog().await?);
+            if written > index {
                 continue;
             }
-            let Some((_, inner)) = link.open_sealed(sealed, &shares)? else { continue };
-            if inner.claim::<Entry>().is_ok_and(|theirs| theirs.files == entry.files) {
-                return Ok(true);
-            }
+            return Err(format!("carrying {town}: {error}"));
         }
-        if !more {
-            return Ok(false);
-        }
+        written = index + 1;
     }
+    Ok(())
 }
 
 /// Removes a directory of ledger files, read-only as they are.
@@ -435,9 +408,9 @@ fn remove(directory: &Path) -> io::Result<()> {
     std::fs::remove_dir_all(directory)
 }
 
-/// Takes entry `seq`: its signed form, then its files.
-fn apply(world: &WorldDir, seq: u64, entry: &Entry, signed: &Signed) -> io::Result<()> {
-    let directory = world.town(&entry.town);
+/// Takes entry `seq` of `town`: its signed form, then its files.
+fn apply(world: &WorldDir, town: &TownName, seq: u64, entry: &Entry, signed: &Signed) -> io::Result<()> {
+    let directory = world.town(town);
     ensure_private_dir(&directory.signed())?;
     let record = directory.signed().join(format!("{seq:020}.json"));
     let bytes = serde_json::to_vec(signed).map_err(io::Error::other)?;
@@ -477,7 +450,8 @@ pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
 
 /// The number of the latest entry this machine has of `town`; 0 when none.
 pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
-    cursor(&world.town(town))
+    let directory = world.town(town);
+    cursor(&directory, &refused(&directory)?)
 }
 
 /// The entries of `town` this machine has after the one numbered `after`,
@@ -492,17 +466,23 @@ pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
     Ok(entries)
 }
 
-fn cursor(directory: &TownDir) -> io::Result<u64> {
-    Ok(numbered(&directory.signed())?.last().map(|(seq, _)| *seq).unwrap_or(0))
+/// The last entry taken or refused.
+fn cursor(directory: &TownDir, refused: &BTreeMap<u64, String>) -> io::Result<u64> {
+    let taken = numbered(&directory.signed())?.last().map(|(seq, _)| *seq).unwrap_or(0);
+    Ok(taken.max(refused.keys().next_back().copied().unwrap_or(0)))
 }
 
-/// The immutable intake identity, independent of the current machine name.
-fn origin(directory: &TownDir) -> io::Result<Option<WorldId>> {
-    numbered(&directory.signed())?.first().map(|(_, path)| read_entry(path).map(|(entry, _)| entry.world)).transpose()
+fn refused(directory: &TownDir) -> io::Result<BTreeMap<u64, String>> {
+    fastctx_net::link::state::read_or(&directory.path().join("refused.json"), BTreeMap::new())
 }
 
-/// Every entry this machine has of a town, in order, as its author claims
-/// it: each was checked when it was taken.
+fn set_refused(directory: &TownDir, refused: &BTreeMap<u64, String>) -> io::Result<()> {
+    ensure_private_dir(directory.path())?;
+    fastctx_net::link::state::write(&directory.path().join("refused.json"), refused)
+}
+
+/// Every entry this machine has of a project, in order, as its author
+/// claims it: each was checked when it was taken.
 fn read_all(directory: &TownDir) -> io::Result<Vec<(u64, Entry, Signed)>> {
     let mut entries = Vec::new();
     for (seq, path) in numbered(&directory.signed())? {
@@ -560,13 +540,13 @@ pub fn own_key(world: &WorldDir) -> io::Result<SecretKey> {
     }
 }
 
-/// The id a World of one machine signs its ledgers under, chosen once.
-fn alone_world(world: &WorldDir) -> io::Result<WorldId> {
+/// The id a computer on no hub keeps its own projects under, chosen once.
+pub(crate) fn alone(world: &WorldDir) -> io::Result<HubId> {
     let path = world.path().join("alone.json");
     match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let id = WorldId::generate()?;
+            let id = fastctx_net::ids::new_hub_id()?;
             publish(&path, &serde_json::to_vec(&id).map_err(io::Error::other)?, Permissions::Private)?;
             Ok(id)
         }

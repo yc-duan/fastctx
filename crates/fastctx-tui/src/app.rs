@@ -12,7 +12,8 @@ use fastctx_types::project::{JournalView, MapView, RecordFields, TownSummary};
 use fastctx_types::session::SessionEvent;
 use fastctx_types::town::{ResidentNow, RunningJob};
 use fastctx_types::world::NodesReply;
-use fastctx_types::{AgentName, EntryId, JournalName, MachineName, ResidentId, TownName};
+use fastctx_types::accounts::Arrival;
+use fastctx_types::{AccountName, AgentName, EntryId, HubName, JournalName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 use ratatui::Frame;
 
@@ -84,19 +85,48 @@ pub enum Job {
         journal: JournalName,
         before: Option<EntryId>,
     },
-    Invite {
+    /// Logs this computer in to an account, at the hub `hub` as the user
+    /// wrote it.
+    Login {
+        hub: String,
+        account: AccountName,
+        password: String,
+        register: bool,
         name: Option<MachineName>,
+    },
+    LoginWithToken {
+        token: String,
+        name: Option<MachineName>,
+    },
+    /// A one-time token for `account`: for a server, the line that installs
+    /// it and registers it as a machine; otherwise one that logs in only.
+    Token {
+        hub: HubName,
+        account: AccountName,
+        /// What logs in with it; `None` for a server, which the line
+        /// installs and registers as a machine.
+        kind: Option<fastctx_types::accounts::MemberKind>,
         hours: u32,
     },
-    Join {
-        code: String,
-        name: Option<MachineName>,
+    Logout {
+        hub: HubName,
+        account: AccountName,
     },
-    Revoke {
+    /// Takes `name` out of `account`; `seen` also marks it shown, for
+    /// 「不是我」.
+    Remove {
+        hub: HubName,
+        account: AccountName,
         name: MachineName,
         reason: String,
+        seen: bool,
     },
-    Leave,
+    /// The user saw that `name` came into `account`.
+    Seen {
+        hub: HubName,
+        account: AccountName,
+        name: MachineName,
+    },
     /// Put the World's tools into the user's own sessions on this machine;
     /// `raise` agrees to raising Codex's shared output limit.
     Apply {
@@ -115,18 +145,20 @@ pub enum Done {
     Opened(Said),
     Record(Box<TownRecord>),
     Journal(Box<JournalView>),
-    Code {
-        code: String,
+    /// A token, or for a server the line that installs it.
+    Token {
+        text: String,
+        server: bool,
         expires: Timestamp,
     },
-    Joined {
-        world: String,
+    LoggedIn {
+        hub: HubName,
         name: MachineName,
+        account: AccountName,
         /// What came of keeping this machine connected afterwards.
         kept: Result<fastctx_install::service::Kept, String>,
     },
-    Revoked,
-    Left,
+    Changed,
     Applied(Report),
     Unapplied(Report),
     /// Codex's shared output limit is lower than the World needs, and
@@ -174,6 +206,8 @@ pub enum Data {
         map: Result<Box<MapView>, String>,
     },
     Nodes(Result<NodesReply, String>),
+    /// Who came into this computer's accounts and was not shown yet.
+    Arrivals(Vec<Arrival>),
     Choices {
         nodes: Result<NodesReply, String>,
         towns: Result<Vec<TownSummary>, String>,

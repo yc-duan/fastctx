@@ -1,53 +1,40 @@
-//! What a machine keeps on disk about its link to the hub, in
-//! `world/net/`.
+//! What a machine keeps on disk about its link to one hub, in
+//! `world/net/<hub id>/`.
 //!
 //! ```text
-//! membership.json   which World, under what name, how to reach and trust its hub
-//! members.json      what this machine has accepted about the members (`trust::Known`)
-//! counter.json      how far the numbers this machine signs with are reserved
+//! membership.json   which hub, under what name, how to reach and trust it
+//! view.json         this machine's view of the hub's directory, as last given
+//! counter.json      how far the numbers this machine sends with are reserved
 //! letters.json      where this machine's letters stand with the hub
-//! calls.json        which calls from each member this machine has taken
 //! outbox/<seq>      letters not yet held by the hub
 //! received/<from>/<id>   letters taken, by sender and id, for good
 //! failures/         letters that could not be delivered or opened, and why
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish};
-use fastctx_types::MachineName;
+use fastctx_types::{HubName, MachineName};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::sign::{PublicKey, Signed};
-use crate::trust::{CertPin, Known, WorldId};
+use crate::directory::Kind;
+use crate::ids::{CertPin, HubId};
 
-/// This machine's place in a World.
+/// This machine's place on a hub.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Membership {
-    pub world: WorldId,
+    pub id: HubId,
+    pub hub_name: HubName,
     pub name: MachineName,
-    /// The root every member's record must lead back to.
-    pub founder: PublicKey,
-    pub hub: Vec<SocketAddr>,
+    /// The hub's own addresses; the relays this machine connects through
+    /// come from its view.
+    pub addresses: Vec<SocketAddr>,
     pub cert: CertPin,
-}
-
-/// The members as last checked, kept so a machine that starts without the
-/// hub still knows them.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct MembersFile {
-    pub known: Known,
-    pub records: Vec<Signed>,
-    pub revocations: Vec<Signed>,
-    #[serde(default)]
-    pub grants: Vec<Signed>,
-    #[serde(default)]
-    pub routes: Vec<Signed>,
+    pub kind: Kind,
 }
 
 /// Where this machine's letters stand with the hub.
@@ -81,8 +68,8 @@ impl NetDir {
         self.root.join("membership.json")
     }
 
-    pub fn members(&self) -> PathBuf {
-        self.root.join("members.json")
+    pub fn view(&self) -> PathBuf {
+        self.root.join("view.json")
     }
 
     pub fn counter(&self) -> PathBuf {
@@ -91,10 +78,6 @@ impl NetDir {
 
     pub fn letters(&self) -> PathBuf {
         self.root.join("letters.json")
-    }
-
-    pub fn calls(&self) -> PathBuf {
-        self.root.join("calls.json")
     }
 
     pub fn outbox(&self) -> PathBuf {
@@ -118,9 +101,9 @@ impl NetDir {
     }
 }
 
-/// The numbers a machine signs its messages with. They are reserved on disk
-/// a block at a time before use, so a machine that crashes never signs two
-/// messages with one number.
+/// The numbers a machine sends its messages under. They are reserved on
+/// disk a block at a time before use, so a machine that crashes never sends
+/// two calls under one number and takes one's answer for the other's.
 pub struct Counter {
     path: PathBuf,
     state: Mutex<(u64, u64)>,
@@ -151,48 +134,6 @@ impl Counter {
         let n = state.0;
         state.0 += 1;
         Ok(n)
-    }
-}
-
-/// The calls this machine has taken from each member, so the hub, which
-/// passes every call on, cannot pass one again to have it done twice.
-/// Calls from one member arrive nearly in the order it numbered them; any
-/// number more than `WINDOW` below the highest taken is refused, and every
-/// number within it is remembered.
-pub struct Taken {
-    path: PathBuf,
-    by: Mutex<BTreeMap<MachineName, TakenFrom>>,
-}
-
-const WINDOW: u64 = 1024;
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-struct TakenFrom {
-    highest: u64,
-    recent: BTreeSet<u64>,
-}
-
-impl Taken {
-    pub fn open(path: PathBuf) -> io::Result<Self> {
-        let by = read_or(&path, BTreeMap::new())?;
-        Ok(Self { path, by: Mutex::new(by) })
-    }
-
-    /// Takes call `n` from `from`, unless it was taken before.
-    pub fn take(&self, from: &MachineName, n: u64) -> io::Result<Result<(), String>> {
-        let mut by = self.by.lock().expect("never poisoned");
-        let taken = by.entry(from.clone()).or_default();
-        if n + WINDOW <= taken.highest {
-            return Ok(Err(format!("call {n} from {from} is older than the last {WINDOW} this machine took from it")));
-        }
-        if !taken.recent.insert(n) {
-            return Ok(Err(format!("call {n} from {from} was taken before")));
-        }
-        taken.highest = taken.highest.max(n);
-        let floor = taken.highest.saturating_sub(WINDOW);
-        taken.recent.retain(|&seen| seen > floor);
-        write(&self.path, &*by)?;
-        Ok(Ok(()))
     }
 }
 

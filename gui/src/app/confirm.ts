@@ -1,7 +1,8 @@
 // A sheet over the page, and the one question asked before something that
-// is not easily taken back: revoking a machine, letting this one leave,
-// removing an agent. It says what will happen, waits for the one button,
-// and stays open with what went wrong if the World refuses.
+// is not easily taken back, or that the user should read first: removing a
+// machine or a device, logging out, removing an agent, trusting a machine.
+// It says what will happen, waits for the one button, and stays open with
+// what went wrong if the World refuses.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -52,6 +53,9 @@ export interface Asked {
   /** Fields asked along with it, as markup inside the form. */
   fields?: string;
   go: string;
+  /** The button is said in the quiet colour, for what is not lost by
+   *  doing it; otherwise in the colour of what cannot be undone. */
+  gentle?: boolean;
   act(): Promise<void>;
   /** It was done; the sheet has closed. */
   done(): void;
@@ -74,7 +78,7 @@ export class Confirm {
       <p class="confirm-what">${escape(asked.what)}</p>
       ${asked.fields ?? ""}
       <p class="sheet-note" role="alert" hidden></p>
-      <footer class="sheet-foot"><span></span><button class="sheet-go danger" type="submit">${escape(asked.go)}</button></footer>`;
+      <footer class="sheet-foot"><span></span><button class="sheet-go${asked.gentle ? "" : " danger"}" type="submit">${escape(asked.go)}</button></footer>`;
     sheet.body.onsubmit = (event) => {
       event.preventDefault();
       if (sheet.busy) return;

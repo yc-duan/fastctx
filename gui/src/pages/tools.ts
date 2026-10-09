@@ -5,6 +5,7 @@
 // go to the core as acts of this page's version, where the declaration and
 // the user's consent are checked; the interface never decides them itself.
 
+import { machinesOf } from "../app/reach";
 import type { Tools } from "../page/tools";
 import { residentsOf, type Store } from "../app/store";
 import { journal, look, project, readText } from "../world/bridge";
@@ -95,11 +96,12 @@ export function toolsFor(options: ToolsOptions): (tool: string, args: Record<str
     async "world.now"() {
       const world = await now();
       return {
-        machines: world.nodes.machines.map((node) => ({
-          name: node.name,
-          online: node.online === true,
-          system: node.facts.Ok?.os ?? null,
-          device: node.device === true,
+        // A page reads the machines this device reaches; a phone is not one.
+        machines: machinesOf(world).map((machine) => ({
+          name: machine.name,
+          online: machine.here || machine.online === true,
+          system: "Ok" in machine.facts ? machine.facts.Ok.os : null,
+          device: false,
         })),
         agents: residentsOf(world).map((resident) => {
           const address = { resident: resident.about.id, machine: resident.about.machine };

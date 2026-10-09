@@ -27,6 +27,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 base64 = "0.22"
 fastctx-client = { path = "../../crates/fastctx-client" }
+fastctx-net = { path = "../../crates/fastctx-net" }
 fastctx-platform = { path = "../../crates/fastctx-platform" }
 fastctx-types = { path = "../../crates/fastctx-types" }
 jiff = "0.2"
@@ -40,7 +41,6 @@ tauri-plugin-world-pages = { path = "page-sandbox" }
 tokio = { version = "1", features = ["sync", "fs", "io-util"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
-fastctx-net = { path = "../../crates/fastctx-net" }
 jni = "0.21"
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 

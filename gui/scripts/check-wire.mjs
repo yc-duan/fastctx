@@ -39,7 +39,13 @@ import type { Speaker } from "../src/world/events";
 import type { Writer, JobOwner, MapView } from "../src/world/world";
 import type { Address } from "../src/world/wire";
 import type { RenewalStatus, MaintenanceRequest, MaintenanceResponse, VersionRefusal } from "../src/world/renewal";
+import type { AccountChange, AccountsReply } from "../src/world/accounts";
+import type { ConnectionState } from "../src/world/device";
+import type { Choices } from "../src/world/bridge";
 export const fixture = ${json.trimEnd()} satisfies {
+  // Accounts as the interface reads and changes them, the device's
+  // standing, and what the user chose for a new conversation.
+  accounts: { replies: AccountsReply[]; changes: AccountChange[]; connections: ConnectionState[]; choices: Choices[] };
   session: {
     events: SessionEvent[];
     watched: Watched[];

@@ -13,19 +13,28 @@ use serde_json::{Value, json};
 pub struct Machines {
     pub here: String,
     pub others: Vec<String>,
+    /// Where this session's colleagues live, when the user turned asking
+    /// for them on.
+    pub colleagues: Option<String>,
 }
 
-/// The tools this session lists: the shell, and the colleague tools, which a
-/// colleague has none of: the World is one level deep
-/// (`world-colleagues.md`). Writing files and going to other machines are
-/// commands in the shell (`world-run.md`, `world-write.md`). `woken` says
-/// whether the World can start a turn here when a job ends or an answer
-/// comes; elsewhere they come with the answer of the next tool call.
-/// `codex` adds what a model calling the tools from Codex's `exec` must set.
-pub fn definitions(writes_off: bool, colleague: bool, woken: bool, codex: bool, machines: Option<&Machines>) -> Value {
+/// What tells the host to list the tools again.
+pub fn list_changed() -> Value {
+    json!({ "jsonrpc": "2.0", "method": "notifications/tools/list_changed" })
+}
+
+/// The tools this session lists: the shell, and the colleague tools where
+/// the user turned asking for colleagues on for this conversation, which a
+/// colleague never has: the World is one level deep (`world-colleagues.md`).
+/// Writing files and going to other machines are commands in the shell
+/// (`world-run.md`, `world-write.md`). `woken` says whether the World can
+/// start a turn here when a job ends or an answer comes; elsewhere they come
+/// with the answer of the next tool call. `codex` adds what a model calling
+/// the tools from Codex's `exec` must set.
+pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<&Machines>) -> Value {
     let mut tools = vec![run_definition(writes_off, woken, codex, machines)];
-    if !colleague {
-        tools.push(ask_colleague_definition(woken, machines));
+    if let Some(lives_on) = machines.and_then(|machines| machines.colleagues.as_deref()) {
+        tools.push(ask_colleague_definition(woken, lives_on));
         tools.push(message_colleague_definition());
     }
     for tool in &mut tools {
@@ -208,12 +217,11 @@ More commands (`--help` on each gives all its options):
 - `fastctx project` lists the user's projects and shows their maps. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its map says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx journal` reads and adds to the project's journals, the history of its work. `fastctx page` publishes an HTML page the user opens in the World app.";
 
-fn ask_colleague_definition(woken: bool, machines: Option<&Machines>) -> Value {
+fn ask_colleague_definition(woken: bool, lives_on: &str) -> Value {
     let delivered = if woken { "" } else { " with the answer of your next call to a fastctx tool" };
-    let node = format!("The machine the colleague works on; without it, this one. {}", machine_names(machines));
     json!({
         "name": "ask_colleague",
-        "description": ASK_COLLEAGUE_DESCRIPTION.replace("{delivered}", delivered),
+        "description": ASK_COLLEAGUE_DESCRIPTION.replace("{delivered}", delivered).replace("{lives_on}", lives_on),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -224,8 +232,7 @@ fn ask_colleague_definition(woken: bool, machines: Option<&Machines>) -> Value {
                 "description": {
                     "type": "string",
                     "description": "A label for the task in three to eight words, shown beside the colleague in `fastctx w`."
-                },
-                "node": { "type": "string", "description": node }
+                }
             },
             "required": ["prompt", "description"]
         },
@@ -242,7 +249,7 @@ fn ask_colleague_definition(woken: bool, machines: Option<&Machines>) -> Value {
 const ASK_COLLEAGUE_DESCRIPTION: &str = "\
 Start a colleague on a part of the work: a GPT agent, run by Codex, that works on its own while you go on. The call returns its id at once.
 
-A colleague is not a subagent inside this conversation. It works on whichever of the user's machines `node` names, it keeps working if you stop, and `fastctx w ID` shows what it is doing. Each time it ends a turn, its last message is delivered to you{delivered}, under a line saying how the turn ended: that message is its answer, or its question to you. Reply, or give it more, with message_colleague.
+A colleague is not a subagent inside this conversation. It lives on {lives_on}, the machine the user chose for this conversation's colleagues, and its scripts start there; it reaches the other machines the same way you do, with `on`. It knows nothing of this conversation, so the prompt must say which machines and paths it works on. It keeps working if you stop, and `fastctx w ID` shows what it is doing. Each time it ends a turn, its last message is delivered to you{delivered}, under a line saying how the turn ended: that message is its answer, or its question to you. Reply, or give it more, with message_colleague.
 
 When to ask one:
 - GPT is strong on a part and weak on the whole. Within one part it reads all the material before acting, works a hard point for hours, changes approach when one fails, and says plainly when it cannot do something. Asked to judge a whole that has not taken shape, or to build a whole thing from nothing, it returns pieces that are each careful and have no idea holding them together.

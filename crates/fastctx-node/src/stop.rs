@@ -7,54 +7,59 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::run::JobRecord;
-use fastctx_types::{JobId, MachineName, Reply};
+use fastctx_types::{JobId, Reply};
 
 use crate::Node;
+use crate::around::Heard;
 
-/// Stops `job` for `by`: on `machine`, or else on the one machine that has a
-/// job with this id.
-pub async fn stop(node: &Arc<Node>, by: String, job: JobId, machine: Option<MachineName>) -> Result<Reply, Failure> {
+/// Stops `job` for `by`, who works for `acting`: on `machine`, or else on
+/// the one machine it may work on that has a job with this id.
+pub async fn stop(
+    node: &Arc<Node>,
+    acting: &Acting,
+    by: String,
+    job: JobId,
+    machine: Option<crate::reach::Written>,
+) -> Result<Reply, Failure> {
     let here = node.machine();
-    if machine.as_ref().is_none_or(|machine| *machine == here)
+    if machine.as_ref().is_none_or(|machine| node.is_here(machine))
         && let Some(record) = here_(node, &job, &by).await?
     {
         return Ok(Reply::JobStopped { machine: here, record: Box::new(record) });
     }
-    if machine.as_ref() == Some(&here) {
+    if machine.as_ref().is_some_and(|machine| node.is_here(machine)) {
         return Err(Failure::new(format!("{here} has no job {job}")));
     }
-    let link = node.link().ok_or_else(|| Failure::new(format!("{here} has no job {job}")))?;
-    let machines: Vec<MachineName> = match machine {
-        Some(machine) => vec![machine],
+    let call = RemoteCall::StopJob { job: job.clone(), by: by.clone() };
+    let heard = match machine {
+        Some(written) => {
+            let answer = match node.call(acting, &written, Purpose::Hands, call).await {
+                Ok(Ok(reply)) => Heard::Answered(reply),
+                Ok(Err(failure)) => Heard::NoAnswer(failure.message),
+                Err(failure) => Heard::NoAnswer(failure.to_string()),
+            };
+            vec![(written.name, answer)]
+        }
         None => {
-            let _ = link.refresh().await;
-            let (table, presence) = link.members();
-            table
-                .machines()
-                .filter(|member| member.name != here && crate::admission::reaches(node, &table, &member.name))
-                .filter(|member| presence.iter().any(|presence| presence.name == member.name && presence.online))
-                .map(|member| member.name.clone())
-                .collect()
+            if !node.connected_anywhere() {
+                return Err(Failure::new(format!("{here} has no job {job}")));
+            }
+            let machines = crate::around::reachable(node, acting, Purpose::Hands);
+            crate::around::ask_each(machines, |_| call.clone()).await
         }
     };
-    let mut asks = Vec::new();
-    for name in machines {
-        let (link, call) = (link.clone(), RemoteCall::StopJob { job: job.clone(), by: by.clone() });
-        asks.push(tokio::spawn(async move { (name.clone(), link.call(&name, call).await) }));
-    }
     let mut stopped = Vec::new();
     let mut failed = Vec::new();
-    for ask in asks {
-        let Ok((name, answer)) = ask.await else { continue };
-        match answer {
-            Ok(Ok(RemoteReply::JobStopped { record: Some(record) })) => stopped.push((name, record)),
-            Ok(Ok(_)) => {}
-            Ok(Err(failure)) => failed.push(format!("{name}: {failure}")),
-            Err(failure) => failed.push(format!("{name}: {failure}")),
+    for (name, heard) in heard {
+        match heard {
+            Heard::Answered(RemoteReply::JobStopped { record: Some(record) }) => stopped.push((name, record)),
+            Heard::Answered(_) | Heard::Offline(_) => {}
+            Heard::NoAnswer(reason) => failed.push(format!("{name}: {reason}")),
         }
     }
     match stopped.len() {

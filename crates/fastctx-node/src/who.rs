@@ -5,6 +5,7 @@ use std::io;
 use std::path::Path;
 
 use fastctx_hands::run::record;
+use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{Activity, Moved};
 use fastctx_types::town::{ResidentNow, RunningJob, WhoReply};
@@ -102,6 +103,24 @@ pub fn who(
     Ok(WhoReply { machine: machine.clone(), residents, jobs, history: None })
 }
 
+/// Marks what `reply` shows that works for no account `acting` works for,
+/// as this computer's views of its hubs say.
+pub(crate) fn mark_others(node: &crate::Node, acting: &Acting, reply: &mut fastctx_types::town::WorldWho) {
+    reply.mark_others(
+        |account| node.serves(acting, &account.hub, &account.account),
+        |machine| {
+            node.links()
+                .iter()
+                .flat_map(|link| {
+                    let hub = link.membership().id.clone();
+                    let logins = link.view().member(machine).map(|member| member.logins.clone());
+                    logins.into_iter().flatten().map(move |account| HubAccount { hub: hub.clone(), account })
+                })
+                .collect()
+        },
+    );
+}
+
 /// The jobs in one resident's `jobs` directory that have not ended.
 pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Result<()> {
     for path in read_dir(jobs)? {
@@ -110,6 +129,7 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
         }
         let job = record::read(&path)?;
         if job.end.is_none() {
+            let account = job.on.and_then(|on| on.account).or(job.account);
             running.push(RunningJob {
                 job: job.id,
                 town: job.town,
@@ -120,6 +140,7 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
                 command: first_line(&job.script),
                 output: job.output,
                 stderr: job.stderr,
+                account,
             });
         }
     }

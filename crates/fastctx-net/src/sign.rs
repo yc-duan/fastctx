@@ -25,52 +25,22 @@ pub enum Domain {
     /// A machine proving to the hub that it holds its key, bound to one TLS
     /// connection.
     Session,
-    /// An envelope from one member to another (`crate::envelope`).
-    Envelope,
-    /// A machine's record of itself: its name and key.
-    Record,
-    /// A member vouching in advance for whoever holds an invitation.
-    Endorsement,
-    /// The holder of an invitation naming the machine it admits.
-    Admission,
-    /// A member saying a key is no longer trusted.
-    Revocation,
-    /// The source of a data transfer naming its two ends.
-    Ticket,
     /// A machine handing over what happens in a session it holds, to a
     /// machine watching it.
     Event,
     /// Metadata and byte-block digests belonging to one user's file read.
     FileRead,
-    /// An entry of a town's shared ledger, as its author wrote it.
+    /// An entry of a project's shared ledger, as its author wrote it.
     Ledger,
-    /// An item of a town's ledger as the hub keeps it: a sealed entry, or
-    /// an entry's key sealed again for another member (`crate::ledger`).
-    LedgerItem,
-    /// A member with management rights setting what another member may do
-    /// (`crate::scope`).
-    Grant,
-    /// A member with management rights saying which upstream a machine
-    /// connects to (`crate::tree`).
-    Route,
 }
 
 impl Domain {
     fn name(self) -> &'static str {
         match self {
             Domain::Session => "session",
-            Domain::Envelope => "envelope",
-            Domain::Record => "record",
-            Domain::Endorsement => "endorsement",
-            Domain::Admission => "admission",
-            Domain::Revocation => "revocation",
-            Domain::Ticket => "ticket",
             Domain::Event => "event",
             Domain::FileRead => "file-read",
             Domain::Ledger => "ledger",
-            Domain::LedgerItem => "ledger-item",
-            Domain::Grant => "grant",
-            Domain::Route => "route",
         }
     }
 }
@@ -85,7 +55,7 @@ fn signing_input(domain: Domain, bytes: &[u8]) -> Vec<u8> {
     input
 }
 
-/// A machine's private key, or an invitation's one-time key.
+/// A machine's private key, or a token's one-time key.
 pub struct SecretKey {
     key: SigningKey,
 }

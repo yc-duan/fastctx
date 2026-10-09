@@ -7,8 +7,11 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
 
 /** The frame's own glyphs: the sidebar, new conversations, settings, and
  *  what can be done to an agent (sleep, wake, move to a project, remove,
- *  which archives it), a page and its versions. */
-type Frame = "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move" | "archive" | "reread" | "scan" | "grip" | "page" | "versions";
+ *  which archives it), a page and its versions; an account, its password,
+ *  a phone, logging out, trust and a relay. */
+type Frame =
+  | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
+  | "archive" | "reread" | "scan" | "grip" | "page" | "versions" | "person" | "key" | "phone" | "logout" | "shield" | "relay";
 
 const paths: Record<Named, string> = {
   menu: '<path d="M4 7h12M4 13h8"/>',
@@ -47,6 +50,12 @@ const paths: Record<Named, string> = {
   send: '<path d="M10 15.5v-11M5.5 9L10 4.5 14.5 9"/>',
   attach: '<path d="M14.2 9.6l-4.6 4.6a3.1 3.1 0 0 1-4.4-4.4l5.3-5.3a2.1 2.1 0 0 1 3 3l-5.2 5.2a1 1 0 0 1-1.5-1.5l4.6-4.6"/>',
   file: '<path d="M5.5 3.5h5.5l3.5 3.5v8.5a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z"/><path d="M11 3.5v3.5h3.5"/>',
+  person: '<circle cx="10" cy="7.25" r="2.75"/><path d="M4.75 16c.7-3 2.6-4.5 5.25-4.5s4.55 1.5 5.25 4.5"/>',
+  key: '<circle cx="7" cy="10" r="2.75"/><path d="M9.75 10h6.5M14 10v2.25M16.25 10v1.5"/>',
+  phone: '<rect x="6" y="3.25" width="8" height="13.5" rx="1.75"/><path d="M9 14.25h2"/>',
+  logout: '<path d="M8 4.25H5.25a1 1 0 0 0-1 1v9.5a1 1 0 0 0 1 1H8"/><path d="M11.5 6.75L14.75 10l-3.25 3.25M14.5 10H8"/>',
+  shield: '<path d="M10 3.75l5.25 2v4c0 3.2-2.2 5.4-5.25 6.5-3.05-1.1-5.25-3.3-5.25-6.5v-4z"/>',
+  relay: '<circle cx="4.5" cy="10" r="1.5"/><circle cx="15.5" cy="10" r="1.5"/><path d="M6 10h2.25M11.75 10H14"/><rect x="8.25" y="8" width="3.5" height="4" rx="0.75"/>',
   camera: '<path d="M3.75 7.5a1 1 0 0 1 1-1h2.1l1.2-1.75h3.9l1.2 1.75h2.1a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H4.75a1 1 0 0 1-1-1z"/><circle cx="10" cy="10.75" r="2.6"/>',
 };
 

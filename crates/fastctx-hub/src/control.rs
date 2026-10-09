@@ -1,33 +1,58 @@
 //! A member's control connection: letters, calls, questions and the
 //! heartbeat.
+//!
+//! The hub says who a member's envelopes are from, by the session they come
+//! on, and passes a call or a letter on only when the directory lets that
+//! member say it to its receiver for the account it names. Every call in
+//! flight keeps what it was allowed under, so a change to the directory
+//! that takes it back ends the call (`Hub::changed`).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use fastctx_net::envelope::{self, Envelope, Kind};
-use fastctx_net::scope::{Grant, Scope};
-use fastctx_net::sign::{Domain, PublicKey, Signature, Signed};
-use fastctx_net::tree::Route;
-use fastctx_net::trust::{Endorsement, Record, Revocation};
-use fastctx_net::wire::{self, CallStatus, Down, Letters, Presence, Question, Refusal, SILENCE, Told, Up};
-use fastctx_types::MachineName;
+use fastctx_net::envelope::{Envelope, Kind};
+use fastctx_net::sign::{PublicKey, Signature};
+use fastctx_net::wire::{self, CallStatus, Down, Letters, Question, Refusal, SILENCE, Told, Up};
+use fastctx_types::access::Purpose;
+use fastctx_types::remote::RemoteCall;
+use fastctx_types::{AccountName, MachineName};
 use futures_util::{SinkExt as _, StreamExt as _};
 use jiff::Timestamp;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use crate::store::Invitation;
 use crate::{Hub, Out, Session, Socket, refuse, storage_failure};
 
-/// A call on its way: who asked, and who is to answer.
+/// What a call or a data connection was allowed under: `from` saying it to
+/// `to` for `account`, for `purpose`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Standing {
+    pub from: MachineName,
+    pub account: AccountName,
+    pub to: MachineName,
+    pub purpose: Purpose,
+}
+
+impl Standing {
+    /// Why it no longer holds, if it does not.
+    pub fn lapsed(&self, hub: &Hub) -> Option<String> {
+        let store = hub.store();
+        store.book.directory.admits(&self.from, &self.account, &self.to, self.purpose).err()
+    }
+}
+
+/// A call on its way: who asked, who is to answer, and what it was allowed
+/// under.
 pub(crate) struct Pending {
     caller: MachineName,
     caller_generation: u64,
     id: u64,
     target: MachineName,
     target_generation: u64,
+    pub standing: Standing,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn session(
     hub: Arc<Hub>,
     mut socket: Socket,
@@ -36,6 +61,7 @@ pub(crate) async fn session(
     key: PublicKey,
     proof: Signature,
     letters: Letters,
+    through: Option<String>,
 ) {
     let name = match hub.member(&key, &proof, &binding) {
         Ok(name) => name,
@@ -47,11 +73,16 @@ pub(crate) async fn session(
     };
     let generation = hub.next();
     let (out, mut outgoing) = mpsc::unbounded_channel();
-    if let Err(reason) = open(&hub, &name, generation, out.clone(), letters) {
+    if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, through.clone()) {
         refuse(&mut socket, reason).await;
         return;
     }
-    hub.log.line(format_args!("{name} connected from {peer}"));
+    match &through {
+        Some(relay) => hub.log.line(format_args!("{name} connected from {peer} through the relay {relay}")),
+        None => hub.log.line(format_args!("{name} connected from {peer}")),
+    }
+    // Whoever sees it sees it online now.
+    hub.changed();
 
     let (mut sink, mut stream) = socket.split();
     let (stopped, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
@@ -111,25 +142,24 @@ pub(crate) async fn session(
         Some(reason) => hub.log.line(format_args!("{name} disconnected: {reason}")),
         None => hub.log.line(format_args!("{name} disconnected")),
     }
+    hub.changed();
 }
 
 /// Registers the session, replacing an older one of the same member, and
 /// queues the welcome and every letter waiting for the member, in order.
-pub(crate) fn open(
+fn open(
     hub: &Hub,
     name: &MachineName,
     generation: u64,
     out: mpsc::UnboundedSender<Out>,
     letters: Letters,
+    through: Option<String>,
 ) -> Result<(), Refusal> {
     // The store's lock is held while the session is registered, so a letter
     // kept meanwhile is either in the backlog below or pushed after it.
     let mut store = hub.store();
-    let world = store.hub.world.clone();
-    let entry = store
-        .letters
-        .get_mut(name)
-        .ok_or_else(|| Refusal::Broken { reason: format!("the hub has no letter records for {name}") })?;
+    let (world, hub_name) = (store.hub.id.clone(), store.hub.name.clone());
+    let entry = store.letters_of(name).map_err(|error| storage_failure(hub, "making letter records", &error))?;
     if entry.epoch != letters.epoch {
         // The machine numbers its letters afresh, having lost its records.
         entry.epoch = letters.epoch;
@@ -139,9 +169,11 @@ pub(crate) fn open(
         Some((epoch, taken)) if epoch == entry.out_epoch => taken,
         _ => 0,
     };
-    entry.connected_at = Some(Timestamp::now());
+    let now = Timestamp::now();
+    entry.connected_at = Some(now);
     let welcome = Down::Welcome {
-        world,
+        hub: world,
+        hub_name,
         name: name.clone(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         taken: entry.taken,
@@ -157,7 +189,7 @@ pub(crate) fn open(
     for (seq, message) in backlog {
         let _ = out.send(Out::Frame(Down::Deliver { seq, message }));
     }
-    let replaced = hub.sessions().insert(name.clone(), Session { generation, out });
+    let replaced = hub.sessions().insert(name.clone(), Session { generation, out, since: now, through });
     drop(store);
     if let Some(old) = replaced {
         let _ = old.out.send(Out::End(Refusal::Replaced));
@@ -180,17 +212,17 @@ pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
             if let Err(error) = store.save_letters() {
                 hub.log.line(format_args!("recording that {name} left: {error}"));
             }
-            // The data connections waiting for it wait no longer; a session
-            // that replaced this one keeps its own.
-            crate::data::member_left(hub, name);
         }
     }
+    // Data connections it registered and nobody paired wait no longer; a
+    // session that replaced this one keeps its own.
+    crate::data::member_left(hub, name, generation);
     fail_calls_of(hub, name, generation);
 }
 
 /// Ends every call this session made or was to answer.
 fn fail_calls_of(hub: &Hub, name: &MachineName, generation: u64) {
-    let ended: Vec<(u64, Pending)> = {
+    let ended: Vec<Pending> = {
         let mut calls = hub.calls.lock().expect("never poisoned");
         let keys: Vec<u64> = calls
             .iter()
@@ -200,16 +232,51 @@ fn fail_calls_of(hub: &Hub, name: &MachineName, generation: u64) {
             })
             .map(|(key, _)| *key)
             .collect();
-        keys.into_iter().filter_map(|key| calls.remove(&key).map(|pending| (key, pending))).collect()
+        keys.into_iter().filter_map(|key| calls.remove(&key)).collect()
     };
-    for (_, pending) in ended {
+    for pending in ended {
         if pending.target == *name {
             hub.tell(&pending.caller, Down::Status { id: pending.id, status: CallStatus::Lost });
         }
     }
 }
 
-pub(crate) fn handle(
+/// Ends every call in flight whose standing lapsed, telling its caller.
+pub(crate) fn cut_calls(hub: &Hub) {
+    // No lock is held while another is taken: the calls are copied out,
+    // judged against the directory, and then taken out.
+    let standings: Vec<(u64, Standing)> = hub
+        .calls
+        .lock()
+        .expect("never poisoned")
+        .iter()
+        .map(|(key, pending)| (*key, pending.standing.clone()))
+        .collect();
+    let keys: Vec<(u64, String)> = {
+        let store = hub.store();
+        standings
+            .into_iter()
+            .filter_map(|(key, standing)| {
+                let directory = &store.book.directory;
+                directory
+                    .admits(&standing.from, &standing.account, &standing.to, standing.purpose)
+                    .err()
+                    .map(|why| (key, why))
+            })
+            .collect()
+    };
+    let lapsed: Vec<(Pending, String)> = {
+        let mut calls = hub.calls.lock().expect("never poisoned");
+        keys.into_iter().filter_map(|(key, why)| calls.remove(&key).map(|pending| (pending, why))).collect()
+    };
+    for (pending, why) in lapsed {
+        hub.log.line(format_args!("cut a call from {} to {}: {why}", pending.caller, pending.target));
+        let status = CallStatus::Cut { reason: format!("the right it was made under was taken back: {why}") };
+        hub.tell(&pending.caller, Down::Status { id: pending.id, status });
+    }
+}
+
+fn handle(
     hub: &Hub,
     name: &MachineName,
     generation: u64,
@@ -221,12 +288,12 @@ pub(crate) fn handle(
     };
     match frame {
         Up::Ping { n } => reply(Down::Pong { n }),
-        Up::Send { seq, message } => letter(hub, name, seq, &message, &reply)?,
+        Up::Send { seq, message } => letter(hub, name, seq, message, &reply)?,
         Up::Ack { seq } => {
             let store = hub.store();
             store.letters_taken(name, seq).map_err(|error| storage_failure(hub, "dropping taken letters", &error))?;
         }
-        Up::Call { id, message } => reply(Down::Status { id, status: call(hub, name, generation, id, &message) }),
+        Up::Call { id, message } => reply(Down::Status { id, status: call(hub, name, generation, id, message) }),
         Up::Answer { call, message } => answer(hub, name, generation, call, message),
         Up::Cancel { id } => {
             hub.calls
@@ -254,61 +321,68 @@ pub(crate) fn handle(
         Up::Hello { .. } => {
             return Err(Refusal::Broken { reason: "a second hello on one connection".to_string() });
         }
-        Up::Admit { .. } => {
-            return Err(Refusal::Broken { reason: "a member's session admits nobody".to_string() });
-        }
-        Up::Attach { .. } | Up::Detach { .. } | Up::For { .. } => {
-            return Err(Refusal::Broken { reason: "a member's session carries no other machine".to_string() });
+        Up::LoginFinish { .. } | Up::RegisterFinish { .. } => {
+            return Err(Refusal::Broken { reason: "a member's session logs nobody in".to_string() });
         }
     }
     Ok(())
 }
 
-/// Opens a member's envelope, checking it came from the member on this
-/// connection. The hub reads only the envelope; the body is sealed.
-fn open_envelope(hub: &Hub, name: &MachineName, message: &Signed) -> Result<Envelope, String> {
-    let claimed = envelope::claim(message)?;
-    if claimed.from != *name {
-        return Err(format!("it says it is from {}, on the connection of {name}", claimed.from));
+/// Checks an envelope from the member `name`: it says it is from `name`
+/// and for this hub.
+fn own(hub: &Hub, name: &MachineName, message: &Envelope) -> Result<(), String> {
+    if message.from != *name {
+        return Err(format!("it says it is from {}, on the connection of {name}", message.from));
     }
-    let store = hub.store();
-    if claimed.world != store.hub.world {
-        return Err(format!("it is for the World {}", claimed.world));
+    let world = hub.store().hub.id.clone();
+    if message.hub != world {
+        return Err(format!("it is for the hub {}", message.hub));
     }
-    let key = store.table().get(name).map(|member| member.key).ok_or_else(|| format!("{name} is not a member"))?;
-    envelope::open(message, &key)
+    if message.to == *name {
+        return Err("a machine's own calls and letters do not go through the hub".to_string());
+    }
+    Ok(())
 }
 
-fn letter(hub: &Hub, name: &MachineName, seq: u64, message: &Signed, reply: &impl Fn(Down)) -> Result<(), Refusal> {
-    let store = hub.store();
-    let taken = store.letters.get(name).map(|entry| entry.taken).unwrap_or(0);
+/// The standing a call or a letter names, if the directory allows it.
+fn standing(hub: &Hub, message: &Envelope) -> Result<Standing, String> {
+    let (account, purpose) = message.standing()?;
+    let standing = Standing { from: message.from.clone(), account: account.clone(), to: message.to.clone(), purpose };
+    match standing.lapsed(hub) {
+        Some(why) => Err(why),
+        None => Ok(standing),
+    }
+}
+
+fn letter(hub: &Hub, name: &MachineName, seq: u64, message: Envelope, reply: &impl Fn(Down)) -> Result<(), Refusal> {
+    let taken = hub.store().letters.get(name).map(|entry| entry.taken).unwrap_or(0);
     if seq <= taken {
         // Sent again after a reconnect; the hub holds it already.
         reply(Down::Ack { seq, refused: None });
         return Ok(());
     }
-    drop(store);
-    let refused = match open_envelope(hub, name, message) {
-        Ok(Envelope { to, kind: Kind::Letter, .. }) => {
-            let mut store = hub.store();
-            if to == *name {
-                Some("a machine's letters to itself do not go through the hub".to_string())
-            } else if store.table().get(&to).is_none() {
-                Some(match store.table().revoked(&to) {
-                    Some(revocation) => {
-                        format!("{to} was revoked by {} at {}", revocation.by, revocation.at)
-                    }
-                    None => format!("{to} is not a member"),
-                })
-            } else {
-                let kept = store
-                    .keep_letter(&to, message)
-                    .map_err(|error| storage_failure(hub, "keeping a letter", &error))?;
-                hub.tell(&to, Down::Deliver { seq: kept, message: message.clone() });
-                None
-            }
+    let refused = match own(hub, name, &message).and_then(|()| {
+        if message.kind != Kind::Letter {
+            return Err("only letters are kept for later".to_string());
         }
-        Ok(_) => Some("only letters are kept for later".to_string()),
+        if hub.store().book.directory.member(&message.to).is_none() {
+            return Err(format!("{} is not a member of the hub", message.to));
+        }
+        match standing(hub, &message) {
+            Ok(_) => Ok(()),
+            Err(_) if echoes_work(hub, &message) => Ok(()),
+            Err(reason) => Err(reason),
+        }
+    }) {
+        Ok(()) => {
+            let to = message.to.clone();
+            let kept = {
+                let mut store = hub.store();
+                store.keep_letter(&to, &message).map_err(|error| storage_failure(hub, "keeping a letter", &error))?
+            };
+            hub.tell(&to, Down::Deliver { seq: kept, message });
+            None
+        }
         Err(reason) => Some(reason),
     };
     let mut store = hub.store();
@@ -316,6 +390,7 @@ fn letter(hub: &Hub, name: &MachineName, seq: u64, message: &Signed, reply: &imp
         entry.taken = seq;
     }
     store.save_letters().map_err(|error| storage_failure(hub, "counting a letter", &error))?;
+    drop(store);
     if let Some(reason) = &refused {
         hub.log.line(format_args!("refused letter {seq} from {name}: {reason}"));
     }
@@ -323,39 +398,90 @@ fn letter(hub: &Hub, name: &MachineName, seq: u64, message: &Signed, reply: &imp
     Ok(())
 }
 
-fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: &Signed) -> CallStatus {
-    let to = match open_envelope(hub, name, message) {
-        Ok(Envelope { to, kind, .. }) if kind.is_call() => to,
-        // A caller that sends something unreadable gets the plainest
-        // answer: nobody by that description is there.
-        Ok(_) | Err(_) => return CallStatus::NotMember,
+/// The resident a call asks the machine it goes to to work for, when it
+/// names one: a hop of an `on`, a run handed over to where its resident
+/// works, a colleague asked, a file placed.
+fn worked_for(message: &Envelope) -> Option<fastctx_types::Address> {
+    let call = match message.body::<fastctx_net::message::Body>().ok()? {
+        fastctx_net::message::Body::Call { call } | fastctx_net::message::Body::StreamCall { call } => call,
+        _ => return None,
     };
-    let store = hub.store();
-    if store.table().get(&to).is_none() {
-        return CallStatus::NotMember;
+    let from = |resident| fastctx_types::Address { machine: message.from.clone(), resident };
+    match call {
+        RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } => Some(origin.resident),
+        RemoteCall::Run { resident, .. } | RemoteCall::Place { resident, .. } => Some(from(resident)),
+        RemoteCall::Ask { asker, .. } => Some(from(asker)),
+        _ => None,
     }
-    let last_seen = store.letters.get(&to).and_then(|entry| entry.last_seen);
-    let sessions = hub.sessions();
-    let Some(target) = sessions.get(&to) else {
+}
+
+/// Whether `message` is a letter telling a resident what came of work its
+/// machine was called to do for it, such as a job's end or a colleague's
+/// answer: that goes on after the account's right on the machine is taken
+/// back, as long as the account stands and the resident's machine still
+/// hosts it (`world-network.md`, 一台机器给几个账号用).
+fn echoes_work(hub: &Hub, message: &Envelope) -> bool {
+    let (Ok((account, Purpose::Echo)), Ok(body)) =
+        (message.standing(), message.body::<fastctx_net::message::LetterBody>())
+    else {
+        return false;
+    };
+    let fastctx_types::remote::Letter::Notice { to, .. } = body.letter else { return false };
+    let store = hub.store();
+    let resident = fastctx_types::Address { machine: message.to.clone(), resident: to };
+    store.book.directory.admits_echo(&message.from, account, &message.to).is_ok()
+        && store.worked.contains(&(message.from.clone(), resident))
+}
+
+fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelope) -> CallStatus {
+    if let Err(reason) = own(hub, name, &message) {
+        return CallStatus::Refused { reason };
+    }
+    if message.kind != Kind::Call {
+        return CallStatus::Refused { reason: format!("a {:?} is not a call", message.kind) };
+    }
+    let to = message.to.clone();
+    let last_seen = {
+        let store = hub.store();
+        if store.book.directory.member(&to).is_none() {
+            return CallStatus::NotMember;
+        }
+        store.letters.get(&to).and_then(|entry| entry.last_seen)
+    };
+    let standing = match standing(hub, &message) {
+        Ok(standing) => standing,
+        Err(reason) => return CallStatus::Refused { reason },
+    };
+    if let Some(resident) = worked_for(&message)
+        && let Err(error) = hub.store().note_worked(&to, resident)
+    {
+        hub.log.line(format_args!("noting that {to} works for a resident: {error}"));
+    }
+    let target = hub.sessions().get(&to).map(|session| (session.generation, session.out.clone()));
+    let Some((target_generation, target)) = target else {
         return CallStatus::Offline { last_seen };
     };
     let key = hub.next();
+    if let Some(ticket) = &message.stream {
+        crate::data::register(hub, ticket, &standing, name, generation);
+    }
     let pending = Pending {
         caller: name.clone(),
         caller_generation: generation,
         id,
         target: to.clone(),
-        target_generation: target.generation,
+        target_generation,
+        standing,
     };
     hub.calls.lock().expect("never poisoned").insert(key, pending);
-    if target.out.send(Out::Frame(Down::Incoming { call: key, message: message.clone() })).is_err() {
+    if target.send(Out::Frame(Down::Incoming { call: key, message })).is_err() {
         hub.calls.lock().expect("never poisoned").remove(&key);
         return CallStatus::Offline { last_seen: Some(Timestamp::now()) };
     }
     CallStatus::Delivered
 }
 
-fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: Signed) {
+fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: Envelope) {
     let pending = {
         let mut calls = hub.calls.lock().expect("never poisoned");
         match calls.get(&call) {
@@ -366,292 +492,59 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: Si
     // The caller may have given up or left; an answer nobody waits for is
     // dropped, as a call does not outlive its caller.
     let Some(pending) = pending else { return };
-    match open_envelope(hub, name, &message) {
-        Ok(Envelope { to, kind, .. }) if kind.is_answer() && to == pending.caller => {
-            let sessions = hub.sessions();
-            if let Some(caller) =
-                sessions.get(&pending.caller).filter(|session| session.generation == pending.caller_generation)
-            {
-                let _ = caller.out.send(Out::Frame(Down::Answered { id: pending.id, message }));
-            }
-        }
-        Ok(_) | Err(_) => {
-            hub.log.line(format_args!("{name} answered call {call} with something that is not its answer"));
-            hub.tell(&pending.caller, Down::Status { id: pending.id, status: CallStatus::Lost });
-        }
+    let fits = message.from == *name && message.kind.is_answer() && message.to == pending.caller;
+    if !fits {
+        hub.log.line(format_args!("{name} answered call {call} with something that is not its answer"));
+        hub.tell(&pending.caller, Down::Status { id: pending.id, status: CallStatus::Lost });
+        return;
+    }
+    if let Some(ticket) = &message.stream {
+        crate::data::register(hub, ticket, &pending.standing, name, generation);
+    }
+    let sessions = hub.sessions();
+    if let Some(caller) =
+        sessions.get(&pending.caller).filter(|session| session.generation == pending.caller_generation)
+    {
+        let _ = caller.out.send(Out::Frame(Down::Answered { id: pending.id, message }));
     }
 }
 
 fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
         Question::KernelRelease { .. } => Err("release reads are dispatched asynchronously".into()),
-        Question::Members => {
-            let store = hub.store();
-            let sessions = hub.sessions();
-            let presence = store
-                .members
-                .records
-                .iter()
-                .map(|admitted| {
-                    let entry = store.letters.get(&admitted.name);
-                    let online = sessions.contains_key(&admitted.name);
-                    let since = entry.and_then(|entry| if online { entry.connected_at } else { entry.last_seen });
-                    Presence { name: admitted.name.clone(), online, since }
-                })
-                .collect();
-            Ok(Told::Members {
-                records: store.members.records.iter().map(|admitted| admitted.record.clone()).collect(),
-                revocations: store.members.revocations.clone(),
-                grants: store.members.grants.clone(),
-                routes: store.members.routes.clone(),
-                presence,
-                latest: store.latest(),
-            })
-        }
-        Question::Invite { endorsement } => invite(hub, name, endorsement).map(|()| Told::Done),
-        Question::Revoke { revocation } => revoke(hub, name, revocation).map(|()| Told::Done),
-        Question::Republish { record } => republish(hub, name, record).map(|()| Told::Done),
-        Question::Grant { grant: signed } => grant(hub, name, signed).map(|()| Told::Done),
-        Question::Route { route: signed } => route(hub, name, signed).map(|()| Told::Done),
-        Question::LedgerWrite { item } => {
-            let (town, seq, tell) = {
+        Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),
+        Question::Manage { account, change } => crate::manage::change(hub, name, &account, change),
+        Question::LedgerWrite { town, entry } => {
+            let (seq, tell) = {
                 let store = hub.store();
-                hub.ledgers.lock().expect("never poisoned").write(&store.hub.world, store.table(), name, item)?
+                hub.ledgers.lock().expect("never poisoned").write(&store, name, &town, entry)?
             };
-            hub.log.line(format_args!("{name} wrote item {seq} of {town}"));
+            hub.log.line(format_args!("{name} wrote entry {seq} of {town}"));
             for machine in tell {
                 hub.tell(&machine, Down::LedgerChanged { town: town.clone() });
             }
             Ok(Told::Written { seq })
         }
-        Question::LedgerCatalog | Question::LedgerQuery { .. } => crate::ledger_query::answer(hub, name, question),
         Question::LedgerTowns => Ok(Told::Towns { towns: hub.ledgers.lock().expect("never poisoned").towns_of(name) }),
+        Question::LedgerCatalog => {
+            let store = hub.store();
+            let directory = &store.book.directory;
+            let towns = hub
+                .ledgers
+                .lock()
+                .expect("never poisoned")
+                .catalog()
+                .into_iter()
+                .filter(|(town, _)| directory.member_in_project(name, town))
+                .collect();
+            Ok(Told::Towns { towns })
+        }
         Question::LedgerRead { town, after } => {
-            let (entries, more) = hub.ledgers.lock().expect("never poisoned").read(name, &town, after)?;
+            if !hub.store().book.directory.member_in_project(name, &town) {
+                return Err(format!("{name} acts for no account that may read {town}"));
+            }
+            let (entries, more) = hub.ledgers.lock().expect("never poisoned").read(&town, after)?;
             Ok(Told::Entries { entries, more })
         }
     }
-}
-
-fn invite(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
-    let mut store = hub.store();
-    let member = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
-    let key = member.key;
-    let endorsement: Endorsement =
-        signed.open(&key, Domain::Endorsement).map_err(|error| format!("the endorsement: {error}"))?;
-    // Every machine refuses whom a member without the right invited; the
-    // hub keeps no such invitation to begin with.
-    store.table().may_invite(name, endorsement.scope.as_ref().unwrap_or(&Scope::all()))?;
-    if endorsement.inviter != *name {
-        return Err(format!("the endorsement is by {}, sent by {name}", endorsement.inviter));
-    }
-    if endorsement.world != store.hub.world {
-        return Err(format!("the endorsement is for the World {}", endorsement.world));
-    }
-    made_now(endorsement.at, None, "invitation")?;
-    if endorsement.expires <= Timestamp::now() {
-        return Err("the invitation has expired already".to_string());
-    }
-    if store.invitation(&endorsement.invite).is_some() {
-        return Err("that invitation key is registered already".to_string());
-    }
-    store.members.invitations.push(Invitation {
-        endorsement: signed,
-        invite: endorsement.invite,
-        inviter: name.clone(),
-        expires: endorsement.expires,
-        used_by: None,
-    });
-    store.save_members().map_err(|error| format!("the hub could not store the invitation: {error}"))?;
-    hub.log.line(format_args!("{name} made an invitation, valid until {}", endorsement.expires));
-    Ok(())
-}
-
-fn revoke(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
-    let revoked = {
-        let mut store = hub.store();
-        let signer = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
-        let key = signer.key;
-        let revocation: Revocation =
-            signed.open(&key, Domain::Revocation).map_err(|error| format!("the revocation: {error}"))?;
-        if !store.table().may_revoke(name, &revocation.name) {
-            return Err(format!("{name} may not revoke {}", revocation.name));
-        }
-        if revocation.by != *name {
-            return Err(format!("the revocation is by {}, sent by {name}", revocation.by));
-        }
-        if revocation.world != store.hub.world {
-            return Err(format!("the revocation is for the World {}", revocation.world));
-        }
-        made_now(Some(revocation.at), store.latest(), "revocation")?;
-        let member = store.table().get(&revocation.name).cloned();
-        match member {
-            Some(member) if member.key == revocation.key => {}
-            Some(_) => return Err(format!("{} has another key", revocation.name)),
-            None => return Err(format!("{} is not a member", revocation.name)),
-        }
-        store.members.revocations.push(signed);
-        store.save_members().map_err(|error| format!("the hub could not store the revocation: {error}"))?;
-        if let Err(error) = store.drop_letters(&revocation.name) {
-            hub.log.line(format_args!("dropping the letters for {}: {error}", revocation.name));
-        }
-        revocation
-    };
-    hub.log.line(format_args!("{} revoked {}: {}", revoked.by, revoked.name, revoked.reason));
-    let refusal = Refusal::Revoked { by: revoked.by.clone(), at: revoked.at, reason: revoked.reason.clone() };
-    if let Some(relay) = hub.relays().get(&revoked.name) {
-        let _ = relay.out.send(Out::End(refusal.clone()));
-    }
-    let sessions = hub.sessions();
-    if let Some(session) = sessions.get(&revoked.name) {
-        let _ = session.out.send(Out::End(refusal));
-    }
-    for session in sessions.values() {
-        let _ = session.out.send(Out::Frame(Down::MembersChanged));
-    }
-    Ok(())
-}
-
-/// Every machine judges invitations, grants, routes and revocations by the time
-/// they say they were made (`fastctx_net::trust`). So a member that no
-/// longer holds a right must not date one back to when it did, nor date one
-/// far ahead, which would hold up everyone's after it; and each must be
-/// dated after the latest the hub holds, so that the order they were made
-/// in is the order the hub took them in.
-fn made_now(at: Option<Timestamp>, latest: Option<Timestamp>, what: &str) -> Result<(), String> {
-    let at = at.ok_or_else(|| format!("the {what} says no time it was made; this fastctx is too old"))?;
-    let off = Timestamp::now().duration_since(at).abs();
-    if off > fastctx_net::trust::CLOCK_TOLERANCE {
-        return Err(format!(
-            "the {what} is dated {at}, {}s from the hub's clock; check this machine's clock",
-            off.as_secs()
-        ));
-    }
-    if let Some(latest) = latest
-        && at <= latest
-    {
-        return Err(format!(
-            "the {what} is dated {at}, not after the latest change to the members ({latest}); try again"
-        ));
-    }
-    Ok(())
-}
-
-/// A member's record again, with its sealing key and where it relays, if it
-/// does: the hub keeps it in place of the one it had, when the name, key and
-/// credential are the same.
-fn republish(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
-    {
-        let mut store = hub.store();
-        let member = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
-        let record: Record =
-            signed.open(&member.key, Domain::Record).map_err(|error| format!("the record: {error}"))?;
-        if record.name != *name || record.key != member.key || record.world != store.hub.world {
-            return Err(format!("the record is of {} with another key or World", record.name));
-        }
-        if record.seal.is_none() {
-            return Err("the record carries no sealing key".to_string());
-        }
-        let admitted = store
-            .members
-            .records
-            .iter_mut()
-            .find(|admitted| admitted.name == *name)
-            .ok_or_else(|| format!("the hub keeps no record of {name}"))?;
-        let before: Record = admitted.record.claim().map_err(|error| format!("the record the hub keeps: {error}"))?;
-        if before.key != record.key || before.credential != record.credential {
-            return Err("the record names another key or credential than the one the hub keeps".to_string());
-        }
-        if before.seal.is_some_and(|seal| Some(seal) != record.seal) {
-            return Err(format!("{name} published another sealing key before; it must join again"));
-        }
-        admitted.record = signed;
-        store.save_members().map_err(|error| format!("the hub could not store the record: {error}"))?;
-        match &record.relay {
-            Some(offer) => hub.log.line(format_args!(
-                "{name} published its record, relaying at {}",
-                offer.addresses.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
-            )),
-            None => hub.log.line(format_args!("{name} published its record")),
-        }
-    }
-    for session in hub.sessions().values() {
-        let _ = session.out.send(Out::Frame(Down::MembersChanged));
-    }
-    Ok(())
-}
-
-/// A grant from a member with management rights, kept when it is the next
-/// version for its member.
-fn grant(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
-    let (member, version) = {
-        let mut store = hub.store();
-        let signer = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
-        if !signer.manage {
-            return Err(format!("{name} does not hold management rights"));
-        }
-        let grant: Grant = signed.open(&signer.key, Domain::Grant).map_err(|error| format!("the grant: {error}"))?;
-        if grant.by != *name || grant.world != store.hub.world {
-            return Err(format!("the grant is by {} for the World {}", grant.by, grant.world));
-        }
-        let member =
-            store.table().get(&grant.member).cloned().ok_or_else(|| format!("{} is not a member", grant.member))?;
-        if member.key != grant.key {
-            return Err(format!("{} has another key", grant.member));
-        }
-        made_now(Some(grant.at), store.latest(), "grant")?;
-        let next = store.table().grant(&grant.member).map(|latest| latest.version + 1).unwrap_or(1);
-        if grant.version != next {
-            return Err(format!("the next grant for {} is version {next}", grant.member));
-        }
-        store.members.grants.push(signed);
-        store.save_members().map_err(|error| format!("the hub could not store the grant: {error}"))?;
-        (grant.member, grant.version)
-    };
-    hub.log.line(format_args!("{name} granted {member} version {version}"));
-    for session in hub.sessions().values() {
-        let _ = session.out.send(Out::Frame(Down::MembersChanged));
-    }
-    Ok(())
-}
-
-/// A route from a member with management rights, kept when it is the next
-/// version for its member.
-fn route(hub: &Hub, name: &MachineName, signed: Signed) -> Result<(), String> {
-    let (member, version) = {
-        let mut store = hub.store();
-        let signer = store.table().get(name).cloned().ok_or_else(|| format!("{name} is not a member"))?;
-        if !signer.manage {
-            return Err(format!("{name} does not hold management rights"));
-        }
-        let route: Route = signed.open(&signer.key, Domain::Route).map_err(|error| format!("the route: {error}"))?;
-        if route.by != *name || route.world != store.hub.world {
-            return Err(format!("the route is by {} for the World {}", route.by, route.world));
-        }
-        let member =
-            store.table().get(&route.member).cloned().ok_or_else(|| format!("{} is not a member", route.member))?;
-        if member.key != route.key {
-            return Err(format!("{} has another key", route.member));
-        }
-        for upstream in &route.via {
-            if let fastctx_net::tree::Upstream::Relay { machine } = upstream
-                && (*machine == route.member || store.table().carries(&route.member, machine))
-            {
-                return Err(format!("{machine} connects through {}: the route makes a loop", route.member));
-            }
-        }
-        made_now(Some(route.at), store.latest(), "route")?;
-        let next = store.table().route(&route.member).map(|latest| latest.version + 1).unwrap_or(1);
-        if route.version != next {
-            return Err(format!("the next route for {} is version {next}", route.member));
-        }
-        store.members.routes.push(signed);
-        store.save_members().map_err(|error| format!("the hub could not store the route: {error}"))?;
-        (route.member, route.version)
-    };
-    hub.log.line(format_args!("{name} routed {member}, version {version}"));
-    for session in hub.sessions().values() {
-        let _ = session.out.send(Out::Frame(Down::MembersChanged));
-    }
-    Ok(())
 }

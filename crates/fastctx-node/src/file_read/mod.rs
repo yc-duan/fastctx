@@ -8,6 +8,7 @@ mod remote;
 use std::sync::Arc;
 
 use fastctx_types::MachineName;
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::file_read::*;
 use fastctx_types::ipc::Failure;
 use tokio::sync::mpsc;
@@ -19,7 +20,7 @@ use fastctx_net::file_read::Part;
 type Sender = mpsc::Sender<Result<Part, Failure>>;
 type Receiver = mpsc::Receiver<Result<Part, Failure>>;
 
-fn start(node: Arc<Node>, machine: Option<MachineName>, request: ReadFileRequest) -> Receiver {
+fn start(node: Arc<Node>, acting: Acting, machine: Option<MachineName>, request: ReadFileRequest) -> Receiver {
     // At most one data-message payload waits between the file/network and
     // IPC. Slow interfaces therefore stop the producer instead of buffering.
     let (sender, receiver) = mpsc::channel(1);
@@ -35,9 +36,11 @@ fn start(node: Arc<Node>, machine: Option<MachineName>, request: ReadFileRequest
                             error
                         }))
                     }
-                    Some(machine) => match node.link() {
-                        Some(link) => fastctx_net::file_read::read(&link, machine, request, &sender).await,
-                        None => Err(Failure::new(format!("{} is in no World with {machine}", node.machine()))),
+                    Some(machine) => match node.speaking(&acting, &(&machine).into(), Purpose::Hands) {
+                        Ok((link, account)) => {
+                            fastctx_net::file_read::read(&link, machine, account, request, &sender).await
+                        }
+                        Err(failure) => Err(Failure::new(failure.to_string())),
                     },
                 }
             } => { let _ = sender.send(result.map(Part::Finished)).await; }

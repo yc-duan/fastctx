@@ -44,7 +44,14 @@ pub enum Owed {
 
 /// Tells `to` something. `id` names it, here and in the letter that carries
 /// it to another machine; the same id told again is the same notice.
-pub async fn tell(node: &Arc<Node>, to: &Address, id: NoticeId, notice: Notice, owed: Owed) -> Result<Landed, Failure> {
+pub async fn tell(
+    node: &Arc<Node>,
+    acting: &fastctx_types::access::Acting,
+    to: &Address,
+    id: NoticeId,
+    notice: Notice,
+    owed: Owed,
+) -> Result<Landed, Failure> {
     if to.machine == node.machine() {
         let delivery = Delivery { id, at: Timestamp::now(), notice };
         if crate::on_delivery::park(node, &to.resident, &delivery)
@@ -54,23 +61,17 @@ pub async fn tell(node: &Arc<Node>, to: &Address, id: NoticeId, notice: Notice, 
         }
         return tell_here(node, &to.resident, delivery, owed).await;
     }
-    let link = node.link().ok_or_else(|| {
-        Failure::new(format!(
-            "{} lives on {}, and this machine is in no World with it any more",
-            to.resident, to.machine
-        ))
-    })?;
     let letter = match notice {
         // Words a resident said make it owed the turn they go into, which
         // the receiving machine knows from who sent them.
         Notice::Words { from: Speaker::Resident { address }, text }
             if address.machine == node.machine() && matches!(owed, Owed::Speaker(_)) =>
         {
-            Letter::Speak { to: to.resident.clone(), from: address.resident, text }
+            Letter::Speak { to: to.resident.clone(), from: address.resident, text, accounts: Vec::new() }
         }
         notice => Letter::Notice { to: to.resident.clone(), notice },
     };
-    crate::letters::send(&link, &to.machine, id, letter)
+    crate::letters::send(node, acting, &(&to.machine).into(), id, letter)
         .map_err(|error| Failure::new(format!("sending to {}: {error}", to.machine)))?;
     Ok(Landed::Sent)
 }
@@ -132,7 +133,7 @@ pub(crate) async fn tell_here_locked(
     // The end of the resident's own job waits for whatever call is waiting
     // now; words for it end the wait (`world-run.md`).
     if !matches!(pending.delivery.notice, Notice::JobEnded { .. }) {
-        node.words.came(to);
+        node.words.came(&fastctx_types::Address { machine: node.machine(), resident: to.clone() });
     }
     hand_over_locked(node, to, &about, &directory, pending).await
 }

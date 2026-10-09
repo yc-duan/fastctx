@@ -18,8 +18,9 @@ use clap::Args;
 use fastctx_client::{CallError, Client};
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
-use fastctx_types::on::{OnEnd, OnPackage, OnPiece, OnRequest};
+use fastctx_types::on::{OnEnd, OnPackage, OnPiece, OnRequest, OnSource, PIPE_LINE_MAX};
 use fastctx_types::run::EndedHow;
+use fastctx_types::access::Written;
 use fastctx_types::{Address, Call, JobId, MachineName, TownName};
 
 /// What `on` exits with when the World could not carry the command through,
@@ -51,6 +52,13 @@ pub struct OnArgs {
     /// The command line the shell function quoted from the command's words.
     #[arg(long, value_name = "FILE", hide = true)]
     command: Option<PathBuf>,
+    /// The script pipes another `on`'s output into this one, and that
+    /// output may have gone straight on: what comes is then where it is.
+    #[arg(long, hide = true)]
+    pipe_in: bool,
+    /// The script pipes this one's output into an `on` to this machine.
+    #[arg(long, value_name = "MACHINE", hide = true)]
+    pipe_to: Option<String>,
     /// The machine, as `fastctx nodes` names it; the usage says it.
     #[arg(hide = true)]
     machine: Option<String>,
@@ -78,19 +86,22 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
             "usage: on MACHINE COMMAND [ARG...], or on MACHINE with the script on standard input. `fastctx nodes` lists the machines"
         );
     };
-    let machine = MachineName::try_from(machine.as_str())?;
+    let written = Written::parse(machine.as_str())?;
+    let machine = written.name.clone();
     let resident: Address =
         std::env::var("FASTCTX_RESIDENT").context("on works only inside a script run by the run tool")?.parse()?;
     let town = std::env::var("FASTCTX_TOWN").ok().map(TownName::try_from).transpose()?;
     let job = std::env::var("FASTCTX_JOB").ok().map(JobId::try_from).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
-    let package = collect(&args.state, args.command.as_deref(), &args.words)?;
+    let package = collect(&args.state, args.command.as_deref(), &args.words, args.pipe_in)?;
     let request = OnRequest {
         machine: machine.clone(),
+        hub: written.hub.clone(),
         receipt: true,
         process: Some(fastctx_platform::current_identity()?),
         job,
         package: package.clone(),
+        pipe_to: args.pipe_to.as_deref().map(MachineName::try_from).transpose()?,
     };
     let call = Call::On { resident: resident.clone(), town, request };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
@@ -107,6 +118,14 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
                     // here is the job's own input.
                     if std::env::var("FASTCTX_MACHINE").ok().as_deref() != Some(there.as_str()) {
                         forget(&package);
+                    }
+                }
+                // Its output stays there for the `on` reading it, which is
+                // told where.
+                Ok(Some(OnPiece::Piped { source })) => {
+                    if out.write_all(source.line().as_bytes()).and_then(|()| out.flush()).is_err() {
+                        stream.stop().await?;
+                        return Ok(Ended::ReaderLeft);
                     }
                 }
                 Ok(Some(OnPiece::Out { base64 })) => {
@@ -191,8 +210,9 @@ fn how_ended(how: &EndedHow) -> String {
 }
 
 /// Writes the package beside the state: the state, the command's words or
-/// the script, and standard input read to its end.
-fn collect(state: &Option<PathBuf>, command: Option<&Path>, words: &[String]) -> anyhow::Result<OnPackage> {
+/// the script, and standard input read to its end, or where it is kept when
+/// it is the output of an `on` that went straight on.
+fn collect(state: &Option<PathBuf>, command: Option<&Path>, words: &[String], pipe_in: bool) -> anyhow::Result<OnPackage> {
     let scratch = match std::env::var_os("FASTCTX_SCRATCH") {
         Some(scratch) => PathBuf::from(scratch),
         None => std::env::temp_dir(),
@@ -225,6 +245,7 @@ fn collect(state: &Option<PathBuf>, command: Option<&Path>, words: &[String]) ->
         let mut file = std::fs::File::create(path)?;
         Ok(std::io::copy(&mut stdin.lock(), &mut file)?)
     };
+    let mut source = None;
     let (script, input) = if let Some(line) = command_line {
         let script = directory.join("script");
         // Bash's %q can end in an escaped space. Whitespace here belongs
@@ -236,7 +257,16 @@ fn collect(state: &Option<PathBuf>, command: Option<&Path>, words: &[String]) ->
         } else {
             let path = directory.join("input");
             let size = read(&path)?;
-            (size > 0).then(|| path.to_string_lossy().into_owned())
+            if pipe_in
+                && size <= PIPE_LINE_MAX
+                && let Some(found) = OnSource::read(&std::fs::read(&path)?)
+            {
+                std::fs::remove_file(&path)?;
+                source = Some(found);
+                None
+            } else {
+                (size > 0).then(|| path.to_string_lossy().into_owned())
+            }
         };
         (script.to_string_lossy().into_owned(), input)
     } else {
@@ -255,6 +285,7 @@ fn collect(state: &Option<PathBuf>, command: Option<&Path>, words: &[String]) ->
         state: state_path.to_string_lossy().into_owned(),
         script,
         input,
+        source,
         writes_off: std::env::var("FASTCTX_WRITES").is_ok_and(|value| value == "off"),
     })
 }

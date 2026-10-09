@@ -12,12 +12,12 @@ use std::sync::Arc;
 
 pub(crate) async fn serve(
     node: &Arc<Node>,
+    link: &Arc<fastctx_net::link::Link>,
     request: ReadFileRequest,
     read: u64,
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
-    let link = node.link().ok_or_else(|| Failure::new("the machine left its World"))?;
-    let mut parts = super::start(node.clone(), None, request);
+    let mut parts = super::start(node.clone(), Default::default(), None, request);
     let mut n = 0;
     while let Some(part) = parts.recv().await {
         let (content, bytes, ended) = match part? {

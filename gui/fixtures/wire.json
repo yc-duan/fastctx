@@ -1,4 +1,247 @@
 {
+  "accounts": {
+    "replies": [
+      {
+        "machine": "desktop",
+        "hubs": [
+          {
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "online",
+              "since": "2026-10-09T08:30:00Z",
+              "hub": "203.0.113.10:7443",
+              "relay": "la",
+              "route": {
+                "kind": "local"
+              }
+            },
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "self_registration": true,
+            "accounts": [
+              {
+                "name": "ada",
+                "admin": true,
+                "may_register": true,
+                "locked": false,
+                "opened": "2026-10-09T08:30:00Z"
+              }
+            ],
+            "members": [
+              {
+                "name": "desktop",
+                "kind": "computer",
+                "logins": [
+                  "ada"
+                ],
+                "home": "ada",
+                "relays": [
+                  {
+                    "label": "la",
+                    "addresses": [
+                      "203.0.113.20:7444"
+                    ]
+                  }
+                ],
+                "added": "2026-10-09T08:30:00Z",
+                "online": true,
+                "since": "2026-10-09T08:30:00Z",
+                "through": "la",
+                "key": "5be1fcee"
+              },
+              {
+                "name": "pixel",
+                "kind": "phone",
+                "logins": [
+                  "ada"
+                ],
+                "home": null,
+                "relays": [],
+                "added": "2026-10-09T08:30:00Z",
+                "online": false,
+                "since": null,
+                "through": null,
+                "key": "4f2a91aa"
+              }
+            ],
+            "grants": [
+              {
+                "machine": "desktop",
+                "account": "bo",
+                "rights": {
+                  "hands": true,
+                  "agents": false
+                }
+              }
+            ],
+            "trust": [
+              {
+                "account": "ada",
+                "machine": "gpu"
+              }
+            ],
+            "projects": [
+              {
+                "name": "mark50",
+                "owner": "ada",
+                "granted": [
+                  "bo"
+                ]
+              }
+            ],
+            "arrivals": [
+              {
+                "hub": "w-0123456789abcdef",
+                "account": "ada",
+                "name": "pixel",
+                "device": true,
+                "noticed_at": "2026-10-09T08:30:00Z"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "machine": "desktop",
+        "hubs": []
+      }
+    ],
+    "changes": [
+      {
+        "change": "grant",
+        "machine": "desktop",
+        "to": "bo",
+        "rights": {
+          "hands": false,
+          "agents": true
+        }
+      },
+      {
+        "change": "trust",
+        "machine": "gpu",
+        "trusted": true
+      },
+      {
+        "change": "relays",
+        "machine": "desktop",
+        "relays": [
+          {
+            "label": "la",
+            "addresses": [
+              "203.0.113.20:7444"
+            ]
+          }
+        ]
+      },
+      {
+        "change": "remove",
+        "name": "pixel",
+        "reason": "lost"
+      },
+      {
+        "change": "logout"
+      },
+      {
+        "change": "token",
+        "register": true,
+        "name": "lab",
+        "kind": "computer",
+        "expires": "2026-10-09T08:30:00Z"
+      },
+      {
+        "change": "set_password",
+        "target": "ada",
+        "password": "fixture"
+      },
+      {
+        "change": "open_account",
+        "name": "bo",
+        "admin": false,
+        "may_register": true,
+        "password": "fixture"
+      },
+      {
+        "change": "set_account",
+        "name": "bo",
+        "admin": false,
+        "may_register": false,
+        "locked": true
+      },
+      {
+        "change": "delete_account",
+        "name": "bo"
+      },
+      {
+        "change": "settings",
+        "self_registration": false
+      },
+      {
+        "change": "share_project",
+        "town": "mark50",
+        "with": "bo",
+        "shared": true
+      },
+      {
+        "change": "move_project",
+        "town": "mark50",
+        "to": "bo"
+      },
+      {
+        "change": "seen",
+        "name": "pixel"
+      }
+    ],
+    "connections": [
+      {
+        "mode": "local",
+        "device": null
+      },
+      {
+        "mode": "device",
+        "device": {
+          "name": "pixel",
+          "hubs": [
+            {
+              "hub": "home",
+              "link": {
+                "kind": "online",
+                "since": "2026-10-09T08:30:00Z",
+                "hub": "203.0.113.10:7443",
+                "relay": "la",
+                "route": {
+                  "kind": "local"
+                }
+              },
+              "logins": [
+                "ada"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "mode": "device",
+        "device": {
+          "name": null,
+          "hubs": []
+        }
+      }
+    ],
+    "choices": [
+      {},
+      {
+        "account": {
+          "hub": "w-0123456789abcdef",
+          "account": "ada"
+        },
+        "works_on": "lab.home",
+        "colleagues": "gpu"
+      }
+    ]
+  },
   "pages": {
     "calls": [
       {
@@ -3950,7 +4193,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": true,
@@ -4020,7 +4266,17 @@
                     },
                     "session": "thread-1",
                     "world_started": true,
-                    "model": "model-a"
+                    "model": "model-a",
+                    "acting": {
+                      "kind": "accounts",
+                      "accounts": [
+                        {
+                          "hub": "w-0123456789abcdef",
+                          "account": "ada"
+                        }
+                      ]
+                    },
+                    "works_on": "laptop.home"
                   },
                   "town": "project-0",
                   "here": true,
@@ -4075,7 +4331,16 @@
                     },
                     "session": "thread-1",
                     "world_started": true,
-                    "model": "model-a"
+                    "model": "model-a",
+                    "acting": {
+                      "kind": "accounts",
+                      "accounts": [
+                        {
+                          "hub": "w-0123456789abcdef",
+                          "account": "ada"
+                        }
+                      ]
+                    }
                   },
                   "town": "project-0",
                   "here": false,
@@ -4128,7 +4393,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -4152,7 +4420,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -4189,7 +4460,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -5320,7 +5594,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": true,
@@ -5390,7 +5667,17 @@
                     },
                     "session": "thread-1",
                     "world_started": true,
-                    "model": "model-a"
+                    "model": "model-a",
+                    "acting": {
+                      "kind": "accounts",
+                      "accounts": [
+                        {
+                          "hub": "w-0123456789abcdef",
+                          "account": "ada"
+                        }
+                      ]
+                    },
+                    "works_on": "laptop.home"
                   },
                   "town": "project-0",
                   "here": true,
@@ -5445,7 +5732,16 @@
                     },
                     "session": "thread-1",
                     "world_started": true,
-                    "model": "model-a"
+                    "model": "model-a",
+                    "acting": {
+                      "kind": "accounts",
+                      "accounts": [
+                        {
+                          "hub": "w-0123456789abcdef",
+                          "account": "ada"
+                        }
+                      ]
+                    }
                   },
                   "town": "project-0",
                   "here": false,
@@ -5498,7 +5794,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -5522,7 +5821,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -5559,7 +5861,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -5689,7 +5994,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": true,
@@ -5759,7 +6067,17 @@
                     },
                     "session": "thread-1",
                     "world_started": true,
-                    "model": "model-a"
+                    "model": "model-a",
+                    "acting": {
+                      "kind": "accounts",
+                      "accounts": [
+                        {
+                          "hub": "w-0123456789abcdef",
+                          "account": "ada"
+                        }
+                      ]
+                    },
+                    "works_on": "laptop.home"
                   },
                   "town": "project-0",
                   "here": true,
@@ -5814,7 +6132,16 @@
                     },
                     "session": "thread-1",
                     "world_started": true,
-                    "model": "model-a"
+                    "model": "model-a",
+                    "acting": {
+                      "kind": "accounts",
+                      "accounts": [
+                        {
+                          "hub": "w-0123456789abcdef",
+                          "account": "ada"
+                        }
+                      ]
+                    }
                   },
                   "town": "project-0",
                   "here": false,
@@ -5867,7 +6194,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -5891,7 +6221,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -5928,7 +6261,10 @@
                     },
                     "session": null,
                     "world_started": false,
-                    "model": null
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
                   },
                   "town": null,
                   "here": false,
@@ -6030,1294 +6366,960 @@
     "nodes": [
       {
         "machine": "desktop",
-        "world": null,
-        "link": {
-          "kind": "alone"
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "shell": "",
+          "node_lifetime": {
+            "process": {
+              "pid": 123,
+              "token": "node-created"
+            },
+            "starter": {
+              "process": {
+                "pid": 122,
+                "token": "serve-created"
+              },
+              "session": {
+                "agent": "codex",
+                "client": "codex-fixture",
+                "version": "fixture-version"
+              }
+            },
+            "supervised": false,
+            "windows_job": {
+              "kill_on_close": true,
+              "breakaway_allowed": false,
+              "silent_breakaway": false
+            }
+          }
         },
-        "machines": [
+        "hubs": [
           {
-            "name": "desktop",
-            "online": true,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Ok": {
-                "name": "desktop",
-                "os": "windows",
-                "arch": "x86_64",
-                "home": "C:/Users/example",
-                "temp": "C:/Temp",
-                "path_separator": "\\",
-                "case_sensitive": false,
-                "version": "fixture-version",
-                "shell": "",
-                "node_lifetime": {
-                  "process": {
-                    "pid": 123,
-                    "token": "node-created"
-                  },
-                  "starter": {
-                    "process": {
-                      "pid": 122,
-                      "token": "serve-created"
-                    },
-                    "session": {
-                      "agent": "codex",
-                      "client": "codex-fixture",
-                      "version": "fixture-version"
-                    }
-                  },
-                  "supervised": false,
-                  "windows_job": {
-                    "kill_on_close": true,
-                    "breakaway_allowed": false,
-                    "silent_breakaway": false
-                  }
-                }
-              }
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "alone"
             },
-            "revoked": null,
-            "standing": {
-              "scope": {
-                "machines": "all",
-                "agents": "all",
-                "projects": "all",
-                "actions": "all",
-                "invite": true
-              },
-              "manage": true,
-              "invited_by": null,
-              "sealing": true
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "hub"
-                }
-              ],
-              "relays_at": [
-                "203.0.113.5:7444"
-              ]
-            }
-          },
-          {
-            "name": "lab",
-            "online": null,
-            "since": null,
-            "facts": {
-              "Ok": {
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "machines": [
+              {
                 "name": "lab",
-                "os": "linux",
-                "arch": "aarch64",
-                "home": "/home/example",
-                "temp": "/tmp",
-                "path_separator": "/",
-                "case_sensitive": true,
-                "version": "fixture-version",
-                "shell": ""
-              }
-            },
-            "revoked": null,
-            "device": true,
-            "standing": {
-              "scope": {
-                "machines": [
-                  "desktop"
-                ],
-                "agents": [
-                  "codex"
-                ],
-                "projects": [
-                  "garden",
-                  "t-0123456789abcdef"
-                ],
-                "actions": [
-                  "w",
-                  "talk"
-                ],
-                "invite": false
-              },
-              "invited_by": "desktop",
-              "delegated": true,
-              "sealing": false
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "relay",
-                  "machine": "desktop"
+                "written": "lab",
+                "online": null,
+                "since": null,
+                "through": "la",
+                "facts": {
+                  "Ok": {
+                    "name": "lab",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
-                {
-                  "kind": "hub"
-                }
-              ]
-            }
-          },
-          {
-            "name": "laptop",
-            "online": false,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Err": "offline"
-            },
-            "revoked": {
-              "by": "desktop",
-              "at": "2026-10-04T12:06:07Z",
-              "reason": "retired"
-            }
+                "owner": "grace",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": false,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "laptop",
+                "written": "laptop",
+                "online": false,
+                "since": "2026-10-04T12:06:07Z",
+                "facts": {
+                  "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              }
+            ]
           }
         ]
       },
       {
         "machine": "desktop",
-        "world": "Example world",
-        "link": {
-          "kind": "connecting",
-          "since": "2026-10-04T12:06:07Z",
-          "last_error": null
-        },
-        "machines": [
-          {
-            "name": "desktop",
-            "online": true,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Ok": {
-                "name": "desktop",
-                "os": "windows",
-                "arch": "x86_64",
-                "home": "C:/Users/example",
-                "temp": "C:/Temp",
-                "path_separator": "\\",
-                "case_sensitive": false,
-                "version": "fixture-version",
-                "shell": "",
-                "node_lifetime": {
-                  "process": {
-                    "pid": 123,
-                    "token": "node-created"
-                  },
-                  "starter": {
-                    "process": {
-                      "pid": 122,
-                      "token": "serve-created"
-                    },
-                    "session": {
-                      "agent": "codex",
-                      "client": "codex-fixture",
-                      "version": "fixture-version"
-                    }
-                  },
-                  "supervised": false,
-                  "windows_job": {
-                    "kill_on_close": true,
-                    "breakaway_allowed": false,
-                    "silent_breakaway": false
-                  }
-                }
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "shell": "",
+          "node_lifetime": {
+            "process": {
+              "pid": 123,
+              "token": "node-created"
+            },
+            "starter": {
+              "process": {
+                "pid": 122,
+                "token": "serve-created"
+              },
+              "session": {
+                "agent": "codex",
+                "client": "codex-fixture",
+                "version": "fixture-version"
               }
             },
-            "revoked": null,
-            "standing": {
-              "scope": {
-                "machines": "all",
-                "agents": "all",
-                "projects": "all",
-                "actions": "all",
-                "invite": true
-              },
-              "manage": true,
-              "invited_by": null,
-              "sealing": true
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "hub"
-                }
-              ],
-              "relays_at": [
-                "203.0.113.5:7444"
-              ]
-            }
-          },
-          {
-            "name": "lab",
-            "online": null,
-            "since": null,
-            "facts": {
-              "Ok": {
-                "name": "lab",
-                "os": "linux",
-                "arch": "aarch64",
-                "home": "/home/example",
-                "temp": "/tmp",
-                "path_separator": "/",
-                "case_sensitive": true,
-                "version": "fixture-version",
-                "shell": ""
-              }
-            },
-            "revoked": null,
-            "device": true,
-            "standing": {
-              "scope": {
-                "machines": [
-                  "desktop"
-                ],
-                "agents": [
-                  "codex"
-                ],
-                "projects": [
-                  "garden",
-                  "t-0123456789abcdef"
-                ],
-                "actions": [
-                  "w",
-                  "talk"
-                ],
-                "invite": false
-              },
-              "invited_by": "desktop",
-              "delegated": true,
-              "sealing": false
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "relay",
-                  "machine": "desktop"
-                },
-                {
-                  "kind": "hub"
-                }
-              ]
-            }
-          },
-          {
-            "name": "laptop",
-            "online": false,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Err": "offline"
-            },
-            "revoked": {
-              "by": "desktop",
-              "at": "2026-10-04T12:06:07Z",
-              "reason": "retired"
+            "supervised": false,
+            "windows_job": {
+              "kill_on_close": true,
+              "breakaway_allowed": false,
+              "silent_breakaway": false
             }
           }
-        ],
-        "joined": [
+        },
+        "hubs": [
           {
-            "name": "lab",
-            "device": true,
-            "noticed_at": "2026-10-04T12:06:07Z"
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "connecting",
+              "since": "2026-10-04T12:06:07Z",
+              "last_error": null
+            },
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "machines": [
+              {
+                "name": "lab",
+                "written": "lab.home",
+                "online": null,
+                "since": null,
+                "through": "la",
+                "facts": {
+                  "Ok": {
+                    "name": "lab",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
+                },
+                "owner": "grace",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": false,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "laptop",
+                "written": "laptop",
+                "online": false,
+                "since": "2026-10-04T12:06:07Z",
+                "facts": {
+                  "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              }
+            ]
           }
         ]
       },
       {
         "machine": "desktop",
-        "world": "Example world",
-        "link": {
-          "kind": "connecting",
-          "since": "2026-10-04T12:06:07Z",
-          "last_error": "hub unavailable"
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "shell": "",
+          "node_lifetime": {
+            "process": {
+              "pid": 123,
+              "token": "node-created"
+            },
+            "starter": {
+              "process": {
+                "pid": 122,
+                "token": "serve-created"
+              },
+              "session": {
+                "agent": "codex",
+                "client": "codex-fixture",
+                "version": "fixture-version"
+              }
+            },
+            "supervised": false,
+            "windows_job": {
+              "kill_on_close": true,
+              "breakaway_allowed": false,
+              "silent_breakaway": false
+            }
+          }
         },
-        "machines": [
+        "hubs": [
           {
-            "name": "desktop",
-            "online": true,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Ok": {
-                "name": "desktop",
-                "os": "windows",
-                "arch": "x86_64",
-                "home": "C:/Users/example",
-                "temp": "C:/Temp",
-                "path_separator": "\\",
-                "case_sensitive": false,
-                "version": "fixture-version",
-                "shell": "",
-                "node_lifetime": {
-                  "process": {
-                    "pid": 123,
-                    "token": "node-created"
-                  },
-                  "starter": {
-                    "process": {
-                      "pid": 122,
-                      "token": "serve-created"
-                    },
-                    "session": {
-                      "agent": "codex",
-                      "client": "codex-fixture",
-                      "version": "fixture-version"
-                    }
-                  },
-                  "supervised": false,
-                  "windows_job": {
-                    "kill_on_close": true,
-                    "breakaway_allowed": false,
-                    "silent_breakaway": false
-                  }
-                }
-              }
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "connecting",
+              "since": "2026-10-04T12:06:07Z",
+              "last_error": "hub unavailable"
             },
-            "revoked": null,
-            "standing": {
-              "scope": {
-                "machines": "all",
-                "agents": "all",
-                "projects": "all",
-                "actions": "all",
-                "invite": true
-              },
-              "manage": true,
-              "invited_by": null,
-              "sealing": true
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "hub"
-                }
-              ],
-              "relays_at": [
-                "203.0.113.5:7444"
-              ]
-            }
-          },
-          {
-            "name": "lab",
-            "online": null,
-            "since": null,
-            "facts": {
-              "Ok": {
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "machines": [
+              {
                 "name": "lab",
-                "os": "linux",
-                "arch": "aarch64",
-                "home": "/home/example",
-                "temp": "/tmp",
-                "path_separator": "/",
-                "case_sensitive": true,
-                "version": "fixture-version",
-                "shell": ""
-              }
-            },
-            "revoked": null,
-            "device": true,
-            "standing": {
-              "scope": {
-                "machines": [
-                  "desktop"
-                ],
-                "agents": [
-                  "codex"
-                ],
-                "projects": [
-                  "garden",
-                  "t-0123456789abcdef"
-                ],
-                "actions": [
-                  "w",
-                  "talk"
-                ],
-                "invite": false
-              },
-              "invited_by": "desktop",
-              "delegated": true,
-              "sealing": false
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "relay",
-                  "machine": "desktop"
+                "written": "lab",
+                "online": null,
+                "since": null,
+                "through": "la",
+                "facts": {
+                  "Ok": {
+                    "name": "lab",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
-                {
-                  "kind": "hub"
-                }
-              ]
-            }
-          },
-          {
-            "name": "laptop",
-            "online": false,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Err": "offline"
-            },
-            "revoked": {
-              "by": "desktop",
-              "at": "2026-10-04T12:06:07Z",
-              "reason": "retired"
-            }
+                "owner": "grace",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": false,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "laptop",
+                "written": "laptop",
+                "online": false,
+                "since": "2026-10-04T12:06:07Z",
+                "facts": {
+                  "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              }
+            ]
           }
         ]
       },
       {
         "machine": "desktop",
-        "world": "Example world",
-        "link": {
-          "kind": "stopped",
-          "reason": "machine revoked"
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "shell": "",
+          "node_lifetime": {
+            "process": {
+              "pid": 123,
+              "token": "node-created"
+            },
+            "starter": {
+              "process": {
+                "pid": 122,
+                "token": "serve-created"
+              },
+              "session": {
+                "agent": "codex",
+                "client": "codex-fixture",
+                "version": "fixture-version"
+              }
+            },
+            "supervised": false,
+            "windows_job": {
+              "kill_on_close": true,
+              "breakaway_allowed": false,
+              "silent_breakaway": false
+            }
+          }
         },
-        "machines": [
+        "hubs": [
           {
-            "name": "desktop",
-            "online": true,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Ok": {
-                "name": "desktop",
-                "os": "windows",
-                "arch": "x86_64",
-                "home": "C:/Users/example",
-                "temp": "C:/Temp",
-                "path_separator": "\\",
-                "case_sensitive": false,
-                "version": "fixture-version",
-                "shell": "",
-                "node_lifetime": {
-                  "process": {
-                    "pid": 123,
-                    "token": "node-created"
-                  },
-                  "starter": {
-                    "process": {
-                      "pid": 122,
-                      "token": "serve-created"
-                    },
-                    "session": {
-                      "agent": "codex",
-                      "client": "codex-fixture",
-                      "version": "fixture-version"
-                    }
-                  },
-                  "supervised": false,
-                  "windows_job": {
-                    "kill_on_close": true,
-                    "breakaway_allowed": false,
-                    "silent_breakaway": false
-                  }
-                }
-              }
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "stopped",
+              "reason": "machine revoked"
             },
-            "revoked": null,
-            "standing": {
-              "scope": {
-                "machines": "all",
-                "agents": "all",
-                "projects": "all",
-                "actions": "all",
-                "invite": true
-              },
-              "manage": true,
-              "invited_by": null,
-              "sealing": true
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "hub"
-                }
-              ],
-              "relays_at": [
-                "203.0.113.5:7444"
-              ]
-            }
-          },
-          {
-            "name": "lab",
-            "online": null,
-            "since": null,
-            "facts": {
-              "Ok": {
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "machines": [
+              {
                 "name": "lab",
-                "os": "linux",
-                "arch": "aarch64",
-                "home": "/home/example",
-                "temp": "/tmp",
-                "path_separator": "/",
-                "case_sensitive": true,
-                "version": "fixture-version",
-                "shell": ""
-              }
-            },
-            "revoked": null,
-            "device": true,
-            "standing": {
-              "scope": {
-                "machines": [
-                  "desktop"
-                ],
-                "agents": [
-                  "codex"
-                ],
-                "projects": [
-                  "garden",
-                  "t-0123456789abcdef"
-                ],
-                "actions": [
-                  "w",
-                  "talk"
-                ],
-                "invite": false
-              },
-              "invited_by": "desktop",
-              "delegated": true,
-              "sealing": false
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "relay",
-                  "machine": "desktop"
+                "written": "lab",
+                "online": null,
+                "since": null,
+                "through": "la",
+                "facts": {
+                  "Ok": {
+                    "name": "lab",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
-                {
-                  "kind": "hub"
-                }
-              ]
-            }
-          },
-          {
-            "name": "laptop",
-            "online": false,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Err": "offline"
-            },
-            "revoked": {
-              "by": "desktop",
-              "at": "2026-10-04T12:06:07Z",
-              "reason": "retired"
-            }
+                "owner": "grace",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": false,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "laptop",
+                "written": "laptop",
+                "online": false,
+                "since": "2026-10-04T12:06:07Z",
+                "facts": {
+                  "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              }
+            ]
           }
         ]
       },
       {
         "machine": "desktop",
-        "world": "Example world",
-        "link": {
-          "kind": "online",
-          "since": "2026-10-04T12:06:07Z",
-          "hub": "hub.example.test",
-          "route": {
-            "kind": "local"
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "shell": "",
+          "node_lifetime": {
+            "process": {
+              "pid": 123,
+              "token": "node-created"
+            },
+            "starter": {
+              "process": {
+                "pid": 122,
+                "token": "serve-created"
+              },
+              "session": {
+                "agent": "codex",
+                "client": "codex-fixture",
+                "version": "fixture-version"
+              }
+            },
+            "supervised": false,
+            "windows_job": {
+              "kill_on_close": true,
+              "breakaway_allowed": false,
+              "silent_breakaway": false
+            }
           }
         },
-        "machines": [
+        "hubs": [
           {
-            "name": "desktop",
-            "online": true,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Ok": {
-                "name": "desktop",
-                "os": "windows",
-                "arch": "x86_64",
-                "home": "C:/Users/example",
-                "temp": "C:/Temp",
-                "path_separator": "\\",
-                "case_sensitive": false,
-                "version": "fixture-version",
-                "shell": "",
-                "node_lifetime": {
-                  "process": {
-                    "pid": 123,
-                    "token": "node-created"
-                  },
-                  "starter": {
-                    "process": {
-                      "pid": 122,
-                      "token": "serve-created"
-                    },
-                    "session": {
-                      "agent": "codex",
-                      "client": "codex-fixture",
-                      "version": "fixture-version"
-                    }
-                  },
-                  "supervised": false,
-                  "windows_job": {
-                    "kill_on_close": true,
-                    "breakaway_allowed": false,
-                    "silent_breakaway": false
-                  }
-                }
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "online",
+              "since": "2026-10-04T12:06:07Z",
+              "hub": "hub.example.test",
+              "route": {
+                "kind": "local"
               }
             },
-            "revoked": null,
-            "standing": {
-              "scope": {
-                "machines": "all",
-                "agents": "all",
-                "projects": "all",
-                "actions": "all",
-                "invite": true
-              },
-              "manage": true,
-              "invited_by": null,
-              "sealing": true
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "hub"
-                }
-              ],
-              "relays_at": [
-                "203.0.113.5:7444"
-              ]
-            }
-          },
-          {
-            "name": "lab",
-            "online": null,
-            "since": null,
-            "facts": {
-              "Ok": {
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "machines": [
+              {
                 "name": "lab",
-                "os": "linux",
-                "arch": "aarch64",
-                "home": "/home/example",
-                "temp": "/tmp",
-                "path_separator": "/",
-                "case_sensitive": true,
-                "version": "fixture-version",
-                "shell": ""
-              }
-            },
-            "revoked": null,
-            "device": true,
-            "standing": {
-              "scope": {
-                "machines": [
-                  "desktop"
-                ],
-                "agents": [
-                  "codex"
-                ],
-                "projects": [
-                  "garden",
-                  "t-0123456789abcdef"
-                ],
-                "actions": [
-                  "w",
-                  "talk"
-                ],
-                "invite": false
-              },
-              "invited_by": "desktop",
-              "delegated": true,
-              "sealing": false
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "relay",
-                  "machine": "desktop"
+                "written": "lab",
+                "online": null,
+                "since": null,
+                "through": "la",
+                "facts": {
+                  "Ok": {
+                    "name": "lab",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
-                {
-                  "kind": "hub"
-                }
-              ]
-            }
-          },
-          {
-            "name": "laptop",
-            "online": false,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Err": "offline"
-            },
-            "revoked": {
-              "by": "desktop",
-              "at": "2026-10-04T12:06:07Z",
-              "reason": "retired"
-            }
+                "owner": "grace",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": false,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "laptop",
+                "written": "laptop",
+                "online": false,
+                "since": "2026-10-04T12:06:07Z",
+                "facts": {
+                  "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              }
+            ]
           }
         ]
       },
       {
         "machine": "desktop",
-        "world": "Example world",
-        "link": {
-          "kind": "online",
-          "since": "2026-10-04T12:06:07Z",
-          "hub": "hub.example.test",
-          "route": {
-            "kind": "card",
-            "name": "Ethernet"
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "shell": "",
+          "node_lifetime": {
+            "process": {
+              "pid": 123,
+              "token": "node-created"
+            },
+            "starter": {
+              "process": {
+                "pid": 122,
+                "token": "serve-created"
+              },
+              "session": {
+                "agent": "codex",
+                "client": "codex-fixture",
+                "version": "fixture-version"
+              }
+            },
+            "supervised": false,
+            "windows_job": {
+              "kill_on_close": true,
+              "breakaway_allowed": false,
+              "silent_breakaway": false
+            }
           }
         },
-        "machines": [
+        "hubs": [
           {
-            "name": "desktop",
-            "online": true,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Ok": {
-                "name": "desktop",
-                "os": "windows",
-                "arch": "x86_64",
-                "home": "C:/Users/example",
-                "temp": "C:/Temp",
-                "path_separator": "\\",
-                "case_sensitive": false,
-                "version": "fixture-version",
-                "shell": "",
-                "node_lifetime": {
-                  "process": {
-                    "pid": 123,
-                    "token": "node-created"
-                  },
-                  "starter": {
-                    "process": {
-                      "pid": 122,
-                      "token": "serve-created"
-                    },
-                    "session": {
-                      "agent": "codex",
-                      "client": "codex-fixture",
-                      "version": "fixture-version"
-                    }
-                  },
-                  "supervised": false,
-                  "windows_job": {
-                    "kill_on_close": true,
-                    "breakaway_allowed": false,
-                    "silent_breakaway": false
-                  }
-                }
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "online",
+              "since": "2026-10-04T12:06:07Z",
+              "hub": "hub.example.test",
+              "route": {
+                "kind": "card",
+                "name": "Ethernet"
               }
             },
-            "revoked": null,
-            "standing": {
-              "scope": {
-                "machines": "all",
-                "agents": "all",
-                "projects": "all",
-                "actions": "all",
-                "invite": true
-              },
-              "manage": true,
-              "invited_by": null,
-              "sealing": true
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "hub"
-                }
-              ],
-              "relays_at": [
-                "203.0.113.5:7444"
-              ]
-            }
-          },
-          {
-            "name": "lab",
-            "online": null,
-            "since": null,
-            "facts": {
-              "Ok": {
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "machines": [
+              {
                 "name": "lab",
-                "os": "linux",
-                "arch": "aarch64",
-                "home": "/home/example",
-                "temp": "/tmp",
-                "path_separator": "/",
-                "case_sensitive": true,
-                "version": "fixture-version",
-                "shell": ""
-              }
-            },
-            "revoked": null,
-            "device": true,
-            "standing": {
-              "scope": {
-                "machines": [
-                  "desktop"
-                ],
-                "agents": [
-                  "codex"
-                ],
-                "projects": [
-                  "garden",
-                  "t-0123456789abcdef"
-                ],
-                "actions": [
-                  "w",
-                  "talk"
-                ],
-                "invite": false
-              },
-              "invited_by": "desktop",
-              "delegated": true,
-              "sealing": false
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "relay",
-                  "machine": "desktop"
+                "written": "lab",
+                "online": null,
+                "since": null,
+                "through": "la",
+                "facts": {
+                  "Ok": {
+                    "name": "lab",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
-                {
-                  "kind": "hub"
-                }
-              ]
-            }
-          },
-          {
-            "name": "laptop",
-            "online": false,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Err": "offline"
-            },
-            "revoked": {
-              "by": "desktop",
-              "at": "2026-10-04T12:06:07Z",
-              "reason": "retired"
-            }
+                "owner": "grace",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": false,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "laptop",
+                "written": "laptop",
+                "online": false,
+                "since": "2026-10-04T12:06:07Z",
+                "facts": {
+                  "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              }
+            ]
           }
         ]
       },
       {
         "machine": "desktop",
-        "world": "Example world",
-        "link": {
-          "kind": "online",
-          "since": "2026-10-04T12:06:07Z",
-          "hub": "hub.example.test",
-          "route": {
-            "kind": "proxy",
-            "proxy": "http://proxy.example.test:8080"
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "shell": "",
+          "node_lifetime": {
+            "process": {
+              "pid": 123,
+              "token": "node-created"
+            },
+            "starter": {
+              "process": {
+                "pid": 122,
+                "token": "serve-created"
+              },
+              "session": {
+                "agent": "codex",
+                "client": "codex-fixture",
+                "version": "fixture-version"
+              }
+            },
+            "supervised": false,
+            "windows_job": {
+              "kill_on_close": true,
+              "breakaway_allowed": false,
+              "silent_breakaway": false
+            }
           }
         },
-        "machines": [
+        "hubs": [
           {
-            "name": "desktop",
-            "online": true,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Ok": {
-                "name": "desktop",
-                "os": "windows",
-                "arch": "x86_64",
-                "home": "C:/Users/example",
-                "temp": "C:/Temp",
-                "path_separator": "\\",
-                "case_sensitive": false,
-                "version": "fixture-version",
-                "shell": "",
-                "node_lifetime": {
-                  "process": {
-                    "pid": 123,
-                    "token": "node-created"
-                  },
-                  "starter": {
-                    "process": {
-                      "pid": 122,
-                      "token": "serve-created"
-                    },
-                    "session": {
-                      "agent": "codex",
-                      "client": "codex-fixture",
-                      "version": "fixture-version"
-                    }
-                  },
-                  "supervised": false,
-                  "windows_job": {
-                    "kill_on_close": true,
-                    "breakaway_allowed": false,
-                    "silent_breakaway": false
-                  }
-                }
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "online",
+              "since": "2026-10-04T12:06:07Z",
+              "hub": "hub.example.test",
+              "route": {
+                "kind": "proxy",
+                "proxy": "http://proxy.example.test:8080"
               }
             },
-            "revoked": null,
-            "standing": {
-              "scope": {
-                "machines": "all",
-                "agents": "all",
-                "projects": "all",
-                "actions": "all",
-                "invite": true
-              },
-              "manage": true,
-              "invited_by": null,
-              "sealing": true
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "hub"
-                }
-              ],
-              "relays_at": [
-                "203.0.113.5:7444"
-              ]
-            }
-          },
-          {
-            "name": "lab",
-            "online": null,
-            "since": null,
-            "facts": {
-              "Ok": {
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "machines": [
+              {
                 "name": "lab",
-                "os": "linux",
-                "arch": "aarch64",
-                "home": "/home/example",
-                "temp": "/tmp",
-                "path_separator": "/",
-                "case_sensitive": true,
-                "version": "fixture-version",
-                "shell": ""
-              }
-            },
-            "revoked": null,
-            "device": true,
-            "standing": {
-              "scope": {
-                "machines": [
-                  "desktop"
-                ],
-                "agents": [
-                  "codex"
-                ],
-                "projects": [
-                  "garden",
-                  "t-0123456789abcdef"
-                ],
-                "actions": [
-                  "w",
-                  "talk"
-                ],
-                "invite": false
-              },
-              "invited_by": "desktop",
-              "delegated": true,
-              "sealing": false
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "relay",
-                  "machine": "desktop"
+                "written": "lab",
+                "online": null,
+                "since": null,
+                "through": "la",
+                "facts": {
+                  "Ok": {
+                    "name": "lab",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
-                {
-                  "kind": "hub"
-                }
-              ]
-            }
-          },
-          {
-            "name": "laptop",
-            "online": false,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Err": "offline"
-            },
-            "revoked": {
-              "by": "desktop",
-              "at": "2026-10-04T12:06:07Z",
-              "reason": "retired"
-            }
+                "owner": "grace",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": false,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "laptop",
+                "written": "laptop",
+                "online": false,
+                "since": "2026-10-04T12:06:07Z",
+                "facts": {
+                  "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              }
+            ]
           }
         ]
       },
       {
         "machine": "desktop",
-        "world": "Example world",
-        "link": {
-          "kind": "online",
-          "since": "2026-10-04T12:06:07Z",
-          "hub": "hub.example.test",
-          "route": {
-            "kind": "system"
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "shell": "",
+          "node_lifetime": {
+            "process": {
+              "pid": 123,
+              "token": "node-created"
+            },
+            "starter": {
+              "process": {
+                "pid": 122,
+                "token": "serve-created"
+              },
+              "session": {
+                "agent": "codex",
+                "client": "codex-fixture",
+                "version": "fixture-version"
+              }
+            },
+            "supervised": false,
+            "windows_job": {
+              "kill_on_close": true,
+              "breakaway_allowed": false,
+              "silent_breakaway": false
+            }
           }
         },
-        "machines": [
+        "hubs": [
           {
-            "name": "desktop",
-            "online": true,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Ok": {
-                "name": "desktop",
-                "os": "windows",
-                "arch": "x86_64",
-                "home": "C:/Users/example",
-                "temp": "C:/Temp",
-                "path_separator": "\\",
-                "case_sensitive": false,
-                "version": "fixture-version",
-                "shell": "",
-                "node_lifetime": {
-                  "process": {
-                    "pid": 123,
-                    "token": "node-created"
-                  },
-                  "starter": {
-                    "process": {
-                      "pid": 122,
-                      "token": "serve-created"
-                    },
-                    "session": {
-                      "agent": "codex",
-                      "client": "codex-fixture",
-                      "version": "fixture-version"
-                    }
-                  },
-                  "supervised": false,
-                  "windows_job": {
-                    "kill_on_close": true,
-                    "breakaway_allowed": false,
-                    "silent_breakaway": false
-                  }
-                }
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "online",
+              "since": "2026-10-04T12:06:07Z",
+              "hub": "hub.example.test",
+              "route": {
+                "kind": "system"
               }
             },
-            "revoked": null,
-            "standing": {
-              "scope": {
-                "machines": "all",
-                "agents": "all",
-                "projects": "all",
-                "actions": "all",
-                "invite": true
-              },
-              "manage": true,
-              "invited_by": null,
-              "sealing": true
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "hub"
-                }
-              ],
-              "relays_at": [
-                "203.0.113.5:7444"
-              ]
-            }
-          },
-          {
-            "name": "lab",
-            "online": null,
-            "since": null,
-            "facts": {
-              "Ok": {
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "machines": [
+              {
                 "name": "lab",
-                "os": "linux",
-                "arch": "aarch64",
-                "home": "/home/example",
-                "temp": "/tmp",
-                "path_separator": "/",
-                "case_sensitive": true,
-                "version": "fixture-version",
-                "shell": ""
-              }
-            },
-            "revoked": null,
-            "device": true,
-            "standing": {
-              "scope": {
-                "machines": [
-                  "desktop"
-                ],
-                "agents": [
-                  "codex"
-                ],
-                "projects": [
-                  "garden",
-                  "t-0123456789abcdef"
-                ],
-                "actions": [
-                  "w",
-                  "talk"
-                ],
-                "invite": false
-              },
-              "invited_by": "desktop",
-              "delegated": true,
-              "sealing": false
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "relay",
-                  "machine": "desktop"
+                "written": "lab",
+                "online": null,
+                "since": null,
+                "through": "la",
+                "facts": {
+                  "Ok": {
+                    "name": "lab",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
-                {
-                  "kind": "hub"
-                }
-              ]
-            }
-          },
-          {
-            "name": "laptop",
-            "online": false,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Err": "offline"
-            },
-            "revoked": {
-              "by": "desktop",
-              "at": "2026-10-04T12:06:07Z",
-              "reason": "retired"
-            }
+                "owner": "grace",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": false,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "laptop",
+                "written": "laptop",
+                "online": false,
+                "since": "2026-10-04T12:06:07Z",
+                "facts": {
+                  "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              }
+            ]
           }
         ]
       },
       {
         "machine": "desktop",
-        "world": "Example world",
-        "link": {
-          "kind": "online",
-          "since": "2026-10-04T12:06:07Z",
-          "hub": "203.0.113.5:7444",
-          "relay": "la",
-          "route": {
-            "kind": "system"
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "shell": "",
+          "node_lifetime": {
+            "process": {
+              "pid": 123,
+              "token": "node-created"
+            },
+            "starter": {
+              "process": {
+                "pid": 122,
+                "token": "serve-created"
+              },
+              "session": {
+                "agent": "codex",
+                "client": "codex-fixture",
+                "version": "fixture-version"
+              }
+            },
+            "supervised": false,
+            "windows_job": {
+              "kill_on_close": true,
+              "breakaway_allowed": false,
+              "silent_breakaway": false
+            }
           }
         },
-        "machines": [
+        "hubs": [
           {
-            "name": "desktop",
-            "online": true,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Ok": {
-                "name": "desktop",
-                "os": "windows",
-                "arch": "x86_64",
-                "home": "C:/Users/example",
-                "temp": "C:/Temp",
-                "path_separator": "\\",
-                "case_sensitive": false,
-                "version": "fixture-version",
-                "shell": "",
-                "node_lifetime": {
-                  "process": {
-                    "pid": 123,
-                    "token": "node-created"
-                  },
-                  "starter": {
-                    "process": {
-                      "pid": 122,
-                      "token": "serve-created"
-                    },
-                    "session": {
-                      "agent": "codex",
-                      "client": "codex-fixture",
-                      "version": "fixture-version"
-                    }
-                  },
-                  "supervised": false,
-                  "windows_job": {
-                    "kill_on_close": true,
-                    "breakaway_allowed": false,
-                    "silent_breakaway": false
-                  }
-                }
+            "hub": "w-0123456789abcdef",
+            "name": "home",
+            "link": {
+              "kind": "online",
+              "since": "2026-10-04T12:06:07Z",
+              "hub": "203.0.113.5:7444",
+              "relay": "la",
+              "route": {
+                "kind": "system"
               }
             },
-            "revoked": null,
-            "standing": {
-              "scope": {
-                "machines": "all",
-                "agents": "all",
-                "projects": "all",
-                "actions": "all",
-                "invite": true
-              },
-              "manage": true,
-              "invited_by": null,
-              "sealing": true
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "hub"
-                }
-              ],
-              "relays_at": [
-                "203.0.113.5:7444"
-              ]
-            }
-          },
-          {
-            "name": "lab",
-            "online": null,
-            "since": null,
-            "facts": {
-              "Ok": {
+            "logins": [
+              "ada"
+            ],
+            "home": "ada",
+            "machines": [
+              {
                 "name": "lab",
-                "os": "linux",
-                "arch": "aarch64",
-                "home": "/home/example",
-                "temp": "/tmp",
-                "path_separator": "/",
-                "case_sensitive": true,
-                "version": "fixture-version",
-                "shell": ""
-              }
-            },
-            "revoked": null,
-            "device": true,
-            "standing": {
-              "scope": {
-                "machines": [
-                  "desktop"
-                ],
-                "agents": [
-                  "codex"
-                ],
-                "projects": [
-                  "garden",
-                  "t-0123456789abcdef"
-                ],
-                "actions": [
-                  "w",
-                  "talk"
-                ],
-                "invite": false
-              },
-              "invited_by": "desktop",
-              "delegated": true,
-              "sealing": false
-            },
-            "place": {
-              "via": [
-                {
-                  "kind": "relay",
-                  "machine": "desktop"
+                "written": "lab",
+                "online": null,
+                "since": null,
+                "through": "la",
+                "facts": {
+                  "Ok": {
+                    "name": "lab",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
-                {
-                  "kind": "hub"
-                }
-              ]
-            }
-          },
-          {
-            "name": "laptop",
-            "online": false,
-            "since": "2026-10-04T12:06:07Z",
-            "facts": {
-              "Err": "offline"
-            },
-            "revoked": {
-              "by": "desktop",
-              "at": "2026-10-04T12:06:07Z",
-              "reason": "retired"
-            }
+                "owner": "grace",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": false,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "laptop",
+                "written": "laptop",
+                "online": false,
+                "since": "2026-10-04T12:06:07Z",
+                "facts": {
+                  "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              }
+            ]
           }
         ]
+      },
+      {
+        "machine": "desktop",
+        "facts": {
+          "name": "desktop",
+          "os": "windows",
+          "arch": "x86_64",
+          "home": "C:/Users/example",
+          "temp": "C:/Temp",
+          "path_separator": "\\",
+          "case_sensitive": false,
+          "version": "fixture-version",
+          "shell": ""
+        },
+        "hubs": []
       }
     ],
     "towns": [
@@ -9642,7 +9644,13 @@
         "node": "desktop",
         "text": "First words",
         "model": "model-a",
-        "reasoning_effort": "medium"
+        "reasoning_effort": "medium",
+        "account": {
+          "hub": "w-0123456789abcdef",
+          "account": "ada"
+        },
+        "works_on": "laptop",
+        "colleagues": "lab.home"
       },
       {
         "call": "open",
@@ -9915,7 +9923,8 @@
         "town": null,
         "text": "First words",
         "model": "opus",
-        "reasoning_effort": "high"
+        "reasoning_effort": "high",
+        "colleagues": "desktop"
       }
     ],
     "remote_replies": [

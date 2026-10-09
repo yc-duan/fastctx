@@ -1,36 +1,35 @@
-//! What members say to each other, inside the sealed body of an envelope
+//! What members say to each other, in the body of an envelope
 //! (`crate::envelope`).
 
 use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
 use serde::{Deserialize, Serialize};
 
-use crate::stream_crypto::StreamKey;
 use crate::wire::Carried;
 
-/// What a call or an answer holds, sealed with the caller's session.
+/// What a call or an answer holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Body {
     /// Asks the receiver to do something now.
     Call { call: RemoteCall },
-    /// A call too large for a message: it follows over a data connection,
-    /// as the JSON of a `RemoteCall`.
+    /// A call too large for a message: it follows over the envelope's data
+    /// connection, as the JSON of a `RemoteCall`.
     LargeCall { carried: Carried },
-    /// A call that comes with a data connection, `ticket`, whose source is
-    /// the caller and whose messages are sealed with `key`: the two ends
-    /// exchange what the call is about, such as the files of a copy, while
-    /// the call waits for its answer.
-    StreamCall { call: RemoteCall, ticket: crate::sign::Signed, key: StreamKey },
+    /// A call that comes with the envelope's data connection, whose source
+    /// is the caller: the two ends exchange what the call is about, such as
+    /// the files of a copy, while the call waits for its answer.
+    StreamCall { call: RemoteCall },
     /// The answer to the call the envelope names.
     Answer { result: RemoteResult },
     /// The answer to the call the envelope names, too large for a message:
-    /// it follows over a data connection, as the JSON of a `RemoteResult`.
+    /// it follows over the envelope's data connection, as the JSON of a
+    /// `RemoteResult`.
     LargeAnswer { carried: Carried },
 }
 
-/// What a letter holds, sealed to its receiver. The sender names it with
-/// `id`: the receiver takes a letter from one sender with one id once, and
-/// refuses the same id with different contents.
+/// What a letter holds. The sender names it with `id`: the receiver takes a
+/// letter from one sender with one id once, and refuses the same id with
+/// different contents.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LetterBody {
     pub id: LetterId,

@@ -1,5 +1,6 @@
 import type { Address, MachineName, Timestamp, TownName } from "../world/wire";
-import type { JobOwner, MachineWho, Node, TownSummary, Writer } from "../world/world";
+import type { Machine } from "../app/reach";
+import type { JobOwner, MachineWho, TownSummary, WhoFor, Writer } from "../world/world";
 
 /** One line of what happened while the reader was away, read from what
  *  the World answered (`home/since.ts`). */
@@ -35,7 +36,10 @@ export interface Away {
 export interface WorldState {
   here: MachineName;
   machines: MachineWho[];
-  nodes: Node[];
+  /** What runs there for other accounts than the reader's, and for whom. */
+  others?: WhoFor[];
+  /** The machines this computer or device reaches, itself first. */
+  nodes: Machine[];
   towns: TownSummary[];
   /** What happened while the reader was away; `null` before the World
    *  has been asked, or where there is no earlier visit to ask from. */

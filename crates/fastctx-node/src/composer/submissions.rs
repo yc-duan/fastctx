@@ -4,10 +4,12 @@ use super::*;
 
 pub(super) async fn dispatch(node: &Arc<Node>, id: &ResidentId, flight: Flight) -> Result<Option<Landed>, Failure> {
     let result = async {
-        if let fastctx_types::residents::Notice::Attached { message, .. } = &flight.delivery.notice {
+        let mut delivery = flight.delivery.clone();
+        if let fastctx_types::residents::Notice::Attached { message, .. } = &mut delivery.notice {
             crate::attachments::resolve(node, id, &message.attachments).await?;
+            message.attachments = crate::attachments::place(node, id, std::mem::take(&mut message.attachments)).await?;
         }
-        crate::speech::send_composer(node, id, flight.delivery.clone(), flight.idle_only).await
+        crate::speech::send_composer(node, id, delivery, flight.idle_only).await
     }
     .await;
     let cell = node.composers.cell(id);

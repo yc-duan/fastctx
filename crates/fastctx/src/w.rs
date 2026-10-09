@@ -80,7 +80,7 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
         for name in &args.names {
             anyhow::ensure!(is_id(name), "{name} is not a resident or job id; look at a town on its own");
             let (id, machine) = match name.split_once('@') {
-                Some((id, machine)) => (id, Some(MachineName::try_from(machine)?)),
+                Some((id, machine)) => (id, Some(fastctx_types::access::Written::parse(machine)?.name)),
                 None => (name.as_str(), None),
             };
             ids.push(id.to_string());

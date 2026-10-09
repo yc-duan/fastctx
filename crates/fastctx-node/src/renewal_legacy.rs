@@ -1,5 +1,5 @@
-//! The frozen protocol-5/6 subset used by already running tool adapters and
-//! job supervisors. A GUI is never admitted through this compatibility path.
+//! The frozen protocol-5/6/7 subset used by already running tool adapters
+//! and job supervisors. A GUI is never admitted through this compatibility path.
 //! It can discover the mismatch and renew through the maintenance envelope.
 
 use fastctx_types::ipc::Peer;
@@ -14,7 +14,7 @@ use std::borrow::Cow;
 mod page_identity;
 
 pub(crate) fn enabled(protocol: u32, peer: &Peer) -> bool {
-    matches!(protocol, 5 | 6) && self::peer(peer)
+    matches!(protocol, 5..=7) && self::peer(peer)
 }
 
 pub(crate) fn peer(peer: &Peer) -> bool {
@@ -28,7 +28,7 @@ pub(crate) fn peer(peer: &Peer) -> bool {
 }
 
 pub(crate) fn call(protocol: u32, peer: &Peer, call: &Call) -> bool {
-    if protocol == 5 && matches!(call, Call::Machines | Call::Page(_)) {
+    if protocol == 5 && matches!(call, Call::Machines { .. } | Call::Page(_)) {
         return false;
     }
     if let Peer::Supervisor { job: owned } = peer {
@@ -50,7 +50,7 @@ pub(crate) fn call(protocol: u32, peer: &Peer, call: &Call) -> bool {
             | Call::Project(_)
             | Call::Journal(_)
             | Call::Nodes
-            | Call::Machines
+            | Call::Machines { .. }
             | Call::Page(PageCall::Publish { .. } | PageCall::Read { .. } | PageCall::List { .. })
     )
 }
@@ -149,6 +149,18 @@ pub(crate) fn frame(protocol: u32, id: u64, reply: &Result<Reply, fastctx_types:
     }
     let reply = reply.as_ref().map(|reply| Answer { protocol, reply });
     let frame = Frame { kind: "reply", id, reply };
+    // The machines hub by hub (`world-network.md`) have no shape in these
+    // protocols, which knew one World through one hub: the reply is said
+    // whole, as text, rather than fitted into a shape that would misstate it.
+    if protocol < fastctx_types::ipc::PROTOCOL && frame.reply.as_ref().is_ok_and(|answer| matches!(answer.reply, Reply::Nodes(_))) {
+        let value = serde_json::to_value(&frame).expect("the World's types always serialize");
+        let failure = fastctx_types::ipc::Failure::new(format!(
+            "The call completed. This fastctx is older than the node and cannot show the machines hub by hub. The complete result follows as JSON (do not repeat the call):\n{}",
+            serde_json::to_string_pretty(&value["reply"]).expect("JSON serializes")
+        ));
+        return serde_json::to_vec(&Frame { kind: "reply", id, reply: Err(&failure) })
+            .expect("the World's types always serialize");
+    }
     if protocol == 5 && frame.reply.as_ref().is_ok_and(|answer| page_identity::present(answer.reply)) {
         let value = serde_json::to_value(&frame).expect("the World's types always serialize");
         // Protocol 5 has no truthful value for a page author or owner.

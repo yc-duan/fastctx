@@ -13,13 +13,22 @@ pub enum ConnectionMode {
     Device,
 }
 
-/// Available before joining, while offline, and when no machine can answer.
-/// Contains no key or invitation material.
+/// Available before logging in, while offline, and when no machine can
+/// answer. Contains no key or token material.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceState {
+    /// This device's name, the same on every hub; `None` before its first
+    /// login.
     pub name: Option<MachineName>,
-    pub world: Option<String>,
+    pub hubs: Vec<DeviceHub>,
+}
+
+/// One hub this device is logged in to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceHub {
+    pub hub: crate::HubName,
     pub link: LinkState,
+    pub logins: Vec<crate::AccountName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,9 +37,10 @@ pub struct ConnectionState {
     pub device: Option<DeviceState>,
 }
 
-/// Device admission does not install or start a node or a system service.
+/// A device's login does not install or start a node or a system service.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceJoined {
-    pub world: String,
+    pub hub: crate::HubName,
     pub name: MachineName,
+    pub account: crate::AccountName,
 }

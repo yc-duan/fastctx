@@ -293,8 +293,9 @@ pub fn pay<'a>(
             }
             Err(_) => return,
         };
-        let colleague =
-            node.residents.about(id).is_some_and(|(about, _)| matches!(about.origin, Origin::Colleague { .. }));
+        let about = node.residents.about(id).map(|(about, _)| about);
+        let colleague = about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. }));
+        let acting = about.map(|about| about.acting).unwrap_or_default();
         for answer in owing {
             let turn = match &answer.delivery.notice {
                 Notice::Answer { turn, .. } => Some(turn.clone()).filter(|turn| !turn.is_empty()),
@@ -303,6 +304,7 @@ pub fn pay<'a>(
             // Telling can lead back here, as a reader's turn ends at once.
             let landed = Box::pin(speech::tell(
                 node,
+                &acting,
                 &answer.to,
                 answer.delivery.id.clone(),
                 answer.delivery.notice.clone(),

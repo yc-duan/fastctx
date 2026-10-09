@@ -170,6 +170,7 @@ impl World {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn open_with_attachments(
         &self,
         agent: fastctx_types::AgentName,
@@ -178,6 +179,7 @@ impl World {
         text: String,
         options: fastctx_types::agents::SessionOptions,
         attachments: Vec<Attachment>,
+        choices: fastctx_types::agents::Choices,
     ) -> Result<Said, Error> {
         let call = Call::Open {
             agent,
@@ -187,6 +189,7 @@ impl World {
             model: options.model,
             reasoning_effort: options.reasoning_effort,
             attachments,
+            choices,
         };
         match self.call(call).await?.0 {
             Reply::Opened { resident, landed } => Ok(Said { to: resident, landed }),

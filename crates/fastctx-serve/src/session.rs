@@ -25,9 +25,6 @@ pub struct Session {
     host: OnceLock<Host>,
     /// Set when the World started this session as a Codex thread.
     resident: Option<String>,
-    /// Set when the World started this session as someone's colleague,
-    /// which asks for no colleagues of its own.
-    colleague: bool,
     /// The residents this session's calls belong to, by Codex thread; calls
     /// with no thread share the entry for `None`.
     residents: tokio::sync::Mutex<HashMap<Option<String>, Arrival>>,
@@ -40,6 +37,10 @@ pub struct Session {
     lifetime_reported: Mutex<Option<fastctx_types::ProcessIdentity>>,
     /// The World's write commands refuse in this session's shell.
     writes_off: bool,
+    /// The task telling the host its tools changed, for which resident.
+    watching: Mutex<Option<(Option<ResidentId>, tokio::task::JoinHandle<()>)>>,
+    /// Whether a node was watched before, so a new one is told of.
+    watched: std::sync::atomic::AtomicBool,
 }
 
 struct Arrival {
@@ -55,17 +56,17 @@ impl Session {
             Err(std::env::VarError::NotPresent) => None,
             Err(error) => return Err(error.into()),
         };
-        let colleague = std::env::var_os("FASTCTX_COLLEAGUE").is_some_and(|value| value == "1");
         Ok(Self {
             world,
             host: OnceLock::new(),
             resident,
-            colleague,
             residents: tokio::sync::Mutex::new(HashMap::new()),
             were: Mutex::new(HashMap::new()),
             starting: tokio::sync::Mutex::new(()),
             lifetime_reported: Mutex::new(None),
             writes_off,
+            watching: Mutex::new(None),
+            watched: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -105,17 +106,14 @@ impl Session {
             world: self.world.clone(),
             host: OnceLock::new(),
             resident: self.resident.clone(),
-            colleague: self.colleague,
             residents: tokio::sync::Mutex::new(HashMap::new()),
             were: Mutex::new(HashMap::new()),
             starting: tokio::sync::Mutex::new(()),
             lifetime_reported: Mutex::new(None),
             writes_off: self.writes_off,
+            watching: Mutex::new(None),
+            watched: std::sync::atomic::AtomicBool::new(false),
         })
-    }
-
-    pub fn colleague(&self, meta: Option<&Value>) -> bool {
-        self.colleague && self.host(meta).is_ok_and(|host| host.agent.as_str() != "claude")
     }
 
     /// Whether the host is Codex, whose models may call the tools from an
@@ -260,17 +258,20 @@ impl Session {
             (Ok(prompt), Ok(label)) => (prompt, label),
             (Err(error), _) | (_, Err(error)) => return failed(error),
         };
-        let node = match machine_argument(arguments) {
-            Ok(node) => node,
-            Err(error) => return failed(error),
-        };
+        // A session listed before colleagues lived where the user says may
+        // still name a machine.
+        if arguments.get("node").is_some_and(|node| !node.is_null()) {
+            return failed(
+                "ask_colleague has no `node`: colleagues live on the machine the user chose in this conversation's details; say in `prompt` where the colleague works".to_string(),
+            );
+        }
         let whereabouts = match self.whereabouts(meta).await {
             Ok(whereabouts) => whereabouts,
             Err(error) => return failed(error),
         };
         let reply = async {
             let mut client = self.client(meta).await?;
-            let call = Call::Ask { resident: whereabouts.resident.clone(), label, prompt, node };
+            let call = Call::Ask { resident: whereabouts.resident.clone(), label, prompt };
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;
@@ -411,7 +412,10 @@ impl Session {
             let hints = Hints { tool_use_id: Some(tool_use_id.to_string()), ..Hints::default() };
             let mut client = self.client(meta).await?;
             return match client.call(Call::Arrive { host, hints }).await {
-                Ok(Reply::Arrived(whereabouts)) => Ok(whereabouts),
+                Ok(Reply::Arrived(whereabouts)) => {
+                    self.were.lock().expect("never poisoned").insert(None, whereabouts.resident.clone());
+                    Ok(whereabouts)
+                }
                 Ok(other) => Err(format!("the node answered something else: {other:?}")),
                 Err(CallError::Failed(failure)) => Err(failure.message),
                 Err(error) => Err(error.to_string()),
@@ -431,7 +435,7 @@ impl Session {
         if let Some(mut known) = residents.remove(&thread) {
             // Check the arrival connection itself before trusting presence. A detached
             // EOF watcher can run after this call has already reached a replacement node.
-            match known.client.call(Call::Machines).await {
+            match known.client.call(Call::Machines { resident: None }).await {
                 Ok(Reply::Machines { .. }) => {
                     let whereabouts = known.whereabouts.clone();
                     residents.insert(thread, known);
@@ -467,17 +471,62 @@ impl Session {
         }
     }
 
-    /// The machines this session works on, for its tools' descriptions; none
-    /// when the node is not running, which listing the tools does not start.
+    /// The machines this session works on, for its tools' descriptions, and
+    /// whether it may ask for colleagues; none when the node is not
+    /// running, which listing the tools does not start.
     pub async fn machines(&self, meta: Option<&Value>) -> Option<crate::tools::Machines> {
         let host = self.host(meta).ok()?;
         let mut client = Client::connect(&self.world, Peer::Session { host }).await.ok()?;
-        match client.call(Call::Machines).await {
-            Ok(Reply::Machines { here, others }) => Some(crate::tools::Machines {
+        match client.call(Call::Machines { resident: self.known_resident(meta) }).await {
+            Ok(Reply::Machines { here, others, colleagues }) => Some(crate::tools::Machines {
                 here: here.to_string(),
                 others: others.iter().map(ToString::to_string).collect(),
+                colleagues: colleagues.map(|lives_on| lives_on.to_string()),
             }),
             _ => None,
+        }
+    }
+
+    /// This session's resident, when it is known without asking the node:
+    /// the World started it, or one of its calls arrived.
+    pub fn known_resident(&self, meta: Option<&Value>) -> Option<ResidentId> {
+        if let Some(address) = self.resident.as_deref().and_then(|address| address.parse::<Address>().ok()) {
+            return Some(address.resident);
+        }
+        let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
+        let were = self.were.lock().expect("never poisoned");
+        were.get(&thread).or_else(|| were.get(&None)).cloned()
+    }
+
+    /// Tells the host each time the tools this session lists may have
+    /// changed, for as long as the node it reached stays up; started again
+    /// with each call that reaches a node, so a restarted node is watched
+    /// too, and told of once.
+    pub fn watch_tools(self: &Arc<Self>, output: &crate::stdio::Output, meta: Option<&Value>) {
+        let resident = self.known_resident(meta);
+        let Ok(host) = self.host(meta) else { return };
+        {
+            let mut watching = self.watching.lock().expect("never poisoned");
+            if watching.as_ref().is_some_and(|(watched, task)| *watched == resident && !task.is_finished()) {
+                return;
+            }
+            if let Some((_, task)) = watching.take() {
+                task.abort();
+            }
+            let (world, output, first) = (self.world.clone(), output.clone(), !self.watched.swap(true, std::sync::atomic::Ordering::AcqRel));
+            let watched = resident.clone();
+            let task = tokio::spawn(async move {
+                let Ok(client) = Client::connect(&world, Peer::Session { host }).await else { return };
+                let Ok(mut changes) = client.watch_tools(Call::WatchTools { resident: watched }).await else { return };
+                // What changed while no node was watched is told now.
+                if !first {
+                    output.send(&crate::tools::list_changed());
+                }
+                while changes.next().await.is_ok() {
+                    output.send(&crate::tools::list_changed());
+                }
+            });
+            *watching = Some((resident, task));
         }
     }
 
@@ -582,15 +631,6 @@ fn text_argument(arguments: &Value, name: &str) -> Result<String, String> {
         Some(Value::String(text)) => Ok(text.clone()),
         Some(_) => Err(format!("`{name}` must be a string")),
         None => Err(format!("`{name}` is missing")),
-    }
-}
-
-/// The `node` argument, when given.
-fn machine_argument(arguments: &Value) -> Result<Option<MachineName>, String> {
-    match arguments.get("node") {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(node)) => MachineName::try_from(node.as_str()).map(Some).map_err(|error| error.to_string()),
-        Some(_) => Err("`node` must be a string naming a machine".to_string()),
     }
 }
 

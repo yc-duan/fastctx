@@ -262,6 +262,10 @@ pub struct JobRecord {
     /// Set for a job an `on` sent here from another machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on: Option<OnJob>,
+    /// The account a job run here for a resident of another machine works
+    /// for, which its end is told as (`world-run.md`, 这里).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
 }
 
 /// Log offsets acknowledged by both output readers after the shell exited.
@@ -281,6 +285,13 @@ pub struct OnJob {
     pub request: Option<crate::NoticeId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follower: Option<MachineName>,
+    /// The account the machine that sent it asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
+    /// Its standard output goes straight to the machine of the `on` that
+    /// reads it, which takes it from here, and not to its follower.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub piped: bool,
 }
 
 /// A resident or an open page that started a job. The resident wire shape

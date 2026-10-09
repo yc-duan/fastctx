@@ -128,7 +128,8 @@ async fn add(node: &Arc<Node>, caller: &Caller, town: TownName, adding: Adding) 
     // Every attachment is copied in first, so the evidence is fixed as it is
     // now; those that fit go into the entry, the rest stay here.
     let staging = node.world.town(&town).attachments().join(id.as_str());
-    let staged = match stage(node, &staging, &adding.attach).await {
+    let acting = crate::around::acting_of(node, caller);
+    let staged = match stage(node, &acting, &staging, &adding.attach).await {
         Ok(staged) => staged,
         Err(failure) => {
             let _ = std::fs::remove_dir_all(&staging);
@@ -188,7 +189,12 @@ struct Staged {
 }
 
 /// Copies each attachment into `staging`, from this machine or another.
-async fn stage(node: &Arc<Node>, staging: &Path, attach: &[Attach]) -> Result<Vec<Staged>, Failure> {
+async fn stage(
+    node: &Arc<Node>,
+    acting: &fastctx_types::access::Acting,
+    staging: &Path,
+    attach: &[Attach],
+) -> Result<Vec<Staged>, Failure> {
     let here = node.machine();
     let _ = std::fs::remove_dir_all(staging);
     if !attach.is_empty() {
@@ -213,9 +219,9 @@ async fn stage(node: &Arc<Node>, staging: &Path, attach: &[Attach]) -> Result<Ve
                     .map_err(|error| Failure::new(format!("attaching {}: {error}", one.path)))?;
             }
             Some(machine) => {
-                let from = Place { machine: Some(machine.clone()), path: one.path.clone() };
-                let to = Place { machine: Some(here.clone()), path: crate::world::native(&path) };
-                crate::copy::copy(node, from, to)
+                let from = Place { machine: Some(machine.clone()), hub: None, path: one.path.clone() };
+                let to = Place { machine: Some(here.clone()), hub: None, path: crate::world::native(&path) };
+                crate::copy::copy(node, acting, from, to)
                     .await
                     .map_err(|failure| Failure::new(format!("attaching {} from {machine}: {failure}", one.path)))?;
             }
@@ -277,15 +283,22 @@ fn pack(
                 .map_err(|error| Failure::new(format!("reading the attachment {}: {error}", staged.name)))?;
             files.push((format!("{directory}/attachments/{}", staged.name), bytes));
         }
+        // The entry as it will travel: its size does not depend on which
+        // hub, project or key it names.
+        let place = crate::ledger::names::place(&node.world, town)
+            .map_err(|error| Failure::new(format!("reading {town}: {error}")))?
+            .ok_or_else(|| Failure::new(format!("there is no project {town} on {here}")))?;
+        let key = crate::ledger::own_key(&node.world).map_err(|error| Failure::new(format!("this machine's key: {error}")))?;
         let entry = Entry {
-            world: fastctx_net::trust::WorldId::generate().map_err(|error| Failure::new(error.to_string()))?,
-            town: town.clone(),
+            hub: place.hub,
+            town: place.town,
             author: here.clone(),
+            key: key.public(),
             at: stamp.at,
             machines: None,
             files: files.iter().map(|(path, bytes)| File { path: path.clone(), bytes: Bytes(bytes.clone()) }).collect(),
         };
-        match crate::ledger::fits(node, town, &entry) {
+        match crate::ledger::fits(&entry) {
             Ok(_) => return Ok((files, stamp)),
             Err(over) => {
                 let largest = staged
