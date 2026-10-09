@@ -62,7 +62,7 @@ fn exercise() -> Result {
     let machine: MachineName = "job-test".parse()?;
     let owner = Address { machine: machine.clone(), resident: "lab-cafe".parse()? }.into();
     let environment = environment(&root, &bash);
-    let request = RunRequest { script: String::new(), cwd: Some(display(&root)), writes_off: false };
+    let request = RunRequest { script: String::new(), cwd: Some(display(&root)), writes_off: false, wait: None };
     let launch = run::Launch {
         world: &world,
         machine: &machine,
@@ -87,7 +87,7 @@ fn exercise() -> Result {
         fs::write(&input, &bytes)?;
         let (gate, address) = new_gate()?;
         let script = format!("exec 3<&0\n{} child {address} <&3 &\nexit 17\n", quote(&executable));
-        let request = RunRequest { script, cwd: Some(display(&root)), writes_off: false };
+        let request = RunRequest { script, cwd: Some(display(&root)), writes_off: false, wait: None };
         let launch = run::Launch { request: &request, ..launch };
         let job = run::launch_with_io(&launch, OutputMode::Separate, Some(&input))?;
         let (mut child, identity) = arrived(&gate, &job).await?;
@@ -124,7 +124,7 @@ fn exercise() -> Result {
         for separate in [false, true] {
             let (gate, address) = new_gate()?;
             let script = format!("(exec {} child {address}) &\nexit 23\n", quote(&executable));
-            let request = RunRequest { script, cwd: Some(display(&root)), writes_off: false };
+            let request = RunRequest { script, cwd: Some(display(&root)), writes_off: false, wait: None };
             let launch = run::Launch { request: &request, ..launch };
             let mode = if separate { OutputMode::Separate } else { OutputMode::Merged };
             let job = run::launch_with_io(&launch, mode, None)?;

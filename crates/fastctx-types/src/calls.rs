@@ -60,6 +60,11 @@ pub enum Call {
         job: JobId,
         machine: Option<MachineName>,
     },
+    /// Waits until jobs of this machine end (`fastctx wait`). The end of a
+    /// job the caller started is taken by the wait: it is not told again.
+    Wait {
+        jobs: Vec<JobId>,
+    },
     /// Copies files or a directory from one machine to another.
     Copy {
         from: Place,
@@ -206,6 +211,10 @@ pub enum Call {
     /// handed to no other answer meanwhile.
     Collect {
         resident: ResidentId,
+        /// The job this very answer is about, left out of the jobs the
+        /// answer says still run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answering: Option<JobId>,
     },
     /// The named notices from `Collect`, and all its town notes, went out
     /// with the answer. Unnamed notices remain waiting; an empty list can
@@ -434,6 +443,10 @@ pub enum Reply {
     JobStopped {
         machine: MachineName,
         record: Box<crate::run::JobRecord>,
+    },
+    /// The jobs a `Wait` named, as their records stood when each ended.
+    Waited {
+        records: Vec<crate::run::JobRecord>,
     },
     Done,
 }

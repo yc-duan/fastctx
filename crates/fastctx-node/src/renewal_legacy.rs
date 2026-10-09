@@ -86,7 +86,7 @@ impl Serialize for Answer<'_> {
         if matches!(self.protocol, 5 | 6)
             && let Reply::Run(run) = self.reply
         {
-            let RunReply { machine, job, state, output, visited } = run;
+            let RunReply { machine, job, state, output, visited, .. } = run;
             let OutputWindow { log, bytes, lines, pieces, legacy, escaped_lines } = output;
             let mut pieces = Cow::Borrowed(pieces.as_slice());
             let legacy = match legacy.as_slice() {

@@ -5,7 +5,7 @@
 //! the user's machines, projects, sessions, colleagues, jobs. The design's
 //! own words (World, resident, town) stay out.
 
-use fastctx_hands::run::{Content, window};
+use fastctx_hands::run::{Content, LONGEST_WAIT, window};
 use serde_json::{Value, json};
 
 /// The machines a session works on as its tools were listed: this one, and
@@ -83,6 +83,12 @@ fn run_definition(writes_off: bool, woken: bool, machines: Option<&Machines>) ->
                 "cwd": {
                     "type": "string",
                     "description": cwd_description(machines)
+                },
+                "wait": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": LONGEST_WAIT.as_secs(),
+                    "description": WAIT_DESCRIPTION
                 }
             },
             "required": ["command"],
@@ -108,12 +114,19 @@ Shell:
 - Each call is a fresh login shell, starting in the home directory, or in `cwd`. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together.
 - Calls share nothing, so you can make several at once, and call this tool from your scripts and subagents like any other. The steps of one piece of work belong in one script; separate pieces of work can go in separate calls.
 - Images a program draws with the kitty or iTerm2 terminal protocols come back as images.
-- A call waits up to 15 seconds. A script still running then goes on in the background, and the answer names the file its output continues in. ";
+- By default a call waits 15 seconds for the script; `wait` sets another wait, up to 600 seconds, or 0 to answer at once. A script still running when the wait is over goes on by itself in the background as a job: it is never stopped for taking long, and the answer names the job and the file its output continues in.
+";
 
-const RUN_ENDS_WOKEN: &str = "You are told when it ends; meanwhile you can do other work, or end your turn.";
+const RUN_ENDS_WOKEN: &str = "\
+- When a job of yours ends, you are told automatically, with its exit status and last lines, while you work or after you end your turn. Meanwhile do what suits you: other work, end your turn, or wait for it with `fastctx wait JOB` in a call with a longer `wait`.
+- While jobs of yours run, each answer ends with a line naming them.";
 
 const RUN_ENDS_ASKED: &str = "\
-When it has ended, the answer of your next call to this tool says so, with its last lines; until then `fastctx w ID` says whether it still runs.";
+- When a job of yours ends, the answer of your next call to this tool says so, with its exit status and last lines; nothing reaches you after you end your turn. Meanwhile do what suits you: other work, or wait for it with `fastctx wait JOB` in a call with a longer `wait`.
+- While jobs of yours run, each answer ends with a line naming them.";
+
+const WAIT_DESCRIPTION: &str = "\
+Seconds to wait for the script before answering: 15 by default, at most 600, 0 to answer at once. A script still running then goes on in the background by itself.";
 
 const RUN_FILES: &str = "\
 Files:
@@ -174,7 +187,7 @@ const RUN_COMMANDS: &str = "\
 More commands (`--help` on each gives all its options):
 - `fastctx nodes` lists the machines, which are online, and what each runs.
 - `fastctx w` shows what runs and who works now, and what happened since your last turn; `fastctx w ID...` shows those sessions or jobs.
-- `fastctx stop JOB...` stops background jobs and everything they started.
+- `fastctx wait JOB...` waits until jobs end and shows how each ended; `fastctx stop JOB...` stops them and everything they started.
 - `fastctx project` lists the user's projects and shows their maps. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its map says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx journal` reads and adds to the project's journals, the history of its work. `fastctx page` publishes an HTML page the user opens in the World app.";
 

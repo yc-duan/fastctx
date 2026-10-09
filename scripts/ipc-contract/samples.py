@@ -53,6 +53,11 @@ def replies(fixtures):
             yield {"reply": "run", "machine": "desktop", "job": "j-abc123", "state": state,
                    "output": {"log": "C:/job.log", "bytes": 900, "lines": 7, "pieces": pieces,
                               "legacy": legacy, "escaped_lines": 1}, "visited": [["laptop", "j-def456"]]}
+    # Why a call answered while its job ran: a field older readers ignore.
+    for answered in [{"kind": "wait_over", "seconds": 0}, {"kind": "words", "seconds": 5}]:
+        yield {"reply": "run", "machine": "desktop", "job": "j-abc123", "state": {"kind": "running"},
+               "output": {"log": "C:/job.log", "bytes": 0, "lines": 0, "pieces": [], "legacy": [],
+                          "escaped_lines": 0}, "answered": answered}
     notices = []
     for how in [{"kind": "finished"}, {"kind": "stopped"}, {"kind": "interrupted", "reason": "restart"},
                 {"kind": "failed", "error": "disk full"}]:

@@ -51,10 +51,10 @@ pub type EventBarrier = Arc<Mutex<Option<oneshot::Sender<Result<(), String>>>>>;
 /// How long Codex waits for a thread's tool server to start; the World
 /// gives Codex this, and waits as long for word of how it went.
 pub const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
-/// How long Codex waits for one call of a World tool. A `run` answers
-/// within its fifteen seconds and a write or a colleague's request at once;
-/// what can take longer is a large result travelling between machines.
-pub const TOOL_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long Codex waits for one call of a World tool: a minute above the
+/// longest wait a `run` may ask for (`fastctx_hands::run::LONGEST_WAIT`),
+/// for the answer that follows the wait.
+pub const TOOL_TIMEOUT: Duration = Duration::from_secs(660);
 
 /// The MCP/history limit for at most `budget` Unicode scalar values across
 /// the complete displayed text blocks, plus images. The caller must include

@@ -93,15 +93,23 @@ impl Session {
                 return Answer::error("=== run (not run: `cwd` must be a string) ===".to_string());
             }
         };
-        let node = match arguments.get("node") {
+        // A session listed before `on` replaced it may still name a machine.
+        if arguments.get("node").is_some_and(|node| !node.is_null()) {
+            return Answer::error(
+                "=== run (not run: run has no `node`; write `on MACHINE` in the script to run part of it there) ==="
+                    .to_string(),
+            );
+        }
+        let wait = match arguments.get("wait") {
             None | Some(Value::Null) => None,
-            Some(Value::String(node)) => match MachineName::try_from(node.as_str()) {
-                Ok(node) => Some(node),
-                Err(error) => return Answer::error(format!("=== run (not run: {error}) ===")),
+            Some(wait) => match wait.as_u64().and_then(|wait| u32::try_from(wait).ok()) {
+                Some(wait) => Some(wait),
+                None => {
+                    return Answer::error(
+                        "=== run (not run: `wait` must be a whole number of seconds) ===".to_string(),
+                    );
+                }
             },
-            Some(_) => {
-                return Answer::error("=== run (not run: `node` must be a string naming a machine) ===".to_string());
-            }
         };
         let whereabouts = match self.whereabouts(meta).await {
             Ok(whereabouts) => whereabouts,
@@ -111,12 +119,16 @@ impl Session {
             let mut client = self.client().await?;
             let call = Call::Run {
                 resident: whereabouts.resident.clone(),
-                request: RunRequest { script: command, cwd, writes_off: self.writes_off },
-                node,
+                request: RunRequest { script: command, cwd, writes_off: self.writes_off, wait },
+                node: None,
             };
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;
+        let answering = match &reply {
+            Ok(Reply::Run(reply)) => Some(reply.job.clone()),
+            _ => None,
+        };
         let mut answer = match reply {
             Ok(Reply::Run(reply)) => Answer {
                 content: present(&reply),
@@ -131,7 +143,7 @@ impl Session {
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== run (not run) ===\n{error}")),
         };
-        self.add_waiting_words(&whereabouts, &mut answer).await;
+        self.add_waiting_words_about(&whereabouts, answering, &mut answer).await;
         answer
     }
 
@@ -271,7 +283,18 @@ impl Session {
     /// it, ride along with its answer, each in a block of its own
     /// (`world-colleagues.md`, 话怎样送到居民眼前; `world-projects.md`).
     async fn add_waiting_words(&self, whereabouts: &Whereabouts, answer: &mut Answer) {
-        let collect = Call::Collect { resident: whereabouts.resident.clone() };
+        self.add_waiting_words_about(whereabouts, None, answer).await;
+    }
+
+    /// What waits for the resident, added to an answer that itself tells of
+    /// the job `answering`.
+    async fn add_waiting_words_about(
+        &self,
+        whereabouts: &Whereabouts,
+        answering: Option<fastctx_types::JobId>,
+        answer: &mut Answer,
+    ) {
+        let collect = Call::Collect { resident: whereabouts.resident.clone(), answering };
         let mut client = match self.client().await {
             Ok(client) => client,
             Err(error) => {

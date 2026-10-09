@@ -270,7 +270,7 @@ fn words(id: &ResidentId, machine: &MachineName, town: Option<&TownName>, origin
         Origin::User => "The user started this session from fastctx and talks to you here.".to_string(),
     };
     format!(
-        "You are {id}, an agent session on {machine}, one of the user's machines connected by fastctx.{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. It runs bash on this machine, and `on MACHINE` in the script runs a part of it on another machine; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running after 15 seconds goes on in the background; you are told when it ends, so you can end your turn and be woken with the news."
+        "You are {id}, an agent session on {machine}, one of the user's machines connected by fastctx.{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. It runs bash on this machine, and `on MACHINE` in the script runs a part of it on another machine; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
     )
 }
 

@@ -22,6 +22,21 @@ pub struct RunRequest {
     /// they refuse and point at the host's own (`world-write.md`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub writes_off: bool,
+    /// How many seconds the call waits before a job still running goes on
+    /// in the background; without it, the World's own wait (`world-run.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait: Option<u32>,
+}
+
+/// Why a call answered while its job still ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Answered {
+    /// The wait was over.
+    WaitOver { seconds: u32 },
+    /// Words came for the resident after `seconds`, and an answer is the way
+    /// they reach it.
+    Words { seconds: u32 },
 }
 
 /// How a job retains its two output streams. Ordinary `run` uses Merged;
@@ -62,6 +77,9 @@ pub struct RunReply {
     /// is there (`world-run.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub visited: Vec<(MachineName, JobId)>,
+    /// Why the call answered, when the job still ran then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered: Option<Answered>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

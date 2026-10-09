@@ -123,6 +123,11 @@ pub(crate) async fn tell_here_locked(
         // The same thing told again: it is on its way or went in already.
         return Ok(Landed::Waiting { why: None, answered: answered(node, to, &about) });
     }
+    // The end of the resident's own job waits for whatever call is waiting
+    // now; words for it end the wait (`world-run.md`).
+    if !matches!(pending.delivery.notice, Notice::JobEnded { .. }) {
+        node.words.came(to);
+    }
     hand_over_locked(node, to, &about, &directory, pending).await
 }
 

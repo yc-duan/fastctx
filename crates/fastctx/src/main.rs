@@ -25,6 +25,7 @@ mod talk;
 mod update;
 mod view;
 mod w;
+mod wait;
 mod world;
 mod writers;
 
@@ -128,6 +129,13 @@ enum Command {
     On(on::OnArgs),
     /// Stop jobs and everything they started, on whichever machine each runs.
     Stop(stop::StopArgs),
+    /// Wait until jobs end, then show how each ended and its last lines.
+    ///
+    /// The jobs are those of this machine; for a job on another machine, wait
+    /// there: `on laptop fastctx wait j-k3x9a2`. The end of a job you started
+    /// is shown here and not told to you again. Like bash's `wait`, it exits
+    /// with the status of the last job named.
+    Wait(wait::WaitArgs),
     /// List the user's machines: which are online and what each is like.
     Nodes,
     /// Copy files and directories from one of the user's machines to another.
@@ -251,6 +259,7 @@ fn main() -> ExitCode {
         Command::W(args) => w::run(args),
         Command::On(args) => return on::run(args),
         Command::Stop(args) => return finish(stop::run(args)),
+        Command::Wait(args) => return finish(wait::run(args)),
         Command::Nodes => world::nodes(),
         Command::Copy(args) => return finish(copy::run(args)),
         Command::Talk(args) => talk::run(args),

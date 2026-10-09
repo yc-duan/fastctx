@@ -101,6 +101,21 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.send(&json(&NodeFrame::Reply { id, reply: ended })).await?;
             continue;
         }
+        if let Call::Wait { jobs } = call {
+            // A wait keeps the connection until the jobs end; its leaving
+            // hands back the ends the wait held (`waiting`).
+            let caller = match &hello.peer {
+                Peer::Command { resident, .. } => resident.clone(),
+                _ => None,
+            };
+            let waited = tokio::select! {
+                waited = crate::waiting::wait(node, caller, jobs) => waited,
+                // The client says nothing more on a wait.
+                _ = reader.recv() => return Ok(()),
+            };
+            writer.send(&json(&NodeFrame::Reply { id, reply: waited })).await?;
+            continue;
+        }
         if let Call::On { resident, town, request } = call {
             // Only the World's shell of that resident sends its `on`s: the
             // command speaks as the resident its job belongs to.
@@ -164,7 +179,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
         let mut reply = match call {
-            Call::Collect { resident } => collect(node, resident, &mut arrived.collected, &mut arrived.notes).await,
+            Call::Collect { resident, answering } => {
+                collect(node, resident, answering, &mut arrived.collected, &mut arrived.notes).await
+            }
             Call::Taken { resident, ids } => {
                 taken(node, resident, ids, &mut arrived.collected, &mut arrived.notes).await
             }
@@ -207,16 +224,17 @@ impl Drop for Arrived<'_> {
 async fn collect(
     node: &Arc<Node>,
     resident: ResidentId,
+    answering: Option<fastctx_types::JobId>,
     collected: &mut Vec<(ResidentId, NoticeId, Option<String>)>,
     collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
     if native_delivery(node, &resident) {
-        return collect_notes(node, resident, Vec::new(), collected_notes).await;
+        return collect_notes(node, resident, answering, Vec::new(), collected_notes).await;
     }
     let speaking = node.residents.speaking(&resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let _speaking = speaking.lock().await;
     if native_delivery(node, &resident) {
-        return collect_notes(node, resident, Vec::new(), collected_notes).await;
+        return collect_notes(node, resident, answering, Vec::new(), collected_notes).await;
     }
     let town = town_of(node, &resident)?;
     let directory = node.world.resident(town.as_ref(), &resident);
@@ -254,7 +272,7 @@ async fn collect(
             }
         }
     }
-    collect_notes(node, resident, notices, collected_notes).await
+    collect_notes(node, resident, answering, notices, collected_notes).await
 }
 
 fn native_delivery(node: &Node, resident: &ResidentId) -> bool {
@@ -269,11 +287,17 @@ fn native_delivery(node: &Node, resident: &ResidentId) -> bool {
 async fn collect_notes(
     node: &Arc<Node>,
     resident: ResidentId,
+    answering: Option<fastctx_types::JobId>,
     notices: Vec<fastctx_types::residents::Delivery>,
     collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
     let (node, id) = (node.clone(), resident.clone());
-    let (notes, heard) = blocking("reading the town", move || crate::town::notes::notes(&node, &id)).await?;
+    let (notes, heard) = blocking("reading the town", move || {
+        let (mut notes, heard) = crate::town::notes::notes(&node, &id)?;
+        notes.extend(crate::jobs::still_running(&node.world, &node.machine(), &id, answering.as_ref())?);
+        Ok((notes, heard))
+    })
+    .await?;
     if let Some(heard) = heard {
         collected_notes.push((resident, heard));
     }
@@ -477,6 +501,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
         Call::Upload { .. } => Err(Failure::new("an upload requires its byte stream on a dedicated connection")),
         Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),
+        Call::Wait { .. } => Err(Failure::new("a wait is asked on a command's own connection")),
         Call::Ask { resident, label, prompt, node: target } => {
             let town = town_of(node, &resident)?;
             crate::colleagues::ask(node, resident, town, label, prompt, target)

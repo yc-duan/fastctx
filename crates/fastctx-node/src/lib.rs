@@ -58,7 +58,9 @@ mod town;
 mod turns;
 mod watch;
 mod watchdog;
+mod waiting;
 mod who;
+mod words;
 mod world;
 mod write;
 mod write_command;
@@ -119,6 +121,8 @@ pub(crate) struct Node {
     /// The `on` jobs here whose sender is following them now: their end
     /// goes to it, not in a letter, unless it leaves first (`on`).
     following: std::sync::Mutex<std::collections::HashMap<fastctx_types::JobId, usize>>,
+    /// Words coming for residents here, for the `run` calls waiting.
+    words: words::Words,
     /// The jobs `on` sent from here to other machines, by machine and id,
     /// as a letter telling one's end finds them (`on`).
     awaited:
@@ -306,6 +310,7 @@ pub async fn run_replacing(
         taking: Default::default(),
         reaching: Default::default(),
         following: Default::default(),
+        words: Default::default(),
         awaited: Default::default(),
         effects_ready: std::sync::atomic::AtomicBool::new(false),
         effects_changed: tokio::sync::Notify::new(),

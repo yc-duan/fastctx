@@ -85,7 +85,7 @@ pub async fn here_(node: &Arc<Node>, job: &JobId, by: &str) -> Result<Option<Job
 }
 
 /// The record of the job `job` on this machine.
-fn find(world: &WorldDir, job: &JobId) -> io::Result<Option<PathBuf>> {
+pub(crate) fn find(world: &WorldDir, job: &JobId) -> io::Result<Option<PathBuf>> {
     for parent in world.job_parents()? {
         let entries = match std::fs::read_dir(&parent) {
             Ok(entries) => entries,

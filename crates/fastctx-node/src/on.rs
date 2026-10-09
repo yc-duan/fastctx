@@ -706,7 +706,7 @@ async fn start(
 ) -> Result<(JobId, PathBuf), Failure> {
     let script = staged.script;
     let on = OnJob { state: staged.state.to_string_lossy().into_owned() };
-    let request = RunRequest { script, cwd: None, writes_off };
+    let request = RunRequest { script, cwd: None, writes_off, wait: None };
     let owner = JobOwner::Resident(origin.resident.clone());
     let launched = node.jobs.launch(node, owner, origin.town.clone(), request, Some((on, staged.input))).await?;
     // Followed before its end is owed, so an end that comes first goes to

@@ -5,7 +5,7 @@
 //! and carries only facts the World is sure of and the reader cannot see
 //! in the text itself (`world-view.md`, 输出长什么样).
 
-use fastctx_types::run::{ExitStatus, OutputPiece, OutputWindow, RunReply, RunState};
+use fastctx_types::run::{Answered, ExitStatus, OutputPiece, OutputWindow, RunReply, RunState};
 
 use super::WAIT;
 
@@ -80,7 +80,15 @@ fn facts(reply: &RunReply) -> String {
                 format!("{}; {processes} still running", status_text(*status))
             }
         }
-        RunState::Running => format!("still running after {}s; {}", WAIT.as_secs(), reply.job),
+        RunState::Running => match reply.answered {
+            Some(Answered::Words { seconds }) => {
+                format!("still running after {seconds}s, answered then because a message came for you; {}", reply.job)
+            }
+            // Asked not to wait at all.
+            Some(Answered::WaitOver { seconds: 0 }) => format!("started; {}", reply.job),
+            Some(Answered::WaitOver { seconds }) => format!("still running after {seconds}s; {}", reply.job),
+            None => format!("still running after {}s; {}", WAIT.as_secs(), reply.job),
+        },
         RunState::Stopped => "stopped".to_string(),
         RunState::Interrupted { reason } => format!("interrupted: {reason}"),
         RunState::Failed { error } => format!("could not run: {error}"),

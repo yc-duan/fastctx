@@ -1,18 +1,23 @@
 //! Jobs on this machine: starting one for `run`, waiting for it within the
 //! call, and noticing jobs whose supervisor is gone.
+//!
+//! A call waits until its job settles, the wait is over, or words come for
+//! the resident who asked: an answer is how words reach a session the World
+//! cannot speak into, and the moment a busy session reads them.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
-use fastctx_hands::run::{self, Launch, WAIT, record, window};
+use fastctx_hands::run::{self, LONGEST_WAIT, Launch, WAIT, record, window};
 use fastctx_platform::{FileLock, is_alive, user_home, world_process_environment};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::Action;
-use fastctx_types::run::{Ended, EndedHow, JobRecord, RunReply, RunRequest, RunState};
+use fastctx_types::run::{Answered, Ended, EndedHow, JobRecord, RunReply, RunRequest, RunState};
 use fastctx_types::{JobId, TownName};
 use jiff::Timestamp;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 
 use crate::Node;
@@ -87,8 +92,9 @@ impl Jobs {
         .map_err(|error| Failure::new(format!("starting the job: {error}")))?
     }
 
-    /// Starts `request` for `owner` and waits until the job settles or the
-    /// wait is over. Returns the answer and the job's record as it stood.
+    /// Starts `request` for `owner` and waits until the job settles, the
+    /// wait is over, or words come for the resident who asked. Returns the
+    /// answer and the job's record as it stood.
     pub async fn run(
         &self,
         node: &Arc<Node>,
@@ -97,10 +103,26 @@ impl Jobs {
         request: RunRequest,
     ) -> Result<(RunReply, JobRecord), Failure> {
         let (world, machine) = (&node.world, &node.machine());
-        let deadline = Instant::now() + WAIT;
+        let wait = match request.wait {
+            None => WAIT,
+            Some(seconds) if u64::from(seconds) <= LONGEST_WAIT.as_secs() => Duration::from_secs(seconds.into()),
+            Some(seconds) => {
+                return Err(Failure::new(format!(
+                    "a call waits at most {} seconds, not {seconds}",
+                    LONGEST_WAIT.as_secs()
+                )));
+            }
+        };
+        let started = Instant::now();
+        let deadline = started + wait;
         // Listening before the job exists, so its first change is not missed.
         let mut changes = self.changes.subscribe();
+        let mut words = owner
+            .resident()
+            .filter(|address| address.machine == *machine)
+            .map(|address| node.words.watch(&address.resident));
         let launched = self.launch(node, owner, town, request, None).await?;
+        let mut answered = None;
         loop {
             let record = read(&launched.record).await?;
             if settled(&record) {
@@ -111,7 +133,14 @@ impl Jobs {
                     Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => unreachable!("the node holds the sender"),
                 },
-                () = tokio::time::sleep_until(deadline) => break,
+                () = tokio::time::sleep_until(deadline) => {
+                    answered = Some(Answered::WaitOver { seconds: seconds(wait) });
+                    break;
+                }
+                () = came(&mut words) => {
+                    answered = Some(Answered::Words { seconds: seconds(started.elapsed()) });
+                    break;
+                }
             }
         }
         let mut record = read(&launched.record).await?;
@@ -140,9 +169,28 @@ impl Jobs {
         }
         let visited =
             visited(&node.world.job_owner(machine, record.town.as_ref(), &record.owner).jobs(), &launched.job);
-        let reply = RunReply { machine: machine.clone(), job: launched.job, state: state(&record), output, visited };
+        let state = state(&record);
+        // Why it answered says something only of a job that still runs.
+        let answered = answered.filter(|_| state == RunState::Running);
+        let reply = RunReply { machine: machine.clone(), job: launched.job, state, output, visited, answered };
         Ok((reply, record))
     }
+}
+
+/// Returns when words come for the resident `words` watches; never, when
+/// the job is nobody's here.
+async fn came(words: &mut Option<watch::Receiver<u64>>) {
+    match words {
+        // The node holds every sender, so the watch never closes.
+        Some(words) => {
+            let _ = words.changed().await;
+        }
+        None => std::future::pending().await,
+    }
+}
+
+fn seconds(span: Duration) -> u32 {
+    u32::try_from(span.as_secs()).unwrap_or(u32::MAX)
 }
 
 /// The action a `run` was, as its resident's `actions` record it.
@@ -223,6 +271,64 @@ async fn supervisor_gone(record: &JobRecord, launched: &run::Launched) -> bool {
     }
 }
 
+/// One line naming the jobs of `resident` here that went on in the
+/// background and still run, for the end of each answer of its World tools,
+/// as 0.2's tools did: it keeps them in view after the conversation that
+/// started them is compacted, and spares asking whether they still run.
+/// `None` when there are none but `answering`, the job this answer is about.
+pub fn still_running(
+    world: &WorldDir,
+    here: &fastctx_types::MachineName,
+    resident: &fastctx_types::ResidentId,
+    answering: Option<&JobId>,
+) -> std::io::Result<Option<String>> {
+    let owner = fastctx_types::run::JobOwner::Resident(fastctx_types::Address {
+        machine: here.clone(),
+        resident: resident.clone(),
+    });
+    let mut running = Vec::new();
+    for town in std::iter::once(None).chain(world.towns()?.into_iter().map(Some)) {
+        let jobs = world.job_owner(here, town.as_ref(), &owner).jobs();
+        for owed in read_dir(&jobs)? {
+            if owed.extension().is_none_or(|extension| extension != "owed") {
+                continue;
+            }
+            let job = match record::read(&owed.with_extension("json")) {
+                Ok(job) => job,
+                // Its record is being replaced; the next answer shows it.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            if job.end.is_none() && job.owner == owner && Some(&job.id) != answering {
+                running.push(job);
+            }
+        }
+    }
+    if running.is_empty() {
+        return Ok(None);
+    }
+    running.sort_by_key(|job| job.started_at);
+    let now = Timestamp::now();
+    let jobs: Vec<String> = running
+        .iter()
+        .map(|job| {
+            let ran = now.as_second().saturating_sub(job.started_at.as_second()).max(0) as u64;
+            format!("{} ({}) {}", job.id, fastctx_hands::told::duration(ran), short(&first_line(&job.script)))
+        })
+        .collect();
+    Ok(Some(format!("=== your jobs still running: {} ===", jobs.join("; "))))
+}
+
+/// A command cut to what names it in a line of several.
+fn short(command: &str) -> String {
+    // Enough to tell jobs apart, few enough to repeat with every answer.
+    const SHOWN: usize = 40;
+    match command.char_indices().nth(SHOWN) {
+        Some((cut, _)) => format!("{} …", command[..cut].trim_end()),
+        None => command.to_string(),
+    }
+}
+
 /// The machines a job's `on`s went to, as `on` noted them beside it.
 fn visited(jobs: &Path, job: &JobId) -> Vec<(fastctx_types::MachineName, JobId)> {
     let Ok(text) = std::fs::read_to_string(jobs.join(format!("{job}.on"))) else { return Vec::new() };
@@ -244,7 +350,7 @@ pub(crate) async fn read(path: &Path) -> Result<JobRecord, Failure> {
 
 /// Records that a job ended without its supervisor, if the supervisor is
 /// indeed gone: its lock is free.
-async fn interrupt(path: &Path, reason: &str) -> Result<JobRecord, Failure> {
+pub(crate) async fn interrupt(path: &Path, reason: &str) -> Result<JobRecord, Failure> {
     let (path, reason) = (path.to_path_buf(), reason.to_string());
     tokio::task::spawn_blocking(move || interrupt_now(&path, &reason))
         .await
