@@ -6,19 +6,25 @@
 //! told when it ends. Every byte of output is kept in a log on the machine
 //! where it ran.
 
+mod cells;
 pub mod control;
 mod display;
+mod graphics;
 mod heredoc;
 pub mod last;
 pub mod launch;
 mod output;
+mod pieces;
 pub mod preread;
 pub mod present;
 pub mod program;
+mod queue;
 pub mod record;
+mod records;
 pub mod shell;
 pub mod supervisor;
 pub mod terminal;
+mod view_set;
 pub mod window;
 
 use std::time::Duration;

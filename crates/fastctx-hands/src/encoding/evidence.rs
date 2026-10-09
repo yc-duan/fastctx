@@ -1,4 +1,5 @@
-use std::io::{self, Read};
+use crate::spool::Spool;
+use std::io::{self, Read, Write};
 
 use super::file::{Plan, describe_error};
 use super::statistics::Statistics;
@@ -83,7 +84,9 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
     }
 
     let mut statistics = Statistics::new();
-    let mut line = Vec::new();
+    let mut line = Spool::default();
+    let mut line_utf8 = TextDecoder::new(TextEncoding::utf8());
+    let mut line_valid = true;
     let mut utf8 = Validation::new("utf-8");
     let mut le = Validation::new("utf-16le");
     let mut be = Validation::new("utf-16be");
@@ -93,22 +96,29 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
     let mut offset = 0u64;
     let mut escape = [0u8; 3];
     let mut iso_offset = None;
-    let mut probe = |bytes: &[u8], end| {
+    let mut probe = |bytes: &[u8], end| -> Result<(), String> {
         utf8.feed(bytes, end);
         for piece in bytes.split_inclusive(|byte| *byte == b'\n') {
-            line.extend_from_slice(piece);
+            line.write_all(piece).map_err(|e| e.to_string())?;
+            line_valid &= line_utf8.feed(piece, piece.ends_with(b"\n")).is_ok();
             if piece.ends_with(b"\n") {
-                // Valid UTF-8 lines have their own evidence. Pool the remaining
-                // lines so a short legacy heading can borrow the file's context.
-                if std::str::from_utf8(&line).is_err() {
-                    statistics.feed(&line, false);
+                let bytes = std::mem::take(&mut line).finish();
+                if !line_valid {
+                    for chunk in bytes.chunks() {
+                        statistics.feed(&chunk.map_err(|e| e.to_string())?, false);
+                    }
                 }
-                line.clear();
+                line_utf8 = TextDecoder::new(TextEncoding::utf8());
+                line_valid = true;
             }
         }
         if end {
-            if std::str::from_utf8(&line).is_err() {
-                statistics.feed(&line, false);
+            line_valid &= line_utf8.feed(&[], true).is_ok();
+            let bytes = std::mem::take(&mut line).finish();
+            if !line_valid {
+                for chunk in bytes.chunks() {
+                    statistics.feed(&chunk.map_err(|e| e.to_string())?, false);
+                }
             }
             statistics.feed(&[], true);
         }
@@ -127,8 +137,9 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
             }
             offset += 1;
         }
+        Ok(())
     };
-    probe(first, false);
+    probe(first, false)?;
     let mut buffer = [0; 64 * 1024];
     loop {
         let n = match reader.read(&mut buffer) {
@@ -136,7 +147,7 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e.to_string()),
         };
-        probe(&buffer[..n], n == 0);
+        probe(&buffer[..n], n == 0)?;
         if n == 0 {
             break;
         }

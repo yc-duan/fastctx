@@ -17,7 +17,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::decode::Hashed;
 use super::{Options, Section, head, hex, plural};
-use crate::encoding::file::{Plan, excerpt, visit};
+use crate::encoding::file::{Plan, content, excerpt, visit};
 pub(crate) use crate::text::visible;
 
 pub fn look(
@@ -52,7 +52,8 @@ pub fn look(
     if let Err(facts) = visit(&mut stream, &plan, |line| {
         // A line of ASCII reads alike in every encoding that keeps ASCII,
         // so only the others say which encoding a file uses.
-        let telling = line.codec.filter(|codec| !codec.ascii_compatible() || !line.text.is_ascii());
+        let ascii = line.text.is_ascii().map_err(|e| e.to_string())?;
+        let telling = line.codec.filter(|codec| !codec.ascii_compatible() || !ascii);
         let label = telling.map(|codec| codec.label());
         if let Some(label) = label {
             labels.insert(label);
@@ -79,16 +80,21 @@ pub fn look(
             previous = label;
         }
         if line.issue.is_some() {
-            let ending = if line.text.ends_with("\r\n") {
+            let ending = if line.text.ends_with(b"\r\n").map_err(|e| e.to_string())? {
                 "\r\n"
-            } else if line.text.ends_with('\n') {
+            } else if line.text.ends_with(b"\n").map_err(|e| e.to_string())? {
                 "\n"
             } else {
                 ""
             };
-            reader.take(&format!("{}{ending}", excerpt(crate::text::line_content(&line.text))));
+            reader.take(&format!("{}{ending}", excerpt(&content(&line.text)?)?));
         } else {
-            reader.take(&line.text);
+            line.text
+                .utf8(|text| {
+                    reader.take(text);
+                    Ok(())
+                })
+                .map_err(|e| e.to_string())?;
         }
         Ok(())
     }) {
@@ -315,27 +321,35 @@ impl Reader {
         }
     }
 
-    fn count_ending(&mut self) {
-        if self.line_ends_with_cr { self.crlf += 1 } else { self.lf += 1 }
-    }
-
     pub(super) fn take(&mut self, text: &str) {
+        let mut text = text;
+        if self.line_ends_with_cr {
+            if let Some(rest) = text.strip_prefix('\n') {
+                self.crlf += 1;
+                self.end_line();
+                text = rest;
+            } else if !text.is_empty() {
+                self.extend_line("\r");
+                self.line_ends_with_cr = false;
+            } else {
+                return;
+            }
+        }
         for part in text.split_inclusive('\n') {
-            match part.strip_suffix('\n') {
-                Some(content) => {
-                    // A CR before the LF is the line's ending, not its text.
-                    let content = match content.strip_suffix('\r') {
-                        Some(content) => {
-                            self.line_ends_with_cr = true;
-                            content
-                        }
-                        None => content,
-                    };
-                    self.extend_line(content);
-                    self.count_ending();
-                    self.end_line();
+            if let Some(content) = part.strip_suffix('\n') {
+                let (content, crlf) = content.strip_suffix('\r').map_or((content, false), |s| (s, true));
+                self.extend_line(content);
+                if crlf {
+                    self.crlf += 1;
+                } else {
+                    self.lf += 1;
                 }
-                None => self.extend_line(part),
+                self.end_line();
+            } else if let Some(content) = part.strip_suffix('\r') {
+                self.extend_line(content);
+                self.line_ends_with_cr = true;
+            } else {
+                self.extend_line(part);
             }
         }
     }
@@ -445,6 +459,10 @@ impl Reader {
     }
 
     fn finish(mut self) -> Read {
+        if self.line_ends_with_cr {
+            self.extend_line("\r");
+            self.line_ends_with_cr = false;
+        }
         // A last line without a newline is still a line.
         if self.position > 0 {
             self.end_line();
