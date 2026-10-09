@@ -73,7 +73,7 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     json!({
         "name": "run",
         "description": format!(
-            "{} {RUN_START}\n\n{RUN_SHELL}{exec}{ends}\n\n{RUN_FILES}{writing}{RUN_COPY}\n\n{RUN_ON}\n\n{}\n\n{RUN_COMMANDS}",
+            "{exec}{} {RUN_START}\n\n{RUN_SHELL}{ends}\n\n{RUN_FILES}{writing}{RUN_COPY}\n\n{RUN_ON}\n\n{}\n\n{RUN_COMMANDS}",
             machine_names(machines),
             run_together(writes_off)
         ),
@@ -126,9 +126,11 @@ Shell:
 /// the script's first-line pragma raises it: no setting or tool definition
 /// can. 100,000 holds an answer of `window::BUDGET` units with what a script
 /// adds around it; what it prints is recorded under the global tool output
-/// limit that apply writes for the same budget (`world-view.md`).
+/// limit that apply writes for the same budget (`world-view.md`). It leads
+/// the description: a model writing the script reads the tool from its top.
 const RUN_EXEC: &str = "\
-- Called from an `exec` script, an answer of this tool reaches you only as far as the script prints it, and a script prints no more than its `max_output_tokens`. The answers are often long: begin every script that calls this tool with `// @exec: {\"max_output_tokens\": 100000}`, putting any other setting, such as `yield_time_ms`, on that same line.
+You must begin every `exec` script that calls this tool with `// @exec: {\"max_output_tokens\": 100000}`, putting any other setting, such as `yield_time_ms`, on that same line: its answers are often long, and a script shows you only what it prints, no more than its `max_output_tokens`.
+
 ";
 
 const RUN_ENDS_WOKEN: &str = "\
