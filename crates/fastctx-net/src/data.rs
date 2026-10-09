@@ -92,6 +92,27 @@ impl Stream {
         Ok(())
     }
 
+    /// Passes exactly `count` bytes on to `to` as they come, holding no more
+    /// than one message of them at a time.
+    pub async fn forward(&mut self, to: &mut Stream, mut count: u64) -> Result<(), String> {
+        while count > 0 {
+            if self.pending.is_empty() {
+                match self.next().await? {
+                    Some(Message::Bytes(bytes)) => self.pending = bytes,
+                    Some(Message::Word(_)) => {
+                        return Err("the other end said something where bytes were due".to_string());
+                    }
+                    None => return Err(format!("the other end stopped with {count} bytes still due")),
+                }
+            }
+            let here = (self.pending.len() as u64).min(count) as usize;
+            to.send(&self.pending[..here]).await?;
+            self.pending.drain(..here);
+            count -= here as u64;
+        }
+        Ok(())
+    }
+
     /// Says something to the other end.
     pub async fn say(&mut self, word: &impl Serialize) -> Result<(), String> {
         self.put(WsMessage::Text(serde_json::to_string(word).expect("words serialize").into())).await
