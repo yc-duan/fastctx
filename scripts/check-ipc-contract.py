@@ -13,7 +13,8 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-WORK = ROOT / "target" / "ipc-contract"
+TARGET = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
+WORK = TARGET / "ipc-contract"
 REVISIONS = {
     5: "5534ed866e19c931f469c51e0f434ac2e3b4ea2e",
     6: "f00f76c68d27d74204110c876860e4ab61a7f85f",
@@ -63,10 +64,10 @@ serde_json = "1"
     (WORK / "src/main.rs").write_text(source, encoding="utf-8")
     (WORK / "Cargo.lock").write_bytes((ROOT / "Cargo.lock").read_bytes())
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith("CLAUDE")}
-    env["CARGO_TARGET_DIR"] = str(ROOT / "target")
+    env["CARGO_TARGET_DIR"] = str(TARGET)
     subprocess.run(["cargo", "build", "--offline", "-j", "2", "--manifest-path", str(WORK / "Cargo.toml")],
                    cwd=ROOT, env=env, check=True)
-    return ROOT / "target/debug" / ("ipc-historical-readers.exe" if os.name == "nt" else "ipc-historical-readers")
+    return TARGET / "debug" / ("ipc-historical-readers.exe" if os.name == "nt" else "ipc-historical-readers")
 
 
 def verify(reader):
@@ -85,6 +86,9 @@ def verify(reader):
     for case, answer in zip(corpus, answers):
         if case["mode"] == "request":
             assert answer["admitted"] == case["admitted"], (case, answer)
+        elif case["mode"] == "welcome":
+            expected = {key: value for key, value in case["value"].items() if key != "node_lifetime"}
+            assert answer["read"] == expected, (case, answer)
         else:
             wire = answer["wire"]
             if case.get("text_result"):

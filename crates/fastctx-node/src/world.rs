@@ -142,11 +142,11 @@ pub fn link_state(link: Option<&Link>) -> LinkState {
 }
 
 /// What this machine is like.
-pub fn facts(machine: &MachineName) -> MachineFacts {
+pub fn facts(node: &Node) -> MachineFacts {
     let home =
         fastctx_platform::user_home().map(|path| native(&path)).unwrap_or_else(|error| format!("(not known: {error})"));
     MachineFacts {
-        name: machine.clone(),
+        name: node.machine(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         home,
@@ -155,6 +155,7 @@ pub fn facts(machine: &MachineName) -> MachineFacts {
         case_sensitive: !cfg!(any(windows, target_os = "macos")),
         version: env!("CARGO_PKG_VERSION").to_string(),
         shell: shell().clone(),
+        node_lifetime: Some(Box::new(node.lifetime.clone())),
     }
 }
 
@@ -357,7 +358,7 @@ impl fastctx_net::link::Node for Handler {
                         .map(|heads| RemoteReply::Canon { heads })
                         .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
                 }
-                RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&machine))),
+                RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::CopySend { from: path, to } => {
                     let to_machine = to.machine.ok_or_else(|| Failure::new("the copy names no machine to send to"))?;
                     // This machine sends as itself: where it sends, the

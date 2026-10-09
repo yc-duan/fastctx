@@ -313,6 +313,11 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
         } else {
             text.push_str(&format!("{line}  {facts}\n"));
         }
+        if let Ok(facts) = &node.facts
+            && let Some(warning) = facts.node_lifetime.as_ref().and_then(|lifetime| lifetime.warning())
+        {
+            text.push_str(&format!("  {warning}\n"));
+        }
     }
     text
 }

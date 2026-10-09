@@ -21,6 +21,7 @@ pub mod kernel;
 pub mod layout;
 pub mod management;
 pub mod names;
+pub mod node_lifetime;
 pub mod on;
 pub mod pages;
 pub mod process;

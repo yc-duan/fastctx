@@ -35,6 +35,8 @@ pub struct Session {
     were: Mutex<HashMap<Option<String>, ResidentId>>,
     /// Starting the node is done by one call at a time.
     starting: tokio::sync::Mutex<()>,
+    /// Emit stderr diagnostics once per connected node incarnation.
+    lifetime_reported: Mutex<Option<fastctx_types::ProcessIdentity>>,
     /// The World's write commands refuse in this session's shell.
     writes_off: bool,
 }
@@ -61,6 +63,7 @@ impl Session {
             residents: tokio::sync::Mutex::new(HashMap::new()),
             were: Mutex::new(HashMap::new()),
             starting: tokio::sync::Mutex::new(()),
+            lifetime_reported: Mutex::new(None),
             writes_off,
         })
     }
@@ -438,7 +441,18 @@ impl Session {
     async fn client(&self) -> Result<Client, String> {
         let host = self.host.get().cloned().ok_or("the session did not introduce itself with `initialize`")?;
         let _starting = self.starting.lock().await;
-        Client::connect_or_start(&self.world, Peer::Session { host }).await.map_err(|error| error.to_string())
+        let client =
+            Client::connect_or_start(&self.world, Peer::Session { host }).await.map_err(|error| error.to_string())?;
+        if let Some(lifetime) = &client.node_lifetime {
+            let mut reported = self.lifetime_reported.lock().expect("never poisoned");
+            if reported.as_ref() != Some(&lifetime.process) {
+                if let Some(warning) = lifetime.warning() {
+                    eprintln!("fastctx: {warning}");
+                }
+                *reported = Some(lifetime.process.clone());
+            }
+        }
+        Ok(client)
     }
 }
 

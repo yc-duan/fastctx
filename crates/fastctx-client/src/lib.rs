@@ -73,6 +73,8 @@ pub struct Client {
     pub machine: MachineName,
     /// The node binary's version.
     pub node_version: String,
+    /// The connected node's facts, including when another starter won.
+    pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
 
 impl Client {
@@ -105,7 +107,9 @@ impl Client {
             .map_err(io_error)?
             .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
-            Welcome::Accepted { machine, version } => Ok(Self { connection, next: 0, machine, node_version: version }),
+            Welcome::Accepted { machine, version, node_lifetime } => {
+                Ok(Self { connection, next: 0, machine, node_version: version, node_lifetime })
+            }
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
                 Err(ConnectError::Refused { reason, mismatch })
@@ -114,8 +118,8 @@ impl Client {
     }
 
     /// Connects to the node, first starting it if it is not running. The
-    /// node is started on its own, with the user's environment, so that it
-    /// outlives whatever started it and carries nothing of that process.
+    /// node uses the user's environment. Windows may retain it inside a
+    /// host's job; `node_lifetime` reports the connected node's containment.
     /// A node a system service keeps is started by nobody else: a second
     /// one would hold the World while the service's waits for it.
     pub async fn connect_or_start(world: &WorldDir, peer: Peer) -> Result<Self, ConnectError> {
@@ -135,7 +139,7 @@ impl Client {
                 Err(ConnectError::KeptByService { endpoint })
             }
             Err(ConnectError::NoNode { endpoint }) => {
-                let started = start_node(world, program)
+                let started = start_node(world, program, &peer)
                     .map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?;
                 loop {
                     match Self::connect(world, peer.clone()).await {
@@ -323,6 +327,7 @@ pub fn command_peer() -> Peer {
 fn start_node(
     world: &WorldDir,
     program: Option<&std::path::Path>,
+    peer: &Peer,
 ) -> std::io::Result<fastctx_platform::DetachedProcess> {
     let root = world
         .path()
@@ -343,6 +348,16 @@ fn start_node(
     // FASTCTX_HOME may describe an entirely different one.
     environment.retain(|(name, _)| !name.eq_ignore_ascii_case("FASTCTX_HOME"));
     environment.push(("FASTCTX_HOME".into(), root.as_os_str().to_os_string()));
+    let starter = fastctx_types::node_lifetime::NodeStarter {
+        process: fastctx_platform::current_identity()?,
+        session: match peer {
+            Peer::Session { host } => Some(host.clone()),
+            _ => None,
+        },
+    };
+    environment.retain(|(name, _)| !name.eq_ignore_ascii_case("FASTCTX_NODE_STARTER"));
+    environment
+        .push(("FASTCTX_NODE_STARTER".into(), serde_json::to_string(&starter).map_err(std::io::Error::other)?.into()));
     fastctx_platform::spawn_detached(
         &executable,
         &[std::ffi::OsStr::new("node"), std::ffi::OsStr::new("--dir"), root.as_os_str()],

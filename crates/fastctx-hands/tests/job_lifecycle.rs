@@ -220,7 +220,14 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
         let hello: Hello = serde_json::from_slice(&connection.recv().await.unwrap().unwrap()).unwrap();
         assert!(matches!(hello.peer, Peer::Supervisor { .. }));
         connection
-            .send(&serde_json::to_vec(&Welcome::Accepted { machine: machine.clone(), version: "test".into() }).unwrap())
+            .send(
+                &serde_json::to_vec(&Welcome::Accepted {
+                    machine: machine.clone(),
+                    version: "test".into(),
+                    node_lifetime: None,
+                })
+                .unwrap(),
+            )
             .await
             .unwrap();
         let ClientFrame::Call { id, call } =

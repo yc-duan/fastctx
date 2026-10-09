@@ -27,6 +27,9 @@ pub struct MachineFacts {
     /// machine runs an older fastctx that does not say.
     #[serde(default)]
     pub shell: String,
+    /// The running node's own observation; older nodes do not report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_lifetime: Option<Box<crate::node_lifetime::NodeLifetime>>,
 }
 
 /// How this machine's link to the hub stands.
