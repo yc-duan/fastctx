@@ -64,7 +64,10 @@ fn town_of(call: &RemoteCall) -> Option<&TownName> {
         | RemoteCall::Who { town, .. }
         | RemoteCall::Since { town, .. }
         | RemoteCall::Open { town, .. } => town.as_ref(),
-        RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } | RemoteCall::StopOn { origin, .. } => {
+        RemoteCall::On { origin, .. }
+        | RemoteCall::Follow { origin, .. }
+        | RemoteCall::StopOn { origin, .. }
+        | RemoteCall::PipeOut { origin, .. } => {
             origin.town.as_ref()
         }
         RemoteCall::PageAction { source, .. } => Some(&source.town),

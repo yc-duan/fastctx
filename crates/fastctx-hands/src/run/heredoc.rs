@@ -11,6 +11,11 @@ struct Command {
     words: Vec<Word>,
     documents: Vec<usize>,
     grouped: bool,
+    /// A redirection takes its standard input elsewhere.
+    input_redirected: bool,
+    /// A redirection takes its standard output elsewhere, or sends its
+    /// standard error where its standard output goes.
+    output_redirected: bool,
 }
 
 struct Word {
@@ -36,6 +41,11 @@ struct Scanner<'a> {
     commands: Vec<Command>,
     documents: Vec<Document>,
     flows: Vec<(usize, usize)>,
+    /// Commands joined by a plain `|`: the first's standard output is the
+    /// second's standard input.
+    pipes: Vec<(usize, usize)>,
+    /// The descriptor written just before a redirection, as `2` in `2>`.
+    descriptor: Option<Vec<u8>>,
     word_owner: usize,
     functions: std::collections::HashSet<Vec<u8>>,
 }
@@ -64,6 +74,8 @@ pub(super) fn check(source: &str) -> Result<(), Failure> {
         documents: Vec::new(),
         flows: Vec::new(),
         word_owner: 0,
+        pipes: Vec::new(),
+        descriptor: None,
         functions: std::collections::HashSet::new(),
     };
     scanner.shell(None)?;
@@ -150,6 +162,8 @@ pub(super) fn on_machines(source: &str) -> Vec<(String, usize)> {
         documents: Vec::new(),
         flows: Vec::new(),
         word_owner: 0,
+        pipes: Vec::new(),
+        descriptor: None,
         functions: std::collections::HashSet::new(),
     };
     if scanner.shell(None).is_err() {
@@ -166,6 +180,80 @@ pub(super) fn on_machines(source: &str) -> Vec<(String, usize)> {
         }
     }
     named
+}
+
+/// The script with each `on` whose output a pipeline hands straight to
+/// another `on`, or whose input comes straight from one, written as the
+/// prelude's `__fastctx_on_pipe` (`world-run.md`, 数据跟着命令走): its first
+/// word says whether its input comes from an `on`, its second names the
+/// machine its output goes to, or is `-`. Only literal `on`s joined by a
+/// plain `|` qualify, the first not sending its output elsewhere, the
+/// second not taking its input elsewhere and running a command; anything
+/// else, and any script this scanner cannot follow or that makes `on`
+/// something else, is left as written and piped as any command is.
+pub(super) fn mark_on_pipes(source: &str) -> String {
+    if !source.contains('|') || !source.contains("on") {
+        return source.to_string();
+    }
+    let mut scanner = Scanner {
+        source: source.as_bytes(),
+        offset: 0,
+        line: 1,
+        commands: Vec::new(),
+        documents: Vec::new(),
+        flows: Vec::new(),
+        pipes: Vec::new(),
+        descriptor: None,
+        word_owner: 0,
+        functions: std::collections::HashSet::new(),
+    };
+    if scanner.shell(None).is_err() || scanner.functions.contains(b"on".as_slice()) {
+        return source.to_string();
+    }
+    let aliased = scanner.commands.iter().any(|command| {
+        matches!(command_kind(&command.words, &std::collections::HashSet::new()), (_, Some(name)) if name.text == b"alias")
+            && command.words.iter().any(|word| word.text.starts_with(b"on="))
+    });
+    if aliased {
+        return source.to_string();
+    }
+    let bytes = source.as_bytes();
+    // A literal `on`: its offset, the machine it names, and how many words
+    // follow the machine.
+    let literal = |command: &Command| -> Option<(usize, String, usize)> {
+        let mut words = command.words.iter().skip_while(|word| word.assignment);
+        let (head, machine) = (words.next()?, words.next()?);
+        let written = head.text == b"on"
+            && !head.quoted
+            && !head.dynamic
+            && bytes.get(head.offset..head.offset + 2) == Some(b"on".as_slice())
+            && bytes.get(head.offset + 2).is_some_and(|byte| *byte == b' ' || *byte == b'\t');
+        let name = std::str::from_utf8(&machine.text).ok()?;
+        let named = !machine.dynamic
+            && !name.is_empty()
+            && !name.starts_with('-')
+            && name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+        (written && named).then(|| (head.offset, name.to_string(), words.count()))
+    };
+    let mut marks: std::collections::BTreeMap<usize, (bool, Option<String>)> = std::collections::BTreeMap::new();
+    for &(producer, consumer) in &scanner.pipes {
+        let (Some((from, _, _)), Some((to, machine, rest))) =
+            (literal(&scanner.commands[producer]), literal(&scanner.commands[consumer]))
+        else {
+            continue;
+        };
+        if scanner.commands[producer].output_redirected || scanner.commands[consumer].input_redirected || rest == 0 {
+            continue;
+        }
+        marks.entry(from).or_default().1 = Some(machine);
+        marks.entry(to).or_default().0 = true;
+    }
+    let mut marked = source.to_string();
+    for (offset, (input, output)) in marks.iter().rev() {
+        let call = format!("__fastctx_on_pipe {} {}", u8::from(*input), output.as_deref().unwrap_or("-"));
+        marked.replace_range(*offset..*offset + 2, &call);
+    }
+    marked
 }
 
 impl Scanner<'_> {
@@ -248,11 +336,16 @@ impl Scanner<'_> {
                 Some(b'|') if cases.last() == Some(&Case::Pattern) => self.advance(1),
                 Some(b'|') if !self.at(b"||") => {
                     self.advance(1);
-                    if self.byte() == Some(b'&') {
+                    // `|&` pipes standard error too.
+                    let both = self.byte() == Some(b'&');
+                    if both {
                         self.advance(1);
                     }
                     let consumer = self.command();
                     self.flows.push((command, consumer));
+                    if !both {
+                        self.pipes.push((command, consumer));
+                    }
                     command = consumer;
                 }
                 Some(b'|' | b'&') => {
@@ -299,6 +392,7 @@ impl Scanner<'_> {
                             self.advance(2);
                         }
                     }
+                    self.redirected(command, &operator);
                     if operator == b"<<" {
                         let strip_tabs = self.byte() == Some(b'-');
                         if strip_tabs {
@@ -322,6 +416,7 @@ impl Scanner<'_> {
                     }
                 }
                 Some(_) => {
+                    self.descriptor = None;
                     let word = self.word(false)?;
                     if word.offset == self.offset {
                         return Err(refuse(
@@ -414,6 +509,7 @@ impl Scanner<'_> {
                         && !word.quoted
                         && self.byte().is_some_and(|b| b == b'<' || b == b'>')
                     {
+                        self.descriptor = Some(word.text);
                         continue;
                     }
                     self.commands[command].words.push(word);
@@ -430,6 +526,23 @@ impl Scanner<'_> {
             return Err(refuse(self.line, "unclosed command substitution; close it before ending the script"));
         }
         Ok(())
+    }
+
+    /// Notes what the redirection `operator`, with the descriptor written
+    /// before it if any, takes from `command`: its standard input, or its
+    /// standard output, which standard error joining it counts as.
+    fn redirected(&mut self, command: usize, operator: &[u8]) {
+        let number = self.descriptor.take().map(|text| std::str::from_utf8(&text).ok().and_then(|text| text.parse::<u32>().ok()));
+        // No descriptor is the operator's own; one named by a variable,
+        // `{fd}>`, could be any.
+        let is = |fd: u32| number.is_none_or(|number| number.is_none_or(|number| number == fd));
+        if operator.contains(&b'>') && operator != b"<>" {
+            if operator.contains(&b'&') || is(1) {
+                self.commands[command].output_redirected = true;
+            }
+        } else if is(0) {
+            self.commands[command].input_redirected = true;
+        }
     }
 
     fn empty_parentheses(&self) -> bool {
@@ -656,6 +769,8 @@ impl Scanner<'_> {
                     documents: Vec::new(),
                     flows: Vec::new(),
                     word_owner: 0,
+                    pipes: Vec::new(),
+                    descriptor: None,
                     functions: std::collections::HashSet::new(),
                 };
                 nested.shell(None)?;

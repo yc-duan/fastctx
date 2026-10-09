@@ -290,14 +290,21 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
         })
         .transpose()?
         .unwrap_or(false);
-    if record_path.with_extension("on-taken").try_exists()?
-        || record_path.with_extension("on-stopped").try_exists()?
-        || cancelled
-    {
-        return match std::fs::remove_file(&owed) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        };
+    let taken = record_path.with_extension("on-taken").try_exists()?;
+    if taken || record_path.with_extension("on-stopped").try_exists()? || cancelled {
+        match std::fs::remove_file(&owed) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        // Whoever followed it took every byte and its end, so they are
+        // part of the hop that followed it now: one copy of an output stays,
+        // there (`world-run.md`, 输出).
+        // Output that went straight on goes once it got there too.
+        let piped = record.on.as_ref().is_some_and(|on| on.piped);
+        if taken && (!piped || record_path.with_extension("on-piped").try_exists()?) {
+            crate::job_watch::forget(node, &record_path);
+        }
+        return Ok(());
     }
     let notice_path = record_path.with_extension("notice");
     let notice = if notice_path.try_exists()? {

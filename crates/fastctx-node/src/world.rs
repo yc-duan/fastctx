@@ -391,6 +391,7 @@ impl fastctx_net::link::Node for Handler {
             RemoteCall::Watch { .. }
                 | RemoteCall::On { .. }
                 | RemoteCall::Follow { .. }
+                | RemoteCall::PipeOut { .. }
                 | RemoteCall::FindFiles { request: fastctx_types::file_search::FileSearchRequest::Open { .. } }
         ) {
             return Ok(None);
@@ -436,11 +437,18 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Write { .. } => Err(Failure::new(format!(
                     "{machine} takes files from other machines only through `on`; the fastctx on {from} is older and needs updating"
                 ))),
-                RemoteCall::On { mut origin, sizes, writes_off } => {
+                RemoteCall::On { mut origin, sizes, writes_off, piped, source } => {
                     let stream = stream.ok_or_else(|| Failure::new("an on comes with a data connection"))?;
                     origin.follower = Some(from.clone());
                     origin.account = Some(HubAccount { hub: hub.clone(), account: caller.account.clone() });
-                    crate::on::serve_on(&node, origin, sizes, writes_off, stream).await
+                    let how = crate::on::Sent { writes_off, piped, source };
+                    crate::on::serve_on(&node, origin, sizes, how, stream).await
+                }
+                RemoteCall::PipeOut { mut origin, job } => {
+                    let stream = stream.ok_or_else(|| Failure::new("an on's output goes over a data connection"))?;
+                    // The account is the one this machine was called for.
+                    origin.account = Some(HubAccount { hub: hub.clone(), account: caller.account.clone() });
+                    crate::on::serve_pipe(&node, origin, job, stream).await
                 }
                 RemoteCall::OnReceipt { owner, machine, job, request } => {
                     if owner.machine != from {

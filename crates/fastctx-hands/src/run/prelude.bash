@@ -120,17 +120,36 @@ on() {
     else
         : >"$__fastctx_file.state" || return 255
     fi
+    # The script pipes this `on` from or into another (`__fastctx_on_pipe`);
+    # the ends as they stand now decide.
+    local -a __fastctx_piping=()
+    if [ "${__fastctx_pipe_in-0}" = 1 ] && [ -p /dev/stdin ]; then
+        __fastctx_piping+=(--pipe-in)
+    fi
+    if [ "${__fastctx_pipe_to--}" != - ] && [ -p /dev/stdout ]; then
+        __fastctx_piping+=(--pipe-to "$__fastctx_pipe_to")
+    fi
     if [ $# -gt 1 ]; then
         # The words, quoted by bash itself, become the command line bash
         # reads there: it reads back exactly these words.
         printf '%q ' "${@:2}" >"$__fastctx_file.command" || return 255
-        fastctx on --shell-parent "$__fastctx_shell" --state "$__fastctx_file.state" --command "$__fastctx_file.command" -- "$1"
+        fastctx on "${__fastctx_piping[@]}" --shell-parent "$__fastctx_shell" --state "$__fastctx_file.state" --command "$__fastctx_file.command" -- "$1"
     else
-        fastctx on --shell-parent "$__fastctx_shell" --state "$__fastctx_file.state" -- "$1"
+        fastctx on "${__fastctx_piping[@]}" --shell-parent "$__fastctx_shell" --state "$__fastctx_file.state" -- "$1"
     fi
     # Keep the shell alive as the follower's parent, even when this is the
     # script's last command. On Linux the follower dies with this shell.
     return $?
+}
+
+# An `on` the script pipes straight from or into another, as the run tool
+# marks it before bash reads the script (world-run.md, 数据跟着命令走): the
+# first word is 1 when its input comes from an `on`, the second the machine
+# of the `on` its output goes to, or -.
+__fastctx_on_pipe() {
+    local __fastctx_pipe_in=$1 __fastctx_pipe_to=$2
+    shift 2
+    on "$@"
 }
 
 # The World's ways of writing files (world-write.md). Functions, because
@@ -140,7 +159,7 @@ edit() { fastctx edit "$@"; }
 write() { fastctx write "$@"; }
 apply_patch() { fastctx apply-patch "$@"; }
 
-export -f on edit write apply_patch
+export -f on __fastctx_on_pipe edit write apply_patch
 
 # Restore last: options such as verbose and nounset govern the requested
 # script, not the implementation of the World's prelude. A failed restore

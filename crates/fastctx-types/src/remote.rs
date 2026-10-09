@@ -63,6 +63,22 @@ pub enum RemoteCall {
         /// The World's write commands are off in the sending shell.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         writes_off: bool,
+        /// The job's standard output stays there for the machine of the
+        /// `on` that reads it to take, and does not come back.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        piped: bool,
+        /// The job's standard input is the output of this `on`, which the
+        /// machine takes from where it is kept before the job starts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<crate::on::OnSource>,
+    },
+    /// Hand over, on this call's data connection, the standard output of
+    /// the `on` job `job`, which went straight on to the calling machine
+    /// (`world-run.md`, 数据跟着命令走), as `PipeWord`s and the bytes after
+    /// them, until it is all there.
+    PipeOut {
+        origin: crate::on::OnOrigin,
+        job: JobId,
     },
     /// Go on handing over an `on` job's output from these byte offsets, on
     /// the data connection, after the one it started on broke.
@@ -281,6 +297,7 @@ impl RemoteCall {
             | RemoteCall::CopyFetch { .. }
             | RemoteCall::CopyReceive { .. }
             | RemoteCall::Place { .. }
+            | RemoteCall::PipeOut { .. }
             | RemoteCall::PageAction { .. } => Purpose::Hands,
             RemoteCall::Composer { .. }
             | RemoteCall::Ask { .. }

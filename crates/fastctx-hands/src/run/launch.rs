@@ -134,7 +134,9 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
     };
     let record_path = resident.job_record(&job);
     let script = resident.job_script(&job);
-    publish_new(&script, launch.request.script.as_bytes(), Permissions::Private)
+    // Bash reads the script with its `on`-to-`on` pipes marked; the record
+    // keeps it as it was written.
+    publish_new(&script, super::heredoc::mark_on_pipes(&launch.request.script).as_bytes(), Permissions::Private)
         .map_err(|error| failure("could not write the script", &error))?;
     let record = JobRecord {
         id: job.clone(),

@@ -22,7 +22,7 @@ use fastctx_net::link::{CallFailure, Feed};
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::on::{
-    OnEnd, OnOrigin, OnPackage, OnPiece, OnRequest, OnSizes, OnWord, SILENT_FOR, STILL_EVERY, TAKEN,
+    OnEnd, OnOrigin, OnPackage, OnPiece, OnRequest, OnSizes, OnSource, OnWord, PipeWord, SILENT_FOR, STILL_EVERY, TAKEN,
 };
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::Action;
@@ -213,7 +213,7 @@ async fn here(
     waiting: &Arc<Mutex<crate::on_delivery::Following>>,
 ) -> Result<(), Failure> {
     let staged = Staged::local(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
-    let (job, record_path, follower) = start(node, origin, staged, request.package.writes_off).await?;
+    let (job, record_path, follower) = start(node, origin, staged, request.package.writes_off, false).await?;
     waiting.lock().expect("never poisoned").started(&job);
     noted(node, origin, request, &job).await?;
     let _ = pieces.send(Ok(OnPiece::Started { machine: node.machine(), job: job.clone() })).await;
@@ -265,9 +265,26 @@ async fn there(
             Box::pin(async move { noted(&node, &origin, &request, &job).await.map_err(|failure| failure.message) })
         })
     };
-    let call = RemoteCall::On { origin: origin.clone(), sizes, writes_off: request.package.writes_off };
-    let sending =
-        feed(&machine, Some(request.package.clone()), followed.clone(), pieces.clone(), Some(started), waiting.clone());
+    // Its output goes straight to the `on` the script pipes it into when
+    // that machine may take it from there (`world-run.md`, 数据跟着命令走).
+    let piped = request.pipe_to.as_ref().is_some_and(|to| straight(node, &link, &account, &machine, to));
+    let call = RemoteCall::On {
+        origin: origin.clone(),
+        sizes,
+        writes_off: request.package.writes_off,
+        piped,
+        source: request.package.source.clone(),
+    };
+    let piping = origin.request.clone().filter(|_| piped);
+    let sending = feed(
+        &machine,
+        Some(request.package.clone()),
+        followed.clone(),
+        pieces.clone(),
+        Some(started),
+        waiting.clone(),
+        piping,
+    );
     let first = link.call_with_stream(&machine, &account, Purpose::Hands, call, sending).await;
     let (started, refused) = {
         let followed = followed.lock().expect("never poisoned");
@@ -320,6 +337,27 @@ async fn there(
     followed_through.map(|_| ())
 }
 
+/// Whether the output of an `on` to `from` may go straight to `to`, the
+/// machine of the `on` the script pipes it into: neither is this machine,
+/// through which it would come anyway, and `to` is a machine of `link`'s
+/// hub that `account` works on and trusts to act for it, as taking the
+/// output from `from` asks.
+fn straight(
+    node: &Node,
+    link: &fastctx_net::link::Link,
+    account: &fastctx_types::AccountName,
+    from: &MachineName,
+    to: &MachineName,
+) -> bool {
+    let here = node.machine();
+    let view = link.view();
+    *from != here
+        && *to != here
+        && view.member(to).is_some()
+        && view.rights(account, to).hands
+        && view.trusts(account, to)
+}
+
 /// Follows a job that started on `machine` until its end is taken, it is
 /// stopped, or the World says it cannot be followed. True when the `on`
 /// that sent it left, and so stopped it.
@@ -362,7 +400,7 @@ async fn follow_there(
             (followed.out, followed.err)
         };
         let call = RemoteCall::Follow { origin: origin.clone(), job: job.clone(), out_from, err_from };
-        let following = feed(machine, None, followed.clone(), pieces.clone(), None, waiting.clone());
+        let following = feed(machine, None, followed.clone(), pieces.clone(), None, waiting.clone(), None);
         let result = link.call_with_stream(machine, account, Purpose::Hands, call, following).await;
         // A control reply can fail after the data stream already offered
         // the end. Only that handover's CLI receipt decides its outcome.
@@ -382,7 +420,8 @@ async fn follow_there(
 }
 
 /// The source end of an `On` or `Follow` connection: the package first, if
-/// any, then what the job writes, until its end.
+/// any, then what the job writes, until its end. A job whose output went
+/// straight on, as dispatch `piping`, is told to `fastctx on` once started.
 fn feed(
     machine: &MachineName,
     package: Option<OnPackage>,
@@ -390,6 +429,7 @@ fn feed(
     pieces: Pieces,
     started: Option<OnStarted>,
     waiting: Arc<Mutex<crate::on_delivery::Following>>,
+    piping: Option<fastctx_types::NoticeId>,
 ) -> Feed {
     let machine = machine.clone();
     Box::new(move |mut stream: Stream| {
@@ -418,7 +458,11 @@ fn feed(
                             followed.lock().expect("never poisoned").refused = Some(Failure::new(error.clone()));
                             return Err(error);
                         }
-                        let _ = pieces.send(Ok(OnPiece::Started { machine: machine.clone(), job })).await;
+                        let _ = pieces.send(Ok(OnPiece::Started { machine: machine.clone(), job: job.clone() })).await;
+                        if let Some(request) = &piping {
+                            let source = OnSource { machine: machine.clone(), job, request: request.clone() };
+                            let _ = pieces.send(Ok(OnPiece::Piped { source })).await;
+                        }
                     }
                     OnWord::Out { mut bytes } | OnWord::Err { mut bytes } => {
                         let error = matches!(word, OnWord::Err { .. });
@@ -611,20 +655,33 @@ impl Backoff {
 
 // The receiving side.
 
+/// How an `On` call asks for its job: with the World's writes off, its
+/// output going straight on, its input another `on`'s output.
+pub(crate) struct Sent {
+    pub(crate) writes_off: bool,
+    pub(crate) piped: bool,
+    pub(crate) source: Option<OnSource>,
+}
+
 /// Runs the package an `On` call from `from` brings, and hands over the
 /// job's output on `stream` until its end.
 pub async fn serve_on(
     node: &Arc<Node>,
     origin: OnOrigin,
     sizes: OnSizes,
-    writes_off: bool,
+    how: Sent,
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let starting = async {
-        let staged = Staged::receive(node, &origin, &sizes, &mut stream)
+        let mut staged = Staged::receive(node, &origin, &sizes, &mut stream)
             .await
             .map_err(|failure| Failure::not_run(failure.message))?;
-        start(node, &origin, staged, writes_off).await
+        if let Some(source) = &how.source {
+            let path = staged.state.with_extension("in");
+            take_piped(node, &origin, source, &path, &mut stream).await?;
+            staged.input = Some(path);
+        }
+        start(node, &origin, staged, how.writes_off, how.piped).await
     }
     .await;
     let (job, record_path, follower) = match starting {
@@ -655,6 +712,200 @@ pub async fn serve_on(
     }
     .await;
     follower.finish(handed).await?;
+    Ok(RemoteReply::OnDone)
+}
+
+/// Takes the output of the `on` `source` names, which went straight on to
+/// this one, as the input of the job about to start here, saying `Still` to
+/// whoever sent this one while it comes, so the wait is not taken for a
+/// broken line. Nothing has run here when it does not come.
+async fn take_piped(
+    node: &Arc<Node>,
+    origin: &OnOrigin,
+    source: &OnSource,
+    path: &Path,
+    stream: &mut Stream,
+) -> Result<(), Failure> {
+    let producer = OnOrigin { request: Some(source.request.clone()), ..origin.clone() };
+    let mut taking = Box::pin(take_output(node, &producer, source, path));
+    loop {
+        tokio::select! {
+            taken = &mut taking => {
+                return taken.map_err(|failure| {
+                    Failure::not_run(format!(
+                        "its input, the output of {} on {}, did not arrive: {}",
+                        source.job, source.machine, failure.message
+                    ))
+                });
+            }
+            () = tokio::time::sleep(STILL_EVERY) => {
+                stream
+                    .say(&OnWord::Still)
+                    .await
+                    .map_err(|error| Failure::new(format!("telling the sender its input is coming: {error}")))?;
+            }
+        }
+    }
+}
+
+/// Takes the output of `source`'s job, sent by `producer`, into `path` once
+/// it is all written: from this machine's own disk, or over a data
+/// connection from the machine it was written on.
+async fn take_output(node: &Arc<Node>, producer: &OnOrigin, source: &OnSource, path: &Path) -> Result<(), Failure> {
+    if source.machine == node.machine() {
+        let record_path = on_job(node, producer, &source.job)?;
+        piped_record(&record_path, producer).await?;
+        let mut changes = node.jobs.subscribe();
+        let record = loop {
+            let record = crate::jobs::read(&record_path).await?;
+            if through(&record).is_some() {
+                break record;
+            }
+            tokio::select! {
+                _ = changes.recv() => {}
+                () = tokio::time::sleep(LOOK_AGAIN) => {}
+            }
+        };
+        let through = record.output_drained.filter(|_| record.end.is_none()).map(|boundary| boundary.stdout);
+        let (from, to) = (PathBuf::from(&record.output), path.to_path_buf());
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            let file = std::fs::File::open(&from)?;
+            let mut reader: Box<dyn std::io::Read> = match through {
+                Some(limit) => Box::new(file.take(limit)),
+                None => Box::new(file),
+            };
+            let mut writer = std::fs::File::create(&to)?;
+            std::io::copy(&mut reader, &mut writer)?;
+            writer.sync_all()
+        })
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(format!("taking the output: {error}")))?;
+        piped_taken(node, &record_path);
+        return Ok(());
+    }
+    let acting = acting(node, producer);
+    let call = RemoteCall::PipeOut { origin: producer.clone(), job: source.job.clone() };
+    let arrived: Arc<Mutex<bool>> = Arc::default();
+    let from = source.machine.clone();
+    let feed = || -> Feed {
+        let (path, arrived, from) = (path.to_path_buf(), arrived.clone(), from.clone());
+        Box::new(move |mut stream: Stream| {
+            Box::pin(async move {
+                use std::io::Write as _;
+                let mut file =
+                    std::fs::File::create(&path).map_err(|error| format!("writing {}: {error}", path.display()))?;
+                let (mut taken, mut digest) = (0u64, Sha256::new());
+                loop {
+                    let word = tokio::time::timeout(SILENT_FOR, stream.hear::<PipeWord>())
+                        .await
+                        .map_err(|_| format!("{from} said nothing for {}s", SILENT_FOR.as_secs()))??;
+                    match word {
+                        PipeWord::Out { bytes } => {
+                            let mut written = Ok(());
+                            stream
+                                .take(bytes, |chunk| {
+                                    digest.update(chunk);
+                                    if written.is_ok() {
+                                        written = file.write_all(chunk);
+                                    }
+                                    Ok(())
+                                })
+                                .await?;
+                            written.map_err(|error| format!("writing {}: {error}", path.display()))?;
+                            taken += bytes;
+                        }
+                        PipeWord::Still => {}
+                        PipeWord::End { bytes, sha256 } => {
+                            if bytes != taken || sha256 != hex(&digest.finalize()) {
+                                return Err("the output arrived different from what was sent".to_string());
+                            }
+                            file.sync_all().map_err(|error| format!("writing {}: {error}", path.display()))?;
+                            *arrived.lock().expect("never poisoned") = true;
+                            return stream.done().await;
+                        }
+                    }
+                }
+            })
+        })
+    };
+    let answer = Box::pin(node.call_with_stream(&acting, &(&source.machine).into(), Purpose::Hands, call, feed)).await;
+    match answer {
+        Ok(Ok(_)) if *arrived.lock().expect("never poisoned") => Ok(()),
+        Ok(Ok(_)) => Err(Failure::new(format!("{} answered before the output arrived", source.machine))),
+        Ok(Err(failure)) => Err(failure),
+        Err(failure) => Err(Failure::new(failure.to_string())),
+    }
+}
+
+/// Refuses unless the job at `record_path` sent its output straight on, for
+/// the account `origin` is for.
+async fn piped_record(record_path: &Path, origin: &OnOrigin) -> Result<(), Failure> {
+    let record = crate::jobs::read(record_path).await?;
+    if record.on.as_ref().is_some_and(|on| on.piped && on.account == origin.account) {
+        return Ok(());
+    }
+    Err(Failure::not_run(format!("{} did not send its output on for the account asking for it", record.id)))
+}
+
+/// Notes that the output of the job at `record_path` reached the `on` that
+/// reads it; once its follower took its end too, the job's files go: the
+/// output is there now (`world-run.md`, 输出).
+fn piped_taken(node: &Arc<Node>, record_path: &Path) {
+    let marker = record_path.with_extension("on-piped");
+    if let Err(error) = fastctx_platform::publish(&marker, b"", fastctx_platform::Permissions::Private) {
+        node.log.line(format_args!("noting that {} went on: {error}", record_path.display()));
+        return;
+    }
+    if record_path.with_extension("on-taken").exists() {
+        crate::job_watch::forget(node, record_path);
+    }
+}
+
+/// Hands the standard output of `job`, an `on` job of `origin` whose output
+/// went straight on, to the machine of the `on` that reads it, as it is
+/// written and until it is all there.
+pub async fn serve_pipe(node: &Arc<Node>, origin: OnOrigin, job: JobId, mut stream: Stream) -> Result<RemoteReply, Failure> {
+    let record_path = on_job(node, &origin, &job)?;
+    piped_record(&record_path, &origin).await?;
+    let failed = |error: String| Failure::new(format!("handing over the output of {job}: {error}"));
+    let mut changes = node.jobs.subscribe();
+    let (mut sent, mut digest, mut quiet_since) = (0u64, Sha256::new(), Instant::now());
+    loop {
+        // The record first: whatever it says has ended had written its last
+        // byte before, so reading the log after it misses nothing.
+        let record = crate::jobs::read(&record_path).await?;
+        let boundary = record.output_drained.filter(|_| record.end.is_none() && through(&record).is_some());
+        if let Some(bytes) = read_from(&record.output, sent, boundary.map(|b| b.stdout)).await.map_err(failed)? {
+            stream.say(&PipeWord::Out { bytes: bytes.len() as u64 }).await.map_err(failed)?;
+            stream.send(&bytes).await.map_err(failed)?;
+            digest.update(&bytes);
+            sent += bytes.len() as u64;
+            quiet_since = Instant::now();
+            if boundary.is_none_or(|boundary| sent < boundary.stdout) {
+                continue;
+            }
+        }
+        if through(&record).is_some() {
+            break;
+        }
+        if quiet_since.elapsed() >= STILL_EVERY {
+            stream.say(&PipeWord::Still).await.map_err(failed)?;
+            quiet_since = Instant::now();
+        }
+        tokio::select! {
+            change = changes.recv() => {
+                if let Ok(changed) = change && changed != job {
+                    continue;
+                }
+            }
+            () = tokio::time::sleep(LOOK_AGAIN) => {}
+            () = stream.closed() => return Err(failed("the machine taking it left".to_string())),
+        }
+    }
+    stream.say(&PipeWord::End { bytes: sent, sha256: hex(&digest.finalize()) }).await.map_err(failed)?;
+    stream.finish().await.map_err(failed)?;
+    piped_taken(node, &record_path);
     Ok(RemoteReply::OnDone)
 }
 
@@ -782,6 +1033,7 @@ async fn start(
     origin: &OnOrigin,
     staged: Staged,
     writes_off: bool,
+    piped: bool,
 ) -> Result<(JobId, PathBuf, Follower), Failure> {
     let script = staged.script;
     let on = OnJob {
@@ -789,6 +1041,7 @@ async fn start(
         request: origin.request.clone(),
         follower: origin.follower.clone(),
         account: origin.account.clone(),
+        piped,
     };
     let request = RunRequest { script, cwd: None, writes_off, wait: None };
     let owner = JobOwner::Resident(origin.resident.clone());
@@ -930,8 +1183,11 @@ async fn hand_over(
         let record = crate::jobs::read(record_path).await.map_err(|failure| failure.message)?;
         let errors = record.stderr.clone();
         let boundary = record.output_drained.filter(|_| record.end.is_none() && through(&record).is_some());
+        // Output that went straight on is taken from here by another
+        // machine, not handed to the follower.
+        let piped = record.on.as_ref().is_some_and(|on| on.piped);
         let mut sent = false;
-        if let Some(bytes) = read_from(&record.output, out, boundary.map(|b| b.stdout)).await? {
+        if !piped && let Some(bytes) = read_from(&record.output, out, boundary.map(|b| b.stdout)).await? {
             out += bytes.len() as u64;
             sink.bytes(false, &bytes).await?;
             sent = true;
@@ -943,7 +1199,7 @@ async fn hand_over(
             sink.bytes(true, &bytes).await?;
             sent = true;
         }
-        let drained = boundary.is_some_and(|b| out >= b.stdout && err >= b.stderr);
+        let drained = boundary.is_some_and(|b| (piped || out >= b.stdout) && err >= b.stderr);
         if sent && !drained {
             quiet_since = Instant::now();
             continue;

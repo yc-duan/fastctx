@@ -236,9 +236,15 @@ pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_typ
     }
 }
 
-/// Removes the files of the ended job whose record is at `path`.
+/// Removes the files of the ended job whose record is at `path`; those of
+/// a job an `on` sent here include the package it came in and what was
+/// kept of its end. Gone already, there is nothing to remove.
 pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
-    let record = record::read(path)?;
+    let record = match record::read(path) {
+        Ok(record) => record,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
     // The supervisor writes its last record and then lets go of the log; on
     // Windows a file it still holds cannot go.
     if let Some(supervisor) = &record.supervisor {
@@ -247,6 +253,11 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
     // The record goes last: a log without one would be found by nobody.
     let mut files = vec![PathBuf::from(&record.output), path.with_extension("sh"), record::lock_path(path)];
     files.extend(record.stderr.as_deref().map(PathBuf::from));
+    if let Some(on) = &record.on {
+        files.push(PathBuf::from(&on.state));
+        files.extend(record.stdin.as_deref().map(PathBuf::from));
+        files.extend(["notice", "owed", "on-taken", "on-piped"].map(|extension| path.with_extension(extension)));
+    }
     files.push(path.to_path_buf());
     for file in files {
         match std::fs::remove_file(&file) {
