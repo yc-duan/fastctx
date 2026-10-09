@@ -295,19 +295,22 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
     codex.limits = Fact::known(AgentLimits {
         observed_at: now - SignedDuration::from_mins(2),
         windows: vec![window("codex", 300, 423, 2), window("codex", 10_080, 182, 80)],
+        credits: None,
     });
     let mut work = base("codex", "C:/Users/me/.codex-work", HomeFound::Found);
     work.account = account("me@acme.example", "team");
     work.integration = Fact::known(Integration::Out);
     work.limits = Fact::known(AgentLimits {
         observed_at: now - SignedDuration::from_mins(1),
-        windows: vec![window("codex", 300, 912, 1), window("codex", 10_080, 655, 50)],
+        windows: vec![window("codex", 300, 1000, 1), window("codex", 10_080, 655, 50)],
+        credits: Some(AgentCredits { balance: Some("52230.1460550000".into()), unlimited: false }),
     });
     let mut claude = base("claude", "C:/Users/me/.claude", HomeFound::Default);
     claude.account = account("me@example.com", "max");
     claude.limits = Fact::known(AgentLimits {
         observed_at: now - SignedDuration::from_mins(26),
         windows: vec![window("five_hour", 300, 618, 3), window("seven_day", 10_080, 341, 100)],
+        credits: None,
     });
     let mut personal = base("claude", "D:/agents/claude-personal", HomeFound::Added);
     personal.login = Fact::known(LoginStatus::LoggedOut);

@@ -73,6 +73,8 @@ export interface HomeWords {
   resets(at: Date, now: Date): string;
   /** When the agent read the numbers: "14:05" or "昨天" from `when`. */
   observed(when: string): string;
+  /** What the account goes on with once a window is used up. */
+  credits(balance: string | null, unlimited: boolean): string;
   /** No session of this Claude home has read its limits yet. */
   notRead: string;
   limitsFailed(why: string): string;
@@ -107,6 +109,7 @@ export const zhHomes: HomeWords = {
     return `${at.getMonth() + 1}月${at.getDate()}日重置`;
   },
   observed: (when) => `${when} 读到`,
+  credits: (balance, unlimited) => (unlimited ? "用完后用 credits，不限" : balance ? `用完后用 credits，余 ${balance}` : "用完后用 credits"),
   notRead: "额度要等这个账号的会话干过一轮才读得到",
   limitsFailed: (why) => `额度没读到：${why}`,
 };
@@ -130,6 +133,8 @@ export const enHomes: HomeWords = {
     return `resets ${at.toLocaleString("en", { month: "short", day: "numeric" })}`;
   },
   observed: (when) => `read ${when}`,
+  credits: (balance, unlimited) =>
+    unlimited ? "then credits, unlimited" : balance ? `then credits, ${balance} left` : "then credits",
   notRead: "Limits are read once a session of this account has worked a turn",
   limitsFailed: (why) => `Limits not read: ${why}`,
 };
@@ -138,6 +143,12 @@ export const enHomes: HomeWords = {
  *  once it is full. */
 function level(window: LimitWindow): string {
   return window.used_tenths >= 1000 ? " spent" : window.used_tenths >= 900 ? " high" : "";
+}
+
+/** A balance as a whole number with its digits grouped: "52,230". */
+function amount(balance: string): string {
+  const value = Number(balance);
+  return Number.isFinite(value) ? Math.round(value).toLocaleString("en") : balance;
 }
 
 function percent(window: LimitWindow): string {
@@ -171,6 +182,9 @@ export function limitsHtml(
     const reset = window.resets_at ? `<span class="limit-reset">${escape(words.resets(new Date(window.resets_at), now))}</span>` : "";
     return `<span class="limit${level(window)}"><span class="limit-name">${escape(label)}</span><span class="limit-bar" aria-hidden="true"><span style="width:${width}%"></span></span><span class="limit-used">${escape(percent(window))}</span>${reset}</span>`;
   });
+  const credits = limits.value.credits;
+  const balance = credits?.balance !== undefined ? amount(credits.balance) : null;
+  const more = credits ? `<span class="limit-credits">${escape(words.credits(balance, credits.unlimited))}</span>` : "";
   const read = `<span class="limit-seen">${escape(words.observed(when(new Date(limits.value.observed_at), now)))}</span>`;
-  return `<div class="home-limits">${rows.join("")}${read}</div>`;
+  return `<div class="home-limits">${rows.join("")}${more}${read}</div>`;
 }

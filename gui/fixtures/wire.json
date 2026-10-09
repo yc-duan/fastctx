@@ -9792,7 +9792,11 @@
                           "name": "codex_other",
                           "used_tenths": 0
                         }
-                      ]
+                      ],
+                      "credits": {
+                        "balance": "52230.1460550000",
+                        "unlimited": false
+                      }
                     }
                   },
                   "program": {
@@ -10001,7 +10005,11 @@
                           "name": "codex_other",
                           "used_tenths": 0
                         }
-                      ]
+                      ],
+                      "credits": {
+                        "balance": "52230.1460550000",
+                        "unlimited": false
+                      }
                     }
                   },
                   "program": {
@@ -10182,7 +10190,11 @@
                     "name": "codex_other",
                     "used_tenths": 0
                   }
-                ]
+                ],
+                "credits": {
+                  "balance": "52230.1460550000",
+                  "unlimited": false
+                }
               }
             },
             "program": {
@@ -10391,7 +10403,11 @@
                     "name": "codex_other",
                     "used_tenths": 0
                   }
-                ]
+                ],
+                "credits": {
+                  "balance": "52230.1460550000",
+                  "unlimited": false
+                }
               }
             },
             "program": {

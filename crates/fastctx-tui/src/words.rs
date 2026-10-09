@@ -536,6 +536,22 @@ impl Words {
         }
     }
 
+    /// What the account goes on with once a window is used up.
+    pub fn credits(&self, balance: Option<&str>, unlimited: bool) -> String {
+        let balance = balance.map(|balance| match balance.parse::<f64>() {
+            Ok(amount) => format!("{}", amount.round() as i64),
+            Err(_) => balance.to_string(),
+        });
+        match (self.lang, unlimited, balance) {
+            (Lang::Zh, true, _) => "credits 不限".into(),
+            (Lang::Zh, false, Some(balance)) => format!("credits 余 {balance}"),
+            (Lang::Zh, false, None) => "有 credits".into(),
+            (Lang::En, true, _) => "unlimited credits".into(),
+            (Lang::En, false, Some(balance)) => format!("{balance} credits left"),
+            (Lang::En, false, None) => "has credits".into(),
+        }
+    }
+
     pub fn limits_failed(&self, why: &str) -> String {
         match self.lang {
             Lang::Zh => format!("额度没读到：{why}"),

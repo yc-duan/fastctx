@@ -74,6 +74,8 @@ export interface AgentAccount {
 export interface AgentLimits {
   observed_at: Timestamp;
   windows: LimitWindow[];
+  /** What the account goes on with once a window is used up. */
+  credits?: { balance?: string; unlimited: boolean };
 }
 
 export interface LimitWindow {

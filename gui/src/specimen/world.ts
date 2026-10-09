@@ -343,7 +343,14 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
     ...codex,
     home: { dir: `${home}/.codex-work`, found: "found" },
     account: { kind: "known", value: { email: "me@acme.example", plan: "team" } },
-    limits: { kind: "known", value: { observed_at: ago(1), windows: [window("codex", 300, 912, 47), window("codex", 10080, 655, 2 * 1440 + 90)] } },
+    limits: {
+      kind: "known",
+      value: {
+        observed_at: ago(1),
+        windows: [window("codex", 300, 912, 47), window("codex", 10080, 1000, 2 * 1440 + 90)],
+        credits: { balance: "52230.1460550000", unlimited: false },
+      },
+    },
     integration: { kind: "known", value: "out" },
   };
   const claude: AgentFacts = {

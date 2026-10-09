@@ -138,7 +138,7 @@ pub fn limits(world: &Path) -> Vec<(PathBuf, fastctx_types::agents::AgentLimits)
                 resets_at: limit.resets_at,
             })
             .collect();
-        readings.push((transcript, fastctx_types::agents::AgentLimits { observed_at: reading.at, windows }));
+        readings.push((transcript, fastctx_types::agents::AgentLimits { observed_at: reading.at, windows, credits: None }));
     }
     readings.sort_by(|(_, a), (_, b)| b.observed_at.cmp(&a.observed_at));
     readings

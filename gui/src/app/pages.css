@@ -632,6 +632,10 @@
   color: var(--wrong);
 }
 
+.limit-credits {
+  color: var(--text-2);
+}
+
 .limit-seen {
   opacity: 0.8;
 }

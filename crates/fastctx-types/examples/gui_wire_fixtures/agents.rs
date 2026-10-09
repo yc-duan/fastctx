@@ -26,6 +26,7 @@ pub fn fixtures() -> Fixtures {
                 LimitWindow { name: "codex".into(), minutes: Some(10080), used_tenths: 1000, resets_at: reset("2026-10-09T00:00:00Z") },
                 LimitWindow { name: "codex_other".into(), minutes: None, used_tenths: 0, resets_at: None },
             ],
+            credits: Some(AgentCredits { balance: Some("52230.1460550000".into()), unlimited: false }),
         }),
         program: Fact::known(Some(AgentProgram {
             path: "C:/app/codex.exe".into(),
@@ -64,6 +65,7 @@ pub fn fixtures() -> Fixtures {
                 used_tenths: 1013,
                 resets_at: reset("2026-10-04T15:00:00Z"),
             }],
+            credits: None,
         }),
         program: Fact::known(Some(AgentProgram {
             path: "/usr/bin/claude".into(),

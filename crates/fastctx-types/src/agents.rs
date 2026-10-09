@@ -145,6 +145,19 @@ pub struct AgentLimits {
     pub observed_at: Timestamp,
     /// No window is no reading, never 0% used.
     pub windows: Vec<LimitWindow>,
+    /// What the account can spend once a window is used up, when it has
+    /// any: a spent window then does not stop it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credits: Option<AgentCredits>,
+}
+
+/// An account's credits, as its agent says them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentCredits {
+    /// The balance as the agent writes it; none when it does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balance: Option<String>,
+    pub unlimited: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

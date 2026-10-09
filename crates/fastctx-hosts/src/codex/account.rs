@@ -2,7 +2,7 @@
 //! its own app-server says: the World reads no credentials, and the
 //! requests these make go out from the machine the app-server runs on.
 
-use fastctx_types::agents::{AgentAccount, AgentLimits, Fact, LimitWindow};
+use fastctx_types::agents::{AgentAccount, AgentCredits, AgentLimits, Fact, LimitWindow};
 use serde_json::{Value, json};
 
 use super::server::AppServer;
@@ -29,7 +29,8 @@ pub(super) async fn account(server: &AppServer) -> Fact<AgentAccount> {
 
 /// `account/rateLimits/read`: every limit's windows, each named by its
 /// limit and known by its length, never by which slot it came in (the
-/// first is not always the five-hour one).
+/// first is not always the five-hour one), and the credits the account
+/// goes on with once a window is used up.
 pub(super) async fn limits(server: &AppServer) -> Fact<AgentLimits> {
     let observed_at = jiff::Timestamp::now();
     let answer = match server.request("account/rateLimits/read", json!({})).await {
@@ -41,7 +42,15 @@ pub(super) async fn limits(server: &AppServer) -> Fact<AgentLimits> {
         _ => vec![&answer["rateLimits"]],
     };
     let mut windows = Vec::new();
+    let mut credits = None;
     for snapshot in snapshots.into_iter().filter(|snapshot| !snapshot.is_null()) {
+        let held = &snapshot["credits"];
+        if credits.is_none() && held["hasCredits"].as_bool() == Some(true) {
+            credits = Some(AgentCredits {
+                balance: held["balance"].as_str().map(str::to_string),
+                unlimited: held["unlimited"].as_bool() == Some(true),
+            });
+        }
         let name = snapshot["limitName"]
             .as_str()
             .or_else(|| snapshot["limitId"].as_str())
@@ -65,5 +74,5 @@ pub(super) async fn limits(server: &AppServer) -> Fact<AgentLimits> {
             });
         }
     }
-    Fact::known(AgentLimits { observed_at, windows })
+    Fact::known(AgentLimits { observed_at, windows, credits })
 }

@@ -115,7 +115,11 @@ fn login_rows(ctx: &Ctx, name: &str, facts: &AgentFacts, many: bool, item: usize
     }
     let (limits, read) = match &facts.limits {
         Fact::Known { value } if !value.windows.is_empty() => {
-            (limits_line(ctx, &value.windows), Some(words.read_ago(&words.ago(value.observed_at, ctx.now))))
+            let mut read = words.read_ago(&words.ago(value.observed_at, ctx.now));
+            if let Some(credits) = &value.credits {
+                read = format!("{}  ·  {read}", words.credits(credits.balance.as_deref(), credits.unlimited));
+            }
+            (limits_line(ctx, &value.windows), Some(read))
         }
         Fact::Failed { reason } => (wrong(ctx, words.limits_failed(&text::first_line(reason))), None),
         _ => (Line::default(), None),
