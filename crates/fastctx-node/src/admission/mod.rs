@@ -65,9 +65,11 @@ fn asked(call: &RemoteCall) -> Asked<'_> {
         // A colleague is a Codex resident.
         RemoteCall::Ask { town, .. } => (Action::AskColleague, Some(codex()), town.as_ref()),
         RemoteCall::Who { town, .. } | RemoteCall::Since { town, .. } => (Action::W, None, town.as_ref()),
-        RemoteCall::Agents | RemoteCall::Facts | RemoteCall::Look { .. } | RemoteCall::Find { .. } => {
-            (Action::W, None, None)
-        }
+        RemoteCall::Agents
+        | RemoteCall::Facts
+        | RemoteCall::Look { .. }
+        | RemoteCall::Find { .. }
+        | RemoteCall::OnReceipt { .. } => (Action::W, None, None),
         RemoteCall::Talk { to, .. } => (Action::Talk, resident(to), None),
         RemoteCall::Watch { resident: who, .. }
         | RemoteCall::Composer { resident: who, .. }

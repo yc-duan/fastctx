@@ -23,6 +23,16 @@ pub fn is_alive(identity: &ProcessIdentity) -> io::Result<bool> {
     Ok(imp::token(identity.pid)?.as_deref() == Some(identity.token.as_str()))
 }
 
+/// Whether this lifetime of the process has ended or is ending. A process
+/// that is killed closes its handles before the system reports it gone: on
+/// Windows its exit code is set but its handle is not yet signalled when a
+/// pipe it held reads end of file (2,000 of 2,000 kills measured on Windows
+/// 11, 2026-10-09); on Linux it is between `PF_EXITING` and becoming a
+/// zombie. Whoever sees such a pipe close asks this, not `is_alive`.
+pub fn has_ended(identity: &ProcessIdentity) -> io::Result<bool> {
+    imp::has_ended(identity)
+}
+
 /// Whether a recorded lifetime is known to belong to an earlier boot.
 /// False includes systems whose process identities do not identify a boot.
 pub fn is_from_earlier_boot(identity: &ProcessIdentity) -> io::Result<bool> {
@@ -65,6 +75,16 @@ mod imp {
             _ => Ok(None),
         }
     }
+
+    pub fn has_ended(identity: &fastctx_types::ProcessIdentity) -> io::Result<bool> {
+        match procfs::stat(identity.pid)? {
+            Some(stat) => {
+                let same = format!("{}:{}", procfs::boot_id()?, stat.start) == identity.token;
+                Ok(!same || stat.is_ending())
+            }
+            None => Ok(true),
+        }
+    }
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
@@ -85,6 +105,12 @@ mod imp {
         }
         Ok(Some(text))
     }
+
+    /// `ps` shows no state for a process in the middle of exiting; such a
+    /// process reads as alive here until it is a zombie.
+    pub fn has_ended(identity: &fastctx_types::ProcessIdentity) -> io::Result<bool> {
+        Ok(token(identity.pid)?.as_deref() != Some(identity.token.as_str()))
+    }
 }
 
 #[cfg(windows)]
@@ -94,9 +120,12 @@ pub(crate) use imp::of_handle;
 mod imp {
     use std::io;
 
-    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, FILETIME, HANDLE, WAIT_OBJECT_0};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_INVALID_PARAMETER, FILETIME, HANDLE, STILL_ACTIVE, WAIT_OBJECT_0,
+    };
     use windows_sys::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        WaitForSingleObject,
     };
 
     use fastctx_types::ProcessIdentity;
@@ -120,6 +149,35 @@ mod imp {
             };
             CloseHandle(handle);
             result
+        }
+    }
+
+    pub fn has_ended(identity: &ProcessIdentity) -> io::Result<bool> {
+        // SAFETY: plain handle-based queries; the handle is closed below.
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, 0, identity.pid);
+            if handle.is_null() {
+                let error = io::Error::last_os_error();
+                return match error.raw_os_error() {
+                    Some(code) if code == ERROR_INVALID_PARAMETER as i32 => Ok(true),
+                    _ => Err(error),
+                };
+            }
+            let ended = (|| {
+                if creation_time(handle)? != identity.token || WaitForSingleObject(handle, 0) == WAIT_OBJECT_0 {
+                    return Ok(true);
+                }
+                // Set when the process starts to terminate, before its
+                // handle is signalled. A process that exits with 259 itself
+                // reads as running until it is signalled.
+                let mut code = 0_u32;
+                if GetExitCodeProcess(handle, &mut code) == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(code != STILL_ACTIVE as u32)
+            })();
+            CloseHandle(handle);
+            ended
         }
     }
 

@@ -156,25 +156,42 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         if let Call::On { resident, town, request } = call {
             let receipt = request.receipt;
+            let process = request.process.clone();
             // Only the World's shell of that resident sends its `on`s: the
             // command speaks as the resident its job belongs to.
             let ended = match &hello.peer {
                 Peer::Command { resident: Some(speaker), .. } if *speaker == resident => {
-                    let origin = fastctx_types::on::OnOrigin { resident, town, request: None };
+                    let origin = fastctx_types::on::OnOrigin { resident, town, request: None, follower: None };
                     match crate::on::send(node, origin, request).await {
                         Err(failure) => Err(failure),
-                        Ok(mut pieces) => loop {
+                        Ok(mut following) => loop {
                             tokio::select! {
-                                piece = pieces.recv() => match piece {
-                                    Some(crate::on::Piece::Value(Ok(piece))) => writer.send(&json(&NodeFrame::On { id, piece })).await?,
+                                piece = following.pieces.recv() => match piece {
+                                    Some(crate::on::Piece::Value(Ok(piece))) => {
+                                        let written = writer.send(&json(&NodeFrame::On { id, piece })).await;
+                                        written.or_else(|error| on_unwritten(&following.stop, process.as_ref(), error))?;
+                                    }
                                     Some(crate::on::Piece::Value(Err(failure))) => break Err(failure),
                                     Some(crate::on::Piece::End { end, taken }) => {
                                         let piece = fastctx_types::on::OnPiece::Ended { end };
-                                        writer.send(&json(&NodeFrame::On { id, piece })).await?;
-                                        writer.drain().await?;
+                                        let written = match writer.send(&json(&NodeFrame::On { id, piece })).await {
+                                            Ok(()) => writer.drain().await,
+                                            Err(error) => Err(error),
+                                        };
+                                        written.or_else(|error| on_unwritten(&following.stop, process.as_ref(), error))?;
                                         if receipt {
-                                            let Some(frame) = reader.recv().await? else { return Ok(()) };
+                                            let frame = match reader.recv().await {
+                                                Ok(Some(frame)) => frame,
+                                                left => {
+                                                    on_departed(&following.stop, process.as_ref(), &left)?;
+                                                    return Ok(());
+                                                }
+                                            };
                                             let word: String = parse(&frame)?;
+                                            if word == fastctx_types::on::STOP {
+                                                let _ = following.stop.send(true);
+                                                return Ok(());
+                                            }
                                             if word != fastctx_types::on::TAKEN {
                                                 return Err(std::io::Error::other("the on client did not acknowledge its end"));
                                             }
@@ -183,9 +200,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                                     }
                                     None => break Ok(Reply::Done),
                                 },
-                                // The client says nothing more on an `on`;
-                                // its leaving stops the job.
-                                _ = reader.recv() => return Ok(()),
+                                left = reader.recv() => {
+                                    on_departed(&following.stop, process.as_ref(), &left)?;
+                                    return Ok(());
+                                },
                             }
                         },
                     }
@@ -257,6 +275,45 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         writer.drain().await?;
     }
     Ok(())
+}
+
+/// The `on` client said something more, or its connection ended: a stop is
+/// on purpose when it says so, or when the client is gone.
+fn on_departed(
+    stop: &tokio::sync::watch::Sender<bool>,
+    process: Option<&fastctx_types::ProcessIdentity>,
+    frame: &std::io::Result<Option<Vec<u8>>>,
+) -> std::io::Result<()> {
+    let deliberate = match frame {
+        Ok(Some(frame)) => parse::<String>(frame)? == fastctx_types::on::STOP,
+        _ => on_gone(process)?,
+    };
+    if deliberate {
+        let _ = stop.send(true);
+    }
+    Ok(())
+}
+
+/// Writing to the `on` client failed: because it is gone, which is a stop
+/// on purpose, or because this end broke, after which the job's end is
+/// still owed to the resident. Returns the write's error either way.
+fn on_unwritten(
+    stop: &tokio::sync::watch::Sender<bool>,
+    process: Option<&fastctx_types::ProcessIdentity>,
+    error: std::io::Error,
+) -> std::io::Result<()> {
+    if on_gone(process)? {
+        let _ = stop.send(true);
+    }
+    Err(error)
+}
+
+/// Whether the `on` client is gone. A client leaves without a word only
+/// when it is stopped with the shell it ran in, and it is gone or going by
+/// the time its connection closes (`fastctx_platform::has_ended`). One that
+/// sent no identity is taken as gone.
+fn on_gone(process: Option<&fastctx_types::ProcessIdentity>) -> std::io::Result<bool> {
+    Ok(process.map(fastctx_platform::has_ended).transpose()?.unwrap_or(true))
 }
 
 struct Arrived<'a> {

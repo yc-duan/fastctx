@@ -55,7 +55,12 @@ pub(crate) enum Piece {
 }
 
 #[derive(Clone)]
-struct Pieces(mpsc::Sender<Piece>);
+struct Pieces(mpsc::Sender<Piece>, watch::Receiver<bool>);
+
+pub(crate) struct OnFollowing {
+    pub(crate) pieces: mpsc::Receiver<Piece>,
+    pub(crate) stop: watch::Sender<bool>,
+}
 
 impl Pieces {
     async fn send(&self, piece: Result<OnPiece, Failure>) -> Result<(), String> {
@@ -64,6 +69,10 @@ impl Pieces {
 
     fn is_closed(&self) -> bool {
         self.0.is_closed()
+    }
+
+    fn stopping(&self) -> bool {
+        *self.1.borrow()
     }
 
     async fn closed(&self) {
@@ -82,14 +91,12 @@ impl Pieces {
 /// Sends `request` for the resident in `origin`. The job's pieces come on
 /// the returned channel until its end or a failure; dropping the channel
 /// before the end stops the job.
-pub async fn send(
-    node: &Arc<Node>,
-    mut origin: OnOrigin,
-    request: OnRequest,
-) -> Result<mpsc::Receiver<Piece>, Failure> {
+pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) -> Result<OnFollowing, Failure> {
     origin.request = Some(crate::speech::new_id("on"));
+    origin.follower = Some(node.machine());
     let (pieces, receiver) = mpsc::channel(QUEUED_PIECES);
-    let pieces = Pieces(pieces);
+    let (stop, stopping) = watch::channel(false);
+    let pieces = Pieces(pieces, stopping);
     let node = node.clone();
     tokio::spawn(async move {
         let waiting = Arc::new(Mutex::new(crate::on_delivery::Following::start(&node, &origin, &request.machine)));
@@ -107,13 +114,13 @@ pub async fn send(
             {
                 failure = Failure::new(format!("keeping the startup refusal: {error}"));
             }
-            if local && !failure.not_run && pieces.is_closed() {
+            if local && !failure.not_run && pieces.stopping() {
                 crate::on_stop::send(&node, &request.machine, &origin, None).await;
             }
             let _ = pieces.send(Err(failure)).await;
         }
     });
-    Ok(receiver)
+    Ok(OnFollowing { pieces: receiver, stop })
 }
 
 /// What the sender knows of a job it sent, kept across the connections
@@ -197,9 +204,7 @@ async fn here(
             .taken(&job)
             .map_err(|error| Failure::new(format!("keeping the completion receipt: {error}")))?;
     }
-    // A local follower has no network to lose: its departure is an
-    // intentional stop, just as it is for the sending side of a remote on.
-    let stopped = if pieces.is_closed() && !matches!(handed, Ok(Handed { taken: true, .. })) {
+    let stopped = if pieces.stopping() && !matches!(handed, Ok(Handed { taken: true, .. })) {
         crate::on_stop::send(node, &request.machine, origin, Some(&job)).await;
         waiting
             .lock()
@@ -261,7 +266,7 @@ async fn there(
                 | CallFailure::Offline { .. }
                 | CallFailure::Unreachable { .. })
         ) || matches!(&first, Ok(Err(failure)) if failure.not_run);
-        if pieces.is_closed() && !not_sent {
+        if pieces.stopping() && !not_sent {
             crate::on_stop::send(node, &machine, origin, None).await;
             return Ok(());
         }
@@ -318,9 +323,11 @@ async fn follow_there(
             return Ok(false);
         }
         if pieces.is_closed() {
-            // The `on` that sent it left: it was stopped on purpose.
-            crate::on_stop::send(node, machine, origin, Some(job)).await;
-            return Ok(true);
+            if pieces.stopping() {
+                crate::on_stop::send(node, machine, origin, Some(job)).await;
+                return Ok(true);
+            }
+            return Err(Failure::new("the local connection to the on follower broke; its end remains owed"));
         }
         tokio::select! {
             () = tokio::time::sleep(delay.next()) => {}
@@ -753,7 +760,11 @@ async fn start(
     writes_off: bool,
 ) -> Result<(JobId, PathBuf, Follower), Failure> {
     let script = staged.script;
-    let on = OnJob { state: staged.state.to_string_lossy().into_owned(), request: origin.request.clone() };
+    let on = OnJob {
+        state: staged.state.to_string_lossy().into_owned(),
+        request: origin.request.clone(),
+        follower: origin.follower.clone(),
+    };
     let request = RunRequest { script, cwd: None, writes_off, wait: None };
     let owner = JobOwner::Resident(origin.resident.clone());
     let registration = Arc::new(Mutex::new(None));

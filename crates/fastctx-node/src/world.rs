@@ -263,9 +263,18 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Run { .. } | RemoteCall::Write { .. } => Err(Failure::new(format!(
                     "{machine} takes commands and files from other machines only through `on`; the fastctx on {from} is older and needs updating"
                 ))),
-                RemoteCall::On { origin, sizes, writes_off } => {
+                RemoteCall::On { mut origin, sizes, writes_off } => {
                     let stream = stream.ok_or_else(|| Failure::new("an on comes with a data connection"))?;
+                    origin.follower = Some(from.clone());
                     crate::on::serve_on(&node, origin, sizes, writes_off, stream).await
+                }
+                RemoteCall::OnReceipt { owner, machine, job, request } => {
+                    if owner.machine != from {
+                        return Err(Failure::new("only the completion's resident machine asks for its receipt"));
+                    }
+                    crate::on_delivery::status(&node, &owner, &machine, &job, request.as_ref())
+                        .map(|(taken, following)| RemoteReply::OnReceipt { taken, following })
+                        .map_err(|error| Failure::new(format!("reading the on receipt: {error}")))
                 }
                 RemoteCall::Follow { origin, job, out_from, err_from } => {
                     let stream = stream.ok_or_else(|| Failure::new("following an on needs a data connection"))?;

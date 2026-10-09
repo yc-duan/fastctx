@@ -77,7 +77,7 @@ impl Connection {
         let (reader, writer) = tokio::io::split(Box::new(stream) as Box<dyn Stream>);
         Self {
             server: None,
-            reader: FrameReader(reader),
+            reader: FrameReader { stream: reader, header: [0; 4], header_filled: 0, length: None, frame: Vec::new() },
             writer: FrameWriter {
                 stream: writer,
                 #[cfg(windows)]
@@ -107,11 +107,18 @@ impl Connection {
     }
 }
 
-pub struct FrameReader(ReadHalf<Box<dyn Stream>>);
+pub struct FrameReader {
+    stream: ReadHalf<Box<dyn Stream>>,
+    header: [u8; 4],
+    header_filled: usize,
+    length: Option<usize>,
+    frame: Vec<u8>,
+}
 
 impl FrameReader {
     /// The next frame, or `None` if the other side closed the connection
     /// between frames. Closing in the middle of a frame is an error.
+    /// Cancelling a read preserves its partial header and payload.
     pub async fn recv(&mut self) -> io::Result<Option<Vec<u8>>> {
         self.recv_up_to(u32::MAX as usize).await
     }
@@ -119,22 +126,28 @@ impl FrameReader {
     /// Receives one frame whose size is bounded by the current protocol
     /// phase, before allocating it. This does not limit a stream's total.
     pub async fn recv_up_to(&mut self, maximum: usize) -> io::Result<Option<Vec<u8>>> {
-        let mut length = [0u8; 4];
-        let mut filled = 0;
-        while filled < length.len() {
-            match self.0.read(&mut length[filled..]).await? {
-                0 if filled == 0 => return Ok(None),
+        while self.header_filled < self.header.len() {
+            match self.stream.read(&mut self.header[self.header_filled..]).await? {
+                0 if self.header_filled == 0 => return Ok(None),
                 0 => return Err(io::ErrorKind::UnexpectedEof.into()),
-                read => filled += read,
+                read => self.header_filled += read,
             }
         }
-        let length = u32::from_le_bytes(length) as usize;
+        let length = *self.length.get_or_insert_with(|| u32::from_le_bytes(self.header) as usize);
         if length > maximum {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "frame exceeds the upload chunk size"));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "frame exceeds this protocol phase's size limit"));
         }
-        let mut frame = vec![0u8; length];
-        self.0.read_exact(&mut frame).await?;
-        Ok(Some(frame))
+        // The peer's length is a boundary, not evidence that its bytes exist.
+        // Grow only for bytes actually received, including on a truncated frame.
+        while self.frame.len() < length {
+            let remaining = length - self.frame.len();
+            if (&mut self.stream).take(remaining as u64).read_buf(&mut self.frame).await? == 0 {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+        }
+        self.header_filled = 0;
+        self.length = None;
+        Ok(Some(std::mem::take(&mut self.frame)))
     }
 }
 

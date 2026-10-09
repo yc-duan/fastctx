@@ -51,7 +51,7 @@ pub use detach::{DetachedProcess, spawn_detached};
 pub use environment::{in_job, user_environment, world_process_environment};
 pub use home::{fastctx_root, user_home};
 pub use hostname::hostname;
-pub use identity::{current_identity, identity_of, is_alive};
+pub use identity::{current_identity, has_ended, identity_of, is_alive};
 pub use legacy_text::decode_legacy;
 pub use local_path::local_path;
 pub use lock::FileLock;

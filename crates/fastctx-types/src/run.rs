@@ -279,6 +279,8 @@ pub struct OnJob {
     pub state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<crate::NoticeId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follower: Option<MachineName>,
 }
 
 /// A resident or an open page that started a job. The resident wire shape

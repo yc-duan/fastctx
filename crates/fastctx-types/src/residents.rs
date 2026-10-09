@@ -97,6 +97,9 @@ pub enum Notice {
         machine: MachineName,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         request: Option<NoticeId>,
+        /// Where this hop's CLI took the end, for arbitration of nested calls.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        follower: Option<MachineName>,
         how: EndedHow,
         /// How the shell itself exited, when it did.
         status: Option<ExitStatus>,
