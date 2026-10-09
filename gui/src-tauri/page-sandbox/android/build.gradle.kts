@@ -21,6 +21,9 @@ android {
 kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_1_8 } }
 
 dependencies {
+    // The plugin overrides Plugin.onDestroy(AppCompatActivity); Tauri keeps AppCompat to itself, so
+    // the plugin names it too, at the version Tauri's Android library uses.
+    implementation("androidx.appcompat:appcompat:1.6.0")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.15.3")
     implementation(project(":tauri-android"))
