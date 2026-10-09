@@ -21,8 +21,12 @@ fn rejection_precedes_all_job_side_effects() {
         "on target fastctx write /file <<END\n$HOME\nEND\n",
         "cat <<'END'\nmissing delimiter\n",
     ] {
-        let request =
-            RunRequest { script: format!("printf executed > '{path}'\n{tail}"), cwd: None, writes_off: false, wait: None };
+        let request = RunRequest {
+            script: format!("printf executed > '{path}'\n{tail}"),
+            cwd: None,
+            writes_off: false,
+            wait: None,
+        };
         let result = run::launch(&run::Launch {
             on: None,
             world: &world,

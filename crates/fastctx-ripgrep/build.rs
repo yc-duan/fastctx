@@ -36,8 +36,7 @@ fn main() {
     match env::var_os("FASTCTX_THIRD_PARTY_LICENSES").map(PathBuf::from) {
         Some(notices) => {
             println!("cargo:rerun-if-changed={}", notices.display());
-            fs::copy(&notices, embedded)
-                .unwrap_or_else(|error| panic!("reading {}: {error}", notices.display()));
+            fs::copy(&notices, embedded).unwrap_or_else(|error| panic!("reading {}: {error}", notices.display()));
         }
         None => fs::write(embedded, DEVELOPMENT).unwrap(),
     }

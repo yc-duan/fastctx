@@ -180,11 +180,7 @@ type Edit = (std::ops::Range<usize>, Vec<u8>);
 /// were rewritten: the earlier value restored, or the line this apply added
 /// removed. `None` when it is no longer ours, or sits in an inline table
 /// whose separators cannot be told apart from the user's.
-fn rewritten(
-    source: &Source<'_>,
-    key: &str,
-    setting: &Setting,
-) -> Result<Option<Edit>, Error> {
+fn rewritten(source: &Source<'_>, key: &str, setting: &Setting) -> Result<Option<Edit>, Error> {
     let path = ["features", key];
     if source.item(&path).and_then(Item::as_bool) != Some(false) {
         return Ok(None);

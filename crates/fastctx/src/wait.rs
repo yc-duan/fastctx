@@ -59,8 +59,11 @@ fn ended(record: &JobRecord) -> Notice {
         at: end.at,
         output: record.output.clone(),
         stderr: record.stderr.clone(),
-        last: fastctx_hands::run::last::last_streams(Path::new(&record.output), record.stderr.as_deref().map(Path::new))
-            .unwrap_or(None),
+        last: fastctx_hands::run::last::last_streams(
+            Path::new(&record.output),
+            record.stderr.as_deref().map(Path::new),
+        )
+        .unwrap_or(None),
     }
 }
 
