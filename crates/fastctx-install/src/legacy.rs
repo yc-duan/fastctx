@@ -10,7 +10,7 @@ use toml_edit::{Item, Value};
 
 use crate::codex::Limit;
 use crate::guidance::{self, BEGIN, END, OLD_BEGIN, OLD_END, marker_range};
-use crate::source::{Source, comma_in, splice};
+use crate::source::{Source, comma_in, edit, splice};
 use crate::{Error, File, Notice, check_path};
 
 /// A released installer's `[applied]` record, bound to both original paths.
@@ -209,9 +209,6 @@ pub(crate) fn take_over(config: File<'_>, agents: File<'_>, receipt: &Receipt) -
                 "the legacy server differs from its applied record",
             ));
         }
-        if hash(original) != record.codex_config.applied_sha256 {
-            check_released_server_bytes(&source, &expected)?;
-        }
         owned_servers.push("fastctx");
     }
     for name in ["fastread", "fastshell", "fastedit"] {
@@ -228,9 +225,7 @@ pub(crate) fn take_over(config: File<'_>, agents: File<'_>, receipt: &Receipt) -
         }
     }
     let limit = if let Some(item) = source.item(&["tool_output_token_limit"]) {
-        if item.as_integer() == Some(record.tool_output_token_limit)
-            && original[source.span(item.span())?] == *record.tool_output_token_limit.to_string().as_bytes()
-        {
+        if item.as_integer() == Some(record.tool_output_token_limit) {
             let range = source.span(item.span())?;
             let written = original[range].to_vec();
             let statement = source.assignment(&["tool_output_token_limit"])?;
@@ -253,25 +248,11 @@ pub(crate) fn take_over(config: File<'_>, agents: File<'_>, receipt: &Receipt) -
     } else {
         None
     };
-    let mut edits = vec![];
+    let mut config_bytes = original.to_vec();
     for name in &owned_servers {
         let path = ["mcp_servers", *name];
-        let spans = source.table_ranges(&path)?;
-        if spans.is_empty() {
-            return Err(Error::at(path.join("."), "legacy ownership requires a section table"));
-        }
-        for mut span in spans {
-            // Only an immediately adjacent line ending can be the old writer's
-            // terminator. A following comment and all its whitespace survive.
-            if original[span.end..].starts_with(b"\r\n") {
-                span.end += 2;
-            } else if original[span.end..].starts_with(b"\n") {
-                span.end += 1;
-            }
-            edits.push((span, vec![]));
-        }
+        config_bytes = edit::remove(&Source::parse(&config_bytes, config.path)?, &path)?;
     }
-    let mut config_bytes = splice(original, edits)?;
     for name in &owned_servers {
         config_bytes = remove_namespace(&config_bytes, config.path, &format!("mcp__{name}"), &mut notices)?;
     }
@@ -347,59 +328,6 @@ fn matches_value(item: &Item, expected: &toml::Value) -> bool {
         toml::Value::Integer(value) => item.as_integer() == Some(*value),
         toml::Value::Boolean(value) => item.as_bool() == Some(*value),
         _ => false,
-    }
-}
-
-fn check_released_server_bytes(source: &Source<'_>, expected: &toml::Value) -> Result<(), Error> {
-    let mut text = String::from("[mcp_servers.fastctx]\n");
-    for key in ["command", "args", "startup_timeout_sec", "tool_timeout_sec"] {
-        if let Some(value) = expected.get(key) {
-            text.push_str(&format!("{key} = {}\n", literal(value)));
-        }
-    }
-    text.push_str("\n[mcp_servers.fastctx.env]\n");
-    for key in [
-        "FASTCTX_TOKEN_BUDGET",
-        "FASTCTX_READ_TOKEN_BUDGET",
-        "FASTCTX_GREP_TOKEN_BUDGET",
-        "FASTCTX_GLOB_TOKEN_BUDGET",
-        "FASTCTX_RUN_TOKEN_BUDGET",
-        "FASTCTX_JOB_OUTPUT_TOKEN_BUDGET",
-    ] {
-        if let Some(value) = expected.get("env").and_then(|env| env.get(key)) {
-            text.push_str(&format!("{key} = {}\n", literal(value)));
-        }
-    }
-    let frozen = Source::parse(text.as_bytes(), "released server")?;
-    let actual = source.table_ranges(&["mcp_servers", "fastctx"])?;
-    let expected = frozen.table_ranges(&["mcp_servers", "fastctx"])?;
-    if actual.len() != expected.len() {
-        return Err(Error::at("mcp_servers.fastctx", "legacy syntax no longer matches the released writer"));
-    }
-    for (actual, expected) in actual.iter().zip(&expected) {
-        if source.bytes[actual.clone()] != frozen.bytes[expected.clone()] {
-            return Err(Error::at("mcp_servers.fastctx", "legacy syntax was edited after apply; left it in place"));
-        }
-    }
-    for (actual, expected) in actual.windows(2).zip(expected.windows(2)) {
-        let old_gap = &frozen.bytes[expected[0].end..expected[1].start];
-        let gap = &source.bytes[actual[0].end..actual[1].start];
-        if gap != old_gap {
-            return Err(Error::at(
-                "mcp_servers.fastctx",
-                "legacy section spacing or comments changed, or its sections moved apart; left it in place",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn literal(value: &toml::Value) -> String {
-    match value {
-        toml::Value::String(value) => toml_edit::Value::from(value.clone()).to_string(),
-        toml::Value::Integer(value) => value.to_string(),
-        toml::Value::Array(values) => format!("[{}]", values.iter().map(literal).collect::<Vec<_>>().join(", ")),
-        _ => unreachable!("the released server builder uses strings, integers and arrays"),
     }
 }
 

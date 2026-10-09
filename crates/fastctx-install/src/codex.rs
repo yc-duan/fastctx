@@ -8,7 +8,7 @@ use toml_edit::Item;
 use crate::guidance;
 use crate::legacy;
 use crate::plan::CodexPlan;
-use crate::source::{Source, comma_in, newline, splice};
+use crate::source::{Source, comma_in, edit, newline, same_value, splice};
 use crate::{Error, File, Notice, check_path, finish};
 
 pub(crate) mod tools;
@@ -16,7 +16,7 @@ pub(crate) mod tools;
 const SERVER: &[&str] = &["mcp_servers", "fastctx"];
 const LIMIT: &[&str] = &["tool_output_token_limit"];
 
-/// Caller authorization for changing an existing, insufficient shared limit.
+/// Caller authorization for increasing an existing, unowned shared limit.
 #[derive(Clone, Copy, Debug, Default)]
 pub enum Approval {
     #[default]
@@ -85,7 +85,8 @@ pub struct Unapplied {
 
 /// Plans both files atomically in memory. Unowned or edited server/guidance
 /// blocks are conflicts. The root limit is shared: sufficient user values
-/// stay unowned, and increasing an existing lower value requires approval.
+/// stay unowned, and increasing an unowned lower value requires approval.
+/// Owned limits follow the plan until the recorded user value is sufficient.
 pub fn apply(
     config: File<'_>,
     agents: File<'_>,
@@ -124,7 +125,7 @@ pub fn apply(
                         reason: "was gone from the configuration; put back".into(),
                     });
                 } else {
-                    server_range(&source, server)?;
+                    check_server(&source, server)?;
                 }
             }
         }
@@ -141,7 +142,7 @@ pub fn apply(
     }
     let source = Source::parse(&bytes, config.path)?;
     if let Some(old) = &receipt.limit
-        && source.value_range(LIMIT)?.is_none_or(|range| bytes[range] != old.written)
+        && !owns_limit(&source, old)?
     {
         notices.push(Notice {
             location: format!("{}: tool_output_token_limit", config.path),
@@ -159,10 +160,18 @@ pub fn apply(
     receipt.limit = limit;
     let source = Source::parse(&bytes, config.path)?;
     if let Some(server) = &receipt.server {
-        let range = server_range(&source, server)?;
         let replacement = server_body(plan, server.inline, newline(&bytes));
-        bytes = splice(&bytes, vec![(range, replacement.clone())])?;
-        receipt.server = Some(Server { body: replacement, ..server.clone() });
+        let next = Server { body: replacement, ..server.clone() };
+        let expected = server_document(&next);
+        let expected = Source::parse(&expected, "server receipt")?;
+        let desired = expected.item(SERVER).expect("the generated server exists");
+        if !source.item(SERVER).is_some_and(|current| same_value(current, desired)) {
+            bytes = match server_range(&source, server) {
+                Ok(range) => splice(&bytes, vec![(range, next.body.clone())])?,
+                Err(_) => edit::synchronize(&bytes, config.path, SERVER, desired)?,
+            };
+            receipt.server = Some(next);
+        }
     } else {
         let (next, server) = insert_server(&source, plan)?;
         bytes = next;
@@ -344,6 +353,9 @@ fn insert_server(source: &Source<'_>, plan: &CodexPlan) -> Result<(Vec<u8>, Serv
 
 fn server_range(source: &Source<'_>, server: &Server) -> Result<Range<usize>, Error> {
     let spans = if server.inline {
+        if source.item(&["mcp_servers"]).and_then(Item::as_inline_table).is_none() {
+            return Err(Error::at("mcp_servers", "the recorded inline table was rewritten"));
+        }
         if source.item(SERVER).is_none() { vec![] } else { vec![source.assignment(SERVER)?] }
     } else {
         source.table_ranges(SERVER)?
@@ -356,16 +368,44 @@ fn server_range(source: &Source<'_>, server: &Server) -> Result<Range<usize>, Er
     Ok(start..end)
 }
 
+fn server_document(server: &Server) -> Vec<u8> {
+    let mut bytes = if server.inline { b"[mcp_servers]\n".to_vec() } else { Vec::new() };
+    bytes.extend_from_slice(&server.body);
+    bytes
+}
+
+fn check_server(source: &Source<'_>, server: &Server) -> Result<(), Error> {
+    // Version 1 receipts already contain all the values we wrote. Parsing that
+    // evidence also recognizes installations made before semantic ownership.
+    let recorded = server_document(server);
+    let recorded = Source::parse(&recorded, "server receipt")?;
+    let expected = recorded.item(SERVER).ok_or_else(|| Error::at("receipt", "missing recorded server"))?;
+    if source.item(SERVER).is_some_and(|current| same_value(current, expected)) {
+        Ok(())
+    } else {
+        Err(Error::at(
+            "mcp_servers.fastctx",
+            "the server's keys or values differ from the recorded values; left it in place",
+        ))
+    }
+}
+
 fn remove_server(bytes: &[u8], location: &str, server: &Server) -> Result<Vec<u8>, Error> {
     let source = Source::parse(bytes, location)?;
     if source.item(SERVER).is_none() {
         return Ok(bytes.to_vec());
     }
-    let mut range = server_range(&source, server)?;
+    check_server(&source, server)?;
+    let Ok(mut range) = server_range(&source, server) else {
+        return edit::remove(&source, SERVER);
+    };
     if bytes[..range.start].ends_with(&server.prefix) {
         range.start -= server.prefix.len();
     } else if !server.prefix.is_empty() {
-        return Err(Error::at("mcp_servers.fastctx", "the server's inserted separator was changed"));
+        return edit::remove(&source, SERVER);
+    }
+    if edit::joins_lines(bytes, &range) {
+        return edit::remove(&source, SERVER);
     }
     let mut edits = vec![];
     if server.inline && server.prefix.is_empty() {
@@ -396,8 +436,7 @@ fn remove_server(bytes: &[u8], location: &str, server: &Server) -> Result<Vec<u8
     }
     edits.push((range, vec![]));
     let next = splice(bytes, edits)?;
-    Source::parse(&next, location)?;
-    Ok(next)
+    if Source::parse(&next, location).is_ok() { Ok(next) } else { edit::remove(&source, SERVER) }
 }
 
 fn apply_limit(
@@ -413,14 +452,26 @@ fn apply_limit(
         .item(LIMIT)
         .map(|i| i.as_integer().ok_or_else(|| Error::at("tool_output_token_limit", "expected an integer")))
         .transpose()?;
-    let owned = old.filter(|old| range.as_ref().is_some_and(|r| bytes[r.clone()] == old.written));
-    if current.is_some_and(|value| value >= requested as i64) {
-        return Ok((bytes.to_vec(), owned.cloned()));
-    }
-    if let Some(current) = current
-        && !matches!(approval, Approval::RaiseOutputLimit)
-    {
-        return Err(Error::TokenLimitApproval { location: location.into(), current, requested });
+    let owned = match old {
+        Some(old) if owns_limit(&source, old)? => Some(old),
+        _ => None,
+    };
+    if let Some(owned) = owned {
+        if owned.before.as_deref().map(recorded_limit).transpose()?.is_some_and(|before| before >= requested as i64) {
+            return Ok((restore_limit(bytes, location, owned)?, None));
+        }
+        if current == Some(requested as i64) {
+            return Ok((bytes.to_vec(), Some(owned.clone())));
+        }
+    } else {
+        if current.is_some_and(|value| value >= requested as i64) {
+            return Ok((bytes.to_vec(), None));
+        }
+        if let Some(current) = current
+            && !matches!(approval, Approval::RaiseOutputLimit)
+        {
+            return Err(Error::TokenLimitApproval { location: location.into(), current, requested });
+        }
     }
     let written = requested.to_string().into_bytes();
     let (edit, record) = if let Some(range) = range {
@@ -448,7 +499,7 @@ pub(crate) fn restore_limit(bytes: &[u8], location: &str, limit: &Limit) -> Resu
     let Some(range) = source.value_range(LIMIT)? else {
         return Ok(bytes.to_vec());
     };
-    if bytes[range.clone()] != limit.written {
+    if !owns_limit(&source, limit)? {
         return Err(Error::at(
             "tool_output_token_limit",
             "the current value differs from the recorded value; left it in place",
@@ -461,10 +512,7 @@ pub(crate) fn restore_limit(bytes: &[u8], location: &str, limit: &Limit) -> Resu
         if let Some(assignment) = &limit.assignment {
             let end = range.start + assignment.len();
             if bytes.get(range.start..end) != Some(assignment.as_slice()) {
-                return Err(Error::at(
-                    "tool_output_token_limit",
-                    "the inserted assignment was edited; left it in place",
-                ));
+                return edit::remove(&source, LIMIT);
             }
             (range.start..end, vec![])
         } else {
@@ -475,4 +523,18 @@ pub(crate) fn restore_limit(bytes: &[u8], location: &str, limit: &Limit) -> Resu
     let next = splice(bytes, vec![(range, replacement)])?;
     Source::parse(&next, location)?;
     Ok(next)
+}
+
+fn owns_limit(source: &Source<'_>, limit: &Limit) -> Result<bool, Error> {
+    Ok(source.item(LIMIT).and_then(Item::as_integer) == Some(recorded_limit(&limit.written)?))
+}
+
+fn recorded_limit(value: &[u8]) -> Result<i64, Error> {
+    let mut recorded = b"tool_output_token_limit = ".to_vec();
+    recorded.extend_from_slice(value);
+    let recorded = Source::parse(&recorded, "limit receipt")?;
+    recorded
+        .item(LIMIT)
+        .and_then(Item::as_integer)
+        .ok_or_else(|| Error::at("receipt", "the recorded output limit is not an integer"))
 }

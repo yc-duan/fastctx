@@ -64,7 +64,7 @@ fn installation_round_trip_and_drift_are_independent() {
 
 #[test]
 fn file_existence_and_unowned_bytes_survive() {
-    for original in [None, Some(b"".as_slice()), Some(b"# user\r\n".as_slice())] {
+    for original in [None, Some(b"".as_slice()), Some(b"# user\r\n".as_slice()), Some(b"# user".as_slice())] {
         let config = File { path: "config.toml", bytes: original };
         let agents = File { path: "CLAUDE.md", bytes: original };
         let installed = codex::apply(config, agents, &plan(), "body", Ownership::None, Approval::Require).unwrap();
@@ -76,11 +76,137 @@ fn file_existence_and_unowned_bytes_survive() {
         .unwrap();
         assert_eq!(restored.config.as_deref(), original);
         assert_eq!(restored.agents.as_deref(), original);
+
+        let tail = b"[user_added]\nvalue = 'preserved'\n";
+        let extended = [installed.config.as_slice(), tail].concat();
+        let restored = codex::unapply(
+            File { bytes: Some(&extended), ..config },
+            File { bytes: Some(&installed.agents), ..agents },
+            Some(&installed.receipt),
+        )
+        .unwrap();
+        assert!(restored.retained.is_empty());
+        let bytes = restored.config.unwrap();
+        assert!(bytes.ends_with(tail));
+        let value: toml::Value = toml::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        assert_eq!(value["user_added"]["value"].as_str(), Some("preserved"));
     }
     let foreign = b"<!-- fastctx:begin -->\nbody\n<!-- fastctx:end -->\n";
     let file = File { path: "CLAUDE.md", bytes: Some(foreign) };
     assert!(guidance::apply(file, "body", None).is_err());
     assert_eq!(guidance::unapply(file, None).unwrap().bytes.as_deref(), Some(foreign.as_slice()));
+}
+
+#[test]
+fn configuration_rewrites_preserve_ownership_and_user_bytes() {
+    let original =
+        b"model = 'user'\ntool_output_token_limit = +8_192 # original spelling\nfeatures.shell_tool = true\n";
+    let config = File { path: "config.toml", bytes: Some(original) };
+    let agents = File { path: "AGENTS.md", bytes: None };
+    let installed = codex::apply(config, agents, &plan(), "body", Ownership::None, Approval::RaiseOutputLimit).unwrap();
+    let receipt = serde_json::from_slice(&serde_json::to_vec(&installed.receipt).unwrap()).unwrap();
+    let mut doc = std::str::from_utf8(&installed.config).unwrap().parse::<toml_edit::DocumentMut>().unwrap();
+    let server = doc["mcp_servers"]["fastctx"].as_table().unwrap().clone().into_inline_table();
+    doc["mcp_servers"]["fastctx"] = toml_edit::value(server);
+    let rewritten = doc.to_string().replace('\n', "\r\n").replace(
+        &format!("tool_output_token_limit = {}", plan().output_token_limit),
+        &format!("'tool_output_token_limit' = +{}", plan().output_token_limit),
+    );
+    let user = "\r\n[untouched] # retained exactly\r\n  text = '''# user's text'''  # note\r\n";
+    let rewritten = format!("{rewritten}{user}");
+    let repeated = codex::apply(
+        File { bytes: Some(rewritten.as_bytes()), ..config },
+        File { bytes: Some(&installed.agents), ..agents },
+        &plan(),
+        "body",
+        Ownership::Current(&receipt),
+        Approval::Require,
+    )
+    .unwrap();
+    assert_eq!(repeated.config, rewritten.as_bytes());
+    assert!(repeated.notices.is_empty());
+    for receipt in [&receipt, &repeated.receipt] {
+        let restored = codex::unapply(
+            File { bytes: Some(rewritten.as_bytes()), ..config },
+            File { bytes: Some(&installed.agents), ..agents },
+            Some(receipt),
+        )
+        .unwrap();
+        assert!(restored.retained.is_empty());
+        assert!(restored.receipt.is_none());
+        let bytes = restored.config.unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(text.contains("model = 'user'\r\n"));
+        assert!(text.contains("'tool_output_token_limit' = +8_192 # original spelling\r\n"));
+        assert!(text.ends_with(user));
+        let parsed: toml::Value = toml::from_str(text).unwrap();
+        assert!(parsed["mcp_servers"].get("fastctx").is_none());
+        assert_eq!(parsed["features"]["shell_tool"].as_bool(), Some(true));
+        assert!(parsed["features"].get("view_image").is_none());
+    }
+}
+
+#[test]
+fn owned_output_limits_follow_the_plan_and_restore_user_values() {
+    let current = plan();
+    let mut old_plan = current.clone();
+    old_plan.output_token_limit += 2;
+    for before in [
+        None,
+        Some(current.output_token_limit - 1),
+        Some(current.output_token_limit),
+        Some(current.output_token_limit + 1),
+    ] {
+        let setting = before.map(|value| format!("tool_output_token_limit = +{value} # user\n")).unwrap_or_default();
+        let original = format!("model = 'user'\n{setting}");
+        let config = File { path: "config.toml", bytes: Some(original.as_bytes()) };
+        let agents = File { path: "AGENTS.md", bytes: None };
+        let old = codex::apply(config, agents, &old_plan, "body", Ownership::None, Approval::RaiseOutputLimit).unwrap();
+        let receipt = serde_json::from_slice(&serde_json::to_vec(&old.receipt).unwrap()).unwrap();
+        let next = codex::apply(
+            File { bytes: Some(&old.config), ..config },
+            File { bytes: Some(&old.agents), ..agents },
+            &current,
+            "body",
+            Ownership::Current(&receipt),
+            Approval::Require,
+        )
+        .unwrap();
+        assert!(next.notices.is_empty());
+        let value: toml::Value = toml::from_str(std::str::from_utf8(&next.config).unwrap()).unwrap();
+        let sufficient = before.filter(|value| *value >= current.output_token_limit);
+        assert_eq!(
+            value["tool_output_token_limit"].as_integer(),
+            Some(sufficient.unwrap_or(current.output_token_limit) as i64)
+        );
+        for name in ["run", "apply_patch", "ask_colleague", "message_colleague"] {
+            assert_eq!(
+                value["mcp_servers"]["fastctx"]["tools"][name]["output_token_limit"].as_integer(),
+                Some(current.output_token_limit as i64)
+            );
+        }
+        assert_eq!(serde_json::to_value(&next.receipt).unwrap()["limit"].is_null(), sufficient.is_some());
+        let repeated = codex::apply(
+            File { bytes: Some(&next.config), ..config },
+            File { bytes: Some(&next.agents), ..agents },
+            &current,
+            "body",
+            Ownership::Current(&next.receipt),
+            Approval::Require,
+        )
+        .unwrap();
+        assert_eq!(repeated.config, next.config);
+        assert_eq!(repeated.receipt, next.receipt);
+        let restored = codex::unapply(
+            File { bytes: Some(&next.config), ..config },
+            File { bytes: Some(&next.agents), ..agents },
+            Some(&next.receipt),
+        )
+        .unwrap();
+        assert!(restored.retained.is_empty());
+        assert!(restored.receipt.is_none());
+        assert_eq!(restored.config.as_deref(), Some(original.as_bytes()));
+    }
 }
 
 #[test]
