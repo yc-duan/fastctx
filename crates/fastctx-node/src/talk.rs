@@ -73,6 +73,7 @@ pub async fn talk_here(
     attachments: Vec<Attachment>,
 ) -> Result<Landed, Failure> {
     crate::attachments::resolve(node, to, &attachments).await?;
+    let attachments = crate::attachments::place(node, to, attachments).await?;
     let delivery = crate::attachments::delivery(typed_on, text, attachments);
     speech::tell_here(node, to, delivery, Owed::Nobody).await
 }

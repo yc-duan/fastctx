@@ -1,7 +1,11 @@
 //! Verified user uploads, kept with the resident on its host's machine.
+//! A session that works on another machine is given its files other than
+//! images there (`world-gui.md`): each is placed on that machine, beside the
+//! session's other things there, while the upload kept where it lives stays
+//! the conversation's record.
 
 use std::io::{Read as _, Write as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use fastctx_net::data::Stream;
@@ -9,12 +13,13 @@ use fastctx_net::link::Feed;
 use fastctx_platform::FileLock;
 use fastctx_platform::ipc::FrameReader;
 use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
-use fastctx_types::access::{Acting, Purpose};
+use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use tokio::io::AsyncReadExt as _;
 
 use crate::Node;
 
@@ -289,12 +294,25 @@ async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Re
     let id = crate::speech::new_id("attachment");
     let directory = directory.join(id.as_str());
     std::fs::create_dir(&directory).map_err(failure)?;
+    let owner = Address { machine: node.machine(), resident };
+    arriving_in(&directory, Attachment { id, owner, town, path: String::new(), file })
+}
+
+/// An upload arriving into `directory`, its own, for `attachment`, whose
+/// path it gives.
+fn arriving_in(directory: &Path, mut attachment: Attachment) -> Result<Arriving, Failure> {
     let directory = std::fs::canonicalize(directory).map_err(failure)?;
     let temporary = directory.join("upload.part");
+    // A try that stopped before its end may have left its part.
+    if let Err(error) = std::fs::remove_file(&temporary)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        return Err(failure(error));
+    }
     let output = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(failure)?;
     // The original name is metadata, never a path component. The image
     // extension also lets native hosts that dispatch by extension open it.
-    let name = match file.media_type.as_str() {
+    let name = match attachment.file.media_type.as_str() {
         "image/png" => "content.png",
         "image/jpeg" => "content.jpg",
         "image/webp" => "content.webp",
@@ -302,13 +320,7 @@ async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Re
         _ => "content",
     };
     let path = directory.join(name);
-    let attachment = Attachment {
-        id,
-        owner: Address { machine: node.machine(), resident },
-        town,
-        path: crate::world::native(&path),
-        file,
-    };
+    attachment.path = crate::world::native(&path);
     Ok(Arriving { attachment, temporary, path, output: Some(output), received: 0, hash: Sha256::new() })
 }
 
@@ -377,31 +389,8 @@ pub async fn resolve(node: &Arc<Node>, resident: &ResidentId, attachments: &[Att
     tokio::task::spawn_blocking(move || {
         let mut buffer = vec![0u8; UPLOAD_CHUNK];
         for attachment in attachments {
-            if attachment.owner.machine != node.machine() || attachment.owner.resident != resident {
-                return Err(failure("an attachment belongs to another resident or machine"));
-            }
-            let directory = node
-                .world
-                .resident(attachment.town.as_ref(), &resident)
-                .path()
-                .join("attachments")
-                .join(attachment.id.as_str());
-            let kept: Attachment = read_json(&directory.join("receipt.json"))?;
-            if kept != attachment {
-                return Err(failure("the attachment receipt differs from the stored upload"));
-            }
-            let mut file = std::fs::File::open(&kept.path).map_err(failure)?;
-            let mut hash = Sha256::new();
-            let mut size = 0u64;
-            loop {
-                let read = file.read(&mut buffer).map_err(failure)?;
-                if read == 0 {
-                    break;
-                }
-                size += read as u64;
-                hash.update(&buffer[..read]);
-            }
-            if size != kept.file.size || format!("{:x}", hash.finalize()) != kept.file.sha256 {
+            let kept = kept_here(&node, &resident, &attachment)?;
+            if !holds(&kept, &mut buffer)? {
                 return Err(failure(format!("{} on {} changed after upload", kept.path, kept.owner.machine)));
             }
         }
@@ -409,6 +398,204 @@ pub async fn resolve(node: &Arc<Node>, resident: &ResidentId, attachments: &[Att
     })
     .await
     .map_err(failure)?
+}
+
+/// The upload kept here for `attachment` of `resident`: the one it names, or
+/// the one a copy placed on another machine was made from, known by its id
+/// and its file.
+fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Result<Attachment, Failure> {
+    let unknown = || failure(format!("{} was not attached for {resident} on {}", attachment.file.name, node.machine()));
+    if attachment.owner.resident != *resident {
+        return Err(unknown());
+    }
+    let receipt = node
+        .world
+        .resident(attachment.town.as_ref(), resident)
+        .path()
+        .join("attachments")
+        .join(attachment.id.as_str())
+        .join("receipt.json");
+    let kept: Attachment = read_json(&receipt).map_err(|_| unknown())?;
+    let same = if attachment.owner.machine == node.machine() {
+        kept == *attachment
+    } else {
+        kept.id == attachment.id && kept.town == attachment.town && kept.file == attachment.file
+    };
+    if !same {
+        return Err(failure("the attachment receipt differs from the stored upload"));
+    }
+    Ok(kept)
+}
+
+/// Whether the file `kept` names still holds the bytes it was kept with.
+fn holds(kept: &Attachment, buffer: &mut [u8]) -> Result<bool, Failure> {
+    let mut file = std::fs::File::open(&kept.path).map_err(failure)?;
+    let mut hash = Sha256::new();
+    let mut size = 0u64;
+    loop {
+        let read = file.read(buffer).map_err(failure)?;
+        if read == 0 {
+            break;
+        }
+        size += read as u64;
+        hash.update(&buffer[..read]);
+    }
+    Ok(size == kept.file.size && format!("{:x}", hash.finalize()) == kept.file.sha256)
+}
+
+/// What the machine a file is placed on says first.
+#[derive(Serialize, Deserialize)]
+struct Need {
+    /// Whether it wants the bytes; when not, it holds that very file.
+    bytes: bool,
+}
+
+/// The user's files for `resident`, of this machine, as its session is
+/// given them, each already resolved: images where it lives, whose host
+/// shows them to the model from here; other files on the machine it works
+/// on, where its commands handle them. A copy placed there before is placed
+/// again from the upload kept here, and so is one placed on a machine it no
+/// longer works on.
+pub async fn place(node: &Arc<Node>, resident: &ResidentId, attachments: Vec<Attachment>) -> Result<Vec<Attachment>, Failure> {
+    if attachments.is_empty() {
+        return Ok(attachments);
+    }
+    let works_on = crate::here::elsewhere(node, resident);
+    let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
+    let mut given = Vec::with_capacity(attachments.len());
+    for attachment in &attachments {
+        let kept = kept_here(node, resident, attachment)?;
+        given.push(match &works_on {
+            Some(works_on) if !kept.is_image() => send_placed(node, &acting, works_on, resident, kept).await?,
+            _ => kept,
+        });
+    }
+    Ok(given)
+}
+
+/// Places `kept`, an upload of `resident` kept here, on `works_on`, for
+/// whom it works; answers the copy there.
+async fn send_placed(
+    node: &Arc<Node>,
+    acting: &Acting,
+    works_on: &Written,
+    resident: &ResidentId,
+    kept: Attachment,
+) -> Result<Attachment, Failure> {
+    let call = RemoteCall::Place { resident: resident.clone(), attachment: kept.clone() };
+    let (path, size) = (PathBuf::from(&kept.path), kept.file.size);
+    let feed = || -> Feed {
+        let path = path.clone();
+        Box::new(move |mut stream: Stream| {
+            Box::pin(async move {
+                let need: Need = stream.hear().await?;
+                if need.bytes {
+                    send_bytes(&mut stream, &path, size).await?;
+                    stream.say(&"placed").await?;
+                }
+                stream.finish().await
+            })
+        })
+    };
+    let refused = |why: String| {
+        Failure::new(format!("{} goes to {works_on}, where the session works, and did not get there: {why}", kept.file.name))
+    };
+    let mine = Address { machine: works_on.name.clone(), resident: resident.clone() };
+    match node.call_with_stream(acting, works_on, Purpose::Hands, call, feed).await {
+        Ok(Ok(RemoteReply::Uploaded(placed))) if placed.id == kept.id && placed.file == kept.file && placed.owner == mine => {
+            Ok(placed)
+        }
+        Ok(Ok(_)) => Err(refused(format!("{works_on} answered something other than the file kept there"))),
+        Ok(Err(failure)) => Err(refused(failure.message)),
+        Err(failure) => Err(refused(failure.to_string())),
+    }
+}
+
+/// Sends the `size` bytes of the file at `path`, and only those: a file
+/// shorter than when it was checked is not sent short.
+async fn send_bytes(stream: &mut Stream, path: &Path, size: u64) -> Result<(), String> {
+    let mut file =
+        tokio::fs::File::open(path).await.map_err(|error| format!("opening {}: {error}", path.display()))?;
+    let mut buffer = vec![0u8; UPLOAD_CHUNK];
+    let mut left = size;
+    while left > 0 {
+        let want = (buffer.len() as u64).min(left) as usize;
+        let read = file.read(&mut buffer[..want]).await.map_err(|error| format!("reading {}: {error}", path.display()))?;
+        if read == 0 {
+            return Err(format!("{} is shorter than when it was attached", path.display()));
+        }
+        stream.send(&buffer[..read]).await?;
+        left -= read as u64;
+    }
+    Ok(())
+}
+
+/// Keeps on this machine a file the user attached for `resident`, of
+/// `from`, which works here, beside its other things here (`world-town.md`),
+/// under the same id; asks for the bytes only when it does not hold that
+/// very file already. A copy changed since, by whatever works here, is left
+/// as it is, and this one is kept beside it.
+pub async fn take_placed(
+    node: &Arc<Node>,
+    from: &MachineName,
+    resident: ResidentId,
+    attachment: Attachment,
+    mut stream: Stream,
+) -> Result<Attachment, Failure> {
+    validate_file(&attachment.file)?;
+    if attachment.owner != (Address { machine: from.clone(), resident: resident.clone() }) {
+        return Err(Failure::not_run(format!("{from} places files only of its own sessions")));
+    }
+    let base = node.world.resident(attachment.town.as_ref(), &resident).path().join("attachments");
+    let wanted = Attachment { owner: Address { machine: node.machine(), resident }, ..attachment };
+    let (directory, held) = {
+        let wanted = wanted.clone();
+        tokio::task::spawn_blocking(move || slot(&base, &wanted)).await.map_err(failure)??
+    };
+    if let Some(held) = held {
+        stream.say(&Need { bytes: false }).await.map_err(failure)?;
+        stream.done().await.map_err(failure)?;
+        return Ok(held);
+    }
+    stream.say(&Need { bytes: true }).await.map_err(failure)?;
+    let size = wanted.file.size;
+    let mut arriving = arriving_in(&directory, wanted)?;
+    stream.take(size, |piece| arriving.write(piece).map_err(|error| error.message)).await.map_err(Failure::new)?;
+    let end: String = stream.hear().await.map_err(failure)?;
+    if end != "placed" {
+        return Err(failure("the sender did not end the file"));
+    }
+    let placed = arriving.finish()?;
+    stream.done().await.map_err(failure)?;
+    Ok(placed)
+}
+
+/// Where under `base` the file `wanted` is kept: its id's directory, or the
+/// first one after it, `<id>-2` and on, that is free, left from a try that
+/// did not finish, or holds that very file, which is then given.
+fn slot(base: &Path, wanted: &Attachment) -> Result<(PathBuf, Option<Attachment>), Failure> {
+    std::fs::create_dir_all(base).map_err(failure)?;
+    let mut buffer = vec![0u8; UPLOAD_CHUNK];
+    for n in 1u32.. {
+        let name = if n == 1 { wanted.id.as_str().to_string() } else { format!("{}-{n}", wanted.id.as_str()) };
+        let directory = base.join(name);
+        match std::fs::create_dir(&directory) {
+            Ok(()) => return Ok((directory, None)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(failure(error)),
+        }
+        match read_json::<Attachment>(&directory.join("receipt.json")) {
+            Ok(kept) if kept.id == wanted.id && kept.owner == wanted.owner && kept.file == wanted.file => {
+                if holds(&kept, &mut buffer).unwrap_or(false) {
+                    return Ok((directory, Some(kept)));
+                }
+            }
+            Ok(_) => {}
+            Err(_) if !directory.join("receipt.json").exists() => return Ok((directory, None)),
+            Err(_) => {}
+        }
+    }
+    unreachable!("some directory is free")
 }
 
 /// Reserves a draft for precisely one Open. The lock spans host creation;

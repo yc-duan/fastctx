@@ -167,6 +167,15 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<crate::attachments::Attachment>,
     },
+    /// Keep here a file the user attached to their words for `resident`, of
+    /// the calling machine, which works here (`world-gui.md`): its receipt
+    /// where it lives comes with the call, and over the call's data
+    /// connection this machine says whether it needs the bytes, which then
+    /// come, followed by the JSON word "placed".
+    Place {
+        resident: ResidentId,
+        attachment: crate::attachments::Attachment,
+    },
     /// Bytes arrive through this signed call's data connection, followed by
     /// the JSON word "uploaded". Only a user-authorized entrance emits this.
     Upload {
@@ -271,6 +280,7 @@ impl RemoteCall {
             | RemoteCall::CopySend { .. }
             | RemoteCall::CopyFetch { .. }
             | RemoteCall::CopyReceive { .. }
+            | RemoteCall::Place { .. }
             | RemoteCall::PageAction { .. } => Purpose::Hands,
             RemoteCall::Composer { .. }
             | RemoteCall::Ask { .. }

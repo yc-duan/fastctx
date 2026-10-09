@@ -68,6 +68,7 @@ fn town_of(call: &RemoteCall) -> Option<&TownName> {
             origin.town.as_ref()
         }
         RemoteCall::PageAction { source, .. } => Some(&source.town),
+        RemoteCall::Place { attachment, .. } => attachment.town.as_ref(),
         RemoteCall::Upload { target: fastctx_types::attachments::UploadTarget::New { town, .. }, .. } => town.as_ref(),
         RemoteCall::Manage { action: Management::Move { town: Some(town) }, .. } => Some(town),
         _ => None,

@@ -573,6 +573,12 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(RemoteReply::Copied)
                 }
+                RemoteCall::Place { resident, attachment } => {
+                    let stream = stream.ok_or_else(|| Failure::new("a file comes with a data connection, and this one had none"))?;
+                    crate::attachments::take_placed(&node, &from, resident, attachment, stream)
+                        .await
+                        .map(RemoteReply::Uploaded)
+                }
                 RemoteCall::Upload { target, file, composer } => {
                     let stream = stream.ok_or_else(|| Failure::new("an upload requires its data connection"))?;
                     crate::attachments::receive(&node, &from, target, file, composer, stream)
