@@ -154,13 +154,11 @@ pub(super) fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result
         return chosen.map(|label| Plan::fixed(explicit(label, &[]).expect("known codec"), "NUL byte pattern and strict UTF-16 validation"))
             .ok_or_else(|| format!("the file has NUL bytes from byte {offset} and is not clearly UTF-16, so it is taken as binary; if it is text, view it with --encoding to name its encoding"));
     }
-    if iso_offset.is_some() {
-        if iso.valid {
-            return Ok(Plan::fixed(
-                explicit("iso-2022-jp", &[]).expect("known codec"),
-                "ISO-2022-JP escape sequences and strict validation",
-            ));
-        }
+    if iso_offset.is_some() && iso.valid {
+        return Ok(Plan::fixed(
+            explicit("iso-2022-jp", &[]).expect("known codec"),
+            "ISO-2022-JP escape sequences and strict validation",
+        ));
     }
     if utf8.valid && iso_offset.is_none() {
         return Ok(Plan::fixed(TextEncoding::utf8(), "UTF-8"));

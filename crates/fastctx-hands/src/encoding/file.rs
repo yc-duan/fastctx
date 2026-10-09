@@ -6,6 +6,9 @@ use std::ops::Range;
 use super::{EncodingError, TextEncoding, evidence, iso2022, line, mapping::Mapping};
 pub(crate) use line::{excerpt, visit};
 
+/// A text range before a replacement and where it is after.
+pub type Moved = (Range<usize>, Range<usize>);
+
 pub(crate) struct Plan {
     pub(super) fixed: Option<TextEncoding>,
     pub(super) choices: Vec<TextEncoding>,
@@ -135,7 +138,7 @@ impl Source {
     }
 
     /// Returns the new text ranges. Every unaffected original byte is copied.
-    pub fn replace(&mut self, replacements: &[Replacement]) -> Result<Vec<(Range<usize>, Range<usize>)>, String> {
+    pub fn replace(&mut self, replacements: &[Replacement]) -> Result<Vec<Moved>, String> {
         if replacements.is_empty() {
             return Ok(Vec::new());
         }
