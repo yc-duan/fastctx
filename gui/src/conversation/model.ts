@@ -461,9 +461,17 @@ export function changeHealth(change: SessionChange): Health | null {
         text: `OpenAI moved this turn from ${change.from} to ${change.to} (${change.reason})`,
       };
     case "safety": {
-      return property(change.buffering, "showBufferingUi") === true
-        ? { kind: "safety", text: "OpenAI is holding this turn's output for extra safety processing" }
-        : null;
+      if (property(change.buffering, "showBufferingUi") !== true) return null;
+      // The use and the reason OpenAI gives say what the person who asked may want to change.
+      const listed = (key: string) => {
+        const value = property(change.buffering, key);
+        const words = Array.isArray(value) ? value.filter((word): word is string => typeof word === "string") : [];
+        return words.length === 0 ? "unspecified" : words.join(", ");
+      };
+      return {
+        kind: "safety",
+        text: `OpenAI is holding this turn's output for extra safety processing (use: ${listed("useCases")}; reason: ${listed("reasons")})`,
+      };
     }
     case "error": {
       const message = property(change.error, "message");

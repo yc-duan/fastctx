@@ -109,6 +109,7 @@ impl Session {
             residents: tokio::sync::Mutex::new(HashMap::new()),
             were: Mutex::new(HashMap::new()),
             starting: tokio::sync::Mutex::new(()),
+            lifetime_reported: Mutex::new(None),
             writes_off: self.writes_off,
         })
     }

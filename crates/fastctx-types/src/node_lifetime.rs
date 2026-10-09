@@ -37,14 +37,18 @@ impl NodeLifetime {
         let job = self.windows_job.as_ref().filter(|_| !self.supervised)?;
         let origin = match &self.starter {
             Some(starter) => match &starter.session {
-                Some(host) => format!("auto-started by {} MCP process {}", host.client, starter.process.pid),
-                None => format!("auto-started by process {}", starter.process.pid),
+                Some(host) => format!("started by a {} session (process {})", host.client, starter.process.pid),
+                None => format!("started by process {}", starter.process.pid),
             },
             None => "started outside a node service".into(),
         };
-        let closing = if job.kill_on_close { "closing its last job handle also kills its processes; " } else { "" };
+        let end = if job.kill_on_close {
+            "when that job closes, as it does when the session that holds it ends"
+        } else {
+            "if that job is ended"
+        };
         Some(format!(
-            "node {} is inside a Windows job ({origin}); {closing}ending that job stops this node and work retained in it. Background work may end with the session that owns that job",
+            "this machine's fastctx node (process {}) was {origin} and runs inside a Windows job: {end}, the node and the jobs it runs end with it; a fastctx node service would keep them apart",
             self.process.pid
         ))
     }
