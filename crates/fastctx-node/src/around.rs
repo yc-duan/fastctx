@@ -109,6 +109,13 @@ pub(crate) fn acting_of(node: &Node, caller: &crate::town::caller::Caller) -> Ac
         crate::town::caller::Caller::Resident(address) if address.machine == node.machine() => {
             node.residents.about(&address.resident).map(|(about, _)| about.acting).unwrap_or_default()
         }
+        // A resident of another machine runs commands here only in a job
+        // that machine sent for an account: they work for that account, and
+        // never for the ones this computer is logged in to
+        // (`world-network.md`, 一个登录，只在登录它的那台电脑上用).
+        crate::town::caller::Caller::Resident(address) => {
+            Acting::Accounts { accounts: crate::jobs::running_for(&node.world, &node.machine(), address) }
+        }
         _ => Acting::Here,
     }
 }

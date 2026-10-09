@@ -107,7 +107,9 @@ pub(crate) fn acting(node: &Node, origin: &OnOrigin) -> Acting {
 /// it: an `on` in its script works for that account.
 pub(crate) fn sent_for(node: &Node, job: Option<&JobId>) -> Option<fastctx_types::access::HubAccount> {
     let path = crate::stop::find(&node.world, job?).ok()??;
-    fastctx_hands::run::record::read(&path).ok()?.on?.account
+    let record = fastctx_hands::run::record::read(&path).ok()?;
+    // A hop sent here, or a run handed over to where its resident works.
+    record.on.and_then(|on| on.account).or(record.account)
 }
 
 /// Sends `request` for the resident in `origin`. The job's pieces come on

@@ -415,6 +415,37 @@ pub fn still_running(
     Ok(Some(format!("=== your jobs still running: {} ===", jobs.join("; "))))
 }
 
+/// The accounts the jobs still running here of `owner`, a resident of
+/// another machine, were sent for: an `on`'s hop, or a run handed over to
+/// where it works.
+pub(crate) fn running_for(
+    world: &WorldDir,
+    here: &fastctx_types::MachineName,
+    owner: &fastctx_types::Address,
+) -> Vec<fastctx_types::access::HubAccount> {
+    let owner = fastctx_types::run::JobOwner::Resident(owner.clone());
+    let towns = world.towns().unwrap_or_default();
+    let mut accounts = Vec::new();
+    for town in std::iter::once(None).chain(towns.iter().map(Some)) {
+        let Ok(entries) = std::fs::read_dir(world.job_owner(here, town, &owner).jobs()) else { continue };
+        for path in entries.flatten().map(|entry| entry.path()) {
+            if path.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            let Ok(record) = record::read(&path) else { continue };
+            if record.end.is_some() || record.owner != owner {
+                continue;
+            }
+            if let Some(account) = record.on.and_then(|on| on.account).or(record.account)
+                && !accounts.contains(&account)
+            {
+                accounts.push(account);
+            }
+        }
+    }
+    accounts
+}
+
 /// A command cut to what names it in a line of several.
 fn short(command: &str) -> String {
     // Enough to tell jobs apart, few enough to repeat with every answer.
