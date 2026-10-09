@@ -240,70 +240,58 @@ pub enum Call {
         owner: JobOwner,
         town: Option<TownName>,
     },
-    /// Joins this machine to a World with a code, under `name` or the name
-    /// it has.
-    Join {
-        code: String,
+    /// Logs this computer in to `account` on the hub at `hub` with its
+    /// password, and registers it as one of the account's machines when
+    /// `register` and the account may. A computer new to the hub asks for
+    /// its own name there, or `name`.
+    Login {
+        hub: Vec<std::net::SocketAddr>,
+        account: crate::AccountName,
+        password: String,
+        register: bool,
         name: Option<MachineName>,
     },
-    /// Makes an invitation for one more machine, or for a device such as a
-    /// phone, which carries the user's words and looks and runs nothing.
-    Invite {
+    /// Logs this computer in with an enrollment token.
+    LoginWithToken {
+        token: String,
+        name: Option<MachineName>,
+    },
+    /// Opens `account` with `password` on a hub that lets anyone, then
+    /// logs in to it as `Login` would.
+    OpenAccount {
+        hub: Vec<std::net::SocketAddr>,
+        account: crate::AccountName,
+        password: String,
+        register: bool,
+        name: Option<MachineName>,
+    },
+    /// Makes `change` as `account` on the hub named `hub`, or on the one
+    /// hub this computer is on when `None`.
+    Account {
+        hub: Option<crate::HubName>,
+        account: crate::AccountName,
+        change: crate::accounts::AccountChange,
+    },
+    /// Every hub this computer is on, with what it sees of each.
+    Accounts,
+    /// An enrollment token that registers a Linux server as a machine of
+    /// `account`, and the line that installs it there with this node's
+    /// version.
+    ServerCommand {
+        hub: Option<crate::HubName>,
+        account: crate::AccountName,
         name: Option<MachineName>,
         expires: Timestamp,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        device: bool,
-        /// What it may do until a grant says otherwise; everything when not
-        /// given.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        scope: Option<crate::scope::NamedScope>,
     },
-    /// Checks the hub's release, then invites a Linux server with a complete
-    /// installation command using this node's version.
-    InviteServer {
-        name: Option<MachineName>,
-        expires: Timestamp,
-        scope: Option<crate::scope::NamedScope>,
-    },
-    /// Sets what a member may do, and whether it holds management rights,
-    /// as this machine, which must hold them.
-    Grant {
-        member: MachineName,
-        scope: crate::scope::NamedScope,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        manage: bool,
-    },
-    /// The user has seen that `member` joined with this machine's invitation.
-    Seen {
-        member: MachineName,
-    },
-    /// Sets where the member `member` connects: through `via`, in order, as
-    /// this machine, which must hold management rights.
-    Route {
-        member: MachineName,
-        via: Vec<crate::world::Upstream>,
-    },
-    /// Makes `machine` relay for the machines whose routes lead through it,
-    /// as `relay` says, or stop relaying: this machine itself, or another,
-    /// asked as a member with management rights.
-    SetRelay {
-        machine: MachineName,
-        relay: Option<crate::world::RelaySetting>,
-    },
-    /// Revokes a member's key, so no machine trusts it any more.
-    Revoke {
-        name: MachineName,
-        reason: String,
-    },
-    /// This machine leaves its World and becomes a World of one again.
-    Leave,
     /// The node hands the World over once idle and exits: a system service
     /// now keeps this World's node, and its node waits to take over.
     HandOver,
-    /// This machine's link and every machine of the World (`fastctx nodes`).
+    /// This computer's links and every machine its accounts may use
+    /// (`fastctx nodes`).
     Nodes,
-    /// The names of the machines a session here works on: this one, and the
-    /// others its scope reaches, as the members table holds them now.
+    /// The machines a session here may work on, as it writes them: this
+    /// one, and the others its accounts may use, `name.hub` where a name
+    /// is on more than one hub.
     Machines,
 }
 
@@ -425,23 +413,26 @@ pub enum Reply {
     Looked {
         looked: Vec<LookedUp>,
     },
-    Joined {
-        world: String,
+    /// This computer is the member `name` of the hub `hub`, logged in to
+    /// `account`.
+    LoggedIn {
+        hub: crate::HubName,
         name: MachineName,
-        /// It was in that World before this join.
-        #[serde(default)]
-        already: bool,
+        account: crate::AccountName,
     },
-    Code {
-        code: String,
+    /// An account change was made; a token, when it made one.
+    Changed {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
     },
+    Accounts(crate::accounts::AccountsReply),
     ServerInvitation {
         command: String,
     },
     Nodes(NodesReply),
     Machines {
         here: MachineName,
-        others: Vec<MachineName>,
+        others: Vec<String>,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.

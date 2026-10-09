@@ -11,7 +11,6 @@
 //! it, and every member, which holds its cut, make them the same way.
 
 use std::collections::BTreeSet;
-use std::net::SocketAddr;
 
 use fastctx_types::access::{Purpose, Rights, TownId, Use};
 use fastctx_types::{AccountName, HubName, MachineName, TownName};
@@ -21,33 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::ids::HubId;
 use crate::sign::PublicKey;
 
-/// What a member is.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Kind {
-    /// A computer: a node runs on it, and it may be registered as a machine.
-    #[default]
-    Computer,
-    /// A phone: it carries its user's words and looks; nothing runs on it.
-    Phone,
-    /// A web AI's connection through the hub's endpoint.
-    Web,
-}
-
-impl Kind {
-    pub fn is_computer(self) -> bool {
-        self == Kind::Computer
-    }
-}
-
-/// A relay a machine may connect through: a port forwarded to the hub, so
-/// the hub's own certificate is what a machine checks there too.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Relay {
-    /// What the user called it, such as the machine it runs on.
-    pub label: String,
-    pub addresses: Vec<SocketAddr>,
-}
+pub use fastctx_types::accounts::{MemberKind as Kind, Relay};
 
 /// A computer, phone or web AI on the hub, under a name no other member
 /// on the hub has.

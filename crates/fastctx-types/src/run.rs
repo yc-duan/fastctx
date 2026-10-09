@@ -281,6 +281,9 @@ pub struct OnJob {
     pub request: Option<crate::NoticeId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follower: Option<MachineName>,
+    /// The account the machine that sent it asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
 }
 
 /// A resident or an open page that started a job. The resident wire shape

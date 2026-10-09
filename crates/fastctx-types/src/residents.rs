@@ -58,6 +58,13 @@ pub struct About {
     /// The model, as the host told the World; `None` when it did not.
     #[serde(default)]
     pub model: Option<String>,
+    /// Whom it works for.
+    #[serde(default)]
+    pub acting: crate::access::Acting,
+    /// The machine its scripts start on, its 这里 (`world-run.md`), when
+    /// that is not the machine it lives on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub works_on: Option<MachineName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

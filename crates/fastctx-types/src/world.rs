@@ -36,7 +36,7 @@ pub struct MachineFacts {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum LinkState {
-    /// The machine has joined no World with others: it is a World of one.
+    /// The computer is logged in to no hub: it is a World of one.
     Alone,
     Connecting {
         since: Timestamp,
@@ -49,10 +49,10 @@ pub enum LinkState {
         since: Timestamp,
         hub: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        relay: Option<MachineName>,
+        relay: Option<String>,
         route: Route,
     },
-    /// The hub refused this machine for good.
+    /// The hub removed this computer.
     Stopped {
         reason: String,
     },
@@ -83,105 +83,43 @@ impl std::fmt::Display for Route {
     }
 }
 
-/// One upstream a machine may connect to (`world-network.md`, 一个中枢，一棵树).
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum Upstream {
-    Hub,
-    Relay { machine: MachineName },
-}
-
-/// Where a machine relays for the machines below it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RelaySetting {
-    /// Where it listens.
-    pub listen: std::net::SocketAddr,
-    /// Where the machines below it dial it, written into its record.
-    pub public: Vec<std::net::SocketAddr>,
-}
-
-/// Where a member hangs in the World's tree.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Place {
-    /// The upstreams it connects through, in the order it tries them; the
-    /// hub is the last of any.
-    pub via: Vec<Upstream>,
-    /// Where machines below it dial it, when it relays.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub relays_at: Vec<String>,
-}
-
-/// `fastctx nodes`: this machine's link, and every machine of the World.
+/// `fastctx nodes`: this computer's links, and every machine its accounts
+/// may use, hub by hub.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodesReply {
     pub machine: MachineName,
-    pub world: Option<String>,
+    pub hubs: Vec<HubNodes>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HubNodes {
+    pub hub: crate::access::HubId,
+    pub name: crate::HubName,
     pub link: LinkState,
+    /// The accounts this computer is logged in to there.
+    pub logins: Vec<crate::AccountName>,
+    /// The account this computer is registered under there.
+    pub home: Option<crate::AccountName>,
     pub machines: Vec<Node>,
-    /// Members that joined with this machine's invitations and the user has
-    /// not been shown yet.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub joined: Vec<Joined>,
-}
-
-/// A member that came in with this machine's invitation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Joined {
-    pub name: MachineName,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub device: bool,
-    pub noticed_at: Timestamp,
-}
-
-/// Where a member stands in the World: what it may do, as every machine
-/// works it out.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Standing {
-    /// Its scope, projects by their short names; a project this machine
-    /// cannot name is shown by its id.
-    pub scope: crate::scope::Scope<String>,
-    /// Whether it holds management rights.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub manage: bool,
-    /// Who invited it; `None` for the machine that founded the World.
-    pub invited_by: Option<MachineName>,
-    /// Whether it is the branch of an inviter without management rights.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub delegated: bool,
-    /// Whether it has published its sealing key: without one, nothing can
-    /// be sealed to it yet.
-    #[serde(default)]
-    pub sealing: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
     pub name: MachineName,
+    /// How it is written where its name is on more than one hub: `name.hub`.
+    pub written: String,
     /// `None` when whether it is connected is not known.
     pub online: Option<bool>,
     /// When it connected, if online; when it was last seen, if not.
     pub since: Option<Timestamp>,
+    /// The relay it is connected through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<String>,
     /// What the machine said of itself just now, or why it could not be
     /// asked.
     pub facts: Result<MachineFacts, String>,
-    /// Set when the machine's key is revoked: no machine trusts it.
-    pub revoked: Option<Revoked>,
-    /// A device, such as a phone: a member nothing runs on, which the
-    /// World does not ask or work on.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub device: bool,
-    /// What it may do; `None` when it is revoked, or this machine is in no
-    /// World with others.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub standing: Option<Standing>,
-    /// Where it hangs in the World's tree; `None` as for `standing`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub place: Option<Place>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Revoked {
-    pub by: MachineName,
-    pub at: Timestamp,
-    pub reason: String,
+    /// The account it is registered under.
+    pub owner: Option<crate::AccountName>,
+    /// What each of this computer's accounts may do on it.
+    pub rights: Vec<(crate::AccountName, crate::access::Rights)>,
 }

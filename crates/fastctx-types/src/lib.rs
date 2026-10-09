@@ -8,6 +8,7 @@
 //! is written to disk and what travels on the wire is their serde form.
 
 pub mod access;
+pub mod accounts;
 pub mod agents;
 pub mod attachments;
 pub mod calls;
@@ -31,7 +32,6 @@ pub mod remote;
 pub mod renewal;
 pub mod residents;
 pub mod run;
-pub mod scope;
 pub mod session;
 pub mod since;
 pub mod town;

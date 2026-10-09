@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::AccountName;
+
 /// A project as the hub and the wire know it, chosen at random when the
 /// project is opened. Its short name is the town's (`TownName`); the id is
 /// what the hub keeps its ledger under.
@@ -180,5 +182,31 @@ impl Purpose {
     /// a machine the account trusts (`world-network.md`, 什么算出手).
     pub fn acts(self) -> bool {
         self != Purpose::Echo
+    }
+}
+
+/// An account of one hub.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct HubAccount {
+    pub hub: HubId,
+    pub account: AccountName,
+}
+
+/// Whom a resident or a job works for (`world-network.md`, 一个居民替谁干活).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Acting {
+    /// Every account logged in on the computer it is on, as they are at
+    /// each step: a session the user opened there, and what it runs.
+    #[default]
+    Here,
+    /// These accounts: a session an account opened from elsewhere, a job
+    /// another machine sent, a colleague.
+    Accounts { accounts: Vec<HubAccount> },
+}
+
+impl Acting {
+    pub fn one(hub: HubId, account: AccountName) -> Self {
+        Acting::Accounts { accounts: vec![HubAccount { hub, account }] }
     }
 }
