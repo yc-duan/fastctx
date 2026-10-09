@@ -56,9 +56,10 @@ pub fn apply(file: File<'_>, body: &str, previous: Option<&Receipt>) -> Result<A
     }
     block.extend_from_slice(END);
     let range = marker_range(original, BEGIN, END, file.path)?;
-    if let Some(receipt) = previous {
+    if let Some(receipt) = previous
+        && let Some(range) = range
+    {
         check_path(file.path, &receipt.path)?;
-        let range = range.ok_or_else(|| Error::at(file.path, "the recorded fastctx block is missing"))?;
         if original[range.clone()] != receipt.block {
             return Err(Error::at(file.path, "the fastctx block differs from the recorded bytes"));
         }
@@ -71,16 +72,20 @@ pub fn apply(file: File<'_>, body: &str, previous: Option<&Receipt>) -> Result<A
     if range.is_some() {
         return Err(Error::at(file.path, "the fastctx block has no ownership receipt"));
     }
+    // A recorded block that is gone, as when something rewrote the file
+    // without it, goes back in; whether the file existed before the first
+    // apply is still what that apply found.
+    if let Some(receipt) = previous {
+        check_path(file.path, &receipt.path)?;
+    }
     let prefix = separator(original);
     let suffix = b"\n".to_vec();
     let mut bytes = original.to_vec();
     bytes.extend_from_slice(&prefix);
     bytes.extend_from_slice(&block);
     bytes.extend_from_slice(&suffix);
-    Ok(Applied {
-        bytes,
-        receipt: Receipt { path: file.path.into(), original_existed: file.bytes.is_some(), block, prefix, suffix },
-    })
+    let original_existed = previous.map_or(file.bytes.is_some(), |receipt| receipt.original_existed);
+    Ok(Applied { bytes, receipt: Receipt { path: file.path.into(), original_existed, block, prefix, suffix } })
 }
 
 /// Removes only a block whose bytes still match. Drift is returned as a

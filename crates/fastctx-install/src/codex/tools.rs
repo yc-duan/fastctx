@@ -33,9 +33,11 @@ pub(crate) fn apply(
         let source = Source::parse(&bytes, location)?;
         let path = ["features", key];
         if previous.is_some() {
-            if source.item(&path).and_then(Item::as_bool) != Some(false)
-                || receipt.settings[index].as_ref().is_some_and(|setting| owned_range(&source, key, setting).is_err())
-            {
+            // What is owned is the value written. A configuration manager
+            // that rewrites the whole file keeps the `false` and changes
+            // the bytes around it; only the user turning it back on, or
+            // removing it, gives it up.
+            if source.item(&path).and_then(Item::as_bool) != Some(false) {
                 receipt.settings[index] = None;
                 notices.push(notice(location, key, "changed since apply; left untouched"));
             }
@@ -74,7 +76,13 @@ pub(crate) fn unapply(original: &[u8], location: &str, receipt: &Receipt) -> Res
         let range = match owned_range(&source, key, setting) {
             Ok(range) => range,
             Err(_) => {
-                notices.push(notice(location, key, "changed since apply; left untouched"));
+                match rewritten(&source, key, setting)? {
+                    Some(edit) => {
+                        bytes = splice(&bytes, vec![edit])?;
+                        Source::parse(&bytes, location)?;
+                    }
+                    None => notices.push(notice(location, key, "changed since apply; left untouched")),
+                }
                 continue;
             }
         };
@@ -163,6 +171,44 @@ fn insert(source: &Source<'_>, key: &str) -> Result<(Vec<u8>, Setting), Error> {
     let bytes = splice(source.bytes, vec![(at..at, inserted)])?;
     Source::parse(&bytes, "config.toml")?;
     Ok((bytes, Setting::Inserted { prefix: prefix.into_bytes(), suffix: suffix.into_bytes(), inline, comma }))
+}
+
+/// Bytes to replace and what replaces them.
+type Edit = (std::ops::Range<usize>, Vec<u8>);
+
+/// The edit that takes back a setting still `false` whose surrounding bytes
+/// were rewritten: the earlier value restored, or the line this apply added
+/// removed. `None` when it is no longer ours, or sits in an inline table
+/// whose separators cannot be told apart from the user's.
+fn rewritten(
+    source: &Source<'_>,
+    key: &str,
+    setting: &Setting,
+) -> Result<Option<Edit>, Error> {
+    let path = ["features", key];
+    if source.item(&path).and_then(Item::as_bool) != Some(false) {
+        return Ok(None);
+    }
+    match setting {
+        Setting::Replaced { before } => Ok(source.value_range(&path)?.map(|range| (range, before.clone()))),
+        Setting::Inserted { .. } => {
+            if !matches!(source.item(&["features"]), Some(Item::Table(_)) | None) {
+                return Ok(None);
+            }
+            let assignment = source.assignment(&path)?;
+            let bytes = source.bytes;
+            let start = bytes[..assignment.start].iter().rposition(|byte| *byte == b'\n').map_or(0, |at| at + 1);
+            if bytes[start..assignment.start].iter().any(|byte| !matches!(byte, b' ' | b'\t')) {
+                return Ok(None);
+            }
+            let rest = &bytes[assignment.end..];
+            let line = rest.iter().position(|byte| *byte == b'\n').map_or(rest.len(), |at| at + 1);
+            if rest[..line].iter().any(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n')) {
+                return Ok(None);
+            }
+            Ok(Some((start..assignment.end + line, Vec::new())))
+        }
+    }
 }
 
 fn notice(location: &str, key: &str, reason: &str) -> Notice {

@@ -115,7 +115,17 @@ pub fn apply(
             receipt = old.clone();
             if let Some(server) = &old.server {
                 let source = Source::parse(&bytes, config.path)?;
-                server_range(&source, server)?;
+                if source.item(SERVER).is_none() {
+                    // Something rewrote the configuration without it, such
+                    // as a configuration manager; applying puts it back.
+                    receipt.server = None;
+                    notices.push(Notice {
+                        location: format!("{}: mcp_servers.fastctx", config.path),
+                        reason: "was gone from the configuration; put back".into(),
+                    });
+                } else {
+                    server_range(&source, server)?;
+                }
             }
         }
         Ownership::Legacy(old) => {
