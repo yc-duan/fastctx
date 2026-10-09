@@ -1,16 +1,17 @@
 //! Counting and shortening the complete content of a tool answer.
 
 use crate::run::Content;
-use crate::run::window::IMAGE_COST;
+use crate::run::window::{IMAGE_COST, bytes, units};
 
-/// Unicode scalar values in text, with each image charged at its fixed cost.
+/// What the content costs, in the units Codex counts: each text block its
+/// UTF-8 bytes divided by four, rounded up, and each image its fixed cost.
 pub fn cost(content: &[Content]) -> usize {
     content.iter().map(block_cost).sum()
 }
 
 fn block_cost(block: &Content) -> usize {
     match block {
-        Content::Text(text) => text.chars().count(),
+        Content::Text(text) => units(text),
         Content::Image { .. } => IMAGE_COST,
     }
 }
@@ -21,7 +22,7 @@ pub fn fit(content: Vec<Content>, budget: usize, omission: &str) -> Vec<Content>
     if cost(&content) <= budget {
         return content;
     }
-    let available = budget.checked_sub(omission.chars().count()).expect("room for the source notice");
+    let available = budget.checked_sub(units(omission)).expect("room for the source notice");
     let header = first_line_cost(&content);
     let head = if header <= available { (available / 4).max(header) } else { available / 4 };
     let mut start = edge(&content, head, false);
@@ -34,7 +35,7 @@ pub fn fit(content: Vec<Content>, budget: usize, omission: &str) -> Vec<Content>
 /// The first complete line, normally the tool's status and machine.
 pub fn first_line_cost(content: &[Content]) -> usize {
     match content.first() {
-        Some(Content::Text(text)) => text.split_once('\n').map_or(0, |(line, _)| line.chars().count() + 1),
+        Some(Content::Text(text)) => text.split_once('\n').map_or(0, |(line, _)| (line.len() + 1).div_ceil(4)),
         _ => 0,
     }
 }
@@ -50,10 +51,9 @@ fn edge(content: &[Content], mut budget: usize, back: bool) -> Vec<Content> {
             budget -= size;
         } else {
             if let Content::Text(text) = block {
-                let text =
-                    if back { text.chars().skip(size - budget).collect() } else { text.chars().take(budget).collect() };
-                if budget > 0 {
-                    kept.push(Content::Text(text));
+                let text = if back { suffix(text, bytes(budget)) } else { prefix(text, bytes(budget)) };
+                if !text.is_empty() {
+                    kept.push(Content::Text(text.to_string()));
                 }
             }
             break;
@@ -63,4 +63,22 @@ fn edge(content: &[Content], mut budget: usize, back: bool) -> Vec<Content> {
         kept.reverse();
     }
     kept
+}
+
+/// The longest start of `text` within `room` bytes, whole characters only.
+pub fn prefix(text: &str, room: usize) -> &str {
+    let mut end = room.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// The longest end of `text` within `room` bytes, whole characters only.
+pub fn suffix(text: &str, room: usize) -> &str {
+    let mut start = text.len().saturating_sub(room);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    &text[start..]
 }

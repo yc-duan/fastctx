@@ -7,10 +7,10 @@ use fastctx_client::Client;
 use fastctx_hands::answer::{cost, first_line_cost, fit};
 use fastctx_hands::run::Content;
 use fastctx_hands::run::present::display_path;
-use fastctx_hands::run::window::BUDGET;
+use fastctx_hands::run::window::{BUDGET, units};
 use fastctx_platform::{Permissions, ensure_private_dir, publish_new};
 use fastctx_types::layout::WorldDir;
-use fastctx_types::{Call, NoticeId, ResidentId};
+use fastctx_types::{Call, JobId, NoticeId, ResidentId};
 
 /// What a tool call answers. The writer owns its receipt until stdout is flushed.
 pub struct Answer {
@@ -18,11 +18,15 @@ pub struct Answer {
     pub is_error: bool,
     pub receipt: Option<(Client, ResidentId, Vec<NoticeId>)>,
     pub source: Option<String>,
+    /// A job ended within its call whose whole output this answer shows,
+    /// until the answer is shortened: told with the receipt, so the node
+    /// removes what nobody reads again.
+    pub shown: Option<JobId>,
 }
 
 impl Answer {
     pub fn text(text: String, is_error: bool) -> Self {
-        Self { content: vec![Content::Text(text)], is_error, receipt: None, source: None }
+        Self { content: vec![Content::Text(text)], is_error, receipt: None, source: None, shown: None }
     }
 
     pub fn error(text: String) -> Self {
@@ -37,7 +41,7 @@ impl Answer {
 
     pub async fn sent(mut self) {
         if let Some((mut client, resident, ids)) = self.receipt.take()
-            && let Err(error) = client.call(Call::Taken { resident, ids }).await
+            && let Err(error) = client.call(Call::Taken { resident, ids, shown: self.shown.take() }).await
         {
             eprintln!("fastctx serve: the response was written but its receipt could not be recorded: {error}");
         }
@@ -47,11 +51,12 @@ impl Answer {
     pub fn bound(&mut self, world: &WorldDir) -> io::Result<()> {
         if cost(&self.content) > BUDGET {
             let source = Source::for_answer(world, self);
-            if source.note.chars().count() > BUDGET {
+            if units(&source.note) > BUDGET {
                 return Err(io::Error::other("full-output location exceeds the answer budget"));
             }
             source.keep()?;
             self.content = fit(std::mem::take(&mut self.content), BUDGET, &source.note);
+            self.shown = None;
         }
         Ok(())
     }
@@ -123,7 +128,7 @@ pub fn assemble(
     messages: impl IntoIterator<Item = (NoticeId, String)>,
 ) -> io::Result<Vec<NoticeId>> {
     let source = Source::for_answer(world, answer);
-    let note_cost = source.note.chars().count();
+    let note_cost = units(&source.note);
     let header = first_line_cost(&answer.content);
     let minimum = cost(&answer.content).min(if header + note_cost <= BUDGET { header + note_cost } else { note_cost });
     // The body may need one newline before whatever is delivered with it;
@@ -140,13 +145,13 @@ pub fn assemble(
     let mut ids = Vec::new();
     for (id, text) in messages {
         let text = ended(text);
-        let size = text.chars().count();
+        let size = units(&text);
         if size <= left {
             additions.push(Content::Text(text));
             left -= size;
         } else if ids.is_empty() {
             let saved = Source::text(world, &text);
-            if saved.note.chars().count() > left {
+            if units(&saved.note) > left {
                 break;
             }
             saved.keep()?;
@@ -162,6 +167,7 @@ pub fn assemble(
     if cost(&answer.content) > budget {
         source.keep()?;
         answer.content = fit(std::mem::take(&mut answer.content), budget, &source.note);
+        answer.shown = None;
     }
     if !additions.is_empty() {
         end_line(&mut answer.content);
@@ -190,11 +196,11 @@ fn ended(mut text: String) -> String {
 }
 
 fn shorten_text(world: &WorldDir, text: String, budget: usize) -> io::Result<Vec<Content>> {
-    if text.chars().count() <= budget {
+    if units(&text) <= budget {
         return Ok(vec![Content::Text(text)]);
     }
     let source = Source::text(world, &text);
-    if source.note.chars().count() > budget {
+    if units(&source.note) > budget {
         return Err(io::Error::other("full-text location exceeds the answer budget"));
     }
     source.keep()?;
@@ -219,7 +225,7 @@ mod tests {
         answer.content.push(Content::Text("the last output".into()));
         let first = NoticeId::try_from("first").unwrap();
         let second = NoticeId::try_from("second").unwrap();
-        let words = "first message\n".to_string() + &"😀".repeat(90_000);
+        let words = "first message\n".to_string() + &"😀".repeat(40_000);
         let next = "second message\n".to_string() + &"中".repeat(70_000);
         let ids = assemble(
             &world,
@@ -229,7 +235,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ids, [first]);
-        assert!(cost(&answer.content) <= 150_000);
+        assert!(cost(&answer.content) <= BUDGET);
         assert!(matches!(&answer.content[0], Content::Text(text) if text.starts_with(header)));
         assert!(answer.content.contains(&Content::Text(format!("{words}\n"))));
         assert!(!answer.content.contains(&Content::Text(format!("{next}\n"))));
@@ -249,25 +255,25 @@ mod tests {
         let id = NoticeId::try_from("huge").unwrap();
         let mut reply = Answer::text("written".into(), false);
         assert_eq!(assemble(&world, &mut reply, Vec::new(), [(id.clone(), huge.clone())]).unwrap(), [id]);
-        assert!(cost(&reply.content) <= 150_000);
+        assert!(cost(&reply.content) <= BUDGET);
         let huge = format!("{huge}\n");
         let Source { file: Some((path, _)), .. } = Source::text(&world, &huge) else { unreachable!() };
         assert_eq!(std::fs::read_to_string(path).unwrap(), huge);
 
-        let news = "=== the town changed ===\n".to_string() + &"new journal; ".repeat(20_000);
+        let news = "=== the town changed ===\n".to_string() + &"new journal; ".repeat(40_000);
         let mut reply = Answer::text(format!("{header}done"), false);
         let waiting = NoticeId::try_from("waiting").unwrap();
         assert!(
             assemble(&world, &mut reply, vec![news.clone()], [(waiting, "still waiting".into())]).unwrap().is_empty()
         );
-        assert!(cost(&reply.content) <= 150_000);
+        assert!(cost(&reply.content) <= BUDGET);
         let news = format!("{news}\n");
         let Source { file: Some((path, _)), .. } = Source::text(&world, &news) else { unreachable!() };
         assert_eq!(std::fs::read_to_string(path).unwrap(), news);
 
-        let mut error = Answer::error("😃".repeat(150_001));
+        let mut error = Answer::error("😃".repeat(BUDGET + 1));
         error.bound(&world).unwrap();
         assert!(error.is_error);
-        assert_eq!(cost(&error.content), 150_000);
+        assert!((BUDGET - 2..=BUDGET).contains(&cost(&error.content)));
     }
 }

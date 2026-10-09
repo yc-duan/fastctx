@@ -12,7 +12,16 @@ use fastctx_types::{ProcessIdentity, run::JobRecord};
 use crate::Node;
 
 #[derive(Default)]
-pub(crate) struct Watches(Mutex<HashSet<PathBuf>>);
+pub(crate) struct Watches(Mutex<Watched>);
+
+#[derive(Default)]
+struct Watched {
+    /// Records whose supervisor is being watched.
+    watching: HashSet<PathBuf>,
+    /// Watched jobs to remove once their watch ends: a watch still running
+    /// takes the record's lock and reads the record.
+    forgetting: HashSet<PathBuf>,
+}
 
 /// Restores observation of jobs whose launching node has already exited.
 pub(crate) fn restore(node: &Arc<Node>, record: &JobRecord) -> std::io::Result<()> {
@@ -27,10 +36,34 @@ pub(crate) fn restore(node: &Arc<Node>, record: &JobRecord) -> std::io::Result<(
     Ok(())
 }
 
+/// Removes an ended job's files now, or when its watch ends.
+pub(crate) fn forget(node: &Arc<Node>, path: &Path) {
+    {
+        let mut watched = node.job_watches.0.lock().expect("never poisoned");
+        if watched.watching.contains(path) {
+            watched.forgetting.insert(path.to_path_buf());
+            return;
+        }
+    }
+    remove(node, path.to_path_buf());
+}
+
+fn remove(node: &Arc<Node>, path: PathBuf) {
+    let node = node.clone();
+    tokio::spawn(async move {
+        let removed = tokio::task::spawn_blocking(move || crate::jobs::remove(&path)).await;
+        match removed {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => node.log.line(format_args!("removing a job shown whole: {error}")),
+            Err(error) => node.log.line(format_args!("removing a job shown whole: {error}")),
+        }
+    });
+}
+
 /// Without an identity, the supervisor lock witnesses whether an exited
 /// launch or an earlier node's unfinished startup still has a supervisor.
 pub(crate) fn start(node: &Arc<Node>, path: &Path, identity: Option<ProcessIdentity>) {
-    if !node.job_watches.0.lock().expect("never poisoned").insert(path.to_path_buf()) {
+    if !node.job_watches.0.lock().expect("never poisoned").watching.insert(path.to_path_buf()) {
         return;
     }
     let (node, path) = (node.clone(), path.to_path_buf());
@@ -66,6 +99,13 @@ pub(crate) fn start(node: &Arc<Node>, path: &Path, identity: Option<ProcessIdent
                 }
             }
         }
-        node.job_watches.0.lock().expect("never poisoned").remove(&path);
+        let forgotten = {
+            let mut watched = node.job_watches.0.lock().expect("never poisoned");
+            watched.watching.remove(&path);
+            watched.forgetting.remove(&path)
+        };
+        if forgotten {
+            remove(&node, path);
+        }
     });
 }

@@ -17,6 +17,9 @@ pub struct ViewArgs {
     /// Only lines FIRST-LAST (or one line), counting from 1, of every file.
     #[arg(long, value_name = "FIRST-LAST")]
     lines: Option<String>,
+    /// Only characters FIRST-LAST of each line, counting from 1 as head notes do; for reading on in a line too long to show at once.
+    #[arg(long, value_name = "FIRST-LAST", conflicts_with_all = ["pages", "master", "sheet", "sheet_index", "range", "image"])]
+    chars: Option<String>,
     /// Only PDF pages or PowerPoint slides FIRST-LAST, counting from 1.
     #[arg(long, value_name = "FIRST-LAST")]
     pages: Option<String>,
@@ -64,12 +67,14 @@ pub fn run(args: ViewArgs) -> anyhow::Result<()> {
         bail!("name the files to look at, such as: fastctx view -- /path/to/file");
     }
     let lines = args.lines.as_deref().map(|text| parse_range(text, "lines")).transpose()?;
+    let chars = args.chars.as_deref().map(|text| parse_range(text, "chars")).transpose()?;
     let pages = args.pages.as_deref().map(|text| parse_range(text, "pages")).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
     // Inside a World `run` the answer's first line already names the machine.
     let in_run = std::env::var_os("FASTCTX_MACHINE").is_some();
     let options = Options {
         lines,
+        chars,
         pages,
         master: args.master,
         sheet: args.sheet,

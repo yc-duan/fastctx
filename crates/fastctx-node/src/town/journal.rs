@@ -39,7 +39,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: JournalCall) -> Resul
         JournalCall::Read { town, journal, before } => {
             let town = caller.town_or(node, town)?;
             map::query(node, &town).await?;
-            let (world, budget) = (node.world.clone(), fastctx_hands::run::window::BUDGET);
+            let (world, budget) = (node.world.clone(), fastctx_hands::town::JOURNAL_BYTES);
             let view = blocking(&town, move |town| read(&world, town, &journal, before.as_ref(), budget)).await?;
             Ok(Reply::Journal { view: Box::new(view) })
         }
@@ -366,8 +366,8 @@ async fn describe(
     Ok(Reply::Journals { town, journals: vec![summary] })
 }
 
-/// The latest entries of a journal that fit in `budget` characters as a
-/// resident reads them, before `before` when given.
+/// The latest entries of a journal that fit in `budget` bytes as a resident
+/// reads them, before `before` when given.
 fn read(
     world: &WorldDir,
     town: &TownName,
@@ -420,7 +420,7 @@ fn read(
         let mut tried = view.clone();
         tried.entries.insert(0, entry);
         tried.first -= 1;
-        if !view.entries.is_empty() && fastctx_hands::town::journal(&tried, usize::MAX).chars().count() > budget {
+        if !view.entries.is_empty() && fastctx_hands::town::journal(&tried, usize::MAX).len() > budget {
             break;
         }
         view = tried;

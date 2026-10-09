@@ -59,7 +59,7 @@ pub fn format(path: &Path) -> Option<Format> {
     }
 }
 
-/// Read from the already opened file. The budget includes every character
+/// Read from the already opened file. The budget, in UTF-8 bytes, includes every byte
 /// in both facts and text, including stopping locations and continuation hints.
 pub fn read(file: File, format: Format, selection: &Selection, budget: usize) -> Result<Content> {
     if selection.master && !matches!(format, Format::Ppt | Format::Pptx) {

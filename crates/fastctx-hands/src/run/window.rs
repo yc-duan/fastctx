@@ -2,9 +2,9 @@
 //!
 //! Files the resident asked to read with `fastctx view` are shown whole up
 //! to the answer's budget (`world-view.md`, 一次给多少). Any other output is
-//! shown in the window a host's own shell gives: when it does not all fit,
-//! the answer shows the start and the end and names the lines in between,
-//! which the resident reads back from the log with `fastctx view --lines`.
+//! shown whole when it fits the window a host's own shell gives; when it
+//! does not, the answer shows a short start and end and names the lines in
+//! between, which the resident reads back from the log with `fastctx view`.
 
 use std::collections::VecDeque;
 use std::fs::File;
@@ -17,10 +17,23 @@ use fastctx_types::run::{LegacyLines, OutputPiece, OutputWindow};
 
 use super::terminal::{Line, Lines, Part, VIEW_MARK};
 
-/// Characters the complete answer may hold, including head notes and
-/// delivered words, with each image counted as 5,200 (`world-view.md`).
-pub const BUDGET: usize = 150_000;
+/// What the complete answer may hold, head notes and delivered words
+/// included, in the units Codex counts a tool's output in: each text block
+/// costs its UTF-8 bytes divided by four, rounded up (`world-view.md`).
+pub const BUDGET: usize = 80_000;
+/// What an image costs against the budget: the larger of the two hosts'
+/// costs, Claude Code's for an image it scales to 2000x2000.
 pub const IMAGE_COST: usize = 5_200;
+
+/// What `text` costs as one block of an answer.
+pub fn units(text: &str) -> usize {
+    text.len().div_ceil(4)
+}
+
+/// The UTF-8 bytes of text that cost at most `units`.
+pub const fn bytes(units: usize) -> usize {
+    units * 4
+}
 
 /// Raw image bytes one answer may carry. Claude Code runs on Node, where a
 /// string holds at most about 5.4 × 10⁸ characters; the whole answer is one
@@ -28,14 +41,22 @@ pub const IMAGE_COST: usize = 5_200;
 /// is about the most an answer can carry and still be read (`world-view.md`).
 pub const IMAGE_BYTES: usize = 400 * 1024 * 1024;
 
-/// Characters a program's output may take in one answer: what Claude Code's
-/// own shell tool shows by default, and about the 10,000 tokens Codex gives a
-/// command's output, so either model reads it as it reads its host's shell.
+/// Characters of a program's output shown whole in one answer, an image
+/// counted as `IMAGE_COST`: what Claude Code's own shell tool shows by
+/// default, so either model reads it as it reads its host's shell.
 pub const OUTPUT_WINDOW: usize = 30_000;
 
-/// What `run`'s own notes can take beside a view's output: the first line,
+/// Characters of text shown of the start, and of the end, of a program's
+/// output that does not fit its window. Such output is nearly always a long
+/// log, read for how it began and how it ended; the lines between are named
+/// with the command that reads them back.
+pub const OUTPUT_HEAD: usize = 2_000;
+pub const OUTPUT_TAIL: usize = 2_000;
+
+/// Units `run`'s own notes can take beside a view's output: the first line,
 /// a machine name of at most 32 characters with the facts of how the script
-/// ended, and the note naming the log when processes it started go on.
+/// ended, the notes naming lines left out, and the note naming the log when
+/// processes it started go on.
 pub const RUN_NOTES: usize = 1_024;
 
 /// The part of the output at `log` one answer shows: what `fastctx view`
@@ -43,50 +64,52 @@ pub const RUN_NOTES: usize = 1_024;
 pub fn window(log: &Path) -> io::Result<OutputWindow> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = File::open(log)?;
-    let bytes = file.metadata()?.len();
+    let size = file.metadata()?.len();
     // Which regions `fastctx view` wrote and closed, read in a pass of its
     // own; output that never ran it, nearly all, skips that pass.
     let closed_views = if holds_view_mark(&mut file)? {
         file.seek(SeekFrom::Start(0))?;
-        let mut scan = Lines::new((&mut file).take(bytes));
+        let mut scan = Lines::new((&mut file).take(size));
         while scan.next_line()?.is_some() {}
         scan.closed_views().clone()
     } else {
         Default::default()
     };
     file.seek(SeekFrom::Start(0))?;
-    let mut regular = Selection::new(OUTPUT_WINDOW);
-    let mut lines = Lines::new((&mut file).take(bytes));
+    let mut regular = Selection::default();
+    let mut lines = Lines::new((&mut file).take(size));
     let mut id = 0;
     while let Some(line) = lines.next_line()? {
         if !closed_views.contains(&line.view) {
-            regular.push(id, cost(&line));
+            regular.push(Entry::of(id, &line));
         }
         id += 1;
     }
     let (chosen, used) = regular.finish();
-    let mut view_left = (BUDGET - RUN_NOTES).saturating_sub(used);
+    // A view's lines are shown whole while their bytes fit what is left.
+    let mut view_left = bytes(BUDGET - RUN_NOTES).saturating_sub(used);
     file.seek(SeekFrom::Start(0))?;
-    let mut lines = Lines::new(file.take(bytes));
+    let mut lines = Lines::new(file.take(size));
     let mut assembly = Assembly::default();
     let mut omitted: Option<(u64, u64)> = None;
     id = 0;
     while let Some(line) = lines.next_line()? {
+        let entry = Entry::of(id, &line);
         let portions = if closed_views.contains(&line.view) {
-            let size = cost(&line);
-            let portions = if size <= view_left {
+            let portions = if entry.bytes <= view_left {
                 vec![Portion::Whole]
-            } else if view_left > 0 {
-                vec![Portion::Start(view_left)]
             } else {
-                Vec::new()
+                match chars_within(&line, view_left) {
+                    0 => Vec::new(),
+                    chars => vec![Portion::Start(chars)],
+                }
             };
-            view_left = view_left.saturating_sub(size);
+            view_left = view_left.saturating_sub(entry.bytes);
             portions
         } else {
             chosen.get(&id).cloned().unwrap_or_default()
         };
-        if portions.is_empty() && cost(&line) > 0 {
+        if portions.is_empty() && entry.chars > 0 {
             let range = omitted.get_or_insert((line.number, line.through));
             range.1 = line.through;
         } else {
@@ -106,7 +129,7 @@ pub fn window(log: &Path) -> io::Result<OutputWindow> {
     if let Some((first, last)) = omitted {
         assembly.omitted(first, last);
     }
-    Ok(assembly.finish(log, bytes, lines.raw_lines()))
+    Ok(assembly.finish(log, size, lines.raw_lines()))
 }
 
 /// Whether the log holds the mark `fastctx view` writes first, read in
@@ -134,108 +157,173 @@ fn holds_view_mark(file: &mut File) -> io::Result<bool> {
 #[derive(Clone)]
 enum Portion {
     Whole,
+    /// The first characters of a line.
     Start(usize),
+    /// The last characters of a line.
     End(usize),
 }
 
-/// Retains only positions and costs while scanning. Large lines and image
-/// payloads need not remain in memory just to select the start and end.
+/// One line of the output as the selection weighs it.
+#[derive(Clone, Copy)]
+struct Entry {
+    id: u64,
+    /// Against the window: characters, each image at `IMAGE_COST`.
+    chars: usize,
+    /// Against the start and end of output that does not fit: characters of
+    /// text alone, so an image a program drew there is still shown.
+    text: usize,
+    /// Against the answer: bytes of text, each image at `bytes(IMAGE_COST)`.
+    bytes: usize,
+}
+
+impl Entry {
+    fn of(id: u64, line: &Line) -> Self {
+        let newline = usize::from(line.newline);
+        let mut entry = Self { id, chars: newline, text: newline, bytes: newline };
+        for part in &line.parts {
+            let (chars, text, size) = match part {
+                Part::Text(text) => (text.chars().count(), text.chars().count(), text.len()),
+                Part::Spaces(count) => (*count, *count, *count),
+                Part::Image(_) => (IMAGE_COST, 0, bytes(IMAGE_COST)),
+                Part::Unreadable(reason) => (reason.chars().count(), reason.chars().count(), reason.len()),
+            };
+            entry.chars = entry.chars.saturating_add(chars);
+            entry.text = entry.text.saturating_add(text);
+            entry.bytes = entry.bytes.saturating_add(size);
+        }
+        entry
+    }
+}
+
+/// Chooses what of a program's output to show: all of it when it fits the
+/// window, otherwise whole lines of the start and of the end within
+/// `OUTPUT_HEAD` and `OUTPUT_TAIL`, a single line longer than that shown in
+/// part. Only positions and costs are kept while scanning, so large lines
+/// and image payloads need not stay in memory.
+#[derive(Default)]
 struct Selection {
-    budget: usize,
-    head: Vec<(u64, usize)>,
-    head_cost: usize,
-    tail: VecDeque<(u64, usize)>,
-    tail_cost: usize,
-    first_cut: Option<u64>,
+    /// Every line so far, while all of them fit the window.
+    lines: Vec<Entry>,
+    chars: usize,
     overflowed: bool,
+    head: Vec<Entry>,
+    /// A first line longer than the start, shown in part.
+    first_cut: Option<Entry>,
+    tail: VecDeque<Entry>,
+    tail_text: usize,
 }
 
 impl Selection {
-    fn new(budget: usize) -> Self {
-        Self {
-            budget,
-            head: Vec::new(),
-            head_cost: 0,
-            tail: VecDeque::new(),
-            tail_cost: 0,
-            first_cut: None,
-            overflowed: false,
-        }
-    }
-
-    fn push(&mut self, id: u64, size: usize) {
-        if size == 0 {
+    fn push(&mut self, entry: Entry) {
+        if entry.chars == 0 {
             return;
         }
         if !self.overflowed {
-            if size <= self.budget - self.head_cost {
-                self.head.push((id, size));
-                self.head_cost += size;
+            if entry.chars <= OUTPUT_WINDOW - self.chars {
+                self.chars += entry.chars;
+                self.lines.push(entry);
                 return;
             }
             self.overflowed = true;
-            let mut fitting = 0;
-            self.head_cost = 0;
-            for &(_, cost) in &self.head {
-                if cost > self.budget / 4 - self.head_cost {
-                    break;
-                }
-                self.head_cost += cost;
-                fitting += 1;
-            }
-            for entry in self.head.split_off(fitting) {
-                self.tail_cost += entry.1;
-                self.tail.push_back(entry);
+            let mut earlier = std::mem::take(&mut self.lines).into_iter().chain([entry]).peekable();
+            let mut head_text = 0;
+            while let Some(next) = earlier.next_if(|next| next.text <= OUTPUT_HEAD - head_text) {
+                head_text += next.text;
+                self.head.push(next);
             }
             if self.head.is_empty() {
-                self.first_cut = Some(self.tail.front().map_or(id, |entry| entry.0));
-                self.head_cost = self.budget / 4;
+                // The first line alone is longer than the start: shown in
+                // part, and still the end when nothing follows it.
+                self.first_cut = earlier.peek().copied();
             }
+            for next in earlier {
+                self.push_tail(next);
+            }
+            return;
         }
-        // Evict before adding so even a sparse line costing usize::MAX
-        // cannot overflow the accumulated cost.
-        while !self.tail.is_empty() && size > (self.budget - self.head_cost).saturating_sub(self.tail_cost) {
-            self.tail_cost -= self.tail.pop_front().expect("nonempty").1;
-        }
-        self.tail_cost = self.tail_cost.saturating_add(size);
-        self.tail.push_back((id, size));
+        self.push_tail(entry);
     }
 
+    /// The end keeps the last whole lines within `OUTPUT_TAIL`, or the end
+    /// of the last line when it alone is longer.
+    fn push_tail(&mut self, entry: Entry) {
+        self.tail_text = self.tail_text.saturating_add(entry.text);
+        self.tail.push_back(entry);
+        while self.tail.len() > 1 && self.tail_text > OUTPUT_TAIL {
+            self.tail_text -= self.tail.pop_front().expect("nonempty").text;
+        }
+    }
+
+    /// The portions shown of each chosen line, and at most how many bytes
+    /// of the answer they take.
     fn finish(self) -> (std::collections::BTreeMap<u64, Vec<Portion>>, usize) {
         let mut chosen = std::collections::BTreeMap::<u64, Vec<Portion>>::new();
-        let mut used = 0;
-        for (id, size) in self.head {
-            chosen.entry(id).or_default().push(Portion::Whole);
-            used += size;
+        let mut used = 0usize;
+        let mut show = |id: u64, portion: Portion, size: usize| {
+            chosen.entry(id).or_default().push(portion);
+            used = used.saturating_add(size);
+        };
+        if !self.overflowed {
+            for entry in &self.lines {
+                show(entry.id, Portion::Whole, entry.bytes);
+            }
+            return (chosen, used);
         }
-        let tail_budget = self.budget - self.head_cost;
-        let last_cut = self.tail.len() == 1 && self.tail_cost > tail_budget;
-        if let Some(id) = self.first_cut.filter(|id| self.tail.front().map(|entry| entry.0) != Some(*id) || last_cut) {
-            chosen.entry(id).or_default().push(Portion::Start(self.budget / 4));
-            used += self.budget / 4;
+        for entry in &self.head {
+            show(entry.id, Portion::Whole, entry.bytes);
         }
-        for (id, size) in self.tail {
-            chosen.entry(id).or_default().push(if last_cut { Portion::End(tail_budget) } else { Portion::Whole });
-            used += if last_cut { tail_budget } else { size };
+        let lone = (self.tail.len() == 1 && self.tail_text > OUTPUT_TAIL).then(|| self.tail[0]);
+        match (self.first_cut, lone) {
+            // A single line longer than the window, though not so long that
+            // its start and end would leave anything out: shown whole.
+            (Some(first), Some(last)) if first.id == last.id && first.text <= OUTPUT_HEAD + OUTPUT_TAIL => {
+                show(first.id, Portion::Whole, first.bytes);
+                return (chosen, used);
+            }
+            (Some(first), _) => show(first.id, Portion::Start(OUTPUT_HEAD), bytes(OUTPUT_HEAD)),
+            (None, _) => {}
+        }
+        match lone {
+            Some(last) => show(last.id, Portion::End(OUTPUT_TAIL), bytes(OUTPUT_TAIL)),
+            None => {
+                for entry in &self.tail {
+                    // A first line cut at its start is not shown again whole.
+                    if self.first_cut.is_none_or(|first| first.id != entry.id) {
+                        show(entry.id, Portion::Whole, entry.bytes);
+                    }
+                }
+            }
         }
         (chosen, used)
     }
 }
 
-/// What a line costs against the budget: its characters and its newline,
-/// with images at their fixed cost.
-fn cost(line: &Line) -> usize {
-    usize::from(line.newline).saturating_add(
-        line.parts
-            .iter()
-            .map(|part| match part {
-                Part::Text(text) => text.chars().count(),
-                Part::Spaces(count) => *count,
-                Part::Image(_) => IMAGE_COST,
-                Part::Unreadable(reason) => reason.chars().count(),
-            })
-            .fold(0usize, usize::saturating_add),
-    )
+/// How many characters of a line's text fit in `room` bytes.
+fn chars_within(line: &Line, mut room: usize) -> usize {
+    let mut chars = 0;
+    for part in &line.parts {
+        match part {
+            Part::Text(text) => {
+                for c in text.chars() {
+                    if c.len_utf8() > room {
+                        return chars;
+                    }
+                    room -= c.len_utf8();
+                    chars += 1;
+                }
+            }
+            Part::Spaces(count) => {
+                let fitting = (*count).min(room);
+                chars += fitting;
+                room -= fitting;
+                if fitting < *count {
+                    return chars;
+                }
+            }
+            _ => {}
+        }
+    }
+    chars
 }
 
 #[derive(Default)]

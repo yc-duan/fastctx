@@ -196,8 +196,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             Call::Collect { resident, answering } => {
                 collect(node, resident, answering, &mut arrived.collected, &mut arrived.notes).await
             }
-            Call::Taken { resident, ids } => {
-                taken(node, resident, ids, &mut arrived.collected, &mut arrived.notes).await
+            Call::Taken { resident, ids, shown } => {
+                taken(node, resident, ids, shown, &mut arrived.collected, &mut arrived.notes).await
             }
             call => handle(node, &hello.peer, call).await,
         };
@@ -324,6 +324,7 @@ async fn taken(
     node: &Arc<Node>,
     resident: ResidentId,
     ids: Vec<NoticeId>,
+    shown: Option<fastctx_types::JobId>,
     collected: &mut Vec<(ResidentId, NoticeId, Option<String>)>,
     collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
@@ -372,6 +373,10 @@ async fn taken(
         node.residents.acknowledge_heard(owner, heard.clone());
         false
     });
+    if let Some(job) = shown {
+        let (node, owner) = (node.clone(), fastctx_types::Address { machine: node.machine(), resident });
+        tokio::spawn(async move { crate::jobs::forget(&node, town, owner, job).await });
+    }
     Ok(Reply::Done)
 }
 

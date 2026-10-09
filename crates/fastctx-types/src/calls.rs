@@ -222,6 +222,11 @@ pub enum Call {
     Taken {
         resident: ResidentId,
         ids: Vec<NoticeId>,
+        /// A job that ended within its call and whose output this answer
+        /// showed whole: nobody reads its log or record again, and they go
+        /// (`world-run.md`, 输出).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shown: Option<JobId>,
     },
     /// `fastctx project`.
     Project(ProjectCall),

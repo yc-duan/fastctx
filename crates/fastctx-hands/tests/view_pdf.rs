@@ -2,7 +2,7 @@
 
 use std::io::Write as _;
 
-use fastctx_hands::run::window::{BUDGET, window};
+use fastctx_hands::run::window::{BUDGET, units, window};
 use fastctx_hands::view::{Options, view};
 use fastctx_types::run::OutputPiece;
 
@@ -72,13 +72,19 @@ fn pdf_view_contract() {
         content.extend_from_slice(b"(A page of text that must stop at the shared answer budget.) Tj 0 -13 Td ");
     }
     content.extend_from_slice(b"ET");
-    std::fs::write(&path, pdf(100, &content)).unwrap();
+    std::fs::write(&path, pdf(200, &content)).unwrap();
     let mut output = Vec::new();
     view(&[path], &Options::default(), &mut output).unwrap();
     let text = String::from_utf8(output).unwrap();
-    assert!(text.chars().count() <= BUDGET);
-    assert!(text.contains("remaining text not shown"));
-    assert!(text.contains("(not shown)"));
+    assert!(units(&text) <= BUDGET);
+    // The budget ends inside a page or between pages; either way the rest
+    // is named.
+    assert!(
+        text.contains("remaining text not shown") || text.contains("-200 (not shown)"),
+        "{}",
+        &text[text.len() - 600..]
+    );
+    assert!(text.trim_end().ends_with("-200 (not shown) ==="));
 }
 
 #[test]

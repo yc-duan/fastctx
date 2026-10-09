@@ -1,7 +1,7 @@
 //! Adapt PDF pages to view's output, budget, image transport and seen contract.
 
 use super::{Options, STANDARD, Section};
-use crate::run::window::IMAGE_COST;
+use crate::run::window::{IMAGE_COST, bytes};
 use base64::Engine as _;
 use fastctx_pdf::{Document, ImagePage, TextPage};
 use fastctx_types::residents::Seen;
@@ -17,9 +17,9 @@ pub(super) fn look(
     _file: File,
     metadata: &Metadata,
 ) -> io::Result<(Section, Option<Seen>)> {
-    if options.lines.is_some() || options.encoding.is_some() {
+    if options.lines.is_some() || options.chars.is_some() || options.encoding.is_some() {
         return Ok((
-            Section::note(path, options, "a PDF; --lines and --encoding apply to text files; use --pages"),
+            Section::note(path, options, "a PDF; --lines, --chars and --encoding apply to text files; use --pages"),
             None,
         ));
     }
@@ -53,14 +53,14 @@ fn read(path: &Path, options: &Options, budget: usize, document: &Document) -> S
         "=== page {n} (line {n}: characters 1-{n} of {n} shown; remaining selected content not shown) ===\n",
         n = u64::MAX
     );
-    if section.cost + tail.chars().count() > budget {
+    if section.cost + tail.len() > budget {
         let mut note = super::not_shown(path, options);
         note.partial = true;
         return note;
     }
-    let mut left = budget - section.cost - tail.chars().count();
+    let mut left = budget - section.cost - tail.len();
     for number in first..=last {
-        if options.image && left < IMAGE_COST || left == 0 {
+        if options.image && left < bytes(IMAGE_COST) || left == 0 {
             section.append_note(&format!("=== pages {number}-{last} (not shown) ===\n"));
             section.partial = true;
             break;
@@ -93,7 +93,7 @@ fn read(path: &Path, options: &Options, budget: usize, document: &Document) -> S
 
 impl Section {
     fn append_note(&mut self, note: &str) {
-        self.cost += note.chars().count();
+        self.cost += note.len();
         self.text.push_str(note);
     }
 }
@@ -107,7 +107,7 @@ struct PageOutput {
 impl PageOutput {
     fn note(number: u64, reason: &str) -> Self {
         let text = format!("=== page {number} ({}) ===\n", super::text::visible(reason));
-        Self { cost: text.chars().count(), text, shown: false, partial: false }
+        Self { cost: text.len(), text, shown: false, partial: false }
     }
 }
 
@@ -118,9 +118,9 @@ fn image(page: ImagePage, number: u64) -> PageOutput {
         format!("; {}", super::text::visible(&page.notes.join("; ")))
     };
     let note = format!("=== page {number} (image {}x{}{facts}) ===\n", page.width, page.height);
-    // At most 28 white-composited 2000x2000 RGB pages fit the character budget;
+    // At most 15 white-composited 2000x2000 RGB pages fit the answer's budget;
     // their raw pixels remain below the image transport's 400 MiB allowance.
-    let cost = note.chars().count() + IMAGE_COST + 1;
+    let cost = note.len() + bytes(IMAGE_COST) + 1;
     let text = format!("{note}\x1b]1337;File=inline=1;size={}:{}\x07\n", page.png.len(), STANDARD.encode(page.png));
     PageOutput { text, cost, shown: true, partial: false }
 }
@@ -139,33 +139,32 @@ fn text(page: TextPage, number: u64, budget: usize) -> PageOutput {
         "=== page {number} (lines 1-{n} of {n}; line {n}: characters 1-{n} of {n} shown; remaining text not shown{warning}) ===\n",
         n = usize::MAX
     );
-    let mut left = budget.saturating_sub(longest.chars().count());
+    let mut left = budget.saturating_sub(longest.len());
     let mut body = String::new();
     let mut shown = 0;
     let mut cut = None;
     for (index, line) in lines.iter().enumerate() {
         let prefix = format!("{}\t", index + 1);
-        let length = line.chars().count();
         let overhead = prefix.len() + 1;
         if left < overhead {
             break;
         }
-        let take = length.min(left - overhead);
+        let kept = crate::answer::prefix(line, left - overhead);
         body.push_str(&prefix);
-        body.extend(line.chars().take(take));
+        body.push_str(kept);
         body.push('\n');
-        left -= overhead + take;
+        left -= overhead + kept.len();
         shown += 1;
-        if take < length {
-            cut = Some((shown, take, length));
+        if kept.len() < line.len() {
+            cut = Some((shown, kept.chars().count(), line.chars().count()));
             break;
         }
     }
     let partial = cut.is_some() || shown < lines.len();
     if shown == 0 && !lines.is_empty() {
-        let mut result = PageOutput::note(number, "text not shown");
-        result.partial = true;
-        return result;
+        // Not even the start of the page fits: it is named among the pages
+        // not shown.
+        return PageOutput { text: String::new(), cost: 0, shown: false, partial: true };
     }
     let mut facts = format!("lines 1-{shown} of {}", lines.len());
     if let Some((line, take, length)) = cut {
@@ -176,5 +175,5 @@ fn text(page: TextPage, number: u64, budget: usize) -> PageOutput {
     }
     facts.push_str(&warning);
     let text = format!("=== page {number} ({facts}) ===\n{body}");
-    PageOutput { cost: text.chars().count(), text, shown: shown > 0, partial }
+    PageOutput { cost: text.len(), text, shown: shown > 0, partial }
 }

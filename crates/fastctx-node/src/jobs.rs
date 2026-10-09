@@ -191,6 +191,52 @@ impl Jobs {
     }
 }
 
+/// Removes the files of a job that ended within its call and whose output
+/// its answer showed whole, once the answer reached the host: nobody reads
+/// them again, and `fastctx w` does not list such jobs (`world-run.md`,
+/// 输出). Only `owner`'s own finished jobs go, never one owed word of its
+/// end or sent here by another machine's `on`.
+pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_types::Address, job: JobId) {
+    let directory = node.world.job_owner(&node.machine(), town.as_ref(), &owner.clone().into());
+    let path = directory.job_record(&job);
+    let checked = {
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+            let record = record::read(&path)?;
+            let finished = matches!(record.end, Some(Ended { how: EndedHow::Finished, .. }));
+            Ok(record.owner == owner && finished && record.on.is_none() && !directory.job_owed(&job).try_exists()?)
+        })
+        .await
+    };
+    match checked {
+        Ok(Ok(true)) => crate::job_watch::forget(node, &path),
+        Ok(Ok(false)) => {}
+        Ok(Err(error)) => node.log.line(format_args!("removing a job shown whole: {error}")),
+        Err(error) => node.log.line(format_args!("removing a job shown whole: {error}")),
+    }
+}
+
+/// Removes the files of the ended job whose record is at `path`.
+pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
+    let record = record::read(path)?;
+    // The supervisor writes its last record and then lets go of the log; on
+    // Windows a file it still holds cannot go.
+    if let Some(supervisor) = &record.supervisor {
+        fastctx_platform::host_process::wait_for_exit(supervisor)?;
+    }
+    // The record goes last: a log without one would be found by nobody.
+    let mut files = vec![PathBuf::from(&record.output), path.with_extension("sh"), record::lock_path(path)];
+    files.extend(record.stderr.as_deref().map(PathBuf::from));
+    files.push(path.to_path_buf());
+    for file in files {
+        match std::fs::remove_file(&file) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Returns when words come for the resident `words` watches; never, when
 /// the job is nobody's here.
 async fn came(words: &mut Option<watch::Receiver<u64>>) {

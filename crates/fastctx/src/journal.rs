@@ -133,7 +133,11 @@ pub fn run(command: JournalCommand) -> anyhow::Result<()> {
             text
         }
         Reply::Journal { view } if json => format!("{}\n", serde_json::to_string_pretty(&view)?),
-        Reply::Journal { view } => journal(&view, fastctx_hands::run::window::BUDGET),
+        Reply::Journal { view } => {
+            let text = journal(&view, fastctx_hands::town::JOURNAL_BYTES);
+            // Inside a World `run`, reading a journal is reading a file.
+            if std::env::var_os("FASTCTX_MACHINE").is_some() { fastctx_hands::town::marked(&text) } else { text }
+        }
         Reply::Journals { town, journals } if json => {
             format!("{}\n", serde_json::to_string_pretty(&serde_json::json!({ "town": town, "journals": journals }))?)
         }

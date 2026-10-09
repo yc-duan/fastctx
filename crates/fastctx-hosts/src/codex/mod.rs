@@ -56,10 +56,11 @@ pub const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 /// for the answer that follows the wait.
 pub const TOOL_TIMEOUT: Duration = Duration::from_secs(660);
 
-/// The MCP/history limit for at most `budget` Unicode scalar values across
-/// the complete displayed text blocks, plus images. The caller must include
-/// its own head notes and delivered messages in that budget. For Code Mode,
-/// it bounds the text the script prints, not the raw MCP JSON it can inspect.
+/// The MCP/history limit for an answer of at most `budget` units across its
+/// displayed text blocks, each block costing its UTF-8 bytes divided by four,
+/// rounded up, plus images. The caller must include its own head notes and
+/// delivered messages in that budget. For Code Mode, it bounds the text the
+/// script prints, not the raw MCP JSON it can inspect.
 ///
 /// Verified against desktop Codex 0.160.0, upstream commit
 /// a956835d020762cb2b570053af06f643a11c0ecc:
@@ -72,9 +73,9 @@ pub const TOOL_TIMEOUT: Duration = Duration::from_secs(660);
 ///   11 + (20 + 1 + 4) + 16 = 52 ASCII bytes. The 300-second MCP timeout is not
 ///   a bound on the handler's elapsed time, which includes hooks and approvals.
 /// - `utils/output-truncation/src/lib.rs` charges each text item separately at
-///   ceil(UTF-8 bytes / 4), without separators. A block of n characters costs
-///   at most n tokens; splitting into blocks does not increase that bound.
-///   Images consume none of this budget. The header costs at most 13 tokens.
+///   ceil(UTF-8 bytes / 4), without separators: the units the World counts
+///   its budget in. Images consume none of this budget. The header costs at
+///   most 13 tokens.
 /// - Code Mode skips that MCP header/truncation and returns raw MCP JSON to
 ///   the script. Its exec/wait output has a different header, subsequently
 ///   checked against the root limit in history (`core/src/tools/code_mode/`).
@@ -94,10 +95,10 @@ pub const TOOL_TIMEOUT: Duration = Duration::from_secs(660);
 ///   These are alternative paths: the 13-token MCP header is not added again.
 /// - `protocol/src/protocol.rs` applies the allowance as
 ///   `(limit as f64 * 1.2).ceil()`. Set limit = ceil(5 * (budget + 49) / 6),
-///   rounding upwards rather than discarding a fraction. For 150,000 characters
-///   this is 125,041, whose allowance is 150,050 tokens, covering 150,049.
+///   rounding upwards rather than discarding a fraction. For 80,000 units
+///   this is 66,708, whose allowance is 80,050 tokens, covering 80,049.
 ///   A byte-mode root policy gets four bytes per configured token before the
-///   allowance: ceil(125,041 * 4 * 1.2) = 600,197 covers 600,000 + 195 bytes.
+///   allowance: ceil(66,708 * 4 * 1.2) = 320,199 covers 320,000 + 195 bytes.
 ///   Direct MCP history reuses its already computed allowance from metadata;
 ///   Code Mode history uses the root policy. Neither adds another header.
 ///

@@ -59,7 +59,7 @@ impl Output {
             "from XFD1048576; remaining selected content not shown",
             &crate::spreadsheet::resume(usize::MAX - 1, &cell, None),
         );
-        let stop_room = line.chars().count().max(cells.chars().count()).min(budget);
+        let stop_room = line.len().max(cells.len()).min(budget);
         Self {
             text: String::new(),
             left: budget - stop_room,
@@ -77,13 +77,13 @@ impl Output {
         self.left = self.left.saturating_sub(room);
     }
     pub fn facts(&mut self, facts: String) {
-        assert!(facts.chars().count() <= self.facts_room);
+        assert!(facts.len() <= self.facts_room);
         self.facts = facts;
     }
     pub fn header(&mut self, label: &str, max_facts: &str, resume: &str) -> Option<Header> {
         self.end_row();
         let text = format!("=== {label} ({max_facts}) ===\n");
-        let cost = text.chars().count();
+        let cost = text.len();
         if self.stopped || cost > self.left {
             self.stop("content not shown", resume);
             return None;
@@ -95,7 +95,7 @@ impl Output {
     }
     pub fn update_header(&mut self, header: Header, facts: &str) {
         let text = format!("=== {} ({facts}) ===\n", header.label);
-        let cost = text.chars().count();
+        let cost = text.len();
         assert!(cost <= header.cost);
         self.text.replace_range(header.offset..header.offset + header.length, &text);
         self.left += header.cost - cost;
@@ -108,7 +108,7 @@ impl Output {
         }
         let value = visible(value);
         let count = value.chars().count();
-        let cost = prefix.chars().count() + count + 1;
+        let cost = prefix.len() + value.len() + 1;
         if cost <= self.left {
             self.text.push_str(prefix);
             self.text.push_str(&value);
@@ -116,16 +116,21 @@ impl Output {
             self.left -= cost;
             true
         } else {
-            let room = self.left.saturating_sub(prefix.chars().count() + 1);
-            if room > 0 {
-                self.text.push_str(prefix);
-                self.text.extend(value.chars().take(room));
-                self.text.push('\n');
-                self.left -= prefix.chars().count() + room + 1;
+            let mut end = self.left.saturating_sub(prefix.len() + 1).min(value.len());
+            while !value.is_char_boundary(end) {
+                end -= 1;
             }
-            self.cut = Some((room, count));
+            let shown = &value[..end];
+            if !shown.is_empty() {
+                self.text.push_str(prefix);
+                self.text.push_str(shown);
+                self.text.push('\n');
+                self.left -= prefix.len() + shown.len() + 1;
+            }
+            let shown = shown.chars().count();
+            self.cut = Some((shown, count));
             self.stop(
-                &format!("{prefix}{room} of {count} characters shown; remaining selected content not shown"),
+                &format!("{prefix}{shown} of {count} characters shown; remaining selected content not shown"),
                 resume,
             );
             false
@@ -138,7 +143,7 @@ impl Output {
         let text = format!("{address} {}", visible(value).replace('\t', "\\x09"));
         let tail = format!("from {address}; remaining selected content not shown");
         // Every row pays for its newline when its first cell is accepted.
-        let cost = text.chars().count() + 1;
+        let cost = text.len() + 1;
         if cost > self.left {
             self.stop(&tail, resume);
             return false;
@@ -164,8 +169,8 @@ impl Output {
         }
         self.end_row();
         let text = notice(facts, resume);
-        if text.chars().count() <= self.left + self.stop_room {
-            self.left = self.left + self.stop_room - text.chars().count();
+        if text.len() <= self.left + self.stop_room {
+            self.left = self.left + self.stop_room - text.len();
             self.stop_room = 0;
             self.text.push_str(&text);
         } else {
@@ -200,7 +205,7 @@ impl Output {
     }
     pub fn finish(mut self) -> Content {
         self.end_row();
-        if self.facts.chars().count() + self.text.chars().count() > self.total {
+        if self.facts.len() + self.text.len() > self.total {
             self.facts.clear();
             self.text.clear();
             self.stopped = true;

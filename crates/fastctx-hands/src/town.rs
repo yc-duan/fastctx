@@ -149,9 +149,27 @@ pub fn journal_line(journal: &JournalSummary) -> String {
     format!("{}: {about} ({entries} by {writers}{latest})", journal.journal)
 }
 
+/// What one reading of a journal may take, in UTF-8 bytes: an answer's
+/// budget less `run`'s own notes.
+pub const JOURNAL_BYTES: usize = crate::run::window::bytes(crate::run::window::BUDGET - crate::run::window::RUN_NOTES);
+
+/// A reading inside a World `run`, marked as `fastctx view` marks a file, so
+/// the answer shows it as asked for rather than in a program's output window.
+/// Control characters are written as `\xNN`, so the text cannot end the mark.
+pub fn marked(text: &str) -> String {
+    let mut marked = String::from(crate::run::terminal::VIEW_MARK);
+    for line in text.split_inclusive('\n') {
+        let (content, newline) = line.strip_suffix('\n').map_or((line, ""), |content| (content, "\n"));
+        marked.push_str(&crate::text::visible(content));
+        marked.push_str(newline);
+    }
+    marked.push_str(crate::run::terminal::VIEW_END);
+    marked
+}
+
 /// The journal as one answer: a head note saying what is shown, what it
 /// covers, then each entry with the World's stamp. `budget` is the most it
-/// may hold, in characters; the text of an entry that does not fit stops
+/// may hold, in UTF-8 bytes; the text of an entry that does not fit stops
 /// where the budget does, saying where it goes on.
 pub fn journal(view: &JournalView, budget: usize) -> String {
     let shown = view.entries.len();
@@ -182,15 +200,15 @@ pub fn journal(view: &JournalView, budget: usize) -> String {
     text.push_str(&format!("Each entry's files: {}/entries/<entry>/\n", view.directory));
     for entry in &view.entries {
         let block = entry_block(entry);
-        let room = budget.saturating_sub(text.chars().count());
-        if block.chars().count() <= room {
+        let room = budget.saturating_sub(text.len());
+        if block.len() <= room {
             text.push_str(&block);
         } else {
             // Only an entry larger than a whole answer gets here: it is the
             // one entry shown, and stops where the budget does.
-            let kept: String = block.chars().take(room).collect();
-            let rest = block.chars().count() - room;
-            text.push_str(&kept);
+            let kept = crate::answer::prefix(&block, room);
+            let rest = block[kept.len()..].chars().count();
+            text.push_str(kept);
             text.push_str(&format!(
                 "\n… ({rest} more characters; the whole text is {}/entries/{}/text.md)\n",
                 view.directory, entry.stamp.id

@@ -27,13 +27,16 @@ use sha2::{Digest as _, Sha256};
 
 use crate::image::sniff;
 use crate::run::terminal::{VIEW_END, VIEW_MARK};
-use crate::run::window::{BUDGET, IMAGE_COST, RUN_NOTES};
+use crate::run::window::{BUDGET, IMAGE_COST, RUN_NOTES, bytes};
 
 /// How to look.
 #[derive(Clone, Debug, Default)]
 pub struct Options {
     /// Lines `first..=last`, counting from 1, of every text file.
     pub lines: Option<(u64, u64)>,
+    /// Characters `first..=last` of each line shown, counting from 1 as the
+    /// head note counts them: for reading on in a line too long to show.
+    pub chars: Option<(u64, u64)>,
     /// PDF pages or PowerPoint slides `first..=last`, counting from 1.
     pub pages: Option<(u64, u64)>,
     /// Only the master and layout text of a PowerPoint presentation.
@@ -62,9 +65,9 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
     let files = plural(paths.len() as u64, "file", "files");
     let summary_at_longest = format!("=== view ({files}: {n} shown, {n} not shown) ===\n", n = paths.len());
     let notes: Vec<Section> = paths.iter().map(|path| not_shown(path, options)).collect();
-    let budget = if options.in_run { BUDGET - RUN_NOTES } else { BUDGET };
-    let mut left =
-        budget.saturating_sub(summary_at_longest.chars().count() + notes.iter().map(|note| note.cost).sum::<usize>());
+    // Costs here are UTF-8 bytes, four to each unit of the answer's budget.
+    let budget = bytes(if options.in_run { BUDGET - RUN_NOTES } else { BUDGET });
+    let mut left = budget.saturating_sub(summary_at_longest.len() + notes.iter().map(|note| note.cost).sum::<usize>());
     let mut sections = Vec::new();
     let mut seen = Vec::new();
     let mut stopped = false;
@@ -102,7 +105,8 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
 /// One path's part of the answer.
 struct Section {
     text: String,
-    /// What it costs against the budget.
+    /// What it costs against the budget, in bytes, an image at its fixed
+    /// cost.
     cost: usize,
     /// Whether any of the file's content is shown.
     shown: bool,
@@ -113,7 +117,7 @@ struct Section {
 impl Section {
     fn note(path: &Path, options: &Options, facts: &str) -> Self {
         let text = format!("{}\n", head(path, options, facts));
-        Self { cost: text.chars().count(), text, shown: false, partial: false }
+        Self { cost: text.len(), text, shown: false, partial: false }
     }
 }
 
@@ -223,8 +227,16 @@ fn image(
     height: u32,
     length: u64,
 ) -> io::Result<(Section, Option<Seen>)> {
+    // More than one answer can carry is never read in: shrink it first.
+    if length > crate::run::window::IMAGE_BYTES as u64 {
+        let facts = format!(
+            "not shown: image {width}x{height}, {}, more than an answer can carry; make a smaller copy to look at",
+            size(length)
+        );
+        return Ok((Section::note(path, options, &facts), None));
+    }
     let note = format!("{}\n", head(path, options, &format!("image {width}x{height}, {mime}")));
-    let cost = note.chars().count() + IMAGE_COST;
+    let cost = note.len() + bytes(IMAGE_COST);
     if cost > budget {
         let mut section = Section::note(path, options, &format!("not shown: image {width}x{height}, {}", size(length)));
         section.partial = true;

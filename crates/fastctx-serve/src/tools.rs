@@ -28,13 +28,15 @@ pub fn definitions(writes_off: bool, colleague: bool, woken: bool, machines: Opt
         tools.push(message_colleague_definition());
     }
     for tool in &mut tools {
-        // Claude Code counts UTF-16 code units here. One Unicode scalar
-        // uses at most two, including every supplementary-plane character.
+        // Claude Code counts UTF-16 code units here. An answer of BUDGET
+        // units holds at most four times as many UTF-8 bytes, and no text
+        // takes more UTF-16 units than UTF-8 bytes. Without this, Claude
+        // Code 2.1.294 keeps 50,000 inline and saves the rest to a file.
         // Its tool search would otherwise show the model only these tools'
         // names, and `run` stands in for a shell whose description it
         // always saw.
         tool["_meta"] = json!({
-            "anthropic/maxResultSizeChars": 2 * window::BUDGET,
+            "anthropic/maxResultSizeChars": window::bytes(window::BUDGET),
             "anthropic/alwaysLoad": true,
         });
     }
@@ -129,7 +131,7 @@ The most seconds to wait for the script; the call answers as soon as it ends. 15
 
 const RUN_FILES: &str = "\
 Files:
-- `fastctx view PATH...` shows files, each as its kind is read: text with line numbers; an image as the image itself, for you to see; a PDF as its text, page by page; Word, PowerPoint and Excel as their content, with Excel cells by address. Use it for any file you need to look at:
+- `fastctx view PATH...` shows files, each as its kind is read: text with line numbers; an image as the image itself, for you to see; a PDF as its text, page by page; Word, PowerPoint and Excel as their content, with Excel cells by address. It shows a lot at once, so give it all the files you need in one call rather than one by one; read the ones the work needs, not everything in sight. When not all of it fits, the head lines say exactly what was shown and how to read on. Use it for any file you need to look at:
     fastctx view /srv/app/src/main.rs /srv/app/README.md
     fastctx view --lines 120-180 /srv/app/src/main.rs
     fastctx view C:/Users/me/Pictures/chart.png
@@ -137,6 +139,7 @@ Files:
     fastctx view --image --pages 3 /srv/app/design.pdf
     fastctx view --sheet Sales --range B2:F40 C:/Users/me/q3.xlsx
   `--lines` (text, Word) and `--pages` (PDF pages, PowerPoint slides) apply to every file of the command; for a different range in each file, write one command per file. `--image` shows PDF pages as pictures, for layout and figures. Text in any encoding is shown as text, its encoding named in the head line when it is not UTF-8; `--encoding gbk` reads it in an encoding you name, when the one shown is wrong.
+- To see how large files or directories are before reading them, use `wc -l`, `ls -lh` or `du -sh` as usual.
 ";
 
 const RUN_WRITING: &str = "\

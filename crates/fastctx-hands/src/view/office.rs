@@ -17,12 +17,12 @@ pub(super) fn look(
     metadata: &Metadata,
     format: fastctx_office::Format,
 ) -> io::Result<(Section, Option<Seen>)> {
-    if options.image || options.encoding.is_some() {
+    if options.image || options.encoding.is_some() || options.chars.is_some() {
         return Ok((
             Section::note(
                 path,
                 options,
-                "Office content is decoded directly; --image and --encoding are not supported",
+                "Office content is decoded directly; --image, --encoding and --chars are not supported",
             ),
             None,
         ));
@@ -61,7 +61,7 @@ pub(super) fn look(
     }
     let mut section = Section::note(path, options, &content.facts);
     section.text.push_str(&content.text);
-    section.cost = section.text.chars().count();
+    section.cost = section.text.len();
     section.shown = true;
     section.partial = content.stopped;
     let seen = Seen {

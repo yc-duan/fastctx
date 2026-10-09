@@ -149,6 +149,7 @@ impl Session {
                     reply.machine,
                     fastctx_hands::run::present::display_path(&reply.output.log)
                 )),
+                shown: shown_whole(&reply).then(|| reply.job.clone()),
             },
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== run (not run) ===\n{error}")),
@@ -223,6 +224,7 @@ impl Session {
                 is_error: false,
                 receipt: None,
                 source: None,
+                shown: None,
             },
             Ok(other) => Answer::error(format!("=== ask_colleague (the node answered something else: {other:?}) ===")),
             Err(error) => failed(error),
@@ -278,6 +280,7 @@ impl Session {
                     is_error: false,
                     receipt: None,
                     source: None,
+                    shown: None,
                 }
             }
             Ok(other) => {
@@ -473,4 +476,12 @@ fn machine_argument(arguments: &Value) -> Result<Option<MachineName>, String> {
         Some(Value::String(node)) => MachineName::try_from(node.as_str()).map(Some).map_err(|error| error.to_string()),
         Some(_) => Err("`node` must be a string naming a machine".to_string()),
     }
+}
+
+/// Whether a run's answer shows all its job did: it ended within the call
+/// and its whole output is in the answer.
+fn shown_whole(reply: &fastctx_types::run::RunReply) -> bool {
+    use fastctx_types::run::{OutputPiece, RunState};
+    matches!(reply.state, RunState::Ended { .. })
+        && reply.output.pieces.iter().all(|piece| matches!(piece, OutputPiece::Text { .. } | OutputPiece::Image { .. }))
 }
