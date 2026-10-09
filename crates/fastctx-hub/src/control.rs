@@ -428,10 +428,8 @@ fn echoes_work(hub: &Hub, message: &Envelope) -> bool {
     };
     let fastctx_types::remote::Letter::Notice { to, .. } = body.letter else { return false };
     let store = hub.store();
-    let directory = &store.book.directory;
     let resident = fastctx_types::Address { machine: message.to.clone(), resident: to };
-    directory.account(account).is_some_and(|found| !found.locked)
-        && directory.hosts(account, &message.to)
+    store.book.directory.admits_echo(&message.from, account, &message.to).is_ok()
         && store.worked.contains(&(message.from.clone(), resident))
 }
 

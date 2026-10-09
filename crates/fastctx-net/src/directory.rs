@@ -227,6 +227,20 @@ impl Directory {
         })
     }
 
+    /// Whether `from` may tell a resident of `account` on `to` what came of
+    /// work it was called to do for it: as `admits` says while the account
+    /// uses `from`, and after its rights there are taken back too, as long
+    /// as the account stands and `to` still hosts it. Jobs already running
+    /// there run to their end, and their end still reaches the session that
+    /// started them; the hub passes such a letter only for work it called
+    /// `from` to do for that resident (`world-network.md`, 收回立刻生效).
+    pub fn admits_echo(&self, from: &MachineName, account: &AccountName, to: &MachineName) -> Result<(), String> {
+        self.admits(from, account, to, Purpose::Echo).or_else(|refused| {
+            let stands = self.account(account).is_some_and(|found| !found.locked);
+            if stands && self.member(from).is_some() && self.hosts(account, to) { Ok(()) } else { Err(refused) }
+        })
+    }
+
     /// The machines `account` may use, each with what it may do there.
     pub fn usable(&self, account: &AccountName) -> Vec<(&Member, Rights)> {
         self.machines()

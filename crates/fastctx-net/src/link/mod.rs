@@ -37,7 +37,7 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::data::{Endpoint, Stream};
 use crate::directory::View;
-use crate::envelope::Envelope;
+use crate::envelope::{Envelope, Kind};
 use crate::message::LetterId;
 use crate::sign::{Domain, PublicKey, SecretKey, Signed};
 use crate::wire::{CallStatus, Change, Question, Told};
@@ -555,7 +555,11 @@ impl Inner {
             return Err(format!("it is for {} on {}", envelope.to, envelope.hub));
         }
         let (account, purpose) = envelope.standing()?;
-        let check = |view: &View| view.admits(&envelope.from, account, &self.membership.name, purpose);
+        let me = &self.membership.name;
+        let check = |view: &View| match (envelope.kind, purpose) {
+            (Kind::Letter, Purpose::Echo) => view.admits_echo(&envelope.from, account, me),
+            _ => view.admits(&envelope.from, account, me, purpose),
+        };
         if check(&self.view()).is_err() {
             if let Err(error) = self.refresh().await {
                 self.node.log(format!("asking the hub for the view: {error}"));
