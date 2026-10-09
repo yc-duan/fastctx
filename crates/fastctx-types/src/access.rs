@@ -50,6 +50,62 @@ impl std::fmt::Debug for TownId {
     }
 }
 
+/// Which hub: chosen when the hub is made, and named in everything said
+/// through it, so nothing meant for one hub is taken by another. Written
+/// `w-` and sixteen hex digits, as the network's third version wrote the
+/// World it became.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct HubId(String);
+
+impl HubId {
+    pub fn from_bytes(bytes: [u8; 8]) -> Self {
+        Self(format!("w-{}", bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
+    }
+
+    /// The eight bytes the id spells.
+    pub fn bytes(&self) -> [u8; 8] {
+        let mut bytes = [0_u8; 8];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&self.0[2 + index * 2..4 + index * 2], 16).expect("checked when made");
+        }
+        bytes
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for HubId {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, String> {
+        let ok = text.len() == 18
+            && text.starts_with("w-")
+            && text[2..].bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if ok { Ok(Self(text)) } else { Err(format!("{text:?} is not a hub id")) }
+    }
+}
+
+impl From<HubId> for String {
+    fn from(id: HubId) -> String {
+        id.0
+    }
+}
+
+impl std::fmt::Display for HubId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::fmt::Debug for HubId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
 /// What an account may do on a machine: the two switches of a grant. The
 /// account a machine belongs to has both.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]

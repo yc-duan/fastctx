@@ -53,7 +53,7 @@ impl Inner {
             Ok(Ticket { stream, source: self.membership.name.clone(), sink: to.clone() })
         };
         let envelope = |body: &Body, stream: Option<Ticket>| Envelope {
-            hub: self.membership.world.clone(),
+            hub: self.membership.id.clone(),
             from: self.membership.name.clone(),
             to: to.clone(),
             n,
@@ -233,7 +233,7 @@ impl Inner {
 
     /// The envelope answering this machine's call `n` to `to`, if it is one.
     fn check_answer(&self, to: &MachineName, n: u64, envelope: Envelope) -> Result<Envelope, String> {
-        if envelope.to != self.membership.name || envelope.hub != self.membership.world {
+        if envelope.to != self.membership.name || envelope.hub != self.membership.id {
             return Err(format!("the answer is for {} on {}", envelope.to, envelope.hub));
         }
         if envelope.from != *to {
@@ -310,7 +310,7 @@ impl Inner {
         letter: Letter,
     ) -> Envelope {
         Envelope {
-            hub: self.membership.world.clone(),
+            hub: self.membership.id.clone(),
             from: self.membership.name.clone(),
             to: to.clone(),
             n,

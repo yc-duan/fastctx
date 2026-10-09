@@ -157,7 +157,7 @@ fn open(
     // The store's lock is held while the session is registered, so a letter
     // kept meanwhile is either in the backlog below or pushed after it.
     let mut store = hub.store();
-    let (world, hub_name) = (store.hub.world.clone(), store.hub.name.clone());
+    let (world, hub_name) = (store.hub.id.clone(), store.hub.name.clone());
     let entry = store.letters_of(name).map_err(|error| storage_failure(hub, "making letter records", &error))?;
     if entry.epoch != letters.epoch {
         // The machine numbers its letters afresh, having lost its records.
@@ -333,7 +333,7 @@ fn own(hub: &Hub, name: &MachineName, message: &Envelope) -> Result<(), String> 
     if message.from != *name {
         return Err(format!("it says it is from {}, on the connection of {name}", message.from));
     }
-    let world = hub.store().hub.world.clone();
+    let world = hub.store().hub.id.clone();
     if message.hub != world {
         return Err(format!("it is for the hub {}", message.hub));
     }

@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 
 use fastctx_net::directory::{Directory, Kind, Project};
 use fastctx_net::envelope::Envelope;
-use fastctx_net::ids::WorldId;
+use fastctx_net::ids::HubId;
 use fastctx_net::sign::{Bytes, PublicKey};
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::{AccountName, HubName, MachineName};
@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 /// The hub's settings.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HubFile {
-    pub world: WorldId,
+    pub id: HubId,
     pub name: HubName,
     /// Where machines reach the hub, written into every token.
     pub public: Vec<SocketAddr>,

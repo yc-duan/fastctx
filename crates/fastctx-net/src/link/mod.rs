@@ -249,10 +249,10 @@ impl Link {
         let highest = letters::Outbox::new(&dir).numbers()?.last().copied().unwrap_or(0);
         let next = letters_file.held.max(highest) + 1;
         let view = match state::read::<View>(&dir.view()) {
-            Ok(view) if view.hub == membership.world && view.me == membership.name => view,
-            Ok(_) => View::empty(membership.world.clone(), membership.hub_name.clone(), membership.name.clone()),
+            Ok(view) if view.hub == membership.id && view.me == membership.name => view,
+            Ok(_) => View::empty(membership.id.clone(), membership.hub_name.clone(), membership.name.clone()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                View::empty(membership.world.clone(), membership.hub_name.clone(), membership.name.clone())
+                View::empty(membership.id.clone(), membership.hub_name.clone(), membership.name.clone())
             }
             Err(error) => return Err(error),
         };
@@ -434,7 +434,7 @@ impl Inner {
                     .collect()
             })
             .unwrap_or_default();
-        upstreams.push(Upstream { relay: None, addresses: self.membership.hub.clone() });
+        upstreams.push(Upstream { relay: None, addresses: self.membership.addresses.clone() });
         upstreams
     }
 
@@ -523,10 +523,10 @@ impl Inner {
         let Told::Directory { view } = self.ask(Question::Directory).await? else {
             return Err("the hub answered something else".to_string());
         };
-        if view.hub != self.membership.world || view.me != self.membership.name {
+        if view.hub != self.membership.id || view.me != self.membership.name {
             return Err(format!(
                 "the hub gave the view of {} on {}, not of {} on {}",
-                view.me, view.hub, self.membership.name, self.membership.world
+                view.me, view.hub, self.membership.name, self.membership.id
             ));
         }
         let changed = *self.view() != *view;
@@ -543,7 +543,7 @@ impl Inner {
     /// view again once when it does not: a grant the hub just made may not
     /// be in the view yet.
     async fn admit(&self, envelope: &Envelope) -> Result<Caller, String> {
-        if envelope.to != self.membership.name || envelope.hub != self.membership.world {
+        if envelope.to != self.membership.name || envelope.hub != self.membership.id {
             return Err(format!("it is for {} on {}", envelope.to, envelope.hub));
         }
         let (account, purpose) = envelope.standing()?;

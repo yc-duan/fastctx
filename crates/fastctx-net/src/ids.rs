@@ -6,58 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::sign::{Digest, sha256};
 
-/// Which hub: chosen when the hub is made, and named in everything said
-/// through it, so nothing meant for one hub is taken by another.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct WorldId(String);
+pub use fastctx_types::access::HubId;
 
-impl WorldId {
-    pub fn generate() -> std::io::Result<Self> {
-        Ok(Self::from_bytes(crate::sign::random::<8>()?))
-    }
-
-    pub fn from_bytes(bytes: [u8; 8]) -> Self {
-        Self(format!("w-{}", bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
-    }
-
-    /// The eight bytes the id spells.
-    pub fn bytes(&self) -> [u8; 8] {
-        let mut bytes = [0_u8; 8];
-        for (index, byte) in bytes.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&self.0[2 + index * 2..4 + index * 2], 16).expect("checked when made");
-        }
-        bytes
-    }
-}
-
-impl TryFrom<String> for WorldId {
-    type Error = String;
-
-    fn try_from(text: String) -> Result<Self, String> {
-        let ok = text.len() == 18
-            && text.starts_with("w-")
-            && text[2..].bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-        if ok { Ok(Self(text)) } else { Err(format!("{text:?} is not a hub id")) }
-    }
-}
-
-impl From<WorldId> for String {
-    fn from(id: WorldId) -> String {
-        id.0
-    }
-}
-
-impl fmt::Display for WorldId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl fmt::Debug for WorldId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, f)
-    }
+/// A new hub's id, at random.
+pub fn new_hub_id() -> std::io::Result<HubId> {
+    Ok(HubId::from_bytes(crate::sign::random::<8>()?))
 }
 
 /// The hub's certificate, by the SHA-256 of its DER bytes. Machines reach

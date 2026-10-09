@@ -167,10 +167,10 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
     };
     match welcome {
         Down::Welcome { hub, name, taken, letters, .. } => {
-            if hub != membership.world || name != membership.name {
+            if hub != membership.id || name != membership.name {
                 return Err(Ended::Retry(format!(
                     "the hub knows this machine as {name} on {hub}, not {} on {}",
-                    membership.name, membership.world
+                    membership.name, membership.id
                 )));
             }
             Ok(Opened { socket, address, route, taken, hub_letters: letters })

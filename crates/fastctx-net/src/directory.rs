@@ -18,7 +18,7 @@ use fastctx_types::{AccountName, HubName, MachineName, TownName};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::ids::WorldId;
+use crate::ids::HubId;
 use crate::sign::PublicKey;
 
 /// What a member is.
@@ -302,7 +302,7 @@ impl Directory {
 /// One member's view of its hub's directory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View {
-    pub hub: WorldId,
+    pub hub: HubId,
     pub hub_name: HubName,
     /// The member this view is for.
     pub me: MachineName,
@@ -315,7 +315,7 @@ pub struct View {
 
 impl View {
     /// An empty view, before the hub has given one.
-    pub fn empty(hub: WorldId, hub_name: HubName, me: MachineName) -> Self {
+    pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
         Self { hub, hub_name, me, self_registration: false, directory: Directory::default() }
     }
 

@@ -93,7 +93,7 @@ impl Ledgers {
         if !directory.member_in_project(from, town) {
             return Err(format!("{from} acts for no account that may write in the project {}", project.name));
         }
-        let entry = fastctx_net::ledger::open(&signed, &store.hub.world, town)?;
+        let entry = fastctx_net::ledger::open(&signed, &store.hub.id, town)?;
         if entry.author != *from || entry.key != member.key {
             return Err(format!("the entry is by {}, sent by {from}", entry.author));
         }

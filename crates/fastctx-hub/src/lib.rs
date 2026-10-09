@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use fastctx_net::directory::{Account, View};
-use fastctx_net::ids::{CertPin, WorldId};
+use fastctx_net::ids::CertPin;
 use fastctx_net::login::HubSecrets;
 use fastctx_net::sign::{Bytes, Domain, PublicKey, Signature};
 use fastctx_net::tls::HubCertificate;
@@ -93,7 +93,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
     });
     book.passwords.insert(new.admin, Bytes(record));
     let hub = HubFile {
-        world: WorldId::generate()?,
+        id: fastctx_net::ids::new_hub_id()?,
         name: new.name,
         public: new.public,
         listen: new.listen,
@@ -241,7 +241,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
     log.line(format_args!(
         "hub {} ({}) {} listening on {listen}; certificate {}",
         store.hub.name,
-        store.hub.world,
+        store.hub.id,
         env!("CARGO_PKG_VERSION"),
         certificate.pin()
     ));

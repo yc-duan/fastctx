@@ -331,7 +331,7 @@ async fn logged_in(
             hub.log.line(format_args!("{peer}: {name} logged in to {account}"));
             let (world, hub_name) = {
                 let store = hub.store();
-                (store.hub.world.clone(), store.hub.name.clone())
+                (store.hub.id.clone(), store.hub.name.clone())
             };
             let _ = send(socket, &Down::LoggedIn { hub: world, hub_name, name, account: account.clone() }).await;
             let _ = futures_util::SinkExt::close(socket).await;

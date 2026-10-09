@@ -22,17 +22,17 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::directory::Kind;
-use crate::ids::{CertPin, WorldId};
+use crate::ids::{CertPin, HubId};
 
 /// This machine's place on a hub.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Membership {
-    pub world: WorldId,
+    pub id: HubId,
     pub hub_name: HubName,
     pub name: MachineName,
     /// The hub's own addresses; the relays this machine connects through
     /// come from its view.
-    pub hub: Vec<SocketAddr>,
+    pub addresses: Vec<SocketAddr>,
     pub cert: CertPin,
     pub kind: Kind,
 }

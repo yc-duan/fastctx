@@ -12,12 +12,12 @@ use fastctx_types::access::Purpose;
 use fastctx_types::{AccountName, MachineName};
 use serde::{Deserialize, Serialize};
 
-use crate::ids::WorldId;
+use crate::ids::HubId;
 use crate::wire::Ticket;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Envelope {
-    pub hub: WorldId,
+    pub hub: HubId,
     pub from: MachineName,
     pub to: MachineName,
     /// The number of a call or a letter, counting up across everything

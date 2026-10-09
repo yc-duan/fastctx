@@ -16,13 +16,13 @@ use fastctx_types::access::TownId;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::ids::WorldId;
+use crate::ids::HubId;
 use crate::sign::{Bytes, Domain, PublicKey, SecretKey, Signed};
 
 /// One entry: the files it adds to a project's ledger.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
-    pub hub: WorldId,
+    pub hub: HubId,
     pub town: TownId,
     pub author: MachineName,
     /// The author's key, which signed the entry. The hub took the entry
@@ -44,7 +44,7 @@ pub struct File {
 
 /// The entry `signed` holds, if the key it names signed it, for `town` of
 /// `hub`, with paths a ledger can hold.
-pub fn open(signed: &Signed, hub: &WorldId, town: &TownId) -> Result<Entry, String> {
+pub fn open(signed: &Signed, hub: &HubId, town: &TownId) -> Result<Entry, String> {
     let claimed: Entry = signed.claim().map_err(|error| format!("an unreadable ledger entry: {error}"))?;
     if claimed.hub != *hub || claimed.town != *town {
         return Err(format!("a ledger entry for the project {} of the hub {}", claimed.town, claimed.hub));

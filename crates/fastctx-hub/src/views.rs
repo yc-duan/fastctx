@@ -33,7 +33,7 @@ pub(crate) fn view_for(store: &Store, online: &HashMap<MachineName, Presence>, m
         present(store, online, member);
     }
     View {
-        hub: store.hub.world.clone(),
+        hub: store.hub.id.clone(),
         hub_name: store.hub.name.clone(),
         me: me.clone(),
         self_registration: store.hub.self_registration,

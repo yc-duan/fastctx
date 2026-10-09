@@ -161,7 +161,7 @@ fn apply(
                 made_at: Timestamp::now(),
                 used_by: None,
             });
-            let token = Token { hub: store.hub.public.clone(), cert: hub.pin, world: store.hub.world.clone(), secret };
+            let token = Token { addresses: store.hub.public.clone(), cert: hub.pin, hub: store.hub.id.clone(), secret };
             Ok(Told::Token { text: token.to_text() })
         }
         Change::PasswordStart { target, request } => {

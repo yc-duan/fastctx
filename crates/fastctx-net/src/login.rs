@@ -32,7 +32,7 @@ use rand_core::OsRng;
 
 use crate::dial::{self, HubSocket};
 use crate::directory::Kind;
-use crate::ids::{CertPin, WorldId};
+use crate::ids::{CertPin, HubId};
 use crate::sign::{Bytes, Domain, SecretKey};
 use crate::token::Token;
 use crate::wire::{self, Down, Intent, Joining, PROTOCOL, SILENCE, Up};
@@ -52,12 +52,12 @@ impl CipherSuite for Suite {
 /// What logged in: the hub, and this device as a member of it.
 #[derive(Clone, Debug)]
 pub struct Joined {
-    pub world: WorldId,
+    pub hub: HubId,
     pub hub_name: HubName,
     pub name: MachineName,
     pub account: AccountName,
     /// The addresses the device reached the hub at.
-    pub hub: Vec<SocketAddr>,
+    pub addresses: Vec<SocketAddr>,
     pub cert: CertPin,
 }
 
@@ -122,7 +122,7 @@ pub async fn with_password(
 
 /// Logs in with an enrollment token.
 pub async fn with_token(token: &Token, device: Device<'_>) -> Result<Joined, String> {
-    let dialed = dial::dial(&token.hub, Some(token.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;
+    let dialed = dial::dial(&token.addresses, Some(token.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;
     let (mut socket, binding) = (dialed.socket, dialed.binding);
     let key = token.secret.key();
     let intent = Intent::Token {
@@ -131,9 +131,9 @@ pub async fn with_token(token: &Token, device: Device<'_>) -> Result<Joined, Str
         member: device.joining(&binding),
     };
     hello(&mut socket, intent).await?;
-    let joined = joined(&mut socket, &token.hub, token.cert).await?;
-    if joined.world != token.world {
-        return Err(format!("the hub is {}, not {} the token names", joined.world, token.world));
+    let joined = joined(&mut socket, &token.addresses, token.cert).await?;
+    if joined.hub != token.hub {
+        return Err(format!("the hub is {}, not {} the token names", joined.hub, token.hub));
     }
     Ok(joined)
 }
@@ -194,12 +194,12 @@ async fn next(socket: &mut HubSocket) -> Result<Down, String> {
     }
 }
 
-async fn joined(socket: &mut HubSocket, hub: &[SocketAddr], cert: CertPin) -> Result<Joined, String> {
+async fn joined(socket: &mut HubSocket, addresses: &[SocketAddr], cert: CertPin) -> Result<Joined, String> {
     let answer = next(socket).await;
     let _ = futures_util::SinkExt::close(socket).await;
     match answer? {
-        Down::LoggedIn { hub: world, hub_name, name, account } => {
-            Ok(Joined { world, hub_name, name, account, hub: hub.to_vec(), cert })
+        Down::LoggedIn { hub, hub_name, name, account } => {
+            Ok(Joined { hub, hub_name, name, account, addresses: addresses.to_vec(), cert })
         }
         Down::Refused { reason } => Err(reason.to_string()),
         _ => Err("the hub answered the login with something else".to_string()),

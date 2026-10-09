@@ -22,7 +22,7 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
-use crate::ids::{CertPin, WorldId};
+use crate::ids::{CertPin, HubId};
 use crate::sign::{Digest, SecretKey};
 
 const PREFIX: &str = "FX5";
@@ -56,18 +56,18 @@ impl TokenSecret {
 
 #[derive(Clone, Debug)]
 pub struct Token {
-    pub hub: Vec<SocketAddr>,
+    pub addresses: Vec<SocketAddr>,
     pub cert: CertPin,
-    pub world: WorldId,
+    pub hub: HubId,
     pub secret: TokenSecret,
 }
 
 impl Token {
     pub fn to_text(&self) -> String {
         let mut bytes = vec![KIND];
-        addresses(&mut bytes, &self.hub);
+        addresses(&mut bytes, &self.addresses);
         bytes.extend_from_slice(&self.cert.0.0);
-        bytes.extend_from_slice(&self.world.bytes());
+        bytes.extend_from_slice(&self.hub.bytes());
         bytes.extend_from_slice(&*self.secret.0);
         let check = crate::sign::sha256(&bytes);
         bytes.extend_from_slice(&check[..2]);
@@ -97,14 +97,14 @@ impl Token {
         if reader.take(1).ok_or_else(mistyped)?[0] != KIND {
             return Err("this token is of a kind this fastctx does not know; it may be newer".to_string());
         }
-        let hub = reader.addresses().ok_or_else(mistyped)?;
+        let addresses = reader.addresses().ok_or_else(mistyped)?;
         let cert = CertPin(Digest(reader.array().ok_or_else(mistyped)?));
-        let world = WorldId::from_bytes(reader.array().ok_or_else(mistyped)?);
+        let hub = HubId::from_bytes(reader.array().ok_or_else(mistyped)?);
         let secret = TokenSecret(Zeroizing::new(reader.array().ok_or_else(mistyped)?));
         if !reader.0.is_empty() {
             return Err(mistyped());
         }
-        Ok(Token { hub, cert, world, secret })
+        Ok(Token { addresses, cert, hub, secret })
     }
 }
 

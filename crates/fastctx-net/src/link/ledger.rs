@@ -28,7 +28,7 @@ impl Link {
     pub fn entry(&self, town: &TownId, machines: Option<Vec<MachineName>>, files: Vec<File>) -> Entry {
         let membership = &self.inner.membership;
         Entry {
-            hub: membership.world.clone(),
+            hub: membership.id.clone(),
             town: town.clone(),
             author: membership.name.clone(),
             key: self.inner.key.public(),
@@ -104,7 +104,7 @@ impl Link {
             Told::Entries { entries, more } => (entries, more),
             _ => return Err("the hub answered something else".to_string()),
         };
-        let hub = &self.inner.membership.world;
+        let hub = &self.inner.membership.id;
         let read = entries
             .into_iter()
             .map(|(seq, signed)| match crate::ledger::open(&signed, hub, town) {

@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::directory::{Kind, Relay, View};
 use crate::envelope::Envelope;
-use crate::ids::WorldId;
+use crate::ids::HubId;
 use crate::sign::{Bytes, Digest, PublicKey, Signature, Signed};
 
 /// Raised whenever a change would make one side misread the other.
@@ -198,7 +198,7 @@ pub enum Down {
     /// the hub holds in the numbering `epoch`; `letters` is the hub's
     /// numbering of its letters to this machine.
     Welcome {
-        hub: WorldId,
+        hub: HubId,
         hub_name: HubName,
         name: MachineName,
         version: String,
@@ -216,7 +216,7 @@ pub enum Down {
     /// The login was taken: this computer or phone is the member `name` of
     /// the hub, logged in to `account`.
     LoggedIn {
-        hub: WorldId,
+        hub: HubId,
         hub_name: HubName,
         name: MachineName,
         account: AccountName,
