@@ -1,5 +1,6 @@
 """Combine release notices into the one file accepted by old upgraders."""
 import argparse
+import json
 import os
 import subprocess
 import tempfile
@@ -30,6 +31,8 @@ def main():
 
 
 def generate(destination, syntax_notices):
+    packages = tomllib.loads((ROOT/'Cargo.lock').read_text(encoding='utf-8'))['package']
+    check_jemalloc_notice(packages)
     subprocess.run(['cargo', TOOLCHAIN, 'about', 'generate', '--locked', '--offline', '--fail',
                     str(ROOT/'about.hbs'), '--output-file', str(destination)], cwd=ROOT, check=True)
     sysroot = Path(subprocess.check_output(['rustc', TOOLCHAIN, '--print', 'sysroot'], text=True).strip())
@@ -39,7 +42,6 @@ def generate(destination, syntax_notices):
     # Compiler notices are supplemental provenance, not a substitute for
     # independently linked native runtimes such as Zig's musl or jemalloc.
     native_copyright = (sysroot/'share/doc/rust/COPYRIGHT.html').read_text(encoding='utf-8')
-    packages = tomllib.loads((ROOT/'Cargo.lock').read_text(encoding='utf-8'))['package']
     patch_notice = (ROOT/'crates/fastctx-hands/src/write/patch/NOTICE').read_text(encoding='utf-8')
     pdf_notice = (ROOT/'crates/fastctx-pdf/src/NOTICE').read_text(encoding='utf-8')
     oxide_notice = (ROOT/'vendor/pdf_oxide/NOTICE').read_text(encoding='utf-8')
@@ -72,6 +74,18 @@ def generate(destination, syntax_notices):
                 output.write(f'- {name} {version}: https://static.crates.io/crates/{name}/{name}-{version}.crate\n')
         output.write('\n'+input_marker(ROOT)+'\n')
     destination.write_text(share_html_notices(destination.read_text(encoding='utf-8')), encoding='utf-8', newline='\n')
+
+
+def check_jemalloc_notice(packages):
+    # The Rust bindings' license does not cover the native allocator's COPYING.
+    # A dependency update must also review that version's native notice.
+    records = json.loads((ROOT/'licenses/components/sources.json').read_text(encoding='utf-8'))
+    reviewed = {record.get('crate') for record in records}
+    for package in packages:
+        if package['name'] == 'tikv-jemalloc-sys':
+            component = f"{package['name']}-{package['version']}"
+            if component not in reviewed:
+                raise ValueError(f'Review and bundle jemalloc/COPYING for {component} in licenses/components')
 
 
 if __name__ == '__main__':
