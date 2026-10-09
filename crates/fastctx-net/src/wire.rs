@@ -110,7 +110,15 @@ pub enum Up {
 pub enum Intent {
     /// A member's control connection. `proof` is its key's signature of the
     /// TLS exporter, so the signature proves nothing on any other connection.
-    Session { key: PublicKey, proof: Signature, letters: Letters },
+    /// `through` names the relay the machine dialed, if any: the hub sees
+    /// only the relay's address.
+    Session {
+        key: PublicKey,
+        proof: Signature,
+        letters: Letters,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        through: Option<String>,
+    },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
     /// `Up::LoginFinish`.
@@ -335,40 +343,87 @@ pub enum Question {
 pub enum Change {
     /// What the account `to` may do on `machine`, one of the account's own;
     /// no rights takes the grant away.
-    Grant { machine: MachineName, to: AccountName, rights: fastctx_types::access::Rights },
+    Grant {
+        machine: MachineName,
+        to: AccountName,
+        rights: fastctx_types::access::Rights,
+    },
     /// Whether the account trusts `machine` to act for it.
-    Trust { machine: MachineName, trusted: bool },
+    Trust {
+        machine: MachineName,
+        trusted: bool,
+    },
     /// The relays `machine`, one of the account's own, connects through.
-    Relays { machine: MachineName, relays: Vec<Relay> },
+    Relays {
+        machine: MachineName,
+        relays: Vec<Relay>,
+    },
     /// Takes the member `name` out of the account: a device's login of it,
     /// or one of its machines. An administrator takes it off the hub.
-    Remove { name: MachineName, reason: String },
+    Remove {
+        name: MachineName,
+        reason: String,
+    },
     /// The asking member logs out of the account.
     Logout,
     /// A one-time enrollment token for the account (`crate::token`),
     /// valid until `expires`; `register` makes the computer that uses it a
     /// machine of the account.
-    Token { register: bool, name: Option<MachineName>, kind: Kind, expires: Timestamp },
+    Token {
+        register: bool,
+        name: Option<MachineName>,
+        kind: Kind,
+        expires: Timestamp,
+    },
     /// Sets the password of `target`, the account itself or, for an
     /// administrator, another: the first OPAQUE registration message.
-    PasswordStart { target: AccountName, request: Bytes },
+    PasswordStart {
+        target: AccountName,
+        request: Bytes,
+    },
     /// The last OPAQUE registration message for `target`.
-    PasswordFinish { target: AccountName, upload: Bytes },
+    PasswordFinish {
+        target: AccountName,
+        upload: Bytes,
+    },
     /// Opens an account; its password is set next.
-    OpenAccount { name: AccountName, admin: bool, may_register: bool },
-    SetAccount { name: AccountName, admin: bool, may_register: bool, locked: bool },
+    OpenAccount {
+        name: AccountName,
+        admin: bool,
+        may_register: bool,
+    },
+    SetAccount {
+        name: AccountName,
+        admin: bool,
+        may_register: bool,
+        locked: bool,
+    },
     /// Deletes an account: its machines leave the hub, its grants go, its
     /// projects are archived for an administrator to hand on.
-    DeleteAccount { name: AccountName },
+    DeleteAccount {
+        name: AccountName,
+    },
     /// Whether anyone who reaches the hub may open an account.
-    Settings { self_registration: bool },
+    Settings {
+        self_registration: bool,
+    },
     /// Opens a project in the account.
-    OpenProject { town: TownId, name: TownName },
+    OpenProject {
+        town: TownId,
+        name: TownName,
+    },
     /// Lets the account `with` read and write the project's records, or no
     /// longer.
-    ShareProject { town: TownId, with: AccountName, shared: bool },
+    ShareProject {
+        town: TownId,
+        with: AccountName,
+        shared: bool,
+    },
     /// Hands a project to another account; an administrator's change.
-    MoveProject { town: TownId, to: AccountName },
+    MoveProject {
+        town: TownId,
+        to: AccountName,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

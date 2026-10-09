@@ -137,10 +137,9 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
 
 async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
     let membership = &inner.membership;
-    let dialed =
-        dial::dial(&upstream.addresses, Some(membership.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
-            .await
-            .map_err(Ended::Retry)?;
+    let dialed = dial::dial(&upstream.addresses, Some(membership.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
+        .await
+        .map_err(Ended::Retry)?;
     let (address, route) = (dialed.address, dialed.route.clone());
     let mut socket = dialed.socket;
     let proof = inner.key.sign(Domain::Session, &dialed.binding);
@@ -151,7 +150,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
     let hello = Up::Hello {
         protocol: PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
-        intent: Intent::Session { key: inner.key.public(), proof, letters: position },
+        intent: Intent::Session { key: inner.key.public(), proof, letters: position, through: upstream.relay.clone() },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
         Ok(Ok(())) => {}
@@ -214,13 +213,8 @@ async fn connected(
 
     let generation = inner.next_id();
     let (up, mut outgoing) = Outgoing::channel();
-    *inner.connection.lock().expect("never poisoned") = Some(Connection {
-        generation,
-        up: up.clone(),
-        upstream: upstream.clone(),
-        address,
-        tried: tried.to_vec(),
-    });
+    *inner.connection.lock().expect("never poisoned") =
+        Some(Connection { generation, up: up.clone(), upstream: upstream.clone(), address, tried: tried.to_vec() });
     let relay = upstream.relay.clone();
     inner.status.send_replace(Status::Online { since: Timestamp::now(), address, relay, route: route.clone() });
     *online_since = Some(Instant::now());

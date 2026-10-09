@@ -10,8 +10,8 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use super::state::{NetDir, read};
-use crate::message::LetterId;
 use crate::envelope::Envelope;
+use crate::message::LetterId;
 use crate::sign::Digest;
 
 /// Letters not yet held by the hub, one file each, named by number.

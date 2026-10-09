@@ -24,7 +24,7 @@ use std::net::SocketAddr;
 
 use fastctx_types::{AccountName, HubName, MachineName};
 use opaque_ke::{
-    ClientLogin, ClientLoginFinishParameters, ClientRegistration, ClientRegistrationFinishParameters, CipherSuite,
+    CipherSuite, ClientLogin, ClientLoginFinishParameters, ClientRegistration, ClientRegistrationFinishParameters,
     CredentialFinalization, CredentialRequest, CredentialResponse, RegistrationRequest, RegistrationResponse,
     RegistrationUpload, ServerLogin, ServerLoginStartParameters, ServerRegistration, ServerSetup,
 };
@@ -125,8 +125,11 @@ pub async fn with_token(token: &Token, device: Device<'_>) -> Result<Joined, Str
     let dialed = dial::dial(&token.hub, Some(token.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;
     let (mut socket, binding) = (dialed.socket, dialed.binding);
     let key = token.secret.key();
-    let intent =
-        Intent::Token { token: key.public(), proof: key.sign(Domain::Session, &binding), member: device.joining(&binding) };
+    let intent = Intent::Token {
+        token: key.public(),
+        proof: key.sign(Domain::Session, &binding),
+        member: device.joining(&binding),
+    };
     hello(&mut socket, intent).await?;
     let joined = joined(&mut socket, &token.hub, token.cert).await?;
     if joined.world != token.world {

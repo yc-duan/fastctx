@@ -70,8 +70,7 @@ impl Inner {
             let (opened, opening) = oneshot::channel();
             let inner = self.clone();
             let task = tokio::spawn(async move {
-                let _ = opened
-                    .send(Stream::open(&inner.data_endpoint(), &inner.key, ticket.stream, End::Source).await);
+                let _ = opened.send(Stream::open(&inner.data_endpoint(), &inner.key, ticket.stream, End::Source).await);
             });
             (message, Side::Opening(task, opening))
         } else {

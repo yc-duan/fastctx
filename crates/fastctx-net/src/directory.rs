@@ -193,7 +193,13 @@ impl Directory {
 
     /// Whether `member`, acting for `account`, may `use_` `machine`; when
     /// not, why, in words for whoever is refused.
-    pub fn may(&self, member: &MachineName, account: &AccountName, machine: &MachineName, use_: Use) -> Result<(), String> {
+    pub fn may(
+        &self,
+        member: &MachineName,
+        account: &AccountName,
+        machine: &MachineName,
+        use_: Use,
+    ) -> Result<(), String> {
         let purpose = match use_ {
             Use::Hands => Purpose::Hands,
             Use::Agents => Purpose::Agents,
@@ -203,7 +209,13 @@ impl Directory {
 
     /// Whether `from` may say something for `purpose` to `to`, for
     /// `account`; when not, why, in words for whoever is refused.
-    pub fn admits(&self, from: &MachineName, account: &AccountName, to: &MachineName, purpose: Purpose) -> Result<(), String> {
+    pub fn admits(
+        &self,
+        from: &MachineName,
+        account: &AccountName,
+        to: &MachineName,
+        purpose: Purpose,
+    ) -> Result<(), String> {
         match self.account(account) {
             None => return Err(format!("there is no account {account}")),
             Some(found) if found.locked => return Err(format!("the account {account} is locked")),
@@ -228,7 +240,9 @@ impl Directory {
         }
         Err(match self.member(to) {
             None => format!("there is no machine named {to}"),
-            Some(member) if !member.is_machine() && matches!(purpose, Purpose::Hands | Purpose::Agents | Purpose::Look) => {
+            Some(member)
+                if !member.is_machine() && matches!(purpose, Purpose::Hands | Purpose::Agents | Purpose::Look) =>
+            {
                 format!("{to} is logged in to this hub but not registered as a machine, so no account can use it")
             }
             Some(_) => match purpose {

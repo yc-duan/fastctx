@@ -16,9 +16,7 @@ impl Link {
                     return Err(format!("the hub answered for fastctx {}, requested {version}", release.version));
                 }
                 if CertPin::of(&certificate) != self.membership().cert {
-                    return Err(
-                        "the release certificate is not the hub certificate this membership pins".into()
-                    );
+                    return Err("the release certificate is not the hub certificate this membership pins".into());
                 }
                 Ok((release, certificate))
             }

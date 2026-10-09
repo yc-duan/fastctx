@@ -11,8 +11,8 @@ use std::sync::Arc;
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteResult};
 
-use super::outgoing::Outgoing;
 use super::Inner;
+use super::outgoing::Outgoing;
 use crate::data::Stream;
 use crate::envelope::{Envelope, Kind};
 use crate::message::Body;
@@ -109,7 +109,8 @@ async fn reply(
     stream: Option<Ticket>,
     body: serde_json::Value,
 ) {
-    if let Err(error) = up.write(Up::Answer { call: id, message: answer_envelope(inner, call, kind, stream, &body) }).await
+    if let Err(error) =
+        up.write(Up::Answer { call: id, message: answer_envelope(inner, call, kind, stream, &body) }).await
     {
         inner.node.log(format!("answering {}: {error}", call.from));
     }

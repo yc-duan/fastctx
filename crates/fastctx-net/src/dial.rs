@@ -165,7 +165,12 @@ pub async fn dial(hub: &[SocketAddr], pin: Option<CertPin>, path: &str, max_mess
     dial_routes(hub, pin, path, max_message).await
 }
 
-async fn dial_routes(hub: &[SocketAddr], pin: Option<CertPin>, path: &str, max_message: usize) -> Result<Dialed, String> {
+async fn dial_routes(
+    hub: &[SocketAddr],
+    pin: Option<CertPin>,
+    path: &str,
+    max_message: usize,
+) -> Result<Dialed, String> {
     let mut failures = Vec::new();
     for address in hub {
         let (mut ways, note) = ways(*address);
@@ -291,7 +296,8 @@ pub fn backoff(failures: u32) -> std::time::Duration {
 /// Asks the upstream at `addresses` whether it takes sessions now
 /// (`wire::Intent::Probe`).
 pub async fn probe(addresses: &[SocketAddr], pin: CertPin) -> Result<(), String> {
-    let mut socket = dial(addresses, Some(pin), crate::wire::CONTROL_PATH, crate::wire::MAX_CONTROL_FRAME).await?.socket;
+    let mut socket =
+        dial(addresses, Some(pin), crate::wire::CONTROL_PATH, crate::wire::MAX_CONTROL_FRAME).await?.socket;
     let hello = Up::Hello {
         protocol: crate::wire::PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),

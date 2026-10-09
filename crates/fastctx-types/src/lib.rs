@@ -40,7 +40,7 @@ pub mod write;
 
 pub use calls::{Attach, Call, JournalCall, ProjectCall, Reply};
 pub use names::{
-    AccountName, Address, AgentName, EntryId, HubName, JobId, JournalName, MachineName, NameError, NoticeId,
-    PageName, ResidentId, TownName,
+    AccountName, Address, AgentName, EntryId, HubName, JobId, JournalName, MachineName, NameError, NoticeId, PageName,
+    ResidentId, TownName,
 };
 pub use process::ProcessIdentity;
