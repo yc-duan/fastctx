@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use fastctx_platform::Staged;
 
+pub mod licenses;
+
 pub const VERSION: &str = env!("FASTCTX_RIPGREP_VERSION");
 pub const NAME: &str = if cfg!(windows) { "rg.exe" } else { "rg" };
 const IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/rg"));
@@ -15,6 +17,7 @@ const IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/rg"));
 /// jobs start. `directory` must exist and belong to this version of the World.
 /// Replacement is atomic; an unreadable existing image is an error.
 pub fn place(directory: &Path) -> io::Result<PathBuf> {
+    licenses::place(directory)?;
     let path = directory.join(NAME);
     let present = match fs::read(&path) {
         Ok(bytes) => bytes == IMAGE,

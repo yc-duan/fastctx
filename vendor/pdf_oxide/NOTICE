@@ -20,3 +20,7 @@ source-code license. See TRADEMARKS.md.
 Portions of this software incorporate third-party open-source components; their
 respective licenses are listed in the dependency manifests (Cargo.toml /
 Cargo.lock and the per-binding package manifests).
+
+Supplemental attribution added by fastctx:
+The CCITT decoder includes code ported from fax 0.3.0.
+Copyright © 2021 The pdf-rs contributers. See LICENSE-fax for its MIT terms.

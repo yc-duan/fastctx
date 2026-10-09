@@ -5,12 +5,14 @@ import hashlib
 import io
 import json
 import struct
+import sys
 import tarfile
 import tomllib
 import zipfile
 from pathlib import Path
 
 import ripgrep
+from license_text import input_marker
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = {
@@ -90,10 +92,26 @@ def manifest(name):
 
 
 def legal_files(notices):
+    if input_marker(ROOT) not in notices.read_text(encoding='utf-8'):
+        raise ValueError('THIRD_PARTY_LICENSES.md is stale; regenerate it with scripts/notices.py')
     if ripgrep.notices().strip() not in notices.read_text(encoding='utf-8'):
         raise ValueError('THIRD_PARTY_LICENSES.md is missing the bundled ripgrep notices')
     return {name: ((notices if name == 'THIRD_PARTY_LICENSES.md' else ROOT/name).read_bytes(), 0o644)
             for name in LEGAL}
+
+
+def verify_embedded_legal(binary, legal):
+    for name, (data, _) in legal.items():
+        if data not in binary:
+            raise ValueError(f'Executable does not embed this build\'s {name}; rebuild it with these notices')
+
+
+def check_binary(args):
+    binary = args.binary.read_bytes()
+    verify_machine(binary, args.target)
+    ripgrep.verify_embedded(binary, args.target)
+    verify_embedded_legal(binary, legal_files(args.notices))
+    print(f'Verified embedded legal material: {args.binary}', file=sys.stderr)
 
 
 def npm(output, name, metadata, files):
@@ -121,6 +139,7 @@ def platform(args):
     verify_machine(binary, args.target)
     ripgrep.verify_embedded(binary, args.target)
     legal = legal_files(args.notices)
+    verify_embedded_legal(binary, legal)
     files = {**legal, executable: (binary, 0o755)}
     extension = '.zip' if os == 'win32' else '.tar.gz'
     name = f'fastctx-{args.target}{extension}'
@@ -165,6 +184,8 @@ def verify(args):
         assert {n: digest(data) for n, data in files.items()} == evidence['members']
         verify_machine(files[executable], target)
         ripgrep.verify_embedded(files[executable], target)
+        verify_embedded_legal(files[executable], {name: (files[name], 0o644) for name in LEGAL})
+        assert input_marker(ROOT) in files['THIRD_PARTY_LICENSES.md'].decode('utf-8')
         assert ripgrep.notices().strip() in files['THIRD_PARTY_LICENSES.md'].decode('utf-8').replace('\r\n', '\n')
         path = args.output/'npm'/f'fastctx-{os}-{arch}-{VERSION}.tgz'
         with tarfile.open(path) as source:
@@ -180,6 +201,11 @@ def verify(args):
             assert metadata['bin'] == dict(fastctx='launcher.js')
             assert metadata['optionalDependencies'] == {f'@fastctx/{o}-{a}': VERSION for o, a in TARGETS.values()}
             assert source.extractfile('package/launcher.js').read() == (ROOT/'packages/launcher.js').read_bytes()
+            for legal_name in LEGAL:
+                member = source.extractfile('package/licenses/'+legal_name)
+                assert member is not None, f'{name} is missing {legal_name}'
+                data = member.read()
+                assert data == files[legal_name], f'{name}: {legal_name} differs from the native distribution'
     checksums(args.output)
     print(f'Verified {len(targets)} platform(s) and both npm roots at {VERSION}')
 
@@ -187,18 +213,19 @@ def verify(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
-    for command in ('roots', 'platform', 'verify'):
+    for command in ('roots', 'platform', 'verify', 'check-binary'):
         p = commands.add_parser(command)
-        p.add_argument('--output', type=Path, required=True)
+        if command != 'check-binary':
+            p.add_argument('--output', type=Path, required=True)
         if command != 'verify':
             p.add_argument('--notices', type=Path, required=True)
         else:
             p.add_argument('--complete', action='store_true')
-        if command == 'platform':
+        if command in ('platform', 'check-binary'):
             p.add_argument('--target', choices=TARGETS, required=True)
             p.add_argument('--binary', type=Path, required=True)
     args = parser.parse_args()
-    globals()[args.command](args)
+    globals()[args.command.replace('-', '_')](args)
 
 
 if __name__ == '__main__':

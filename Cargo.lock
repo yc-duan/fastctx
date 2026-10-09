@@ -1246,6 +1246,7 @@ dependencies = [
  "fastctx-install",
  "fastctx-node",
  "fastctx-platform",
+ "fastctx-ripgrep",
  "fastctx-serve",
  "fastctx-tui",
  "fastctx-types",

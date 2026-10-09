@@ -1,3 +1,4 @@
+// Modified by fastctx: removed unused PDF/A conversion and its bundled ICC asset.
 //! C Foreign Function Interface (FFI) for pdf_oxide
 //!
 //! Provides `#[no_mangle] pub extern "C"` functions that Go (CGO), Node.js (N-API),
@@ -1285,47 +1286,6 @@ pub extern "C" fn document_editor_extract_pages_to_bytes(
         Err(e) => {
             set_error(error_code, classify_error(&e));
             ptr::null_mut()
-        },
-    }
-}
-
-/// Convert the edited document to PDF/A in-place.
-/// level: 0=A1b 1=A1a 2=A2b 3=A2a 4=A2u 5=A3b 6=A3a 7=A3u
-#[no_mangle]
-pub extern "C" fn document_editor_convert_to_pdf_a(
-    handle: *mut DocumentEditor,
-    level: i32,
-    error_code: *mut i32,
-) -> i32 {
-    if handle.is_null() {
-        set_error(error_code, ERR_INVALID_ARG);
-        return -1;
-    }
-    use crate::compliance::convert_to_pdf_a;
-    use crate::compliance::types::PdfALevel;
-    let pdf_level = match level {
-        0 => PdfALevel::A1b,
-        1 => PdfALevel::A1a,
-        2 => PdfALevel::A2b,
-        3 => PdfALevel::A2a,
-        4 => PdfALevel::A2u,
-        5 => PdfALevel::A3b,
-        6 => PdfALevel::A3a,
-        7 => PdfALevel::A3u,
-        _ => {
-            set_error(error_code, ERR_INVALID_ARG);
-            return -1;
-        },
-    };
-    let editor = handle_mut(handle);
-    match convert_to_pdf_a(editor.source_mut(), pdf_level) {
-        Ok(_) => {
-            set_error(error_code, ERR_SUCCESS);
-            0
-        },
-        Err(e) => {
-            set_error(error_code, classify_error(&e));
-            -1
         },
     }
 }
@@ -7565,7 +7525,7 @@ pub extern "C" fn pdf_merge(
 // ─── PDF/A Validation ──────────────────────────────────────────────────────
 
 use crate::compliance::{
-    convert_to_pdf_a, validate_pdf_a, PdfALevel, ValidationResult as PdfAValidationResult,
+    validate_pdf_a, PdfALevel, ValidationResult as PdfAValidationResult,
 };
 
 pub struct FfiPdfAResults {
@@ -7606,45 +7566,8 @@ pub extern "C" fn pdf_validate_pdf_a_level(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn pdf_convert_to_pdf_a(
-    document: *mut PdfDocument,
-    level: i32,
-    error_code: *mut i32,
-) -> bool {
-    if document.is_null() {
-        set_error(error_code, ERR_INVALID_ARG);
-        return false;
-    }
-    let pdf_level = match level {
-        0 => PdfALevel::A1b,
-        1 => PdfALevel::A1a,
-        2 => PdfALevel::A2b,
-        3 => PdfALevel::A2a,
-        4 => PdfALevel::A2u,
-        5 => PdfALevel::A3b,
-        6 => PdfALevel::A3a,
-        7 => PdfALevel::A3u,
-        _ => {
-            set_error(error_code, ERR_INVALID_ARG);
-            return false;
-        },
-    };
-    let doc = handle_mut(document);
-    match convert_to_pdf_a(doc, pdf_level) {
-        Ok(result) => {
-            set_error(error_code, ERR_SUCCESS);
-            result.success
-        },
-        Err(e) => {
-            set_error(error_code, classify_error(&e));
-            false
-        },
-    }
-}
-
-/// Return a copy of the document's current source bytes (after any in-place
-/// conversion). `out_len` receives the byte count. Free with `free_bytes`.
+/// Return a copy of the document's source bytes.
+/// `out_len` receives the byte count. Free with `free_bytes`.
 #[no_mangle]
 pub extern "C" fn pdf_document_get_source_bytes(
     document: *mut PdfDocument,

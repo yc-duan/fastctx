@@ -44,12 +44,21 @@ static MSVC runtime. `gui/scripts/release.mjs` calls this same builder before
 copying the exact kernel into Tauri's sidecar directory. Its installer signing
 step is separate and requires the application's configured signing material.
 
+Generate `dist/THIRD_PARTY_LICENSES.md` before invoking the kernel builder or
+the GUI release script. The builder embeds that exact file, verifies all three
+embedded legal texts, and rejects a notice file from a different lockfile or
+supplemental-license inventory. `FASTCTX_THIRD_PARTY_LICENSES` can select another
+generated file. A build without it, as an ordinary development build, embeds a
+line saying it carries no third-party notices, and packaging rejects it.
+`fastctx --licenses` prints the embedded texts without starting a World.
+When ripgrep is extracted, the same three readable files are placed beside it.
+
 Generate third-party notices with the matching Rust toolchain and cargo-about
 0.9.0, then assemble local packages:
 
 ```sh
 cargo +1.92.0 run --locked --release -p fastctx-tui --example syntax_notices > syntax-notices.md
-python scripts/notices.py --syntax-notices syntax-notices.md --output dist/THIRD_PARTY_LICENSES.md
+RUSTUP_TOOLCHAIN=1.92.0 python scripts/notices.py --syntax-notices syntax-notices.md --output dist/THIRD_PARTY_LICENSES.md
 python scripts/package.py roots --notices dist/THIRD_PARTY_LICENSES.md --output dist
 python scripts/package.py platform --target x86_64-unknown-linux-gnu --binary TARGET/x86_64-unknown-linux-musl/release/fastctx --notices dist/THIRD_PARTY_LICENSES.md --output dist
 python scripts/package.py verify --output dist
@@ -61,6 +70,21 @@ regular files at its root. `SHA256SUMS` covers archives. The platform JSON
 records both the historical target and actual build target, and each member's
 SHA-256. The server command takes the archive digests from `SHA256SUMS`.
 All six platforms can be checked together with `verify --complete`.
+
+The GUI's before-build command also generates readable installation resources
+with `scripts/gui-notices.py`. It scans the GUI's own locked Rust workspace,
+retains its exact-version source archive links, and joins that output with the
+kernel, frontend, embedded PDF.js components and font notices. Vite records the
+actual input package inventory in `dist/licenses/frontend-packages.json`;
+packages without a complete license stop the build. The Tauri resources contain
+`LICENSE-APACHE`, `NOTICE`, and `THIRD_PARTY_LICENSES.md` under `licenses/`.
+Cargo-about and the Rust toolchain's copyright files must be installed for the GUI too.
+On a fresh checkout, fetch the GUI's separate locked graph with
+`cargo +1.92.0 fetch --locked --manifest-path gui/src-tauri/Cargo.toml` before
+the offline notice step. Its workspace selects the same vendored pdf_oxide
+patch as the kernel. Native WebView2 SDK and Rust-binding notices are pinned
+separately in `gui/licenses/webview2-sources.json`; updating those crates
+requires reviewing that SDK inventory too.
 
 # Inviting a Linux server
 

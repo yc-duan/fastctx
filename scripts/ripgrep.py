@@ -10,6 +10,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from license_text import share_html_notices
+
 VENDOR = Path(__file__).resolve().parents[1] / 'crates/fastctx-ripgrep/vendor'
 
 
@@ -82,7 +84,26 @@ def notices():
         text += f'\n### ripgrep {name}\n\n```text\n' + (VENDOR / name).read_text(encoding='utf-8') + '```\n'
     text += '\n### PCRE2 10.45 (bundled by official ripgrep)\n\n' + (VENDOR / 'PCRE2-LICENCE.md').read_text(encoding='utf-8')
     text += '\n### ripgrep Rust dependencies\n\n' + (VENDOR / 'DEPENDENCIES.md').read_text(encoding='utf-8')
-    return text
+    components = VENDOR.parents[2] / 'licenses/components'
+    for name in ('jemalloc-5.3.1', 'regex-syntax-0.8.11-unicode', 'musl-1.2.5-zig-0.14.1'):
+        text += f'\n### ripgrep supplemental {name}\n\n' + (components / f'{name}.txt').read_text(encoding='utf-8')
+    directory = components.parent / 'ripgrep-rust'
+    toolchains = json.loads((directory / 'sources.json').read_bytes())
+    covered = []
+    for entry in toolchains:
+        data = (directory / entry['file']).read_bytes()
+        if hashlib.sha256(data).hexdigest() != entry['sha256']:
+            raise ValueError(f"Rust notice does not match its recorded hash: {entry['file']}")
+        for target in entry['targets']:
+            if entry['commit'].encode() not in image(target):
+                raise ValueError(f'ripgrep {target} toolchain changed; refresh its Rust notices')
+            covered.append(target)
+        text += f"\n### ripgrep Rust {entry['version']} standard library\n\n"
+        text += 'Targets: ' + ', '.join(entry['targets']) + f". Compiler commit: {entry['commit']}.\n\n"
+        text += data.decode('utf-8')
+    if sorted(covered) != sorted(pinned['targets']):
+        raise ValueError('Every ripgrep target must have exactly one standard-library notice inventory')
+    return share_html_notices(text)
 
 
 def fetch():
