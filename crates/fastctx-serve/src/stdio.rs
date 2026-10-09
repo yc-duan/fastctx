@@ -10,39 +10,30 @@
 //! that dies without its writer closing, because another process inherited
 //! it, would otherwise leave this server running for good.
 
-use std::io::{self, BufRead as _};
+use std::io::{self, BufRead as _, Write as _};
 
-use tokio::io::AsyncWriteExt as _;
 use tokio::sync::{mpsc, oneshot};
 
 /// What reading standard input yields: a line, or why reading stopped.
 pub enum Input {
     Line(String),
     Failed(io::Error),
-    /// The process that started this server exited.
-    HostGone,
+    Ended,
 }
 
 /// Lines from standard input until it ends.
 pub fn input() -> mpsc::Receiver<Input> {
     let (sender, receiver) = mpsc::channel(16);
-    // Where the platform cannot watch a process, standard input is the only
-    // sign, as it always was.
-    if let Ok(host) = fastctx_platform::host_process::parent_identity() {
-        let sender = sender.clone();
-        std::thread::spawn(move || {
-            if fastctx_platform::host_process::wait_for_exit(&host).is_ok() {
-                let _ = sender.blocking_send(Input::HostGone);
-            }
-        });
-    }
     std::thread::spawn(move || {
         let stdin = io::stdin();
         let mut stdin = stdin.lock();
         loop {
             let mut line = String::new();
             match stdin.read_line(&mut line) {
-                Ok(0) => return,
+                Ok(0) => {
+                    let _ = sender.blocking_send(Input::Ended);
+                    return;
+                }
                 Ok(_) => {
                     if sender.blocking_send(Input::Line(line)).is_err() {
                         return;
@@ -75,30 +66,34 @@ impl Output {
     /// dropped and every line is written.
     pub fn start() -> (Self, tokio::task::JoinHandle<io::Result<()>>) {
         let (sender, mut receiver) = mpsc::unbounded_channel::<Line>();
-        let writer = tokio::spawn(async move {
-            let mut stdout = tokio::io::stdout();
-            while let Some(Line { text: mut line, receipt, answer }) = receiver.recv().await {
-                line.push('\n');
-                let written = async {
-                    stdout.write_all(line.as_bytes()).await?;
-                    stdout.flush().await
+        let (finished, done) = oneshot::channel();
+        let runtime = tokio::runtime::Handle::current();
+        // A leaked pipe reader must not hold up runtime shutdown when the host exits.
+        std::thread::spawn(move || {
+            let result = (|| -> io::Result<()> {
+                let stdout = io::stdout();
+                let mut stdout = stdout.lock();
+                while let Some(Line { text: mut line, receipt, answer }) = receiver.blocking_recv() {
+                    line.push('\n');
+                    let written = stdout.write_all(line.as_bytes()).and_then(|()| stdout.flush());
+                    if written.is_ok()
+                        && let Some(answer) = answer
+                    {
+                        runtime.block_on(answer.sent());
+                    }
+                    if let Some(receipt) = receipt {
+                        let _ = receipt.send(match &written {
+                            Ok(()) => Ok(()),
+                            Err(error) => Err(error.to_string()),
+                        });
+                    }
+                    written?;
                 }
-                .await;
-                if written.is_ok()
-                    && let Some(answer) = answer
-                {
-                    answer.sent().await;
-                }
-                if let Some(receipt) = receipt {
-                    let _ = receipt.send(match &written {
-                        Ok(()) => Ok(()),
-                        Err(error) => Err(error.to_string()),
-                    });
-                }
-                written?;
-            }
-            Ok(())
+                Ok(())
+            })();
+            let _ = finished.send(result);
         });
+        let writer = tokio::spawn(async move { done.await.map_err(io::Error::other)? });
         (Self { sender }, writer)
     }
 

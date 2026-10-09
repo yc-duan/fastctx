@@ -29,26 +29,54 @@ const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", 
 /// calls in flight answer. Each call ends within the `run` wait, so this
 /// ends too.
 pub async fn serve(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
+    let host = fastctx_platform::host_process::parent_identity();
+    let gone = async {
+        match host {
+            Ok(host) => match fastctx_platform::host_process::exited(&host).await {
+                Ok(()) => return,
+                Err(error) => eprintln!(
+                    "fastctx serve: observing its host failed: {error}; standard input still determines its lifetime"
+                ),
+            },
+            Err(error) => eprintln!(
+                "fastctx serve: identifying its host failed: {error}; standard input still determines its lifetime"
+            ),
+        }
+        std::future::pending::<()>().await;
+    };
+    tokio::select! {
+        result = serve_session(world, writes_off) => result,
+        () = gone => {
+            eprintln!("fastctx serve: the process that started it exited; leaving");
+            Ok(())
+        }
+    }
+}
+
+async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
     let session = Arc::new(Session::new(world, writes_off)?);
     let mut input = stdio::input();
     let (output, printing) = Output::start();
     let mut calls = JoinSet::new();
     let mut in_flight: HashMap<String, AbortHandle> = HashMap::new();
     let mut ended = "standard input ended";
-    while let Some(input) = input.recv().await {
+    loop {
+        let input = tokio::select! {
+            input = input.recv() => match input { Some(input) => input, None => break },
+            _ = calls.join_next(), if !calls.is_empty() => {
+                in_flight.retain(|_, handle| !handle.is_finished());
+                if in_flight.is_empty() { in_flight = HashMap::new(); }
+                if calls.is_empty() { calls = JoinSet::new(); }
+                continue;
+            },
+        };
         let line = match input {
             Input::Line(line) => line,
+            Input::Ended => break,
             Input::Failed(error) => {
                 eprintln!("fastctx serve: reading standard input: {error}");
                 ended = "reading standard input failed";
                 break;
-            }
-            Input::HostGone => {
-                // Nobody reads the answers now; what the calls started in
-                // the World goes on without them.
-                eprintln!("fastctx serve: the process that started it exited; leaving");
-                calls.abort_all();
-                return Ok(());
             }
         };
         if line.trim().is_empty() {
@@ -144,10 +172,13 @@ pub async fn serve(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
             // Answers to requests this server never sends.
             (None, _) => {}
         }
-        while let Some(done) = calls.try_join_next() {
-            if let Ok(key) = done {
-                in_flight.remove(&key);
-            }
+        while calls.try_join_next().is_some() {}
+        in_flight.retain(|_, handle| !handle.is_finished());
+        if in_flight.is_empty() {
+            in_flight = HashMap::new();
+        }
+        if calls.is_empty() {
+            calls = JoinSet::new();
         }
     }
     eprintln!("fastctx serve: {ended}; answering the calls in flight, then leaving");

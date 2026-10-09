@@ -89,7 +89,10 @@ pub fn used(node: &Arc<Node>, resident: &ResidentId, turn: &str, used: Use) {
 pub fn turn_ended(node: &Arc<Node>, resident: &ResidentId, turn: &str) {
     let tell = {
         let mut state = node.desk.state.lock().expect("never poisoned");
-        let was_calling = state.calling.remove(resident).is_some();
+        let was_calling = state.calling.get(resident).is_some_and(|held| held == turn || turn.is_empty());
+        if was_calling {
+            state.calling.remove(resident);
+        }
         let sat =
             state.holder.as_ref().is_some_and(|(holder, held)| holder == resident && (held == turn || turn.is_empty()));
         if sat {
@@ -104,6 +107,10 @@ pub fn turn_ended(node: &Arc<Node>, resident: &ResidentId, turn: &str) {
         std::mem::take(&mut state.waiting).into_iter().map(|waiting| (waiting, text.clone())).collect()
     };
     send(node, tell, &format!("ended:{resident}:{turn}"));
+}
+
+pub fn removed(node: &Arc<Node>, resident: &ResidentId) {
+    node.desk.state.lock().expect("never poisoned").waiting.remove(resident);
 }
 
 /// Marks in the resident's `now` whether it sits at the desk.

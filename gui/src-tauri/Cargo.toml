@@ -11,6 +11,9 @@ publish = false
 # and tests, and the core is reached by path.
 [workspace]
 
+[patch.crates-io]
+pdf_oxide = { path = "../../vendor/pdf_oxide" }
+
 [features]
 page-sandbox-probe = ["tauri-plugin-world-pages/probe"]
 

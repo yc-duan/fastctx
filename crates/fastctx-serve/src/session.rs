@@ -14,6 +14,9 @@ use fastctx_types::write::{ApplyPatchRequest, EditRequest, WriteOp, WriteRequest
 use fastctx_types::{Address, AgentName, Call, MachineName, Reply, ResidentId};
 use serde_json::Value;
 
+#[cfg(test)]
+mod lifetime;
+
 use crate::answer::{self, Answer};
 
 pub struct Session {
@@ -26,7 +29,7 @@ pub struct Session {
     colleague: bool,
     /// The residents this session's calls belong to, by Codex thread; calls
     /// with no thread share the entry for `None`.
-    residents: Mutex<HashMap<Option<String>, Whereabouts>>,
+    residents: tokio::sync::Mutex<HashMap<Option<String>, Arrival>>,
     /// Who the calls of each thread were, kept when the connection to the
     /// node breaks, so the session arrives again as the same resident.
     were: Mutex<HashMap<Option<String>, ResidentId>>,
@@ -34,6 +37,11 @@ pub struct Session {
     starting: tokio::sync::Mutex<()>,
     /// The World's write commands refuse in this session's shell.
     writes_off: bool,
+}
+
+struct Arrival {
+    whereabouts: Whereabouts,
+    client: Client,
 }
 
 impl Session {
@@ -50,7 +58,7 @@ impl Session {
             host: OnceLock::new(),
             resident,
             colleague,
-            residents: Mutex::new(HashMap::new()),
+            residents: tokio::sync::Mutex::new(HashMap::new()),
             were: Mutex::new(HashMap::new()),
             starting: tokio::sync::Mutex::new(()),
             writes_off,
@@ -355,10 +363,30 @@ impl Session {
             };
         }
         let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
-        if let Some(known) = self.residents.lock().expect("never poisoned").get(&thread) {
-            return Ok(known.clone());
+        let session = self.clone();
+        // A tool cancellation does not end its session's arrival connection.
+        // Finish this read-only probe/registration even if that caller leaves.
+        tokio::spawn(async move { session.arrival(host, thread).await })
+            .await
+            .map_err(|error| format!("checking the session's arrival: {error}"))?
+    }
+
+    async fn arrival(self: &Arc<Self>, host: Host, thread: Option<String>) -> Result<Whereabouts, String> {
+        let mut residents = self.residents.lock().await;
+        if let Some(mut known) = residents.remove(&thread) {
+            // Check the arrival connection itself before trusting presence. A detached
+            // EOF watcher can run after this call has already reached a replacement node.
+            match known.client.call(Call::Machines).await {
+                Ok(Reply::Machines { .. }) => {
+                    let whereabouts = known.whereabouts.clone();
+                    residents.insert(thread, known);
+                    return Ok(whereabouts);
+                }
+                Err(CallError::Broken(_)) => {}
+                Err(error) => return Err(error.to_string()),
+                Ok(other) => return Err(format!("the node answered something else: {other:?}")),
+            }
         }
-        let host = self.host.get().cloned().ok_or("the session did not introduce itself with `initialize`")?;
         let was = self.were.lock().expect("never poisoned").get(&thread).cloned();
         let resident = self
             .resident
@@ -371,16 +399,11 @@ impl Session {
         let mut client = self.client().await?;
         match client.call(Call::Arrive { host, hints }).await {
             Ok(Reply::Arrived(whereabouts)) => {
-                self.residents.lock().expect("never poisoned").insert(thread.clone(), whereabouts.clone());
                 self.were.lock().expect("never poisoned").insert(thread.clone(), whereabouts.resident.clone());
                 // The connection the resident arrived on stays open for as
                 // long as the session lives; if the node closes it, as when
                 // it restarts, the next call arrives again.
-                let session = self.clone();
-                tokio::spawn(async move {
-                    client.closed().await;
-                    session.residents.lock().expect("never poisoned").remove(&thread);
-                });
+                residents.insert(thread, Arrival { whereabouts: whereabouts.clone(), client });
                 Ok(whereabouts)
             }
             Ok(other) => Err(format!("the node answered something else: {other:?}")),

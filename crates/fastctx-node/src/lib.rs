@@ -31,6 +31,7 @@ mod file_search;
 pub mod handoff;
 mod inbox;
 mod jobs;
+mod leases;
 mod ledger;
 mod letters;
 mod log;
@@ -56,9 +57,9 @@ mod stop;
 mod talk;
 mod town;
 mod turns;
+mod waiting;
 mod watch;
 mod watchdog;
-mod waiting;
 mod who;
 mod words;
 mod world;
@@ -287,6 +288,7 @@ pub async fn run_replacing(
         environment,
         Arc::new(move |line| codex_log.line(line)),
     );
+    let claude = claude::Claude::new(&world)?;
     let node = Arc::new(Node {
         root: fastctx_root.to_path_buf(),
         world,
@@ -296,7 +298,7 @@ pub async fn run_replacing(
         residents,
         codex,
         unclaimed: codex::Unclaimed::default(),
-        claude: claude::Claude::default(),
+        claude,
         desk: desk::Desk::default(),
         watchers: watch::Watchers::default(),
         composers: composer::Composers::default(),

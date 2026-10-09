@@ -3,6 +3,9 @@
 use fastctx_types::ProcessIdentity;
 use std::io;
 
+mod asynchronous;
+pub use asynchronous::exited;
+
 pub fn parent_identity() -> io::Result<ProcessIdentity> {
     crate::identity_of(parent_pid()?)?.ok_or_else(|| io::Error::other("the parent process already exited"))
 }

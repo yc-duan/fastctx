@@ -19,8 +19,8 @@ mod terminal;
 mod user_path;
 
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[cfg(not(target_os = "android"))]
 use fastctx_client::Conversation;
@@ -53,13 +53,52 @@ mod titlebar;
 
 struct Shell {
     connection: connection::Connection,
-    watches: Mutex<HashMap<u64, JoinHandle<()>>>,
+    watches: Arc<Mutex<HashMap<u64, JoinHandle<()>>>>,
     next: AtomicU64,
+    page: AtomicU64,
 }
 
 impl Shell {
     fn world(&self) -> World {
         self.connection.world()
+    }
+
+    fn close_page(&self) {
+        self.page.fetch_add(1, Ordering::Relaxed);
+        self.world().close_file_searches();
+        for (_, watch) in self.watches.lock().expect("watch table").drain() {
+            watch.abort();
+        }
+    }
+
+    fn follow(
+        &self,
+        page: u64,
+        id: u64,
+        work: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> Result<(), String> {
+        let mut watches = self.watches.lock().expect("watch table");
+        if self.page.load(Ordering::Relaxed) != page {
+            return Err("the conversation's page closed".into());
+        }
+        let registry = Arc::downgrade(&self.watches);
+        let task = tauri::async_runtime::spawn(async move {
+            struct Finished {
+                registry: std::sync::Weak<Mutex<HashMap<u64, JoinHandle<()>>>>,
+                id: u64,
+            }
+            impl Drop for Finished {
+                fn drop(&mut self) {
+                    if let Some(registry) = self.registry.upgrade() {
+                        registry.lock().expect("watch table").remove(&self.id);
+                    }
+                }
+            }
+            let _finished = Finished { registry, id };
+            work.await;
+        });
+        watches.insert(id, task);
+        Ok(())
     }
 }
 
@@ -75,11 +114,11 @@ async fn select_connection(
     shell: tauri::State<'_, Shell>,
     mode: connection::Mode,
 ) -> Result<connection::State, String> {
+    let previous = shell.world();
     let (state, changed) = shell.connection.select(mode)?;
     if changed {
-        for (_, watch) in shell.watches.lock().expect("watch table").drain() {
-            watch.abort();
-        }
+        previous.close_file_searches();
+        shell.close_page();
     }
     Ok(state)
 }
@@ -197,6 +236,7 @@ async fn watch(
     machine_name: Option<String>,
     pieces: Channel<Piece>,
 ) -> Result<Watch, String> {
+    let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
@@ -207,9 +247,9 @@ async fn watch(
     let (conversation, history) = android::watching::open(&world, resident.clone(), machine.clone()).await?;
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
     #[cfg(target_os = "android")]
-    let task = tauri::async_runtime::spawn(android::watching::stream(world, resident, machine, conversation, pieces));
+    let work = android::watching::stream(world, resident, machine, conversation, pieces);
     #[cfg(not(target_os = "android"))]
-    let task = tauri::async_runtime::spawn(async move {
+    let work = async move {
         let mut conversation = conversation;
         loop {
             match conversation.next().await {
@@ -228,8 +268,8 @@ async fn watch(
                 }
             }
         }
-    });
-    shell.watches.lock().expect("watch table").insert(id, task);
+    };
+    shell.follow(page, id, work)?;
     Ok(Watch { id, history })
 }
 
@@ -645,13 +685,19 @@ async fn set_relay(
     let address = |text: &str| {
         text.trim().parse::<std::net::SocketAddr>().map_err(|_| format!("{} is not an address as IP:port", text.trim()))
     };
-    let public = public.iter().filter(|text| !text.trim().is_empty()).map(|text| address(text)).collect::<Result<Vec<_>, _>>()?;
+    let public = public
+        .iter()
+        .filter(|text| !text.trim().is_empty())
+        .map(|text| address(text))
+        .collect::<Result<Vec<_>, _>>()?;
     let relay = match public.first() {
         None => None,
         Some(first) => {
             let listen = match listen.as_deref().map(str::trim).filter(|text| !text.is_empty()) {
                 Some(text) => address(text)?,
-                None if first.is_ipv4() => std::net::SocketAddr::new(std::net::Ipv4Addr::UNSPECIFIED.into(), first.port()),
+                None if first.is_ipv4() => {
+                    std::net::SocketAddr::new(std::net::Ipv4Addr::UNSPECIFIED.into(), first.port())
+                }
                 None => std::net::SocketAddr::new(std::net::Ipv6Addr::UNSPECIFIED.into(), first.port()),
             };
             Some(fastctx_types::world::RelaySetting { listen, public })
@@ -806,8 +852,16 @@ pub fn run() {
             let directory = app.path().app_data_dir()?;
             let connection = tauri::async_runtime::block_on(async { connection::Connection::open(directory) })
                 .map_err(std::io::Error::other)?;
-            app.manage(Shell { connection, watches: Mutex::new(HashMap::new()), next: AtomicU64::new(0) });
+            app.manage(Shell { connection, watches: Arc::default(), next: AtomicU64::new(0), page: AtomicU64::new(0) });
             Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Started
+                && let Some(shell) = webview.app_handle().try_state::<Shell>()
+            {
+                shell.close_page();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             connection_state,

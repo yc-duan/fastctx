@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 fastctx-types = { path = "../fastctx-types" }
-tokio = { workspace = true, features = ["fs", "io-util", "net", "rt", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "net", "rt", "sync", "time"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

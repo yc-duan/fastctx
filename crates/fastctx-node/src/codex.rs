@@ -68,19 +68,74 @@ pub async fn adopt(node: &Arc<Node>) {
 #[derive(Default)]
 pub struct Unclaimed {
     state: std::sync::Mutex<Reports>,
+    workers: crate::leases::Registry<String, tokio::sync::Mutex<()>>,
 }
 
 #[derive(Default)]
 struct Reports {
     queues: HashMap<String, Vec<HostEvent>>,
-    claimed: std::collections::HashSet<String>,
-    workers: HashMap<String, Arc<tokio::sync::Mutex<()>>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct KeptReports {
     thread: String,
     events: Vec<HostEvent>,
+}
+
+fn pending_path(node: &Node, thread: &str) -> std::path::PathBuf {
+    node.world.path().join("codex-reports").join(format!("{}.jsonl", crate::speech::fixed_id("thread", &[thread])))
+}
+
+fn restore(node: &Node, thread: &str, state: &mut Reports) -> std::io::Result<()> {
+    if !state.queues.contains_key(thread) {
+        let path = pending_path(node, thread).with_extension("json");
+        match std::fs::read(path) {
+            Ok(bytes) => {
+                let kept: KeptReports = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+                if !kept.events.is_empty() {
+                    state.queues.insert(thread.to_string(), kept.events);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let path = pending_path(node, thread);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let mut events = state.queues.get(thread).cloned().unwrap_or_default();
+    let mut seen: std::collections::HashSet<_> =
+        events.iter().map(|event| serde_json::to_vec(event).expect("report serializes")).collect();
+    let mut incomplete = false;
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        let event: HostEvent = match serde_json::from_slice(line) {
+            Ok(event) => event,
+            Err(_) if line.last() != Some(&b'\n') => {
+                incomplete = true;
+                break;
+            }
+            Err(error) => return Err(std::io::Error::other(format!("{}: {error}", path.display()))),
+        };
+        if seen.insert(serde_json::to_vec(&event).expect("report serializes")) {
+            events.push(event);
+        }
+    }
+    save(node, thread, &events)?;
+    if incomplete {
+        let kept = path.with_extension(format!("{}.incomplete", crate::speech::new_id("partial")));
+        fastctx_platform::publish_new(&kept, &bytes, fastctx_platform::Permissions::Private)?;
+        std::fs::remove_file(&path)?;
+        node.log.line(format_args!("an interrupted Codex report append left an incomplete final record; complete records recovered, original bytes retained at {}", kept.display()));
+    } else {
+        std::fs::remove_file(path)?;
+    }
+    if !events.is_empty() {
+        state.queues.insert(thread.to_string(), events);
+    }
+    Ok(())
 }
 
 /// Whether a report is kept on disk until it is applied.
@@ -96,10 +151,18 @@ fn save(node: &Node, thread: &str, events: &[HostEvent]) -> std::io::Result<()> 
     let directory = node.world.path().join("codex-reports");
     fastctx_platform::ensure_private_dir(&directory)?;
     let key = crate::speech::fixed_id("thread", &[thread]);
-    let events = events.iter().filter(|event| durable(event)).cloned().collect();
+    let path = directory.join(format!("{key}.json"));
+    let events: Vec<_> = events.iter().filter(|event| durable(event)).cloned().collect();
+    if events.is_empty() {
+        return match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        };
+    }
     let kept = KeptReports { thread: thread.to_string(), events };
     fastctx_platform::publish(
-        &directory.join(format!("{key}.json")),
+        &path,
         &serde_json::to_vec(&kept).map_err(std::io::Error::other)?,
         fastctx_platform::Permissions::Private,
     )
@@ -108,18 +171,28 @@ fn save(node: &Node, thread: &str, events: &[HostEvent]) -> std::io::Result<()> 
 fn enqueue(node: &Arc<Node>, thread: String, event: HostEvent) -> std::io::Result<()> {
     {
         let mut state = node.unclaimed.state.lock().expect("never poisoned");
-        let claimed = state.claimed.contains(&thread);
+        let claimed = node.residents.resident_of_thread(&thread).is_some();
+        if !claimed {
+            use std::io::Write;
+            let path = pending_path(node, &thread);
+            fastctx_platform::ensure_private_dir(path.parent().expect("reports directory"))?;
+            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+            let mut bytes = serde_json::to_vec(&event).map_err(std::io::Error::other)?;
+            bytes.push(b'\n');
+            file.write_all(&bytes)?;
+            if durable(&event) {
+                file.sync_all()?;
+            }
+            node.codex.acknowledge(&event);
+            node.handoff.changed();
+            return Ok(());
+        }
+        restore(node, &thread, &mut state)?;
         let events = state.queues.entry(thread.clone()).or_default();
         let kept = durable(&event);
         events.push(event);
         if kept {
             save(node, &thread, events)?;
-        }
-        // Reports of threads not yet claimed are recoverable once saved;
-        // claimed threads finish applying their effects before handoff.
-        if !claimed {
-            node.codex.acknowledge(events.last().expect("just enqueued"));
-            node.handoff.changed();
         }
     }
     let node = node.clone();
@@ -130,14 +203,15 @@ fn enqueue(node: &Arc<Node>, thread: String, event: HostEvent) -> std::io::Resul
 }
 
 async fn drain(node: &Arc<Node>, thread: &str) {
-    let worker = {
-        let mut state = node.unclaimed.state.lock().expect("never poisoned");
-        if !state.claimed.contains(thread) {
-            return;
-        }
-        state.workers.entry(thread.to_string()).or_default().clone()
-    };
+    if node.residents.resident_of_thread(thread).is_none() {
+        return;
+    }
+    let worker = node.unclaimed.workers.get_or_insert_with(&thread.to_string(), Default::default);
     let _worker = worker.lock().await;
+    if let Err(error) = restore(node, thread, &mut node.unclaimed.state.lock().expect("never poisoned")) {
+        node.log.line(format_args!("restoring reports for {thread}: {error}"));
+        return;
+    }
     loop {
         let event = node
             .unclaimed
@@ -215,6 +289,12 @@ async fn drain(node: &Arc<Node>, thread: &str) {
             return;
         }
         let applied = events.remove(0);
+        if events.is_empty() {
+            state.queues.remove(thread);
+            if state.queues.is_empty() {
+                state.queues = HashMap::new();
+            }
+        }
         node.codex.acknowledge(&applied);
         node.handoff.changed();
     }
@@ -224,21 +304,21 @@ async fn drain(node: &Arc<Node>, thread: &str) {
 pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
     {
         let mut state = node.unclaimed.state.lock().expect("never poisoned");
-        for resident in node.residents.everyone() {
-            if let Some(thread) = resident.about.session {
-                state.claimed.insert(thread);
-            }
-        }
         match std::fs::read_dir(node.world.path().join("codex-reports")) {
             Ok(entries) => {
                 for entry in entries {
                     let restored = (|| -> std::io::Result<KeptReports> {
                         let path = entry?.path();
+                        if path.extension().is_some_and(|extension| extension != "json") {
+                            return Ok(KeptReports { thread: String::new(), events: Vec::new() });
+                        }
                         serde_json::from_slice(&std::fs::read(path)?).map_err(std::io::Error::other)
                     })();
                     match restored {
                         Ok(kept) => {
-                            state.queues.insert(kept.thread, kept.events);
+                            if !kept.events.is_empty() && node.residents.resident_of_thread(&kept.thread).is_some() {
+                                state.queues.insert(kept.thread, kept.events);
+                            }
                         }
                         Err(error) => node.log.line(format_args!("restoring Codex reports: {error}")),
                     }
@@ -246,6 +326,13 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => node.log.line(format_args!("restoring Codex reports: {error}")),
+        }
+        for resident in node.residents.everyone() {
+            if let Some(thread) = resident.about.session
+                && let Err(error) = restore(&node, &thread, &mut state)
+            {
+                node.log.line(format_args!("restoring pending reports for {thread}: {error}"));
+            }
         }
     }
     let threads: Vec<String> = node.unclaimed.state.lock().expect("never poisoned").queues.keys().cloned().collect();
@@ -320,7 +407,6 @@ pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
 /// The resident `id` is the thread `thread` now: what was reported of the
 /// thread before goes to it, in order, before anything reported after.
 pub async fn claim(node: &Arc<Node>, thread: &str, _id: &ResidentId) {
-    node.unclaimed.state.lock().expect("never poisoned").claimed.insert(thread.to_string());
     drain(node, thread).await;
 }
 

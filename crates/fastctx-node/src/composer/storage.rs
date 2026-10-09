@@ -4,7 +4,7 @@ use super::*;
 
 /// Lifecycle hooks leave conversations without a shared composer untouched.
 pub(super) fn existing(node: &Node, id: &ResidentId) -> Result<Option<Cell>, Failure> {
-    if let Some(cell) = node.composers.cells.lock().expect("composer cells").get(id).cloned() {
+    if let Some(cell) = node.composers.cells.get(id) {
         return Ok(Some(cell));
     }
     let Some((_, town)) = node.residents.about(id) else { return Ok(None) };
@@ -24,12 +24,14 @@ pub(super) fn load(node: &Node, id: &ResidentId, cell: &mut Option<Stored>) -> R
     let (_, town) = node.residents.about(id).ok_or_else(|| failure("unknown resident"))?;
     let directory = node.world.resident(town.as_ref(), id);
     let (_transition, directory) = crate::resident_storage::current(&directory).map_err(failure)?;
-    let state = match std::fs::read(directory.path().join("composer.json")) {
+    let state: Stored = match std::fs::read(directory.path().join("composer.json")) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(failure)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Stored::default(),
         Err(error) => return Err(failure(error)),
     };
-    *cell = Some(state);
+    let mut compacted = state.clone();
+    receipts::compact(directory.path(), &state, &mut compacted)?;
+    *cell = Some(compacted);
     Ok(())
 }
 
@@ -43,6 +45,9 @@ pub(super) fn publish(
     let (_, town) = node.residents.about(id).ok_or_else(|| failure("unknown resident"))?;
     let directory = node.world.resident(town.as_ref(), id);
     let (_transition, directory) = crate::resident_storage::current(&directory).map_err(failure)?;
+    if let Some(previous) = cell.as_ref() {
+        receipts::compact(directory.path(), previous, &mut next)?;
+    }
     let bytes = serde_json::to_vec(&next).map_err(failure)?;
     if let Err(error) = fastctx_platform::atomic::publish_checked(
         &directory.path().join("composer.json"),
@@ -58,6 +63,13 @@ pub(super) fn publish(
         if let Some(state) = cell.as_mut() {
             state.held = Some(error.message.clone());
         }
+        drop(_transition);
+        // An uncommitted stop cannot be reconstructed from the checkpoint yet.
+        if node.residents.removed(id).is_none()
+            && let Some(held) = node.composers.cells.get(id)
+        {
+            node.composers.failed.lock().expect("failed composer checkpoints").insert(id.clone(), held);
+        }
         node.watchers.publish(
             id,
             &SessionEvent {
@@ -72,6 +84,7 @@ pub(super) fn publish(
     }
     let view = next.view();
     *cell = Some(next);
+    node.composers.failed.lock().expect("failed composer checkpoints").remove(id);
     node.watchers.publish(id, &event(view));
     Ok(())
 }
@@ -102,7 +115,7 @@ pub async fn recover(node: &Arc<Node>) -> Result<(), Failure> {
             if let Some(turn) = crate::delivery::input_turn(&directory, &flight.delivery.id).map_err(failure)? {
                 next.queue.retain(|entry| entry.id != flight.entry);
                 next.pending.retain(|pending| pending.delivery.id != flight.delivery.id);
-                if flight.automatic && !next.ended.contains(&turn) {
+                if flight.automatic && !receipts::ended(node, &resident.id, &next, &turn)? {
                     next.awaiting_turn = Some(turn);
                 }
             } else {

@@ -25,7 +25,7 @@ pub(super) async fn dispatch(node: &Arc<Node>, id: &ResidentId, flight: Flight) 
         }
         Ok(Some(Landed::NewTurn { turn } | Landed::JoinedTurn { turn })) => {
             next.queue.retain(|entry| entry.id != flight.entry);
-            if flight.automatic && !next.ended.contains(turn) {
+            if flight.automatic && !receipts::ended(node, id, &next, turn)? {
                 next.awaiting_turn = Some(turn.clone());
             }
             if !flight.automatic {
@@ -86,7 +86,7 @@ pub async fn bound(
     let Some(flight) = flight else { return Ok(()) };
     next.queue.retain(|entry| entry.id != flight.entry);
     next.pending.retain(|flight| &flight.delivery.id != delivery);
-    if flight.automatic && !next.ended.contains(turn) {
+    if flight.automatic && !receipts::ended(node, id, &next, turn)? {
         next.awaiting_turn = Some(turn.into());
     }
     next.held = None;
@@ -123,9 +123,10 @@ pub async fn turn_ended(node: &Arc<Node>, id: &ResidentId, turn: &str, how: &Tur
     let mut cell = cell.lock().await;
     load(node, id, &mut cell)?;
     let mut next = cell.as_ref().expect("loaded").clone();
-    if !next.ended.insert(turn.into()) {
+    if receipts::ended(node, id, &next, turn)? {
         return Ok(());
     }
+    next.ended.insert(turn.into());
     if next.awaiting_turn.as_deref() == Some(turn) {
         next.awaiting_turn = None;
     }
@@ -156,14 +157,20 @@ pub(super) fn schedule(node: &Arc<Node>, id: &ResidentId) {
 }
 
 pub fn resume(node: &Arc<Node>) {
-    let ids: Vec<_> = node.composers.cells.lock().expect("composer cells").keys().cloned().collect();
-    for id in ids {
-        schedule(node, &id);
+    for resident in node.residents.everyone() {
+        if resident.removed.is_none()
+            && node.world.resident(resident.town.as_ref(), &resident.id).path().join("composer.json").exists()
+        {
+            schedule(node, &resident.id);
+        }
     }
 }
 
 async fn release(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     node.ready().await;
+    if node.residents.removed(id).is_some() {
+        return Ok(());
+    }
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
     load(node, id, &mut cell)?;

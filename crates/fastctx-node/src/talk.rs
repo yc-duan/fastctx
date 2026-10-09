@@ -97,10 +97,13 @@ pub async fn watch(
             None => None,
         };
         let (history, mut events) = if lease.is_some() {
-            (Vec::new(), node.watchers.watch(&resident))
+            (Vec::new(), node.watchers.watch_composer(&resident))
         } else {
             watch_here(node, &resident).await?
         };
+        if lease.is_some() {
+            crate::composer::snapshot(node, &resident).await?;
+        }
         let _ = sender.send(Ok(Watched::History { events: history }));
         tokio::spawn(async move {
             let _lease = lease;
@@ -145,7 +148,11 @@ pub async fn watch(
     });
     let call = RemoteCall::Watch { resident, watch, composer };
     tokio::spawn(async move {
-        let ended = match link.call_with_stream(&machine, call, feed).await {
+        let result = tokio::select! {
+            result = link.call_with_stream(&machine, call, feed) => result,
+            () = sender.closed() => return,
+        };
+        let ended = match result {
             Ok(Ok(_)) => return,
             Ok(Err(failure)) => failure.message,
             Err(failure) => failure.to_string(),
@@ -349,15 +356,25 @@ pub async fn serve_watch(
     composer: Option<String>,
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
-    let _lease = match composer {
-        Some(name) => Some(crate::composer::watch(node, &resident, name).await?),
-        None => None,
-    };
     let link = link(node)?;
-    let (history, mut events) = if _lease.is_some() {
-        (Vec::new(), node.watchers.watch(&resident))
-    } else {
-        watch_here(node, &resident).await?
+    let opening = async {
+        let lease = match composer {
+            Some(name) => Some(crate::composer::watch(node, &resident, name).await?),
+            None => None,
+        };
+        let (history, events) = if lease.is_some() {
+            (Vec::new(), node.watchers.watch_composer(&resident))
+        } else {
+            watch_here(node, &resident).await?
+        };
+        if lease.is_some() {
+            crate::composer::snapshot(node, &resident).await?;
+        }
+        Ok::<_, Failure>((lease, history, events))
+    };
+    let (_lease, history, mut events) = tokio::select! {
+        result = opening => result?,
+        () = stream.closed() => return Ok(RemoteReply::Watched),
     };
     let mut n = 0;
     let mut next = Some(Watched::History { events: history });

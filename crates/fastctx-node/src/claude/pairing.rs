@@ -19,7 +19,6 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
     let mut chain = Vec::new();
     let mut seen = HashSet::new();
     let mut candidates = HashSet::new();
-    let residents = node.residents.everyone();
     let mut current = registration.clone();
     loop {
         validate_session(&current.session)?;
@@ -27,7 +26,7 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
             return Err(io::Error::other("the Claude clear chain contains a cycle"));
         }
         let directory = root.join(&current.session);
-        if residents.iter().filter(|record| record.about.session.as_deref() == Some(&current.session)).count() > 1 {
+        if node.residents.records_for_session(&current.session) > 1 {
             return Err(io::Error::other(format!("more than one resident names Claude session {}", current.session)));
         }
         match std::fs::read(directory.join("resident.json")) {
@@ -56,7 +55,7 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
                 about.world_started && about.host.agent.as_str() == "claude" && about.session.as_deref() == Some(short)
             })
         {
-            if residents.iter().filter(|record| record.about.session.as_deref() == Some(short)).count() > 1 {
+            if node.residents.records_for_session(short) > 1 {
                 return Err(io::Error::other(format!("more than one resident names background id {short}")));
             }
             for entry in std::fs::read_dir(&root)? {
@@ -114,6 +113,17 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
     let bytes = serde_json::to_vec(&id).map_err(io::Error::other)?;
     for registration in chain.iter().rev() {
         let path = root.join(&registration.session).join("resident.json");
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let held: ResidentId = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+                if held != id {
+                    return Err(io::Error::other(format!("{} already belongs to {held}", registration.session)));
+                }
+                continue;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
         match publish_new(&path, &bytes, Permissions::Private) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -148,5 +158,27 @@ pub(super) fn present(node: &Node, registration: &Registration) -> io::Result<bo
             return Ok(false);
         }
     }
+    let path = exchange::sessions(node.world.path()).join(&registration.session).join("node-ended.json");
+    if let Some(ended) = fastctx_hosts::claude::control::read::<Registration>(&path)?
+        && same_activation(&ended, registration)
+    {
+        return Ok(false);
+    }
     registration.process.as_ref().map(fastctx_platform::is_alive).transpose().map(|alive| alive.unwrap_or(false))
+}
+
+fn same_activation(a: &Registration, b: &Registration) -> bool {
+    a.session == b.session && a.instance == b.instance && a.process == b.process && a.at == b.at
+}
+
+pub(super) fn record_ended(node: &Node, registration: &Registration) -> io::Result<()> {
+    if !present(node, registration)? {
+        return Ok(());
+    }
+    // Older mods can report session end while their shared host process stays alive.
+    fastctx_platform::publish(
+        &exchange::sessions(node.world.path()).join(&registration.session).join("node-ended.json"),
+        &serde_json::to_vec(registration).map_err(io::Error::other)?,
+        fastctx_platform::Permissions::Private,
+    )
 }

@@ -213,7 +213,13 @@ impl fastctx_net::link::Node for Handler {
     fn answering(&self, call: &RemoteCall) -> Result<Option<Box<dyn Send>>, Failure> {
         // A watch and an `on` go on for as long as they go on: a node
         // handing the World on does not wait for them.
-        if matches!(call, RemoteCall::Watch { .. } | RemoteCall::On { .. } | RemoteCall::Follow { .. }) {
+        if matches!(
+            call,
+            RemoteCall::Watch { .. }
+                | RemoteCall::On { .. }
+                | RemoteCall::Follow { .. }
+                | RemoteCall::FindFiles { request: fastctx_types::file_search::FileSearchRequest::Open { .. } }
+        ) {
             return Ok(None);
         }
         let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
@@ -292,7 +298,13 @@ impl fastctx_net::link::Node for Handler {
                         .map(|(accepted, changed)| RemoteReply::ClaudeConsent { accepted, changed })
                 }
                 RemoteCall::FindFiles { request } => {
-                    crate::file_search::here(&node, from, request).await.map(RemoteReply::FilesFound)
+                    if let fastctx_types::file_search::FileSearchRequest::Open { scope } = request {
+                        let stream =
+                            stream.ok_or_else(|| Failure::new("a file search requires its owner's data connection"))?;
+                        crate::file_search::serve(&node, from, scope, stream).await
+                    } else {
+                        crate::file_search::here(&node, from, request).await.map(RemoteReply::FilesFound)
+                    }
                 }
                 RemoteCall::ReadFile { request, read } => {
                     let stream = stream.ok_or_else(|| Failure::new("a file read requires a data connection"))?;

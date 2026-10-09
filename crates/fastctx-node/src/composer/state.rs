@@ -91,7 +91,7 @@ pub struct Flight {
     pub idle_only: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Receipt {
     pub from: MachineName,
     pub mutation: Mutation,

@@ -1,17 +1,23 @@
 //! Running items for a watcher joining between their beginning and end.
 //! These snapshots are never part of the durable session history.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use fastctx_types::session::{Content, Happened, Part, SessionChange, SessionEvent, What};
 
 #[derive(Default)]
 pub struct Live {
     items: Vec<SessionEvent>,
-    deltas: HashSet<String>,
+    deltas: HashMap<(String, String), HashSet<String>>,
 }
 
 impl Live {
+    pub fn unwatched(&mut self) {
+        self.items.retain(|snapshot| {
+            !matches!(&snapshot.happened, Happened::Changed { change: SessionChange::Composer { .. }, .. })
+        });
+    }
+
     pub fn snapshots(&self) -> impl Iterator<Item = &SessionEvent> {
         self.items.iter()
     }
@@ -68,7 +74,19 @@ impl Live {
                 }
             }
             Happened::Grew { turn, item, part, text, .. } => {
-                if !self.deltas.insert(serde_json::to_string(event).expect("session event serializes")) {
+                if !self.items.iter().any(|snapshot| {
+                    matches!(&snapshot.happened,
+                    Happened::Began { turn: t, item: i } if t == turn && i.id == *item)
+                }) {
+                    // Late fragments still reach subscribers, but have no live snapshot to extend.
+                    return true;
+                }
+                if !self
+                    .deltas
+                    .entry((turn.clone(), item.clone()))
+                    .or_default()
+                    .insert(serde_json::to_string(event).expect("session event serializes"))
+                {
                     return false;
                 }
                 for snapshot in &mut self.items {
@@ -95,14 +113,20 @@ impl Live {
                     }
                 }
             }
-            Happened::Finished { turn, item } => self.items.retain(|event| {
-                !matches!(&event.happened,
+            Happened::Finished { turn, item } => {
+                self.deltas.remove(&(turn.clone(), item.id.clone()));
+                self.items.retain(|event| {
+                    !matches!(&event.happened,
                 Happened::Began { turn: t, item: i } if t == turn && i.id == item.id)
-            }),
-            Happened::TurnEnded { turn, .. } => self.items.retain(|event| {
-                !matches!(&event.happened,
+                });
+            }
+            Happened::TurnEnded { turn, .. } => {
+                self.deltas.retain(|(t, _), _| t != turn);
+                self.items.retain(|event| {
+                    !matches!(&event.happened,
                 Happened::Began { turn: t, .. } if t == turn)
-            }),
+                });
+            }
             Happened::Realtime { item, complete } => {
                 self.items.retain(|snapshot| !matches!(&snapshot.happened, Happened::Realtime { item: current, .. }
                     if current["realtimeSessionId"] == item["realtimeSessionId"] && (current["id"] == item["id"] || item["type"] == "realtimeSessionClosed")));
@@ -131,6 +155,9 @@ impl Live {
         if self.items.is_empty() {
             self.deltas.clear();
         }
+        if self.deltas.is_empty() {
+            self.deltas = HashMap::new();
+        }
         true
     }
 }
@@ -140,6 +167,44 @@ mod tests {
     use super::*;
     use fastctx_types::session::Item;
     use serde_json::json;
+
+    #[test]
+    fn composer_snapshots_do_not_retain_completed_turn_chunks() {
+        let mut live = Live::default();
+        let at = jiff::Timestamp::now();
+        live.observe(&SessionEvent {
+            at,
+            happened: Happened::Changed { turn: None, change: SessionChange::Composer { composer: Box::default() } },
+        });
+        for index in 0..1024 {
+            let turn = index.to_string();
+            let item = Item {
+                id: "message".into(),
+                started_at: Some(at),
+                detail: None,
+                what: What::Message { text: String::new() },
+            };
+            live.observe(&SessionEvent { at, happened: Happened::Began { turn: turn.clone(), item: item.clone() } });
+            let delta = SessionEvent {
+                at,
+                happened: Happened::Grew {
+                    turn: turn.clone(),
+                    item: item.id.clone(),
+                    part: Part::Text,
+                    text: "a streamed fragment".into(),
+                    revision: Some(index),
+                },
+            };
+            assert!(live.observe(&delta));
+            assert!(!live.observe(&delta));
+            live.observe(&SessionEvent { at, happened: Happened::Finished { turn, item } });
+            live.observe(&delta);
+            assert!(live.deltas.is_empty());
+            assert_eq!(live.snapshots().count(), 1);
+        }
+        live.unwatched();
+        assert_eq!(live.snapshots().count(), 0);
+    }
 
     #[test]
     fn late_watchers_keep_equal_chunks_replacements_and_voice_until_completion() {

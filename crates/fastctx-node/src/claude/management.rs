@@ -85,7 +85,7 @@ async fn settle_stopped(node: &Arc<Node>, resident: &ResidentId, session: &str) 
             }
         }
     }
-    super::ended(node, resident, session, Some("its background process is stopped".into()))
+    super::ended_for_process(node, resident, session, Some("its background process is stopped".into()), None, None)
         .await
         .map_err(|error| Failure::new(error.to_string()))
 }

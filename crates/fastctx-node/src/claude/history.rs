@@ -19,8 +19,9 @@ use crate::Node;
 /// in the World's turns of `recorded` where the World saw them happen.
 pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[SessionEvent]) -> Vec<SessionEvent> {
     let root = exchange::sessions(node.world.path());
-    let mut events = Vec::new();
-    for Session { id, began, process, kept } in sessions(node, resident) {
+    let (sessions, problems) = sessions(node, resident);
+    let mut events: Vec<_> = problems.into_iter().map(|problem| note(Timestamp::now(), problem)).collect();
+    for Session { id, began, process, kept } in sessions {
         match read_whole(root.join(&id), kept, process).await {
             Ok(read) => {
                 events.extend(read.events);
@@ -45,8 +46,10 @@ pub(super) async fn wait_stored(node: &Arc<Node>, session: &str) -> Result<(), S
     let (kept, process) = {
         let state = node.claude.state.lock().expect("never poisoned");
         (
-            state.stored.get(session).cloned(),
-            state.sessions.get(session).and_then(|entry| entry.registration.process.clone()),
+            state.stored.get::<String>(session),
+            exchange::registration(&exchange::sessions(node.world.path()).join(session))
+                .map_err(|error| error.to_string())?
+                .and_then(|registration| registration.process),
         )
     };
     if kept.is_none() {
@@ -66,21 +69,51 @@ struct Session {
 }
 
 /// The sessions the resident has been, the oldest first.
-fn sessions(node: &Node, resident: &ResidentId) -> Vec<Session> {
+fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
     let state = node.claude.state.lock().expect("never poisoned");
-    let mut sessions: Vec<Session> = state
-        .sessions
-        .iter()
-        .filter(|(_, session)| session.resident.as_ref() == Some(resident))
-        .map(|(id, session)| Session {
-            id: id.clone(),
-            began: session.registration.at.unwrap_or_default(),
-            process: session.registration.process.clone(),
-            kept: state.stored.get(id).cloned(),
-        })
-        .collect();
+    let mut sessions = Vec::new();
+    let mut problems = Vec::new();
+    let scanned = (|| -> std::io::Result<()> {
+        for entry in std::fs::read_dir(exchange::sessions(node.world.path()))? {
+            let directory = match entry {
+                Ok(entry) => entry.path(),
+                Err(error) => {
+                    problems.push(format!("reading a Claude session directory: {error}"));
+                    continue;
+                }
+            };
+            let read = (|| -> std::io::Result<Option<Session>> {
+                let alias = match std::fs::read(directory.join("resident.json")) {
+                    Ok(bytes) => serde_json::from_slice::<ResidentId>(&bytes).map_err(std::io::Error::other)?,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(error) => return Err(error),
+                };
+                if &alias != resident {
+                    return Ok(None);
+                }
+                if let Some(registration) = exchange::registration(&directory)? {
+                    return Ok(Some(Session {
+                        kept: state.stored.get(&registration.session),
+                        id: registration.session,
+                        began: registration.at.unwrap_or_default(),
+                        process: registration.process,
+                    }));
+                }
+                Ok(None)
+            })();
+            match read {
+                Ok(Some(session)) => sessions.push(session),
+                Ok(None) => {}
+                Err(error) => problems.push(format!("reading {}: {error}", directory.display())),
+            }
+        }
+        Ok(())
+    })();
+    if let Err(error) = scanned {
+        problems.push(format!("reading {resident}'s Claude sessions: {error}"));
+    }
     sessions.sort_by_key(|session| session.began);
-    sessions
+    (sessions, problems)
 }
 
 /// Reads a session's record once it holds `kept`. Claude Code writes its
@@ -106,10 +139,8 @@ async fn read_whole(
     let folder = path.parent().ok_or_else(|| format!("{} has no folder", path.display()))?;
     notify::Watcher::watch(&mut watcher, folder, notify::RecursiveMode::NonRecursive)
         .map_err(|error| format!("watching {}: {error}", folder.display()))?;
-    let mut ended: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> = match process {
-        Some(process) => Box::pin(async move {
-            let _ = tokio::task::spawn_blocking(move || fastctx_platform::host_process::wait_for_exit(&process)).await;
-        }),
+    let mut ended: std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>> = match process {
+        Some(process) => Box::pin(async move { fastctx_platform::host_process::exited(&process).await }),
         None => Box::pin(std::future::pending()),
     };
     loop {
@@ -119,7 +150,8 @@ async fn read_whole(
         }
         tokio::select! {
             Some(()) = changes.recv() => {}
-            () = &mut ended => {
+            result = &mut ended => {
+                result.map_err(|error| format!("observing Claude's process: {error}"))?;
                 let mut read = read_now(path.clone()).await?;
                 if !read.uuids.contains(&kept) {
                     read.problems.push("its process ended before its file held the last of what it kept".to_string());
@@ -133,20 +165,20 @@ async fn read_whole(
 /// The record as the file holds it now. A session at work adds to its file
 /// as it goes; a read it overtook is read again, until one sees it whole.
 async fn read_now(path: PathBuf) -> Result<transcript::Transcript, String> {
-    tokio::task::spawn_blocking(move || {
-        loop {
-            match transcript::read(&path) {
-                Ok(read) => return Ok(read),
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Err(format!("{} is gone; Claude Code removes old sessions itself", path.display()));
-                }
-                Err(error) => return Err(format!("{}: {error}", path.display())),
+    loop {
+        let reading = path.clone();
+        let read = tokio::task::spawn_blocking(move || transcript::read(&reading))
+            .await
+            .map_err(|error| format!("reading it: {error}"))?;
+        match read {
+            Ok(read) => return Ok(read),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(format!("{} is gone; Claude Code removes old sessions itself", path.display()));
             }
+            Err(error) => return Err(format!("{}: {error}", path.display())),
         }
-    })
-    .await
-    .map_err(|error| format!("reading it: {error}"))?
+    }
 }
 
 /// An item the host deliberately keeps out of its conversation.

@@ -83,7 +83,11 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         if let Call::Watch { resident, machine, composer } = call {
             // A watch keeps the connection until one end leaves.
-            let ended = match crate::talk::watch(node, resident, machine, composer).await {
+            let opening = tokio::select! {
+                result = crate::talk::watch(node, resident, machine, composer) => result,
+                _ = reader.recv() => return Ok(()),
+            };
+            let ended = match opening {
                 Err(failure) => Err(failure),
                 Ok(mut watched) => loop {
                     tokio::select! {
@@ -115,6 +119,36 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             };
             writer.send(&json(&NodeFrame::Reply { id, reply: waited })).await?;
             continue;
+        }
+        if let Call::FindFiles { machine, request: fastctx_types::file_search::FileSearchRequest::Open { scope } } =
+            call
+        {
+            let checked = active_caller(node, &hello.peer).and_then(|()| {
+                for resident in &arrived.residents {
+                    node.residents.active(resident)?;
+                }
+                Ok(())
+            });
+            if let Err(error) = checked {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
+                return writer.drain().await;
+            }
+            let opened = tokio::select! {
+                result = crate::file_search::open(node, node.machine(), machine, scope) => result,
+                _ = reader.recv() => return Ok(()),
+            };
+            match opened {
+                Ok((reply, mut lease)) => {
+                    writer.send(&json(&NodeFrame::Reply { id, reply: Ok(Reply::FilesFound(reply)) })).await?;
+                    writer.drain().await?;
+                    tokio::select! { _ = reader.recv() => {}, () = lease.closed() => {} }
+                    return Ok(());
+                }
+                Err(error) => {
+                    writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
+                    return writer.drain().await;
+                }
+            }
         }
         if let Call::On { resident, town, request } = call {
             // Only the World's shell of that resident sends its `on`s: the
@@ -178,14 +212,22 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             continue;
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
-        let mut reply = match call {
-            Call::Collect { resident, answering } => {
-                collect(node, resident, answering, &mut arrived.collected, &mut arrived.notes).await
+        let cancellable = matches!(&call, Call::Offers { .. });
+        let answer = async {
+            match call {
+                Call::Collect { resident, answering } => {
+                    collect(node, resident, answering, &mut arrived.collected, &mut arrived.notes).await
+                }
+                Call::Taken { resident, ids } => {
+                    taken(node, resident, ids, &mut arrived.collected, &mut arrived.notes).await
+                }
+                call => handle(node, &hello.peer, call).await,
             }
-            Call::Taken { resident, ids } => {
-                taken(node, resident, ids, &mut arrived.collected, &mut arrived.notes).await
-            }
-            call => handle(node, &hello.peer, call).await,
+        };
+        let mut reply = if cancellable {
+            tokio::select! { reply = answer => reply, _ = reader.recv() => return Ok(()) }
+        } else {
+            answer.await
         };
         if legacy && let Ok(reply) = &mut reply {
             crate::renewal_legacy::reply(hello.protocol, reply);
@@ -361,12 +403,17 @@ async fn taken(
     Ok(Reply::Done)
 }
 
-pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
+fn active_caller(node: &Node, peer: &Peer) -> Result<(), Failure> {
     if let Ok(Caller::Resident(address)) = caller::of(node, peer)
         && address.machine == node.machine()
     {
         node.residents.active(&address.resident)?;
     }
+    Ok(())
+}
+
+pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
+    active_caller(node, peer)?;
     match call {
         Call::Arrive { host, hints } => {
             if host.agent.as_str() == "claude" || hints.tool_use_id.is_some() {
@@ -704,18 +751,18 @@ async fn write(
 /// This machine's own answer to `fastctx w`: in `town`, or in every town
 /// and none.
 pub async fn who_here(
-    node: &Node,
+    node: &Arc<Node>,
     all: bool,
     town: Option<TownName>,
     since: Option<jiff::Timestamp>,
 ) -> Result<WhoReply, Failure> {
-    let everyone = node.residents.everyone();
-    let former = node.residents.former();
+    let reading = node.clone();
     let (world, machine) = (node.world.clone(), node.machine());
     let place = town.clone();
-    let mut reply =
-        blocking("looking around", move || crate::who::who(&world, &machine, everyone, former, all, place.as_ref()))
-            .await?;
+    let mut reply = blocking("looking around", move || {
+        crate::who::who(&world, &machine, reading.residents.everyone(), reading.residents.former(), all, place.as_ref())
+    })
+    .await?;
     for resident in &mut reply.residents {
         resident.tools = node.watchers.tools(&resident.about.id);
         if let Some(now) = &mut resident.now {

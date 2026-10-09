@@ -42,31 +42,49 @@ use tokio::sync::mpsc;
 
 use crate::Node;
 
-#[derive(Default)]
 pub struct Claude {
     state: Mutex<State>,
     bridge: control::Bridge,
+    delivering: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
+    reading: crate::leases::Registry<String, tokio::sync::Mutex<()>>,
+    changed: tokio::sync::Notify,
     /// Held to read while the World starts a session and learns its id;
     /// to write, while a mod registration is assigned to a resident.
     pub births: tokio::sync::RwLock<()>,
 }
 
-#[derive(Default)]
 struct State {
     sessions: HashMap<String, Session>,
     /// Resident to the session it is.
-    paired: HashMap<ResidentId, String>,
+    paired: crate::residents::cache::Index,
     observed: HashSet<fastctx_types::ProcessIdentity>,
     /// The last record each session's mod saw Claude Code keep, in this run
     /// of the node: what its file must hold before it is read as whole.
-    stored: HashMap<String, String>,
-    delivering: HashMap<ResidentId, Arc<tokio::sync::Mutex<()>>>,
+    stored: crate::residents::cache::Index,
 }
 
 struct Session {
     registration: exchange::Registration,
     resident: Option<ResidentId>,
-    reading: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Claude {
+    pub fn new(world: &fastctx_types::layout::WorldDir) -> std::io::Result<Self> {
+        let root = world.path().join("resident-cache");
+        Ok(Self {
+            state: Mutex::new(State {
+                sessions: HashMap::new(),
+                observed: HashSet::new(),
+                paired: crate::residents::cache::Index::new(root.join("claude-paired"))?,
+                stored: crate::residents::cache::Index::new(root.join("claude-stored"))?,
+            }),
+            bridge: Default::default(),
+            births: Default::default(),
+            delivering: Default::default(),
+            reading: Default::default(),
+            changed: Default::default(),
+        })
+    }
 }
 
 /// Writes the plugin and starts watching the sessions.
@@ -162,21 +180,30 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     }
     // What it reports stays where it is until it is someone's: a node that
     // stops before it knows whose loses none of it.
-    let Some(resident) = node
+    let resident = node
         .claude
         .state
         .lock()
         .expect("never poisoned")
         .sessions
         .get(&session)
-        .and_then(|entry| entry.resident.clone())
-    else {
+        .and_then(|entry| entry.resident.clone());
+    let Some(resident) = resident else {
+        let _births = node.claude.births.write().await;
+        let mut state = node.claude.state.lock().expect("never poisoned");
+        if state.sessions.get(&session).is_some_and(|entry| entry.resident.is_none()) {
+            state.sessions.remove(&session);
+            node.claude.changed.notify_waiters();
+        }
         return;
     };
     if node.residents.removed(&resident).is_some() {
+        let _births = node.claude.births.write().await;
+        node.claude.state.lock().expect("never poisoned").sessions.remove(&session);
+        node.claude.changed.notify_waiters();
         return;
     }
-    let reading = node.claude.state.lock().expect("never poisoned").sessions[&session].reading.clone();
+    let reading = node.claude.reading.get_or_insert_with(&session, Default::default);
     let _reading = reading.lock().await;
     if let Err(error) = control::look(node, &resident, directory).await {
         node.log.line(format_args!("reading Claude controls for {session}: {error}"));
@@ -254,7 +281,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                             .get(&session)
                             .is_some_and(|entry| instance.is_none() || entry.registration.instance == instance);
                         if current {
-                            ended(node, &resident, &session, reason).await?;
+                            ended(node, &resident, &session, reason, instance).await?;
                         }
                     }
                 }
@@ -289,6 +316,38 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     if let Err(error) = exchange::handed_over(directory) {
         node.log.line(format_args!("clearing what {session}'s mod handed over: {error}"));
     }
+    let _births = node.claude.births.write().await;
+    let registration = node
+        .claude
+        .state
+        .lock()
+        .expect("never poisoned")
+        .sessions
+        .get(&session)
+        .map(|entry| entry.registration.clone());
+    let Some(registration) = registration else { return };
+    match pairing::present(node, &registration) {
+        Ok(false) => {}
+        Ok(true) => return,
+        Err(error) => {
+            node.log.line(format_args!("checking {session}'s lifetime: {error}"));
+            return;
+        }
+    }
+    if let Err(error) =
+        ended(node, &resident, &session, Some("its host activation ended".into()), registration.instance.clone()).await
+    {
+        node.log.line(format_args!("settling {session}: {error}"));
+        return;
+    }
+    let mut state = node.claude.state.lock().expect("never poisoned");
+    if state.sessions.get(&session).is_some_and(|entry| entry.registration == registration) {
+        state.sessions.remove(&session);
+    }
+    if state.sessions.is_empty() {
+        state.sessions = HashMap::new();
+    }
+    node.claude.changed.notify_waiters();
 }
 
 // Register synchronously with the caller, without depending on a filesystem
@@ -347,6 +406,7 @@ async fn hear(node: &Arc<Node>, registration: exchange::Registration) {
                     &session,
                     Some("its host process exited".to_string()),
                     Some(process),
+                    None,
                 )
                 .await
                 {
@@ -362,8 +422,8 @@ async fn hear(node: &Arc<Node>, registration: exchange::Registration) {
         }
     }
     let speaking = prior.as_ref().and_then(|(resident, _)| node.residents.speaking(resident));
-    let guard = match speaking {
-        Some(lock) => Some(lock.lock_owned().await),
+    let guard = match &speaking {
+        Some(lock) => Some(lock.lock().await),
         None => None,
     };
     let changed = {
@@ -376,15 +436,15 @@ async fn hear(node: &Arc<Node>, registration: exchange::Registration) {
                 true
             }
             None => {
-                state.sessions.insert(
-                    session.clone(),
-                    Session { registration, resident: None, reading: Arc::new(tokio::sync::Mutex::new(())) },
-                );
+                state.sessions.insert(session.clone(), Session { registration, resident: None });
                 true
             }
         }
     };
     drop(guard);
+    if changed {
+        node.claude.changed.notify_waiters();
+    }
     let unpaired = node
         .claude
         .state
@@ -487,8 +547,14 @@ async fn uncertain_inputs(
 
 /// The resident's session ended: a turn it ran ends with it, and it sleeps
 /// until words wake it.
-async fn ended(node: &Arc<Node>, resident: &ResidentId, session: &str, reason: Option<String>) -> std::io::Result<()> {
-    ended_for_process(node, resident, session, reason, None).await
+async fn ended(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    session: &str,
+    reason: Option<String>,
+    instance: Option<String>,
+) -> std::io::Result<()> {
+    ended_for_process(node, resident, session, reason, None, instance.map(Some)).await
 }
 
 async fn ended_for_process(
@@ -497,14 +563,25 @@ async fn ended_for_process(
     session: &str,
     reason: Option<String>,
     expected: Option<&fastctx_types::ProcessIdentity>,
+    instance: Option<Option<String>>,
 ) -> std::io::Result<()> {
     let speaking = node.residents.speaking(resident).expect("known resident");
     let _speaking = speaking.lock().await;
+    let registration =
+        node.claude.state.lock().expect("never poisoned").sessions.get(session).map(|entry| entry.registration.clone());
+    let registration = match registration {
+        Some(registration) => Some(registration),
+        None => exchange::registration(&exchange::sessions(node.world.path()).join(session))?,
+    };
     if let Some(expected) = expected {
-        let state = node.claude.state.lock().expect("never poisoned");
-        if state.sessions.get(session).and_then(|entry| entry.registration.process.as_ref()) != Some(expected) {
+        if registration.as_ref().and_then(|entry| entry.process.as_ref()) != Some(expected) {
             return Ok(());
         }
+    }
+    if let Some(instance) = instance
+        && registration.as_ref().is_none_or(|entry| entry.instance != instance)
+    {
+        return Ok(());
     }
     control::ended(node, session);
     let Some((about, town)) = node.residents.about(resident) else { return Ok(()) };
@@ -546,13 +623,17 @@ async fn ended_for_process(
             crate::colleagues::left(node, resident.clone());
         }
     }
+    if let Some(registration) = registration {
+        pairing::record_ended(node, &registration)?;
+    }
     calls::sweep(node);
+    node.claude.changed.notify_waiters();
     Ok(())
 }
 
 /// Asks the paired mod to stop this resident's current turn.
 pub fn stop(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
-    let session = node.claude.state.lock().expect("never poisoned").paired.get(resident).cloned().ok_or_else(|| {
+    let session: String = node.claude.state.lock().expect("never poisoned").paired.get(resident).ok_or_else(|| {
         Failure::new(format!("{resident}'s session has not been heard from the World's plugin, which is what stops it"))
     })?;
     let Some(turn) = node.residents.now(resident).and_then(|now| now.turn) else { return Ok(false) };
@@ -563,7 +644,17 @@ pub fn stop(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
 
 /// Whether the resident's Claude session is paired with its plugin now.
 pub fn paired(node: &Node, resident: &ResidentId) -> bool {
-    node.claude.state.lock().expect("never poisoned").paired.contains_key(resident)
+    node.claude.state.lock().expect("never poisoned").paired.contains(resident)
+}
+
+pub fn removed(node: &Node, resident: &ResidentId) {
+    let mut state = node.claude.state.lock().expect("never poisoned");
+    state.sessions.retain(|_, session| session.resident.as_ref() != Some(resident));
+    state.paired.remove(resident);
+    if state.sessions.is_empty() {
+        state.sessions = HashMap::new();
+    }
+    node.claude.changed.notify_waiters();
 }
 
 /// Resolves this call's own evidence, including before the watcher has seen
@@ -581,9 +672,10 @@ pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
     hear(node, registration).await;
     // The reports preceding the call may establish its turn and deliveries.
     look(node, &exchange::sessions(node.world.path()).join(&session)).await;
-    let resident = node.claude.state.lock().expect("never poisoned").sessions.get(&session)
-        .and_then(|entry| entry.resident.clone())
-        .ok_or_else(|| Failure::new(format!("Claude call {tool_use_id} belongs to session {session}, whose resident could not be registered; see the node log")))?;
+    let alias = exchange::sessions(node.world.path()).join(&session).join("resident.json");
+    let resident: ResidentId =
+        serde_json::from_slice(&std::fs::read(alias).map_err(|error| Failure::new(error.to_string()))?)
+            .map_err(|error| Failure::new(error.to_string()))?;
     node.residents.active(&resident)?;
     let town =
         node.residents.town_of(&resident).ok_or_else(|| Failure::new("the paired Claude resident is missing"))?;
@@ -609,6 +701,8 @@ async fn pair(node: &Arc<Node>, session: &str) {
     let Ok(gate) = node.residents.management(&resident) else { return };
     let _reading = gate.read().await;
     if node.residents.removed(&resident).is_some() {
+        node.claude.state.lock().expect("never poisoned").sessions.remove(session);
+        node.claude.changed.notify_waiters();
         return;
     }
     let speaking = node.residents.speaking(&resident).expect("known resident");
@@ -720,13 +814,9 @@ pub async fn deliver(
     directory: &ResidentDir,
     pending: &Pending,
 ) -> Option<Result<Landed, Failure>> {
-    let delivering = {
-        let mut state = node.claude.state.lock().expect("never poisoned");
-        state.paired.get(to)?;
-        state.delivering.entry(to.clone()).or_default().clone()
-    };
+    let delivering = node.claude.delivering.get_or_insert_with(to, Default::default);
     let _delivering = delivering.lock().await;
-    let session = node.claude.state.lock().expect("never poisoned").paired.get(to).cloned()?;
+    let session: String = node.claude.state.lock().expect("never poisoned").paired.get(to)?;
     if let Err(error) = crate::inbox::target(directory, &pending.delivery.id, &session) {
         return Some(Err(Failure::new(error.to_string())));
     }
