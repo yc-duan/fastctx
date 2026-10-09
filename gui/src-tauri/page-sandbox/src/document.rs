@@ -1,3 +1,4 @@
+#[cfg(windows)]
 pub const WRAPPER_URL: &str = "https://world-page.invalid/host";
 pub const CONTENT_URL: &str = "https://world-page.invalid/content";
 pub const CHECK_URL: &str = "https://world-page-check.invalid/check";
@@ -5,6 +6,7 @@ pub const NAVIGATION: &str = include_str!("navigation.js");
 /// The page views' browser has no network of its own: every request is
 /// answered by the native loader, WebRTC may not use UDP outside a proxy
 /// (and there is none), and no host name resolves.
+#[cfg(windows)]
 pub const ARGUMENTS: &str = "--enable-features=LazyBrowserInterfaceBroker --force-webrtc-ip-handling-policy=disable_non_proxied_udp --host-resolver-rules=\"MAP * ~NOTFOUND\"";
 pub const POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; form-action 'none'; base-uri 'none'; frame-src 'none'; worker-src 'none'";
 pub const WRAPPER_POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src https://world-page.invalid/content; connect-src https://world-page-check.invalid; base-uri 'none'; form-action 'none'";
