@@ -18,6 +18,7 @@ use serde_json::Value;
 mod lifetime;
 
 use crate::answer::{self, Answer};
+use crate::protocol::{CLIENT_INFO, VERSION_KEY};
 
 pub struct Session {
     world: WorldDir,
@@ -67,19 +68,56 @@ impl Session {
 
     /// Records who the session's host is, from the MCP handshake.
     pub fn introduce(&self, client_info: &Value) {
-        let name = client_info.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
-        let version = client_info.get("version").and_then(Value::as_str).unwrap_or_default().to_string();
-        let _ = self.host.set(Host { agent: agent_of(&name), client: name, version });
+        let _ = self.host.set(host_info(client_info));
     }
 
-    pub fn colleague(&self) -> bool {
-        self.colleague && self.host.get().is_some_and(|host| host.agent.as_str() != "claude")
+    pub fn initialized(&self) -> bool {
+        self.host.get().is_some()
+    }
+
+    /// Modern metadata belongs only to this request. Missing clientInfo is
+    /// an unknown agent, not evidence of the previous caller or of Codex.
+    fn host(&self, meta: Option<&Value>) -> Result<Host, String> {
+        if let Some(meta) = meta.filter(|meta| meta.get(VERSION_KEY).is_some()) {
+            return Ok(host_info(meta.get(CLIENT_INFO).unwrap_or(&Value::Null)));
+        }
+        self.host.get().cloned().ok_or_else(|| "the session did not introduce itself with `initialize`".to_string())
+    }
+
+    /// A modern caller with no explicit identity gets a request-scoped
+    /// arrival. The transport is not evidence that two calls are one
+    /// conversation (MCP 2026-07-28, Basic / Statelessness).
+    pub fn for_call(self: &Arc<Self>, meta: Option<&Value>) -> Arc<Self> {
+        let modern = meta.is_some_and(|meta| meta.get(VERSION_KEY).is_some());
+        let identified = self.resident.is_some()
+            || meta.is_some_and(|meta| {
+                ["threadId", "claudecode/toolUseId"]
+                    .iter()
+                    .any(|key| meta.get(key).and_then(Value::as_str).is_some_and(|id| !id.is_empty()))
+            });
+        if !modern || identified {
+            return self.clone();
+        }
+        Arc::new(Self {
+            world: self.world.clone(),
+            host: OnceLock::new(),
+            resident: self.resident.clone(),
+            colleague: self.colleague,
+            residents: tokio::sync::Mutex::new(HashMap::new()),
+            were: Mutex::new(HashMap::new()),
+            starting: tokio::sync::Mutex::new(()),
+            writes_off: self.writes_off,
+        })
+    }
+
+    pub fn colleague(&self, meta: Option<&Value>) -> bool {
+        self.colleague && self.host(meta).is_ok_and(|host| host.agent.as_str() != "claude")
     }
 
     /// Whether the host is Codex, whose models may call the tools from an
     /// `exec` script and see only what it prints (`world-view.md`).
-    pub fn codex(&self) -> bool {
-        self.host.get().is_some_and(|host| host.agent.as_str() == "codex")
+    pub fn codex(&self, meta: Option<&Value>) -> bool {
+        self.host(meta).is_ok_and(|host| host.agent.as_str() == "codex")
     }
 
     /// Whether the World can start a turn here when something arrives for
@@ -87,8 +125,8 @@ impl Session {
     /// app-server, and in Claude Code, through the World's plugin. Any other
     /// session, such as Codex the user opened, learns it only with the
     /// answer of its next World tool call.
-    pub fn woken(&self) -> bool {
-        self.resident.is_some() || self.host.get().is_some_and(|host| host.agent.as_str() == "claude")
+    pub fn woken(&self, meta: Option<&Value>) -> bool {
+        self.resident.is_some() || self.host(meta).is_ok_and(|host| host.agent.as_str() == "claude")
     }
 
     pub async fn run(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
@@ -143,7 +181,7 @@ impl Session {
             Err(error) => return Answer::error(format!("=== run (not run: {error}) ===")),
         };
         let reply = async {
-            let mut client = self.client().await?;
+            let mut client = self.client(meta).await?;
             let call = Call::Run {
                 resident: whereabouts.resident.clone(),
                 request: RunRequest { script: command, cwd, writes_off: self.writes_off, wait },
@@ -171,7 +209,7 @@ impl Session {
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== run (not run) ===\n{error}")),
         };
-        self.add_waiting_words_about(&whereabouts, answering, &mut answer).await;
+        self.add_waiting_words_about(&whereabouts, answering, &mut answer, meta).await;
         answer
     }
 
@@ -196,7 +234,7 @@ impl Session {
             Err(error) => return Answer::error(format!("=== {tool} (not done: {error}) ===")),
         };
         let reply = async {
-            let mut client = self.client().await?;
+            let mut client = self.client(meta).await?;
             let call = Call::Write { resident: Some(whereabouts.resident.clone()), op, node, town: None };
             client.call(call).await.map_err(|error| error.to_string())
         }
@@ -207,7 +245,7 @@ impl Session {
             Ok(other) => Answer::error(format!("=== {tool} (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== {tool} (not done: {error}) ===")),
         };
-        self.add_waiting_words(&whereabouts, &mut answer).await;
+        self.add_waiting_words(&whereabouts, &mut answer, meta).await;
         answer
     }
 
@@ -227,7 +265,7 @@ impl Session {
             Err(error) => return failed(error),
         };
         let reply = async {
-            let mut client = self.client().await?;
+            let mut client = self.client(meta).await?;
             let call = Call::Ask { resident: whereabouts.resident.clone(), label, prompt, node };
             client.call(call).await.map_err(|error| error.to_string())
         }
@@ -246,7 +284,7 @@ impl Session {
             Ok(other) => Answer::error(format!("=== ask_colleague (the node answered something else: {other:?}) ===")),
             Err(error) => failed(error),
         };
-        self.add_waiting_words(&whereabouts, &mut answer).await;
+        self.add_waiting_words(&whereabouts, &mut answer, meta).await;
         answer
     }
 
@@ -269,7 +307,7 @@ impl Session {
             Err(error) => return failed(error),
         };
         let reply = async {
-            let mut client = self.client().await?;
+            let mut client = self.client(meta).await?;
             let call = Call::Message { resident: whereabouts.resident.clone(), to, machine, text: message };
             client.call(call).await.map_err(|error| error.to_string())
         }
@@ -305,15 +343,15 @@ impl Session {
             }
             Err(error) => failed(error),
         };
-        self.add_waiting_words(&whereabouts, &mut answer).await;
+        self.add_waiting_words(&whereabouts, &mut answer, meta).await;
         answer
     }
 
     /// What the resident is told of where it lives, and words waiting for
     /// it, ride along with its answer, each in a block of its own
     /// (`world-colleagues.md`, 话怎样送到居民眼前; `world-projects.md`).
-    async fn add_waiting_words(&self, whereabouts: &Whereabouts, answer: &mut Answer) {
-        self.add_waiting_words_about(whereabouts, None, answer).await;
+    async fn add_waiting_words(&self, whereabouts: &Whereabouts, answer: &mut Answer, meta: Option<&Value>) {
+        self.add_waiting_words_about(whereabouts, None, answer, meta).await;
     }
 
     /// What waits for the resident, added to an answer that itself tells of
@@ -323,9 +361,10 @@ impl Session {
         whereabouts: &Whereabouts,
         answering: Option<fastctx_types::JobId>,
         answer: &mut Answer,
+        meta: Option<&Value>,
     ) {
         let collect = Call::Collect { resident: whereabouts.resident.clone(), answering };
-        let mut client = match self.client().await {
+        let mut client = match self.client(meta).await {
             Ok(client) => client,
             Err(error) => {
                 answer.follow(format!("=== words for you could not be read: {error} ==="));
@@ -360,13 +399,13 @@ impl Session {
     /// Claude proves each call independently; other hosts keep their
     /// connection or thread identity until the node connection closes.
     async fn whereabouts(self: &Arc<Self>, meta: Option<&Value>) -> Result<Whereabouts, String> {
-        let host = self.host.get().cloned().ok_or("the session did not introduce itself with `initialize`")?;
+        let host = self.host(meta)?;
         let tool_use_id = meta.and_then(|meta| meta.get("claudecode/toolUseId"));
         if host.agent.as_str() == "claude" || tool_use_id.is_some() {
             let tool_use_id = tool_use_id.and_then(Value::as_str).filter(|id| !id.is_empty())
                 .ok_or("Claude did not supply a nonempty _meta[\"claudecode/toolUseId\"]; this call cannot be paired with its mod session")?;
             let hints = Hints { tool_use_id: Some(tool_use_id.to_string()), ..Hints::default() };
-            let mut client = self.client().await?;
+            let mut client = self.client(meta).await?;
             return match client.call(Call::Arrive { host, hints }).await {
                 Ok(Reply::Arrived(whereabouts)) => Ok(whereabouts),
                 Ok(other) => Err(format!("the node answered something else: {other:?}")),
@@ -408,7 +447,7 @@ impl Session {
             .map_err(|error| error.to_string())?
             .map(|address| address.resident);
         let hints = Hints { resident, thread: thread.clone(), was, tool_use_id: None };
-        let mut client = self.client().await?;
+        let mut client = self.client_for(host.clone()).await?;
         match client.call(Call::Arrive { host, hints }).await {
             Ok(Reply::Arrived(whereabouts)) => {
                 self.were.lock().expect("never poisoned").insert(thread.clone(), whereabouts.resident.clone());
@@ -426,8 +465,8 @@ impl Session {
 
     /// The machines this session works on, for its tools' descriptions; none
     /// when the node is not running, which listing the tools does not start.
-    pub async fn machines(&self) -> Option<crate::tools::Machines> {
-        let host = self.host.get().cloned()?;
+    pub async fn machines(&self, meta: Option<&Value>) -> Option<crate::tools::Machines> {
+        let host = self.host(meta).ok()?;
         let mut client = Client::connect(&self.world, Peer::Session { host }).await.ok()?;
         match client.call(Call::Machines).await {
             Ok(Reply::Machines { here, others }) => Some(crate::tools::Machines {
@@ -438,11 +477,20 @@ impl Session {
         }
     }
 
-    async fn client(&self) -> Result<Client, String> {
-        let host = self.host.get().cloned().ok_or("the session did not introduce itself with `initialize`")?;
+    async fn client(&self, meta: Option<&Value>) -> Result<Client, String> {
+        self.client_for(self.host(meta)?).await
+    }
+
+    async fn client_for(&self, host: Host) -> Result<Client, String> {
         let _starting = self.starting.lock().await;
         Client::connect_or_start(&self.world, Peer::Session { host }).await.map_err(|error| error.to_string())
     }
+}
+
+fn host_info(client_info: &Value) -> Host {
+    let name = client_info.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
+    let version = client_info.get("version").and_then(Value::as_str).unwrap_or_default().to_string();
+    Host { agent: agent_of(&name), client: name, version }
 }
 
 /// The write a tool call asks for, from its arguments.

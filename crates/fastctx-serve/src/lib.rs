@@ -7,6 +7,7 @@
 //! the session goes on and the next call reaches the new node.
 
 mod answer;
+mod protocol;
 mod session;
 mod stdio;
 mod tools;
@@ -92,6 +93,16 @@ async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> 
         let method = message.get("method").and_then(Value::as_str);
         let id = message.get("id").cloned();
         let params = message.get("params").cloned().unwrap_or(Value::Null);
+        let protocol = match (method, id.as_ref()) {
+            (Some(method), Some(id)) => match protocol::Protocol::request(method, &params, session.initialized()) {
+                Ok(protocol) => protocol,
+                Err(error) => {
+                    output.send(&json!({ "jsonrpc": "2.0", "id": id, "error": error }));
+                    continue;
+                }
+            },
+            _ => protocol::Protocol::Legacy,
+        };
         match (method, id) {
             (Some("initialize"), Some(id)) => {
                 session.introduce(params.get("clientInfo").unwrap_or(&Value::Null));
@@ -106,20 +117,24 @@ async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> 
                     }),
                 ));
             }
-            (Some("ping"), Some(id)) => output.send(&response(&id, json!({}))),
+            (Some("server/discover"), Some(id)) => {
+                output.send(&protocol.response(&id, protocol::discovery(), true));
+            }
+            (Some("ping"), Some(id)) => output.send(&protocol.response(&id, json!({}), false)),
             (Some("tools/list"), Some(id)) => {
-                let machines = session.machines().await;
+                let meta = params.get("_meta");
+                let machines = session.machines(meta).await;
                 let tools = tools::definitions(
                     writes_off,
-                    session.colleague(),
-                    session.woken(),
-                    session.codex(),
+                    session.colleague(meta),
+                    session.woken(meta),
+                    session.codex(meta),
                     machines.as_ref(),
                 );
-                output.send(&response(&id, json!({ "tools": tools })))
+                output.send(&protocol.response(&id, json!({ "tools": tools }), true))
             }
             (Some("tools/call"), Some(id)) => {
-                let (session, output, key) = (session.clone(), output.clone(), id.to_string());
+                let (session, output, key) = (session.for_call(params.get("_meta")), output.clone(), id.to_string());
                 let handle = calls.spawn(async move {
                     let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
                     let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -128,8 +143,10 @@ async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> 
                         // Sessions whose host listed the tools before writing
                         // became the shell's commands may still call these.
                         "edit" | "write" | "apply_patch" => session.write(name, &arguments, params.get("_meta")).await,
-                        "ask_colleague" if !session.colleague() => session.ask(&arguments, params.get("_meta")).await,
-                        "message_colleague" if !session.colleague() => {
+                        "ask_colleague" if !session.colleague(params.get("_meta")) => {
+                            session.ask(&arguments, params.get("_meta")).await
+                        }
+                        "message_colleague" if !session.colleague(params.get("_meta")) => {
                             session.message(&arguments, params.get("_meta")).await
                         }
                         _ => {
@@ -139,7 +156,8 @@ async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> 
                     };
                     match session.bound(&mut answer) {
                         Ok(()) => {
-                            let response = response(&id, tools::result(&answer.content, answer.is_error));
+                            let response =
+                                protocol.response(&id, tools::result(&answer.content, answer.is_error), false);
                             let _ = output.send_answer(&response, answer).await;
                         }
                         Err(error) => {
