@@ -102,18 +102,32 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             continue;
         }
         if let Call::On { resident, town, request } = call {
+            let receipt = request.receipt;
             // Only the World's shell of that resident sends its `on`s: the
             // command speaks as the resident its job belongs to.
             let ended = match &hello.peer {
                 Peer::Command { resident: Some(speaker), .. } if *speaker == resident => {
-                    let origin = fastctx_types::on::OnOrigin { resident, town };
+                    let origin = fastctx_types::on::OnOrigin { resident, town, request: None };
                     match crate::on::send(node, origin, request).await {
                         Err(failure) => Err(failure),
                         Ok(mut pieces) => loop {
                             tokio::select! {
                                 piece = pieces.recv() => match piece {
-                                    Some(Ok(piece)) => writer.send(&json(&NodeFrame::On { id, piece })).await?,
-                                    Some(Err(failure)) => break Err(failure),
+                                    Some(crate::on::Piece::Value(Ok(piece))) => writer.send(&json(&NodeFrame::On { id, piece })).await?,
+                                    Some(crate::on::Piece::Value(Err(failure))) => break Err(failure),
+                                    Some(crate::on::Piece::End { end, taken }) => {
+                                        let piece = fastctx_types::on::OnPiece::Ended { end };
+                                        writer.send(&json(&NodeFrame::On { id, piece })).await?;
+                                        writer.drain().await?;
+                                        if receipt {
+                                            let Some(frame) = reader.recv().await? else { return Ok(()) };
+                                            let word: String = parse(&frame)?;
+                                            if word != fastctx_types::on::TAKEN {
+                                                return Err(std::io::Error::other("the on client did not acknowledge its end"));
+                                            }
+                                        }
+                                        taken.send(()).map_err(|_| std::io::Error::other("the on completion handover stopped before its receipt"))?;
+                                    }
                                     None => break Ok(Reply::Done),
                                 },
                                 // The client says nothing more on an `on`;

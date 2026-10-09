@@ -24,11 +24,11 @@ use fastctx_types::on::{
     OnEnd, OnOrigin, OnPackage, OnPiece, OnRequest, OnSizes, OnWord, SILENT_FOR, STILL_EVERY, TAKEN,
 };
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use fastctx_types::residents::{Action, Delivery, Notice};
+use fastctx_types::residents::Action;
 use fastctx_types::run::{EndedHow, JobOwner, JobRecord, OnJob, RunRequest};
-use fastctx_types::{JobId, MachineName, ResidentId};
+use fastctx_types::{JobId, MachineName};
 use sha2::{Digest as _, Sha256};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;
 
 use crate::Node;
@@ -40,9 +40,37 @@ const CHUNK: usize = 1024 * 1024;
 /// How long a follower waits before looking at a quiet log again. Output
 /// growing says nothing to anyone, so it is looked for; a tenth of a second
 /// is below what a reader notices, and a look at a file's end costs little.
-const LOOK_AGAIN: Duration = Duration::from_millis(100);
+pub(crate) const LOOK_AGAIN: Duration = Duration::from_millis(100);
 
-type Pieces = mpsc::UnboundedSender<Result<OnPiece, Failure>>;
+const WAITING: &str = "waiting for the CLI receipt";
+
+pub(crate) enum Piece {
+    Value(Result<OnPiece, Failure>),
+    End { end: OnEnd, taken: oneshot::Sender<()> },
+}
+
+#[derive(Clone)]
+struct Pieces(mpsc::UnboundedSender<Piece>);
+
+impl Pieces {
+    fn send(&self, piece: Result<OnPiece, Failure>) -> Result<(), String> {
+        self.0.send(Piece::Value(piece)).map_err(|_| "the on that sent it left".to_string())
+    }
+
+    fn is_closed(&self) -> bool {
+        self.0.is_closed()
+    }
+
+    async fn closed(&self) {
+        self.0.closed().await;
+    }
+
+    async fn ended(&self, end: OnEnd) -> Result<bool, String> {
+        let (taken, receipt) = oneshot::channel();
+        self.0.send(Piece::End { end, taken }).map_err(|_| "the on that sent it left".to_string())?;
+        Ok(receipt.await.is_ok())
+    }
+}
 
 // The sending side.
 
@@ -51,53 +79,36 @@ type Pieces = mpsc::UnboundedSender<Result<OnPiece, Failure>>;
 /// before the end stops the job.
 pub async fn send(
     node: &Arc<Node>,
-    origin: OnOrigin,
+    mut origin: OnOrigin,
     request: OnRequest,
-) -> Result<mpsc::UnboundedReceiver<Result<OnPiece, Failure>>, Failure> {
+) -> Result<mpsc::UnboundedReceiver<Piece>, Failure> {
+    origin.request = Some(crate::speech::new_id("on"));
     let (pieces, receiver) = mpsc::unbounded_channel();
+    let pieces = Pieces(pieces);
     let node = node.clone();
     tokio::spawn(async move {
-        let sent = if request.machine == node.machine() {
-            here(&node, &origin, &request, &pieces).await
+        let waiting = Arc::new(Mutex::new(crate::on_delivery::Following::start(&node, &origin, &request.machine)));
+        let local = request.machine == node.machine();
+        let sent = if local {
+            here(&node, &origin, &request, &pieces, &waiting).await
         } else {
-            there(&node, &origin, &request, &pieces).await
+            there(&node, &origin, &request, &pieces, &waiting).await
         };
-        if let Err(failure) = sent {
+        if let Err(mut failure) = sent {
+            // Publication can fail after making a prepared debt visible.
+            // Once a refusal is handed out, it cannot later become an end.
+            if failure.not_run
+                && let Err(error) = crate::on_delivery::cancelled(&node, &origin, &request.machine)
+            {
+                failure = Failure::new(format!("keeping the startup refusal: {error}"));
+            }
+            if local && !failure.not_run && pieces.is_closed() {
+                crate::on_stop::send(&node, &request.machine, &origin, None).await;
+            }
             let _ = pieces.send(Err(failure));
         }
     });
     Ok(receiver)
-}
-
-/// A job this machine's `on` sent elsewhere, as a letter of its end finds
-/// it here: the letter goes when nobody follows the job at its end, and the
-/// follower may come back and take the end too (`on`).
-pub(crate) enum Awaited {
-    /// Still followed: a letter of its end waits until the follower knows
-    /// whether it took the end.
-    Following(Vec<(ResidentId, Delivery)>),
-    /// The follower took the end, which had gone in a letter too: that
-    /// letter, when it comes, is set aside.
-    Lettered,
-}
-
-/// Whether a letter for `to`, `delivery`, is the end of a job this machine
-/// follows or has taken, and so is kept back or set aside.
-pub(crate) fn set_aside(node: &Node, to: &ResidentId, delivery: &Delivery) -> bool {
-    let Notice::JobEnded { job, machine, .. } = &delivery.notice else { return false };
-    let key = (machine.clone(), job.clone());
-    let mut awaited = node.awaited.lock().expect("never poisoned");
-    match awaited.get_mut(&key) {
-        Some(Awaited::Following(parked)) => {
-            parked.push((to.clone(), delivery.clone()));
-            true
-        }
-        Some(Awaited::Lettered) => {
-            awaited.remove(&key);
-            true
-        }
-        None => false,
-    }
 }
 
 /// What the sender knows of a job it sent, kept across the connections
@@ -108,52 +119,127 @@ struct Followed {
     refused: Option<Failure>,
     out: u64,
     err: u64,
-    ended: bool,
-    /// The end came, and a letter of it was sent before it did.
-    lettered: bool,
+    ending: Option<EndReceipt>,
+}
+
+type EndReceipt = watch::Receiver<Option<Result<bool, Failure>>>;
+
+async fn end_received(receipt: &mut EndReceipt) -> Result<bool, Failure> {
+    loop {
+        if let Some(result) = receipt.borrow_and_update().clone() {
+            return result;
+        }
+        receipt.changed().await.map_err(|_| Failure::new("the completion receipt task stopped"))?;
+    }
+}
+
+fn offer_end(
+    followed: &Arc<Mutex<Followed>>,
+    pieces: &Pieces,
+    waiting: &Arc<Mutex<crate::on_delivery::Following>>,
+    end: OnEnd,
+) -> EndReceipt {
+    let mut state = followed.lock().expect("never poisoned");
+    if let Some(receipt) = &state.ending {
+        return receipt.clone();
+    }
+    let job = state.job.clone().expect("started before end");
+    let (done, receipt) = watch::channel(None);
+    state.ending = Some(receipt.clone());
+    let (pieces, waiting) = (pieces.clone(), waiting.clone());
+    // This handover outlives a network feed. A late control reply must not
+    // cancel a completion already queued for the CLI, or cause a second one.
+    tokio::spawn(async move {
+        let complete = !matches!(&end, OnEnd::Exited { remaining, .. } if *remaining > 0);
+        let result = match pieces.ended(end).await {
+            Ok(true) if complete => waiting
+                .lock()
+                .expect("never poisoned")
+                .taken(&job)
+                .map(|()| true)
+                .map_err(|error| Failure::new(format!("keeping the completion receipt: {error}"))),
+            Ok(taken) => Ok(taken),
+            Err(_) => Ok(false),
+        };
+        let _ = done.send(Some(result));
+    });
+    receipt
 }
 
 /// What the sender does with a job's id once the machine says it started,
 /// before any of its output is handed on.
-type OnStarted = Arc<dyn Fn(JobId) -> fastctx_net::link::BoxFuture<()> + Send + Sync>;
+type OnStarted = Arc<dyn Fn(JobId) -> fastctx_net::link::BoxFuture<Result<(), String>> + Send + Sync>;
 
 /// An `on` naming this machine: the same job, without the network.
-async fn here(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces: &Pieces) -> Result<(), Failure> {
-    let staged = Staged::local(&request.package).await?;
-    let (job, record_path) = start(node, origin, staged, request.package.writes_off).await?;
-    noted(node, origin, request, &job).await;
+async fn here(
+    node: &Arc<Node>,
+    origin: &OnOrigin,
+    request: &OnRequest,
+    pieces: &Pieces,
+    waiting: &Arc<Mutex<crate::on_delivery::Following>>,
+) -> Result<(), Failure> {
+    let staged = Staged::local(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
+    let (job, record_path, follower) = start(node, origin, staged, request.package.writes_off).await?;
+    waiting.lock().expect("never poisoned").started(&job);
+    noted(node, origin, request, &job).await?;
     let _ = pieces.send(Ok(OnPiece::Started { machine: node.machine(), job: job.clone() }));
     let mut sink = Sink::Local(pieces);
     let handed = hand_over(node, &job, &record_path, 0, 0, &mut sink).await;
+    if matches!(handed, Ok(Handed { taken: true, complete: true })) {
+        waiting
+            .lock()
+            .expect("never poisoned")
+            .taken(&job)
+            .map_err(|error| Failure::new(format!("keeping the completion receipt: {error}")))?;
+    }
     // A local follower has no network to lose: its departure is an
     // intentional stop, just as it is for the sending side of a remote on.
-    let stopped = if pieces.is_closed() && !matches!(handed, Ok(true)) {
-        serve_stop(node, origin.clone(), job.clone()).await.map(|_| ())
+    let stopped = if pieces.is_closed() && !matches!(handed, Ok(Handed { taken: true, .. })) {
+        crate::on_stop::send(node, &request.machine, origin, Some(&job)).await;
+        waiting
+            .lock()
+            .expect("never poisoned")
+            .taken(&job)
+            .map_err(|error| Failure::new(format!("keeping the intentional stop: {error}")))
     } else {
         Ok(())
     };
-    let finished = finish(node, &job, &record_path, handed).await;
+    let finished = follower.finish(handed).await;
     stopped.and(finished)
 }
 
 /// An `on` naming another machine.
-async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces: &Pieces) -> Result<(), Failure> {
-    let link =
-        node.link().ok_or_else(|| Failure::new(format!("{} is not connected to any other machine", node.machine())))?;
+async fn there(
+    node: &Arc<Node>,
+    origin: &OnOrigin,
+    request: &OnRequest,
+    pieces: &Pieces,
+    waiting: &Arc<Mutex<crate::on_delivery::Following>>,
+) -> Result<(), Failure> {
+    let link = node
+        .link()
+        .ok_or_else(|| Failure::not_run(format!("{} is not connected to any other machine", node.machine())))?;
     let machine = request.machine.clone();
-    let sizes = sizes(&request.package).await?;
+    let sizes = sizes(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
+    let _reaching =
+        (origin.resident.machine == node.machine()).then(|| node.reaching.hold(&origin.resident.resident, &machine));
+    requested(node, origin, request).await?;
+    crate::on_delivery::keep_request(node, origin, &machine)
+        .map_err(|error| Failure::not_run(format!("keeping the request before sending it: {error}")))?;
     let followed = Arc::new(Mutex::new(Followed::default()));
     // Noted when the machine says the job started, before its output is
     // handed on: the script's answer may be read as soon as the job is through.
     let started: OnStarted = {
-        let (node, origin, request) = (node.clone(), origin.clone(), request.clone());
+        let (node, origin, request, waiting) = (node.clone(), origin.clone(), request.clone(), waiting.clone());
         Arc::new(move |job| {
             let (node, origin, request) = (node.clone(), origin.clone(), request.clone());
-            Box::pin(async move { noted(&node, &origin, &request, &job).await })
+            waiting.lock().expect("never poisoned").started(&job);
+            Box::pin(async move { noted(&node, &origin, &request, &job).await.map_err(|failure| failure.message) })
         })
     };
     let call = RemoteCall::On { origin: origin.clone(), sizes, writes_off: request.package.writes_off };
-    let sending = feed(&machine, Some(request.package.clone()), followed.clone(), pieces.clone(), Some(started));
+    let sending =
+        feed(&machine, Some(request.package.clone()), followed.clone(), pieces.clone(), Some(started), waiting.clone());
     let first = link.call_with_stream(&machine, call, sending).await;
     let (started, refused) = {
         let followed = followed.lock().expect("never poisoned");
@@ -163,50 +249,41 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
         return Err(failure);
     }
     let Some(job) = started else {
+        let not_sent = matches!(
+            &first,
+            Err(CallFailure::NotConnected { .. }
+                | CallFailure::NotMember { .. }
+                | CallFailure::Offline { .. }
+                | CallFailure::Unreachable { .. })
+        ) || matches!(&first, Ok(Err(failure)) if failure.not_run);
+        if pieces.is_closed() && !not_sent {
+            crate::on_stop::send(node, &machine, origin, None).await;
+            return Ok(());
+        }
         return Err(match first {
             Ok(Err(failure)) => failure,
-            Ok(Ok(_)) => Failure::new(format!("{machine} answered without starting the job")),
+            Ok(Ok(_)) => {
+                Failure::new(format!("{machine} answered without a startup confirmation; execution is unknown"))
+            }
             // Nothing ran there: the call did not get through.
             Err(
                 failure @ (CallFailure::NotConnected { .. }
                 | CallFailure::NotMember { .. }
                 | CallFailure::Offline { .. }
                 | CallFailure::Unreachable { .. }),
-            ) => Failure::new(failure.to_string()),
+            ) => Failure::not_run(failure.to_string()),
             Err(failure) => Failure::new(format!(
                 "{failure}. If the job started there, its end will be told to you; `fastctx w` on {machine} shows it"
             )),
         });
     };
-    let key = (machine.clone(), job.clone());
-    node.awaited.lock().expect("never poisoned").insert(key.clone(), Awaited::Following(Vec::new()));
-    let followed_through = follow_there(node, &link, origin, &machine, &job, &followed, pieces).await;
-    let (ended, lettered) = {
-        let followed = followed.lock().expect("never poisoned");
-        (followed.ended, followed.lettered)
-    };
-    let parked = {
-        let mut awaited = node.awaited.lock().expect("never poisoned");
-        match awaited.remove(&key) {
-            Some(Awaited::Following(parked)) => {
-                // Its letter already here is the one set aside.
-                if ended && lettered && parked.is_empty() {
-                    awaited.insert(key, Awaited::Lettered);
-                }
-                parked
-            }
-            _ => Vec::new(),
-        }
-    };
-    // An end this `on` did not take still reaches the resident, unless the
-    // `on` stopped the job on purpose: then nobody is owed its end.
-    let stopped = matches!(followed_through, Ok(true));
-    if !ended && !stopped {
-        for (to, delivery) in parked {
-            if let Err(failure) = crate::speech::tell_here(node, &to, delivery, crate::speech::Owed::Working).await {
-                node.log.line(format_args!("telling {to} of {job} on {machine}: {}", failure.message));
-            }
-        }
+    let followed_through = follow_there(node, origin, &machine, &job, &followed, pieces, waiting).await;
+    if matches!(followed_through, Ok(true)) {
+        waiting
+            .lock()
+            .expect("never poisoned")
+            .taken(&job)
+            .map_err(|error| Failure::new(format!("keeping the intentional stop: {error}")))?;
     }
     followed_through.map(|_| ())
 }
@@ -216,21 +293,28 @@ async fn there(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, pieces:
 /// that sent it left, and so stopped it.
 async fn follow_there(
     node: &Arc<Node>,
-    link: &fastctx_net::link::Link,
     origin: &OnOrigin,
     machine: &MachineName,
     job: &JobId,
     followed: &Arc<Mutex<Followed>>,
     pieces: &Pieces,
+    waiting: &Arc<Mutex<crate::on_delivery::Following>>,
 ) -> Result<bool, Failure> {
+    let link = node.link().ok_or_else(|| Failure::new("the node left the network while following the job"))?;
     let mut delay = Backoff::default();
     loop {
-        if followed.lock().expect("never poisoned").ended {
+        if let Some(failure) = followed.lock().expect("never poisoned").refused.clone() {
+            return Err(failure);
+        }
+        let ending = followed.lock().expect("never poisoned").ending.clone();
+        if let Some(mut receipt) = ending
+            && end_received(&mut receipt).await?
+        {
             return Ok(false);
         }
         if pieces.is_closed() {
             // The `on` that sent it left: it was stopped on purpose.
-            stop_there(node, machine, origin, job).await;
+            crate::on_stop::send(node, machine, origin, Some(job)).await;
             return Ok(true);
         }
         tokio::select! {
@@ -242,8 +326,14 @@ async fn follow_there(
             (followed.out, followed.err)
         };
         let call = RemoteCall::Follow { origin: origin.clone(), job: job.clone(), out_from, err_from };
-        let following = feed(machine, None, followed.clone(), pieces.clone(), None);
-        match link.call_with_stream(machine, call, following).await {
+        let following = feed(machine, None, followed.clone(), pieces.clone(), None, waiting.clone());
+        let result = link.call_with_stream(machine, call, following).await;
+        // A control reply can fail after the data stream already offered
+        // the end. Only that handover's CLI receipt decides its outcome.
+        if followed.lock().expect("never poisoned").ending.is_some() {
+            continue;
+        }
+        match result {
             Ok(Err(failure)) => return Err(Failure::new(format!("following {job} on {machine}: {failure}"))),
             Err(CallFailure::NotMember { name, .. }) => {
                 return Err(Failure::new(format!(
@@ -263,6 +353,7 @@ fn feed(
     followed: Arc<Mutex<Followed>>,
     pieces: Pieces,
     started: Option<OnStarted>,
+    waiting: Arc<Mutex<crate::on_delivery::Following>>,
 ) -> Feed {
     let machine = machine.clone();
     Box::new(move |mut stream: Stream| {
@@ -285,8 +376,11 @@ fn feed(
                     }
                     OnWord::Started { job } => {
                         followed.lock().expect("never poisoned").job = Some(job.clone());
-                        if let Some(started) = &started {
-                            started(job.clone()).await;
+                        if let Some(started) = &started
+                            && let Err(error) = started(job.clone()).await
+                        {
+                            followed.lock().expect("never poisoned").refused = Some(Failure::new(error.clone()));
+                            return Err(error);
                         }
                         let _ = pieces.send(Ok(OnPiece::Started { machine: machine.clone(), job }));
                     }
@@ -310,14 +404,16 @@ fn feed(
                         }
                     }
                     OnWord::Still => {}
-                    OnWord::Ended { end, lettered } => {
-                        if pieces.send(Ok(OnPiece::Ended { end })).is_err() {
+                    OnWord::Ended { end, .. } => {
+                        let mut receipt = offer_end(&followed, &pieces, &waiting, end);
+                        let taken = loop {
+                            tokio::select! {
+                                result = end_received(&mut receipt) => break result.map_err(|failure| failure.message)?,
+                                () = tokio::time::sleep(STILL_EVERY) => stream.say(&WAITING).await?,
+                            }
+                        };
+                        if !taken {
                             return Err("the on that sent it left".to_string());
-                        }
-                        {
-                            let mut followed = followed.lock().expect("never poisoned");
-                            followed.ended = true;
-                            followed.lettered = lettered;
                         }
                         return stream.say(&TAKEN).await;
                     }
@@ -377,7 +473,41 @@ async fn sizes(package: &OnPackage) -> Result<OnSizes, Failure> {
 /// Records the `on` where it was written: in the resident's actions, when
 /// it lives here, so the machine it went to may write back about it; and
 /// beside the job whose script it is part of, for that job's answer.
-async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &JobId) {
+async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> Result<(), Failure> {
+    if origin.resident.machine != node.machine() {
+        return Ok(());
+    }
+    let action = Action {
+        at: jiff::Timestamp::now(),
+        machine: request.machine.clone(),
+        hand: "on".to_string(),
+        what: "sending a script".to_string(),
+        result: String::new(),
+    };
+    let (world, origin) = (node.world.clone(), origin.clone());
+    tokio::task::spawn_blocking(move || {
+        let directory = world.resident(origin.town.as_ref(), &origin.resident.resident);
+        let (_transaction, directory) = crate::resident_storage::current(&directory)?;
+        let mut bytes = match std::fs::read(directory.actions()) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error),
+        };
+        // A prior append may have failed mid-line. Preserve that fragment,
+        // but do not let it swallow the durable action for this request.
+        if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+            bytes.push(b'\n');
+        }
+        bytes.extend(serde_json::to_vec(&action).map_err(std::io::Error::other)?);
+        bytes.push(b'\n');
+        fastctx_platform::publish(&directory.actions(), &bytes, fastctx_platform::Permissions::Private)
+    })
+    .await
+    .map_err(|error| Failure::not_run(format!("recording the request before sending it: {error}")))?
+    .map_err(|error| Failure::not_run(format!("recording the request before sending it: {error}")))
+}
+
+async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &JobId) -> Result<(), Failure> {
     let here = node.machine();
     let action = Action {
         at: jiff::Timestamp::now(),
@@ -387,18 +517,21 @@ async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &J
         result: String::new(),
     };
     let (world, origin, request, job) = (node.world.clone(), origin.clone(), request.clone(), job.clone());
-    let _ = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
         let owner = JobOwner::Resident(origin.resident.clone());
         if origin.resident.machine == here {
-            let _ = crate::residents::record_action(&world, &origin.resident.resident, origin.town.as_ref(), &action);
+            crate::residents::record_action(&world, &origin.resident.resident, origin.town.as_ref(), &action)?;
         }
         if let Some(parent) = &request.job {
             let directory = world.job_owner(&here, origin.town.as_ref(), &owner);
             let line = format!("{} {job}\n", request.machine);
-            let _ = append(&directory.jobs().join(format!("{parent}.on")), line.as_bytes());
+            append(&directory.jobs().join(format!("{parent}.on")), line.as_bytes())?;
         }
+        Ok(())
     })
-    .await;
+    .await
+    .map_err(|error| Failure::new(format!("recording the started job: {error}")))?
+    .map_err(|error| Failure::new(format!("recording the started job: {error}")))
 }
 
 fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -406,110 +539,16 @@ fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::OpenOptions::new().create(true).append(true).open(path)?.write_all(bytes)
 }
 
-/// A stop of a job on another machine that has not reached it yet.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct PendingStop {
-    machine: MachineName,
-    job: JobId,
-    origin: OnOrigin,
-}
-
-/// Where stops not yet delivered wait, so that a node that restarts still
-/// sends them.
-fn pending_stops(node: &Node) -> PathBuf {
-    node.world.path().join("on-stops")
-}
-
-/// Asks `machine` to stop `job`, until it has or the job is gone: the stop
-/// was meant, so it is not dropped for a broken connection, nor for this
-/// node restarting before the connection came back.
-async fn stop_there(node: &Arc<Node>, machine: &MachineName, origin: &OnOrigin, job: &JobId) {
-    let pending = PendingStop { machine: machine.clone(), job: job.clone(), origin: origin.clone() };
-    let kept = keep_stop(node, &pending).await;
-    if let Err(error) = &kept {
-        node.log.line(format_args!("could not keep the stop of {job} on {machine} for after a restart: {error}"));
-    }
-    deliver_stop(node, &pending).await;
-    if let Ok(path) = kept
-        && let Err(error) = tokio::fs::remove_file(&path).await
-    {
-        node.log.line(format_args!("{}: {error}", path.display()));
-    }
-}
-
-async fn keep_stop(node: &Node, pending: &PendingStop) -> std::io::Result<PathBuf> {
-    let directory = pending_stops(node);
-    let path = directory.join(format!("{}.json", random_name()?));
-    let bytes = serde_json::to_vec(pending).map_err(std::io::Error::other)?;
-    let written = path.clone();
-    tokio::task::spawn_blocking(move || {
-        fastctx_platform::ensure_private_dir(&directory)?;
-        fastctx_platform::publish(&written, &bytes, fastctx_platform::Permissions::Private)
-    })
-    .await
-    .map_err(std::io::Error::other)??;
-    Ok(path)
-}
-
-async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) {
-    let Some(link) = node.link() else { return };
-    let mut delay = Backoff::default();
-    loop {
-        let call = RemoteCall::StopOn { origin: pending.origin.clone(), job: pending.job.clone() };
-        match link.call(&pending.machine, call).await {
-            Ok(_) | Err(CallFailure::NotMember { .. }) => return,
-            Err(_) => tokio::time::sleep(delay.next()).await,
-        }
-    }
-}
-
-/// Sends again the stops a node that stopped had not delivered.
-pub async fn resume_stops(node: &Arc<Node>) {
-    let directory = pending_stops(node);
-    let mut entries = match tokio::fs::read_dir(&directory).await {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-        Err(error) => {
-            node.log.line(format_args!("{}: {error}", directory.display()));
-            return;
-        }
-    };
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        if path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        let read = tokio::fs::read(&path)
-            .await
-            .map_err(|error| error.to_string())
-            .and_then(|bytes| serde_json::from_slice::<PendingStop>(&bytes).map_err(|error| error.to_string()));
-        let pending = match read {
-            Ok(pending) => pending,
-            Err(error) => {
-                node.log.line(format_args!("{}: {error}", path.display()));
-                continue;
-            }
-        };
-        let node = node.clone();
-        tokio::spawn(async move {
-            deliver_stop(&node, &pending).await;
-            if let Err(error) = tokio::fs::remove_file(&path).await {
-                node.log.line(format_args!("{}: {error}", path.display()));
-            }
-        });
-    }
-}
-
 /// The waits between attempts to reach a machine again, as the link waits
 /// to reconnect (`world-network.md`): at once, then up to twice as long
 /// each time, at most a minute, each a random part of that.
 #[derive(Default)]
-struct Backoff {
+pub(crate) struct Backoff {
     ceiling: Option<Duration>,
 }
 
 impl Backoff {
-    fn next(&mut self) -> Duration {
+    pub(crate) fn next(&mut self) -> Duration {
         let ceiling = match self.ceiling {
             None => {
                 self.ceiling = Some(Duration::from_secs(1));
@@ -536,12 +575,15 @@ pub async fn serve_on(
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let starting = async {
-        let staged = Staged::receive(node, &origin, &sizes, &mut stream).await?;
+        let staged = Staged::receive(node, &origin, &sizes, &mut stream)
+            .await
+            .map_err(|failure| Failure::not_run(failure.message))?;
         start(node, &origin, staged, writes_off).await
     }
     .await;
-    let (job, record_path) = match starting {
+    let (job, record_path, follower) = match starting {
         Ok(started) => started,
+        Err(failure) if !failure.not_run => return Err(failure),
         Err(failure) => {
             // Closing the data stream first races the control reply and
             // turns a definite refusal into an unknown execution outcome.
@@ -560,13 +602,13 @@ pub async fn serve_on(
             }
         }
     };
-    stream
-        .say(&OnWord::Started { job: job.clone() })
-        .await
-        .map_err(|error| Failure::new(format!("saying the job started: {error}")))?;
-    let mut sink = Sink::Stream(&mut stream);
-    let handed = hand_over(node, &job, &record_path, 0, 0, &mut sink).await;
-    finish(node, &job, &record_path, handed).await?;
+    let handed = async {
+        stream.say(&OnWord::Started { job: job.clone() }).await?;
+        let mut sink = Sink::Stream(&mut stream);
+        hand_over(node, &job, &record_path, 0, 0, &mut sink).await
+    }
+    .await;
+    follower.finish(handed).await?;
     Ok(RemoteReply::OnDone)
 }
 
@@ -581,36 +623,27 @@ pub async fn serve_follow(
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let record_path = on_job(node, &origin, &job)?;
-    follow(node, &job);
+    let follower = Follower::new(node, &record_path);
     let mut sink = Sink::Stream(&mut stream);
     let handed = hand_over(node, &job, &record_path, out_from, err_from, &mut sink).await;
-    finish(node, &job, &record_path, handed).await?;
-    Ok(RemoteReply::OnDone)
-}
-
-/// Stops an `on` job its sender stopped. The script that sent it stopped
-/// it on purpose and learns of that from its own end, so no letter of this
-/// end is owed to the resident.
-pub async fn serve_stop(node: &Arc<Node>, origin: OnOrigin, job: JobId) -> Result<RemoteReply, Failure> {
-    let record_path = on_job(node, &origin, &job)?;
-    let owner = JobOwner::Resident(origin.resident.clone());
-    let owed = node.world.job_owner(&node.machine(), origin.town.as_ref(), &owner).job_owed(&job);
-    match tokio::fs::remove_file(&owed).await {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-            return Err(Failure::new(format!("{}: {error}", owed.display())));
-        }
-        _ => {}
-    }
-    let by = format!("{} on {}", origin.resident.resident, origin.resident.machine);
-    crate::jobs::stop(node, &record_path, &by, "the on that sent it stopped").await?;
+    follower.finish(handed).await?;
     Ok(RemoteReply::OnDone)
 }
 
 /// The record of the `on` job `job` of the resident in `origin`.
-fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result<PathBuf, Failure> {
+pub(crate) fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result<PathBuf, Failure> {
     let owner = JobOwner::Resident(origin.resident.clone());
     let path = node.world.job_owner(&node.machine(), origin.town.as_ref(), &owner).job_record(job);
     match fastctx_hands::run::record::read(&path) {
+        Ok(record)
+            if record
+                .on
+                .as_ref()
+                .and_then(|on| on.request.as_ref())
+                .is_some_and(|request| origin.request.as_ref() != Some(request)) =>
+        {
+            Err(Failure::new(format!("{job} belongs to a different on request")))
+        }
         Ok(record) if record.on.is_some() => Ok(path),
         Ok(_) => Err(Failure::new(format!("{job} on {} was not sent by an on", node.machine()))),
         Err(error) => {
@@ -703,79 +736,65 @@ async fn start(
     origin: &OnOrigin,
     staged: Staged,
     writes_off: bool,
-) -> Result<(JobId, PathBuf), Failure> {
+) -> Result<(JobId, PathBuf, Follower), Failure> {
     let script = staged.script;
-    let on = OnJob { state: staged.state.to_string_lossy().into_owned() };
+    let on = OnJob { state: staged.state.to_string_lossy().into_owned(), request: origin.request.clone() };
     let request = RunRequest { script, cwd: None, writes_off };
     let owner = JobOwner::Resident(origin.resident.clone());
-    let launched = node.jobs.launch(node, owner, origin.town.clone(), request, Some((on, staged.input))).await?;
-    // Followed before its end is owed, so an end that comes first goes to
-    // the follower rather than in a letter too.
-    follow(node, &launched.job);
-    let (world, here, job, path) = (node.world.clone(), node.machine(), launched.job.clone(), launched.record.clone());
-    tokio::task::spawn_blocking(move || crate::inbox::owe_job(&world, &here, &job, &path))
-        .await
-        .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?
-        .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?;
-    Ok((launched.job, launched.record))
+    let registration = Arc::new(Mutex::new(None));
+    let launched = node
+        .jobs
+        .launch(node, owner, origin.town.clone(), request, Some((on, staged.input)), Some(registration.clone()))
+        .await?;
+    let follower = registration.lock().expect("never poisoned").take().expect("registered before spawn");
+    Ok((launched.job, launched.record, follower))
 }
 
-/// Marks `job` as followed by one more follower.
-fn follow(node: &Arc<Node>, job: &JobId) {
-    *node.following.lock().expect("never poisoned").entry(job.clone()).or_default() += 1;
+pub(crate) type Registration = Arc<Mutex<Option<Follower>>>;
+
+pub(crate) struct Follower {
+    node: Arc<Node>,
+    path: PathBuf,
 }
 
-/// After a follower is done with `job`: a handed-over end is no longer
-/// owed; otherwise, with no follower left, the resident is told by letter
-/// if the job has ended, or when it does.
-async fn finish(
-    node: &Arc<Node>,
-    job: &JobId,
-    record_path: &Path,
-    handed: Result<bool, String>,
-) -> Result<(), Failure> {
-    // Keep the follower registered until its receipt has cleared the debt.
-    // Otherwise a concurrent JobChanged can send a completion letter in
-    // the interval between releasing the follower and deleting .owed.
-    let taken = if matches!(handed, Ok(true)) {
-        async {
-            let record = crate::jobs::read(record_path).await?;
-            let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(job);
-            match tokio::fs::remove_file(&owed).await {
-                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                    Err(Failure::new(format!("{}: {error}", owed.display())))
-                }
-                _ => Ok(()),
-            }
+impl Follower {
+    pub(crate) fn new(node: &Arc<Node>, path: &Path) -> Self {
+        *node.following.lock().expect("never poisoned").entry(path.to_path_buf()).or_default() += 1;
+        Self { node: node.clone(), path: path.to_path_buf() }
+    }
+
+    async fn finish(self, handed: Result<Handed, String>) -> Result<(), Failure> {
+        // A shell's background children still owe their eventual end,
+        // even if they finished while the shell's receipt was in flight.
+        if matches!(handed, Ok(Handed { taken: true, complete: true })) {
+            fastctx_platform::publish(
+                &self.path.with_extension("on-taken"),
+                b"",
+                fastctx_platform::Permissions::Private,
+            )
+            .map_err(|error| Failure::new(format!("keeping the completion receipt: {error}")))?;
         }
-        .await
-    } else {
         Ok(())
-    };
-    {
-        let mut following = node.following.lock().expect("never poisoned");
-        if let Some(count) = following.get_mut(job) {
+    }
+}
+
+impl Drop for Follower {
+    fn drop(&mut self) {
+        {
+            let mut following = self.node.following.lock().expect("never poisoned");
+            let count = following.get_mut(&self.path).expect("registered follower");
             *count -= 1;
             if *count == 0 {
-                following.remove(job);
+                following.remove(&self.path);
             }
         }
-    }
-    taken?;
-    match handed {
-        Ok(true) => Ok(()),
-        Ok(false) | Err(_) => {
-            let record = crate::jobs::read(record_path).await?;
-            crate::inbox::tell_if_ended(node, &record)
-                .await
-                .map_err(|error| Failure::new(format!("telling the job's end: {error}")))
-        }
+        crate::inbox::retry_job(&self.node, &self.path);
     }
 }
 
 /// Whether nobody follows `job` now, so its end goes in a letter.
-pub fn unfollowed(node: &Node, job: &JobId) -> bool {
-    !node.following.lock().expect("never poisoned").contains_key(job)
+pub fn unfollowed(node: &Node, record: &Path) -> bool {
+    !node.following.lock().expect("never poisoned").contains_key(record)
 }
 
 /// Where a job's output is handed: the network, or this machine's own
@@ -783,6 +802,11 @@ pub fn unfollowed(node: &Node, job: &JobId) -> bool {
 enum Sink<'a> {
     Stream(&'a mut Stream),
     Local(&'a Pieces),
+}
+
+struct Handed {
+    taken: bool,
+    complete: bool,
 }
 
 impl Sink<'_> {
@@ -813,13 +837,16 @@ impl Sink<'_> {
         match self {
             Sink::Stream(stream) => {
                 stream.say(&OnWord::Ended { end, lettered }).await?;
-                match tokio::time::timeout(SILENT_FOR, stream.hear::<String>()).await {
-                    Ok(Ok(word)) => Ok(word == TAKEN),
-                    Ok(Err(error)) => Err(error),
-                    Err(_) => Ok(false),
+                loop {
+                    match tokio::time::timeout(SILENT_FOR, stream.hear::<String>()).await {
+                        Ok(Ok(word)) if word == WAITING => continue,
+                        Ok(Ok(word)) => return Ok(word == TAKEN),
+                        Ok(Err(error)) => return Err(error),
+                        Err(_) => return Ok(false),
+                    }
                 }
             }
-            Sink::Local(pieces) => Ok(pieces.send(Ok(OnPiece::Ended { end })).is_ok()),
+            Sink::Local(pieces) => pieces.ended(end).await,
         }
     }
 
@@ -841,7 +868,7 @@ async fn hand_over(
     mut out: u64,
     mut err: u64,
     sink: &mut Sink<'_>,
-) -> Result<bool, String> {
+) -> Result<Handed, String> {
     let mut changes = node.jobs.subscribe();
     let mut quiet_since = Instant::now();
     loop {
@@ -871,7 +898,8 @@ async fn hand_over(
             // marker that it is owed: without one, the letter went.
             let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(job);
             let lettered = record.end.is_some() && matches!(tokio::fs::try_exists(&owed).await, Ok(false));
-            return sink.ended(end, lettered).await;
+            let complete = record.end.is_some();
+            return sink.ended(end, lettered).await.map(|taken| Handed { taken, complete });
         }
         if quiet_since.elapsed() >= STILL_EVERY {
             sink.still().await?;
@@ -896,7 +924,7 @@ fn through(record: &JobRecord) -> Option<OnEnd> {
     // Output the log could not take was never handed over: the `on` did not
     // carry the job through, whatever its code.
     if let Some(lost) = record.output_lost.as_ref().or(record.stderr_lost.as_ref())
-        && (record.end.is_some() || record.output_ended_at.is_some())
+        && record.end.is_some()
     {
         let error = format!("its output there stopped being kept after {} bytes: {}", lost.kept_bytes, lost.error);
         return Some(OnEnd::Otherwise { how: EndedHow::Failed { error }, status });
@@ -908,7 +936,9 @@ fn through(record: &JobRecord) -> Option<OnEnd> {
         });
     }
     match (status, &record.output_ended_at) {
-        (Some(status), Some(_)) => Some(OnEnd::Exited { status, remaining: record.remaining.unwrap_or(0) }),
+        (Some(status), Some(_)) if record.remaining.is_some_and(|remaining| remaining > 0) => {
+            Some(OnEnd::Exited { status, remaining: record.remaining.expect("checked") })
+        }
         _ => None,
     }
 }

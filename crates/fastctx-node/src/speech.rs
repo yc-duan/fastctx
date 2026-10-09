@@ -46,7 +46,13 @@ pub enum Owed {
 /// it to another machine; the same id told again is the same notice.
 pub async fn tell(node: &Arc<Node>, to: &Address, id: NoticeId, notice: Notice, owed: Owed) -> Result<Landed, Failure> {
     if to.machine == node.machine() {
-        return tell_here(node, &to.resident, Delivery { id, at: Timestamp::now(), notice }, owed).await;
+        let delivery = Delivery { id, at: Timestamp::now(), notice };
+        if crate::on_delivery::park(node, &to.resident, &delivery)
+            .map_err(|error| Failure::new(format!("keeping the on completion: {error}")))?
+        {
+            return Ok(Landed::Waiting { why: None, answered: false });
+        }
+        return tell_here(node, &to.resident, delivery, owed).await;
     }
     let link = node.link().ok_or_else(|| {
         Failure::new(format!(

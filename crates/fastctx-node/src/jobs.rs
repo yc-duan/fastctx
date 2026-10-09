@@ -41,8 +41,13 @@ impl Jobs {
         // With nobody waiting there is nobody to wake.
         let _ = self.changes.send(job.clone());
         let path = node.world.job_owner(&node.machine(), town.as_ref(), &owner).job_record(&job);
-        let record = read(&path).await?;
-        crate::inbox::tell_if_ended(node, &record).await.map_err(|error| failure("telling the job's end", error))
+        let record = read(&path).await.inspect_err(|_| {
+            crate::inbox::retry_job(node, &path);
+        })?;
+        crate::inbox::tell_if_ended(node, &record).await.map_err(|error| {
+            crate::inbox::retry_job(node, &path);
+            failure("telling the job's end", error)
+        })
     }
 
     /// Listens for changes to jobs' records: each change names its job.
@@ -58,9 +63,11 @@ impl Jobs {
         town: Option<TownName>,
         request: RunRequest,
         on: Option<(fastctx_types::run::OnJob, Option<PathBuf>)>,
+        registration: Option<crate::on::Registration>,
     ) -> Result<run::Launched, Failure> {
         let (world, machine, executable) = (node.world.clone(), node.machine(), node.fastctx.clone());
-        tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
+        let registering = node.clone();
+        let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
             let home = user_home().map_err(|error| failure("finding the home directory", error))?;
             let environment =
                 world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
@@ -81,10 +88,17 @@ impl Jobs {
                 environment: &environment,
                 on: on.as_ref(),
             };
-            run::launch_with_io(&launch, mode, input.as_deref())
+            let launched = run::launch::launch_with_io_registered(&launch, mode, input.as_deref(), |path| {
+                if let Some(registration) = registration {
+                    *registration.lock().expect("never poisoned") = Some(crate::on::Follower::new(&registering, path));
+                }
+            })?;
+            crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());
+            Ok(launched)
         })
         .await
-        .map_err(|error| Failure::new(format!("starting the job: {error}")))?
+        .map_err(|error| Failure::new(format!("starting the job: {error}")))??;
+        Ok(launched)
     }
 
     /// Starts `request` for `owner` and waits until the job settles or the
@@ -100,7 +114,7 @@ impl Jobs {
         let deadline = Instant::now() + WAIT;
         // Listening before the job exists, so its first change is not missed.
         let mut changes = self.changes.subscribe();
-        let launched = self.launch(node, owner, town, request, None).await?;
+        let launched = self.launch(node, owner, town, request, None, None).await?;
         loop {
             let record = read(&launched.record).await?;
             if settled(&record) {
@@ -244,7 +258,7 @@ pub(crate) async fn read(path: &Path) -> Result<JobRecord, Failure> {
 
 /// Records that a job ended without its supervisor, if the supervisor is
 /// indeed gone: its lock is free.
-async fn interrupt(path: &Path, reason: &str) -> Result<JobRecord, Failure> {
+pub(crate) async fn interrupt(path: &Path, reason: &str) -> Result<JobRecord, Failure> {
     let (path, reason) = (path.to_path_buf(), reason.to_string());
     tokio::task::spawn_blocking(move || interrupt_now(&path, &reason))
         .await

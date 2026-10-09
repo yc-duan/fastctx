@@ -257,6 +257,9 @@ async fn arrived(gate: &TcpListener, job: &run::Launched) -> Result<(TcpStream, 
     loop {
         match gate.accept() {
             Ok((mut stream, _)) => {
+                // Windows inherits the listener's nonblocking mode; this
+                // frame is read synchronously after the peer connects.
+                stream.set_nonblocking(false)?;
                 let mut size = [0; 4];
                 stream.read_exact(&mut size)?;
                 let mut identity = vec![0; u32::from_le_bytes(size) as usize];

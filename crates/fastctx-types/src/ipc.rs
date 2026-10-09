@@ -107,10 +107,18 @@ pub enum NodeFrame {
 #[error("{message}")]
 pub struct Failure {
     pub message: String,
+    /// The request failed before execution became possible. Absence means
+    /// the caller must not infer that nothing ran.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub not_run: bool,
 }
 
 impl Failure {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self { message: message.into(), not_run: false }
+    }
+
+    pub fn not_run(message: impl Into<String>) -> Self {
+        Self { message: message.into(), not_run: true }
     }
 }

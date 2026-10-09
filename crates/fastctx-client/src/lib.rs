@@ -236,6 +236,16 @@ pub struct OnStream {
 }
 
 impl OnStream {
+    /// Confirms that the CLI read the completion and waits for the node to
+    /// finish recording its receipt. This is not a receipt from the model.
+    pub async fn taken(&mut self) -> Result<(), CallError> {
+        self.client.connection.send(&to_json(&fastctx_types::on::TAKEN)).await.map_err(CallError::Broken)?;
+        match self.next().await? {
+            None => Ok(()),
+            Some(_) => Err(CallError::Broken(std::io::Error::other("the node sent output after the on completion"))),
+        }
+    }
+
     /// The next piece; `None` once the call ended as it should.
     pub async fn next(&mut self) -> Result<Option<fastctx_types::on::OnPiece>, CallError> {
         let frame = self
