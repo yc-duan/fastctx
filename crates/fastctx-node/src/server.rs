@@ -447,7 +447,13 @@ async fn collect_notes(
         if let Some(warning) = node.lifetime.warning() {
             notes.push(format!("=== {warning} ==="));
         }
-        notes.extend(crate::jobs::still_running(&node.world, &node.machine(), &id, answering.as_ref())?);
+        // Those it left running where it works, too.
+        let elsewhere = crate::here::running_elsewhere(&node, &id)
+            .into_iter()
+            .filter(|job| Some(&job.job) != answering.as_ref())
+            .map(|job| (format!("{} on {}", job.job, job.machine), job.started_at, job.command))
+            .collect();
+        notes.extend(crate::jobs::still_running(&node.world, &node.machine(), &id, answering.as_ref(), elsewhere)?);
         Ok((notes, heard))
     })
     .await?;
@@ -513,7 +519,7 @@ async fn taken(
         false
     });
     if let Some(job) = shown
-        && !crate::here::forget(node, &resident, town.clone(), &job)
+        && !crate::here::forget(node, &resident, &job)
     {
         let (node, owner) = (node.clone(), fastctx_types::Address { machine: node.machine(), resident });
         tokio::spawn(async move { crate::jobs::forget(&node, town, owner, job).await });
@@ -603,7 +609,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             Ok(Reply::Looked { looked: crate::look::look(node, &acting, ids).await })
         }
-        Call::StopJob { job, machine } => {
+        Call::StopJob { job, machine, hub } => {
             let caller = caller::of(node, peer)?;
             let acting = crate::around::acting_of(node, &caller);
             let by = match caller {
@@ -612,6 +618,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 Caller::Session(agent) => format!("a {agent} session"),
                 Caller::Page(page) => format!("the page {}", page.page),
             };
+            let machine = machine.map(|name| crate::reach::Written { name, hub });
             crate::stop::stop(node, &acting, by, job, machine).await
         }
         Call::Talk { to, machine, text, attachments } => {

@@ -375,6 +375,7 @@ pub fn still_running(
     here: &fastctx_types::MachineName,
     resident: &fastctx_types::ResidentId,
     answering: Option<&JobId>,
+    elsewhere: Vec<(String, Timestamp, String)>,
 ) -> std::io::Result<Option<String>> {
     let owner = fastctx_types::run::JobOwner::Resident(fastctx_types::Address {
         machine: here.clone(),
@@ -394,20 +395,21 @@ pub fn still_running(
                 Err(error) => return Err(error),
             };
             if job.end.is_none() && job.owner == owner && Some(&job.id) != answering {
-                running.push(job);
+                running.push((job.id.to_string(), job.started_at, first_line(&job.script)));
             }
         }
     }
+    running.extend(elsewhere);
     if running.is_empty() {
         return Ok(None);
     }
-    running.sort_by_key(|job| job.started_at);
+    running.sort_by_key(|(_, started_at, _)| *started_at);
     let now = Timestamp::now();
     let jobs: Vec<String> = running
         .iter()
-        .map(|job| {
-            let ran = now.as_second().saturating_sub(job.started_at.as_second()).max(0) as u64;
-            format!("{} ({}) {}", job.id, fastctx_hands::told::duration(ran), short(&first_line(&job.script)))
+        .map(|(job, started_at, command)| {
+            let ran = now.as_second().saturating_sub(started_at.as_second()).max(0) as u64;
+            format!("{job} ({}) {}", fastctx_hands::told::duration(ran), short(command))
         })
         .collect();
     Ok(Some(format!("=== your jobs still running: {} ===", jobs.join("; "))))

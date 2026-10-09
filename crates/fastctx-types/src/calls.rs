@@ -59,6 +59,9 @@ pub enum Call {
     StopJob {
         job: JobId,
         machine: Option<MachineName>,
+        /// The hub of `machine`, when it was written as `name.hub`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<crate::HubName>,
     },
     /// Waits until jobs of this machine end (`fastctx wait`). The end of a
     /// job the caller started is taken by the wait: it is not told again.

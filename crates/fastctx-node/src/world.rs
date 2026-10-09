@@ -463,7 +463,7 @@ impl fastctx_net::link::Node for Handler {
                     crate::on::serve_follow(&node, origin, job, out_from, err_from, stream).await
                 }
                 RemoteCall::StopOn { origin, job } => crate::on_stop::serve(&node, origin, job).await,
-                RemoteCall::StopJob { job, by } => crate::stop::here_(&node, &job, &format!("{by} on {from}"))
+                RemoteCall::StopJob { job, by } => crate::stop::here_(&node, &job, &format!("{by} on {from}, for {}", caller.account))
                     .await
                     .map(|record| RemoteReply::JobStopped { record: record.map(Box::new) }),
                 RemoteCall::Ask { asker: resident, town, label, prompt, accounts } => {
@@ -564,7 +564,7 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::CopySend { from: path, to } => {
-                    let to_machine = to.machine.ok_or_else(|| Failure::new("the copy names no machine to send to"))?;
+                    let to_machine = to.written().ok_or_else(|| Failure::new("the copy names no machine to send to"))?;
                     // This machine sends for the caller's account: the
                     // hub lets it only where that account may work.
                     crate::copy::send(&node, &acting, &path, &to_machine, &to.path).await.map(RemoteReply::Copied)
@@ -631,6 +631,9 @@ impl fastctx_net::link::Node for Handler {
             match letter {
                 Letter::Fragment { .. } => unreachable!("nested fragments are rejected"),
                 Letter::Notice { to, notice } => {
+                    if let Notice::JobEnded { job, machine, .. } = &notice {
+                        crate::here::ended_elsewhere(&node, &to, machine, job);
+                    }
                     let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                     if crate::on_delivery::park(&node, &to, &delivery)? {
                         return Ok(Ok(()));

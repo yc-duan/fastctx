@@ -17,8 +17,17 @@ use crate::on::{Backoff, LOOK_AGAIN};
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PendingStop {
     machine: MachineName,
+    /// The hub of `machine`, when it was written as `name.hub`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hub: Option<fastctx_types::HubName>,
     job: Option<JobId>,
     origin: OnOrigin,
+}
+
+impl PendingStop {
+    fn written(&self) -> crate::reach::Written {
+        crate::reach::Written { name: self.machine.clone(), hub: self.hub.clone() }
+    }
 }
 
 /// Where stops not yet delivered wait, so that a node that restarts still
@@ -48,8 +57,10 @@ pub(crate) fn pending_cancellation(
 /// Asks `machine` to stop `job`, until it has or the job is gone: the stop
 /// was meant, so it is not dropped for a broken connection, nor for this
 /// node restarting before the connection came back.
-pub(crate) async fn send(node: &Arc<Node>, machine: &MachineName, origin: &OnOrigin, job: Option<&JobId>) {
-    let pending = PendingStop { machine: machine.clone(), job: job.cloned(), origin: origin.clone() };
+pub(crate) async fn send(node: &Arc<Node>, written: &crate::reach::Written, origin: &OnOrigin, job: Option<&JobId>) {
+    let machine = &written.name;
+    let pending =
+        PendingStop { machine: machine.clone(), hub: written.hub.clone(), job: job.cloned(), origin: origin.clone() };
     let identity = origin
         .request
         .as_ref()
@@ -106,7 +117,7 @@ async fn settle_stop(node: &Node, pending: &PendingStop, path: &Path) {
 }
 
 async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) -> Result<(), Failure> {
-    if pending.machine == node.machine() {
+    if node.is_here(&pending.written()) {
         let mut delay = Backoff::default();
         loop {
             match serve(node, pending.origin.clone(), pending.job.clone()).await {
@@ -122,7 +133,7 @@ async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) -> Result<(), Fai
     let acting = crate::on::acting(node, &pending.origin);
     loop {
         let call = RemoteCall::StopOn { origin: pending.origin.clone(), job: pending.job.clone() };
-        match node.call(&acting, &(&pending.machine).into(), Purpose::Hands, call).await {
+        match node.call(&acting, &pending.written(), Purpose::Hands, call).await {
             Ok(Ok(RemoteReply::OnDone)) => return Ok(()),
             Ok(Ok(_)) => node.log.line(format_args!(
                 "{} answered the stop of {:?} with an unrelated reply",

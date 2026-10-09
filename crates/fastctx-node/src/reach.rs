@@ -117,6 +117,18 @@ impl Node {
         }
     }
 
+    /// `town` as a call to a machine of `link`'s hub carries it: a project
+    /// is of one hub (`world-network.md`), so what goes to a machine of
+    /// another hub is kept outside any project there.
+    pub(crate) fn town_across(&self, link: &Link, town: Option<&fastctx_types::TownName>) -> Option<fastctx_types::TownName> {
+        let town = town?;
+        crate::ledger::names::place(&self.world, town)
+            .ok()
+            .flatten()
+            .filter(|place| place.hub == link.membership().id)
+            .map(|_| town.clone())
+    }
+
     /// Whether scripts may start on this computer for `acting`: for a
     /// session the user opened here, or for an account logged in here or
     /// that may work here. An account lent only the agents here works

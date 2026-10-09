@@ -408,19 +408,19 @@ fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Res
     if attachment.owner.resident != *resident {
         return Err(unknown());
     }
-    let receipt = node
-        .world
-        .resident(attachment.town.as_ref(), resident)
-        .path()
-        .join("attachments")
-        .join(attachment.id.as_str())
-        .join("receipt.json");
-    let kept: Attachment = read_json(&receipt).map_err(|_| unknown())?;
-    let same = if attachment.owner.machine == node.machine() {
-        kept == *attachment
-    } else {
-        kept.id == attachment.id && kept.town == attachment.town && kept.file == attachment.file
+    let receipt = |town: Option<&TownName>| {
+        node.world.resident(town, resident).path().join("attachments").join(attachment.id.as_str()).join("receipt.json")
     };
+    let placed = attachment.owner.machine != node.machine();
+    let mut kept: Option<Attachment> = read_json(&receipt(attachment.town.as_ref())).ok();
+    // A copy placed on a machine of another hub went outside any project
+    // there; the upload it was made from is under the project it was for.
+    if kept.is_none() && placed {
+        let towns = node.world.towns().unwrap_or_default();
+        kept = towns.iter().map(Some).chain([None]).find_map(|town| read_json(&receipt(town)).ok());
+    }
+    let kept = kept.ok_or_else(unknown)?;
+    let same = if placed { kept.id == attachment.id && kept.file == attachment.file } else { kept == *attachment };
     if !same {
         return Err(failure("the attachment receipt differs from the stored upload"));
     }
@@ -482,7 +482,11 @@ async fn send_placed(
     resident: &ResidentId,
     kept: Attachment,
 ) -> Result<Attachment, Failure> {
-    let call = RemoteCall::Place { resident: resident.clone(), attachment: kept.clone() };
+    let town = match node.speaking(acting, works_on, Purpose::Hands) {
+        Ok((link, _)) => node.town_across(&link, kept.town.as_ref()),
+        Err(_) => kept.town.clone(),
+    };
+    let call = RemoteCall::Place { resident: resident.clone(), attachment: Attachment { town, ..kept.clone() } };
     let (path, size) = (PathBuf::from(&kept.path), kept.file.size);
     let feed = || -> Feed {
         let path = path.clone();

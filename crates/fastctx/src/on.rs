@@ -20,6 +20,7 @@ use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::on::{OnEnd, OnPackage, OnPiece, OnRequest, OnSource, PIPE_LINE_MAX};
 use fastctx_types::run::EndedHow;
+use fastctx_types::access::Written;
 use fastctx_types::{Address, Call, JobId, MachineName, TownName};
 
 /// What `on` exits with when the World could not carry the command through,
@@ -85,7 +86,8 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
             "usage: on MACHINE COMMAND [ARG...], or on MACHINE with the script on standard input. `fastctx nodes` lists the machines"
         );
     };
-    let machine = MachineName::try_from(machine.as_str())?;
+    let written = Written::parse(machine.as_str())?;
+    let machine = written.name.clone();
     let resident: Address =
         std::env::var("FASTCTX_RESIDENT").context("on works only inside a script run by the run tool")?.parse()?;
     let town = std::env::var("FASTCTX_TOWN").ok().map(TownName::try_from).transpose()?;
@@ -94,6 +96,7 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
     let package = collect(&args.state, args.command.as_deref(), &args.words, args.pipe_in)?;
     let request = OnRequest {
         machine: machine.clone(),
+        hub: written.hub.clone(),
         receipt: true,
         process: Some(fastctx_platform::current_identity()?),
         job,

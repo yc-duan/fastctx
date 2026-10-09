@@ -21,8 +21,12 @@ pub fn resident(node: &Node, asker: &Asker, id: &ResidentId) -> bool {
     }
 }
 
+/// Whether `asker` sees what the resident at `address` did here. A resident
+/// of another machine reaches this one with `on` or a run handed over,
+/// which ask to work here: what it did is not that of an account that may
+/// only use the agents here.
 fn address(node: &Node, asker: &Asker, address: &Address) -> bool {
-    address.machine != node.machine() || resident(node, asker, &address.resident)
+    asker.hands || (address.machine == node.machine() && resident(node, asker, &address.resident))
 }
 
 fn owner(node: &Node, asker: &Asker, owner: &JobOwner) -> bool {

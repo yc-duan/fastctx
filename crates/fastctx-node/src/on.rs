@@ -122,7 +122,7 @@ pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) ->
     let node = node.clone();
     tokio::spawn(async move {
         let waiting = Arc::new(Mutex::new(crate::on_delivery::Following::start(&node, &origin, &request.machine)));
-        let local = request.machine == node.machine();
+        let local = node.is_here(&request.written());
         let sent = if local {
             here(&node, &origin, &request, &pieces, &waiting).await
         } else {
@@ -137,7 +137,7 @@ pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) ->
                 failure = Failure::new(format!("keeping the startup refusal: {error}"));
             }
             if local && !failure.not_run && pieces.stopping() {
-                crate::on_stop::send(&node, &request.machine, &origin, None).await;
+                crate::on_stop::send(&node, &request.written(), &origin, None).await;
             }
             let _ = pieces.send(Err(failure)).await;
         }
@@ -227,7 +227,7 @@ async fn here(
             .map_err(|error| Failure::new(format!("keeping the completion receipt: {error}")))?;
     }
     let stopped = if pieces.stopping() && !matches!(handed, Ok(Handed { taken: true, .. })) {
-        crate::on_stop::send(node, &request.machine, origin, Some(&job)).await;
+        crate::on_stop::send(node, &request.written(), origin, Some(&job)).await;
         waiting
             .lock()
             .expect("never poisoned")
@@ -249,16 +249,20 @@ async fn there(
     waiting: &Arc<Mutex<crate::on_delivery::Following>>,
 ) -> Result<(), Failure> {
     let machine = request.machine.clone();
+    let written = request.written();
     let acting = acting(node, origin);
     let (link, account) =
-        node.speaking(&acting, &(&machine).into(), Purpose::Hands).map_err(|failure| Failure::not_run(failure.to_string()))?;
+        node.speaking(&acting, &written, Purpose::Hands).map_err(|failure| Failure::not_run(failure.to_string()))?;
+    // Recorded here under its project; there, under it only on its hub.
+    let local_origin = origin;
+    let origin = &OnOrigin { town: node.town_across(&link, origin.town.as_ref()), ..origin.clone() };
     let sizes = sizes(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
-    requested(node, origin, request).await?;
+    requested(node, local_origin, request).await?;
     let followed = Arc::new(Mutex::new(Followed::default()));
     // Noted when the machine says the job started, before its output is
     // handed on: the script's answer may be read as soon as the job is through.
     let started: OnStarted = {
-        let (node, origin, request, waiting) = (node.clone(), origin.clone(), request.clone(), waiting.clone());
+        let (node, origin, request, waiting) = (node.clone(), local_origin.clone(), request.clone(), waiting.clone());
         Arc::new(move |job| {
             let (node, origin, request) = (node.clone(), origin.clone(), request.clone());
             waiting.lock().expect("never poisoned").started(&job);
@@ -304,7 +308,7 @@ async fn there(
                 | CallFailure::Unreachable { .. })
         ) || matches!(&first, Ok(Err(failure)) if failure.not_run);
         if pieces.stopping() && !not_sent {
-            crate::on_stop::send(node, &machine, origin, None).await;
+            crate::on_stop::send(node, &written, origin, None).await;
             return Ok(());
         }
         return Err(match first {
@@ -326,7 +330,7 @@ async fn there(
             )),
         });
     };
-    let followed_through = follow_there(node, (&link, &account), origin, &machine, &job, &followed, pieces, waiting).await;
+    let followed_through = follow_there(node, (&link, &account), origin, &written, &job, &followed, pieces, waiting).await;
     if matches!(followed_through, Ok(true)) {
         waiting
             .lock()
@@ -367,12 +371,13 @@ async fn follow_there(
     node: &Arc<Node>,
     (link, account): (&Arc<fastctx_net::link::Link>, &fastctx_types::AccountName),
     origin: &OnOrigin,
-    machine: &MachineName,
+    written: &crate::reach::Written,
     job: &JobId,
     followed: &Arc<Mutex<Followed>>,
     pieces: &Pieces,
     waiting: &Arc<Mutex<crate::on_delivery::Following>>,
 ) -> Result<bool, Failure> {
+    let machine = &written.name;
     let mut delay = Backoff::default();
     loop {
         if let Some(failure) = followed.lock().expect("never poisoned").refused.clone() {
@@ -386,7 +391,7 @@ async fn follow_there(
         }
         if pieces.is_closed() {
             if pieces.stopping() {
-                crate::on_stop::send(node, machine, origin, Some(job)).await;
+                crate::on_stop::send(node, written, origin, Some(job)).await;
                 return Ok(true);
             }
             return Err(Failure::new("the local connection to the on follower broke; its end remains owed"));

@@ -11,7 +11,18 @@ use crate::MachineName;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Place {
     pub machine: Option<MachineName>,
+    /// The hub of `machine`, when it was written as `name.hub`
+    /// (`world-network.md`, 机器的名字).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub: Option<crate::HubName>,
     pub path: String,
+}
+
+impl Place {
+    /// The machine as it was written, if one was.
+    pub fn written(&self) -> Option<crate::access::Written> {
+        self.machine.clone().map(|name| crate::access::Written { name, hub: self.hub.clone() })
+    }
 }
 
 /// Everything a copy carries, as its source found it.

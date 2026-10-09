@@ -28,7 +28,6 @@ use fastctx_hands::copy::{Receiver, walk};
 use fastctx_net::data::Stream;
 use fastctx_net::link::{CallFailure, Feed};
 use fastctx_types::access::{Acting, Purpose, Written};
-use fastctx_types::MachineName;
 use fastctx_types::copy::{CopyReport, EntryKind, Manifest, Place};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -56,24 +55,25 @@ enum Answer {
 /// `acting`.
 pub async fn copy(node: &Arc<Node>, acting: &Acting, from: Place, to: Place) -> Result<CopyReport, Failure> {
     let here = node.machine();
-    let from_machine = from.machine.unwrap_or_else(|| here.clone());
-    let to_machine = to.machine.unwrap_or_else(|| here.clone());
-    if from_machine == to_machine {
+    let at = |place: &Place| place.written().unwrap_or_else(|| (&here).into());
+    let (from_machine, to_machine) = (at(&from), at(&to));
+    if from_machine == to_machine || (node.is_here(&from_machine) && node.is_here(&to_machine)) {
         return Err(Failure::new(format!(
             "both ends are on {from_machine}; copy within one machine with cp, in a run on it"
         )));
     }
-    if from_machine == here {
+    if node.is_here(&from_machine) {
         return send(node, acting, &from.path, &to_machine, &to.path).await;
     }
-    if to_machine == here {
+    if node.is_here(&to_machine) {
         return fetch(node, acting, &from_machine, &from.path, &to.path).await;
     }
-    if !trusted(node, acting, &(&from_machine).into()) {
+    if !trusted(node, acting, &from_machine) {
         return Box::pin(relay(node, acting, &from_machine, &from.path, &to_machine, &to.path)).await;
     }
-    let call = RemoteCall::CopySend { from: from.path, to: Place { machine: Some(to_machine), path: to.path } };
-    let answer = node.call(acting, &(&from_machine).into(), Purpose::Hands, call).await;
+    let to = Place { machine: Some(to_machine.name), hub: to_machine.hub, path: to.path };
+    let call = RemoteCall::CopySend { from: from.path, to };
+    let answer = node.call(acting, &from_machine, Purpose::Hands, call).await;
     match answer.map_err(|failure| Failure::new(failure.to_string()))? {
         Ok(RemoteReply::Copied(report)) => Ok(report),
         Ok(_) => Err(Failure::new(format!("{from_machine} answered something other than a copy"))),
@@ -115,13 +115,13 @@ fn handing(slot: Arc<Mutex<Option<oneshot::Sender<Stream>>>>) -> impl Fn() -> Fe
 async fn relay(
     node: &Arc<Node>,
     acting: &Acting,
-    from_machine: &MachineName,
+    from_machine: &Written,
     from: &str,
-    to_machine: &MachineName,
+    to_machine: &Written,
     to: &str,
 ) -> Result<CopyReport, Failure> {
     let (giving, given) = oneshot::channel();
-    let (source_written, destination_written): (Written, Written) = (from_machine.into(), to_machine.into());
+    let (source_written, destination_written) = (from_machine.clone(), to_machine.clone());
     let call = RemoteCall::CopyFetch { from: from.to_string() };
     // Each of the two calls is a large future; on the heap, the relay does
     // not overflow a worker's stack.
@@ -205,7 +205,7 @@ async fn relay(
         // Everything reached the destination, which checked it.
         (Err(failure), Ok(mut report)) => {
             report.from = from.to_string();
-            report.from_machine = from_machine.clone();
+            report.from_machine = from_machine.name.clone();
             report.problems.push(format!("{from_machine}, which sent it, said afterwards: {}", failure.message));
             Ok(report)
         }
@@ -276,7 +276,7 @@ pub async fn give(node: &Arc<Node>, from: &str, mut stream: Stream) -> Result<Co
 async fn fetch(
     node: &Arc<Node>,
     acting: &Acting,
-    from_machine: &MachineName,
+    from_machine: &Written,
     from: &str,
     to: &str,
 ) -> Result<CopyReport, Failure> {
@@ -297,7 +297,7 @@ async fn fetch(
         })
     };
     let call = RemoteCall::CopyFetch { from: from.to_string() };
-    let answer = node.call_with_stream(acting, &from_machine.into(), Purpose::Hands, call, feed).await;
+    let answer = node.call_with_stream(acting, from_machine, Purpose::Hands, call, feed).await;
     let answer = answer.map_err(|failure| match failure {
         CallFailure::Unknown { name, reason } if reason.starts_with("sending its data failed: ") => {
             Failure::new(format!("the copy from {name} stopped: {}", &reason["sending its data failed: ".len()..]))
@@ -327,7 +327,7 @@ pub async fn send(
     node: &Arc<Node>,
     acting: &Acting,
     from: &str,
-    to_machine: &MachineName,
+    to_machine: &Written,
     to: &str,
 ) -> Result<CopyReport, Failure> {
     let Walked { manifest, files, problems: walk_problems } = walked(node, from).await?;
@@ -340,7 +340,7 @@ pub async fn send(
         let (manifest, files) = (manifest.clone(), files.clone());
         Box::new(move |stream| Box::pin(feed(stream, manifest, files)))
     };
-    let answer = node.call_with_stream(acting, &to_machine.into(), Purpose::Hands, call, sending).await;
+    let answer = node.call_with_stream(acting, to_machine, Purpose::Hands, call, sending).await;
     let answer = answer.map_err(|failure| match failure {
         CallFailure::Unknown { name, reason } if reason.starts_with("sending its data failed: ") => {
             Failure::new(format!("the copy to {name} stopped: {}", &reason["sending its data failed: ".len()..]))

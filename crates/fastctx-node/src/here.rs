@@ -11,6 +11,7 @@
 //! way: it runs even while the machine it would start on sleeps.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use fastctx_types::access::{Acting, HubAccount, Purpose, Written};
@@ -22,10 +23,62 @@ use fastctx_types::{Address, JobId, MachineName, ResidentId, TownName};
 use crate::Node;
 
 /// The jobs a `run` from here ran on the machine its resident works on and
-/// answered whole, until its host has the answer: then they go there.
+/// answered whole, with the project they went under there, until its host
+/// has the answer: then they go there.
 #[derive(Default)]
 pub struct Dispatched {
-    jobs: Mutex<HashMap<(ResidentId, JobId), Written>>,
+    jobs: Mutex<HashMap<(ResidentId, JobId), Went>>,
+}
+
+/// Where a job a `run` handed over went: the machine, and the project it is
+/// under there.
+type Went = (Written, Option<TownName>);
+
+/// A job a run of a resident started on the machine it works on and left
+/// running there, kept here until word of its end comes: the line of jobs
+/// still running, at the end of each answer, names it (`world-run.md`, 怎样
+/// 看它).
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct Elsewhere {
+    pub(crate) machine: Written,
+    pub(crate) job: JobId,
+    pub(crate) command: String,
+    pub(crate) started_at: jiff::Timestamp,
+}
+
+fn elsewhere_path(node: &Node, resident: &ResidentId, machine: &MachineName, job: &JobId) -> PathBuf {
+    node.world.path().join("elsewhere").join(resident.as_str()).join(format!("{machine}-{job}.json"))
+}
+
+fn left_running(node: &Node, resident: &ResidentId, kept: &Elsewhere) {
+    let path = elsewhere_path(node, resident, &kept.machine.name, &kept.job);
+    let bytes = serde_json::to_vec(kept).expect("records serialize");
+    let written = fastctx_platform::ensure_private_dir(path.parent().expect("a resident's directory"))
+        .and_then(|()| fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private));
+    if let Err(error) = written {
+        node.log.line(format_args!("keeping {} as still running: {error}", kept.job));
+    }
+}
+
+/// Word of the end of `job` on `machine` came for `resident`.
+pub(crate) fn ended_elsewhere(node: &Node, resident: &ResidentId, machine: &MachineName, job: &JobId) {
+    match std::fs::remove_file(elsewhere_path(node, resident, machine, job)) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            node.log.line(format_args!("forgetting {job} on {machine} as still running: {error}"));
+        }
+        _ => {}
+    }
+}
+
+/// What runs of `resident` left running on the machine it works on.
+pub(crate) fn running_elsewhere(node: &Node, resident: &ResidentId) -> Vec<Elsewhere> {
+    let Ok(entries) = std::fs::read_dir(node.world.path().join("elsewhere").join(resident.as_str())) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| std::fs::read(entry.ok()?.path()).ok())
+        .filter_map(|bytes| serde_json::from_slice(&bytes).ok())
+        .collect()
 }
 
 /// Every machine `script` names literally after `on` must be one this
@@ -144,7 +197,12 @@ pub(crate) async fn run(
     // Listening before the call goes, so words that come meanwhile are not
     // missed here.
     let mut words = node.words.watch(&here);
-    let call = RemoteCall::Run { resident: resident.clone(), town, request };
+    let town = match node.speaking(&acting, works_on, Purpose::Hands) {
+        Ok((link, _)) => node.town_across(&link, town.as_ref()),
+        Err(_) => town,
+    };
+    let (script, started_at) = (request.script.clone(), jiff::Timestamp::now());
+    let call = RemoteCall::Run { resident: resident.clone(), town: town.clone(), request };
     let answer = node.call(&acting, works_on, Purpose::Hands, call);
     tokio::pin!(answer);
     let mut told = false;
@@ -177,15 +235,23 @@ pub(crate) async fn run(
         Err(failure) => return Err(Failure::new(format!("the script starts on {}: {failure}", works_on.name))),
     };
     if reply.state != RunState::Running {
-        node.dispatched.jobs.lock().expect("never poisoned").insert((resident.clone(), reply.job.clone()), works_on.clone());
+        node.dispatched
+            .jobs
+            .lock()
+            .expect("never poisoned")
+            .insert((resident.clone(), reply.job.clone()), (works_on.clone(), town));
+    } else {
+        let command = crate::jobs::first_line(&script);
+        left_running(node, resident, &Elsewhere { machine: works_on.clone(), job: reply.job.clone(), command, started_at });
     }
     Ok(reply)
 }
 
 /// The answer that showed `job` whole reached its host: where it ran, if
 /// it ran elsewhere, its files go.
-pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, town: Option<TownName>, job: &JobId) -> bool {
-    let Some(works_on) = node.dispatched.jobs.lock().expect("never poisoned").remove(&(resident.clone(), job.clone())) else {
+pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bool {
+    let Some((works_on, town)) = node.dispatched.jobs.lock().expect("never poisoned").remove(&(resident.clone(), job.clone()))
+    else {
         return false;
     };
     let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();

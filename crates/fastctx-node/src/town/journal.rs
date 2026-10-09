@@ -219,8 +219,8 @@ async fn stage(
                     .map_err(|error| Failure::new(format!("attaching {}: {error}", one.path)))?;
             }
             Some(machine) => {
-                let from = Place { machine: Some(machine.clone()), path: one.path.clone() };
-                let to = Place { machine: Some(here.clone()), path: crate::world::native(&path) };
+                let from = Place { machine: Some(machine.clone()), hub: None, path: one.path.clone() };
+                let to = Place { machine: Some(here.clone()), hub: None, path: crate::world::native(&path) };
                 crate::copy::copy(node, acting, from, to)
                     .await
                     .map_err(|failure| Failure::new(format!("attaching {} from {machine}: {failure}", one.path)))?;

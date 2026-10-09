@@ -11,6 +11,10 @@ use crate::{Address, JobId, MachineName, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnRequest {
     pub machine: MachineName,
+    /// The hub of `machine`, when the script wrote it as `name.hub`
+    /// (`world-network.md`, 机器的名字).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub: Option<crate::HubName>,
     /// The client explicitly acknowledges Ended before the node releases
     /// the completion debt. Old clients only consumed the output stream.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -27,6 +31,13 @@ pub struct OnRequest {
     /// passing here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipe_to: Option<MachineName>,
+}
+
+impl OnRequest {
+    /// The machine as the script wrote it.
+    pub fn written(&self) -> crate::access::Written {
+        crate::access::Written { name: self.machine.clone(), hub: self.hub.clone() }
+    }
 }
 
 /// The files `fastctx on` collected on this machine, each written whole

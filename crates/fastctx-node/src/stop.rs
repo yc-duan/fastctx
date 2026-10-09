@@ -12,7 +12,7 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::run::JobRecord;
-use fastctx_types::{JobId, MachineName, Reply};
+use fastctx_types::{JobId, Reply};
 
 use crate::Node;
 use crate::around::Heard;
@@ -24,26 +24,26 @@ pub async fn stop(
     acting: &Acting,
     by: String,
     job: JobId,
-    machine: Option<MachineName>,
+    machine: Option<crate::reach::Written>,
 ) -> Result<Reply, Failure> {
     let here = node.machine();
-    if machine.as_ref().is_none_or(|machine| *machine == here)
+    if machine.as_ref().is_none_or(|machine| node.is_here(machine))
         && let Some(record) = here_(node, &job, &by).await?
     {
         return Ok(Reply::JobStopped { machine: here, record: Box::new(record) });
     }
-    if machine.as_ref() == Some(&here) {
+    if machine.as_ref().is_some_and(|machine| node.is_here(machine)) {
         return Err(Failure::new(format!("{here} has no job {job}")));
     }
     let call = RemoteCall::StopJob { job: job.clone(), by: by.clone() };
     let heard = match machine {
-        Some(machine) => {
-            let answer = match node.call(acting, &(&machine).into(), Purpose::Hands, call).await {
+        Some(written) => {
+            let answer = match node.call(acting, &written, Purpose::Hands, call).await {
                 Ok(Ok(reply)) => Heard::Answered(reply),
                 Ok(Err(failure)) => Heard::NoAnswer(failure.message),
                 Err(failure) => Heard::NoAnswer(failure.to_string()),
             };
-            vec![(machine, answer)]
+            vec![(written.name, answer)]
         }
         None => {
             if !node.connected_anywhere() {

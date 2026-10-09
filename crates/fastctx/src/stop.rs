@@ -8,7 +8,8 @@ use clap::Args;
 use fastctx_client::{CallError, Client, command_peer};
 use fastctx_types::layout::WorldDir;
 use fastctx_types::run::EndedHow;
-use fastctx_types::{Call, JobId, MachineName, Reply};
+use fastctx_types::access::Written;
+use fastctx_types::{Call, JobId, Reply};
 
 /// Stop jobs and everything they started, on whichever machine each runs.
 #[derive(Args)]
@@ -43,12 +44,12 @@ pub fn run(args: StopArgs) -> anyhow::Result<ExitCode> {
     Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
 }
 
-fn target(named: &str, machine: Option<&str>) -> anyhow::Result<(JobId, Option<MachineName>)> {
+fn target(named: &str, machine: Option<&str>) -> anyhow::Result<(JobId, Option<Written>)> {
     let (job, named) = match named.split_once('@') {
         Some((job, machine)) => (job, Some(machine)),
         None => (named, None),
     };
-    let machine = named.or(machine).map(MachineName::try_from).transpose()?;
+    let machine = named.or(machine).map(Written::parse).transpose()?;
     Ok((JobId::try_from(job)?, machine))
 }
 
@@ -57,9 +58,13 @@ fn stop(
     runtime: &tokio::runtime::Runtime,
     client: &mut Client,
     job: JobId,
-    machine: Option<MachineName>,
+    machine: Option<Written>,
 ) -> anyhow::Result<bool> {
-    let reply = runtime.block_on(client.call(Call::StopJob { job: job.clone(), machine }));
+    let (machine, hub) = match machine {
+        Some(written) => (Some(written.name), written.hub),
+        None => (None, None),
+    };
+    let reply = runtime.block_on(client.call(Call::StopJob { job: job.clone(), machine, hub }));
     match reply {
         Ok(Reply::JobStopped { machine, record }) => {
             let how = match record.end.as_ref().map(|end| &end.how) {

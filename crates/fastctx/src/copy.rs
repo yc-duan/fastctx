@@ -4,7 +4,8 @@ use std::process::ExitCode;
 
 use clap::Args;
 use fastctx_types::copy::{CopyReport, Place};
-use fastctx_types::{Call, MachineName, Reply};
+use fastctx_types::access::Written;
+use fastctx_types::{Call, Reply};
 
 /// The ends of a copy; what a copy does is said on the `copy` command.
 #[derive(Args)]
@@ -49,9 +50,9 @@ pub fn run(args: CopyArgs) -> anyhow::Result<ExitCode> {
 fn place(text: &str) -> anyhow::Result<Place> {
     if let Some((machine, path)) = text.split_once(':')
         && machine.len() >= 2
-        && let Ok(machine) = MachineName::try_from(machine)
+        && let Ok(machine) = Written::parse(machine)
     {
-        return Ok(Place { machine: Some(machine), path: path.to_string() });
+        return Ok(Place { machine: Some(machine.name), hub: machine.hub, path: path.to_string() });
     }
     let mut path = std::path::absolute(fastctx_platform::local_path(text)?)?.to_string_lossy().into_owned();
     if cfg!(windows) {
@@ -62,7 +63,7 @@ fn place(text: &str) -> anyhow::Result<Place> {
     if into && !path.ends_with(['/', '\\']) {
         path.push('/');
     }
-    Ok(Place { machine: None, path })
+    Ok(Place { machine: None, hub: None, path })
 }
 
 fn render(report: &CopyReport) -> String {
