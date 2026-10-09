@@ -14,6 +14,7 @@ use fastctx_net::envelope::{Envelope, Kind};
 use fastctx_net::sign::{PublicKey, Signature};
 use fastctx_net::wire::{self, CallStatus, Down, Letters, Question, Refusal, SILENCE, Told, Up};
 use fastctx_types::access::Purpose;
+use fastctx_types::remote::RemoteCall;
 use fastctx_types::{AccountName, MachineName};
 use futures_util::{SinkExt as _, StreamExt as _};
 use jiff::Timestamp;
@@ -367,7 +368,11 @@ fn letter(hub: &Hub, name: &MachineName, seq: u64, message: Envelope, reply: &im
         if hub.store().book.directory.member(&message.to).is_none() {
             return Err(format!("{} is not a member of the hub", message.to));
         }
-        standing(hub, &message).map(|_| ())
+        match standing(hub, &message) {
+            Ok(_) => Ok(()),
+            Err(_) if echoes_work(hub, &message) => Ok(()),
+            Err(reason) => Err(reason),
+        }
     }) {
         Ok(()) => {
             let to = message.to.clone();
@@ -393,6 +398,43 @@ fn letter(hub: &Hub, name: &MachineName, seq: u64, message: Envelope, reply: &im
     Ok(())
 }
 
+/// The resident a call asks the machine it goes to to work for, when it
+/// names one: a hop of an `on`, a run handed over to where its resident
+/// works, a colleague asked, a file placed.
+fn worked_for(message: &Envelope) -> Option<fastctx_types::Address> {
+    let call = match message.body::<fastctx_net::message::Body>().ok()? {
+        fastctx_net::message::Body::Call { call } | fastctx_net::message::Body::StreamCall { call } => call,
+        _ => return None,
+    };
+    let from = |resident| fastctx_types::Address { machine: message.from.clone(), resident };
+    match call {
+        RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } => Some(origin.resident),
+        RemoteCall::Run { resident, .. } | RemoteCall::Place { resident, .. } => Some(from(resident)),
+        RemoteCall::Ask { asker, .. } => Some(from(asker)),
+        _ => None,
+    }
+}
+
+/// Whether `message` is a letter telling a resident what came of work its
+/// machine was called to do for it, such as a job's end or a colleague's
+/// answer: that goes on after the account's right on the machine is taken
+/// back, as long as the account stands and the resident's machine still
+/// hosts it (`world-network.md`, 一台机器给几个账号用).
+fn echoes_work(hub: &Hub, message: &Envelope) -> bool {
+    let (Ok((account, Purpose::Echo)), Ok(body)) =
+        (message.standing(), message.body::<fastctx_net::message::LetterBody>())
+    else {
+        return false;
+    };
+    let fastctx_types::remote::Letter::Notice { to, .. } = body.letter else { return false };
+    let store = hub.store();
+    let directory = &store.book.directory;
+    let resident = fastctx_types::Address { machine: message.to.clone(), resident: to };
+    directory.account(account).is_some_and(|found| !found.locked)
+        && directory.hosts(account, &message.to)
+        && store.worked.contains(&(message.from.clone(), resident))
+}
+
 fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelope) -> CallStatus {
     if let Err(reason) = own(hub, name, &message) {
         return CallStatus::Refused { reason };
@@ -412,6 +454,11 @@ fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelo
         Ok(standing) => standing,
         Err(reason) => return CallStatus::Refused { reason },
     };
+    if let Some(resident) = worked_for(&message)
+        && let Err(error) = hub.store().note_worked(&to, resident)
+    {
+        hub.log.line(format_args!("noting that {to} works for a resident: {error}"));
+    }
     let target = hub.sessions().get(&to).map(|session| (session.generation, session.out.clone()));
     let Some((target_generation, target)) = target else {
         return CallStatus::Offline { last_seen };

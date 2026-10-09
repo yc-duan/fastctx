@@ -115,6 +115,10 @@ pub struct Store {
     pub hub: HubFile,
     pub book: Book,
     pub letters: BTreeMap<MachineName, Letters>,
+    /// Which machine was called to work for which resident: what it tells
+    /// that resident of the work goes on after the account's right on the
+    /// machine is taken back (`world-network.md`, 一台机器给几个账号用).
+    pub worked: std::collections::BTreeSet<(MachineName, fastctx_types::Address)>,
 }
 
 impl Store {
@@ -176,7 +180,8 @@ impl Store {
                 changed = true;
             }
         }
-        let store = Self { dir: dir.to_path_buf(), hub, book, letters };
+        let worked = read_or_default(&dir.join("worked.json"))?;
+        let store = Self { dir: dir.to_path_buf(), hub, book, letters, worked };
         if changed {
             store.save_letters()?;
         }
@@ -189,6 +194,14 @@ impl Store {
 
     pub fn save_book(&self) -> io::Result<()> {
         publish(&Self::directory_file(&self.dir), &json(&self.book)?, Permissions::Private)
+    }
+
+    /// Notes that `machine` was called to work for `resident`.
+    pub fn note_worked(&mut self, machine: &MachineName, resident: fastctx_types::Address) -> io::Result<()> {
+        if self.worked.insert((machine.clone(), resident)) {
+            publish(&self.dir.join("worked.json"), &json(&self.worked)?, Permissions::Private)?;
+        }
+        Ok(())
     }
 
     pub fn save_letters(&self) -> io::Result<()> {
