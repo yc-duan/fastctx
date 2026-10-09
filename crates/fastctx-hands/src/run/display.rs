@@ -208,10 +208,10 @@ impl Display {
     fn split_wide(&mut self, at: u128) -> io::Result<()> {
         if let Some(cell) = self.cells.get(at)?.filter(|c| c.empty()) {
             self.cells.set(at, Cell::new(" ", cell.view))?;
-            if let Some(before) = at.checked_sub(1) {
-                if let Some(cell) = self.cells.get(before)? {
-                    self.cells.set(before, Cell::new(" ", cell.view))?;
-                }
+            if let Some(before) = at.checked_sub(1)
+                && let Some(cell) = self.cells.get(before)?
+            {
+                self.cells.set(before, Cell::new(" ", cell.view))?;
             }
         }
         Ok(())

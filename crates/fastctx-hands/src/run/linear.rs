@@ -3,6 +3,9 @@
 use crate::spool::{BLOCK, Bytes};
 use std::io;
 
+/// Where emitted text goes; without one, the walk only checks the span.
+type Consume<'a> = &'a mut dyn FnMut(&str) -> io::Result<()>;
+
 #[derive(Clone, Copy)]
 enum State {
     Normal,
@@ -13,7 +16,7 @@ enum State {
 
 struct Output<'a> {
     text: String,
-    consume: Option<&'a mut dyn FnMut(&str) -> io::Result<()>>,
+    consume: Option<Consume<'a>>,
 }
 impl Output<'_> {
     fn byte(&mut self, byte: u8, literal: bool) -> io::Result<()> {
@@ -63,7 +66,7 @@ pub(super) fn render(bytes: &Bytes, literal: bool, mut consume: impl FnMut(&str)
     Ok(())
 }
 
-fn walk(bytes: &Bytes, literal: bool, consume: Option<&mut dyn FnMut(&str) -> io::Result<()>>) -> io::Result<bool> {
+fn walk(bytes: &Bytes, literal: bool, consume: Option<Consume<'_>>) -> io::Result<bool> {
     let mut output = Output { text: String::new(), consume };
     let mut state = State::Normal;
     let mut offset = 0;

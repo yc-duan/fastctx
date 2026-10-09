@@ -27,7 +27,10 @@ impl ViewSet {
         let at = id / 8;
         let mut byte = [0];
         file.seek(SeekFrom::Start(at))?;
-        file.read(&mut byte)?;
+        // Past the end of the file no bit of that byte was ever set.
+        if file.read(&mut byte)? == 0 {
+            byte[0] = 0;
+        }
         byte[0] |= 1 << (id % 8);
         file.seek(SeekFrom::Start(at))?;
         file.write_all(&byte)
@@ -45,7 +48,9 @@ impl ViewSet {
         };
         file.seek(SeekFrom::Start(id / 8))?;
         let mut byte = [0];
-        file.read(&mut byte)?;
+        if file.read(&mut byte)? == 0 {
+            return Ok(false);
+        }
         Ok(byte[0] & (1 << (id % 8)) != 0)
     }
 }

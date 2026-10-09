@@ -69,7 +69,7 @@ impl Write for Spool {
             Storage::Memory(buffer) => {
                 let needed = buffer.len() + bytes.len();
                 if needed > buffer.capacity() {
-                    let capacity = needed.max(buffer.capacity().saturating_mul(2)).max(8).min(MEMORY);
+                    let capacity = needed.max(buffer.capacity().saturating_mul(2)).clamp(8, MEMORY);
                     buffer.reserve_exact(capacity - buffer.len());
                 }
                 buffer.extend_from_slice(bytes);
