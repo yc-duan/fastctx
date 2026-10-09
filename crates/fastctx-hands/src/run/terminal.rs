@@ -1,67 +1,64 @@
-//! Reading a job's raw output the way a terminal would show it.
-//!
-//! The log keeps every byte. What a resident is shown is what a person at a
-//! terminal would see: a carriage return moves back to the start of the
-//! line and what follows overwrites it, so a progress bar shows its last
-//! state; recognized presentation controls are applied; images drawn
-//! with the iTerm2 (OSC 1337) or kitty graphics protocols become images.
-//! Text is decoded line by line: UTF-8, or on Windows the system's code
-//! page when a line is not UTF-8, and any byte that decodes in neither is
-//! shown as `\xNN`, never dropped or replaced. Unknown and incomplete
-//! instructions remain visible rather than consuming later text.
-
-use std::collections::{BTreeSet, VecDeque};
-use std::io::{self, Read};
-
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
-use fastctx_platform::legacy_text::{CodePage, decode_with_code_page};
+//! Terminal rows are decoded and laid out through replayable temporary ranges.
 
 use super::display::Display;
-use crate::image::sniff;
+use super::records::{self, Parts, Records};
+use super::view_set::ViewSet;
+use crate::encoding::{TextDecoder, TextEncoding};
+use crate::spool::{Bytes, Spool};
+use fastctx_platform::legacy_text::{CodePage, LegacyDecoder, code_pages};
+use serde::{Deserialize, Serialize};
+use std::io::{self, Read, Write};
 
-/// A contiguous budget region of a rendered row, with its raw log location.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Line {
-    /// Counting from 1, as `fastctx view --lines` counts the log's lines.
+#[derive(Debug, Clone)]
+pub struct Line<'a> {
     pub number: u64,
-    /// Last raw line contributing to this displayed row (strings may span lines).
     pub through: u64,
     pub offset: usize,
     pub characters: usize,
-    pub parts: Vec<Part>,
+    pub images: u64,
+    pub graphics: u64,
+    pub parts: Parts<'a>,
     pub decoding: Decoding,
-    /// A view region's identity, or zero for ordinary output.
     pub view: u64,
-    /// Whether the fragment ends at a physical newline in the log.
     pub newline: bool,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Part {
     Text(String),
-    /// Cursor-created blank columns, kept sparse until a window is chosen.
     Spaces(usize),
     Image(Image),
-    /// A graphics sequence that cannot be shown as an image, and why.
     Unreadable(String),
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Image {
     pub mime: &'static str,
     pub width: u32,
     pub height: u32,
-    pub bytes: Vec<u8>,
+    pub(crate) bytes: Bytes,
 }
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Decoding {
     pub legacy: Vec<String>,
     pub escaped: bool,
 }
 
-/// Reads output and yields its lines one at a time.
+pub const VIEW_MARK: &str = "\x1b]7701;fastctx;view\x07";
+pub const VIEW_END: &str = "\x1b]7701;fastctx;end\x07";
+
+const TEXT: u64 = 0;
+const LITERAL: u64 = 1;
+const BOUNDARY: u64 = 2;
+const VIEW: u64 = 3;
+const IMAGE: u64 = 4;
+const UNREADABLE: u64 = 5;
+
+#[derive(Clone, Copy)]
+enum State {
+    Normal,
+    Escape,
+    String { apc: bool, escape: bool },
+}
+
 pub struct Lines<R> {
     input: R,
     buffer: Vec<u8>,
@@ -72,51 +69,25 @@ pub struct Lines<R> {
     raw_newlines: u64,
     raw_unterminated: bool,
     state: State,
-    /// The current line's bytes and the images found in it so far, in order.
-    pending: Vec<Pending>,
-    text: Vec<u8>,
-    /// A kitty image sent in several chunks, gathered so far.
-    kitty: Option<Vec<u8>>,
+    pending: Spool,
+    pending_content: bool,
+    text: Spool,
+    kitty: Option<Spool>,
     finished: bool,
     view: u64,
     line_view: u64,
     next_view: u64,
-    closed_views: BTreeSet<u64>,
-    ready: VecDeque<Line>,
-}
-
-/// What `fastctx view` writes first inside a World `run`: an OSC string no
-/// terminal shows, by which the answer knows the output is files the
-/// resident asked to read rather than a program's output.
-pub const VIEW_MARK: &str = "\x1b]7701;fastctx;view\x07";
-pub const VIEW_END: &str = "\x1b]7701;fastctx;end\x07";
-
-enum Pending {
-    Text(Vec<u8>),
-    Literal(Vec<u8>),
-    Boundary,
-    View(u64),
-    Image(Image),
-    Unreadable(String),
-}
-
-#[derive(Clone, Copy)]
-enum State {
-    Normal,
-    /// After ESC, deciding what kind of sequence follows.
-    Escape,
-    /// Inside an OSC (`ESC ]`) or APC (`ESC _`) string, until BEL or `ESC \`.
-    String {
-        apc: bool,
-        escape: bool,
-    },
+    closed_views: ViewSet,
+    queued: Spool,
+    ready: Option<Queue>,
+    tracker: super::unfinished::Tracker,
 }
 
 impl<R: Read> Lines<R> {
     pub fn new(input: R) -> Self {
         Self {
             input,
-            buffer: vec![0; 64 * 1024],
+            buffer: vec![0; crate::spool::BLOCK],
             start: 0,
             end: 0,
             number: 0,
@@ -124,24 +95,32 @@ impl<R: Read> Lines<R> {
             raw_newlines: 0,
             raw_unterminated: false,
             state: State::Normal,
-            pending: Vec::new(),
-            text: Vec::new(),
+            pending: Spool::default(),
+            pending_content: false,
+            text: Spool::default(),
             kitty: None,
             finished: false,
             view: 0,
             line_view: 0,
             next_view: 1,
-            closed_views: BTreeSet::new(),
-            ready: VecDeque::new(),
+            closed_views: ViewSet::default(),
+            queued: Spool::default(),
+            ready: None,
+            tracker: Default::default(),
         }
     }
-
-    /// The next line, or `None` after the last.
-    pub fn next_line(&mut self) -> io::Result<Option<Line>> {
-        let mut sequence = Vec::new();
+    pub fn next_line(&mut self) -> io::Result<Option<Line<'_>>> {
+        let mut sequence = Spool::default();
         loop {
-            if let Some(line) = self.ready.pop_front() {
-                return Ok(Some(line));
+            if let Some(ready) = self.ready.as_mut() {
+                if let Some(line) = ready.next()? {
+                    return Ok(Some(line));
+                }
+                self.ready = None;
+            }
+            if self.queued.len() > 0 {
+                self.ready = Some(Queue::new(std::mem::take(&mut self.queued).finish()));
+                continue;
             }
             if self.start == self.end {
                 if self.finished {
@@ -150,11 +129,66 @@ impl<R: Read> Lines<R> {
                 let read = self.input.read(&mut self.buffer)?;
                 if read == 0 {
                     self.finished = true;
-                    self.finish(&sequence)?;
-                    return Ok(self.ready.pop_front());
+                    self.finish(std::mem::take(&mut sequence).finish())?;
+                    continue;
                 }
                 self.start = 0;
                 self.end = read;
+                self.tracker.feed(&self.buffer[..read]);
+            }
+            if matches!(self.state, State::Normal)
+                && self.text.len() == 0
+                && self.pending.len() == 0
+                && let Some(length) = memchr::memchr(b'\n', &self.buffer[self.start..self.end])
+                && let Some(row) = super::plain::text(&self.buffer[self.start..self.start + length])
+            {
+                let start = self.start;
+                self.start += length + 1;
+                self.raw_newlines += 1;
+                self.raw_unterminated = false;
+                let number = self.line_number;
+                self.number += 1;
+                self.line_number = self.number + 1;
+                self.line_view = self.view;
+                let text = match row {
+                    super::plain::Row::Original(length) => std::borrow::Cow::Borrowed(
+                        std::str::from_utf8(&self.buffer[start..start + length]).expect("validated row"),
+                    ),
+                    super::plain::Row::Rendered(text) => std::borrow::Cow::Owned(text),
+                };
+                return Ok(Some(Line {
+                    number,
+                    through: self.number,
+                    offset: 0,
+                    characters: text.chars().count(),
+                    images: 0,
+                    graphics: 0,
+                    parts: Parts::from_text(text),
+                    decoding: Decoding::default(),
+                    view: self.view,
+                    newline: true,
+                }));
+            }
+            let available = &self.buffer[self.start..self.end];
+            let span = match self.state {
+                State::Normal => memchr::memchr2(b'\n', 0x1b, available).unwrap_or(available.len()),
+                State::String { apc, escape: false } => {
+                    let end = memchr::memchr3(0x1b, 0x18, 0x1a, available).unwrap_or(available.len());
+                    if apc { end } else { memchr::memchr(0x07, &available[..end]).unwrap_or(end) }
+                }
+                _ => 0,
+            };
+            if span > 0 {
+                let bytes = &available[..span];
+                self.raw_unterminated = bytes[span - 1] != b'\n';
+                self.raw_newlines += memchr::memchr_iter(b'\n', bytes).count() as u64;
+                if matches!(self.state, State::Normal) {
+                    self.text.write_all(bytes)?;
+                } else {
+                    sequence.write_all(bytes)?;
+                }
+                self.start += span;
+                continue;
             }
             let byte = self.buffer[self.start];
             self.start += 1;
@@ -162,151 +196,133 @@ impl<R: Read> Lines<R> {
             self.raw_newlines += u64::from(byte == b'\n');
             match self.state {
                 State::Normal => match byte {
-                    b'\n' => return self.end_line(true).map(Some),
+                    b'\n' => self.end_line(true)?,
                     0x1b => self.state = State::Escape,
-                    _ => self.text.push(byte),
+                    _ => {
+                        self.text.write_all(&[byte])?;
+                    }
                 },
                 State::Escape => match byte {
                     b']' => self.state = State::String { apc: false, escape: false },
                     b'_' => self.state = State::String { apc: true, escape: false },
-                    0x1b => self.text.push(0x1b),
-                    // Any other sequence stays in the text, where the line
-                    // renderer reads it as a terminal would.
+                    0x1b => {
+                        self.text.write_all(&[byte])?;
+                    }
                     _ => {
-                        self.text.extend_from_slice(&[0x1b, byte]);
+                        self.text.write_all(&[0x1b])?;
                         self.state = State::Normal;
                         if byte == b'\n' {
-                            self.text.pop();
-                            return self.end_line(true).map(Some);
+                            self.end_line(true)?;
+                        } else {
+                            self.text.write_all(&[byte])?;
                         }
                     }
                 },
                 State::String { apc, escape } => match byte {
                     byte if escape && byte != b'\\' => {
-                        self.literal_string(apc, &sequence)?;
-                        sequence.clear();
-                        // ESC starts a new instruction unless it forms ST.
-                        // Keep the interrupted string visible, then parse the
-                        // new instruction without losing its first byte.
+                        self.literal_string(apc, std::mem::take(&mut sequence).finish(), false)?;
                         self.start -= 1;
                         self.raw_newlines -= u64::from(byte == b'\n');
                         self.state = State::Escape;
                     }
                     0x18 | 0x1a => {
-                        self.literal_string(apc, &sequence)?;
-                        sequence.clear();
-                        self.text.push(byte);
+                        self.literal_string(apc, std::mem::take(&mut sequence).finish(), false)?;
+                        self.text.write_all(&[byte])?;
                         self.state = State::Normal;
                     }
                     0x07 if !apc => {
-                        self.close_string(apc, &sequence)?;
-                        sequence.clear();
+                        self.close_string(apc, std::mem::take(&mut sequence).finish())?;
                         self.state = State::Normal;
                     }
                     b'\\' if escape => {
-                        self.close_string(apc, &sequence)?;
-                        sequence.clear();
+                        self.close_string(apc, std::mem::take(&mut sequence).finish())?;
                         self.state = State::Normal;
                     }
-                    0x1b => {
-                        if escape {
-                            sequence.push(0x1b);
-                        }
-                        self.state = State::String { apc, escape: true };
-                    }
+                    0x1b => self.state = State::String { apc, escape: true },
                     _ => {
-                        if escape {
-                            sequence.push(0x1b);
-                        }
-                        sequence.push(byte);
+                        sequence.write_all(&[byte])?;
                         self.state = State::String { apc, escape: false };
                     }
                 },
             }
         }
     }
-
     pub fn raw_lines(&self) -> u64 {
         self.raw_newlines + u64::from(self.raw_unterminated)
     }
-
-    fn finish(&mut self, sequence: &[u8]) -> io::Result<()> {
-        if let State::String { apc, escape } = self.state {
-            let what = if apc { "kitty" } else { "OSC" };
-            if is_image_sequence(apc, sequence) {
-                self.push_unreadable(format!(
-                    "an image ({what} sequence) cut off before its end, {} bytes",
-                    sequence.len()
-                ));
-            }
-            let mut sequence = sequence.to_vec();
-            if escape {
-                sequence.push(0x1b);
-            }
-            self.literal_string(apc, &sequence)?;
-        } else if matches!(self.state, State::Escape) {
-            self.text.push(0x1b);
-        }
-        if self.kitty.take().is_some() {
-            self.push_unreadable("a kitty image whose last chunk never came".to_string());
-        }
-        if self.text.is_empty() && self.pending.iter().all(|part| matches!(part, Pending::View(_) | Pending::Boundary))
-        {
-            return Ok(());
-        }
-        let at = self.ready.len();
-        let line = self.end_line(false)?;
-        self.ready.insert(at, line);
-        Ok(())
-    }
-
-    fn literal_string(&mut self, apc: bool, sequence: &[u8]) -> io::Result<()> {
-        let mut literal = vec![0x1b, if apc { b'_' } else { b']' }];
-        literal.extend_from_slice(sequence);
-        // Replaying an unfinished string through the parser could swallow
-        // it again. Only physical newlines retain their layout meaning.
-        self.flush_text();
-        for (i, bytes) in literal.split(|&byte| byte == b'\n').enumerate() {
-            if i > 0 {
-                let at = self.ready.len();
-                let line = self.end_line(true)?;
-                self.ready.insert(at, line);
-            }
-            if !bytes.is_empty() {
-                self.pending.push(Pending::Literal(bytes.to_vec()));
-            }
-        }
-        Ok(())
-    }
-
-    fn close_string(&mut self, apc: bool, body: &[u8]) -> io::Result<()> {
-        // Even an invisible title or hyperlink separates encoded characters;
-        // removing it must not join two invalid byte fragments into UTF-8.
-        self.flush_text();
-        self.pending.push(Pending::Boundary);
-        if apc {
-            if let Some(control_and_payload) = body.strip_prefix(b"G") {
-                self.kitty_chunk(control_and_payload);
-            }
-        } else if let Some(rest) = body.strip_prefix(b"1337;File=") {
-            self.iterm_file(rest);
-        } else if VIEW_MARK.as_bytes()[2..VIEW_MARK.len() - 1] == *body {
-            self.change_view(true)?;
-        } else if VIEW_END.as_bytes()[2..VIEW_END.len() - 1] == *body {
-            self.change_view(false)?;
-        }
-        // Other strings (window titles, hyperlinks, kitty commands that are
-        // not images) are not shown, as a terminal does not show them.
-        self.number += body.iter().filter(|&&byte| byte == b'\n').count() as u64;
-        Ok(())
-    }
-
-    /// Only a closed view region can grant the larger budget. If a pipe
-    /// cuts off its end marker, later program output must not inherit it.
-    pub fn closed_views(&self) -> &BTreeSet<u64> {
+    pub(super) fn closed_views(&self) -> &ViewSet {
         &self.closed_views
     }
+    pub(super) fn unfinished(&self) -> Option<super::unfinished::Unfinished> {
+        self.tracker.unfinished()
+    }
 
+    fn finish(&mut self, sequence: Bytes) -> io::Result<()> {
+        if let State::String { apc, escape } = self.state {
+            let prefix = sequence.slice(0..sequence.len().min(10)).to_vec()?;
+            if (apc && prefix.starts_with(b"G")) || (!apc && prefix.starts_with(b"1337;File=")) {
+                let what = if apc { "kitty" } else { "OSC" };
+                self.unreadable(format!(
+                    "an image ({what} sequence) cut off before its end, {} bytes",
+                    sequence.len()
+                ))?;
+            }
+            self.literal_string(apc, sequence, escape)?;
+        } else if matches!(self.state, State::Escape) {
+            self.text.write_all(&[0x1b])?;
+        }
+        if self.kitty.take().is_some() {
+            self.unreadable("a kitty image whose last chunk never came".into())?;
+        }
+        if self.text.len() != 0 || self.pending_content {
+            self.end_line(false)?;
+        }
+        Ok(())
+    }
+    fn literal_string(&mut self, apc: bool, sequence: Bytes, escape: bool) -> io::Result<()> {
+        self.flush_text()?;
+        let mut literal = Spool::default();
+        literal.write_all(&[0x1b, if apc { b'_' } else { b']' }])?;
+        for bytes in sequence.chunks() {
+            for piece in bytes?.split_inclusive(|b| *b == b'\n') {
+                let newline = piece.ends_with(b"\n");
+                literal.write_all(&piece[..piece.len() - usize::from(newline)])?;
+                if newline {
+                    self.literal(std::mem::take(&mut literal).finish())?;
+                    self.end_line(true)?;
+                }
+            }
+        }
+        if escape {
+            literal.write_all(&[0x1b])?;
+        }
+        self.literal(literal.finish())
+    }
+    fn literal(&mut self, bytes: Bytes) -> io::Result<()> {
+        if !bytes.is_empty() {
+            records::write(&mut self.pending, LITERAL, 0, 0, 0, &bytes)?;
+            self.pending_content = true;
+        }
+        Ok(())
+    }
+    fn close_string(&mut self, apc: bool, body: Bytes) -> io::Result<()> {
+        self.flush_text()?;
+        records::small(&mut self.pending, BOUNDARY, 0, 0, 0, &[])?;
+        let prefix = body.slice(0..body.len().min(VIEW_MARK.len())).to_vec()?;
+        if apc && prefix.starts_with(b"G") {
+            super::graphics::kitty(self, body.slice(1..body.len()))?;
+        } else if !apc && prefix.starts_with(b"1337;File=") {
+            super::graphics::iterm(self, body.slice(10..body.len()))?;
+        } else if !apc && prefix == VIEW_MARK.as_bytes()[2..VIEW_MARK.len() - 1] {
+            self.change_view(true)?;
+        } else if !apc && prefix == VIEW_END.as_bytes()[2..VIEW_END.len() - 1] {
+            self.change_view(false)?;
+        }
+        for bytes in body.chunks() {
+            self.number += memchr::memchr_iter(b'\n', &bytes?).count() as u64;
+        }
+        Ok(())
+    }
     fn change_view(&mut self, begin: bool) -> io::Result<()> {
         let view = if begin {
             let id = self.next_view;
@@ -314,231 +330,262 @@ impl<R: Read> Lines<R> {
             id
         } else {
             if self.view != 0 {
-                self.closed_views.insert(self.view);
+                self.closed_views.insert(self.view)?;
             }
             0
         };
-        self.flush_text();
-        self.pending.push(Pending::View(view));
+        self.flush_text()?;
+        records::small(&mut self.pending, VIEW, view, 0, 0, &[])?;
         self.view = view;
         Ok(())
     }
-
-    fn iterm_file(&mut self, rest: &[u8]) {
-        let Some(colon) = rest.iter().position(|&b| b == b':') else {
-            return self.push_unreadable("an iTerm2 image without data".to_string());
-        };
-        let arguments = &rest[..colon];
-        let inline = arguments.split(|&b| b == b';').any(|argument| argument == b"inline=1");
-        if !inline {
-            // Without inline=1 a terminal offers the file as a download.
-            return;
-        }
-        match STANDARD.decode(trim_ascii_whitespace(&rest[colon + 1..])) {
-            Ok(bytes) => self.push_image(bytes),
-            Err(error) => self.push_unreadable(format!("an iTerm2 image whose base64 does not decode: {error}")),
-        }
+    pub(super) fn kitty_buffer(&mut self) -> &mut Option<Spool> {
+        &mut self.kitty
     }
-
-    fn kitty_chunk(&mut self, control_and_payload: &[u8]) {
-        let (control, payload) = match control_and_payload.iter().position(|&b| b == b';') {
-            Some(split) => (&control_and_payload[..split], &control_and_payload[split + 1..]),
-            None => (control_and_payload, &[][..]),
-        };
-        let mut format = None;
-        let mut medium = b"d".as_slice();
-        let mut more = false;
-        let mut action = b"t".as_slice();
-        for pair in control.split(|&b| b == b',') {
-            match pair.split_first() {
-                Some((b'f', value)) => format = value.strip_prefix(b"="),
-                Some((b't', value)) => medium = value.strip_prefix(b"=").unwrap_or(medium),
-                Some((b'm', value)) => more = value == b"=1",
-                Some((b'a', value)) => action = value.strip_prefix(b"=").unwrap_or(action),
-                _ => {}
-            }
-        }
-        let continuing = self.kitty.is_some();
-        if !continuing && !matches!(action, b"t" | b"T") {
-            // Commands that place or delete images sent earlier draw nothing new.
-            return;
-        }
-        if !continuing && (format != Some(b"100") || medium != b"d") {
-            return self.push_unreadable(
-                "a kitty image that is not a PNG sent directly (only f=100, t=d is shown)".to_string(),
-            );
-        }
-        let gathered = self.kitty.get_or_insert_with(Vec::new);
-        gathered.extend_from_slice(trim_ascii_whitespace(payload));
-        if more {
-            return;
-        }
-        let gathered = self.kitty.take().expect("set above");
-        match STANDARD.decode(&gathered) {
-            Ok(bytes) => self.push_image(bytes),
-            Err(error) => self.push_unreadable(format!("a kitty image whose base64 does not decode: {error}")),
-        }
+    pub(super) fn image(&mut self, image: Image) -> io::Result<()> {
+        self.flush_text()?;
+        records::write(
+            &mut self.pending,
+            IMAGE,
+            u64::from(image.width),
+            u64::from(image.height),
+            records::mime_id(image.mime),
+            &image.bytes,
+        )?;
+        self.pending_content = true;
+        Ok(())
     }
-
-    fn push_image(&mut self, bytes: Vec<u8>) {
-        match sniff(&bytes) {
-            Some((mime, width, height)) => {
-                self.flush_text();
-                self.pending.push(Pending::Image(Image { mime, width, height, bytes }));
-            }
-            None => self.push_unreadable(format!(
-                "an image of {} bytes in a format other than PNG, JPEG, GIF or WebP",
-                bytes.len()
-            )),
+    pub(super) fn unreadable(&mut self, reason: String) -> io::Result<()> {
+        self.flush_text()?;
+        records::small(&mut self.pending, UNREADABLE, 0, 0, 0, reason.as_bytes())?;
+        self.pending_content = true;
+        Ok(())
+    }
+    fn flush_text(&mut self) -> io::Result<()> {
+        if self.text.len() != 0 {
+            records::write(&mut self.pending, TEXT, 0, 0, 0, &std::mem::take(&mut self.text).finish())?;
+            self.pending_content = true;
         }
+        Ok(())
     }
-
-    fn push_unreadable(&mut self, why: String) {
-        self.flush_text();
-        self.pending.push(Pending::Unreadable(why));
-    }
-
-    fn flush_text(&mut self) {
-        if !self.text.is_empty() {
-            self.pending.push(Pending::Text(std::mem::take(&mut self.text)));
-        }
-    }
-
-    fn end_line(&mut self, newline: bool) -> io::Result<Line> {
-        self.flush_text();
+    fn end_line(&mut self, newline: bool) -> io::Result<()> {
+        self.flush_text()?;
         let number = self.line_number;
-        if newline {
-            self.number += 1;
-        }
+        self.number += u64::from(newline);
         let through = self.number + u64::from(!newline);
         self.line_number = self.number + 1;
-        let mut groups: Vec<(u64, Vec<Part>)> = Vec::new();
-        let raw: Vec<u8> = self
-            .pending
-            .iter()
-            .flat_map(|pending| match pending {
-                Pending::Text(bytes) | Pending::Literal(bytes) => bytes.as_slice(),
-                // Protocol boundaries contain ASCII controls, which cannot be
-                // part of a UTF-8 or Windows multibyte character.
-                _ => b"\x1b".as_slice(),
-            })
-            .copied()
-            .collect();
-        let encoding = Encoding::of(&raw);
-        drop(raw);
-        let decoding = encoding.facts();
-        // Plain output needs no per-cell layout. Keep long ordinary lines
-        // proportional to their byte size rather than allocating a tree node
-        // for every character.
-        let plain = matches!(encoding, Encoding::Utf8)
-            && self.pending.iter().all(|pending| match pending {
-                Pending::Text(bytes) => {
-                    std::str::from_utf8(bytes).is_ok_and(|text| text.chars().all(|c| !c.is_control() || c == '\t'))
+        let pending = std::mem::take(&mut self.pending).finish();
+        self.pending_content = false;
+        let mut raw = Spool::default();
+        let mut literal = false;
+        for record in Records::new(pending.clone()) {
+            let record = record?;
+            if matches!(record.kind, TEXT | LITERAL) {
+                literal |= record.kind == LITERAL;
+                io::copy(&mut record.payload.reader(), &mut raw)?;
+            } else {
+                raw.write_all(b"\x1b")?;
+            }
+        }
+        let (encoding, mut plain) = Encoding::of(&raw.finish())?;
+        plain &= !literal;
+        if plain {
+            for record in Records::new(pending.clone()) {
+                let record = record?;
+                if record.kind == TEXT {
+                    record.payload.utf8(|text| {
+                        plain &= text.chars().all(|c| !c.is_control() || c == '\t');
+                        Ok(())
+                    })?;
                 }
-                Pending::Literal(_) => false,
-                _ => true,
-            });
+            }
+        }
+        // Streaming is valid only when the entire row has no horizontal edits.
+        // A later cursor operation can still overwrite an earlier literal span.
+        let mut linear = !plain && matches!(encoding, Encoding::Utf8);
+        if linear {
+            for record in Records::new(pending.clone()) {
+                let record = record?;
+                if matches!(record.kind, TEXT | LITERAL)
+                    && !super::linear::check(&record.payload, record.kind == LITERAL)?
+                {
+                    linear = false;
+                    break;
+                }
+            }
+        }
+        let decoding = encoding.facts();
         let mut display = Display::default();
         display.view = self.line_view;
         self.line_view = self.view;
-        for pending in std::mem::take(&mut self.pending) {
-            let literal = matches!(pending, Pending::Literal(_));
-            match pending {
-                Pending::Text(bytes) | Pending::Literal(bytes) => {
+        let mut fragments = Fragments::default();
+        for record in Records::new(pending) {
+            let record = record?;
+            match record.kind {
+                TEXT | LITERAL => {
                     if plain {
-                        groups.push((
-                            display.view,
-                            vec![Part::Text(String::from_utf8(bytes).map_err(io::Error::other)?)],
-                        ));
+                        record.payload.utf8(|text| fragments.push(display.view, Part::Text(text.to_string())))?;
+                    } else if linear {
+                        super::linear::render(&record.payload, record.kind == LITERAL, |text| {
+                            fragments.push(display.view, Part::Text(text.to_string()))
+                        })?;
                     } else {
-                        encoding.render(&bytes, literal, &mut display)?;
+                        encoding.render(&record.payload, record.kind == LITERAL, &mut display)?;
                     }
                 }
-                Pending::Image(image) => {
-                    groups.extend(display.take()?);
-                    groups.push((display.view, vec![Part::Image(image)]));
+                IMAGE | UNREADABLE => {
+                    display.take(|view, part| fragments.push(view, part))?;
+                    let part = if record.kind == IMAGE {
+                        Part::Image(Image {
+                            mime: records::mime(record.c)?,
+                            width: record.a as u32,
+                            height: record.b as u32,
+                            bytes: record.payload,
+                        })
+                    } else {
+                        Part::Unreadable(record.payload.text()?)
+                    };
+                    fragments.push(display.view, part)?;
                 }
-                Pending::Unreadable(why) => {
-                    groups.extend(display.take()?);
-                    groups.push((display.view, vec![Part::Unreadable(why)]));
-                }
-                Pending::View(view) => display.view = view,
-                Pending::Boundary => {}
+                VIEW => display.view = record.a,
+                BOUNDARY => {}
+                _ => return Err(io::Error::other("invalid terminal record")),
             }
         }
-        groups.extend(display.take()?);
-        // OutputPiece character offsets use u64 and slices use usize. A
-        // cursor may be sparse, but its reported extent must still fit both.
-        let extent = groups
-            .iter()
-            .flat_map(|(_, parts)| parts)
-            .try_fold(0usize, |sum, part| {
-                let size = match part {
-                    Part::Text(text) => text.chars().count(),
-                    Part::Spaces(count) => *count,
-                    _ => 0,
-                };
-                sum.checked_add(size)
-            })
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "terminal row exceeds the addressable character count")
-            })?;
-        u64::try_from(extent).map_err(io::Error::other)?;
-        let mut fragments: Vec<Line> = Vec::new();
-        for (view, parts) in groups {
-            if let Some(line) = fragments.last_mut().filter(|line| line.view == view) {
-                line.parts.extend(parts);
-            } else {
-                fragments.push(Line {
-                    number,
-                    through,
-                    offset: 0,
-                    characters: extent,
-                    parts,
-                    decoding: decoding.clone(),
-                    view,
-                    newline: false,
-                });
-            }
-        }
-        if fragments.last().is_none_or(|line| line.view != self.view) {
-            fragments.push(Line {
-                number,
-                through,
-                offset: 0,
-                characters: extent,
-                parts: Vec::new(),
-                decoding,
-                view: self.view,
-                newline: false,
-            });
-        }
-        let mut offset = 0;
-        for line in &mut fragments {
-            line.offset = offset;
-            offset += line
-                .parts
-                .iter()
-                .map(|part| match part {
-                    Part::Text(text) => text.chars().count(),
-                    Part::Spaces(count) => *count,
-                    _ => 0,
-                })
-                .sum::<usize>();
-        }
-        fragments.last_mut().expect("at least one fragment").newline = newline;
-        let first = fragments.remove(0);
-        self.ready.extend(fragments);
-        Ok(first)
+        display.take(|view, part| fragments.push(view, part))?;
+        fragments.finish(&mut self.queued, number, through, self.view, newline, decoding)
     }
 }
 
-fn is_image_sequence(apc: bool, body: &[u8]) -> bool {
-    if apc { body.starts_with(b"G") } else { body.starts_with(b"1337;File=") }
+#[derive(Serialize, Deserialize)]
+struct Header {
+    number: u64,
+    through: u64,
+    offset: usize,
+    characters: usize,
+    images: u64,
+    graphics: u64,
+    view: u64,
+    newline: bool,
+    decoding: Decoding,
 }
-
-fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
-    bytes.trim_ascii()
+struct Queue {
+    bytes: Bytes,
+    at: usize,
+}
+impl Queue {
+    fn new(bytes: Bytes) -> Self {
+        Self { bytes, at: 0 }
+    }
+    fn next(&mut self) -> io::Result<Option<Line<'static>>> {
+        if self.at == self.bytes.len() {
+            return Ok(None);
+        }
+        let length =
+            u64::from_le_bytes(self.bytes.slice(self.at..self.at + 8).to_vec()?.try_into().expect("length")) as usize;
+        self.at += 8;
+        let header: Header =
+            serde_json::from_slice(&self.bytes.slice(self.at..self.at + length).to_vec()?).map_err(io::Error::other)?;
+        self.at += length;
+        let length =
+            u64::from_le_bytes(self.bytes.slice(self.at..self.at + 8).to_vec()?.try_into().expect("length")) as usize;
+        self.at += 8;
+        let parts = Parts::from_records(self.bytes.slice(self.at..self.at + length));
+        self.at += length;
+        Ok(Some(Line {
+            number: header.number,
+            through: header.through,
+            offset: header.offset,
+            characters: header.characters,
+            images: header.images,
+            graphics: header.graphics,
+            view: header.view,
+            newline: header.newline,
+            decoding: header.decoding,
+            parts,
+        }))
+    }
+}
+#[derive(Default)]
+struct Fragments {
+    parts: Spool,
+    index: Spool,
+    view: Option<u64>,
+    start: u64,
+    offset: usize,
+    characters: usize,
+    images: u64,
+    graphics: u64,
+}
+impl Fragments {
+    fn close(&mut self) -> io::Result<()> {
+        if let Some(view) = self.view {
+            for word in [view, self.start, self.parts.len(), self.offset as u64, self.characters as u64] {
+                self.index.write_all(&word.to_le_bytes())?;
+            }
+            self.start = self.parts.len();
+            self.offset = self.characters;
+        }
+        Ok(())
+    }
+    fn push(&mut self, view: u64, part: Part) -> io::Result<()> {
+        if self.view != Some(view) {
+            self.close()?;
+            self.view = Some(view);
+        }
+        let size = match &part {
+            Part::Text(text) => text.chars().count(),
+            Part::Spaces(n) => *n,
+            _ => 0,
+        };
+        self.images += u64::from(matches!(&part, Part::Image(_)));
+        self.graphics += u64::from(matches!(&part, Part::Unreadable(_)));
+        self.characters = self.characters.checked_add(size).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "terminal row exceeds the addressable character count")
+        })?;
+        Parts::write(&mut self.parts, &part)
+    }
+    fn finish(
+        mut self,
+        out: &mut Spool,
+        number: u64,
+        through: u64,
+        view: u64,
+        newline: bool,
+        decoding: Decoding,
+    ) -> io::Result<()> {
+        if self.view != Some(view) {
+            self.close()?;
+            self.view = Some(view);
+        }
+        self.close()?;
+        let parts = self.parts.finish();
+        let index = self.index.finish();
+        let mut input = index.reader();
+        let count = index.len() / 40;
+        for at in 0..count {
+            let mut bytes = [0; 40];
+            input.read_exact(&mut bytes)?;
+            let words: Vec<_> = bytes.chunks_exact(8).map(|b| u64::from_le_bytes(b.try_into().unwrap())).collect();
+            let header = Header {
+                number,
+                through,
+                offset: words[3] as usize,
+                characters: self.characters,
+                images: self.images,
+                graphics: self.graphics,
+                view: words[0],
+                newline: newline && at + 1 == count,
+                decoding: decoding.clone(),
+            };
+            let header = serde_json::to_vec(&header).map_err(io::Error::other)?;
+            out.write_all(&(header.len() as u64).to_le_bytes())?;
+            out.write_all(&header)?;
+            out.write_all(&(words[2] - words[1]).to_le_bytes())?;
+            io::copy(&mut parts.slice(words[1] as usize..words[2] as usize).reader(), out)?;
+        }
+        Ok(())
+    }
 }
 
 enum Encoding {
@@ -546,48 +593,104 @@ enum Encoding {
     Legacy(CodePage),
     Escaped,
 }
-
 impl Encoding {
-    fn of(bytes: &[u8]) -> Self {
-        if std::str::from_utf8(bytes).is_ok() {
-            return Self::Utf8;
+    fn of(bytes: &Bytes) -> io::Result<(Self, bool)> {
+        if bytes.as_slice().is_some_and(|bytes| std::str::from_utf8(bytes).is_ok()) {
+            return Ok((Self::Utf8, true));
         }
-        if let Some((_, encoding)) = decode_with_code_page(bytes) {
-            return Self::Legacy(encoding);
+        let mut utf8 = TextDecoder::new(TextEncoding::utf8());
+        let mut valid = true;
+        for chunk in bytes.chunks() {
+            valid &= utf8.feed(&chunk?, false).is_ok();
         }
-        Self::Escaped
-    }
-
-    fn facts(&self) -> Decoding {
-        match self {
-            Self::Utf8 => Decoding::default(),
-            Self::Legacy(encoding) => Decoding { legacy: vec![encoding.name()], escaped: false },
-            Self::Escaped => Decoding { legacy: Vec::new(), escaped: true },
+        valid &= utf8.feed(&[], true).is_ok();
+        if valid {
+            return Ok((Self::Utf8, true));
         }
-    }
-
-    fn render(&self, bytes: &[u8], literal: bool, display: &mut Display) -> io::Result<()> {
-        display.legacy = matches!(self, Self::Legacy(_));
-        match self {
-            Self::Utf8 => display.write(std::str::from_utf8(bytes).map_err(io::Error::other)?, literal),
-            Self::Legacy(encoding) => {
-                let text = encoding.decode(bytes).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "terminal fragment does not decode in its line's code page",
-                    )
-                })?;
-                display.write(&text, literal);
-            }
-            Self::Escaped => {
-                for chunk in bytes.utf8_chunks() {
-                    display.write(chunk.valid(), literal);
-                    for byte in chunk.invalid() {
-                        display.byte(*byte);
-                    }
+        if bytes.len() <= i32::MAX as usize {
+            for page in code_pages() {
+                let mut decoder = LegacyDecoder::new(page)?;
+                let mut valid = true;
+                for chunk in bytes.chunks() {
+                    valid &= decoder.feed(&chunk?, false).is_ok();
+                }
+                valid &= decoder.feed(&[], true).is_ok();
+                if valid {
+                    return Ok((Self::Legacy(page), false));
                 }
             }
         }
-        Ok(())
+        Ok((Self::Escaped, false))
+    }
+    fn facts(&self) -> Decoding {
+        match self {
+            Self::Utf8 => Decoding::default(),
+            Self::Legacy(page) => Decoding { legacy: vec![page.name()], escaped: false },
+            Self::Escaped => Decoding { legacy: Vec::new(), escaped: true },
+        }
+    }
+    fn render(&self, bytes: &Bytes, literal: bool, display: &mut Display) -> io::Result<()> {
+        display.legacy = matches!(self, Self::Legacy(_));
+        match self {
+            Self::Utf8 => display.write(bytes, literal),
+            Self::Legacy(page) => {
+                let mut decoder = LegacyDecoder::new(*page)?;
+                let mut text = Spool::default();
+                for chunk in bytes.chunks() {
+                    let chunk = decoder.feed(&chunk?, false).map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "terminal fragment does not decode in its line's code page",
+                        )
+                    })?;
+                    text.write_all(chunk.as_bytes())?;
+                }
+                text.write_all(
+                    decoder
+                        .feed(&[], true)
+                        .map_err(|_| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "terminal fragment does not decode in its line's code page",
+                            )
+                        })?
+                        .as_bytes(),
+                )?;
+                display.write(&text.finish(), literal)
+            }
+            Self::Escaped => {
+                let mut pending = Vec::new();
+                let mut valid = Spool::default();
+                for chunk in bytes.chunks().chain(std::iter::once(Ok(Vec::new()))) {
+                    let chunk = chunk?;
+                    let end = chunk.is_empty();
+                    pending.extend_from_slice(&chunk);
+                    let mut at = 0;
+                    while at < pending.len() {
+                        let (good, bad) = match std::str::from_utf8(&pending[at..]) {
+                            Ok(text) => (text.len(), 0),
+                            Err(e) => (
+                                e.valid_up_to(),
+                                e.error_len().unwrap_or(if end { pending.len() - at - e.valid_up_to() } else { 0 }),
+                            ),
+                        };
+                        valid.write_all(&pending[at..at + good])?;
+                        at += good;
+                        if bad > 0 {
+                            display.write(&std::mem::take(&mut valid).finish(), literal)?;
+                            for byte in &pending[at..at + bad] {
+                                display.byte(*byte)?;
+                            }
+                        }
+                        at += bad;
+                        if bad == 0 {
+                            break;
+                        }
+                    }
+                    pending.drain(..at);
+                }
+                display.write(&valid.finish(), literal)
+            }
+        }
     }
 }

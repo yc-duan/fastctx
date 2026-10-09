@@ -18,12 +18,6 @@ impl Statistics {
         self.0.feed(bytes, last);
     }
 
-    pub fn for_line(bytes: &[u8]) -> Self {
-        let mut statistics = Self::new();
-        statistics.feed(bytes, true);
-        statistics
-    }
-
     pub fn score(&self, codec: TextEncoding) -> Option<i64> {
         let mut encoding = Encoding::for_label(codec.label().as_bytes())?;
         if encoding == encoding_rs::GB18030 {

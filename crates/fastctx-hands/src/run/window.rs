@@ -4,14 +4,13 @@
 //! to the answer's budget (`world-view.md`, 一次给多少). Any other output is
 //! shown whole when it fits the window a host's own shell gives; when it
 //! does not, the answer shows a short start and end and names the lines in
-//! between, which the resident reads back from the log with `fastctx view`.
+//! between. The log retains every original byte.
 
-use std::collections::VecDeque;
+use super::queue::Queue;
 use std::fs::File;
 use std::io;
 use std::path::Path;
 
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use fastctx_types::run::{LegacyLines, OutputPiece, OutputWindow};
 
@@ -48,8 +47,8 @@ pub const OUTPUT_WINDOW: usize = 30_000;
 
 /// Characters of text shown of the start, and of the end, of a program's
 /// output that does not fit its window. Such output is nearly always a long
-/// log, read for how it began and how it ended; the lines between are named
-/// with the command that reads them back.
+/// log, read for how it began and how it ended; the answer identifies the
+/// omitted lines and the file holding the complete output.
 pub const OUTPUT_HEAD: usize = 2_000;
 pub const OUTPUT_TAIL: usize = 2_000;
 
@@ -94,12 +93,12 @@ fn snapshot(log: &Path, through: Option<u64>) -> io::Result<OutputWindow> {
     let mut lines = Lines::new((&mut file).take(size));
     let mut id = 0;
     while let Some(line) = lines.next_line()? {
-        if !closed_views.contains(&line.view) {
-            regular.push(Entry::of(id, &line));
+        if !closed_views.contains(&line.view)? {
+            regular.push(Entry::of(id, &line)?)?;
         }
         id += 1;
     }
-    let (chosen, used) = regular.finish();
+    let (mut chosen, used) = regular.finish()?;
     // A view's lines are shown whole while their bytes fit what is left.
     let mut view_left = bytes(BUDGET - RUN_NOTES).saturating_sub(used);
     file.seek(SeekFrom::Start(0))?;
@@ -108,12 +107,12 @@ fn snapshot(log: &Path, through: Option<u64>) -> io::Result<OutputWindow> {
     let mut omitted: Option<(u64, u64)> = None;
     id = 0;
     while let Some(line) = lines.next_line()? {
-        let entry = Entry::of(id, &line);
-        let portions = if closed_views.contains(&line.view) {
+        let entry = Entry::of(id, &line)?;
+        let portions = if closed_views.contains(&line.view)? {
             let portions = if entry.bytes <= view_left {
                 vec![Portion::Whole]
             } else {
-                match chars_within(&line, view_left) {
+                match chars_within(&line, view_left)? {
                     0 => Vec::new(),
                     chars => vec![Portion::Start(chars)],
                 }
@@ -121,7 +120,7 @@ fn snapshot(log: &Path, through: Option<u64>) -> io::Result<OutputWindow> {
             view_left = view_left.saturating_sub(entry.bytes);
             portions
         } else {
-            chosen.get(&id).cloned().unwrap_or_default()
+            chosen.get(id)?
         };
         if portions.is_empty() && entry.chars > 0 {
             let range = omitted.get_or_insert((line.number, line.through));
@@ -132,9 +131,9 @@ fn snapshot(log: &Path, through: Option<u64>) -> io::Result<OutputWindow> {
             }
             for portion in portions {
                 match portion {
-                    Portion::Whole => assembly.whole(&line),
-                    Portion::Start(budget) => assembly.start_of(&line, budget),
-                    Portion::End(budget) => assembly.end_of(&line, budget),
+                    Portion::Whole => assembly.whole(&line)?,
+                    Portion::Start(budget) => assembly.start_of(&line, budget)?,
+                    Portion::End(budget) => assembly.end_of(&line, budget)?,
                 }
             }
         }
@@ -142,6 +141,12 @@ fn snapshot(log: &Path, through: Option<u64>) -> io::Result<OutputWindow> {
     }
     if let Some((first, last)) = omitted {
         assembly.omitted(first, last);
+    }
+    if let Some(unfinished) = lines.unfinished() {
+        assembly.pieces.push(OutputPiece::Unreadable {
+            line: unfinished.line,
+            reason: format!("{}; raw bytes: {}", unfinished.description(), log.display()),
+        });
     }
     Ok(assembly.finish(log, size, lines.raw_lines()))
 }
@@ -190,11 +195,16 @@ struct Entry {
 }
 
 impl Entry {
-    fn of(id: u64, line: &Line) -> Self {
+    fn of(id: u64, line: &Line) -> io::Result<Self> {
         let newline = usize::from(line.newline);
+        if let Some(text) = line.parts.text() {
+            let characters = line.characters + newline;
+            return Ok(Self { id, chars: characters, text: characters, bytes: text.len() + newline });
+        }
         let mut entry = Self { id, chars: newline, text: newline, bytes: newline };
-        for part in &line.parts {
-            let (chars, text, size) = match part {
+        for part in line.parts.iter() {
+            let part = part?;
+            let (chars, text, size) = match &part {
                 Part::Text(text) => (text.chars().count(), text.chars().count(), text.len()),
                 Part::Spaces(count) => (*count, *count, *count),
                 Part::Image(_) => (IMAGE_COST, 0, bytes(IMAGE_COST)),
@@ -204,122 +214,152 @@ impl Entry {
             entry.text = entry.text.saturating_add(text);
             entry.bytes = entry.bytes.saturating_add(size);
         }
-        entry
+        Ok(entry)
     }
 }
 
-/// Chooses what of a program's output to show: all of it when it fits the
-/// window, otherwise whole lines of the start and of the end within
-/// `OUTPUT_HEAD` and `OUTPUT_TAIL`, a single line longer than that shown in
-/// part. Only positions and costs are kept while scanning, so large lines
-/// and image payloads need not stay in memory.
-#[derive(Default)]
-struct Selection {
-    /// Every line so far, while all of them fit the window.
-    lines: Vec<Entry>,
-    chars: usize,
-    overflowed: bool,
-    head: Vec<Entry>,
-    /// A first line longer than the start, shown in part.
-    first_cut: Option<Entry>,
-    tail: VecDeque<Entry>,
-    tail_text: usize,
+impl Entry {
+    fn record(self) -> [u64; 4] {
+        [self.id, self.chars as u64, self.text as u64, self.bytes as u64]
+    }
+    fn read(record: [u64; 4]) -> Self {
+        Self { id: record[0], chars: record[1] as usize, text: record[2] as usize, bytes: record[3] as usize }
+    }
 }
 
+#[derive(Default)]
+struct Selection {
+    lines: Queue<4>,
+    chars: usize,
+    overflowed: bool,
+    head: Queue<4>,
+    first_cut: Option<Entry>,
+    tail: Queue<4>,
+    tail_text: usize,
+}
 impl Selection {
-    fn push(&mut self, entry: Entry) {
+    fn push(&mut self, entry: Entry) -> io::Result<()> {
         if entry.chars == 0 {
-            return;
+            return Ok(());
         }
         if !self.overflowed {
             if entry.chars <= OUTPUT_WINDOW - self.chars {
                 self.chars += entry.chars;
-                self.lines.push(entry);
-                return;
+                return self.lines.push(entry.record());
             }
             self.overflowed = true;
-            let mut earlier = std::mem::take(&mut self.lines).into_iter().chain([entry]).peekable();
+            let mut earlier = std::mem::take(&mut self.lines);
+            earlier.push(entry.record())?;
             let mut head_text = 0;
-            while let Some(next) = earlier.next_if(|next| next.text <= OUTPUT_HEAD - head_text) {
+            while let Some(next) = earlier.front()?.map(Entry::read) {
+                if next.text > OUTPUT_HEAD - head_text {
+                    break;
+                }
                 head_text += next.text;
-                self.head.push(next);
+                self.head.push(earlier.pop()?.expect("front"))?;
             }
             if self.head.is_empty() {
-                // The first line alone is longer than the start: shown in
-                // part, and still the end when nothing follows it.
-                self.first_cut = earlier.peek().copied();
+                self.first_cut = earlier.front()?.map(Entry::read);
             }
-            for next in earlier {
-                self.push_tail(next);
+            while let Some(next) = earlier.pop()? {
+                self.push_tail(Entry::read(next))?;
             }
-            return;
+            return Ok(());
         }
-        self.push_tail(entry);
+        self.push_tail(entry)
     }
-
-    /// The end keeps the last whole lines within `OUTPUT_TAIL`, or the end
-    /// of the last line when it alone is longer.
-    fn push_tail(&mut self, entry: Entry) {
+    fn push_tail(&mut self, entry: Entry) -> io::Result<()> {
         self.tail_text = self.tail_text.saturating_add(entry.text);
-        self.tail.push_back(entry);
+        self.tail.push(entry.record())?;
         while self.tail.len() > 1 && self.tail_text > OUTPUT_TAIL {
-            self.tail_text -= self.tail.pop_front().expect("nonempty").text;
+            self.tail_text -= Entry::read(self.tail.pop()?.expect("nonempty")).text;
         }
+        Ok(())
     }
-
-    /// The portions shown of each chosen line, and at most how many bytes
-    /// of the answer they take.
-    fn finish(self) -> (std::collections::BTreeMap<u64, Vec<Portion>>, usize) {
-        let mut chosen = std::collections::BTreeMap::<u64, Vec<Portion>>::new();
+    fn finish(mut self) -> io::Result<(Chosen, usize)> {
+        let mut chosen = Chosen::default();
         let mut used = 0usize;
-        let mut show = |id: u64, portion: Portion, size: usize| {
-            chosen.entry(id).or_default().push(portion);
+        let mut show = |id: u64, portion: Portion, size: usize| -> io::Result<()> {
+            chosen.push(id, portion)?;
             used = used.saturating_add(size);
+            Ok(())
         };
         if !self.overflowed {
-            for entry in &self.lines {
-                show(entry.id, Portion::Whole, entry.bytes);
+            while let Some(entry) = self.lines.pop()?.map(Entry::read) {
+                show(entry.id, Portion::Whole, entry.bytes)?;
             }
-            return (chosen, used);
+            return Ok((chosen, used));
         }
-        for entry in &self.head {
-            show(entry.id, Portion::Whole, entry.bytes);
+        while let Some(entry) = self.head.pop()?.map(Entry::read) {
+            show(entry.id, Portion::Whole, entry.bytes)?;
         }
-        let lone = (self.tail.len() == 1 && self.tail_text > OUTPUT_TAIL).then(|| self.tail[0]);
+        let lone = if self.tail.len() == 1 && self.tail_text > OUTPUT_TAIL {
+            self.tail.front()?.map(Entry::read)
+        } else {
+            None
+        };
         match (self.first_cut, lone) {
-            // A single line longer than the window, though not so long that
-            // its start and end would leave anything out: shown whole.
             (Some(first), Some(last)) if first.id == last.id && first.text <= OUTPUT_HEAD + OUTPUT_TAIL => {
-                show(first.id, Portion::Whole, first.bytes);
-                return (chosen, used);
+                show(first.id, Portion::Whole, first.bytes)?;
+                return Ok((chosen, used));
             }
-            (Some(first), _) => show(first.id, Portion::Start(OUTPUT_HEAD), bytes(OUTPUT_HEAD)),
+            (Some(first), _) => show(first.id, Portion::Start(OUTPUT_HEAD), bytes(OUTPUT_HEAD))?,
             (None, _) => {}
         }
         match lone {
-            Some(last) => show(last.id, Portion::End(OUTPUT_TAIL), bytes(OUTPUT_TAIL)),
+            Some(last) => show(last.id, Portion::End(OUTPUT_TAIL), bytes(OUTPUT_TAIL))?,
             None => {
-                for entry in &self.tail {
-                    // A first line cut at its start is not shown again whole.
+                while let Some(entry) = self.tail.pop()?.map(Entry::read) {
                     if self.first_cut.is_none_or(|first| first.id != entry.id) {
-                        show(entry.id, Portion::Whole, entry.bytes);
+                        show(entry.id, Portion::Whole, entry.bytes)?;
                     }
                 }
             }
         }
-        (chosen, used)
+        Ok((chosen, used))
+    }
+}
+#[derive(Default)]
+struct Chosen(Queue<3>);
+impl Chosen {
+    fn push(&mut self, id: u64, portion: Portion) -> io::Result<()> {
+        let (kind, count) = match portion {
+            Portion::Whole => (0, 0),
+            Portion::Start(n) => (1, n),
+            Portion::End(n) => (2, n),
+        };
+        self.0.push([id, kind, count as u64])
+    }
+    fn get(&mut self, id: u64) -> io::Result<Vec<Portion>> {
+        let mut portions = Vec::new();
+        while let Some([next, kind, count]) = self.0.front()? {
+            if next > id {
+                break;
+            }
+            self.0.pop()?;
+            if next == id {
+                portions.push(match kind {
+                    0 => Portion::Whole,
+                    1 => Portion::Start(count as usize),
+                    2 => Portion::End(count as usize),
+                    _ => unreachable!("written kind"),
+                });
+            }
+        }
+        Ok(portions)
     }
 }
 
 /// How many characters of a line's text fit in `room` bytes.
-fn chars_within(line: &Line, mut room: usize) -> usize {
+fn chars_within(line: &Line, mut room: usize) -> io::Result<usize> {
     let mut chars = 0;
-    for part in &line.parts {
-        match part {
+    for part in line.parts.iter() {
+        let part = part?;
+        match &part {
             Part::Text(text) => {
                 for c in text.chars() {
                     if c.len_utf8() > room {
-                        return chars;
+                        return Ok(chars);
                     }
                     room -= c.len_utf8();
                     chars += 1;
@@ -330,32 +370,43 @@ fn chars_within(line: &Line, mut room: usize) -> usize {
                 chars += fitting;
                 room -= fitting;
                 if fitting < *count {
-                    return chars;
+                    return Ok(chars);
                 }
             }
             _ => {}
         }
     }
-    chars
+    Ok(chars)
 }
 
 #[derive(Default)]
 struct Assembly {
-    pieces: Vec<OutputPiece>,
+    pieces: super::pieces::Pieces,
+    // Include images discarded by final-answer edge retention: refunding them
+    // would change which later images exceed the existing raw-image allowance.
     image_bytes: usize,
-    legacy: std::collections::BTreeMap<String, std::collections::BTreeSet<u64>>,
-    escaped: std::collections::BTreeSet<u64>,
+    legacy: std::collections::BTreeMap<String, LineCount>,
+    escaped: LineCount,
+    graphics_noted: Option<u64>,
 }
 
 impl Assembly {
-    fn whole(&mut self, line: &Line) {
+    fn whole(&mut self, line: &Line) -> io::Result<()> {
         self.count(line);
-        for part in &line.parts {
-            match part {
+        if let Some(text) = line.parts.text() {
+            self.text(line.number, text);
+            if line.newline {
+                self.text(line.number, "\n");
+            }
+            return Ok(());
+        }
+        for part in line.parts.iter() {
+            let part = part?;
+            match &part {
                 Part::Text(text) => self.text(line.number, text),
                 Part::Spaces(count) => self.text(line.number, &" ".repeat(*count)),
                 Part::Image(image) => {
-                    if self.image_bytes + image.bytes.len() > IMAGE_BYTES {
+                    if image.bytes.len() > IMAGE_BYTES - self.image_bytes {
                         self.pieces.push(OutputPiece::Unreadable {
                             line: line.number,
                             reason: format!(
@@ -369,7 +420,7 @@ impl Assembly {
                             mime: image.mime.to_string(),
                             width: image.width,
                             height: image.height,
-                            base64: STANDARD.encode(&image.bytes),
+                            base64: encode_image(&image.bytes)?,
                         });
                     }
                 }
@@ -381,17 +432,18 @@ impl Assembly {
         if line.newline {
             self.text(line.number, "\n");
         }
+        Ok(())
     }
 
     /// The first `budget` characters of a line too long to show whole.
-    fn start_of(&mut self, line: &Line, budget: usize) {
+    fn start_of(&mut self, line: &Line, budget: usize) -> io::Result<()> {
         self.count(line);
-        self.images_left_out(line);
-        let of = text_cost(line);
+        self.images_left_out(line)?;
+        let of = text_cost(line)?;
         if of == 0 {
-            return;
+            return Ok(());
         }
-        let shown = line_slice(line, 0, budget);
+        let shown = line_slice(line, 0, budget)?;
         let to = shown.chars().count();
         self.pieces.push(OutputPiece::PartOfLine {
             line: line.number,
@@ -400,18 +452,19 @@ impl Assembly {
             of: line.characters as u64,
             text: shown,
         });
+        Ok(())
     }
 
     /// The last `budget` characters of a line too long to show whole.
-    fn end_of(&mut self, line: &Line, budget: usize) {
+    fn end_of(&mut self, line: &Line, budget: usize) -> io::Result<()> {
         self.count(line);
-        self.images_left_out(line);
-        let of = text_cost(line);
+        self.images_left_out(line)?;
+        let of = text_cost(line)?;
         if of == 0 {
-            return;
+            return Ok(());
         }
         let skip = of.saturating_sub(budget);
-        let shown = line_slice(line, skip, budget);
+        let shown = line_slice(line, skip, budget)?;
         self.pieces.push(OutputPiece::PartOfLine {
             line: line.number,
             from: (line.offset + skip) as u64 + 1,
@@ -419,22 +472,20 @@ impl Assembly {
             of: line.characters as u64,
             text: shown,
         });
+        Ok(())
     }
 
     /// A line shown in part is shown as text; images in it are named.
-    fn images_left_out(&mut self, line: &Line) {
-        for part in &line.parts {
-            if let Part::Unreadable(reason) = part {
-                self.pieces.push(OutputPiece::Unreadable { line: line.number, reason: reason.clone() });
-            }
+    fn images_left_out(&mut self, line: &Line) -> io::Result<()> {
+        if self.graphics_noted == Some(line.number) {
+            return Ok(());
         }
-        let images = line.parts.iter().filter(|part| matches!(part, Part::Image(_))).count();
-        if images > 0 {
-            self.pieces.push(OutputPiece::Unreadable {
-                line: line.number,
-                reason: format!("{images} image(s) in a line too long to show whole; the log holds them"),
-            });
+        let (images, graphics) = (line.images, line.graphics);
+        if images > 0 || graphics > 0 {
+            self.graphics_noted = Some(line.number);
+            self.pieces.push(OutputPiece::Unreadable { line: line.number, reason: format!("{images} images and {graphics} graphics sequences that cannot be shown as images in a line too long to show whole; the log holds them") });
         }
+        Ok(())
     }
 
     fn omitted(&mut self, first_line: u64, last_line: u64) {
@@ -442,55 +493,76 @@ impl Assembly {
     }
 
     fn text(&mut self, line: u64, text: &str) {
-        if let Some(OutputPiece::Text { text: open, .. }) = self.pieces.last_mut() {
-            open.push_str(text);
-        } else {
-            self.pieces.push(OutputPiece::Text { first_line: line, text: text.to_string() });
-        }
+        self.pieces.text(line, text);
     }
 
     fn count(&mut self, line: &Line) {
         if line.decoding.escaped {
-            self.escaped.insert(line.number);
+            self.escaped.add(line.number);
         }
         for name in &line.decoding.legacy {
-            self.legacy.entry(name.clone()).or_default().insert(line.number);
+            self.legacy.entry(name.clone()).or_default().add(line.number);
         }
     }
 
-    fn finish(mut self, log: &Path, bytes: u64, lines: u64) -> OutputWindow {
-        self.pieces.retain(|piece| !matches!(piece, OutputPiece::Text { text, .. } if text.is_empty()));
+    fn finish(self, log: &Path, bytes: u64, lines: u64) -> OutputWindow {
         OutputWindow {
             log: log.to_string_lossy().into_owned(),
             bytes,
             lines,
-            pieces: self.pieces,
+            pieces: self.pieces.finish(),
             legacy: self
                 .legacy
                 .into_iter()
-                .map(|(encoding, lines)| LegacyLines { encoding, lines: lines.len() as u64 })
+                .map(|(encoding, lines)| LegacyLines { encoding, lines: lines.count })
                 .collect(),
-            escaped_lines: self.escaped.len() as u64,
+            escaped_lines: self.escaped.count,
         }
     }
 }
 
-fn text_cost(line: &Line) -> usize {
-    line.parts
-        .iter()
-        .map(|part| match part {
+/// Fragments arrive in raw-line order, so deduplication needs only the last
+/// counted number rather than a set whose size follows the log.
+#[derive(Default)]
+struct LineCount {
+    last: Option<u64>,
+    count: u64,
+}
+impl LineCount {
+    fn add(&mut self, line: u64) {
+        if self.last != Some(line) {
+            self.last = Some(line);
+            self.count += 1;
+        }
+    }
+}
+
+fn encode_image(bytes: &crate::spool::Bytes) -> io::Result<String> {
+    let length =
+        base64::encoded_len(bytes.len(), true).ok_or_else(|| io::Error::other("image encoding length overflow"))?;
+    let mut encoded = base64::write::EncoderWriter::new(Vec::with_capacity(length), &STANDARD);
+    io::copy(&mut bytes.reader(), &mut encoded)?;
+    String::from_utf8(encoded.finish()?).map_err(io::Error::other)
+}
+
+fn text_cost(line: &Line) -> io::Result<usize> {
+    let mut total = 0usize;
+    for part in line.parts.iter() {
+        total = total.saturating_add(match part? {
             Part::Text(text) => text.chars().count(),
-            Part::Spaces(count) => *count,
+            Part::Spaces(count) => count,
             _ => 0,
-        })
-        .fold(0usize, usize::saturating_add)
+        });
+    }
+    Ok(total)
 }
 
 /// Copies only the requested characters, without expanding sparse gaps.
-fn line_slice(line: &Line, mut skip: usize, mut take: usize) -> String {
+pub(super) fn line_slice(line: &Line, mut skip: usize, mut take: usize) -> io::Result<String> {
     let mut out = String::new();
-    for part in &line.parts {
-        let size = match part {
+    for part in line.parts.iter() {
+        let part = part?;
+        let size = match &part {
             Part::Text(text) => text.chars().count(),
             Part::Spaces(count) => *count,
             _ => continue,
@@ -500,7 +572,7 @@ fn line_slice(line: &Line, mut skip: usize, mut take: usize) -> String {
             continue;
         }
         let count = take.min(size - skip);
-        match part {
+        match &part {
             Part::Text(text) => out.extend(text.chars().skip(skip).take(count)),
             Part::Spaces(_) => out.extend(std::iter::repeat_n(' ', count)),
             _ => unreachable!(),
@@ -511,5 +583,5 @@ fn line_slice(line: &Line, mut skip: usize, mut take: usize) -> String {
             break;
         }
     }
-    out
+    Ok(out)
 }

@@ -28,12 +28,10 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 stacker = "0.1"
+tempfile = "3"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 unicode-width = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-[dev-dependencies]
-tempfile = "3"

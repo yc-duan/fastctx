@@ -4,7 +4,7 @@ use std::io::{Cursor, Read};
 use std::ops::Range;
 
 use super::{EncodingError, TextEncoding, evidence, iso2022, line, mapping::Mapping};
-pub(crate) use line::{excerpt, visit};
+pub(crate) use line::{content, excerpt, visit};
 
 /// A text range before a replacement and where it is after.
 pub type Moved = (Range<usize>, Range<usize>);
@@ -61,7 +61,7 @@ impl Source {
         let mut segments: Vec<Segment> = Vec::new();
         visit(Cursor::new(&raw), &plan, |line| {
             let start = text.len();
-            text.push_str(&line.text);
+            text.push_str(&line.text.text().map_err(|e| e.to_string())?);
             if let Some(previous) = segments.last_mut()
                 && previous.codec == line.codec
                 && previous.issue == line.issue
