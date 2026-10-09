@@ -32,6 +32,9 @@ mod writers;
 #[derive(Parser)]
 #[command(name = "fastctx", bin_name = "fastctx", version, about = "One world, many machines.")]
 struct Cli {
+    /// Print this executable's licenses and third-party notices.
+    #[arg(long, exclusive = true)]
+    licenses: bool,
     /// Without a command, in a terminal, the TUI opens.
     #[command(subcommand)]
     command: Option<Command>,
@@ -208,6 +211,9 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    if std::env::args_os().skip(1).eq(["--licenses"]) {
+        return print_licenses();
+    }
     // An old fastctx's upgrader may have started this version: it waits to
     // hear that it is healthy before anything else happens.
     if let Err(error) = update::finalize() {
@@ -218,6 +224,9 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         Err(error) => error.exit(),
     };
+    if cli.licenses {
+        return print_licenses();
+    }
     let Some(command) = cli.command else {
         // The TUI needs a terminal on both sides; anything else asked for
         // help, as a command without arguments does.
@@ -286,6 +295,10 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn print_licenses() -> ExitCode {
+    finish(fastctx_ripgrep::licenses::write(std::io::stdout().lock()).map(|()| ExitCode::SUCCESS).map_err(Into::into))
 }
 
 /// The commands a person runs on a machine: its node, joining and managing

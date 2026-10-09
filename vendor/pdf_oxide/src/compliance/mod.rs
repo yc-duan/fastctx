@@ -1,8 +1,9 @@
-//! PDF compliance validation and conversion module.
+// Modified by fastctx: removed unused PDF/A conversion and its bundled ICC asset.
+//! PDF compliance validation module.
 //!
 //! This module provides functionality for validating PDF documents against
 //! PDF/A (archival), PDF/UA (accessibility), and PDF/X (print production)
-//! standards, as well as converting documents to these standards.
+//! standards.
 //!
 //! ## PDF/A Conformance Levels (Archival)
 //!
@@ -55,12 +56,6 @@
 //!     println!("Document is PDF/X-1a:2003 compliant");
 //! }
 //!
-//! // Convert to PDF/A-2b
-//! let conversion_result = convert_to_pdf_a(&mut pdf.document()?, PdfALevel::A2b)?;
-//! if conversion_result.success {
-//!     println!("Document converted to PDF/A-2b");
-//! }
-//!
 //! // Validate against PDF/UA-1
 //! let pdf_ua_result = validate_pdf_ua(&mut pdf.document()?, PdfUaLevel::Ua1)?;
 //! if pdf_ua_result.is_compliant {
@@ -81,17 +76,12 @@
 //! - ISO 15930-9:2020 (PDF/X-6)
 //! - ISO 14289-1:2014 (PDF/UA-1)
 
-mod converter;
 pub(crate) mod pdf_a;
 pub(crate) mod pdf_ua;
 pub(crate) mod pdf_x;
 pub(crate) mod types;
 mod validators;
 
-pub use converter::{
-    convert_to_pdf_a, ActionType, ConversionAction, ConversionConfig, ConversionError,
-    ConversionResult, PdfAConverter,
-};
 pub use pdf_a::{validate_pdf_a, PdfAValidator};
 pub use pdf_ua::{
     validate_pdf_ua, PdfUaLevel, PdfUaValidator, UaComplianceError, UaErrorCode,

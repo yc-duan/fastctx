@@ -7,7 +7,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5317",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && python ../scripts/gui-notices.py",
     "frontendDist": "../dist"
   },
   "app": {
@@ -28,6 +28,11 @@
   },
   "bundle": {
     "active": true,
+    "resources": {
+      "licenses/LICENSE-APACHE": "licenses/LICENSE-APACHE",
+      "licenses/NOTICE": "licenses/NOTICE",
+      "licenses/THIRD_PARTY_LICENSES.md": "licenses/THIRD_PARTY_LICENSES.md"
+    },
     "targets": ["nsis"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "windows": {

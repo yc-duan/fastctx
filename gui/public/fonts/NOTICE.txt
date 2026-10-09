@@ -1,0 +1,36 @@
+Bundled interface fonts: original embedded copyright and license metadata
+
+ibm-plex-serif/IBMPlexSerif-400.woff2
+SHA-256: cb2c5eee2c0a43ff30d2365407c7bc8b20e3bd90720a4a64102ba0b328022a02
+Copyright 2020 IBM Corp. All rights reserved.
+
+http://scripts.sil.org/OFL
+
+ibm-plex-serif/IBMPlexSerif-600.woff2
+SHA-256: e279e4f8baa0d4634d98868092f2198ae0dcd9e142c935822c385b9843352a9b
+Copyright 2020 IBM Corp. All rights reserved.
+
+http://scripts.sil.org/OFL
+
+Complete font license: ibm-plex-serif/OFL.txt
+
+noto-sans-sc/NotoSansSC-400.woff2
+SHA-256: 95e3633b6a98f764ba3adfb54504a0cd4799328c009adf9081d6c1850f9c4c78
+(c) 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+
+http://scripts.sil.org/OFL
+
+noto-sans-sc/NotoSansSC-600.woff2
+SHA-256: 578fb41a3dc2817b703611ad94b5c27dac96a3907c9d6b843c513217b562e1a2
+(c) 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+
+http://scripts.sil.org/OFL
+
+Complete font license: noto-sans-sc/OFL.txt
+
+recursive/Recursive-VF.woff2
+SHA-256: 14ef41458aeba3d812284c4e32ee956910b88845062c61e91cc8578c2b78bccb
+Copyright 2019 The Recursive Project Authors (github.com/arrowtype/recursive)
+
+Complete font license: recursive/OFL.txt
+

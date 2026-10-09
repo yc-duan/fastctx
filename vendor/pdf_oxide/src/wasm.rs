@@ -1,3 +1,4 @@
+// Modified by fastctx: removed unused PDF/A conversion and its bundled ICC asset.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! WebAssembly bindings for PDF Oxide.
 //!
@@ -3722,46 +3723,6 @@ impl WasmPdfDocument {
             "level": level,
             "errors": errors,
             "warnings": warnings,
-        }))
-        .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
-    /// Convert the document to PDF/A compliance.
-    ///
-    /// Level must be one of: `"1a"`, `"1b"`, `"2a"`, `"2b"`, `"2u"`, `"3a"`, `"3b"`, `"3u"`.
-    /// Returns a JS object with `success`, `level`, `actions`, and `errors` fields.
-    #[wasm_bindgen(js_name = "convertToPdfA")]
-    pub fn convert_to_pdf_a(&mut self, level: &str) -> Result<JsValue, JsValue> {
-        use crate::compliance::convert_to_pdf_a;
-        use crate::compliance::types::PdfALevel;
-        let pdf_level = match level {
-            "1a" => PdfALevel::A1a,
-            "1b" => PdfALevel::A1b,
-            "2a" => PdfALevel::A2a,
-            "2b" => PdfALevel::A2b,
-            "2u" => PdfALevel::A2u,
-            "3a" => PdfALevel::A3a,
-            "3b" => PdfALevel::A3b,
-            "3u" => PdfALevel::A3u,
-            _ => return Err(JsValue::from_str(&format!("Unknown PDF/A level: {}", level))),
-        };
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| JsValue::from_str("Lock failed"))?;
-        let result = convert_to_pdf_a(&mut inner, pdf_level)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let actions: Vec<String> = result
-            .actions
-            .iter()
-            .map(|a| a.description.clone())
-            .collect();
-        let errors: Vec<String> = result.errors.iter().map(|e| e.reason.clone()).collect();
-        serde_wasm_bindgen::to_value(&serde_json::json!({
-            "success": result.success,
-            "level": level,
-            "actions": actions,
-            "errors": errors,
         }))
         .map_err(|e| JsValue::from_str(&e.to_string()))
     }

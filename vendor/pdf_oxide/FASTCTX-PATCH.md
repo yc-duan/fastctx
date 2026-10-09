@@ -51,3 +51,19 @@ Modified upstream files carry a `Modified by fastctx` notice. New raw API and
 CMap code is independently implemented. No MuPDF source code is included.
 
 Whitespace-only edits also normalize trailing spaces in src/pipeline/input_parsers/{html,markdown,plaintext}.rs and src/rendering/text_rasterizer.rs.
+
+The unused PDF/A conversion implementation and its bundled sRGB ICC asset are
+omitted from this source copy. The asset was byte-identical to GhostPDL's
+`iccprofiles/srgb.icc` at commit
+`53a390c27621f0bb9fa1fa4bdf97fedfceea0400` (SHA-256
+`eddaf344b5edea13269e0d20055f335610e5e0b6e33e6e536f2701bc18c5f7d5`),
+whose upstream license covers that directory under AGPL-3.0-or-later. It is
+not part of fastctx's Apache-2.0 source distribution.
+
+Removed files are `src/compliance/converter.rs` and
+`src/compliance/srgb_profile_placeholder.bin`. `src/compliance/mod.rs` no longer
+declares or re-exports that converter. The corresponding conversion entry
+points are removed from `src/ffi.rs`, `src/python.rs`, and `src/wasm.rs`, and the
+stale conversion example in `src/document.rs` is removed. PDF/A, PDF/UA and
+PDF/X validators remain available. Fastctx uses only PDF reading and rendering;
+its extraction, rendering and Office implementations are unchanged.

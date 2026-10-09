@@ -14,8 +14,15 @@ fn official_image_runs_offline_and_repairs_its_placement() {
     fastctx_ripgrep::place(&directory).unwrap();
     assert_eq!(fs::metadata(&executable).unwrap().modified().unwrap(), modified);
     fs::write(&executable, b"interrupted or corrupted placement").unwrap();
+    fs::remove_file(directory.join("NOTICE")).unwrap();
+    fs::write(directory.join("THIRD_PARTY_LICENSES.md"), b"interrupted placement").unwrap();
     fastctx_ripgrep::place(&directory).unwrap();
     assert_eq!(fs::read(&executable).unwrap(), original);
+    assert_eq!(fs::read_to_string(directory.join("NOTICE")).unwrap(), fastctx_ripgrep::licenses::NOTICE);
+    assert_eq!(
+        fs::read_to_string(directory.join("THIRD_PARTY_LICENSES.md")).unwrap(),
+        fastctx_ripgrep::licenses::THIRD_PARTY
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;

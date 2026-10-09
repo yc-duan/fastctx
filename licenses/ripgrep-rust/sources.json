@@ -1,0 +1,40 @@
+[
+  {
+    "version": "1.92.0",
+    "commit": "ded5c06cf21d2b93bffd5d884aa6e96934ee4234",
+    "targets": [
+      "aarch64-pc-windows-msvc"
+    ],
+    "url": "https://static.rust-lang.org/dist/rustc-1.92.0-x86_64-pc-windows-msvc.tar.xz",
+    "member": "rustc/share/doc/rust/COPYRIGHT-library.html",
+    "file": "1.92.0.html",
+    "sha256": "c90d52b09be83ce6e930d00f4b26559611eadcee806b2307184e04f2c78ad522"
+  },
+  {
+    "version": "1.97.0",
+    "commit": "2d8144b7880597b6e6d3dfd63a9a9efae3f533d3",
+    "targets": [
+      "aarch64-unknown-linux-musl"
+    ],
+    "url": "https://static.rust-lang.org/dist/2026-07-09/rustc-1.97.0-x86_64-pc-windows-msvc.tar.xz",
+    "archive_sha256": "32f62b4162c729c080d0f5fddc8386ae6d160bd493016e850c1dba26aa20a196",
+    "member": "rustc-1.97.0-x86_64-pc-windows-msvc/rustc/share/doc/rust/COPYRIGHT-library.html",
+    "file": "1.97.0.html",
+    "sha256": "0a65bb747c49c7bb816cbc7188319bd6e4e8d08091c1190b8a3c0971c47968ed"
+  },
+  {
+    "version": "1.99.0-nightly (2026-07-15)",
+    "commit": "da80ed0708a09dc096c184345d6eb42cbcd50a1e",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-musl"
+    ],
+    "url": "https://static.rust-lang.org/dist/2026-07-15/rustc-nightly-x86_64-pc-windows-msvc.tar.xz",
+    "archive_sha256": "a55c3933faf617a47a10545a072bae1de03aa3fe7363d0779baad35bed2cf259",
+    "member": "rustc-nightly-x86_64-pc-windows-msvc/rustc/share/doc/rust/COPYRIGHT-library.html",
+    "file": "nightly-2026-07-15.html",
+    "sha256": "b3e8f954eb940dcae0cc3ad902370df137e6df9eb9bffee34048734bae1f1b95"
+  }
+]

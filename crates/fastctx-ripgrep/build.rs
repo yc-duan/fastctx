@@ -5,6 +5,9 @@ use std::path::PathBuf;
 
 use sha2::{Digest as _, Sha256};
 
+const DEVELOPMENT: &str = "This is a development build of fastctx. It does not embed third-party notices; \
+release builds embed the complete notices that scripts/notices.py generates for their lockfile.\n";
+
 fn main() {
     let vendor = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("vendor");
     let manifest = vendor.join("manifest.json");
@@ -25,5 +28,18 @@ fn main() {
         "ripgrep SHA-256 for {target}"
     );
     fs::write(PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("rg"), bytes).unwrap();
+    // Release builds embed the notices scripts/notices.py generated for this
+    // lockfile, and packaging rejects an executable without them. A
+    // development build says plainly that it carries none.
+    println!("cargo:rerun-if-env-changed=FASTCTX_THIRD_PARTY_LICENSES");
+    let embedded = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("THIRD_PARTY_LICENSES.md");
+    match env::var_os("FASTCTX_THIRD_PARTY_LICENSES").map(PathBuf::from) {
+        Some(notices) => {
+            println!("cargo:rerun-if-changed={}", notices.display());
+            fs::copy(&notices, embedded)
+                .unwrap_or_else(|error| panic!("reading {}: {error}", notices.display()));
+        }
+        None => fs::write(embedded, DEVELOPMENT).unwrap(),
+    }
     println!("cargo:rustc-env=FASTCTX_RIPGREP_VERSION={}", manifest["version"].as_str().unwrap());
 }

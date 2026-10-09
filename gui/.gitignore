@@ -5,3 +5,4 @@ src-tauri/target/
 src-tauri/gen/
 src-tauri/icon-source.png
 src-tauri/binaries/
+src-tauri/licenses/

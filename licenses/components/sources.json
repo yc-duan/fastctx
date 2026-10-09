@@ -1,0 +1,37 @@
+[
+  {
+    "file": "uds_windows-1.2.1-notices.txt",
+    "crate": "uds_windows-1.2.1",
+    "source": "THIRDPARTYNOTICES",
+    "sha256": "943312cc53d8eb84176f7b2a62568bf4fa0d9cf9d66713d7b0cafae0b2086f40"
+  },
+  {
+    "file": "regex-syntax-0.8.11-unicode.txt",
+    "crate": "regex-syntax-0.8.11",
+    "source": "src/unicode_tables/LICENSE-UNICODE",
+    "sha256": "74db5baf44a41b1000312c673544b3374e4198af5605c7f9080a402cec42cfa3"
+  },
+  {
+    "file": "fax-0.3.0.txt",
+    "crate": "fax-0.3.0",
+    "source": "LICENSE",
+    "sha256": "7101390b4c8edd752f4c0de47f35d61b44d9cf0ee8dd032115e25644e277cfff"
+  },
+  {
+    "file": "jemalloc-5.3.1.txt",
+    "crate": "tikv-jemalloc-sys-0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8",
+    "source": "jemalloc/COPYING",
+    "sha256": "94aa2caa98c25d942f58b956c71dba6a99ff98fc3a31cbc669fe2a4cd0268b53"
+  },
+  {
+    "file": "musl-1.2.5-zig-0.14.1.txt",
+    "source": "https://github.com/ziglang/zig/tree/0.14.1/lib/libc/musl",
+    "method": "Complete COPYRIGHT and every C/assembly comment mentioning copyright, permission, license or redistribution; identical comments shared with all source paths",
+    "sha256": "cd73be6529e5f5f6fcb62be771dc80d6b05f7088640b2c64d588b6f70daa7c05"
+  },
+  {
+    "file": "windows-ucrt-10.0.26100.0-arm.txt",
+    "source": "Windows SDK 10.0.26100.0 Source/ucrt/string/arm64/strcmp.asm (also strcpy, strlen_spec_unaligned, strncmp, strnlen, wcscmp)",
+    "sha256": "57dcbfb6907746b3a0b50bd2870e1e2c6e8dd0d5d9bc5049d19868362ab0d4d2"
+  }
+]

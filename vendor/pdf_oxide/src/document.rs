@@ -1134,10 +1134,7 @@ impl PdfDocument {
         // Read once and route through `from_bytes` so the in-memory
         // `source_bytes` field is populated. Path-loaded documents that
         // skip this lose access to APIs that re-read the bytes
-        // (notably `compliance::convert_to_pdf_a`, which constructs a
-        // `DocumentEditor` from `source_bytes` — an empty Vec breaks
-        // it with `"Invalid PDF header: ... File is empty"`).
-        // issue #456.
+        // through a DocumentEditor. See upstream issue #456.
         //
         // The doc comment on this function already promised "Reads the
         // entire file into memory"; this is making it true.

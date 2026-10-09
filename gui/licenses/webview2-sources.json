@@ -1,0 +1,29 @@
+{
+  "crates": {
+    "webview2-com": "0.39.1",
+    "webview2-com-sys": "0.39.1",
+    "webview2-com-macros": "0.8.1"
+  },
+  "notices": [
+    {
+      "file": "WebView2-1.0.3800.47-LICENSE.txt",
+      "url": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3800.47/microsoft.web.webview2.1.0.3800.47.nupkg",
+      "archive_sha256": "56c9f26bdd07916a2d1949fb58a5c7e434dfa1173577dca879206050c4e718db",
+      "member": "LICENSE.txt",
+      "sha256": "0af8f1b807512aae39c2ac1aa4d0cae65cabecb6fd554b8439a5162a0d6eca55"
+    },
+    {
+      "file": "WebView2-1.0.3800.47-NOTICE.txt",
+      "url": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3800.47/microsoft.web.webview2.1.0.3800.47.nupkg",
+      "archive_sha256": "56c9f26bdd07916a2d1949fb58a5c7e434dfa1173577dca879206050c4e718db",
+      "member": "NOTICE.txt",
+      "sha256": "106423785c5b7eba0a8e61d1837f2132e9c828e20ad530f565d981c1df60dd90"
+    },
+    {
+      "file": "webview2-rs-MIT.txt",
+      "url": "https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE",
+      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+      "also_verified": "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE"
+    }
+  ]
+}
