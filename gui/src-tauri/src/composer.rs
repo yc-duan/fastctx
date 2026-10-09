@@ -3,7 +3,7 @@
 use fastctx_client::{World, composer::Composing};
 use fastctx_types::attachments::Attachment;
 use fastctx_types::composer::{Change, Composer, Mutation, Request, Target, Updated};
-use fastctx_types::world::LinkState;
+use fastctx_net::link::Status;
 use fastctx_types::{MachineName, ResidentId};
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -20,7 +20,7 @@ pub struct Watching {
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Piece {
-    Snapshot { watch: String, composer: Composer },
+    Snapshot { watch: String, composer: Box<Composer> },
     Interrupted { error: Option<String> },
     Ended { error: Option<String> },
 }
@@ -91,23 +91,25 @@ async fn open(
     resident: &ResidentId,
     machine: &Option<MachineName>,
 ) -> Result<(Composing, String, Composer), String> {
-    let mut changes =
-        world.device().map(|device| device.connection_changes()).transpose().map_err(|error| error.to_string())?;
+    // A device waits for the link of the hub the resident's machine is on.
+    let mut changes = world
+        .device()
+        .map(|device| device.machine_changes(machine.as_ref()).map(|(_, changes)| changes))
+        .transpose()
+        .map_err(|error| error.to_string())?;
     loop {
-        if let Some(device) = world.device() {
-            let connection = changes.as_mut().expect("device changes");
+        if let Some(connection) = changes.as_mut() {
             loop {
-                connection.borrow_and_update();
-                match device.state().link {
-                    LinkState::Online { .. } => break,
-                    LinkState::Stopped { reason } => return Err(reason),
-                    LinkState::Alone => return Err("this device has not joined a World".into()),
-                    _ => connection.changed().await.map_err(|error| error.to_string())?,
+                let status = connection.borrow_and_update().clone();
+                match status {
+                    Status::Online { .. } => break,
+                    Status::Stopped { reason } => return Err(reason),
+                    Status::Connecting { .. } => connection.changed().await.map_err(|error| error.to_string())?,
                 }
             }
         }
         #[cfg(target_os = "android")]
-        crate::android::readiness::wait(world).await?;
+        crate::android::readiness::wait(world, machine.as_ref()).await?;
         let name = fastctx_client::composer::watch_id().map_err(|error| error.to_string())?;
         let read = tokio::select! {
             changed = async { match changes.as_mut() { Some(changes) => changes.changed().await.map_err(|error| error.to_string()), None => std::future::pending().await } } => {
@@ -130,8 +132,8 @@ async fn stream(
     pieces: Channel<Piece>,
 ) {
     let mut changes = match world.device() {
-        Some(device) => match device.connection_changes() {
-            Ok(changes) => Some(changes),
+        Some(device) => match device.machine_changes(machine.as_ref()) {
+            Ok((_, changes)) => Some(changes),
             Err(error) => {
                 let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
                 return;
@@ -163,7 +165,7 @@ async fn stream(
         };
         match next {
             Some(Ok(Some(composer))) => {
-                if pieces.send(Piece::Snapshot { watch: name.clone(), composer }).is_err() {
+                if pieces.send(Piece::Snapshot { watch: name.clone(), composer: Box::new(composer) }).is_err() {
                     return;
                 }
                 continue;
@@ -199,7 +201,7 @@ async fn stream(
         match open(&world, &resident, &machine).await {
             Ok((fresh, watch, composer)) => {
                 name = watch;
-                if pieces.send(Piece::Snapshot { watch: name.clone(), composer }).is_err() {
+                if pieces.send(Piece::Snapshot { watch: name.clone(), composer: Box::new(composer) }).is_err() {
                     return;
                 }
                 composing = Some(fresh);
@@ -235,7 +237,7 @@ pub async fn composer_attach_path(
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
     #[cfg(target_os = "android")]
-    crate::android::readiness::wait(&world).await?;
+    crate::android::readiness::wait(&world, machine.as_ref()).await?;
     let attachment = crate::uploading::composer_path(
         &world,
         resident,
@@ -280,7 +282,7 @@ pub async fn composer_attach_bytes(
     };
     let world = shell.world();
     #[cfg(target_os = "android")]
-    crate::android::readiness::wait(&world).await?;
+    crate::android::readiness::wait(&world, machine.as_ref()).await?;
     let attachment = crate::uploading::composer_bytes(
         &world,
         resident,

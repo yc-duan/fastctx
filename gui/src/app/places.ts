@@ -13,7 +13,12 @@ export type Place =
   | { kind: "machines" }
   | { kind: "machine"; name: string }
   | { kind: "settings" }
-  | { kind: "welcome" }
+  /** Logging in, the first time or to one more account. */
+  | { kind: "login" }
+  /** The accounts this computer or device is logged in to. */
+  | { kind: "account" }
+  /** An administrator's page of a hub's accounts. */
+  | { kind: "admin" }
   /** A file on a machine, read whole, or its end when it keeps growing. */
   | { kind: "file"; machine: string; path: string; tail: boolean };
 
@@ -37,8 +42,12 @@ export function link(place: Place): string {
       return `#/machine/${part(place.name)}`;
     case "settings":
       return "#/settings";
-    case "welcome":
-      return "#/welcome";
+    case "login":
+      return "#/login";
+    case "account":
+      return "#/account";
+    case "admin":
+      return "#/admin";
     case "file":
       return `#/file/${part(place.machine)}/${place.tail ? "tail" : "whole"}/${part(place.path)}`;
   }
@@ -73,8 +82,14 @@ export function placeOf(hash: string): Place {
       break;
     case "settings":
       return { kind: "settings" };
+    // An address from before accounts, kept so old links still open.
     case "welcome":
-      return { kind: "welcome" };
+    case "login":
+      return { kind: "login" };
+    case "account":
+      return { kind: "account" };
+    case "admin":
+      return { kind: "admin" };
     case "file":
       if (parts[1] && parts[3]) return { kind: "file", machine: parts[1], path: parts.slice(3).join("/"), tail: parts[2] === "tail" };
       break;

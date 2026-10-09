@@ -1,11 +1,16 @@
-// Beginning a conversation: which machine, which agent on it, which
-// project, which model and how hard it thinks, and the first words
-// (`world-gui.md`, 界面的结构). A sheet over the page, opened by the button in
-// the sidebar or Ctrl+N; on a phone it rises from the foot of the screen.
-// Only machines online now are offered, only projects that span the machine
-// chosen, and only agents its own programs say can start there; their
-// models are those the program lists. Once the agent is asked in, its
-// conversation opens and its first turn is watched from the start.
+// Beginning a conversation (`world-gui.md`, 界面的结构): the machine it lives
+// on, the account it works for where more than one may open it there, which
+// agent, which model and how hard it thinks, which project, the machine it
+// works on (the one it lives on unless another is chosen, `world-run.md`,
+// 这里), whether it may ask for colleagues and where they would live, and the
+// first words. A sheet over the page, opened by the button in the sidebar or
+// Ctrl+N; on a phone it rises from the foot of the screen. Only machines
+// online now are offered to live on, only projects of the account that span
+// the machine chosen, only machines the account may work on or use agents
+// on, and only agents its own programs say can start there; their models
+// are those the program lists. Colleagues are asked for nowhere unless a
+// machine is chosen for them. Once the agent is asked in, its conversation
+// opens and its first turn is watched from the start.
 //
 // Files may come with the first words. They wait in the sheet while the
 // machine, agent and project are still being chosen, and go when the
@@ -17,10 +22,12 @@ import { AttachTray, type AttachSource, type AttachWords } from "../conversation
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
+import type { HubAccount, Login } from "../world/accounts";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
 import type { Attachment, UploadTarget } from "../world/attachments";
 import type { WorldNow } from "../world/bridge";
 import type { Address } from "../world/events";
+import { colleagueHomes, groupsOf, loginLabel, machinesOf, openersOn, workPlaces, type Machine } from "./reach";
 import type { Store } from "./store";
 import type { NewTalkWords } from "./words";
 
@@ -34,6 +41,12 @@ export interface Begun {
   effort: string | null;
   /** What was attached, already on the machine, for the agent to start with. */
   attachments: Attachment[];
+  /** The account it works for, where the user chose among several. */
+  account: HubAccount | null;
+  /** The machine it works on, as written, when not the one it lives on. */
+  worksOn: string | null;
+  /** Where its colleagues live; without it, it asks for none. */
+  colleagues: string | null;
 }
 
 export interface NewTalkOptions {
@@ -106,6 +119,12 @@ export class NewTalk {
   private town: string | null = null;
   private model: string | null = null;
   private effort: string | null = null;
+  /** The account chosen, as `hub/account`. */
+  private account: string | null = remembered("account");
+  /** Where it works and where its colleagues live, as written; null for
+   *  the machine it lives on, and for no colleagues. */
+  private worksOn: string | null = null;
+  private colleagues: string | null = null;
   private asked = new Map<string, Asked>();
   private busy = false;
   private tray: AttachTray | null = null;
@@ -153,7 +172,20 @@ export class NewTalk {
       switch (button.dataset.choice) {
         case "machine":
           this.machine = value;
+          this.worksOn = null;
+          this.colleagues = null;
           this.ask(value);
+          break;
+        case "account":
+          this.account = value;
+          this.worksOn = null;
+          this.colleagues = null;
+          break;
+        case "works":
+          this.worksOn = value || null;
+          break;
+        case "colleagues":
+          this.colleagues = value || null;
           break;
         case "agent":
           this.agent = value;
@@ -288,9 +320,9 @@ export class NewTalk {
 
   private listen: () => (() => void) | null = () => null;
 
-  /** The machine, agent and project the files go for. */
+  /** The machine, account, agent and project the files go for. */
   private chosen(): string {
-    return JSON.stringify([this.machine, this.agent, this.town]);
+    return JSON.stringify([this.machine, this.account, this.agent, this.town]);
   }
 
   /** Opens the sheet; `town` is the project to begin in, when opened from
@@ -305,6 +337,8 @@ export class NewTalk {
     this.town = town;
     this.model = null;
     this.effort = null;
+    this.worksOn = null;
+    this.colleagues = null;
     this.note.hidden = true;
     // What is on each machine is asked again each time: a program may have
     // been installed, logged in or updated since.
@@ -346,15 +380,30 @@ export class NewTalk {
 
   private machines(world: WorldNow | null): Choice[] {
     const { words } = this.options;
-    // A phone is never where an agent lives.
-    return (world?.nodes.machines ?? [])
-      .filter((node) => !node.revoked && !node.device)
-      .map((node) => ({
-        value: node.name,
-        label: node.name,
-        note: node.name === world?.here ? words.here : node.online === false ? words.offline : undefined,
-        disabled: node.online !== true,
+    // A machine an agent may live on: one whose agents some login may use.
+    return machinesOf(world)
+      .filter((machine) => machine.here || openersOn(world, machine).length)
+      .map((machine) => ({
+        value: machine.name,
+        label: machine.written,
+        note: machine.here ? words.here : machine.online === false ? words.offline : undefined,
+        disabled: !machine.here && machine.online !== true,
       }));
+  }
+
+  /** The machine chosen to live on, as this computer reaches it. */
+  private lives(world: WorldNow | null): Machine | null {
+    return machinesOf(world).find((machine) => machine.name === this.machine) ?? null;
+  }
+
+  /** The logins that may open a conversation on the machine chosen, and
+   *  the one chosen of them: the only one, or the one picked. */
+  private logins(world: WorldNow | null): { all: Login[]; chosen: Login | null } {
+    const lives = this.lives(world);
+    const all = lives ? openersOn(world, lives) : [];
+    const key = (login: Login) => `${login.hub}/${login.account}`;
+    const chosen = all.find((login) => key(login) === this.account) ?? all[0] ?? null;
+    return { all, chosen };
   }
 
   /** The agents on the chosen machine as choices: whether each can start,
@@ -393,12 +442,36 @@ export class NewTalk {
     const { words, store } = this.options;
     const world = store.world.peek();
     const machines = this.machines(world);
+    const lives = this.lives(world);
+    const logins = this.logins(world);
+    const login = logins.chosen;
+    // The projects of the account it works for that span where it lives.
+    const group = login ? groupsOf(world).find((group) => group.login.hub === login.hub && group.login.account === login.account) : null;
     const towns: Choice[] = [
       { value: "", label: words.noProject },
       ...(world?.towns ?? [])
-        .filter((town) => !this.machine || town.record.machines.includes(this.machine))
+        .filter((town) => (!this.machine || town.record.machines.includes(this.machine)) && (!group || group.towns.includes(town.town)))
         .map((town) => ({ value: town.town, label: town.record.name })),
     ];
+    const places: Choice[] = lives
+      ? workPlaces(world, lives, login).map((machine) => ({
+          value: machine.written === lives.written ? "" : machine.written,
+          label: machine.written === lives.written ? words.sameMachine : machine.written,
+          note: machine.written !== lives.written && machine.online === false ? words.offline : undefined,
+        }))
+      : [];
+    if (this.worksOn && !places.some((choice) => choice.value === this.worksOn)) this.worksOn = null;
+    const homes: Choice[] = lives
+      ? [
+          { value: "", label: words.noColleagues },
+          ...colleagueHomes(world, lives, login).map((machine) => ({
+            value: machine.written,
+            label: machine.written,
+            note: machine.here ? words.here : machine.online === false ? words.offline : undefined,
+          })),
+        ]
+      : [];
+    if (this.colleagues && !homes.some((choice) => choice.value === this.colleagues)) this.colleagues = null;
     if (this.town && !towns.some((choice) => choice.value === this.town)) this.town = null;
     const agents = this.agents();
     // An agent that cannot start here gives way to one that can.
@@ -434,6 +507,14 @@ export class NewTalk {
       </div>`;
     this.dialog.querySelector(".choices")!.innerHTML = [
       row("machine", words.machine, machines, this.machine),
+      logins.all.length > 1
+        ? row(
+            "account",
+            words.account,
+            logins.all.map((one) => ({ value: `${one.hub}/${one.account}`, label: loginLabel(one) })),
+            login ? `${login.hub}/${login.account}` : null,
+          )
+        : "",
       row("agent", words.agent, agents, this.agent),
       models.length
         ? row(
@@ -445,6 +526,9 @@ export class NewTalk {
         : "",
       efforts.length > 1 ? row("effort", words.effort, efforts.map((e) => ({ value: e, label: e })), this.effort) : "",
       row("town", words.project, towns, this.town),
+      places.length > 1 ? row("works", words.worksOn, places, this.worksOn ?? "") : "",
+      homes.length > 1 ? row("colleagues", words.colleagues, homes, this.colleagues ?? "") : "",
+      this.colleagues ? `<p class="choice-said">${escape(words.colleaguesWhat(this.colleagues))}</p>` : "",
     ].join("");
     // What was sent went for another machine, agent or project: it is sent
     // again, to the one chosen now, when the conversation begins.
@@ -482,6 +566,8 @@ export class NewTalk {
     this.drawStart();
     this.note.hidden = true;
     remember("agent", this.agent);
+    const login = this.logins(this.options.store.world.peek()).chosen;
+    if (login) remember("account", `${login.hub}/${login.account}`);
     if (this.model) remember(`model:${this.agent}`, this.model);
     if (this.effort) remember(`effort:${this.agent}`, this.effort);
     const { words } = this.options;
@@ -503,6 +589,9 @@ export class NewTalk {
         model: this.model,
         effort: this.effort,
         attachments: (this.tray?.arrived ?? []) as Attachment[],
+        account: login ? { hub: login.hub, account: login.account } : null,
+        worksOn: this.worksOn,
+        colleagues: this.colleagues,
       });
       this.input.value = "";
       this.tray?.take();

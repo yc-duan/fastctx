@@ -32,13 +32,24 @@ impl Device {
                 self.logout(hub, account).await?;
                 return Ok((Reply::Changed { token: None }, here()));
             }
+            Call::Account { hub, account, change: AccountChange::Seen { name } } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let path = self.store.arrivals(&session.link.membership().id);
+                fastctx_net::arrivals::shown(&path, &account, &name).map_err(failed)?;
+                return Ok((Reply::Changed { token: None }, here()));
+            }
             Call::Account { hub, account, change } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let token = session.link.account_change(&account, change).await.map_err(failed)?;
                 return Ok((Reply::Changed { token }, here()));
             }
             Call::Accounts => {
-                let hubs = self.sessions().iter().map(|session| session.link.accounts()).collect();
+                let mut hubs = Vec::new();
+                for session in self.sessions() {
+                    let mut accounts = session.link.accounts();
+                    accounts.arrivals = fastctx_net::arrivals::fresh(&self.store.arrivals(&accounts.hub)).map_err(failed)?;
+                    hubs.push(accounts);
+                }
                 return Ok((Reply::Accounts(AccountsReply { machine: here(), hubs }), here()));
             }
             _ => {}

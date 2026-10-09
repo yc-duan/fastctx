@@ -1,8 +1,12 @@
 // What the World knows of the agent in a conversation, opened from the
-// conversation's head: who it is and where, how it came, what it is doing,
-// the colleagues it asked, what it started that still runs, its latest
-// actions, and what can be done to it. The same facts as `fastctx w <id>`,
-// asked of the machine it lives on while the card is open.
+// conversation's head: who it is and where it lives and works, whom it
+// works for, how it came, what it is doing, whether it may ask for
+// colleagues and where they live, the colleagues it asked, what it started
+// that still runs, its latest actions, and what can be done to it. The same
+// facts as `fastctx w <id>`, asked of the machine it lives on while the card
+// is open. Asking for colleagues is turned on here by the user, choosing
+// where they live; a colleague's own card has no such choice
+// (`world-colleagues.md`).
 
 import { escape } from "./prose";
 import { glyph } from "./glyphs";
@@ -49,9 +53,21 @@ export interface DetailsOptions {
   markdown?: (() => string) | undefined;
   /** Managing it, where the World can. */
   manage?: Manage | undefined;
+  /** Where its colleagues may live, and turning asking for them on there
+   *  or off; none for a colleague. */
+  colleagues?: Colleagues | undefined;
+  /** "hangzhou · ada" for each account it works for; empty for this
+   *  computer's logins. */
+  actingFor(resident: ResidentNow): string[];
 }
 
-type Managing = "sleep" | "wake" | "move";
+export interface Colleagues {
+  /** The machines, as written, its colleagues may live on. */
+  homes(): string[];
+  set(livesOn: string | null): Promise<void>;
+}
+
+type Managing = "sleep" | "wake" | "move" | "colleagues";
 
 export class Details {
   readonly element: HTMLElement;
@@ -65,6 +81,9 @@ export class Details {
   private managing: Managing | null = null;
   /** Whether the projects to move it to are shown. */
   private moving = false;
+  /** Whether the machines its colleagues may live on are shown. */
+  private choosing = false;
+  private colleaguesNote = "";
   private confirm: Confirm | null = null;
   private shown: { detail: ResidentDetail; colleagues: ResidentNow[]; now: Date } | null = null;
 
@@ -133,6 +152,36 @@ export class Details {
         }
         case "remove":
           if (manage && this.shown) this.askRemove(manage, this.shown.detail.resident);
+          return;
+        case "colleagues":
+          this.choosing = !this.choosing;
+          this.redraw();
+          return;
+        case "colleagues-on": {
+          const colleagues = options.colleagues;
+          if (!colleagues || !this.shown) return;
+          const home = button.dataset.home || null;
+          this.choosing = false;
+          this.managing = "colleagues";
+          this.colleaguesNote = "";
+          this.redraw();
+          colleagues
+            .set(home)
+            .then(() => {
+              if (this.shown && home) this.shown.detail.colleagues = home;
+              else if (this.shown) delete this.shown.detail.colleagues;
+              this.colleaguesNote = home ? words.colleaguesOn(home) : words.colleaguesOff;
+            })
+            .catch((error: unknown) => {
+              this.colleaguesNote = words.failed(error instanceof Error ? error.message : String(error));
+            })
+            .finally(() => {
+              this.managing = null;
+              this.spoken.textContent = this.colleaguesNote;
+              this.redraw();
+            });
+          return;
+        }
       }
     });
   }
@@ -198,7 +247,10 @@ export class Details {
 
   set open(shown: boolean) {
     this.element.hidden = !shown;
-    if (!shown) this.moving = false;
+    if (!shown) {
+      this.moving = false;
+      this.choosing = false;
+    }
   }
 
   /** The World could not say. */
@@ -237,10 +289,13 @@ export class Details {
       about.origin.kind === "colleague"
         ? words.askedBy(this.options.someone(about.origin.asked_by), about.origin.label)
         : words.openedByYou;
+    const acting = this.options.actingFor(r);
     const facts: [string, string][] = [
       [words.state, state],
       [words.model, about.model ? about.model : ""],
       [words.machine, about.machine],
+      [words.worksOn, about.works_on && about.works_on !== about.machine ? about.works_on : ""],
+      [words.actingFor, acting.join(words.separator)],
       [words.host, `${agentName(about.host.agent)} ${about.host.version}${about.world_started ? ` · ${words.startedByWorld}` : ""}`],
       [words.origin, origin],
       [words.here, words.since(ago(about.born_at))],
@@ -294,10 +349,31 @@ export class Details {
       </div>
       ${section(words.manage, this.manageBody(r), " details-manage")}
       ${section(words.task, task)}
-      ${section(words.colleagues, asked)}
+      ${section(words.colleagues, this.colleaguesBody(detail) + asked)}
       ${section(words.running, running)}
       ${section(words.actions(detail.actions.length, detail.actions_total), actions)}
       <p class="details-records"><span>${escape(words.records)}</span><code>${escape(`${about.machine}:${detail.records}`)}</code></p>`;
+  }
+
+  /** Whether it may ask for colleagues and where they live, with the
+   *  machines to choose from when asked; a colleague asks for none. */
+  private colleaguesBody(detail: ResidentDetail): string {
+    const { words, colleagues } = this.options;
+    const r = detail.resident;
+    if (!colleagues || r.removed || r.about.origin.kind === "colleague") return "";
+    const home = detail.colleagues ?? null;
+    const doing = this.managing === "colleagues";
+    const said = `<p class="details-colleagues"><span>${escape(home ? words.colleaguesLive(home) : words.noColleagues)}</span><button class="text-button" type="button" data-act="colleagues" aria-expanded="${this.choosing}"${doing ? " disabled" : ""}>${glyph("colleague", 14)}<span>${escape(doing ? words.working : home ? words.changeColleagues : words.allowColleagues)}</span></button></p>`;
+    const choices = this.choosing
+      ? `<div class="details-move" role="group" aria-label="${escape(words.colleaguesWhere)}"><span class="details-faint">${escape(words.colleaguesWhere)}</span><div class="choice-options">${[
+          ...colleagues.homes().map(
+            (machine) =>
+              `<button type="button" class="choice${machine === home ? " chosen" : ""}" data-act="colleagues-on" data-home="${escape(machine)}"${machine === home ? ` disabled aria-current="true"` : ""}>${escape(machine)}</button>`,
+          ),
+          home ? `<button type="button" class="choice" data-act="colleagues-on" data-home="">${escape(words.colleaguesNone)}</button>` : "",
+        ].join("")}</div></div>`
+      : "";
+    return `${said}${choices}${this.colleaguesNote ? `<p class="details-note">${escape(this.colleaguesNote)}</p>` : ""}`;
   }
 
   /** Sleep or wake, move to a project, remove: what the World can do to

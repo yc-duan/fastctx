@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish};
 use fastctx_types::ResidentId;
+use fastctx_types::layout::WorldDir;
 use fastctx_types::access::Written;
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::Origin;
@@ -20,13 +21,18 @@ struct Setting {
     lives_on: Written,
 }
 
-fn path(node: &Node, id: &ResidentId) -> PathBuf {
-    node.world.path().join("colleagues").join(format!("{id}.json"))
+fn path(world: &WorldDir, id: &ResidentId) -> PathBuf {
+    world.path().join("colleagues").join(format!("{id}.json"))
 }
 
 /// Where `id`'s colleagues live, when it may ask for them.
 pub fn read(node: &Node, id: &ResidentId) -> io::Result<Option<Written>> {
-    match std::fs::read(path(node, id)) {
+    read_in(&node.world, id)
+}
+
+/// The same, read from the World's directory alone.
+pub(crate) fn read_in(world: &WorldDir, id: &ResidentId) -> io::Result<Option<Written>> {
+    match std::fs::read(path(world, id)) {
         Ok(bytes) => serde_json::from_slice::<Setting>(&bytes)
             .map(|setting| Some(setting.lives_on))
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
@@ -47,7 +53,7 @@ pub fn set(node: &Node, id: &ResidentId, lives_on: Option<Written>) -> Result<()
     match &lives_on {
         Some(lives_on) => keep(node, id, lives_on)?,
         None => {
-            let path = path(node, id);
+            let path = path(&node.world, id);
             match std::fs::remove_file(&path) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => {
                     return Err(Failure::new(format!("removing the colleague setting {}: {error}", path.display())));
@@ -71,7 +77,7 @@ pub fn inherit(node: &Node, parent: &ResidentId, id: &ResidentId) -> Result<(), 
 
 /// Keeps where `id`'s colleagues live, for a resident being born.
 pub fn keep(node: &Node, id: &ResidentId, lives_on: &Written) -> Result<(), Failure> {
-    let path = path(node, id);
+    let path = path(&node.world, id);
     let mut bytes = serde_json::to_vec_pretty(&Setting { lives_on: lives_on.clone() }).expect("a setting serializes");
     bytes.push(b'\n');
     ensure_private_dir(path.parent().expect("the colleagues directory"))

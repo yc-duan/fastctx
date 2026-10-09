@@ -86,8 +86,7 @@ export class HomePage {
       const owner = ownerResident(job.owner);
       return !owner || !present.has(`${owner.resident}@${owner.machine}`);
     });
-    // Machines are what the World works on; a phone is not counted among them.
-    const machines = world.nodes.filter((node) => !node.device);
+    const machines = world.nodes;
     const online = machines.filter((node) => node.online).length;
     const idleLine = idle.length
       ? `<p class="idle">${escape(words.idle(idle.map((r) => this.name(r)).join(words.listSeparator)))}</p>`
@@ -134,8 +133,7 @@ export class HomePage {
         this.away.hidden = !awayHtml;
       });
     }
-    // The drawing is of the machines the World works on.
-    this.frontispiece.update({ ...world, nodes: world.nodes.filter((node) => !node.device) }, residents);
+    this.frontispiece.update(world, residents);
   }
 
   /** The World could not be asked: said where the facts would be, with
@@ -147,7 +145,7 @@ export class HomePage {
     this.day.textContent = words.dateline(now);
     this.facts.innerHTML = old
       ? `<span class="fact unreachable">${escape(words.oldWorld(old.node_version, old.client_version))}</span><a class="text-button set-up" href="#/settings">${escape(words.renewThere)}</a>`
-      : `<span class="fact unreachable">${escape(words.unreachable(why))}</span><a class="text-button set-up" href="#/welcome">${escape(words.setUp)}</a>`;
+      : `<span class="fact unreachable">${escape(words.unreachable(why))}</span><a class="text-button set-up" href="#/login">${escape(words.setUp)}</a>`;
     this.drawn = "";
   }
 

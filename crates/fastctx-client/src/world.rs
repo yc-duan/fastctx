@@ -409,6 +409,17 @@ impl World {
         }
     }
 
+    /// Turns asking for colleagues on for `resident`, with where they live,
+    /// or off.
+    pub async fn colleagues(
+        &self,
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        lives_on: Option<fastctx_types::access::Written>,
+    ) -> Result<(), Error> {
+        done(self.ask(Call::Colleagues { resident, machine, lives_on }).await?)
+    }
+
     /// Every hub this computer is on, with what it sees of each.
     pub async fn accounts(&self) -> Result<AccountsReply, Error> {
         match self.ask(Call::Accounts).await? {

@@ -36,7 +36,13 @@ export interface ShellWords {
   unanswered(seconds: number): string;
   thisOne: string;
   phone: string;
-  joinOrFound: string;
+  /** The way to log in, on a computer logged in nowhere. */
+  logIn: string;
+  account: string;
+  /** Who came into the accounts lately, not yet shown, for a screen reader. */
+  arrivals(n: number): string;
+  /** A login's part of the sidebar, folded or not. */
+  groupOf(login: string): string;
   more(n: number): string;
   span(ms: number): string;
   /** A project's fold button: the agents in it. */
@@ -48,6 +54,14 @@ export interface ShellWords {
 export interface NewTalkWords {
   title: string;
   machine: string;
+  /** Which account it works for. */
+  account: string;
+  worksOn: string;
+  sameMachine: string;
+  colleagues: string;
+  noColleagues: string;
+  /** What choosing where colleagues live means. */
+  colleaguesWhat(machine: string): string;
   agent: string;
   project: string;
   noProject: string;
@@ -81,7 +95,13 @@ export interface NewTalkWords {
 
 export const zhNewTalk: NewTalkWords = {
   title: "新对话",
-  machine: "在哪台机器",
+  machine: "住在哪台",
+  account: "替哪个账号",
+  worksOn: "在哪台干活",
+  sameMachine: "同一台",
+  colleagues: "同事住哪台",
+  noColleagues: "不请同事",
+  colleaguesWhat: (machine) => `它能请同事来分担活儿，同事是住在 ${machine} 上的 Codex；以后在对话的详情里也能改、能关掉。`,
   agent: "用哪一位",
   project: "进哪个项目",
   noProject: "不进项目",
@@ -110,7 +130,13 @@ export const zhNewTalk: NewTalkWords = {
 
 export const enNewTalk: NewTalkWords = {
   title: "New conversation",
-  machine: "On which machine",
+  machine: "Lives on",
+  account: "Works for",
+  worksOn: "Works on",
+  sameMachine: "the same one",
+  colleagues: "Colleagues on",
+  noColleagues: "no colleagues",
+  colleaguesWhat: (machine) => `It can ask colleagues to share the work: Codex living on ${machine}. You can change or turn this off later in the conversation's details.`,
   agent: "With whom",
   project: "In which project",
   noProject: "No project",
@@ -144,8 +170,8 @@ export const zhPresence: PresenceWords = {
   finishedBody: (town, last) => [town ? `项目 ${town}` : null, last].filter(Boolean).join(" · ") || "打开它，看它说了什么。",
   open: "打开",
   stop: "停下",
-  joined: (name, device) => `${device ? "手机" : "机器"} ${name} 用你发的邀请进来了`,
-  joinedBody: "不是你请进来的，打开机器页一键吊销它。",
+  arrived: (name, device, login) => `${device ? "设备" : "机器"} ${name} 进了 ${login}`,
+  arrivedBody: "不是你放进来的话，打开账号页，按「不是我」移除它。",
 };
 
 export const enPresence: PresenceWords = {
@@ -155,8 +181,8 @@ export const enPresence: PresenceWords = {
   finishedBody: (town, last) => [town, last].filter(Boolean).join(" · ") || "Open it to see what it said.",
   open: "Open",
   stop: "Stop",
-  joined: (name, device) => `${device ? "The phone" : "The machine"} ${name} came in with your invitation`,
-  joinedBody: "If you did not bring it in, revoke it from the machines page.",
+  arrived: (name, device, login) => `${device ? "The device" : "The machine"} ${name} came into ${login}`,
+  arrivedBody: "If you did not let it in, open the account page and press “That wasn't me”.",
 };
 
 export interface SettingsWords {
@@ -175,9 +201,12 @@ export interface SettingsWords {
   sizes: Record<string, string>;
   device: string;
   machine: string;
-  world: string;
   alone: string;
   link: string;
+  /** A hub this computer or device is logged in to. */
+  hub(name: string): string;
+  /** The accounts it is logged in to there. */
+  as(accounts: string): string;
   version: string;
   online(hub: string, since: string): string;
   connecting(error: string | null): string;
@@ -257,9 +286,10 @@ export const zhSettings: SettingsWords = {
   sizes: { "14": "小", "15": "标准", "16": "大", "17": "更大" },
   device: "这台设备",
   machine: "机器名",
-  world: "世界",
-  alone: "独自一台",
+  alone: "独自一台，没有登录账号",
   link: "与中枢",
+  hub: (name) => `中枢 ${name}`,
+  as: (accounts) => (accounts ? `登录着 ${accounts}` : ""),
   version: "版本",
   online: (hub, since) => `连着 ${hub}，从 ${since} 起`,
   connecting: (error) => (error ? `正在连，上一次没连上：${error}` : "正在连"),
@@ -368,9 +398,10 @@ export const enSettings: SettingsWords = {
   sizes: { "14": "Small", "15": "Standard", "16": "Large", "17": "Larger" },
   device: "This device",
   machine: "Machine",
-  world: "World",
-  alone: "On its own",
+  alone: "On its own, logged in to no account",
   link: "To the hub",
+  hub: (name) => `Hub ${name}`,
+  as: (accounts) => (accounts ? `logged in to ${accounts}` : ""),
   version: "Version",
   online: (hub, since) => `connected to ${hub} since ${since}`,
   connecting: (error) => (error ? `connecting; the last try failed: ${error}` : "connecting"),
@@ -456,276 +487,6 @@ export const enSettings: SettingsWords = {
   legacyUnreadable: (why) => `The record of tidying what it left could not be read: ${why}`,
 };
 
-export interface MachinesWords {
-  title: string;
-  here: string;
-  online(since: string): string;
-  offline(since: string | null): string;
-  unknown: string;
-  revoked(by: string, reason: string): string;
-  factsUnknown(why: string): string;
-  agents: string;
-  nobody: string;
-  jobs(n: number): string;
-  home: string;
-  via(route: string): string;
-  phone: string;
-  device: string;
-  hosts: string;
-  asking: string;
-  notAsked(why: string): string;
-  notInstalled: string;
-  loggedIn: string;
-  loggedOut: string;
-  loginUnknown: string;
-  toolsIn: string;
-  toolsOut: string;
-  toolsOld: string;
-  putIn: string;
-  takeOut: string;
-  renew: string;
-  applied: string;
-  notApplied(why: string): string;
-  /** Whether Claude here may work without asking for approval. */
-  unattendedYes: string;
-  unattendedNo: string;
-  allow: string;
-  withdraw: string;
-  /** The hub every machine reaches, by its address. */
-  hub(address: string): string;
-  /** This machine reaches the World through a relay, at `address`. */
-  hubVia(relay: string, address: string): string;
-  /** The way out of this machine, to the relay it is on. */
-  viaRelay(route: string, relay: string): string;
-  changeRoute: string;
-  relaySettings: string;
-  relayTag: string;
-  manages: string;
-  founder: string;
-  invitedBy(name: string): string;
-  /** Brought in by a member without management rights: its branch. */
-  branch(name: string): string;
-  noSealing: string;
-  changeScope: string;
-  scopeTitle(name: string): string;
-  scopeGo: string;
-  /** A member came in with this machine's invitation. */
-  joined(name: string, device: boolean, at: string): string;
-  notMe: string;
-  gotIt: string;
-  notMeWhat(name: string): string;
-}
-
-export const zhMachines: MachinesWords = {
-  phone: "手机",
-  device: "一部带着你身份的设备，上面不跑任何东西",
-  hosts: "上面的两家智能体",
-  asking: "正在问它上面的智能体…",
-  notAsked: (why) => `问不到它上面的智能体：${why}`,
-  notInstalled: "没装",
-  loggedIn: "已登录",
-  loggedOut: "没登录",
-  loginUnknown: "登没登录说不准",
-  toolsIn: "你在这里开的会话用着世界的工具",
-  toolsOut: "你在这里开的会话没接入世界的工具",
-  toolsOld: "接入的还是旧版 fastctx",
-  putIn: "接入",
-  takeOut: "拿出",
-  renew: "换成新版",
-  applied: "改好了",
-  notApplied: (why) => `没改成：${why}`,
-  unattendedYes: "已许可它不经审批干活",
-  unattendedNo: "还没许可它不经审批干活，世界请不来它",
-  allow: "许可…",
-  withdraw: "撤回",
-  hub: (address) => `中枢在 ${address}`,
-  hubVia: (relay, address) => `经转接站 ${relay}（${address}）连着世界`,
-  viaRelay: (route, relay) => `经${route}连着转接站 ${relay}`,
-  changeRoute: "上游…",
-  relaySettings: "转接站…",
-  relayTag: "转接站",
-  manages: "管理",
-  founder: "建世界的那台",
-  invitedBy: (name) => `${name} 邀请进来的`,
-  branch: (name) => `${name} 转授进来的，随它`,
-  noSealing: "还没有加密钥匙：它换到新版之前，什么都锁不给它",
-  changeScope: "范围…",
-  scopeTitle: (name) => `${name} 能用什么`,
-  scopeGo: "就这样",
-  joined: (name, device, at) => `${device ? "手机" : "机器"} ${name} 用你发的邀请进来了，${at}`,
-  notMe: "不是我",
-  gotIt: "知道了",
-  notMeWhat: (name) => `${name} 不是你请进来的：吊销它，每台机器从此不再认它，它也再不能回来，除非重新邀请。`,
-  title: "机器",
-  here: "这台",
-  online: (since) => `在线，${since}起`,
-  offline: (since) => (since ? `离线，${since}起` : "离线"),
-  unknown: "不知道在不在线",
-  revoked: (by, reason) => `已被 ${by} 吊销：${reason}`,
-  factsUnknown: (why) => `问不到它的情况：${why}`,
-  agents: "上面的智能体",
-  nobody: "此刻没有智能体",
-  jobs: (n) => `${n} 个作业在跑`,
-  home: "家目录",
-  via: (route) => `经${route}连着中枢`,
-};
-
-/** Where a member hangs in the World's tree, and the sheets that set it. */
-export interface TreeWords {
-  /** Above the tree on the machines page. */
-  structure: string;
-  hub: string;
-  here: string;
-  relayTag: string;
-  /** Connects through `first`, falling back to `then` in order. */
-  through(first: string, then: string[]): string;
-  relaysAt(addresses: string[]): string;
-  thenHub: string;
-  straightSaid: string;
-  routeTitle(name: string): string;
-  routeWhat: string;
-  first: string;
-  fallback: string;
-  relay(name: string): string;
-  straight: string;
-  hubLast: string;
-  noRelays: string;
-  routeGo: string;
-  relayTitle(name: string): string;
-  relayWhat: string;
-  publicAt: string;
-  publicHint: string;
-  listenAt: string;
-  listenHint: string;
-  relayGo: string;
-  relayChange: string;
-  stopRelaying: string;
-  publicNeeded: string;
-  working: string;
-  failed(why: string): string;
-  close: string;
-}
-
-export const zhTree: TreeWords = {
-  structure: "世界的结构",
-  hub: "中枢",
-  here: "这台",
-  relayTag: "转接站",
-  through: (first, then) => (then.length ? `经转接站 ${first} 连上来，它不通时走 ${then.join("、")}` : `经转接站 ${first} 连上来`),
-  relaysAt: (addresses) => `在 ${addresses.join("、")} 替下面的机器转接`,
-  thenHub: "，都不通时直连中枢",
-  straightSaid: "直连中枢",
-  routeTitle: (name) => `${name} 经哪里连上来`,
-  routeWhat: "世界是一棵以中枢为根的树。同挂在一个转接站下面的机器，彼此说话不绕中枢；转接站只转话，看不见内容。",
-  first: "先连",
-  fallback: "它不通时",
-  relay: (name) => name,
-  straight: "直连中枢",
-  hubLast: "直连中枢",
-  noRelays: "世界里还没有转接站：先在一台机器上点「转接站…」，把它设成转接站。",
-  routeGo: "就这样连",
-  relayTitle: (name) => `让 ${name} 当转接站`,
-  relayWhat: "路线经过它的机器会连到它这里，再由它连上世界。它只转话，读不到、改不了经过的内容；它停了，下面的机器自己改连中枢，等它回来再回去。",
-  publicAt: "下面的机器拨哪个地址",
-  publicHint: "IP:端口，几个就用逗号隔开；它所在的网络要放行这个端口。",
-  listenAt: "它在本机哪里监听",
-  listenHint: "留空就在所有网卡上监听同一个端口。",
-  relayGo: "设成转接站",
-  relayChange: "改好",
-  stopRelaying: "不再当转接站",
-  publicNeeded: "至少写一个下面的机器拨得通的地址。",
-  working: "稍等…",
-  failed: (why) => `没办成：${why}`,
-  close: "关闭",
-};
-
-export const enTree: TreeWords = {
-  structure: "How the World hangs together",
-  hub: "The hub",
-  here: "this one",
-  relayTag: "relay",
-  through: (first, then) => (then.length ? `connects through ${first}, then ${then.join(", then ")}` : `connects through ${first}`),
-  relaysAt: (addresses) => `relays at ${addresses.join(", ")}`,
-  thenHub: ", then straight to the hub",
-  straightSaid: "Straight to the hub",
-  routeTitle: (name) => `Where ${name} connects`,
-  routeWhat: "The World is a tree rooted at the hub. Machines below one relay speak without going through the hub; a relay only passes on what is said, and cannot read it.",
-  first: "First through",
-  fallback: "When it is down",
-  relay: (name) => name,
-  straight: "Straight to the hub",
-  hubLast: "Straight to the hub",
-  noRelays: "No machine relays yet: make one a relay first, with “Relay…” on it.",
-  routeGo: "Connect this way",
-  relayTitle: (name) => `${name} as a relay`,
-  relayWhat: "Machines whose route leads through it connect to it, and it connects them on to the World. It passes on what is said and can neither read nor change it; when it stops, the machines below it go to the hub, and come back once it is back.",
-  publicAt: "Where the machines below dial it",
-  publicHint: "IP:port, several separated by commas; its network must let the port through.",
-  listenAt: "Where it listens",
-  listenHint: "Left empty, on every interface at the same port.",
-  relayGo: "Make it a relay",
-  relayChange: "Change",
-  stopRelaying: "Stop relaying",
-  publicNeeded: "Give at least one address the machines below can reach.",
-  working: "Working…",
-  failed: (why) => `Not done: ${why}`,
-  close: "Close",
-};
-
-export const enMachines: MachinesWords = {
-  phone: "phone",
-  device: "A device that carries you; nothing runs on it",
-  hosts: "Its agents",
-  asking: "Asking about its agents…",
-  notAsked: (why) => `Its agents could not be asked about: ${why}`,
-  notInstalled: "not installed",
-  loggedIn: "logged in",
-  loggedOut: "not logged in",
-  loginUnknown: "login not known",
-  toolsIn: "sessions you open here have the World's tools",
-  toolsOut: "sessions you open here don't have the World's tools",
-  toolsOld: "still has the old fastctx",
-  putIn: "Put in",
-  takeOut: "Take out",
-  renew: "Use the new one",
-  applied: "Done",
-  notApplied: (why) => `Not done: ${why}`,
-  unattendedYes: "allowed to work without asking",
-  unattendedNo: "not yet allowed to work without asking; the World cannot bring it in",
-  allow: "Allow…",
-  withdraw: "Withdraw",
-  hub: (address) => `hub at ${address}`,
-  hubVia: (relay, address) => `Connected to the World through the relay ${relay} (${address})`,
-  viaRelay: (route, relay) => `reaches the relay ${relay} ${route}`,
-  changeRoute: "Upstream…",
-  relaySettings: "Relay…",
-  relayTag: "relay",
-  manages: "manages",
-  founder: "founded the World",
-  invitedBy: (name) => `invited by ${name}`,
-  branch: (name) => `in ${name}'s branch, and stands with it`,
-  noSealing: "no sealing key yet: nothing can be sealed to it until it runs the new version",
-  changeScope: "Scope…",
-  scopeTitle: (name) => `What ${name} may use`,
-  scopeGo: "Set it",
-  joined: (name, device, at) => `${device ? "The phone" : "The machine"} ${name} came in with your invitation, ${at}`,
-  notMe: "That wasn't me",
-  gotIt: "Got it",
-  notMeWhat: (name) => `${name} was not brought in by you: revoke it, and no machine trusts it again; it cannot come back unless invited anew.`,
-  title: "Machines",
-  here: "this one",
-  online: (since) => `online since ${since}`,
-  offline: (since) => (since ? `offline since ${since}` : "offline"),
-  unknown: "not known whether online",
-  revoked: (by, reason) => `revoked by ${by}: ${reason}`,
-  factsUnknown: (why) => `could not be asked: ${why}`,
-  agents: "Agents on it",
-  nobody: "No agent right now",
-  jobs: (n) => `${n} job${n === 1 ? "" : "s"} running`,
-  home: "Home",
-  via: (route) => `reaches the hub ${route}`,
-};
-
 export interface ReaderWordsSet {
   zh: ReaderWords;
   en: ReaderWords;
@@ -788,6 +549,18 @@ export interface DetailsWords {
   trouble: string;
   task: string;
   colleagues: string;
+  worksOn: string;
+  actingFor: string;
+  separator: string;
+  /** Where its colleagues live, when it may ask for them. */
+  colleaguesLive(machine: string): string;
+  noColleagues: string;
+  allowColleagues: string;
+  changeColleagues: string;
+  colleaguesWhere: string;
+  colleaguesNone: string;
+  colleaguesOn(machine: string): string;
+  colleaguesOff: string;
   running: string;
   actions(shown: number, total: number): string;
   noActions: string;
@@ -838,7 +611,7 @@ export const zhDetails: DetailsWords = {
   close: "收起",
   model: "模型",
   modelSelf: "（自报）",
-  machine: "在哪台机器",
+  machine: "住在哪台",
   host: "程序",
   startedByWorld: "世界拉起的后台会话",
   origin: "来历",
@@ -854,7 +627,18 @@ export const zhDetails: DetailsWords = {
   waiting: "在等你回答",
   trouble: "出过的状况",
   task: "它接的活",
-  colleagues: "它请的同事",
+  colleagues: "同事",
+  worksOn: "在哪台干活",
+  actingFor: "替谁干活",
+  separator: "、",
+  colleaguesLive: (machine) => `能请同事，同事住在 ${machine}`,
+  noColleagues: "不能请同事",
+  allowColleagues: "让它能请同事…",
+  changeColleagues: "改…",
+  colleaguesWhere: "同事住哪台",
+  colleaguesNone: "不再能请",
+  colleaguesOn: (machine) => `它从下一次起能请住在 ${machine} 上的同事了`,
+  colleaguesOff: "它不能再请同事了；已经请来的照旧",
   running: "它起的、还在跑的",
   actions: (shown, total) => (shown < total ? `最近的动作（${total} 个里的最后 ${shown} 个）` : "它的动作"),
   noActions: "还没有动作。",
@@ -901,7 +685,7 @@ export const enDetails: DetailsWords = {
   close: "Close",
   model: "Model",
   modelSelf: " (self-reported)",
-  machine: "Machine",
+  machine: "Lives on",
   host: "Program",
   startedByWorld: "a background session the World started",
   origin: "Came",
@@ -917,7 +701,18 @@ export const enDetails: DetailsWords = {
   waiting: "waiting for your answer",
   trouble: "Trouble",
   task: "Its task",
-  colleagues: "Colleagues it asked",
+  colleagues: "Colleagues",
+  worksOn: "Works on",
+  actingFor: "Works for",
+  separator: ", ",
+  colleaguesLive: (machine) => `may ask colleagues, who live on ${machine}`,
+  noColleagues: "asks no colleagues",
+  allowColleagues: "Let it ask colleagues…",
+  changeColleagues: "Change…",
+  colleaguesWhere: "Colleagues live on",
+  colleaguesNone: "No more colleagues",
+  colleaguesOn: (machine) => `From its next call it can ask colleagues living on ${machine}`,
+  colleaguesOff: "It can no longer ask colleagues; those it asked stay",
   running: "Still running, started by it",
   actions: (shown, total) => (shown < total ? `Latest actions (last ${shown} of ${total})` : "Its actions"),
   noActions: "No actions yet.",
@@ -961,6 +756,8 @@ export const enDetails: DetailsWords = {
 
 export interface ProjectFormWords {
   newTitle: string;
+  /** Which account a new project opens in. */
+  account: string;
   editTitle(name: string): string;
   name: string;
   namePlaceholder: string;
@@ -990,6 +787,7 @@ export interface ProjectFormWords {
 
 export const zhProjectForm: ProjectFormWords = {
   newTitle: "新项目",
+  account: "开在哪个账号",
   editTitle: (name) => `修改「${name}」`,
   name: "名字",
   namePlaceholder: "给它起个名字，比如 mark50 研发",
@@ -1018,6 +816,7 @@ export const zhProjectForm: ProjectFormWords = {
 
 export const enProjectForm: ProjectFormWords = {
   newTitle: "New project",
+  account: "In which account",
   editTitle: (name) => `Edit “${name}”`,
   name: "Name",
   namePlaceholder: "Name it, such as Mark 50 research",
@@ -1083,293 +882,6 @@ export const enConsent: ConsentWords = {
   close: "Close",
 };
 
-export interface DeviceWords {
-  invite: string;
-  inviteTitle: string;
-  inviteWhat: string;
-  aComputer: string;
-  aServer: string;
-  aPhone: string;
-  computerHint: string;
-  serverHint: string;
-  phoneHint: string;
-  /** What the new member may use. */
-  scope: string;
-  presetAll: string;
-  presetSelf: string;
-  presetOneAgent: string;
-  presetSome: string;
-  presetCustom: string;
-  /** What a preset lets it do, said before the code is made. */
-  presetSays(said: string): string;
-  selfNeedsName: string;
-  oneAgentOn: string;
-  serverSteps: string[];
-  serverCommand: string;
-  phoneSteps: string[];
-  inviteName: string;
-  inviteNameHint: string;
-  valid: string;
-  qr: string;
-  hours(n: number): string;
-  make: string;
-  making: string;
-  code: string;
-  copy: string;
-  copied: string;
-  until(at: string): string;
-  howTo: string;
-  howToSteps: string[];
-  again: string;
-  revoke: string;
-  revokeTitle(name: string): string;
-  revokeWhat(name: string): string;
-  reason: string;
-  reasonDefault: string;
-  revokeGo: string;
-  leave: string;
-  leaveTitle: string;
-  leaveWhat: string;
-  leaveGo: string;
-  working: string;
-  close: string;
-  failed(why: string): string;
-  specimen: string;
-}
-
-export const zhDevices: DeviceWords = {
-  invite: "邀请",
-  inviteTitle: "邀请一台电脑、服务器或手机",
-  inviteWhat: "它是",
-  aComputer: "一台电脑",
-  aServer: "一台服务器",
-  aPhone: "一部手机",
-  computerHint: "智能体可以住在它上面，世界会在它上面干活。",
-  serverHint: "智能体可以住在它上面；复制一行命令，在它的终端里装好并加入。",
-  phoneHint: "它带着你的身份进来，只用来看和说话，上面不跑任何东西。",
-  scope: "它能用什么",
-  presetAll: "全部",
-  presetSelf: "只用它自己",
-  presetOneAgent: "只用一个智能体",
-  presetSome: "只用某几台机器",
-  presetCustom: "自定义",
-  presetSays: (said) => `进来以后能用的：${said}。别的它看不到。`,
-  selfNeedsName: "「只用它自己」要先给它起个名字。",
-  oneAgentOn: "用哪一个",
-  serverSteps: [
-    "把这一整行粘进 Linux 服务器的终端运行；",
-    "它从你的中枢下载 fastctx、核对无误后装好，并加入世界；",
-    "装开机服务那一步要管理员权限，不是 root 时它会说明怎样用 sudo；之后它就一直连着。中途断了，同一行再跑一次就接着做完。",
-  ],
-  serverCommand: "在服务器上运行",
-  inviteName: "它叫什么",
-  inviteNameHint: "小写字母、数字与连字符；不写就由它自己起名",
-  valid: "多久内有效",
-  qr: "邀请码的二维码，用新设备扫它",
-  hours: (n) => (n < 24 ? `${n} 小时` : `${n / 24} 天`),
-  make: "生成邀请码",
-  making: "正在生成…",
-  code: "邀请码",
-  copy: "复制",
-  copied: "已复制",
-  until: (at) => `${at}之前有效，只能用一次`,
-  howTo: "在新设备上",
-  phoneSteps: [
-    "在手机上装好 World，打开它，扫这个码；扫不了就粘贴邀请码。",
-    "它以你的身份进来：能看、能说话、能管，但不在它上面跑任何东西。",
-    "要它在后台也连着，按它的提示在手机的设置里放行后台运行。",
-  ],
-  howToSteps: [
-    "装好 World，打开它，选「加入已有的世界」，扫这个码或粘贴邀请码；",
-    "或者在它的终端里敲 fastctx join <邀请码>。",
-    "加入时会请一次管理员确认，装上开机自启的服务，之后它就一直连着。",
-  ],
-  again: "再生成一个",
-  revoke: "吊销",
-  revokeTitle: (name) => `吊销 ${name}`,
-  revokeWhat: (name) => `从此每台机器都不再认 ${name} 的钥匙：它不能再说话、收信，也不能再回来，除非重新邀请。它身上的东西不会被删掉。丢了的设备就这样处理。`,
-  reason: "原因",
-  reasonDefault: "revoked",
-  revokeGo: "吊销它",
-  leave: "离开世界",
-  leaveTitle: "让这台离开世界",
-  leaveWhat: "这台机器吊销自己的钥匙，回到独自一台。它身上的居民与记录都留着；别的机器从此不再认它。要回来，得重新被邀请。",
-  leaveGo: "离开",
-  working: "正在办…",
-  close: "关闭",
-  failed: (why) => `没办成：${why}`,
-  specimen: "这是样例，没有连着世界",
-};
-
-export const enDevices: DeviceWords = {
-  invite: "Invite",
-  inviteTitle: "Invite a computer, server or phone",
-  inviteWhat: "It is",
-  aComputer: "A computer",
-  aServer: "A server",
-  aPhone: "A phone",
-  computerHint: "Agents can live on it, and the World works on it.",
-  serverHint: "Agents can live on it; copy one line to install it and join from its terminal.",
-  phoneHint: "It comes in as you, to look and speak; nothing runs on it.",
-  scope: "What it may use",
-  presetAll: "Everything",
-  presetSelf: "Only itself",
-  presetOneAgent: "One agent",
-  presetSome: "Some machines",
-  presetCustom: "Choose",
-  presetSays: (said) => `Once in, it may use: ${said}. It sees nothing else.`,
-  selfNeedsName: "Give it a name first, to let it use only itself.",
-  oneAgentOn: "Which one",
-  serverSteps: [
-    "Paste this whole line into the Linux server's terminal;",
-    "it downloads fastctx from your hub, checks it, installs it and joins the World;",
-    "installing its service needs administrator rights; when not root, it says how to use sudo. Then it stays connected. If it stops halfway, run the same line again to finish.",
-  ],
-  serverCommand: "On the server, run",
-  inviteName: "Its name",
-  inviteNameHint: "lowercase letters, digits and hyphens; left empty, it names itself",
-  valid: "Valid for",
-  qr: "The invitation as a QR code, for the new device to scan",
-  hours: (n) => (n < 24 ? `${n} hour${n === 1 ? "" : "s"}` : `${n / 24} day${n === 24 ? "" : "s"}`),
-  make: "Make the code",
-  making: "Making it…",
-  code: "Invitation code",
-  copy: "Copy",
-  copied: "Copied",
-  until: (at) => `valid until ${at}, once`,
-  howTo: "On the new device",
-  phoneSteps: [
-    "Install World on the phone, open it, and scan this code; paste the code where it cannot scan.",
-    "It comes in as you: it can look, speak and manage, and nothing runs on it.",
-    "To stay connected in the background, allow it in the phone's settings as it asks.",
-  ],
-  howToSteps: [
-    "Install World, open it, choose “Join a World”, and scan this code or paste it;",
-    "or run fastctx join <code> in its terminal.",
-    "Joining asks for an administrator once to install the service that keeps it connected.",
-  ],
-  again: "Make another",
-  revoke: "Revoke",
-  revokeTitle: (name) => `Revoke ${name}`,
-  revokeWhat: (name) => `No machine will trust ${name}'s key again: it can no longer speak, receive letters or come back unless invited anew. Nothing on it is deleted. This is what to do with a lost device.`,
-  reason: "Reason",
-  reasonDefault: "revoked",
-  revokeGo: "Revoke it",
-  leave: "Leave the World",
-  leaveTitle: "Have this machine leave the World",
-  leaveWhat: "This machine revokes its own key and becomes a World of one. Its residents and records stay; the other machines stop trusting it. To come back it must be invited again.",
-  leaveGo: "Leave",
-  working: "Working…",
-  close: "Close",
-  failed: (why) => `It did not go through: ${why}`,
-  specimen: "This is a specimen, not connected to the World",
-};
-
-export interface ScopeWords {
-  machines: string;
-  agents: string;
-  projects: string;
-  actions: string;
-  allMachines: string;
-  allAgents: string;
-  allProjects: string;
-  allActions: string;
-  noMachines: string;
-  noAgents: string;
-  noProjects: string;
-  noActions: string;
-  projectsOnly(names: string): string;
-  /** Everything, said once. */
-  everything: string;
-  /** Where it may work: which machines, which agents there; `null` for all. */
-  where(machines: string | null, agents: string | null): string;
-  action: Record<import("../world/world").ScopeAction, string>;
-  and: string;
-  sep: string;
-  canInvite: string;
-  manages: string;
-  manage: string;
-  manageHint: string;
-  invite: string;
-  inviteHint: string;
-}
-
-export const zhScope: ScopeWords = {
-  machines: "能用哪几台机器",
-  agents: "能用哪家智能体",
-  projects: "能用哪些项目",
-  actions: "能做哪些事",
-  allMachines: "全部机器",
-  allAgents: "全部智能体",
-  allProjects: "全部项目",
-  allActions: "什么都能做",
-  noMachines: "一台机器都不能用",
-  noAgents: "哪家智能体都不能用",
-  noProjects: "没有项目",
-  noActions: "什么都不能做",
-  projectsOnly: (names) => `项目 ${names}`,
-  everything: "什么都能用",
-  where: (machines, agents) =>
-    machines && agents ? `只用 ${machines} 上的 ${agents}` : machines ? `只用 ${machines}` : agents ? `全部机器上的 ${agents}` : "全部机器",
-  action: {
-    talk: "说话与看着",
-    w: "看谁在、发生了什么",
-    read: "读文件",
-    run: "跑命令、改文件",
-    write: "写项目的记录",
-    copy: "搬文件",
-    ask_colleague: "请同事",
-    page: "替页面做事",
-    consent: "许可 Claude 不经审批",
-  },
-  and: "、",
-  sep: " · ",
-  canInvite: "能邀请别人",
-  manages: "什么都能用，也能邀请、吊销、改别人的范围",
-  manage: "握管理权",
-  manageHint: "能邀请任意范围的成员、吊销任何成员、改任何成员的范围。只给最信得过的电脑。",
-  invite: "能邀请别人",
-  inviteHint: "它能在自己的范围里邀请设备或机器进来；它邀请进来的不能再邀请。",
-};
-
-export const enScope: ScopeWords = {
-  machines: "Machines it may use",
-  agents: "Agents it may use",
-  projects: "Projects it may use",
-  actions: "What it may do",
-  allMachines: "every machine",
-  allAgents: "every agent",
-  allProjects: "every project",
-  allActions: "anything",
-  noMachines: "no machine",
-  noAgents: "no agent",
-  noProjects: "no project",
-  noActions: "nothing",
-  projectsOnly: (names) => `the project${names.includes(", ") ? "s" : ""} ${names}`,
-  everything: "anything",
-  where: (machines, agents) =>
-    machines && agents ? `only ${agents} on ${machines}` : machines ? `only ${machines}` : agents ? `${agents} on every machine` : "every machine",
-  action: {
-    talk: "talk and watch",
-    w: "see who is here and what happened",
-    read: "read files",
-    run: "run commands and change files",
-    write: "write project records",
-    copy: "copy files",
-    ask_colleague: "ask colleagues",
-    page: "act for pages",
-    consent: "let Claude work without asking",
-  },
-  and: ", ",
-  sep: " · ",
-  canInvite: "may invite",
-  manages: "may use anything, and invite, revoke and set others' scopes",
-  manage: "Holds management rights",
-  manageHint: "May invite members with any scope, revoke any member and set any member's scope. Give it only to the computers you trust most.",
-  invite: "May invite",
-  inviteHint: "It may bring in devices or machines within its own scope; those it brings in may not invite.",
-};
-
 export interface PaletteWords {
   placeholder: string;
   nothing: string;
@@ -1378,6 +890,8 @@ export interface PaletteWords {
   agents: string;
   machines: string;
   theme(name: string): string;
+  /** Letting another device into an account. */
+  invite(login: string): string;
   fold: string;
   hint: string;
 }
@@ -1390,6 +904,7 @@ export const zhPalette: PaletteWords = {
   agents: "智能体",
   machines: "机器",
   theme: (name) => `主题：${name}`,
+  invite: (login) => `让一台设备进入 ${login}`,
   fold: "收起或打开侧栏",
   hint: "↑↓ 选择 · Enter 前往 · Esc 关闭",
 };
@@ -1402,186 +917,9 @@ export const enPalette: PaletteWords = {
   agents: "Agents",
   machines: "Machines",
   theme: (name) => `Theme: ${name}`,
+  invite: (login) => `Let a device into ${login}`,
   fold: "Fold or open the sidebar",
   hint: "↑↓ to choose · Enter to go · Esc to close",
-};
-
-export interface WelcomeWords {
-  lede: string;
-  thisComputer: string;
-  thisPhone: string;
-  facts(name: string, world: string | null): string;
-  placed: string;
-  notPlaced: string;
-  place: string;
-  noCarried: string;
-  serviceOn: string;
-  serviceOff: string;
-  join: string;
-  joinWhat: string;
-  joinPhoneWhat: string;
-  phoneJoined: string;
-  found: string;
-  foundWhat: string;
-  alone: string;
-  aloneWhat: string;
-  code: string;
-  codeHint: string;
-  /** On a phone: read the invitation's QR code with the camera. */
-  scan: string;
-  scanFailed(why: string): string;
-  /** Above the pasted code, where scanning comes first. */
-  codeOr: string;
-  name: string;
-  nameHint: string;
-  joinGo: string;
-  joining: string;
-  hubWhere: string;
-  hubHere: string;
-  hubServer: string;
-  address: string;
-  addressHint: string;
-  hubGo: string;
-  founding: string;
-  serverSteps: string[];
-  foundingCode: string;
-  joined(world: string, name: string): string;
-  kept: Record<"already" | "installed" | "declined" | "unsupported", string>;
-  keptCommand: string;
-  hosts: string;
-  hostsWhat: string;
-  codex: string;
-  claude: string;
-  hostState: Record<"absent" | "out" | "in" | "old", string>;
-  applyGo: string;
-  applying: string;
-  enter: string;
-  failed(why: string): string;
-  back: string;
-}
-
-export const zhWelcome: WelcomeWords = {
-  lede: "让你的几台电脑，和住在上面的 Codex、Claude，在同一个世界里。",
-  thisComputer: "这台电脑",
-  thisPhone: "这部手机",
-  facts: (name, world) => (world ? `叫 ${name}，在世界 ${world} 里` : `叫 ${name}，此刻独自一台`),
-  placed: "fastctx 已就位",
-  notPlaced: "fastctx 还没放好",
-  place: "放好它",
-  noCarried: "这一份 World 没有随身带 fastctx",
-  serviceOn: "开机自启的服务在",
-  serviceOff: "还没有开机自启的服务",
-  join: "加入已有的世界",
-  joinWhat: "另一台设备在 World 里「邀请一台设备」，会给你一个邀请码。",
-  joinPhoneWhat: "在电脑上的 World 里「邀请一台设备」、选「一部手机」，扫它给出的二维码，或者把邀请码粘贴到这里。",
-  phoneJoined: "这部手机现在带着自己的钥匙，以你的身份看着世界、和智能体说话；上面什么都不跑。",
-  found: "建一个新世界",
-  foundWhat: "要有一个中枢，别的设备都连向它：可以是这台电脑，也可以是一台服务器。",
-  alone: "先独自用",
-  aloneWhat: "这台电脑本身就是一个世界。以后随时可以加入或建一个。",
-  code: "邀请码",
-  codeHint: "以 fxw3. 开头的一长串，粘贴进来",
-  scan: "扫电脑上的二维码",
-  codeOr: "或者粘贴邀请码",
-  scanFailed: (why) => `没扫成：${why}`,
-  name: "这台电脑在世界里叫什么",
-  nameHint: "小写字母、数字与连字符；不写就用它现在的名字",
-  joinGo: "加入",
-  joining: "正在加入，稍后会请一次管理员确认…",
-  hubWhere: "中枢放在哪",
-  hubHere: "这台电脑",
-  hubServer: "一台服务器",
-  address: "别的设备够得着这台电脑的地址",
-  addressHint: "IP 加端口，比如 203.0.113.5:7443；它要一直开着，别的设备才连得上",
-  hubGo: "在这台电脑上建中枢",
-  founding: "正在建，稍后会请一次管理员确认…",
-  serverSteps: [
-    "在服务器上装好 fastctx（npm install -g fastctx，或从 GitHub 的发布页下载）；",
-    "运行 fastctx hub init --public <服务器的公网 IP>:7443，它会打印一个建世界码；",
-    "运行 sudo fastctx service hub install，让中枢开机自启、一直在；",
-    "把那个建世界码粘贴到上面「加入已有的世界」里，这台电脑就是这个世界的第一台。",
-  ],
-  foundingCode: "建世界码",
-  joined: (world, name) => `已经在世界 ${world} 里，这台叫 ${name}。`,
-  kept: {
-    already: "开机自启的服务早就在了。",
-    installed: "开机自启的服务装好了：从此开机就连着，不管有没有人登录。",
-    declined: "没有拿到管理员确认，所以没装开机服务：只有你登录着时它才连着。以后可以在设置里再装。",
-    unsupported: "这个系统没有开机服务：只有你登录着时它才连着。",
-  },
-  keptCommand: "要它开机就连着，在终端里运行：",
-  hosts: "把世界的工具接进这台电脑上的智能体",
-  hostsWhat: "接进去之后，你在这台电脑上自己开的 Codex 与 Claude Code 也能用世界的手、看见世界。随时可以拿出来。",
-  codex: "Codex",
-  claude: "Claude Code",
-  hostState: { absent: "没装", out: "没接入", in: "已接入", old: "里面是旧版 fastctx" },
-  applyGo: "接入",
-  applying: "正在接入…",
-  enter: "进入世界",
-  failed: (why) => `没办成：${why}`,
-  back: "返回",
-};
-
-export const enWelcome: WelcomeWords = {
-  lede: "Your computers, and the Codex and Claude living on them, in one World.",
-  thisComputer: "This computer",
-  thisPhone: "This phone",
-  facts: (name, world) => (world ? `named ${name}, in the World ${world}` : `named ${name}, on its own for now`),
-  placed: "fastctx is in place",
-  notPlaced: "fastctx is not in place yet",
-  place: "Put it in place",
-  noCarried: "this build of World carries no fastctx",
-  serviceOn: "a service keeps it running",
-  serviceOff: "no service keeps it running yet",
-  join: "Join a World",
-  joinWhat: "Another device's World gives you an invitation code under “Invite a device”.",
-  joinPhoneWhat: "In World on a computer, invite a device, choose a phone, then scan its QR code or paste the invitation here.",
-  phoneJoined: "This phone now carries its own key: it watches the World and speaks to agents as you, and runs nothing.",
-  found: "Found a new World",
-  foundWhat: "It needs a hub every device connects to: this computer, or a server.",
-  alone: "Stay on its own",
-  aloneWhat: "This computer is a World by itself. You can join or found one any time.",
-  code: "Invitation code",
-  codeHint: "a long string starting with fxw3.; paste it here",
-  scan: "Scan the QR code on the computer",
-  codeOr: "Or paste the invitation",
-  scanFailed: (why) => `Could not scan: ${why}`,
-  name: "This computer's name in the World",
-  nameHint: "lowercase letters, digits and hyphens; left empty, it keeps its name",
-  joinGo: "Join",
-  joining: "Joining; an administrator will be asked once…",
-  hubWhere: "Where the hub is",
-  hubHere: "This computer",
-  hubServer: "A server",
-  address: "An address other devices reach this computer at",
-  addressHint: "IP and port, such as 203.0.113.5:7443; it must stay on for the others to connect",
-  hubGo: "Found the hub here",
-  founding: "Founding; an administrator will be asked once…",
-  serverSteps: [
-    "Install fastctx on the server (npm install -g fastctx, or from the GitHub releases);",
-    "run fastctx hub init --public <the server's public IP>:7443; it prints a founding code;",
-    "run sudo fastctx service hub install, so the hub starts at boot and stays up;",
-    "paste the founding code into “Join a World” above; this computer is the World's first.",
-  ],
-  foundingCode: "Founding code",
-  joined: (world, name) => `In the World ${world}, as ${name}.`,
-  kept: {
-    already: "A service already keeps it running.",
-    installed: "A service now keeps it running: connected from boot, signed in or not.",
-    declined: "Administrator rights were declined, so no service was installed: it is connected only while you are signed in. You can install it later in the settings.",
-    unsupported: "This system has no service for it: it is connected only while you are signed in.",
-  },
-  keptCommand: "To keep it connected from boot, run in a terminal:",
-  hosts: "Put the World's tools into the agents on this computer",
-  hostsWhat: "Then the Codex and Claude Code you open on this computer yourself use the World's hands and see the World. You can take them out any time.",
-  codex: "Codex",
-  claude: "Claude Code",
-  hostState: { absent: "not installed", out: "not in", in: "in", old: "an old fastctx is in it" },
-  applyGo: "Put them in",
-  applying: "Putting them in…",
-  enter: "Enter the World",
-  failed: (why) => `It did not go through: ${why}`,
-  back: "Back",
 };
 
 export interface ComposerWords {
@@ -1996,7 +1334,10 @@ export const zhShell: ShellWords = {
   unanswered: (seconds) => `世界已经 ${seconds} 秒没回答`,
   thisOne: "这台",
   phone: "手机",
-  joinOrFound: "加入或建一个世界",
+  logIn: "登录",
+  account: "账号",
+  arrivals: (n) => `${n} 台新设备进了你的账号`,
+  groupOf: (login) => `${login} 的机器、智能体与项目`,
   more: (n) => `还有 ${n} 个`,
   span: zhSpan,
   agentsIn: (project) => `${project} 里的智能体`,
@@ -2028,7 +1369,10 @@ export const enShell: ShellWords = {
   unanswered: (seconds) => `The World has not answered for ${seconds} s`,
   thisOne: "this one",
   phone: "phone",
-  joinOrFound: "Join or found a World",
+  logIn: "Log in",
+  account: "Account",
+  arrivals: (n) => `${n} new device${n === 1 ? "" : "s"} came into your accounts`,
+  groupOf: (login) => `Machines, agents and projects of ${login}`,
   more: (n) => `${n} more`,
   span: enSpan,
   agentsIn: (project) => `Agents in ${project}`,

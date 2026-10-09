@@ -6,14 +6,12 @@
 //! hosts here. Each step is the library the command line uses, run from
 //! the copy of fastctx placed for the hosts, never from this program.
 
-use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use fastctx_client::World;
 use fastctx_install::apply::{self, Hosts, Places, Standing};
 use fastctx_install::codex::Approval;
 use fastctx_install::service::{Kept, Released, keep_connected, stop_keeping};
-use fastctx_types::MachineName;
 use fastctx_types::layout::WorldDir;
 use serde::Serialize;
 
@@ -69,13 +67,6 @@ pub enum KeptNow {
     Removed,
     /// No service kept the node, so there was none to remove.
     NotKept,
-}
-
-#[derive(Serialize)]
-pub struct Joined {
-    pub world: String,
-    pub name: MachineName,
-    pub kept: KeptNow,
 }
 
 fn standing(standing: Standing) -> &'static str {
@@ -161,14 +152,6 @@ pub fn place() -> Result<String, String> {
     Ok(installed.display().to_string())
 }
 
-/// Joins a World with a code, then has a system service keep this
-/// machine's node, asking once for administrator rights, and the node that
-/// served until now hand the World over to it.
-pub async fn join(world: &World, code: String, name: Option<MachineName>) -> Result<Joined, String> {
-    let (joined, name) = world.join(code, name).await.map_err(|error| error.to_string())?;
-    Ok(Joined { world: joined, name, kept: keep(world).await? })
-}
-
 /// Has a system service keep this machine's node, asking once for
 /// administrator rights, and the node that served until now hand the World
 /// over to it.
@@ -199,41 +182,6 @@ pub fn release() -> Result<KeptNow, String> {
         Released::Declined => KeptNow::Declined,
         Released::Command(command) => KeptNow::Command { command },
     })
-}
-
-/// Founds a hub on this computer, reached at `public`, keeps it running as
-/// a system service (administrator rights, asked once), and returns the
-/// code that founds its World.
-pub fn hub_here(public: Vec<String>) -> Result<String, String> {
-    let public: Vec<SocketAddr> = public
-        .iter()
-        .map(|address| address.parse::<SocketAddr>().map_err(|error| format!("{address}: {error}")))
-        .collect::<Result<_, _>>()?;
-    let first = *public.first().ok_or("give at least one address the other machines reach this one at")?;
-    let places = places()?;
-    let (executable, _) = apply::place_executable(&places).map_err(|error| error.to_string())?;
-    let directory = fastctx_hub::default_dir(&places.root);
-    let code = fastctx_hub::init(&directory, public, SocketAddr::from(([0, 0, 0, 0], first.port())))
-        .map_err(|error| error.to_string())?;
-    let args: Vec<std::ffi::OsString> = vec![
-        "service".into(),
-        "hub".into(),
-        "install".into(),
-        "--dir".into(),
-        directory.into(),
-        "--executable".into(),
-        executable.clone().into(),
-    ];
-    match fastctx_platform::elevation::run_elevated(&executable, &args) {
-        Ok(0) => Ok(code.to_text()),
-        Ok(code) => Err(format!(
-            "the hub is made, but installing its service failed (exit {code}); `fastctx service hub install` run as administrator says why"
-        )),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            Err("the hub is made, but administrator rights were declined, so nothing keeps it running".into())
-        }
-        Err(error) => Err(error.to_string()),
-    }
 }
 
 /// Puts the World's tools into this computer's Codex and Claude Code, or

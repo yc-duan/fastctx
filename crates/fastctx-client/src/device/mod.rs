@@ -195,8 +195,10 @@ impl Device {
         let start = if self.managed { Link::start_managed } else { Link::start };
         let key = self.store.key()?;
         let id = membership.id.clone();
-        let handler = Arc::new(Handler { _store: self.store.clone() });
-        let link = Arc::new(start(self.store.net(&id), membership, key, handler)?);
+        let arrivals = self.store.arrivals(&id);
+        let handler = Arc::new(Handler { _store: self.store.clone(), link: std::sync::OnceLock::new(), arrivals });
+        let link = Arc::new(start(self.store.net(&id), membership, key, handler.clone())?);
+        let _ = handler.link.set(Arc::downgrade(&link));
         self.sessions.write().expect("device sessions").insert(id, Arc::new(Session { link }));
         Ok(())
     }
@@ -264,6 +266,10 @@ struct Handler {
     // finishing disk writes. The link's handler lives with its last task,
     // so the identity remains locked until all its network work has ended.
     _store: Arc<Store>,
+    /// The link it handles for, set once it is made.
+    link: std::sync::OnceLock<std::sync::Weak<Link>>,
+    /// Where who came into this device's accounts there is kept.
+    arrivals: std::path::PathBuf,
 }
 
 impl fastctx_net::link::Node for Handler {
@@ -286,6 +292,13 @@ impl fastctx_net::link::Node for Handler {
     }
 
     fn ledger_changed(&self, _: Option<fastctx_types::access::TownId>) {}
+
+    fn directory_changed(&self) {
+        let Some(link) = self.link.get().and_then(std::sync::Weak::upgrade) else { return };
+        if let Err(error) = fastctx_net::arrivals::notice(&self.arrivals, &link.view()) {
+            eprintln!("World device: keeping who came into this device's accounts: {error}");
+        }
+    }
 
     fn log(&self, line: String) {
         eprintln!("World device: {line}");

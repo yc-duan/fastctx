@@ -10,6 +10,7 @@
 
 #[cfg(target_os = "android")]
 pub mod android;
+pub mod arrivals;
 pub mod data;
 pub mod dial;
 pub mod directory;

@@ -81,6 +81,9 @@ export interface Words {
   removedNote: string;
   waitingForYou: string;
   on(machine: string): string;
+  /** Under a conversation's title: the machine its commands start on,
+   *  where it is not the one it lives on. */
+  worksOn(machine: string): string;
   /** Between the names in a short list. */
   listSeparator: string;
   moreLines(n: number): string;
@@ -235,6 +238,7 @@ export const zh: Words = {
   removedNote: "它已离开世界。这段对话留着给你看，话不会再送到它那里。",
   waitingForYou: "在等你回答",
   on: (machine) => `在 ${machine}`,
+  worksOn: (machine) => `在 ${machine} 干活`,
   listSeparator: "、",
   moreLines: (n) => `还有 ${n} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
@@ -356,6 +360,7 @@ export const en: Words = {
   removedNote: "It has left the World. This conversation is kept for you to read; words no longer reach it.",
   waitingForYou: "Waiting for you",
   on: (machine) => `on ${machine}`,
+  worksOn: (machine) => `works on ${machine}`,
   listSeparator: ", ",
   moreLines: (n) => `${n} more lines`,
   unchangedLines: (n) => `${n} unchanged lines`,

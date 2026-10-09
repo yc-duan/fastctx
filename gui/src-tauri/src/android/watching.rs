@@ -14,8 +14,8 @@ pub(crate) async fn open(
     resident: ResidentId,
     machine: Option<MachineName>,
 ) -> Result<(Conversation, Vec<SessionEvent>), String> {
-    let mut connection =
-        world.device().expect("Android device").connection_changes().map_err(|error| error.to_string())?;
+    let (_, mut connection) =
+        world.device().expect("Android device").machine_changes(machine.as_ref()).map_err(|error| error.to_string())?;
     loop {
         let state = connection.borrow_and_update().clone();
         match state {
@@ -44,8 +44,8 @@ pub(crate) async fn stream(
     initial: Conversation,
     pieces: Channel<Piece>,
 ) {
-    let mut connection = match world.device().expect("Android device").connection_changes() {
-        Ok(connection) => connection,
+    let mut connection = match world.device().expect("Android device").machine_changes(machine.as_ref()) {
+        Ok((_, connection)) => connection,
         Err(error) => {
             let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
             return;

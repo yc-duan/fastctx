@@ -130,6 +130,7 @@ pub(crate) fn read_here(
             asked,
             answers,
             jobs,
+            colleagues: crate::colleagues::setting::read_in(world, &record.id)?,
         }))))
     } else {
         Ok(None)

@@ -48,6 +48,11 @@ impl Store {
         self.root.join("hubs")
     }
 
+    /// Who came into this device's accounts at `hub` (`fastctx_net::arrivals`).
+    pub fn arrivals(&self, hub: &HubId) -> PathBuf {
+        self.hubs().join(hub.as_str()).join("arrivals.json")
+    }
+
     pub fn net(&self, hub: &HubId) -> NetDir {
         NetDir::new(self.hubs().join(hub.as_str()))
     }

@@ -4,6 +4,7 @@
 // left. The page itself never scrolls; what is long scrolls in its own
 // region.
 
+import type { Login } from "../world/accounts";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Place } from "./places";
@@ -22,7 +23,8 @@ export interface ShellOptions {
   store: Store;
   words: ShellWords;
   newTalk(): void;
-  newProject(): void;
+  /** A new project, in `login`'s account where the sidebar names one. */
+  newProject(login: Login | null): void;
 }
 
 const narrow = matchMedia("(max-width: 760px)");
@@ -58,9 +60,9 @@ export class Shell {
         this.closeDrawer();
         options.newTalk();
       },
-      newProject: () => {
+      newProject: (login) => {
         this.closeDrawer();
-        options.newProject();
+        options.newProject(login);
       },
       fold: () => this.fold(true),
     });

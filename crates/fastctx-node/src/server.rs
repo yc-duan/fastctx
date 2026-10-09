@@ -951,12 +951,6 @@ fn machines(node: &Arc<Node>, resident: Option<&ResidentId>) -> Result<Reply, Fa
 async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
     let here = node.machine();
     let links = node.links();
-    let mut seen: std::collections::BTreeMap<MachineName, usize> = std::collections::BTreeMap::new();
-    for link in &links {
-        for machine in link.view().machines() {
-            *seen.entry(machine.name.clone()).or_default() += 1;
-        }
-    }
     let mut hubs = Vec::new();
     for link in links {
         let refreshed = link.refresh().await;
@@ -971,11 +965,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
                 continue;
             };
             let online = refreshed.is_ok().then_some(machine.online);
-            let written = if seen.get(&machine.name).copied().unwrap_or(0) > 1 {
-                format!("{}.{}", machine.name, view.hub_name)
-            } else {
-                machine.name.to_string()
-            };
+            let written = node.written(&link, &machine.name).to_string();
             let unknown = refreshed.as_ref().err().cloned();
             let (link, name, since, through, owner) =
                 (link.clone(), machine.name.clone(), machine.since, machine.through.clone(), machine.home.clone());

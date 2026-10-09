@@ -1,8 +1,8 @@
 // When the World calls the user from outside the window: an agent began
 // waiting for their answer, a conversation they opened finished a turn, or
-// a member came in with this machine's invitation, while the window is not
-// in front of them. What is said is the World's
-// own fact, never a summary. A notification is taken back once what it
+// a device or a machine came into one of their accounts, while the window
+// is not in front of them. What is said is the World's own fact, never a
+// summary. A notification is taken back once what it
 // called for no longer holds, and a click on it opens that conversation.
 // The shell's own mechanics are in `world/desktop.ts`.
 
@@ -20,9 +20,9 @@ export interface PresenceWords {
   finishedBody(town: string | null, last: string | null): string;
   open: string;
   stop: string;
-  /** A member came in with this machine's invitation. */
-  joined(name: string, device: boolean): string;
-  joinedBody: string;
+  /** A device or a machine came into `login`, the account it logged in to. */
+  arrived(name: string, device: boolean, login: string): string;
+  arrivedBody: string;
 }
 
 export interface PresenceOptions {
@@ -68,21 +68,22 @@ export function startPresence(options: PresenceOptions): void {
     },
   }).catch((error: unknown) => console.error("Connecting World's desktop", error));
 
-  // Who came in with this machine's invitations: each called about once,
-  // the first look only learns.
-  let joined: Set<string> | null = null;
+  // Who came into an account this computer or device is logged in to:
+  // each called about once, the first look only learns.
+  let arrived: Set<string> | null = null;
   effect(() => {
     const world = store.world.get();
     if (!world) return;
-    const now = world.nodes.joined ?? [];
-    const before = joined;
-    joined = new Set(now.map((member) => member.name));
+    const now = world.accounts.hubs.flatMap((hub) => hub.arrivals.map((arrival) => ({ hub: hub.name, arrival })));
+    const key = ({ hub, arrival }: (typeof now)[number]) => `${hub}/${arrival.account}/${arrival.name}`;
+    const before = arrived;
+    arrived = new Set(now.map(key));
     if (!before || !notifying()) return;
-    for (const member of now.filter((member) => !before.has(member.name))) {
-      void call(`joined:${member.name}`, {
-        title: words.joined(member.name, member.device === true),
-        body: words.joinedBody,
-        route: link({ kind: "machine", name: member.name }),
+    for (const one of now.filter((one) => !before.has(key(one)))) {
+      void call(`arrived:${key(one)}`, {
+        title: words.arrived(one.arrival.name, one.arrival.device, `${one.hub} · ${one.arrival.account}`),
+        body: words.arrivedBody,
+        route: link({ kind: "account" }),
         actions: [{ id: "open", title: words.open }],
       });
     }

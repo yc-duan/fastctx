@@ -13,7 +13,8 @@ import type { Attachment, UploadTarget } from "./attachments";
 import type { ConnectionState } from "./device";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
-import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Scope, Stamp, TownSummary, WorldWho } from "./world";
+import type { AccountChange, AccountsReply, HubAccount } from "./accounts";
+import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
 export function inShell(): boolean {
   return "__TAURI_INTERNALS__" in window;
@@ -37,6 +38,9 @@ export interface WorldNow {
   who: WorldWho;
   nodes: NodesReply;
   towns: TownSummary[];
+  /** The accounts this computer or device is logged in to, hub by hub,
+   *  with what each sees. */
+  accounts: AccountsReply;
 }
 
 export type Piece =
@@ -110,6 +114,17 @@ export async function uploadBytes(machine: MachineName, target: UploadTarget, fi
   });
 }
 
+/** What the user chose for a conversation they open, beyond its agent,
+ *  project and model (`fastctx_types::agents::Choices`). */
+export interface Choices {
+  /** The account it works for, where more than one may open it there. */
+  account?: HubAccount;
+  /** The machine it works on, as written, when not the one it lives on. */
+  works_on?: string;
+  /** Where its colleagues live; without it, it asks for none. */
+  colleagues?: string;
+}
+
 /** Opens a conversation with an agent; the model and reasoning effort are
  *  the official program's own names, and its defaults where not given. */
 export function open(
@@ -120,8 +135,9 @@ export function open(
   model: string | null = null,
   effort: string | null = null,
   attachments: Attachment[] = [],
+  choices: Choices = {},
 ): Promise<{ to: Address; landed: Landed }> {
-  return invoke("open", { agent, town, machineName: machine, text, model, effort, attachments });
+  return invoke("open", { agent, town, machineName: machine, text, model, effort, attachments, choices });
 }
 
 /** What happened in the World after a moment, as each machine's records
@@ -165,12 +181,6 @@ export function connectionState(): Promise<ConnectionState> {
   return invoke("connection_state");
 }
 
-/** Joins a World as a device with an invitation made for one; nothing is
- *  installed or started here. */
-export function joinDevice(code: string, name: string | null): Promise<{ world: string; name: MachineName }> {
-  return invoke("join_device", { code, name });
-}
-
 /** Residents or jobs in detail, from every machine that has them. */
 /** The user's word on whether Claude Code on a machine may run the World's
  *  sessions without approvals; what it now records, and whether it changed. */
@@ -198,8 +208,10 @@ export interface TownRecord {
   opened: Stamp;
 }
 
-export function projectNew(name: string, fields: RecordFields): Promise<TownRecord> {
-  return invoke("project_new", { name, fields });
+/** Opens a project in `account` of the hub named `hub`, or in the one
+ *  account this computer is in. */
+export function projectNew(name: string, fields: RecordFields, account: string | null = null, hub: string | null = null): Promise<TownRecord> {
+  return invoke("project_new", { name, fields, accountName: account, hubName: hub });
 }
 
 export function projectEdit(name: string, fields: RecordFields): Promise<TownRecord> {
@@ -215,48 +227,51 @@ export function journalAdd(name: string, journal: string, text: string, descript
   return invoke("journal_add", { name, journal, text, description });
 }
 
-/** An invitation for one more machine, or for a phone (`device`), valid
- *  for `hours`; what it may do until a grant says otherwise is `scope`,
- *  everything when null. */
-export function invite(name: string | null, hours: number, device = false, scope: Scope | null = null): Promise<string> {
-  return invoke("invite", { name, hours, device, scope });
+/** A login, and on a computer what came of keeping it connected. */
+export interface LoggedIn {
+  hub: string;
+  name: MachineName;
+  account: string;
+  kept?: KeptNow | null;
 }
 
-/** A complete hub-hosted installer line, issued by the local node. */
-export function inviteServer(name: string | null, hours: number, scope: Scope | null = null): Promise<string> {
-  return invoke("invite_server", { name, hours, scope });
+/** Logs in to `account` at the hub written `hub` (host:port) with its
+ *  password; a computer registers as one of the account's machines when
+ *  `register`. */
+export function login(hub: string, account: string, password: string, register: boolean, name: string | null): Promise<LoggedIn> {
+  return invoke("login", { hub, accountName: account, password, register, name });
 }
 
-/** Sets what `member` may do, and whether it holds management rights. */
-export function grant(member: MachineName, scope: Scope, manage: boolean): Promise<void> {
-  return invoke("grant", { member, scope, manage });
+/** Logs in with a one-time token another device made. */
+export function loginToken(token: string, name: string | null): Promise<LoggedIn> {
+  return invoke("login_token", { token, name });
 }
 
-/** Where `member` connects from now on: through the relays `via`, in
- *  order, then the hub; straight to the hub when `via` is empty. */
-export function route(member: MachineName, via: MachineName[]): Promise<void> {
-  return invoke("route", { member, via });
+/** Opens an account on a hub that lets anyone, and logs in to it. */
+export function openAccount(hub: string, account: string, password: string, register: boolean, name: string | null): Promise<LoggedIn> {
+  return invoke("open_account", { hub, accountName: account, password, register, name });
 }
 
-/** Makes `machine` relay, dialed at `public` (IP:port each) and listening
- *  at `listen`, or stop relaying when `public` is empty. Resolves to where
- *  it relays now. */
-export function setRelay(machine: MachineName, publicAt: string[], listen: string | null): Promise<string[]> {
-  return invoke("set_relay", { machine, public: publicAt, listen });
+export function accounts(): Promise<AccountsReply> {
+  return invoke("accounts");
 }
 
-/** The user has been shown that `member` came in with this machine's
- *  invitation. */
-export function seen(member: MachineName): Promise<void> {
-  return invoke("seen", { member });
+/** Makes `change` as `account` at the hub named `hub`; resolves to a token
+ *  when it made one. */
+export function accountChange(hub: string | null, account: string, change: AccountChange): Promise<string | null> {
+  return invoke("account_change", { hubName: hub, accountName: account, change });
 }
 
-export function revoke(name: MachineName, reason: string): Promise<void> {
-  return invoke("revoke", { name, reason });
+/** The line that installs fastctx on a Linux server and registers it as a
+ *  machine of `account`. */
+export function serverCommand(hub: string | null, account: string, name: string | null, hours: number): Promise<string> {
+  return invoke("server_command", { hubName: hub, accountName: account, name, hours });
 }
 
-export function leave(): Promise<void> {
-  return invoke("leave");
+/** Turns asking for colleagues on for a conversation, with the machine
+ *  they live on, or off with null. */
+export function setColleagues(who: Address, livesOn: string | null): Promise<void> {
+  return invoke("colleagues", { residentId: who.resident, machineName: who.machine, livesOn });
 }
 
 /** Where this computer stands with the World (`src-tauri/src/setup.rs`). */
@@ -292,14 +307,6 @@ export function placeFastctx(): Promise<string> {
   return invoke("place_fastctx");
 }
 
-/** What joining comes to: it keeps the machine connected, never removes
- *  a service. */
-export type JoinKept = Exclude<KeptNow, { kind: "removed" | "not_kept" }>;
-
-export function joinWorld(code: string, name: string | null): Promise<{ world: string; name: MachineName; kept: JoinKept }> {
-  return invoke("join_world", { code, name });
-}
-
 /** Has a system service keep this computer's node, asking once for
  *  administrator rights. */
 export function keepHere(): Promise<KeptNow> {
@@ -309,11 +316,6 @@ export function keepHere(): Promise<KeptNow> {
 /** Removes the service that keeps this computer's node. */
 export function releaseHere(): Promise<KeptNow> {
   return invoke("release_here");
-}
-
-/** Founds a hub on this computer; resolves to the code that founds its World. */
-export function hubHere(publicAddresses: string[]): Promise<string> {
-  return invoke("hub_here", { public: publicAddresses });
 }
 
 /** Opens a resident on this computer in its own official interface, in a
@@ -340,9 +342,9 @@ export function offers(who: Address): Promise<Offers> {
  *  with the camera. */
 export const canScan = (): boolean => isTauri() && /Android/i.test(navigator.userAgent);
 
-/** Reads an invitation's QR code with the phone's camera; null when the
+/** Reads a login token's QR code with the phone's camera; null when the
  *  person turned back. */
-export async function scanInvitation(): Promise<string | null> {
+export async function scanToken(): Promise<string | null> {
   const read = await invoke<{ kind: "scanned"; code: string } | { kind: "cancelled" }>("plugin:android-world|scan");
   return read.kind === "scanned" ? read.code : null;
 }
