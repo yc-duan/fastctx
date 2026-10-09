@@ -85,7 +85,7 @@ pub fn run(args: ViewArgs) -> anyhow::Result<()> {
         machine: if in_run { None } else { machine(&world) },
         in_run,
     };
-    let mut out = std::io::stdout().lock();
+    let mut out = crate::output::out();
     let seen = view(&paths, &options, &mut out)?;
     out.flush()?;
     drop(out);

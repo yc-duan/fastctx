@@ -122,7 +122,7 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
         }
         other => anyhow::bail!("the node answered something else: {other:?}"),
     };
-    print!("{text}");
+    crate::output::print(&text)?;
     Ok(())
 }
 
