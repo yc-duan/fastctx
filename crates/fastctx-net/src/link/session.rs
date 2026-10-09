@@ -246,11 +246,12 @@ async fn connected(
         let _ = sink.close().await;
     });
     let (letter_failed, mut letters_failed) = oneshot::channel::<String>();
+    let (outbox_failed, mut outbox_failure) = oneshot::channel::<String>();
     let (deliveries, delivered) = mpsc::unbounded_channel();
     let mut tasks = Tasks(vec![
         writer,
         tokio::spawn(heartbeat(up.clone())),
-        tokio::spawn(flush(inner.clone(), up.clone(), taken)),
+        tokio::spawn(flush(inner.clone(), up.clone(), taken, outbox_failed)),
         tokio::spawn(take_letters(inner.clone(), up.clone(), hub_letters, delivered, letter_failed)),
     ]);
     let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
@@ -290,6 +291,7 @@ async fn connected(
             () = &mut rerouted => break Ended::Reroute("the upstreams this machine connects through changed".to_string()),
             Ok(upstream) = &mut preferred_back => break Ended::Reroute(format!("{upstream} takes sessions again")),
             failed = &mut letters_failed => break Ended::Retry(failed.unwrap_or_else(|_| "taking letters stopped".to_string())),
+            failed = &mut outbox_failure => break Ended::Retry(failed.unwrap_or_else(|_| "sending letters stopped".to_string())),
             next = stream.next() => next,
         };
         let frame: Down = match next {
@@ -470,13 +472,13 @@ fn refused_letter(inner: &Inner, seq: u64, reason: &str) {
 
 /// Sends every letter in the outbox past `sent`, in order, and each new one
 /// as it is put there.
-async fn flush(inner: Arc<Inner>, up: Outgoing, mut sent: u64) {
+async fn flush(inner: Arc<Inner>, up: Outgoing, mut sent: u64, failed: oneshot::Sender<String>) {
     let outbox = Outbox::new(&inner.dir);
     loop {
         let numbers = match outbox.numbers() {
             Ok(numbers) => numbers,
             Err(error) => {
-                inner.node.log(format!("reading the outbox: {error}"));
+                let _ = failed.send(format!("reading the outbox: {error}"));
                 return;
             }
         };
@@ -492,7 +494,7 @@ async fn flush(inner: Arc<Inner>, up: Outgoing, mut sent: u64) {
                 // Held by the hub meanwhile.
                 Ok(None) => {}
                 Err(error) => {
-                    inner.node.log(format!("reading letter {seq} from the outbox: {error}"));
+                    let _ = failed.send(format!("reading letter {seq} from the outbox: {error}"));
                     return;
                 }
             }

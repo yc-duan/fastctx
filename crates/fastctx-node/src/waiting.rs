@@ -6,7 +6,7 @@
 //! end hands it back, and the resident is told as usual. A wait for someone
 //! else's job takes nothing from them.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fastctx_platform::is_alive;
@@ -41,7 +41,7 @@ pub async fn wait(node: &Arc<Node>, caller: Option<Address>, jobs: Vec<JobId>) -
     for (job, path) in jobs.iter().zip(&paths) {
         let record = crate::jobs::read(path).await?;
         if caller.as_ref().is_some_and(|caller| record.owner.resident() == Some(caller)) {
-            hold(node, job);
+            hold(node, path);
             held.jobs.push((job.clone(), path.clone()));
         }
     }
@@ -82,16 +82,18 @@ async fn ended_or_gone(path: &std::path::Path) -> Result<JobRecord, Failure> {
     Ok(record)
 }
 
-fn hold(node: &Node, job: &JobId) {
-    *node.following.lock().expect("never poisoned").entry(job.clone()).or_default() += 1;
+/// Followers are counted by the job's record path: short job ids are only
+/// unique within one owner's directory.
+fn hold(node: &Node, record: &Path) {
+    *node.following.lock().expect("never poisoned").entry(record.to_path_buf()).or_default() += 1;
 }
 
-fn release(node: &Node, job: &JobId) {
+fn release(node: &Node, record: &Path) {
     let mut following = node.following.lock().expect("never poisoned");
-    if let Some(count) = following.get_mut(job) {
+    if let Some(count) = following.get_mut(record) {
         *count -= 1;
         if *count == 0 {
-            following.remove(job);
+            following.remove(record);
         }
     }
 }
@@ -127,8 +129,8 @@ impl Held {
                 failed.get_or_insert(failure);
             }
         }
-        for (job, _) in &self.jobs {
-            release(&self.node, job);
+        for (_, path) in &self.jobs {
+            release(&self.node, path);
         }
         self.done = true;
         failed.map_or(Ok(()), Err)
@@ -140,21 +142,11 @@ impl Drop for Held {
         if self.done {
             return;
         }
-        for (job, _) in &self.jobs {
-            release(&self.node, job);
+        // Left before the end: whatever ended meanwhile is told as usual,
+        // retried as an `on`'s follower that leaves retries it.
+        for (_, path) in &self.jobs {
+            release(&self.node, path);
+            crate::inbox::retry_job(&self.node, path);
         }
-        // Left before the end: whatever ended meanwhile is told as usual.
-        let (node, paths) = (self.node.clone(), self.jobs.iter().map(|(_, path)| path.clone()).collect::<Vec<_>>());
-        tokio::spawn(async move {
-            for path in paths {
-                let told = match crate::jobs::read(&path).await {
-                    Ok(record) => crate::inbox::tell_if_ended(&node, &record).await.map_err(|error| error.to_string()),
-                    Err(failure) => Err(failure.message),
-                };
-                if let Err(error) = told {
-                    node.log.line(format_args!("telling the end of a job a wait left: {error}"));
-                }
-            }
-        });
     }
 }

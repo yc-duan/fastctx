@@ -85,7 +85,7 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
     let job = std::env::var("FASTCTX_JOB").ok().map(JobId::try_from).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
     let package = collect(&args.state, args.command.as_deref(), &args.words)?;
-    let request = OnRequest { machine: machine.clone(), job, package: package.clone() };
+    let request = OnRequest { machine: machine.clone(), receipt: true, job, package: package.clone() };
     let call = Call::On { resident: resident.clone(), town, request };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let ended = runtime.block_on(async {
@@ -115,9 +115,12 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
                         return Ok(Ended::ReaderLeft);
                     }
                 }
-                Ok(Some(OnPiece::Ended { end })) => return Ok(Ended::Job(end, started)),
+                Ok(Some(OnPiece::Ended { end })) => {
+                    stream.taken().await.context("the node did not confirm keeping the completion receipt")?;
+                    return Ok(Ended::Job(end, started));
+                }
                 Ok(None) => bail!("the node ended the on without the job's end"),
-                Err(CallError::Failed(failure)) if started.is_none() => return Ok(Ended::Refused(failure.message)),
+                Err(CallError::Failed(failure)) if failure.not_run => return Ok(Ended::Refused(failure.message)),
                 Err(CallError::Failed(failure)) => return Ok(Ended::Lost(failure.message)),
                 Err(error) => return Err(error.into()),
             }
@@ -171,7 +174,7 @@ fn how_ended(how: &EndedHow) -> String {
         EndedHow::Finished => "it finished".to_string(),
         EndedHow::Stopped => "it was stopped".to_string(),
         EndedHow::Interrupted { reason } => format!("it was interrupted: {reason}"),
-        EndedHow::Failed { error } => format!("it could not run: {error}"),
+        EndedHow::Failed { error } => format!("it failed: {error}"),
     }
 }
 

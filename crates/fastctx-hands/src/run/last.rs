@@ -18,6 +18,25 @@ pub const CHARACTERS: usize = 2_000;
 /// The last lines of the output at `log` as a terminal shows them, read
 /// from the file's tail; `None` when it is empty.
 pub fn last_lines(log: &Path) -> io::Result<Option<LastLines>> {
+    tail(log, LINES, CHARACTERS)
+}
+
+/// Separate streams have no shared byte order. Give each half of the
+/// existing preview budget and label them rather than inventing an order.
+pub fn last_streams(output: &Path, stderr: Option<&Path>) -> io::Result<Option<LastLines>> {
+    let Some(stderr) = stderr else { return last_lines(output) };
+    let mut parts = Vec::new();
+    let mut whole = true;
+    for (label, path) in [("stdout:\n", output), ("stderr:\n", stderr)] {
+        if let Some(last) = tail(path, LINES / 2 - 1, (CHARACTERS - 1) / 2 - label.len())? {
+            whole &= last.whole;
+            parts.push(format!("{label}{}", last.text));
+        }
+    }
+    Ok((!parts.is_empty()).then(|| LastLines { text: parts.join("\n"), whole }))
+}
+
+fn tail(log: &Path, line_limit: usize, character_limit: usize) -> io::Result<Option<LastLines>> {
     let mut file = File::open(log)?;
     let size = file.metadata()?.len();
     if size == 0 {
@@ -25,7 +44,7 @@ pub fn last_lines(log: &Path) -> io::Result<Option<LastLines>> {
     }
     // A character takes at most four bytes; colour sequences a terminal
     // drops take more, and when they crowd the tail fewer lines are told.
-    let take = (CHARACTERS as u64) * 4 + 4096;
+    let take = (character_limit as u64) * 4 + 4096;
     let start = size.saturating_sub(take);
     file.seek(SeekFrom::Start(start))?;
     let mut bytes = Vec::new();
@@ -48,7 +67,7 @@ pub fn last_lines(log: &Path) -> io::Result<Option<LastLines>> {
                 Part::Text(text) => text.clone(),
                 // Only a suffix can survive the preview budget. One extra
                 // column makes the existing shortening notice mandatory.
-                Part::Spaces(count) => " ".repeat((*count).min(CHARACTERS + 1)),
+                Part::Spaces(count) => " ".repeat((*count).min(character_limit + 1)),
                 Part::Image(image) => format!("[an image, {}x{}]", image.width, image.height),
                 Part::Unreadable(why) => format!("[{why}]"),
             })
@@ -62,15 +81,15 @@ pub fn last_lines(log: &Path) -> io::Result<Option<LastLines>> {
             kept.push_back(text);
         }
         previous = Some(line.number);
-        while kept.len() > LINES || (cost > CHARACTERS && kept.len() > 1) {
+        while kept.len() > line_limit || (cost > character_limit && kept.len() > 1) {
             cost -= kept.pop_front().expect("more than one").chars().count() + 1;
         }
     }
     let whole = start == 0 && kept.len() == read;
     let mut text = kept.into_iter().collect::<Vec<_>>().join("\n");
-    if text.chars().count() > CHARACTERS {
+    if text.chars().count() > character_limit {
         // One last line longer than all that is told: its end.
-        let skip = text.chars().count() - (CHARACTERS - 1);
+        let skip = text.chars().count() - (character_limit - 1);
         text = format!("…{}", text.chars().skip(skip).collect::<String>());
         return Ok(Some(LastLines { text, whole: false }));
     }

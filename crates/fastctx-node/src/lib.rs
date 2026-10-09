@@ -30,6 +30,7 @@ mod file_read;
 mod file_search;
 pub mod handoff;
 mod inbox;
+mod job_watch;
 mod jobs;
 mod ledger;
 mod letters;
@@ -38,6 +39,8 @@ mod look;
 mod machine;
 mod management;
 mod on;
+mod on_delivery;
+mod on_stop;
 mod own;
 mod pages;
 mod relay;
@@ -88,6 +91,7 @@ pub(crate) struct Node {
     /// This machine's name; it changes only when the machine joins a World.
     machine: RwLock<MachineName>,
     jobs: jobs::Jobs,
+    job_watches: job_watch::Watches,
     residents: residents::Residents,
     /// This machine's Codex app-server, holding the Codex residents the
     /// World started.
@@ -120,13 +124,15 @@ pub(crate) struct Node {
     reaching: admission::letters::Reaching,
     /// The `on` jobs here whose sender is following them now: their end
     /// goes to it, not in a letter, unless it leaves first (`on`).
-    following: std::sync::Mutex<std::collections::HashMap<fastctx_types::JobId, usize>>,
+    following: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
     /// Words coming for residents here, for the `run` calls waiting.
     words: words::Words,
     /// The jobs `on` sent from here to other machines, by machine and id,
     /// as a letter telling one's end finds them (`on`).
-    awaited:
-        std::sync::Mutex<std::collections::HashMap<(fastctx_types::MachineName, fastctx_types::JobId), on::Awaited>>,
+    on_deliveries: on_delivery::Deliveries,
+    on_stopping: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    on_delivering: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    notifying_jobs: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     effects_ready: std::sync::atomic::AtomicBool,
     effects_changed: tokio::sync::Notify,
     /// Whether turns may start, while a guardian may ask for the World to
@@ -293,6 +299,7 @@ pub async fn run_replacing(
         fastctx,
         machine: RwLock::new(machine),
         jobs: jobs::Jobs::new(),
+        job_watches: Default::default(),
         residents,
         codex,
         unclaimed: codex::Unclaimed::default(),
@@ -311,7 +318,10 @@ pub async fn run_replacing(
         reaching: Default::default(),
         following: Default::default(),
         words: Default::default(),
-        awaited: Default::default(),
+        on_deliveries: Default::default(),
+        on_stopping: Default::default(),
+        on_delivering: Default::default(),
+        notifying_jobs: Default::default(),
         effects_ready: std::sync::atomic::AtomicBool::new(false),
         effects_changed: tokio::sync::Notify::new(),
         handoff: Arc::new(handoff::Handoff::default()),
@@ -326,8 +336,8 @@ pub async fn run_replacing(
         node.log.line(format_args!("a member of the World {} as {}", membership.world, membership.name));
         world::start(&node, membership, key).context("starting the link to the hub")?;
         relay::resume(&node).await;
-        on::resume_stops(&node).await;
     }
+    on_stop::resume(&node).await;
     codex::adopt(&node).await;
     codex::listen(node.clone(), codex_events);
     codex::replay(&node).await;
@@ -347,15 +357,21 @@ pub async fn run_replacing(
     node.effects_changed.notify_waiters();
     composer::resume(&node);
     speech::recover(&node).await;
+    on_delivery::resume(&node);
     let jobs_node = node.clone();
     tokio::spawn(async move {
-        match inbox::settle_jobs(&jobs_node).await {
-            Ok(problems) => {
-                for (path, error) in problems {
-                    jobs_node.log.line(format_args!("could not tell what {} owes: {error}", path.display()));
+        let mut delay = on::Backoff::default();
+        loop {
+            match inbox::settle_jobs(&jobs_node).await {
+                Ok(problems) if problems.is_empty() => break,
+                Ok(problems) => {
+                    for (path, error) in problems {
+                        jobs_node.log.line(format_args!("could not tell what {} owes: {error}", path.display()));
+                    }
                 }
+                Err(error) => jobs_node.log.line(format_args!("recovering job notifications: {error}")),
             }
-            Err(error) => jobs_node.log.line(format_args!("recovering job notifications: {error}")),
+            tokio::time::sleep(delay.next()).await;
         }
     });
 

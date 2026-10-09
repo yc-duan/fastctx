@@ -53,11 +53,14 @@ fn ended(record: &JobRecord) -> Notice {
     Notice::JobEnded {
         job: record.id.clone(),
         machine: record.machine.clone(),
+        request: record.on.as_ref().and_then(|on| on.request.clone()),
         how: end.how.clone(),
         status: record.exit.map(|exit| exit.status),
         at: end.at,
         output: record.output.clone(),
-        last: fastctx_hands::run::last::last_lines(Path::new(&record.output)).unwrap_or(None),
+        stderr: record.stderr.clone(),
+        last: fastctx_hands::run::last::last_streams(Path::new(&record.output), record.stderr.as_deref().map(Path::new))
+            .unwrap_or(None),
     }
 }
 

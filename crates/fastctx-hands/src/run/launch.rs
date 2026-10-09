@@ -57,6 +57,55 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
 /// `stdin` names an already complete, verified local file. The caller keeps
 /// it unchanged and present until the job ends. None connects null input.
 pub fn launch_with_io(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Result<Launched, Failure> {
+    launch_with_io_registered(launch, mode, stdin, |_| {})
+}
+
+/// Registers a consumer after preparation is durable and before a
+/// supervisor can execute. The registration must release itself on errors.
+pub fn launch_with_io_registered(
+    launch: &Launch<'_>,
+    mode: OutputMode,
+    stdin: Option<&Path>,
+    register: impl FnOnce(&Path),
+) -> Result<Launched, Failure> {
+    let (job, output, stderr, record_path, resident) =
+        prepare(launch, mode, stdin).map_err(|failure| Failure::not_run(failure.message))?;
+    register(&record_path);
+    if let Some(request) = launch.on.and_then(|on| on.request.as_ref()) {
+        let stopped = resident.jobs().join(format!("request-{request}.stopped"));
+        if stopped
+            .try_exists()
+            .map_err(|error| Failure::not_run(format!("reading the request's cancellation: {error}")))?
+        {
+            let mut record = record::read(&record_path)
+                .map_err(|error| Failure::not_run(format!("reading the cancelled job: {error}")))?;
+            let at = jiff::Timestamp::now();
+            record.stop = Some(fastctx_types::run::StopRequested {
+                at,
+                request: fastctx_types::run::StopRequest {
+                    by: launch.owner.to_string(),
+                    reason: "the on that sent it stopped before its supervisor started".to_string(),
+                },
+            });
+            record.end = Some(fastctx_types::run::Ended { at, how: fastctx_types::run::EndedHow::Stopped });
+            record::write(&record_path, &record)
+                .map_err(|error| Failure::not_run(format!("recording the cancelled job: {error}")))?;
+            return Err(Failure::not_run("the on was stopped before its supervisor started"));
+        }
+    }
+    let started = spawn_detached(
+        launch.executable,
+        &[OsStr::new("supervise"), launch.world.path().as_os_str(), record_path.as_os_str()],
+        resident.path(),
+        launch.environment,
+    )
+    .map_err(|error| failure("starting the job's supervisor (execution may have begun)", &error))?;
+    Ok(Launched { job, record: record_path, output, stderr, supervisor: started.identity })
+}
+
+type Prepared = (JobId, PathBuf, Option<PathBuf>, PathBuf, ResidentDir);
+
+fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Result<Prepared, Failure> {
     super::preread::check(&launch.request.script)?;
     if let Some(path) = stdin {
         if !path.is_absolute() {
@@ -114,14 +163,12 @@ pub fn launch_with_io(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path
         on: launch.on.cloned(),
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
-    let started = spawn_detached(
-        launch.executable,
-        &[OsStr::new("supervise"), launch.world.path().as_os_str(), record_path.as_os_str()],
-        resident.path(),
-        launch.environment,
-    )
-    .map_err(|error| failure("could not start the job's supervisor", &error))?;
-    Ok(Launched { job, record: record_path, output, stderr, supervisor: started.identity })
+    if launch.on.is_some() {
+        // No supervisor can execute until its completion debt is durable.
+        publish_new(&resident.job_owed(&job), b"", Permissions::Private)
+            .map_err(|error| failure("could not keep the job's completion debt", &error))?;
+    }
+    Ok((job, output, stderr, record_path, resident))
 }
 
 /// The directory the script starts in: the one asked for, which must be an
@@ -159,6 +206,11 @@ fn reserve(resident: &ResidentDir) -> io::Result<(JobId, PathBuf)> {
     std::fs::create_dir_all(resident.out())?;
     loop {
         let job = random_job_id()?;
+        // Losing or removing a log does not release the identity of the
+        // job whose durable record still exists.
+        if resident.job_record(&job).try_exists()? {
+            continue;
+        }
         let output = resident.job_output(&job);
         match OpenOptions::new().write(true).create_new(true).open(&output) {
             Ok(_) => return Ok((job, output)),

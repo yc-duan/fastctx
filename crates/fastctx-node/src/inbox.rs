@@ -19,7 +19,7 @@
 //! then does the marker go; a node that stopped in between finds the marker
 //! when it starts and finishes the telling.
 
-use std::io::{self, BufRead as _, Write as _};
+use std::io::{self, BufRead as _};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -133,8 +133,9 @@ pub fn settle(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pendi
         }
         return Ok(None);
     }
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(directory.delivered())?;
-    file.write_all(format!("{id}\n").as_bytes())?;
+    let receipts = directory.path().join("delivery-receipts");
+    ensure_private_dir(&receipts)?;
+    publish(&receipts.join(id.as_str()), b"", Permissions::Private)?;
     if directory.path().file_name().is_some_and(|name| name == "archive") {
         return Ok(Some(pending));
     }
@@ -147,6 +148,9 @@ pub fn settle(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pendi
 
 /// Whether something with this id went into the resident's session.
 fn delivered_here(directory: &ResidentDir, id: &NoticeId) -> io::Result<bool> {
+    if directory.path().join("delivery-receipts").join(id.as_str()).try_exists()? {
+        return Ok(true);
+    }
     let file = match std::fs::File::open(directory.delivered()) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -267,24 +271,91 @@ pub fn owe_job(world: &WorldDir, here: &MachineName, job: &JobId, record_path: &
 pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<()> {
     let Some(owner) = record.owner.resident() else { return Ok(()) };
     let Some(end) = &record.end else {
+        crate::job_watch::restore(node, record)?;
         return Ok(());
     };
     let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(&record.id);
+    let record_path = owed.with_extension("json");
     // An `on` job's follower takes its end; a letter goes only when nobody
     // follows it then (`on`).
-    if !owed.exists() || !crate::on::unfollowed(node, &record.id) {
+    if !owed.try_exists()? || !crate::on::unfollowed(node, &record_path) {
         return Ok(());
     }
-    let notice = Notice::JobEnded {
-        job: record.id.clone(),
-        machine: record.machine.clone(),
-        how: end.how.clone(),
-        status: record.exit.map(|exit| exit.status),
-        at: end.at,
-        output: record.output.clone(),
-        last: fastctx_hands::run::last::last_lines(std::path::Path::new(&record.output)).unwrap_or(None),
+    let cancelled = record
+        .on
+        .as_ref()
+        .and_then(|on| on.request.as_ref())
+        .map(|request| {
+            record_path.parent().expect("jobs directory").join(format!("request-{request}.stopped")).try_exists()
+        })
+        .transpose()?
+        .unwrap_or(false);
+    if record_path.with_extension("on-taken").try_exists()?
+        || record_path.with_extension("on-stopped").try_exists()?
+        || cancelled
+    {
+        return match std::fs::remove_file(&owed) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        };
+    }
+    let notice_path = record_path.with_extension("notice");
+    let notice = if notice_path.try_exists()? {
+        parse(&notice_path, &std::fs::read(&notice_path)?)?
+    } else {
+        let loss = record
+            .output_lost
+            .as_ref()
+            .map(|loss| ("stdout", loss))
+            .or_else(|| record.stderr_lost.as_ref().map(|loss| ("stderr", loss)));
+        let how = match loss {
+            Some((stream, loss)) => fastctx_types::run::EndedHow::Failed {
+                error: format!(
+                    "{stream} stopped being kept after {} bytes: {}; only the saved output is available",
+                    loss.kept_bytes, loss.error
+                ),
+            },
+            None => end.how.clone(),
+        };
+        let notice = Notice::JobEnded {
+            job: record.id.clone(),
+            machine: record.machine.clone(),
+            request: record.on.as_ref().and_then(|on| on.request.clone()),
+            how,
+            status: record.exit.map(|exit| exit.status),
+            at: end.at,
+            output: record.output.clone(),
+            stderr: record.stderr.clone(),
+            last: fastctx_hands::run::last::last_streams(
+                std::path::Path::new(&record.output),
+                record.stderr.as_deref().map(Path::new),
+            )?,
+        };
+        match publish_new(&notice_path, &json(&notice)?, Permissions::Private) {
+            Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
+            _ => {}
+        }
+        // Concurrent notification attempts always send the same frozen
+        // content, including its tail, under the stable letter id.
+        parse(&notice_path, &std::fs::read(&notice_path)?)?
     };
-    let id = NoticeId::try_from(format!("{}-{}", record.machine, record.id)).expect("a machine and a job make an id");
+    let id = if let Some(request) = record.on.as_ref().and_then(|on| on.request.as_ref()) {
+        // Short job ids are reserved within one owner's town directory.
+        // The request distinguishes jobs even after that owner changes towns.
+        crate::speech::fixed_id(
+            "on-end",
+            &[
+                record.machine.as_str(),
+                owner.machine.as_str(),
+                owner.resident.as_str(),
+                record.id.as_str(),
+                request.as_str(),
+            ],
+        )
+    } else {
+        // An older job may already have posted this id before an upgrade.
+        NoticeId::try_from(format!("{}-{}", record.machine, record.id)).expect("a machine and a job make an id")
+    };
     tell(node, owner, id, notice, Owed::Working).await.map_err(|failure| io::Error::other(failure.message))?;
     match std::fs::remove_file(&owed) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
@@ -297,8 +368,23 @@ pub async fn settle_jobs(node: &Arc<Node>) -> io::Result<Vec<(std::path::PathBuf
     let mut problems = Vec::new();
     let mut owed = Vec::new();
     for parent in node.world.resident_parents()? {
-        for resident in entries(&parent)? {
-            for path in entries(&resident.join("jobs"))? {
+        let residents = match entries(&parent) {
+            Ok(entries) => entries,
+            Err(error) => {
+                problems.push((parent, error));
+                continue;
+            }
+        };
+        for resident in residents {
+            let jobs = resident.join("jobs");
+            let records = match entries(&jobs) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    problems.push((jobs, error));
+                    continue;
+                }
+            };
+            for path in records {
                 if path.extension().is_some_and(|extension| extension == "owed") {
                     owed.push(path);
                 }
@@ -311,10 +397,35 @@ pub async fn settle_jobs(node: &Arc<Node>) -> io::Result<Vec<(std::path::PathBuf
             Err(error) => Err(error),
         };
         if let Err(error) = told {
+            retry_job(node, &path.with_extension("json"));
             problems.push((path, error));
         }
     }
     Ok(problems)
+}
+
+/// A failed durable handover remains owed. Retry independently of the
+/// supervisor, which may already have exited after its final notification.
+pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
+    if !node.notifying_jobs.lock().expect("never poisoned").insert(path.to_path_buf()) {
+        return;
+    }
+    let (node, path) = (node.clone(), path.to_path_buf());
+    tokio::spawn(async move {
+        let mut delay = crate::on::Backoff::default();
+        loop {
+            let result = match record::read(&path) {
+                Ok(record) => tell_if_ended(&node, &record).await,
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(()) => break,
+                Err(error) => node.log.line(format_args!("{} still owes its completion: {error}", path.display())),
+            }
+            tokio::time::sleep(delay.next()).await;
+        }
+        node.notifying_jobs.lock().expect("never poisoned").remove(&path);
+    });
 }
 
 fn entries(directory: &Path) -> io::Result<Vec<std::path::PathBuf>> {

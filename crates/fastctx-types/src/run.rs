@@ -265,6 +265,8 @@ pub struct JobRecord {
 pub struct OnJob {
     /// The sending script's own state, which the prelude restores first.
     pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<crate::NoticeId>,
 }
 
 /// A resident or an open page that started a job. The resident wire shape

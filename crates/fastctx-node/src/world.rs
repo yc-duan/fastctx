@@ -264,7 +264,7 @@ impl fastctx_net::link::Node for Handler {
                     let stream = stream.ok_or_else(|| Failure::new("following an on needs a data connection"))?;
                     crate::on::serve_follow(&node, origin, job, out_from, err_from, stream).await
                 }
-                RemoteCall::StopOn { origin, job } => crate::on::serve_stop(&node, origin, job).await,
+                RemoteCall::StopOn { origin, job } => crate::on_stop::serve(&node, origin, job).await,
                 RemoteCall::StopJob { job, by } => crate::stop::here_(&node, &job, &format!("{by} on {from}"))
                     .await
                     .map(|record| RemoteReply::JobStopped { record: record.map(Box::new) }),
@@ -405,6 +405,14 @@ impl fastctx_net::link::Node for Handler {
                 }
                 letter => (letter, delivery_id),
             };
+            let _reaching = match &letter {
+                Letter::Notice { to, notice: Notice::JobEnded { machine, request: Some(request), .. } }
+                    if machine == &from && crate::on_delivery::requested_here(&node, to, machine, request)? =>
+                {
+                    Some(node.reaching.hold(to, machine))
+                }
+                _ => None,
+            };
             if let Err(refused) = crate::admission::letters::admit(&node, &member, &letter).await {
                 return Ok(Err(refused));
             }
@@ -418,7 +426,7 @@ impl fastctx_net::link::Node for Handler {
                         )));
                     }
                     let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
-                    if crate::on::set_aside(&node, &to, &delivery) {
+                    if crate::on_delivery::park(&node, &to, &delivery)? {
                         return Ok(Ok(()));
                     }
                     match crate::speech::tell_here(&node, &to, delivery, Owed::Working).await {

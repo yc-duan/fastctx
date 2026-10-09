@@ -297,20 +297,15 @@ impl Inner {
         if connection.up.send(Up::Call { id, message }).is_err() {
             return Err(CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() });
         }
-        let mut delivered = false;
-        let lost = |delivered: bool, reason: String| {
-            if delivered {
-                CallFailure::Unknown { name: to.clone(), reason }
-            } else {
-                CallFailure::Unreachable { name: to.clone(), reason }
-            }
-        };
+        // Once queued to the connection, the call may have reached its
+        // target even if the hub's Delivered status never reached us.
+        let lost = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
         let mut fed: Option<oneshot::Receiver<Result<(), String>>> = None;
         loop {
             let event = tokio::select! {
                 event = received.recv() => match event {
                     Some(event) => event,
-                    None => return Err(lost(delivered, "the link stopped".to_string())),
+                    None => return Err(lost("the link stopped".to_string())),
                 },
                 opened = async { opening.as_mut().expect("polled only while opening").await }, if opening.is_some() => {
                     opening = None;
@@ -324,21 +319,21 @@ impl Inner {
                             fed = Some(finished);
                             continue;
                         }
-                        Ok(Err(error)) => return Err(lost(delivered, format!("opening its data connection: {error}"))),
-                        Err(_) => return Err(lost(delivered, "opening its data connection stopped".to_string())),
+                        Ok(Err(error)) => return Err(lost(format!("opening its data connection: {error}"))),
+                        Err(_) => return Err(lost("opening its data connection stopped".to_string())),
                     }
                 }
                 finished = async { fed.as_mut().expect("polled only while feeding").await }, if fed.is_some() => {
                     fed = None;
                     match finished {
-                        Ok(Err(error)) => return Err(lost(delivered, format!("sending its data failed: {error}"))),
+                        Ok(Err(error)) => return Err(lost(format!("sending its data failed: {error}"))),
                         // Fed in full; the answer decides.
                         Ok(Ok(())) | Err(_) => continue,
                     }
                 }
             };
             match event {
-                CallEvent::Status(CallStatus::Delivered) => delivered = true,
+                CallEvent::Status(CallStatus::Delivered) => {}
                 CallEvent::Status(CallStatus::Offline { last_seen }) => {
                     waiting.answered = true;
                     return Err(CallFailure::Offline { name: to.clone(), last_seen });
@@ -349,7 +344,7 @@ impl Inner {
                 }
                 CallEvent::Status(CallStatus::Lost) => {
                     waiting.answered = true;
-                    return Err(lost(delivered, "its connection to the hub ended".to_string()));
+                    return Err(lost("its connection to the hub ended".to_string()));
                 }
                 CallEvent::Answered(signed) => {
                     waiting.answered = true;
@@ -359,7 +354,7 @@ impl Inner {
                 }
                 CallEvent::Disconnected(reason) => {
                     waiting.answered = true;
-                    return Err(lost(delivered, reason));
+                    return Err(lost(reason));
                 }
             }
         }

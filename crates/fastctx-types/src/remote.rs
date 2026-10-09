@@ -65,7 +65,8 @@ pub enum RemoteCall {
     /// Stop an `on` job: its sender stopped it on purpose.
     StopOn {
         origin: crate::on::OnOrigin,
-        job: JobId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        job: Option<JobId>,
     },
     /// Write files there for a resident of the calling machine.
     Write {

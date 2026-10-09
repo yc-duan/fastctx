@@ -114,6 +114,24 @@ impl Job {
         let mode = if stderr.is_some() { OutputMode::Separate } else { OutputMode::Merged };
         self.record.supervisor = Some(current_identity()?);
         self.record.ends_with_node = in_job()?;
+        // The control endpoint exists before this identity is published.
+        // A node stopping a just-started job can therefore address it even
+        // before the shell has been spawned.
+        record::write(&self.path, &self.record)?;
+        if let Some(request) = self.record.on.as_ref().and_then(|on| on.request.as_ref()) {
+            let directory = self.world.job_owner(&self.record.machine, self.record.town.as_ref(), &self.record.owner);
+            if directory.jobs().join(format!("request-{request}.stopped")).try_exists()? {
+                self.record.stop = Some(StopRequested {
+                    at: Timestamp::now(),
+                    request: StopRequest {
+                        by: self.record.owner.to_string(),
+                        reason: "the on that sent it stopped".to_string(),
+                    },
+                });
+                self.record.end = Some(Ended { at: Timestamp::now(), how: EndedHow::Stopped });
+                return self.publish().await;
+            }
+        }
         let (tree, output) = ProcessTree::spawn_with_io(
             &shell.program,
             &args,

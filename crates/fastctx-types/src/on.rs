@@ -11,6 +11,10 @@ use crate::{Address, JobId, MachineName, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnRequest {
     pub machine: MachineName,
+    /// The client explicitly acknowledges Ended before the node releases
+    /// the completion debt. Old clients only consumed the output stream.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub receipt: bool,
     /// The job on this machine whose script this `on` is part of, when the
     /// World's shell runs it: its answer names where the script went.
     pub job: Option<JobId>,
@@ -63,8 +67,9 @@ pub enum OnWord {
     /// `STILL_EVERY` while the job is quiet.
     Still,
     /// Everything it will write has been sent, and this is how it ended.
-    /// `lettered`: it had ended while nobody followed, so its end already
-    /// went to the resident in a letter, which the sender sets aside.
+    /// `lettered` is the older protocol's debt-cleared hint. Completion
+    /// receipts are now tracked independently of this hint: a lost TAKEN
+    /// can produce a later letter even when this field was false.
     Ended {
         end: OnEnd,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -130,6 +135,10 @@ pub struct OnOrigin {
     /// job is recorded under it however many machines it passed through.
     pub resident: Address,
     pub town: Option<TownName>,
+    /// One dispatch, known before Started. An intentional stop can name it
+    /// even when the job id did not get back to the sender.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<crate::NoticeId>,
 }
 
 /// What the node hands `fastctx on` as the job goes.

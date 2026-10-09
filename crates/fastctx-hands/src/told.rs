@@ -15,21 +15,24 @@ use crate::run::present::{display_path, status_text};
 /// A notice as one block of text.
 pub fn told(notice: &Notice) -> String {
     match notice {
-        Notice::JobEnded { job, machine, how, status, at, output, last } => {
+        Notice::JobEnded { job, machine, how, status, at, output, stderr, last, .. } => {
             let how = match (how, status) {
                 (EndedHow::Finished, Some(status)) => status_text(*status),
                 (EndedHow::Finished, None) => "finished".to_string(),
                 (EndedHow::Stopped, _) => "stopped".to_string(),
                 (EndedHow::Interrupted { reason }, _) => format!("interrupted: {reason}"),
-                (EndedHow::Failed { error }, _) => format!("could not run: {error}"),
+                (EndedHow::Failed { error }, _) => format!("failed: {error}"),
             };
             // A notice is written as it is delivered. Its reader knows no
             // machine's clock, so a late one says how long ago, as `w` does;
             // within a minute the age changes nothing it would do.
             let waited = jiff::Timestamp::now().as_second().saturating_sub(at.as_second());
             let ago = if waited >= 60 { format!(" {} ago", duration(waited as u64)) } else { String::new() };
-            let head =
-                format!("=== {job} on {machine} ended ({how}){ago}; its output is in {} ===", display_path(output));
+            let errors = stderr.as_ref().map(|path| format!("; stderr in {}", display_path(path))).unwrap_or_default();
+            let head = format!(
+                "=== {job} on {machine} ended ({how}){ago}; its output is in {}{errors} ===",
+                display_path(output)
+            );
             match last {
                 Some(last) if last.whole => format!("{head}\n{}", last.text),
                 Some(last) => format!("{head}\n=== its last lines ===\n{}", last.text),

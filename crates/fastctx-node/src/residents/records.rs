@@ -92,9 +92,17 @@ pub fn move_to(
     }
     // These are active obligations and receipt identities, not town history.
     // Copy before publishing arrival; an interrupted move resumes from old.
-    for name in
-        ["inbox", "outbox", "handovers", "uncertain", "turns", "turn-sessions", "session-events", "composer.json"]
-    {
+    for name in [
+        "inbox",
+        "outbox",
+        "delivery-receipts",
+        "handovers",
+        "uncertain",
+        "turns",
+        "turn-sessions",
+        "session-events",
+        "composer.json",
+    ] {
         copy_state(&old.path().join(name), &new.path().join(name), true)?;
     }
     crate::session_record::carried(old.path(), new.path())?;
@@ -253,6 +261,7 @@ pub fn carry_obligations(
     for name in [
         "inbox",
         "outbox",
+        "delivery-receipts",
         "handovers",
         "uncertain",
         "turns",

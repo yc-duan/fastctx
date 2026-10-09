@@ -95,12 +95,16 @@ pub enum Notice {
     JobEnded {
         job: JobId,
         machine: MachineName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request: Option<NoticeId>,
         how: EndedHow,
         /// How the shell itself exited, when it did.
         status: Option<ExitStatus>,
         at: Timestamp,
         /// The log holding all of its output, on that machine.
         output: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stderr: Option<String>,
         /// The end of that output as a terminal shows it, so the resident
         /// knows how it went without reading the log.
         #[serde(default, skip_serializing_if = "Option::is_none")]
