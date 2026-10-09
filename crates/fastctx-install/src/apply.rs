@@ -353,7 +353,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
             File { path: &config_path, bytes: config.bytes() },
             File { path: &agents_path, bytes: agents.bytes() },
             &CodexPlan::new(&installed),
-            &briefing::guidance(),
+            &briefing::guidance(true),
             ownership,
             approval,
         )?;
@@ -374,7 +374,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         let path = text(claude_md.path());
         let applied = guidance::apply(
             File { path: &path, bytes: claude_md.bytes() },
-            &briefing::guidance(),
+            &briefing::guidance(false),
             record.claude_md.as_ref(),
         )?;
         let previous = read_plugin_record(&places.plugin_record(), initial_settings.path(), &record)?;

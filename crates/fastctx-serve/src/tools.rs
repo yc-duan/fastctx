@@ -21,8 +21,9 @@ pub struct Machines {
 /// commands in the shell (`world-run.md`, `world-write.md`). `woken` says
 /// whether the World can start a turn here when a job ends or an answer
 /// comes; elsewhere they come with the answer of the next tool call.
-pub fn definitions(writes_off: bool, colleague: bool, woken: bool, machines: Option<&Machines>) -> Value {
-    let mut tools = vec![run_definition(writes_off, woken, machines)];
+/// `codex` adds what a model calling the tools from Codex's `exec` must set.
+pub fn definitions(writes_off: bool, colleague: bool, woken: bool, codex: bool, machines: Option<&Machines>) -> Value {
+    let mut tools = vec![run_definition(writes_off, woken, codex, machines)];
     if !colleague {
         tools.push(ask_colleague_definition(woken, machines));
         tools.push(message_colleague_definition());
@@ -65,13 +66,14 @@ fn cwd_description(machines: Option<&Machines>) -> String {
     )
 }
 
-fn run_definition(writes_off: bool, woken: bool, machines: Option<&Machines>) -> Value {
+fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&Machines>) -> Value {
     let writing = if writes_off { "" } else { RUN_WRITING };
     let ends = if woken { RUN_ENDS_WOKEN } else { RUN_ENDS_ASKED };
+    let exec = if codex { RUN_EXEC } else { "" };
     json!({
         "name": "run",
         "description": format!(
-            "{} {RUN_START}\n\n{RUN_SHELL}{ends}\n\n{RUN_FILES}{writing}{RUN_COPY}\n\n{RUN_ON}\n\n{}\n\n{RUN_COMMANDS}",
+            "{} {RUN_START}\n\n{RUN_SHELL}{exec}{ends}\n\n{RUN_FILES}{writing}{RUN_COPY}\n\n{RUN_ON}\n\n{}\n\n{RUN_COMMANDS}",
             machine_names(machines),
             run_together(writes_off)
         ),
@@ -116,6 +118,17 @@ Shell:
 - Calls share nothing, so you can make several at once, and call this tool from your scripts and subagents like any other. The steps of one piece of work belong in one script; separate pieces of work can go in separate calls.
 - Images a program draws with the kitty or iTerm2 terminal protocols come back as images.
 - A call answers as soon as the script ends. A script still running after 15 seconds, or after `wait` seconds when you set it (up to 600), goes on by itself in the background as a job: it is never stopped for taking long, and the answer names the job and the file its output continues in. `wait` 0 sends the script to the background at once, before it has printed anything: for work you will not wait for.
+";
+
+/// Codex's Code Mode hands a nested call's whole answer to the script, but
+/// the model sees only what the script prints, cut at the script's
+/// `max_output_tokens` (10,000 by default, counted as UTF-8 bytes / 4). Only
+/// the script's first-line pragma raises it: no setting or tool definition
+/// can. 100,000 holds an answer of `window::BUDGET` units with what a script
+/// adds around it; what it prints is recorded under the global tool output
+/// limit that apply writes for the same budget (`world-view.md`).
+const RUN_EXEC: &str = "\
+- Called from an `exec` script, an answer of this tool reaches you only as far as the script prints it, and a script prints no more than its `max_output_tokens`. The answers are often long: begin every script that calls this tool with `// @exec: {\"max_output_tokens\": 100000}`, putting any other setting, such as `yield_time_ms`, on that same line.
 ";
 
 const RUN_ENDS_WOKEN: &str = "\

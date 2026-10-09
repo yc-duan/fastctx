@@ -76,6 +76,12 @@ impl Session {
         self.colleague && self.host.get().is_some_and(|host| host.agent.as_str() != "claude")
     }
 
+    /// Whether the host is Codex, whose models may call the tools from an
+    /// `exec` script and see only what it prints (`world-view.md`).
+    pub fn codex(&self) -> bool {
+        self.host.get().is_some_and(|host| host.agent.as_str() == "codex")
+    }
+
     /// Whether the World can start a turn here when something arrives for
     /// this session: in a Codex thread the World started, through its
     /// app-server, and in Claude Code, through the World's plugin. Any other
