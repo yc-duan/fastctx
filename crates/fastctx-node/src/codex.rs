@@ -237,7 +237,11 @@ async fn drain(node: &Arc<Node>, thread: &str) {
         let result = match event {
             HostEvent::Synchronized { .. } => unreachable!("barriers do not enter the durable queue"),
             HostEvent::Unloaded { .. } => {
-                if !node.codex.thread(thread).loaded(thread) {
+                let codex = match node.residents.about(&id) {
+                    Some((about, _)) => node.codex.of(&about),
+                    None => node.codex.thread(thread),
+                };
+                if !codex.loaded(thread) {
                     node.residents.change_now(&node.world, &id, |now| {
                         now.activity = Activity::Asleep;
                         now.since = jiff::Timestamp::now();
