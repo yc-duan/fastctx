@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use fastctx_install::apply;
 use fastctx_types::MachineName;
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 
@@ -17,11 +18,8 @@ pub async fn call(node: &Arc<Node>, machine: MachineName, accept: bool) -> Resul
     if machine == node.machine() {
         return here(node, accept, format!("the user on {machine}")).await;
     }
-    let link = node.link().ok_or_else(|| Failure::new("this machine belongs to no connected World"))?;
-    match link
-        .call(&machine, RemoteCall::ClaudeConsent { accept })
-        .await
-        .map_err(|error| Failure::new(error.to_string()))??
+    let call = RemoteCall::ClaudeConsent { accept };
+    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|error| Failure::new(error.to_string()))??
     {
         RemoteReply::ClaudeConsent { accepted, changed } => Ok((accepted, changed)),
         _ => Err(Failure::new(format!("{machine} answered something other than Claude Code's consent"))),

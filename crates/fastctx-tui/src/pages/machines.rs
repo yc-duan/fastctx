@@ -1,9 +1,12 @@
-//! The World's machines (`world-network.md`): how this one is linked to the
-//! hub, each machine and what it is like, and bringing a machine in or
-//! sending one away.
+//! This computer's hubs and machines (`world-network.md`): each hub it is
+//! logged in to, how it is linked to it and with which accounts, each
+//! machine there and what it is like; logging in and out, tokens for other
+//! devices, and who came into its accounts, with 「不是我」.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use fastctx_types::world::{LinkState, NodesReply};
+use fastctx_types::accounts::Arrival;
+use fastctx_types::world::{HubNodes, LinkState, NodesReply};
+use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -20,6 +23,8 @@ use crate::text;
 #[derive(Default)]
 pub struct MachinesPage {
     nodes: Option<NodesReply>,
+    /// Who came into this computer's accounts and was not shown yet.
+    arrivals: Vec<Arrival>,
     failed: Option<String>,
     had_at: Option<Timestamp>,
     list: List,
@@ -27,6 +32,12 @@ pub struct MachinesPage {
     sessions: Option<Result<Status, String>>,
     /// What the latest apply or unapply came to, or that one is under way.
     outcome: Option<Outcome>,
+}
+
+/// What a row the keys can be on stands for.
+enum Entry {
+    Arrival(usize),
+    Machine { hub: usize, machine: usize },
 }
 
 enum Outcome {
@@ -50,12 +61,17 @@ impl MachinesPage {
     pub fn data(&mut self, data: Data) -> Act {
         match data {
             Data::Nodes(Ok(nodes)) => {
-                self.list.clamp(nodes.machines.len());
                 self.nodes = Some(nodes);
+                self.list.clamp(self.entries().len());
                 self.failed = None;
                 self.had_at = Some(Timestamp::now());
             }
             Data::Nodes(Err(why)) => self.failed = Some(why),
+            Data::Arrivals(arrivals) => {
+                self.arrivals = arrivals;
+                self.list.clamp(self.entries().len());
+            }
+            Data::Done { job: Job::Seen { .. } | Job::Remove { .. }, result: Err(why) } => self.failed = Some(why),
             Data::Sessions(sessions) => self.sessions = Some(sessions),
             Data::Done { job: Job::Apply { .. } | Job::Unapply, result } => {
                 self.outcome = Some(match result {
@@ -84,25 +100,95 @@ impl MachinesPage {
         matches!(&self.sessions, Some(Ok(status)) if status.codex != Standing::Absent || status.claude != Standing::Absent)
     }
 
-    pub fn key(&mut self, _ctx: &Ctx, key: KeyEvent) -> Act {
-        let count = self.nodes.as_ref().map_or(0, |nodes| nodes.machines.len());
+    /// The rows the keys can be on, in the order they are drawn.
+    fn entries(&self) -> Vec<Entry> {
+        let mut entries: Vec<Entry> = (0..self.arrivals.len()).map(Entry::Arrival).collect();
+        if let Some(nodes) = &self.nodes {
+            for (hub, nodes) in nodes.hubs.iter().enumerate() {
+                entries.extend((0..nodes.machines.len()).map(|machine| Entry::Machine { hub, machine }));
+            }
+        }
+        entries
+    }
+
+    /// The accounts this computer is logged in to, hub by hub.
+    fn logins(&self) -> Vec<(HubName, AccountName)> {
+        let Some(nodes) = &self.nodes else { return Vec::new() };
+        nodes
+            .hubs
+            .iter()
+            .flat_map(|hub| hub.logins.iter().map(|account| (hub.name.clone(), account.clone())))
+            .collect()
+    }
+
+    /// The hub of the row the keys are on, and the first account this
+    /// computer is logged in to there.
+    fn selected_login(&self) -> Option<(HubName, AccountName)> {
+        let nodes = self.nodes.as_ref()?;
+        let hub = match self.entries().get(self.list.selected)? {
+            Entry::Machine { hub, .. } => nodes.hubs.get(*hub)?,
+            Entry::Arrival(index) => {
+                let arrival = self.arrivals.get(*index)?;
+                return Some((nodes.hubs.iter().find(|hub| hub.hub == arrival.hub)?.name.clone(), arrival.account.clone()));
+            }
+        };
+        Some((hub.name.clone(), hub.logins.first()?.clone()))
+    }
+
+    /// The machine the keys are on, when this computer is logged in to the
+    /// account it is registered under, and so may take it out.
+    fn removable(&self) -> Option<(HubName, AccountName, MachineName)> {
+        let nodes = self.nodes.as_ref()?;
+        let entries = self.entries();
+        let Entry::Machine { hub, machine } = entries.get(self.list.selected)? else { return None };
+        let hub = nodes.hubs.get(*hub)?;
+        let node = hub.machines.get(*machine)?;
+        let owner = node.owner.as_ref().filter(|owner| hub.logins.contains(owner))?;
+        Some((hub.name.clone(), owner.clone(), node.name.clone()))
+    }
+
+    /// The arrival the keys are on, as the jobs name it.
+    fn selected_arrival(&self) -> Option<(HubName, AccountName, MachineName)> {
+        let entries = self.entries();
+        let Entry::Arrival(index) = entries.get(self.list.selected)? else { return None };
+        let arrival = self.arrivals.get(*index)?;
+        let hub = self.nodes.as_ref()?.hubs.iter().find(|hub| hub.hub == arrival.hub)?;
+        Some((hub.name.clone(), arrival.account.clone(), arrival.name.clone()))
+    }
+
+    pub fn key(&mut self, ctx: &Ctx, key: KeyEvent) -> Act {
+        let count = self.entries().len();
         if self.list.key(&key, count) {
             return Act::Stay;
         }
-        let here = self.nodes.as_ref().map(|nodes| nodes.machine.clone());
-        let selected = self.nodes.as_ref().and_then(|nodes| nodes.machines.get(self.list.selected));
+        let first = self.nodes.as_ref().is_some_and(|nodes| nodes.hubs.is_empty());
+        let logins = self.logins();
         match key.code {
-            KeyCode::Char('i') => Act::Push(Page::Form(Box::new(form::FormPage::invite()))),
-            KeyCode::Char('j') => Act::Push(Page::Form(Box::new(form::FormPage::join()))),
-            KeyCode::Char('r') => match selected {
-                Some(node) if Some(&node.name) != here.as_ref() && node.revoked.is_none() => {
-                    Act::Push(Page::Form(Box::new(form::FormPage::revoke(node.name.clone()))))
-                }
-                _ => Act::Stay,
-            },
-            KeyCode::Char('l') if self.nodes.as_ref().is_some_and(|nodes| !matches!(nodes.link, LinkState::Alone)) => {
-                Act::Push(Page::Form(Box::new(form::FormPage::leave())))
+            KeyCode::Char('l') => Act::Push(Page::Form(Box::new(form::FormPage::login(ctx, first)))),
+            KeyCode::Char('k') => Act::Push(Page::Form(Box::new(form::FormPage::token_login(first)))),
+            KeyCode::Char('t') if !logins.is_empty() => {
+                let preset = self.selected_login();
+                Act::Push(Page::Form(Box::new(form::FormPage::token(ctx, &logins, preset.as_ref()))))
             }
+            KeyCode::Char('o') if !logins.is_empty() => {
+                let preset = self.selected_login();
+                Act::Push(Page::Form(Box::new(form::FormPage::logout(&logins, preset.as_ref()))))
+            }
+            KeyCode::Char('r') => match self.removable() {
+                Some((hub, account, name)) => Act::Push(Page::Form(Box::new(form::FormPage::remove(hub, account, name)))),
+                None => Act::Stay,
+            },
+            KeyCode::Char('y') => match self.selected_arrival() {
+                Some((hub, account, name)) => Act::Do(Job::Seen { hub, account, name }),
+                None => Act::Stay,
+            },
+            KeyCode::Char('n') => match self.selected_arrival() {
+                Some((hub, account, name)) => {
+                    let reason = ctx.words.not_me_reason().to_string();
+                    Act::Do(Job::Remove { hub, account, name, reason, seen: true })
+                }
+                None => Act::Stay,
+            },
             KeyCode::Char('u') if !self.busy() && self.any_installed() => {
                 self.outcome = Some(Outcome::Applying);
                 Act::Do(Job::Apply { raise: false })
@@ -233,76 +319,44 @@ impl MachinesPage {
         let look = &ctx.look;
         let width = paint::column(area).width as usize;
         let mut rows = Vec::new();
-        let mut alone = false;
+        let mut item = 0;
         if let Some(nodes) = &self.nodes {
             paint::open_section(&mut rows, paint::section(words.this_machine_link(), look));
-            let (line, role) = match &nodes.link {
-                LinkState::Alone => {
-                    alone = true;
-                    (words.link_alone(), Role::Muted)
+            let mut first = vec![title(ctx, nodes.machine.to_string())];
+            if let Some(facts) = &nodes.facts {
+                first.push(Span::styled(
+                    format!("   {} {}  ·  fastctx {}", facts.os, facts.arch, facts.version),
+                    look.text(Role::Faint),
+                ));
+            }
+            rows.push(Row::new(Line::from(first)));
+            if nodes.hubs.is_empty() {
+                for line in text::wrap_plain(&words.link_alone(), look.text(Role::Muted), width) {
+                    rows.push(Row::new(line));
                 }
-                LinkState::Connecting { since, last_error } => (
-                    words.link_connecting(
-                        &crate::words::clock(*since, ctx.now),
-                        last_error.as_deref().map(text::first_line).as_deref(),
-                    ),
-                    Role::Caution,
-                ),
-                LinkState::Online { since, hub, relay, route } => {
-                    (words.link_online(hub, relay.as_ref(), route, &crate::words::clock(*since, ctx.now)), Role::Muted)
-                }
-                LinkState::Stopped { reason } => (words.link_stopped(&text::first_line(reason)), Role::Wrong),
-            };
-            for line in text::wrap_plain(&line, look.text(role), width) {
-                rows.push(Row::new(line));
             }
             rows.extend(self.sessions_rows(ctx, width));
             rows.push(Row::blank());
-            paint::open_section(
-                &mut rows,
-                paint::section(words.machines(), look).right(quiet(ctx, words.machine_count(nodes.machines.len()))),
-            );
-            for (item, node) in nodes.machines.iter().enumerate() {
-                let (mark, since) = match (&node.revoked, node.online) {
-                    (Some(_), _) => (Span::styled("×", look.text(Role::Wrong)), String::new()),
-                    (None, Some(true)) => (
-                        Span::styled("●", look.text(Role::Alive)),
-                        node.since
-                            .map(|since| words.online_since(&crate::words::clock(since, ctx.now)))
-                            .unwrap_or_default(),
-                    ),
-                    (None, Some(false)) => (
-                        Span::styled("○", look.text(Role::Faint)),
-                        node.since
-                            .map(|since| words.offline_since(&crate::words::clock(since, ctx.now)))
-                            .unwrap_or_else(|| words.offline().to_string()),
-                    ),
-                    (None, None) => (Span::styled("·", look.text(Role::Muted)), String::new()),
-                };
-                let mut left = vec![mark, Span::raw("  "), title(ctx, node.name.to_string())];
-                if node.name == nodes.machine {
-                    left.push(Span::styled(format!("   {}", words.this_machine()), look.text(Role::Faint)));
-                }
-                rows.push(Row::new(Line::from(left)).right(quiet(ctx, since)).item(item));
-                let second = match (&node.revoked, &node.facts) {
-                    (Some(revoked), _) => Some(Span::styled(
-                        words.revoked(revoked.by.as_str(), &crate::words::clock(revoked.at, ctx.now), &revoked.reason),
-                        look.text(Role::Wrong),
-                    )),
-                    (None, Ok(facts)) => Some(Span::styled(
-                        format!("{} {}  ·  home {}  ·  fastctx {}", facts.os, facts.arch, facts.home, facts.version),
-                        look.text(Role::Faint),
-                    )),
-                    // The first row already says it is offline, and since when.
-                    (None, Err(_)) if node.online == Some(false) => None,
-                    (None, Err(why)) => {
-                        Some(Span::styled(words.not_asked(&text::first_line(why)), look.text(Role::Caution)))
+            if !self.arrivals.is_empty() {
+                paint::open_section(&mut rows, paint::section(words.arrivals(), look));
+                for arrival in &self.arrivals {
+                    let hub = nodes.hubs.iter().find(|hub| hub.hub == arrival.hub).map(|hub| hub.name.to_string());
+                    let said = words.arrival(
+                        arrival.name.as_str(),
+                        arrival.device,
+                        arrival.account.as_str(),
+                        hub.as_deref().unwrap_or(arrival.hub.as_str()),
+                        &crate::words::clock(arrival.noticed_at, ctx.now),
+                    );
+                    for line in text::wrap_plain(&said, look.text(Role::Caution), width) {
+                        rows.push(Row::new(line).item(item));
                     }
-                };
-                if let Some(second) = second {
-                    rows.push(Row::new(Line::from(vec![Span::raw("   "), second])).item(item));
+                    item += 1;
                 }
                 rows.push(Row::blank());
+            }
+            for hub in &nodes.hubs {
+                hub_rows(ctx, &mut rows, &mut item, hub, &nodes.machine, width);
             }
         }
         let note = match (&self.failed, self.had_at) {
@@ -314,7 +368,17 @@ impl MachinesPage {
             (None, None) => Some(quiet(ctx, words.asking())),
             (None, Some(_)) => None,
         };
-        let mut keys = vec![("i", words.key_invite()), ("j", words.key_join())];
+        let mut keys = vec![("l", words.key_login()), ("k", words.key_token_login())];
+        if !self.logins().is_empty() {
+            keys.push(("t", words.key_token()));
+            keys.push(("o", words.key_logout()));
+        }
+        if self.selected_arrival().is_some() {
+            keys.push(("y", words.key_its_me()));
+            keys.push(("n", words.key_not_me()));
+        } else if self.removable().is_some() {
+            keys.push(("r", words.key_remove()));
+        }
         if matches!(self.outcome, Some(Outcome::NeedsRaise { .. })) {
             keys.push(("U", words.key_raise()));
         } else if self.any_installed() && !self.busy() {
@@ -323,10 +387,6 @@ impl MachinesPage {
         }
         if self.any_in() && !self.busy() {
             keys.push(("x", words.key_unapply()));
-        }
-        if !alone {
-            keys.push(("r", words.key_revoke()));
-            keys.push(("l", words.key_leave()));
         }
         keys.push(("Esc", words.key_back()));
         let page = Sheet {
@@ -337,6 +397,85 @@ impl MachinesPage {
             note,
         };
         sheet(ctx, frame, area, &page, &mut self.list);
+    }
+}
+
+/// One hub: how this computer is linked to it and with which accounts, and
+/// each machine its accounts may use there.
+fn hub_rows(ctx: &Ctx, rows: &mut Vec<Row>, item: &mut usize, hub: &HubNodes, here: &MachineName, width: usize) {
+    let words = &ctx.words;
+    let look = &ctx.look;
+    paint::open_section(
+        rows,
+        paint::section(&words.hub_section(hub.name.as_str()), look)
+            .right(quiet(ctx, words.machine_count(hub.machines.len()))),
+    );
+    let (line, role) = match &hub.link {
+        LinkState::Alone => (words.link_alone(), Role::Muted),
+        LinkState::Connecting { since, last_error } => (
+            words.link_connecting(
+                &crate::words::clock(*since, ctx.now),
+                last_error.as_deref().map(text::first_line).as_deref(),
+            ),
+            Role::Caution,
+        ),
+        LinkState::Online { since, hub, relay, route } => (
+            words.link_online(hub, relay.as_deref(), route, &crate::words::clock(*since, ctx.now)),
+            Role::Muted,
+        ),
+        LinkState::Stopped { reason } => (words.link_stopped(&text::first_line(reason)), Role::Wrong),
+    };
+    for line in text::wrap_plain(&line, look.text(role), width) {
+        rows.push(Row::new(line));
+    }
+    let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+    let said = words.logins_line(&logins, hub.home.as_ref().map(|home| home.as_str()));
+    for line in text::wrap_plain(&said, look.text(Role::Faint), width) {
+        rows.push(Row::new(line));
+    }
+    rows.push(Row::blank());
+    for node in &hub.machines {
+        let (mark, since) = match node.online {
+            Some(true) => (
+                Span::styled("●", look.text(Role::Alive)),
+                node.since.map(|since| words.online_since(&crate::words::clock(since, ctx.now))).unwrap_or_default(),
+            ),
+            Some(false) => (
+                Span::styled("○", look.text(Role::Faint)),
+                node.since
+                    .map(|since| words.offline_since(&crate::words::clock(since, ctx.now)))
+                    .unwrap_or_else(|| words.offline().to_string()),
+            ),
+            None => (Span::styled("·", look.text(Role::Muted)), String::new()),
+        };
+        let mut left = vec![mark, Span::raw("  "), title(ctx, node.written.clone())];
+        if node.name == *here {
+            left.push(Span::styled(format!("   {}", words.this_machine()), look.text(Role::Faint)));
+        }
+        rows.push(Row::new(Line::from(left)).right(quiet(ctx, since)).item(*item));
+        let rights = node
+            .rights
+            .iter()
+            .filter(|(_, rights)| rights.any())
+            .map(|(account, rights)| words.rights(account.as_str(), rights.hands, rights.agents))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let standing = words.owner_and_rights(node.owner.as_ref().map(|owner| owner.as_str()), &rights);
+        rows.push(Row::new(Line::from(vec![Span::raw("   "), Span::styled(standing, look.text(Role::Muted))])).item(*item));
+        let second = match &node.facts {
+            Ok(facts) => Some(Span::styled(
+                format!("{} {}  ·  home {}  ·  fastctx {}", facts.os, facts.arch, facts.home, facts.version),
+                look.text(Role::Faint),
+            )),
+            // The first row already says it is offline, and since when.
+            Err(_) if node.online == Some(false) => None,
+            Err(why) => Some(Span::styled(words.not_asked(&text::first_line(why)), look.text(Role::Caution))),
+        };
+        if let Some(second) = second {
+            rows.push(Row::new(Line::from(vec![Span::raw("   "), second])).item(*item));
+        }
+        rows.push(Row::blank());
+        *item += 1;
     }
 }
 

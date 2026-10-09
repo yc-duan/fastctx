@@ -144,6 +144,23 @@ pub struct ProbeTime {
     pub elapsed_ms: u64,
 }
 
+/// What the user chose for a conversation they open, beyond its agent,
+/// project and model (`world-gui.md`, 新对话).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Choices {
+    /// The account it works for, where this computer is logged in to more
+    /// than one that may open it there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
+    /// The machine it works on, when not the one it lives on
+    /// (`world-run.md`, 这里).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub works_on: Option<crate::access::Written>,
+    /// Where its colleagues live; without it, it asks for none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colleagues: Option<crate::access::Written>,
+}
+
 /// Omitted fields keep the official program's configured defaults.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionOptions {

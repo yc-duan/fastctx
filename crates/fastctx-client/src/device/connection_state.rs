@@ -4,10 +4,13 @@ use super::Device;
 use crate::Error;
 
 impl Device {
-    /// A native application can stop live subscriptions when their link is
-    /// replaced and read fresh history when it returns. Leaving or revoking
-    /// this membership stops this receiver; another membership needs a new one.
-    pub fn connection_changes(&self) -> Result<tokio::sync::watch::Receiver<Status>, Error> {
-        Ok(self.connected()?.link.subscribe())
+    /// A native application can stop live subscriptions when the link of
+    /// the hub `hub`, or of the one hub, is replaced and read fresh history
+    /// when it returns. Logging out of that hub stops this receiver.
+    pub fn connection_changes(
+        &self,
+        hub: Option<&fastctx_types::HubName>,
+    ) -> Result<tokio::sync::watch::Receiver<Status>, Error> {
+        Ok(self.on_hub(hub)?.link.subscribe())
     }
 }

@@ -1003,6 +1003,7 @@ pub(crate) fn environment() -> Result<Vec<(OsString, OsString)>, Failure> {
 pub async fn open_here(
     node: &Arc<Node>,
     typed_on: &MachineName,
+    opened: crate::talk::Opened,
     town: Option<TownName>,
     text: String,
     options: fastctx_types::agents::SessionOptions,
@@ -1013,6 +1014,9 @@ pub async fn open_here(
     }
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
+    if let Some(lives_on) = &opened.colleagues {
+        crate::colleagues::setting::keep(node, &id, lives_on)?;
+    }
     let Command { program, env, .. } = command(node)?;
     let (words, heard) = crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User).await?;
     let born_at = Timestamp::now();
@@ -1025,6 +1029,8 @@ pub async fn open_here(
         session: None,
         world_started: true,
         model: None,
+        acting: opened.acting,
+        works_on: opened.works_on,
     };
     let now = Now {
         activity: Activity::Busy,

@@ -143,7 +143,10 @@ async fn fork(
         session: Some(fork.clone()),
         world_started: true,
         model,
+        acting: source.acting,
+        works_on: source.works_on,
     };
+    crate::colleagues::setting::inherit(node, parent, &id)?;
     let now = Now {
         activity: Activity::Idle,
         since: at,

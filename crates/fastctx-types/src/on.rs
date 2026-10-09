@@ -148,6 +148,10 @@ pub struct OnOrigin {
     /// The machine whose CLI follows this hop, which may differ from the resident's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follower: Option<MachineName>,
+    /// The account the hop runs for, as the machine it runs on was called
+    /// for: set there, from the call, never taken from the sender's word.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
 }
 
 /// What the node hands `fastctx on` as the job goes.

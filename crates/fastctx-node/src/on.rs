@@ -19,6 +19,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use fastctx_net::data::Stream;
 use fastctx_net::link::{CallFailure, Feed};
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::on::{
     OnEnd, OnOrigin, OnPackage, OnPiece, OnRequest, OnSizes, OnWord, SILENT_FOR, STILL_EVERY, TAKEN,
@@ -87,6 +88,27 @@ impl Pieces {
 }
 
 // The sending side.
+
+/// Whom an `on` from `origin` works for (`world-network.md`, 一个登录，只在
+/// 登录它的那台电脑上用): a hop another machine sent works for the account it
+/// was sent for, and for nothing else this computer is logged in to; an
+/// `on` of a resident here, for whom the resident works.
+pub(crate) fn acting(node: &Node, origin: &OnOrigin) -> Acting {
+    match &origin.account {
+        Some(account) => Acting::one(account.hub.clone(), account.account.clone()),
+        None if origin.resident.machine == node.machine() => {
+            node.residents.about(&origin.resident.resident).map(|(about, _)| about.acting).unwrap_or_default()
+        }
+        None => Acting::Accounts { accounts: Vec::new() },
+    }
+}
+
+/// The account the job `job` here was sent for, when another machine sent
+/// it: an `on` in its script works for that account.
+pub(crate) fn sent_for(node: &Node, job: Option<&JobId>) -> Option<fastctx_types::access::HubAccount> {
+    let path = crate::stop::find(&node.world, job?).ok()??;
+    fastctx_hands::run::record::read(&path).ok()?.on?.account
+}
 
 /// Sends `request` for the resident in `origin`. The job's pieces come on
 /// the returned channel until its end or a failure; dropping the channel
@@ -226,16 +248,12 @@ async fn there(
     pieces: &Pieces,
     waiting: &Arc<Mutex<crate::on_delivery::Following>>,
 ) -> Result<(), Failure> {
-    let link = node
-        .link()
-        .ok_or_else(|| Failure::not_run(format!("{} is not connected to any other machine", node.machine())))?;
     let machine = request.machine.clone();
+    let acting = acting(node, origin);
+    let (link, account) =
+        node.speaking(&acting, &(&machine).into(), Purpose::Hands).map_err(|failure| Failure::not_run(failure.to_string()))?;
     let sizes = sizes(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
-    let _reaching =
-        (origin.resident.machine == node.machine()).then(|| node.reaching.hold(&origin.resident.resident, &machine));
     requested(node, origin, request).await?;
-    crate::on_delivery::keep_request(node, origin, &machine)
-        .map_err(|error| Failure::not_run(format!("keeping the request before sending it: {error}")))?;
     let followed = Arc::new(Mutex::new(Followed::default()));
     // Noted when the machine says the job started, before its output is
     // handed on: the script's answer may be read as soon as the job is through.
@@ -250,7 +268,7 @@ async fn there(
     let call = RemoteCall::On { origin: origin.clone(), sizes, writes_off: request.package.writes_off };
     let sending =
         feed(&machine, Some(request.package.clone()), followed.clone(), pieces.clone(), Some(started), waiting.clone());
-    let first = link.call_with_stream(&machine, call, sending).await;
+    let first = link.call_with_stream(&machine, &account, Purpose::Hands, call, sending).await;
     let (started, refused) = {
         let followed = followed.lock().expect("never poisoned");
         (followed.job.clone(), followed.refused.clone())
@@ -264,6 +282,8 @@ async fn there(
             Err(CallFailure::NotConnected { .. }
                 | CallFailure::NotMember { .. }
                 | CallFailure::Offline { .. }
+                | CallFailure::Refused { .. }
+                | CallFailure::NotAllowed { .. }
                 | CallFailure::Unreachable { .. })
         ) || matches!(&first, Ok(Err(failure)) if failure.not_run);
         if pieces.stopping() && !not_sent {
@@ -280,6 +300,8 @@ async fn there(
                 failure @ (CallFailure::NotConnected { .. }
                 | CallFailure::NotMember { .. }
                 | CallFailure::Offline { .. }
+                | CallFailure::Refused { .. }
+                | CallFailure::NotAllowed { .. }
                 | CallFailure::Unreachable { .. }),
             ) => Failure::not_run(failure.to_string()),
             Err(failure) => Failure::new(format!(
@@ -287,7 +309,7 @@ async fn there(
             )),
         });
     };
-    let followed_through = follow_there(node, origin, &machine, &job, &followed, pieces, waiting).await;
+    let followed_through = follow_there(node, (&link, &account), origin, &machine, &job, &followed, pieces, waiting).await;
     if matches!(followed_through, Ok(true)) {
         waiting
             .lock()
@@ -301,8 +323,11 @@ async fn there(
 /// Follows a job that started on `machine` until its end is taken, it is
 /// stopped, or the World says it cannot be followed. True when the `on`
 /// that sent it left, and so stopped it.
+/// It is followed through the hub, and for the account, it was sent with.
+#[allow(clippy::too_many_arguments)]
 async fn follow_there(
     node: &Arc<Node>,
+    (link, account): (&Arc<fastctx_net::link::Link>, &fastctx_types::AccountName),
     origin: &OnOrigin,
     machine: &MachineName,
     job: &JobId,
@@ -310,7 +335,6 @@ async fn follow_there(
     pieces: &Pieces,
     waiting: &Arc<Mutex<crate::on_delivery::Following>>,
 ) -> Result<bool, Failure> {
-    let link = node.link().ok_or_else(|| Failure::new("the node left the network while following the job"))?;
     let mut delay = Backoff::default();
     loop {
         if let Some(failure) = followed.lock().expect("never poisoned").refused.clone() {
@@ -339,7 +363,7 @@ async fn follow_there(
         };
         let call = RemoteCall::Follow { origin: origin.clone(), job: job.clone(), out_from, err_from };
         let following = feed(machine, None, followed.clone(), pieces.clone(), None, waiting.clone());
-        let result = link.call_with_stream(machine, call, following).await;
+        let result = link.call_with_stream(machine, account, Purpose::Hands, call, following).await;
         // A control reply can fail after the data stream already offered
         // the end. Only that handover's CLI receipt decides its outcome.
         if followed.lock().expect("never poisoned").ending.is_some() {
@@ -764,6 +788,7 @@ async fn start(
         state: staged.state.to_string_lossy().into_owned(),
         request: origin.request.clone(),
         follower: origin.follower.clone(),
+        account: origin.account.clone(),
     };
     let request = RunRequest { script, cwd: None, writes_off, wait: None };
     let owner = JobOwner::Resident(origin.resident.clone());

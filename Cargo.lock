@@ -1236,6 +1236,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "clap",
+ "crossterm",
  "fastctx-client",
  "fastctx-hands",
  "fastctx-hub",

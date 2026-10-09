@@ -1,0 +1,199 @@
+//! Reaching other machines (`world-network.md`): which hub a machine is on,
+//! and which account a call or a letter from here speaks for.
+//!
+//! A machine is written as its name, or as `name.hub` where the name is on
+//! more than one of the hubs this computer is on. Whom something here works
+//! for (`Acting`) gives the accounts it may speak for on each hub; of those,
+//! the first the directory lets say this to that machine is the one used.
+
+use std::sync::Arc;
+
+use fastctx_net::link::{CallFailure, Feed, Link};
+pub(crate) use fastctx_types::access::Written;
+use fastctx_types::access::{Acting, HubAccount, HubId, Purpose};
+use fastctx_types::ipc::Failure;
+use fastctx_types::remote::{RemoteCall, RemoteResult};
+use fastctx_types::{AccountName, MachineName};
+
+use crate::Node;
+
+impl Node {
+    /// The links to the hubs this computer is on.
+    pub(crate) fn links(&self) -> Vec<Arc<Link>> {
+        self.links.read().expect("never poisoned").values().cloned().collect()
+    }
+
+    pub(crate) fn link_of(&self, hub: &HubId) -> Option<Arc<Link>> {
+        self.links.read().expect("never poisoned").get(hub).cloned()
+    }
+
+    /// Whether this computer is on any hub.
+    pub(crate) fn connected_anywhere(&self) -> bool {
+        !self.links.read().expect("never poisoned").is_empty()
+    }
+
+    /// The links of the hubs `machine` is on. A computer has one name and
+    /// one key on every hub it is on, so a name the views of several hubs
+    /// hold for one key is one machine, reached through any of them; held
+    /// for different keys, it is several, and must be written `name.hub`.
+    pub(crate) fn locate(&self, machine: &Written) -> Result<Vec<Arc<Link>>, Failure> {
+        let links = self.links();
+        if links.is_empty() {
+            return Err(Failure::not_run(format!(
+                "{} is logged in to no hub, so it reaches no other machine",
+                self.machine()
+            )));
+        }
+        if let Some(hub) = &machine.hub {
+            return links.into_iter().find(|link| link.membership().hub_name == *hub).map(|link| vec![link]).ok_or_else(
+                || Failure::not_run(format!("{} is not logged in to a hub named {hub}", self.machine())),
+            );
+        }
+        let holding: Vec<(Arc<Link>, fastctx_net::sign::PublicKey)> = links
+            .iter()
+            .filter_map(|link| link.view().member(&machine.name).map(|member| (link.clone(), member.key)))
+            .collect();
+        match holding.first() {
+            // Not in any view yet: the only hub, if there is one, may know
+            // it, and its answer says so if not.
+            None if links.len() == 1 => Ok(links),
+            None => Err(Failure::not_run(format!(
+                "no hub {} is on has a machine named {}",
+                self.machine(),
+                machine.name
+            ))),
+            Some((_, key)) if holding.iter().all(|(_, other)| other == key) => {
+                Ok(holding.into_iter().map(|(link, _)| link).collect())
+            }
+            Some(_) => Err(Failure::not_run(format!(
+                "{} names different computers on different hubs; write it as {}",
+                machine.name,
+                holding
+                    .iter()
+                    .map(|(link, _)| format!("{}.{}", machine.name, link.membership().hub_name))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            ))),
+        }
+    }
+
+    /// How the machine `name` of `link`'s hub is written here: its name,
+    /// with the hub only when another hub this computer is on has a
+    /// different computer of that name.
+    pub(crate) fn written(&self, link: &Link, name: &MachineName) -> Written {
+        let key = link.view().member(name).map(|member| member.key);
+        let shared = self.links().iter().any(|other| {
+            other.membership().id != link.membership().id
+                && other.view().member(name).is_some_and(|member| Some(&member.key) != key.as_ref())
+        });
+        Written { name: name.clone(), hub: shared.then(|| link.membership().hub_name.clone()) }
+    }
+
+    /// Whether `machine` is this computer.
+    pub(crate) fn is_here(&self, machine: &Written) -> bool {
+        machine.name == self.machine()
+            && machine.hub.as_ref().is_none_or(|hub| self.links().iter().any(|link| link.membership().hub_name == *hub))
+    }
+
+    /// The accounts `acting` may speak for on `link`'s hub.
+    pub(crate) fn accounts_on(&self, link: &Link, acting: &Acting) -> Vec<AccountName> {
+        match acting {
+            Acting::Here => link.view().me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),
+            Acting::Accounts { accounts } => accounts
+                .iter()
+                .filter(|account| account.hub == link.membership().id)
+                .map(|account| account.account.clone())
+                .collect(),
+        }
+    }
+
+    /// Whether `acting` works for `account` of `hub`.
+    pub(crate) fn serves(&self, acting: &Acting, hub: &HubId, account: &AccountName) -> bool {
+        match acting {
+            Acting::Here => self
+                .link_of(hub)
+                .is_some_and(|link| link.view().me().is_some_and(|me| me.logins.contains(account))),
+            Acting::Accounts { accounts } => accounts.contains(&HubAccount { hub: hub.clone(), account: account.clone() }),
+        }
+    }
+
+    /// Calls `to`, for whom `acting` works, asking `purpose` of it: for each
+    /// account `acting` may speak for there that may, in turn, until one is
+    /// let in. What a call about a resident there may do depends on whom the
+    /// resident works for, which only that machine knows; a call turned
+    /// away at its door ran nothing, so the next account may ask again.
+    pub(crate) async fn call(
+        &self,
+        acting: &Acting,
+        to: &Written,
+        purpose: Purpose,
+        call: RemoteCall,
+    ) -> Result<RemoteResult, CallFailure> {
+        let mut turned_away = None;
+        for (link, account) in self.speakers(acting, to, purpose)? {
+            match link.call(&to.name, &account, purpose, call.clone()).await {
+                Ok(Err(failure)) if failure.not_run => turned_away = Some(failure),
+                answered => return answered,
+            }
+        }
+        Ok(Err(turned_away.expect("there is a speaker to ask")))
+    }
+
+    /// Calls `to` with a data connection, as `call` does, with a feed
+    /// `feed` makes for each try.
+    pub(crate) async fn call_with_stream(
+        &self,
+        acting: &Acting,
+        to: &Written,
+        purpose: Purpose,
+        call: RemoteCall,
+        feed: impl Fn() -> Feed,
+    ) -> Result<RemoteResult, CallFailure> {
+        let mut turned_away = None;
+        for (link, account) in self.speakers(acting, to, purpose)? {
+            match link.call_with_stream(&to.name, &account, purpose, call.clone(), feed()).await {
+                Ok(Err(failure)) if failure.not_run => turned_away = Some(failure),
+                answered => return answered,
+            }
+        }
+        Ok(Err(turned_away.expect("there is a speaker to ask")))
+    }
+
+    /// The link and the account to say something for `purpose` to `to`
+    /// that is not answered: the first `speakers` gives.
+    pub(crate) fn speaking(&self, acting: &Acting, to: &Written, purpose: Purpose) -> Result<(Arc<Link>, AccountName), CallFailure> {
+        Ok(self.speakers(acting, to, purpose)?.into_iter().next().expect("speakers names one at least"))
+    }
+
+    /// The hubs `to` is on, each with the accounts `acting` may say
+    /// something for `purpose` to it for, at least one. News goes for the
+    /// accounts it is about without a look at this machine's view, which
+    /// need not show the resident's machine; the hub checks it.
+    pub(crate) fn speakers(&self, acting: &Acting, to: &Written, purpose: Purpose) -> Result<Vec<(Arc<Link>, AccountName)>, CallFailure> {
+        let unreachable = |failure: Failure| CallFailure::Unreachable { name: to.name.clone(), reason: failure.message };
+        let links = self.locate(to).map_err(unreachable)?;
+        let here = self.machine();
+        let mut speakers = Vec::new();
+        let mut why = Vec::new();
+        for link in links {
+            let accounts = self.accounts_on(&link, acting);
+            let hub = &link.membership().hub_name;
+            if accounts.is_empty() {
+                why.push(format!("this works for no account of the hub {hub}, which {} is on", to.name));
+                continue;
+            }
+            let view = link.view();
+            for account in accounts {
+                match view.admits(&here, &account, &to.name, purpose) {
+                    _ if purpose == Purpose::Echo => speakers.push((link.clone(), account)),
+                    Ok(()) => speakers.push((link.clone(), account)),
+                    Err(refused) => why.push(refused),
+                }
+            }
+        }
+        if speakers.is_empty() {
+            return Err(CallFailure::NotAllowed { name: to.name.clone(), reason: why.join("; ") });
+        }
+        Ok(speakers)
+    }
+}

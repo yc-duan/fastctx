@@ -418,6 +418,8 @@ impl Residents {
             session: hints.thread.clone(),
             world_started: false,
             model: None,
+            acting: Default::default(),
+            works_on: None,
         };
         records::create(&world.resident(None, &resident), &about)
             .map_err(|error| Failure::new(format!("recording a new resident: {error}")))?;

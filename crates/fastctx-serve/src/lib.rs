@@ -112,7 +112,7 @@ async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> 
                     &id,
                     json!({
                         "protocolVersion": version,
-                        "capabilities": { "tools": {} },
+                        "capabilities": { "tools": { "listChanged": true } },
                         "serverInfo": { "name": "fastctx", "version": env!("CARGO_PKG_VERSION") }
                     }),
                 ));
@@ -124,16 +124,12 @@ async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> 
             (Some("tools/list"), Some(id)) => {
                 let meta = params.get("_meta");
                 let machines = session.machines(meta).await;
-                let tools = tools::definitions(
-                    writes_off,
-                    session.colleague(meta),
-                    session.woken(meta),
-                    session.codex(meta),
-                    machines.as_ref(),
-                );
-                output.send(&protocol.response(&id, json!({ "tools": tools }), true))
+                let tools = tools::definitions(writes_off, session.woken(meta), session.codex(meta), machines.as_ref());
+                output.send(&protocol.response(&id, json!({ "tools": tools }), true));
+                session.watch_tools(&output, meta);
             }
             (Some("tools/call"), Some(id)) => {
+                let main = session.clone();
                 let (session, output, key) = (session.for_call(params.get("_meta")), output.clone(), id.to_string());
                 let handle = calls.spawn(async move {
                     let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
@@ -143,17 +139,19 @@ async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> 
                         // Sessions whose host listed the tools before writing
                         // became the shell's commands may still call these.
                         "edit" | "write" | "apply_patch" => session.write(name, &arguments, params.get("_meta")).await,
-                        "ask_colleague" if !session.colleague(params.get("_meta")) => {
-                            session.ask(&arguments, params.get("_meta")).await
-                        }
-                        "message_colleague" if !session.colleague(params.get("_meta")) => {
-                            session.message(&arguments, params.get("_meta")).await
-                        }
+                        // Whether this conversation may ask for colleagues is
+                        // the node's to say: a host may still hold the tools
+                        // after the user turned them off.
+                        "ask_colleague" => session.ask(&arguments, params.get("_meta")).await,
+                        "message_colleague" => session.message(&arguments, params.get("_meta")).await,
                         _ => {
                             output.send(&error_response(&id, -32602, "unknown tool"));
                             return id.to_string();
                         }
                     };
+                    // A call that reached a node starts watching it, for
+                    // the resident it now knows.
+                    main.watch_tools(&output, params.get("_meta"));
                     match session.bound(&mut answer) {
                         Ok(()) => {
                             let response =

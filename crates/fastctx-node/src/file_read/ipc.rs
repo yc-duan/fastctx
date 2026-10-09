@@ -12,13 +12,14 @@ use crate::Node;
 
 pub(crate) async fn serve(
     node: &Arc<Node>,
+    acting: fastctx_types::access::Acting,
     machine: Option<MachineName>,
     request: ReadFileRequest,
     id: u64,
     reader: &mut FrameReader,
     writer: &mut FrameWriter,
 ) -> std::io::Result<()> {
-    let mut parts = super::start(node.clone(), machine, request);
+    let mut parts = super::start(node.clone(), acting, machine, request);
     let reply = loop {
         let part = tokio::select! {
             part = parts.recv() => part,

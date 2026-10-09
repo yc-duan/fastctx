@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::session::control::{Control, Controlled, Offers};
@@ -25,7 +26,7 @@ pub async fn control(
         return Ok((Address { machine, resident }, controlled));
     }
     let call = RemoteCall::Control { resident: resident.clone(), control };
-    match link(node)?.call(&machine, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
+    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
         Ok(RemoteReply::Controlled(controlled)) => Ok((Address { machine, resident }, controlled)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than what was done"))),
         Err(failure) => Err(failure),
@@ -43,7 +44,7 @@ pub async fn offers(
         return Ok((Address { machine, resident }, offers));
     }
     let call = RemoteCall::Offers { resident: resident.clone() };
-    match link(node)?.call(&machine, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
+    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
         Ok(RemoteReply::Offers(offers)) => Ok((Address { machine, resident }, *offers)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than what it offers"))),
         Err(failure) => Err(failure),
@@ -99,10 +100,6 @@ async fn machine_of(
     match machine {
         Some(machine) => Ok(machine),
         None if node.residents.about(resident).is_some() => Ok(node.machine()),
-        None => crate::colleagues::find(node, resident).await,
+        None => crate::colleagues::find_for(node, &Acting::Here, resident).await,
     }
-}
-
-fn link(node: &Node) -> Result<Arc<fastctx_net::link::Link>, Failure> {
-    node.link().ok_or_else(|| Failure::new(format!("{} is in no World with other machines", node.machine())))
 }

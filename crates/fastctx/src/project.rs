@@ -42,6 +42,12 @@ pub enum ProjectCommand {
         town: String,
         #[command(flatten)]
         fields: Fields,
+        /// The account it is opened in, where this works for more than one.
+        #[arg(long = "as")]
+        account: Option<fastctx_types::AccountName>,
+        /// The hub of that account, where several have one of its name.
+        #[arg(long)]
+        hub: Option<fastctx_types::HubName>,
     },
     /// Write the next version of a project's record; what is not given
     /// stays as it is.
@@ -88,8 +94,8 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
         ProjectCommand::Show { town: given } => ProjectCall::Show { town: town(given)? },
         ProjectCommand::Map { town: given } => ProjectCall::Map { town: town(given)? },
         ProjectCommand::Enter { town } => ProjectCall::Enter { town: TownName::try_from(town)? },
-        ProjectCommand::New { town, fields } => {
-            ProjectCall::New { town: TownName::try_from(town)?, fields: fields.into_fields()? }
+        ProjectCommand::New { town, fields, account, hub } => {
+            ProjectCall::New { town: TownName::try_from(town)?, fields: fields.into_fields()?, account, hub }
         }
         ProjectCommand::Edit { town: given, fields } => {
             ProjectCall::Edit { town: town(given)?, fields: fields.into_fields()? }

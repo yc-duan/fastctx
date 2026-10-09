@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use fastctx_types::composer::{Change, Request, Updated};
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{Activity, Landed};
@@ -59,13 +60,13 @@ pub async fn request(
     let machine = match machine {
         Some(machine) => machine,
         None if node.residents.about(&resident).is_some() => node.machine(),
-        None => crate::colleagues::find(node, &resident).await?,
+        None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
     if machine == node.machine() {
         return here(node, &node.machine(), &resident, request).await;
     }
-    let link = node.link().ok_or_else(|| failure("this machine is not connected to a World"))?;
-    match link.call(&machine, RemoteCall::Composer { resident, request }).await.map_err(failure)? {
+    let call = RemoteCall::Composer { resident, request };
+    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(failure)? {
         Ok(RemoteReply::Composer(updated)) => Ok(*updated),
         Ok(_) => Err(failure("the machine answered something other than a composer")),
         Err(error) => Err(error),

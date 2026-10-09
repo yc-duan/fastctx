@@ -2,6 +2,7 @@
 //! membership are reported separately so partial completion stays visible.
 
 use crate::{Node, speech};
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::management::{Managed, Management, ManagementOutcome as Outcome, ManagementStep};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -20,16 +21,13 @@ pub async fn manage(
     let machine = match machine {
         Some(machine) => machine,
         None if node.residents.about(&resident).is_some() => node.machine(),
-        None => crate::colleagues::find(node, &resident).await?,
+        None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
     let managed = if machine == node.machine() {
         here(node, &resident, action).await?
     } else {
-        let link = node.link().ok_or_else(|| Failure::new("this machine belongs to no connected World"))?;
-        match link
-            .call(&machine, RemoteCall::Manage { resident: resident.clone(), action })
-            .await
-            .map_err(|error| Failure::new(error.to_string()))??
+        let call = RemoteCall::Manage { resident: resident.clone(), action };
+        match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|error| Failure::new(error.to_string()))??
         {
             RemoteReply::Managed(managed) => managed,
             _ => return Err(Failure::new(format!("{machine} answered something other than a management result"))),

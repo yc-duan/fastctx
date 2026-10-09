@@ -137,29 +137,6 @@ fn cancellation(
     named(node, &[owner.as_str(), to.as_str(), machine.as_str(), request.as_str()]).with_extension("stopped")
 }
 
-/// Keeps the caller's outstanding request before dispatch. A completion
-/// after restart can restore its reaching guard without depending on an
-/// unrelated read of the resident's whole action history succeeding.
-pub(crate) fn keep_request(node: &Node, origin: &OnOrigin, machine: &MachineName) -> io::Result<()> {
-    if origin.resident.machine != node.machine() {
-        return Ok(());
-    }
-    let request = origin.request.as_ref().expect("new on has a request identity");
-    let path =
-        cancellation(node, &node.machine(), &origin.resident.resident, machine, request).with_extension("requested");
-    ensure_private_dir(&directory(node))?;
-    publish(&path, b"", Permissions::Private)
-}
-
-pub(crate) fn requested_here(
-    node: &Node,
-    to: &ResidentId,
-    machine: &MachineName,
-    request: &NoticeId,
-) -> io::Result<bool> {
-    cancellation(node, &node.machine(), to, machine, request).with_extension("requested").try_exists()
-}
-
 pub(crate) fn cancelled(node: &Node, origin: &OnOrigin, machine: &MachineName) -> io::Result<()> {
     let Some(request) = &origin.request else { return Ok(()) };
     let _state = node.on_deliveries.state.lock().expect("never poisoned");
@@ -292,14 +269,15 @@ async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> io::Result<()> {
             || stopped(node, &parked.to, machine, request.as_ref())?
     };
     if !taken && let Some(follower) = follower.as_ref().filter(|follower| *follower != &node.machine()) {
-        let link = node.link().ok_or_else(|| io::Error::other("no network for the nested completion receipt"))?;
+        let acting = node.residents.about(&parked.to).map(|(about, _)| about.acting).unwrap_or_default();
         let call = fastctx_types::remote::RemoteCall::OnReceipt {
             owner,
             machine: machine.clone(),
             job: job.clone(),
             request: request.clone(),
         };
-        match link.call(follower, call).await {
+        let purpose = fastctx_types::access::Purpose::Hands;
+        match node.call(&acting, &follower.into(), purpose, call).await {
             Ok(Ok(fastctx_types::remote::RemoteReply::OnReceipt { taken: claimed, following })) => {
                 if following && !claimed {
                     return Err(io::Error::other("the nested hop is still handing its end to its CLI"));

@@ -9,6 +9,7 @@
 use std::time::Duration;
 
 use fastctx_client::{Conversation, TownView, World};
+use fastctx_types::accounts::AccountChange;
 use fastctx_types::{Address, TownName};
 use jiff::Timestamp;
 use tokio::sync::mpsc::UnboundedSender;
@@ -77,6 +78,15 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
         let sessions = matches!(feed, Feed::Nodes | Feed::World { .. });
         if sessions && sender.send((page, Data::Sessions(crate::sessions::status().await))).is_err() {
             return;
+        }
+        // And who came into this computer's accounts.
+        if matches!(feed, Feed::Nodes)
+            && let Ok(accounts) = world.accounts().await
+        {
+            let arrivals = accounts.hubs.into_iter().flat_map(|hub| hub.arrivals).collect();
+            if sender.send((page, Data::Arrivals(arrivals))).is_err() {
+                return;
+            }
         }
         tokio::time::sleep(EVERY).await;
     }
@@ -158,6 +168,26 @@ async fn around(world: World, sender: Sender, page: u64, owner: Address, town: O
     }
 }
 
+/// A computer logged in to a hub is kept connected by a system service;
+/// the node that served until now hands the World over to it.
+async fn keep_connected(world: &World) -> Result<fastctx_install::service::Kept, String> {
+    let kept = tokio::task::spawn_blocking(|| {
+        let places = fastctx_install::apply::Places::here().map_err(|error| error.to_string())?;
+        fastctx_install::service::keep_connected(&places).map(|(kept, _)| kept).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())
+    .and_then(|kept| kept);
+    match kept {
+        Ok(fastctx_install::service::Kept::Installed) => world
+            .hand_over()
+            .await
+            .map(|()| fastctx_install::service::Kept::Installed)
+            .map_err(|error| error.to_string()),
+        other => other,
+    }
+}
+
 /// Does a job and sends its answer to the page that asked.
 pub fn run(world: World, sender: Sender, page: u64, job: Job) {
     tokio::spawn(async move {
@@ -180,45 +210,46 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
         Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine)).await?.1),
         Job::Attach { resident } => Done::Attachable(world.attach(resident).await?),
         Job::Open { agent, town, node, text } => Done::Opened(world.open(agent, town, node, text).await?),
-        Job::OpenTown { town, fields } => Done::Record(Box::new(world.open_town(town, fields).await?)),
+        Job::OpenTown { town, fields } => Done::Record(Box::new(world.open_town(town, fields, None, None).await?)),
         Job::EditTown { town, fields } => Done::Record(Box::new(world.edit_town(Some(town), fields).await?)),
         Job::Journal { town, journal, before } => {
             Done::Journal(Box::new(world.journal(Some(town), journal, before).await?))
         }
-        Job::Invite { name, hours } => {
+        Job::Login { hub, account, password, register, name } => {
+            let addresses = fastctx_client::hub_addresses(&hub).await.map_err(fastctx_client::Error::Other)?;
+            let (hub, name, account) = world.login(addresses, account, password, register, name).await?;
+            Done::LoggedIn { hub, name, account, kept: keep_connected(world).await }
+        }
+        Job::LoginWithToken { token, name } => {
+            let (hub, name, account) = world.login_with_token(token, name).await?;
+            Done::LoggedIn { hub, name, account, kept: keep_connected(world).await }
+        }
+        Job::Token { hub, account, kind, hours } => {
             let expires = Timestamp::now() + jiff::SignedDuration::from_hours(i64::from(hours));
-            Done::Code { code: world.invite(name, expires, false, None).await?, expires }
-        }
-        Job::Join { code, name } => {
-            let (world_id, name) = world.join(code, name).await?;
-            // A machine in a World is kept connected by a system service;
-            // the node that served until now hands the World over to it.
-            let kept = tokio::task::spawn_blocking(|| {
-                let places = fastctx_install::apply::Places::here().map_err(|error| error.to_string())?;
-                fastctx_install::service::keep_connected(&places)
-                    .map(|(kept, _)| kept)
-                    .map_err(|error| error.to_string())
-            })
-            .await
-            .map_err(|error| error.to_string())
-            .and_then(|kept| kept);
-            let kept = match kept {
-                Ok(fastctx_install::service::Kept::Installed) => world
-                    .hand_over()
-                    .await
-                    .map(|()| fastctx_install::service::Kept::Installed)
-                    .map_err(|error| error.to_string()),
-                other => other,
+            let server = kind.is_none();
+            let text = match kind {
+                None => world.server_command(Some(hub), account, None, expires).await?,
+                Some(kind) => {
+                    let change = AccountChange::Token { register: false, name: None, kind, expires };
+                    world.account(Some(hub), account, change).await?.unwrap_or_default()
+                }
             };
-            Done::Joined { world: world_id, name, kept }
+            Done::Token { text, server, expires }
         }
-        Job::Revoke { name, reason } => {
-            world.revoke(name, reason).await?;
-            Done::Revoked
+        Job::Logout { hub, account } => {
+            world.account(Some(hub), account, AccountChange::Logout).await?;
+            Done::Changed
         }
-        Job::Leave => {
-            world.leave().await?;
-            Done::Left
+        Job::Remove { hub, account, name, reason, seen } => {
+            world.account(Some(hub.clone()), account.clone(), AccountChange::Remove { name: name.clone(), reason }).await?;
+            if seen {
+                world.account(Some(hub), account, AccountChange::Seen { name }).await?;
+            }
+            Done::Changed
+        }
+        Job::Seen { hub, account, name } => {
+            world.account(Some(hub), account, AccountChange::Seen { name }).await?;
+            Done::Changed
         }
         Job::Apply { .. } | Job::Unapply => unreachable!("done on this machine, not asked of the World"),
     })

@@ -16,6 +16,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
 fastctx-client = { path = "../fastctx-client" }
 fastctx-hands = { path = "../fastctx-hands" }
 fastctx-hub = { path = "../fastctx-hub" }

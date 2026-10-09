@@ -4,6 +4,7 @@ use std::io;
 use std::sync::Arc;
 
 use fastctx_hands::run::record;
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -12,6 +13,7 @@ use fastctx_types::town::{CurrentTool, Looked, LookedUp, ResidentDetail, Residen
 use fastctx_types::{Address, JobId, ResidentId};
 
 use crate::Node;
+use crate::around::Heard;
 use crate::activity::entries;
 use crate::residents::OnRecord;
 
@@ -19,7 +21,9 @@ use crate::residents::OnRecord;
 // retains the complete record (`world-town.md`).
 const ACTIONS: usize = 20;
 
-pub async fn look(node: &Arc<Node>, ids: Vec<String>) -> Vec<LookedUp> {
+/// Each of `ids`, on this machine and on each machine whoever asks
+/// (`acting`) may look at.
+pub async fn look(node: &Arc<Node>, acting: &Acting, ids: Vec<String>) -> Vec<LookedUp> {
     let mut looked = Vec::new();
     for id in ids {
         let mut found = Vec::new();
@@ -32,44 +36,16 @@ pub async fn look(node: &Arc<Node>, ids: Vec<String>) -> Vec<LookedUp> {
             }
             Err(error) => unasked.push(format!("{} ({error})", node.machine())),
         }
-        if let Some(link) = node.link() {
-            let refreshed = link.refresh().await;
-            let (table, presence) = link.members();
-            let me = link.membership().name.clone();
-            let mut asks = Vec::new();
-            for member in table
-                .machines()
-                .filter(|member| member.name != me && crate::admission::reaches(node, &table, &member.name))
-            {
-                if let Err(error) = &refreshed {
-                    unasked.push(format!("{} (presence unknown: {error})", member.name));
-                    continue;
+        let machines = crate::around::reachable(node, acting, Purpose::Look);
+        for (name, heard) in crate::around::ask_each(machines, |_| RemoteCall::Look { id: id.clone() }).await {
+            match heard {
+                Heard::Answered(RemoteReply::Looked { looked, jobs: work }) => {
+                    found.extend(looked);
+                    jobs.extend(work);
                 }
-                match presence.iter().find(|seen| seen.name == member.name) {
-                    Some(seen) if seen.online => {}
-                    Some(_) => {
-                        unasked.push(format!("{} (offline)", member.name));
-                        continue;
-                    }
-                    None => {
-                        unasked.push(format!("{} (presence unknown)", member.name));
-                        continue;
-                    }
-                }
-                let (link, name, id) = (link.clone(), member.name.clone(), id.clone());
-                asks.push((name.clone(), tokio::spawn(async move { link.call(&name, RemoteCall::Look { id }).await })));
-            }
-            for (name, ask) in asks {
-                match ask.await {
-                    Ok(Ok(Ok(RemoteReply::Looked { looked, jobs: work }))) => {
-                        found.extend(looked);
-                        jobs.extend(work);
-                    }
-                    Ok(Ok(Ok(_))) => unasked.push(format!("{name} (answered something else)")),
-                    Ok(Ok(Err(error))) => unasked.push(format!("{name} ({error})")),
-                    Ok(Err(error)) => unasked.push(format!("{name} ({error})")),
-                    Err(error) => unasked.push(format!("{name} (asking: {error})")),
-                }
+                Heard::Answered(_) => unasked.push(format!("{name} (answered something else)")),
+                Heard::Offline(_) => unasked.push(format!("{name} (offline)")),
+                Heard::NoAnswer(reason) => unasked.push(format!("{name} ({reason})")),
             }
         }
         let mut one = LookedUp { id, found, unasked, jobs };

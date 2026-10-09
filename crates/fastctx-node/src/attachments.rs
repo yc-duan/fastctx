@@ -9,6 +9,7 @@ use fastctx_net::link::Feed;
 use fastctx_platform::FileLock;
 use fastctx_platform::ipc::FrameReader;
 use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
@@ -54,7 +55,7 @@ pub async fn upload(
         Some(machine) => machine,
         None if composer.is_some() => match &target {
             UploadTarget::Resident { resident } if node.residents.about(resident).is_some() => node.machine(),
-            UploadTarget::Resident { resident } => crate::colleagues::find(node, resident).await?,
+            UploadTarget::Resident { resident } => crate::colleagues::find_for(node, &Acting::Here, resident).await?,
             _ => return Err(failure("a shared composer upload needs an existing resident")),
         },
         None => node.machine(),
@@ -86,7 +87,8 @@ pub async fn upload(
         }
         return result;
     }
-    let link = node.link().ok_or_else(|| failure("this machine is not connected to a World"))?;
+    // The bytes come once, so the upload is tried for one account.
+    let (link, account) = node.speaking(&Acting::Here, &(&machine).into(), Purpose::Agents).map_err(failure)?;
     let size = file.size;
     let source_error = Arc::new(Mutex::new(None));
     let feeding_error = source_error.clone();
@@ -99,7 +101,8 @@ pub async fn upload(
             Ok(())
         })
     });
-    let answer = link.call_with_stream(&machine, RemoteCall::Upload { target, file, composer }, feed).await;
+    let upload = RemoteCall::Upload { target, file, composer };
+    let answer = link.call_with_stream(&machine, &account, Purpose::Agents, upload, feed).await;
     let result = match answer {
         Ok(Ok(RemoteReply::Uploaded(attachment))) => return Ok(Uploaded { attachment, composer: None }),
         Ok(Ok(RemoteReply::ComposerUploaded(result))) => {

@@ -166,12 +166,21 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
         }
     };
     match welcome {
-        Down::Welcome { hub, name, taken, letters, .. } => {
+        Down::Welcome { hub, hub_name, name, taken, letters, .. } => {
             if hub != membership.id || name != membership.name {
                 return Err(Ended::Retry(format!(
                     "the hub knows this machine as {name} on {hub}, not {} on {}",
                     membership.name, membership.id
                 )));
+            }
+            // The hub's short name is the hub's to say: a membership kept
+            // before it was known takes it from the welcome.
+            if hub_name != membership.hub_name {
+                let corrected = super::Membership { hub_name: hub_name.clone(), ..membership.clone() };
+                match super::state::write(&inner.dir.membership(), &corrected) {
+                    Ok(()) => inner.node.log(format!("the hub {hub} is called {hub_name}")),
+                    Err(error) => inner.node.log(format!("recording that the hub is called {hub_name}: {error}")),
+                }
             }
             Ok(Opened { socket, address, route, taken, hub_letters: letters })
         }

@@ -72,7 +72,10 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         session: Some(short),
         world_started: true,
         model,
+        acting: source.acting,
+        works_on: source.works_on,
     };
+    crate::colleagues::setting::inherit(node, &source.id, &id)?;
     node.residents.create(&node.world, about, town, crate::residents::idle(at)).map_err(failure)?;
     node.residents.set_heard(&id, heard);
     drop(_birth);

@@ -5,7 +5,7 @@
 //! node per World; it listens on the World's local endpoint, where every
 //! client (commands, the MCP adapter of each agent session, the TUI, the
 //! supervisors of running jobs) reaches it; it holds the machine's link to
-//! the hub when the machine has joined a World with others; and on start
+//! each hub it is logged in to; and on start
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
@@ -13,6 +13,7 @@ pub mod activity;
 mod admission;
 mod admitted;
 mod agents;
+mod around;
 mod attach;
 mod attachments;
 mod claude;
@@ -45,7 +46,7 @@ mod on_delivery;
 mod on_stop;
 mod own;
 mod pages;
-mod relay;
+mod reach;
 mod renewal;
 mod renewal_legacy;
 mod resident_storage;
@@ -75,6 +76,7 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::{Context as _, anyhow};
 use fastctx_hosts::codex::{CodexHost, launch};
+use fastctx_net::ids::HubId;
 use fastctx_net::link::Link;
 use fastctx_platform::ipc::{Endpoint, Listener};
 use fastctx_platform::{FileLock, ensure_private_dir};
@@ -90,7 +92,8 @@ pub(crate) struct Node {
     /// This program's own copy under the World, which everything the node
     /// starts from itself runs from (`own.rs`).
     fastctx: PathBuf,
-    /// This machine's name; it changes only when the machine joins a World.
+    /// This machine's name, the same on every hub; it changes only when a
+    /// computer on no hub logs in under another.
     machine: RwLock<MachineName>,
     jobs: jobs::Jobs,
     job_watches: job_watch::Watches,
@@ -106,24 +109,16 @@ pub(crate) struct Node {
     composers: composer::Composers,
     file_searches: file_search::Searches,
     log: Arc<log::Log>,
-    /// Present while the machine is a member of a World with others.
-    link: RwLock<Option<Arc<Link>>>,
-    /// Present while this machine relays for others (`relay`).
-    relay: tokio::sync::Mutex<Option<relay::Running>>,
-    /// Held while the towns' ledgers are taken or written, one at a time.
+    /// The link to each hub this computer is logged in to (`reach`).
+    links: RwLock<std::collections::BTreeMap<HubId, Arc<Link>>>,
+    /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: tokio::sync::Mutex<()>,
-    /// The World's naming key, once this machine has opened it
-    /// (`ledger::names`).
-    naming: RwLock<Option<fastctx_net::ledger::NamingKey>>,
     /// Held while a town's record or journals are written from here, from
     /// reading what is there to writing what comes next.
     writing: tokio::sync::Mutex<()>,
     /// What went out with an answer of a World tool and is not yet known to
     /// have been taken: no other answer hands it over meanwhile.
     taking: std::sync::Mutex<std::collections::HashSet<(fastctx_types::ResidentId, fastctx_types::NoticeId)>>,
-    /// The machines residents here are asking something of right now
-    /// (`admission::letters`).
-    reaching: admission::letters::Reaching,
     /// The `on` jobs here whose sender is following them now: their end
     /// goes to it, not in a letter, unless it leaves first (`on`).
     following: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
@@ -137,6 +132,9 @@ pub(crate) struct Node {
     notifying_jobs: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     effects_ready: std::sync::atomic::AtomicBool,
     effects_changed: tokio::sync::Notify,
+    /// Which resident's offered tools may have changed, or everyone's
+    /// (`WatchTools`).
+    tools: tokio::sync::broadcast::Sender<Option<fastctx_types::ResidentId>>,
     /// Whether turns may start, while a guardian may ask for the World to
     /// be handed on.
     handoff: Arc<handoff::Handoff>,
@@ -157,16 +155,18 @@ impl Node {
             changed.await;
         }
     }
+    /// The tools `resident` is offered, or every session here, may have
+    /// changed.
+    pub(crate) fn tools_changed(&self, resident: Option<&fastctx_types::ResidentId>) {
+        let _ = self.tools.send(resident.cloned());
+    }
+
     pub(crate) fn machine(&self) -> MachineName {
         self.machine.read().expect("never poisoned").clone()
     }
 
     pub(crate) fn set_machine(&self, name: MachineName) {
         *self.machine.write().expect("never poisoned") = name;
-    }
-
-    pub(crate) fn link(&self) -> Option<Arc<Link>> {
-        self.link.read().expect("never poisoned").clone()
     }
 }
 
@@ -280,7 +280,7 @@ pub async fn run_replacing(
         log.line(format_args!("could not read {}: {error}", path.display()));
     }
 
-    let membership = world::load(&world).context("reading this machine's membership")?;
+    let memberships = world::load(&world).context("reading this computer's memberships")?;
     let endpoint = Endpoint::for_world(world.path())?;
     let mut listener = Listener::bind(&endpoint)?;
     log.line(format_args!("listening at {endpoint}"));
@@ -320,13 +320,10 @@ pub async fn run_replacing(
         composers: composer::Composers::default(),
         file_searches: file_search::Searches::default(),
         log,
-        link: RwLock::new(None),
-        relay: tokio::sync::Mutex::new(None),
+        links: RwLock::new(std::collections::BTreeMap::new()),
         syncing: tokio::sync::Mutex::new(()),
-        naming: RwLock::new(None),
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),
-        reaching: Default::default(),
         following: Default::default(),
         words: Default::default(),
         on_deliveries: Default::default(),
@@ -335,6 +332,9 @@ pub async fn run_replacing(
         notifying_jobs: Default::default(),
         effects_ready: std::sync::atomic::AtomicBool::new(false),
         effects_changed: tokio::sync::Notify::new(),
+        // A watcher that falls behind tells its session to list again, so
+        // the capacity only bounds how many changes are told one by one.
+        tools: tokio::sync::broadcast::channel(64).0,
         handoff: Arc::new(handoff::Handoff::default()),
         renewal,
         supervised: supervision.is_some(),
@@ -344,10 +344,9 @@ pub async fn run_replacing(
         node.log.line(format_args!("could not finish a ledger entry: {problem}"));
     }
     town::guard::start(&node).context("watching the towns' ledgers")?;
-    if let Some((membership, key)) = membership {
-        node.log.line(format_args!("a member of the World {} as {}", membership.world, membership.name));
-        world::start(&node, membership, key).context("starting the link to the hub")?;
-        relay::resume(&node).await;
+    for membership in memberships {
+        node.log.line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
+        world::start(&node, membership).context("starting a link to a hub")?;
     }
     on_stop::resume(&node).await;
     codex::adopt(&node).await;
@@ -417,8 +416,8 @@ pub async fn run_replacing(
             // its scheduling must not depend on random select fairness.
             biased;
             () = watchdog.requested() => {
-                if node.link().is_some_and(|link| link.failed()) {
-                    node.log.line("the link task ended unexpectedly; exiting for the service to restart it");
+                if node.links().iter().any(|link| link.failed()) {
+                    node.log.line("a link task ended unexpectedly; exiting for the service to restart it");
                     std::process::exit(1);
                 }
                 continue;

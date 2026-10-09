@@ -58,6 +58,9 @@ pub enum AccountChange {
     Settings { self_registration: bool },
     ShareProject { town: TownName, with: AccountName, shared: bool },
     MoveProject { town: TownName, to: AccountName },
+    /// The user saw that `name` came into the account; nothing goes to the
+    /// hub.
+    Seen { name: MachineName },
 }
 
 /// Every hub this computer is on, as the user sees it.
@@ -84,6 +87,21 @@ pub struct HubAccounts {
     pub grants: Vec<GrantSeen>,
     pub trust: Vec<TrustSeen>,
     pub projects: Vec<ProjectSeen>,
+    /// Who came into the accounts this computer is logged in to there,
+    /// not yet shown to the user.
+    #[serde(default)]
+    pub arrivals: Vec<Arrival>,
+}
+
+/// A device that logged in to an account, or a machine registered under
+/// it, as one of the account's other logins noticed it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Arrival {
+    pub hub: HubId,
+    pub account: AccountName,
+    pub name: MachineName,
+    pub device: bool,
+    pub noticed_at: Timestamp,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

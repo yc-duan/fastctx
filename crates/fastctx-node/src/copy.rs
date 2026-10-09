@@ -20,7 +20,8 @@ use std::sync::Arc;
 
 use fastctx_hands::copy::{Receiver, walk};
 use fastctx_net::data::Stream;
-use fastctx_net::link::{CallFailure, Feed, Link};
+use fastctx_net::link::{CallFailure, Feed};
+use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::MachineName;
 use fastctx_types::copy::{CopyReport, EntryKind, Manifest, Place};
 use fastctx_types::ipc::Failure;
@@ -44,8 +45,9 @@ enum Answer {
     },
 }
 
-/// Copies `from` to `to`, asked of this machine.
-pub async fn copy(node: &Arc<Node>, from: Place, to: Place) -> Result<CopyReport, Failure> {
+/// Copies `from` to `to`, asked of this machine by whoever works for
+/// `acting`.
+pub async fn copy(node: &Arc<Node>, acting: &Acting, from: Place, to: Place) -> Result<CopyReport, Failure> {
     let here = node.machine();
     let from_machine = from.machine.unwrap_or_else(|| here.clone());
     let to_machine = to.machine.unwrap_or_else(|| here.clone());
@@ -55,22 +57,18 @@ pub async fn copy(node: &Arc<Node>, from: Place, to: Place) -> Result<CopyReport
         )));
     }
     if from_machine == here {
-        return send(node, &from.path, &to_machine, &to.path).await;
+        return send(node, acting, &from.path, &to_machine, &to.path).await;
     }
     if to_machine == here {
-        return fetch(node, &from_machine, &from.path, &to.path).await;
+        return fetch(node, acting, &from_machine, &from.path, &to.path).await;
     }
-    let link = link(node)?;
     let call = RemoteCall::CopySend { from: from.path, to: Place { machine: Some(to_machine), path: to.path } };
-    match link.call(&from_machine, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
+    let answer = node.call(acting, &(&from_machine).into(), Purpose::Hands, call).await;
+    match answer.map_err(|failure| Failure::new(failure.to_string()))? {
         Ok(RemoteReply::Copied(report)) => Ok(report),
         Ok(_) => Err(Failure::new(format!("{from_machine} answered something other than a copy"))),
         Err(failure) => Err(failure),
     }
-}
-
-fn link(node: &Node) -> Result<Arc<Link>, Failure> {
-    node.link().ok_or_else(|| Failure::new(format!("{} is in no World with other machines", node.machine())))
 }
 
 /// What a source has to send: its manifest, the files behind it, and what
@@ -132,24 +130,32 @@ pub async fn give(node: &Arc<Node>, from: &str, mut stream: Stream) -> Result<Co
 
 /// The destination's side when it is the machine asked: calls `from_machine`
 /// for `from` and puts it at `to`, here.
-async fn fetch(node: &Arc<Node>, from_machine: &MachineName, from: &str, to: &str) -> Result<CopyReport, Failure> {
-    let link = link(node)?;
+async fn fetch(
+    node: &Arc<Node>,
+    acting: &Acting,
+    from_machine: &MachineName,
+    from: &str,
+    to: &str,
+) -> Result<CopyReport, Failure> {
     // The feed keeps what it took before it sends its receipt; the source
     // answers only after the receipt, so the answer never comes first.
     let taken: Arc<std::sync::Mutex<Option<CopyReport>>> = Arc::default();
-    let (here, to, kept) = (node.clone(), to.to_string(), taken.clone());
-    let feed: Feed = Box::new(move |mut stream| {
-        Box::pin(async move {
-            let offer: Offer = stream.hear().await?;
-            let report = take_files(&here, to, offer.manifest_bytes, None, &mut stream)
-                .await
-                .map_err(|failure| failure.message)?;
-            *kept.lock().expect("never poisoned") = Some(report);
-            stream.done().await
+    let feed = || -> Feed {
+        let (here, to, kept) = (node.clone(), to.to_string(), taken.clone());
+        Box::new(move |mut stream| {
+            Box::pin(async move {
+                let offer: Offer = stream.hear().await?;
+                let report = take_files(&here, to, offer.manifest_bytes, None, &mut stream)
+                    .await
+                    .map_err(|failure| failure.message)?;
+                *kept.lock().expect("never poisoned") = Some(report);
+                stream.done().await
+            })
         })
-    });
+    };
     let call = RemoteCall::CopyFetch { from: from.to_string() };
-    let answer = link.call_with_stream(from_machine, call, feed).await.map_err(|failure| match failure {
+    let answer = node.call_with_stream(acting, &from_machine.into(), Purpose::Hands, call, feed).await;
+    let answer = answer.map_err(|failure| match failure {
         CallFailure::Unknown { name, reason } if reason.starts_with("sending its data failed: ") => {
             Failure::new(format!("the copy from {name} stopped: {}", &reason["sending its data failed: ".len()..]))
         }
@@ -174,16 +180,25 @@ async fn fetch(node: &Arc<Node>, from_machine: &MachineName, from: &str, to: &st
 }
 
 /// The source's side: walks `from`, here, and sends it to `to` on `to_machine`.
-pub async fn send(node: &Arc<Node>, from: &str, to_machine: &MachineName, to: &str) -> Result<CopyReport, Failure> {
-    let link = link(node)?;
+pub async fn send(
+    node: &Arc<Node>,
+    acting: &Acting,
+    from: &str,
+    to_machine: &MachineName,
+    to: &str,
+) -> Result<CopyReport, Failure> {
     let Walked { manifest, files, problems: walk_problems } = walked(node, from).await?;
     let call = RemoteCall::CopyReceive {
         to: to.to_string(),
         manifest_bytes: manifest.len() as u64,
         manifest_sha256: format!("{:x}", Sha256::digest(&manifest)),
     };
-    let feed: Feed = Box::new(move |stream| Box::pin(feed(stream, manifest, files)));
-    let answer = link.call_with_stream(to_machine, call, feed).await.map_err(|failure| match failure {
+    let sending = || -> Feed {
+        let (manifest, files) = (manifest.clone(), files.clone());
+        Box::new(move |stream| Box::pin(feed(stream, manifest, files)))
+    };
+    let answer = node.call_with_stream(acting, &to_machine.into(), Purpose::Hands, call, sending).await;
+    let answer = answer.map_err(|failure| match failure {
         CallFailure::Unknown { name, reason } if reason.starts_with("sending its data failed: ") => {
             Failure::new(format!("the copy to {name} stopped: {}", &reason["sending its data failed: ".len()..]))
         }

@@ -19,7 +19,7 @@ mod page;
 mod paths;
 mod project;
 mod renew;
-mod scope_args;
+mod secret;
 mod server_install;
 mod service;
 mod stop;
@@ -176,25 +176,32 @@ enum Command {
     /// live facts of the machines and sessions. Publish, read or list them.
     #[command(subcommand, after_long_help = page::PAGE_HELP)]
     Page(page::PageCommand),
-    /// Join a World with a code.
-    Join(world::JoinArgs),
-    /// Make a code that lets one more machine join this World.
-    Invite(world::InviteArgs),
-    /// Set what a member of the World may do, as a machine that holds
-    /// management rights.
+    /// Log this computer in to an account on a hub: with the hub's address
+    /// and the account's password, asked for here, or with a token another
+    /// device made. It stays logged in until it logs out or is removed.
+    Login(world::LoginArgs),
+    /// Log this computer out of an account.
+    Logout(world::LogoutArgs),
+    /// Make a one-time token that logs another device in to an account, or,
+    /// for a server, the line that installs and registers it.
+    Token(world::TokenArgs),
+    /// The hubs this computer is on, with their accounts, machines, grants,
+    /// trust and projects, and who came into its accounts.
+    Accounts,
+    /// Let another account work on one of an account's machines, or use its
+    /// agents, or take that back.
     Grant(world::GrantArgs),
-    /// Set where a member of the World connects: through relays, or straight
-    /// to the hub, as a machine that holds management rights.
-    Route(world::RouteArgs),
-    /// Make a machine of the World relay for the machines whose routes lead
-    /// through it, or stop relaying.
+    /// Trust a machine another account lets this one use, so sessions and
+    /// jobs there may act for this account on its other machines.
+    Trust(world::TrustArgs),
+    /// Take a device or a machine out of an account.
+    Remove(world::RemoveArgs),
+    /// Set the relays one of an account's machines connects through.
+    Relays(world::RelaysArgs),
+    /// Forward a hub's port for machines that reach this one more easily:
+    /// the bytes pass through, the TLS between them and the hub is theirs.
     Relay(world::RelayArgs),
-    /// Stop every machine of the World trusting a machine's key, as when it
-    /// is lost.
-    Revoke(world::RevokeArgs),
-    /// Leave the World; this machine becomes a World of one again.
-    Leave,
-    /// The hub every machine of a World connects to.
+    /// The hub: where the accounts are, and every computer connects to.
     #[command(subcommand)]
     Hub(world::HubCommand),
     /// Give the sessions you open on this machine, in Codex and Claude Code,
@@ -278,13 +285,15 @@ fn main() -> ExitCode {
         Command::Project(command) => project::run(command),
         Command::Journal(command) => journal::run(command),
         Command::Page(command) => page::run(command),
-        Command::Join(args) => world::join(args),
-        Command::Invite(args) => world::invite(args),
+        Command::Login(args) => world::login(args),
+        Command::Logout(args) => world::logout(args),
+        Command::Token(args) => world::token(args),
+        Command::Accounts => world::accounts(),
         Command::Grant(args) => world::grant(args),
-        Command::Route(args) => world::route(args),
+        Command::Trust(args) => world::trust(args),
+        Command::Remove(args) => world::remove(args),
+        Command::Relays(args) => world::relays(args),
         Command::Relay(args) => world::relay(args),
-        Command::Revoke(args) => world::revoke(args),
-        Command::Leave => world::leave(),
         Command::Hub(command) => world::hub(command),
         Command::Apply(args) => apply::apply(args),
         Command::Unapply(args) => apply::unapply(args),
@@ -305,9 +314,9 @@ fn print_licenses() -> ExitCode {
 
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
-const PEOPLE_ONLY: [&str; 18] = [
-    "ui", "node", "renew", "service", "server", "serve", "talk", "attach", "join", "invite", "grant", "route", "relay",
-    "revoke", "leave", "hub", "apply", "unapply",
+const PEOPLE_ONLY: [&str; 20] = [
+    "ui", "node", "renew", "service", "server", "serve", "talk", "attach", "login", "logout", "token", "accounts",
+    "grant", "trust", "remove", "relays", "relay", "hub", "apply", "unapply",
 ];
 
 /// The command line; in a resident's shell its help lists what a resident

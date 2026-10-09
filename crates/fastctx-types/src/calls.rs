@@ -82,14 +82,28 @@ pub enum Call {
         request: crate::file_search::FileSearchRequest,
     },
     /// Asks for a colleague for a resident of this machine
-    /// (`ask_colleague`): a Codex resident started on this machine or on
-    /// the machine `node` names, with `prompt` as its first words. `label`
-    /// is the task's few words.
+    /// (`ask_colleague`): a Codex resident started where the user set the
+    /// resident's colleagues to live, with `prompt` as its first words.
+    /// `label` is the task's few words.
     Ask {
         resident: ResidentId,
         label: String,
         prompt: String,
-        node: Option<MachineName>,
+    },
+    /// The user turns asking for colleagues on for a resident on any
+    /// machine, with where they live, or off (`world-colleagues.md`, 同事从
+    /// 哪里来、能去哪里).
+    Colleagues {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        lives_on: Option<crate::access::Written>,
+    },
+    /// On a session's own connection: a `ToolsChanged` frame each time the
+    /// tools `resident`, the session's resident when it is known, is
+    /// offered may have changed, for as long as the connection stays open.
+    WatchTools {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resident: Option<ResidentId>,
     },
     /// Words from a resident of this machine to another resident, on any
     /// machine (`message_colleague`); `machine` is where it lives, when the
@@ -176,6 +190,8 @@ pub enum Call {
         reasoning_effort: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<crate::attachments::Attachment>,
+        #[serde(flatten)]
+        choices: crate::agents::Choices,
     },
     /// Stops the turn a resident on any machine is running, for the user.
     Stop {
@@ -291,8 +307,12 @@ pub enum Call {
     Nodes,
     /// The machines a session here may work on, as it writes them: this
     /// one, and the others its accounts may use, `name.hub` where a name
-    /// is on more than one hub.
-    Machines,
+    /// is on more than one hub; for `resident`, the session's resident when
+    /// it is known, also where its colleagues live.
+    Machines {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resident: Option<ResidentId>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -433,6 +453,10 @@ pub enum Reply {
     Machines {
         here: MachineName,
         others: Vec<String>,
+        /// Where the calling session's colleagues live, when it may ask
+        /// for them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        colleagues: Option<crate::access::Written>,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.
@@ -452,10 +476,15 @@ pub enum Reply {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "do")]
 pub enum ProjectCall {
-    /// Opens a town with the first version of its record.
+    /// Opens a town with the first version of its record, in `account` of
+    /// `hub`, or in the one account whoever asks works for.
     New {
         town: TownName,
         fields: RecordFields,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<crate::HubName>,
     },
     /// Writes the next version of a town's record; what is not given stays.
     Edit {

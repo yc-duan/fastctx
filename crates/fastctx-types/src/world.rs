@@ -88,6 +88,9 @@ impl std::fmt::Display for Route {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodesReply {
     pub machine: MachineName,
+    /// What this machine is like; a device has none to tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facts: Option<MachineFacts>,
     pub hubs: Vec<HubNodes>,
 }
 

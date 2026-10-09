@@ -1,12 +1,14 @@
 //! Asking the World for something that takes a few answers: a conversation
-//! with a new agent, a project opened or its record written anew, a machine
-//! invited, joined, revoked or left. Choices come from what the World says
-//! now: the machines online, the projects that span the chosen machine.
+//! with a new agent, a project opened or its record written anew, logging
+//! this computer in to an account or out of one, a token for another
+//! device, a member taken out of an account. Choices come from what the
+//! World says now: the machines online, the projects that span the chosen
+//! machine, the accounts this computer is logged in to.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fastctx_types::project::{Listing, Location, Record, RecordFields, TownSummary};
 use fastctx_types::world::NodesReply;
-use fastctx_types::{AgentName, MachineName, TownName};
+use fastctx_types::{AccountName, AgentName, HubName, MachineName, TownName};
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
@@ -37,15 +39,18 @@ enum Kind {
     OpenAgent { preset: Option<TownName> },
     NewProject,
     EditProject { town: TownName, machines: Vec<MachineName> },
-    Invite,
-    Join,
-    Revoke { name: MachineName },
-    Leave,
+    Login,
+    TokenLogin,
+    Token,
+    Logout,
+    Remove { hub: HubName, account: AccountName, name: MachineName },
 }
 
 struct Field {
     key: Key,
     value: Value,
+    /// Shown as dots: a password.
+    secret: bool,
 }
 
 enum Value {
@@ -64,15 +69,19 @@ enum Value {
 
 impl Field {
     fn text(key: Key, editor: Editor) -> Self {
-        Self { key, value: Value::Text(editor) }
+        Self { key, value: Value::Text(editor), secret: false }
+    }
+
+    fn secret(key: Key) -> Self {
+        Self { key, value: Value::Text(Editor::single()), secret: true }
     }
 
     fn choice(key: Key, options: Vec<(String, String)>) -> Self {
-        Self { key, value: Value::Choice { options, index: 0 } }
+        Self { key, value: Value::Choice { options, index: 0 }, secret: false }
     }
 
     fn ticks(key: Key) -> Self {
-        Self { key, value: Value::Ticks { options: Vec::new(), at: 0 } }
+        Self { key, value: Value::Ticks { options: Vec::new(), at: 0 }, secret: false }
     }
 
     fn text_value(&self) -> String {
@@ -146,26 +155,64 @@ impl FormPage {
         )
     }
 
-    pub fn invite() -> Self {
-        Self::new(
-            Kind::Invite,
-            vec![Field::text(Key::InviteName, Editor::single()), Field::text(Key::Hours, Editor::single().with("24"))],
-        )
+    /// Logs this computer in with the hub's address and an account's
+    /// password; `first` asks what it is called, as it is on no hub yet.
+    pub fn login(ctx: &Ctx, first: bool) -> Self {
+        let words = &ctx.words;
+        let register = vec![
+            (words.register_no().to_string(), String::new()),
+            (words.register_yes().to_string(), "register".to_string()),
+        ];
+        let mut fields = vec![
+            Field::text(Key::HubAddress, Editor::single()),
+            Field::text(Key::Account, Editor::single()),
+            Field::secret(Key::Password),
+            Field::choice(Key::Register, register),
+        ];
+        if first {
+            fields.push(Field::text(Key::LoginName, Editor::single()));
+        }
+        Self::new(Kind::Login, fields)
     }
 
-    pub fn join() -> Self {
-        Self::new(
-            Kind::Join,
-            vec![Field::text(Key::Code, Editor::single()), Field::text(Key::JoinName, Editor::single())],
-        )
+    pub fn token_login(first: bool) -> Self {
+        let mut fields = vec![Field::text(Key::Token, Editor::single())];
+        if first {
+            fields.push(Field::text(Key::LoginName, Editor::single()));
+        }
+        Self::new(Kind::TokenLogin, fields)
     }
 
-    pub fn revoke(name: MachineName) -> Self {
-        Self::new(Kind::Revoke { name }, vec![Field::text(Key::Reason, Editor::single())])
+    /// A token for another device, or the line for a server, for one of
+    /// `logins`, the accounts this computer is logged in to.
+    pub fn token(ctx: &Ctx, logins: &[(HubName, AccountName)], preset: Option<&(HubName, AccountName)>) -> Self {
+        let words = &ctx.words;
+        let purposes = vec![
+            (words.token_for_phone().to_string(), "phone".to_string()),
+            (words.token_for_computer().to_string(), "computer".to_string()),
+            (words.token_for_server().to_string(), "server".to_string()),
+        ];
+        let hours = ["1", "24", "72"].iter().map(|hours| (words.hours(hours), hours.to_string())).collect();
+        let mut accounts = Field::choice(Key::HubAccount, account_options(logins));
+        if let (Some(preset), Value::Choice { index, .. }) = (preset, &mut accounts.value) {
+            *index = logins.iter().position(|login| login == preset).unwrap_or(0);
+        }
+        Self::new(Kind::Token, vec![accounts, Field::choice(Key::TokenFor, purposes), Field::choice(Key::Hours, hours)])
     }
 
-    pub fn leave() -> Self {
-        Self::new(Kind::Leave, Vec::new())
+    /// Logs this computer out of one of `logins`.
+    pub fn logout(logins: &[(HubName, AccountName)], preset: Option<&(HubName, AccountName)>) -> Self {
+        let mut accounts = Field::choice(Key::HubAccount, account_options(logins));
+        if let (Some(preset), Value::Choice { index, .. }) = (preset, &mut accounts.value) {
+            *index = logins.iter().position(|login| login == preset).unwrap_or(0);
+        }
+        Self::new(Kind::Logout, vec![accounts])
+    }
+
+    /// Takes `name` out of `account`: a device's login of it, or one of its
+    /// machines.
+    pub fn remove(hub: HubName, account: AccountName, name: MachineName) -> Self {
+        Self::new(Kind::Remove { hub, account, name }, vec![Field::text(Key::Reason, Editor::single())])
     }
 
     pub fn feed(&self) -> Option<Feed> {
@@ -183,6 +230,14 @@ impl FormPage {
 
     fn value(&self, key: Key) -> String {
         self.fields.iter().find(|field| field.key == key).map(Field::text_value).unwrap_or_default()
+    }
+
+    /// What was typed, untrimmed: a password is what it is.
+    fn raw(&self, key: Key) -> String {
+        match self.fields.iter().find(|field| field.key == key).map(|field| &field.value) {
+            Some(Value::Text(editor)) => editor.text().to_string(),
+            _ => String::new(),
+        }
     }
 
     pub fn paste(&mut self, text: String) -> Act {
@@ -222,18 +277,21 @@ impl FormPage {
     fn refresh_choices(&mut self, ctx: &Ctx) {
         let Some(nodes) = &self.nodes else { return };
         let here = nodes.machine.clone();
-        let mut usable: Vec<MachineName> = nodes
-            .machines
-            .iter()
-            .filter(|node| node.revoked.is_none() && node.online != Some(false))
-            .map(|node| node.name.clone())
-            .collect();
-        if !usable.contains(&here) {
-            usable.insert(0, here.clone());
+        // The machines whose agents this computer's accounts may use, the
+        // online ones, and every machine of its hubs.
+        let mut usable = vec![here.clone()];
+        let mut every = vec![here.clone()];
+        for node in nodes.hubs.iter().flat_map(|hub| &hub.machines) {
+            if node.online != Some(false)
+                && node.rights.iter().any(|(_, rights)| rights.agents)
+                && !usable.contains(&node.name)
+            {
+                usable.push(node.name.clone());
+            }
+            if !every.contains(&node.name) {
+                every.push(node.name.clone());
+            }
         }
-        let every: Vec<MachineName> =
-            nodes.machines.iter().filter(|node| node.revoked.is_none()).map(|node| node.name.clone()).collect();
-        let every = if every.is_empty() { vec![here.clone()] } else { every };
         let towns = self.towns.clone();
         let words = ctx.words;
         let initial = match &self.kind {
@@ -308,27 +366,30 @@ impl FormPage {
             (Kind::NewProject, Done::Record(record)) => {
                 Act::Replace(Page::Project(Box::new(project::ProjectPage::new(record.town))))
             }
-            (Kind::EditProject { .. } | Kind::Revoke { .. } | Kind::Leave, _) => Act::Back,
-            (Kind::Invite, Done::Code { code, expires }) => {
+            (Kind::EditProject { .. } | Kind::Logout | Kind::Remove { .. }, _) => Act::Back,
+            (Kind::Token, Done::Token { text, server, expires }) => {
                 let look = &ctx.look;
                 self.result = Some(vec![
-                    Line::from(Span::styled(code, look.text(Role::Accent).add_modifier(Modifier::BOLD))),
+                    Line::from(Span::styled(text, look.text(Role::Accent).add_modifier(Modifier::BOLD))),
                     Line::default(),
-                    Line::from(Span::styled(words.invite_how(), look.text(Role::Text))),
+                    Line::from(Span::styled(words.token_how(server), look.text(Role::Text))),
                     Line::from(Span::styled(
-                        words.invite_until(&crate::words::clock(expires, ctx.now)),
+                        words.token_until(&crate::words::clock(expires, ctx.now)),
                         look.text(Role::Muted),
                     )),
                 ]);
                 Act::Stay
             }
-            (Kind::Join, Done::Joined { world, name, kept }) => {
+            (Kind::Login | Kind::TokenLogin, Done::LoggedIn { hub, name, account, kept }) => {
                 let (said, role) = match &kept {
                     Ok(kept) => (words.kept(kept), Role::Muted),
                     Err(why) => (words.not_kept(why), Role::Caution),
                 };
                 self.result = Some(vec![
-                    Line::from(Span::styled(words.joined(&world, name.as_str()), ctx.look.text(Role::Text))),
+                    Line::from(Span::styled(
+                        words.logged_in(hub.as_str(), name.as_str(), account.as_str()),
+                        ctx.look.text(Role::Text),
+                    )),
                     Line::from(Span::styled(said, ctx.look.text(role))),
                 ]);
                 Act::Stay
@@ -344,10 +405,10 @@ impl FormPage {
             Kind::OpenAgent { .. } => Finish::Open,
             Kind::NewProject => Finish::Create,
             Kind::EditProject { .. } => Finish::Save,
-            Kind::Invite => Finish::Invite,
-            Kind::Join => Finish::Join,
-            Kind::Revoke { .. } => Finish::Revoke,
-            Kind::Leave => Finish::Leave,
+            Kind::Login | Kind::TokenLogin => Finish::Login,
+            Kind::Token => Finish::Token,
+            Kind::Logout => Finish::Logout,
+            Kind::Remove { .. } => Finish::Remove,
         }
     }
 
@@ -483,19 +544,45 @@ impl FormPage {
                 Job::OpenTown { town, fields: self.record_fields(ctx)? }
             }
             Kind::EditProject { town, .. } => Job::EditTown { town: town.clone(), fields: self.record_fields(ctx)? },
-            Kind::Invite => {
-                let hours: u32 = self.value(Key::Hours).parse().map_err(|_| words.hours_wrong().to_string())?;
-                Job::Invite { name: optional_machine(self.value(Key::InviteName))?, hours }
-            }
-            Kind::Join => {
-                let code = self.value(Key::Code);
-                if code.is_empty() {
-                    return Err(words.code_needed().to_string());
+            Kind::Login => {
+                let hub = self.value(Key::HubAddress);
+                let account = self.value(Key::Account);
+                let password = self.raw(Key::Password);
+                if hub.is_empty() || account.is_empty() || password.is_empty() {
+                    return Err(words.login_needs().to_string());
                 }
-                Job::Join { code, name: optional_machine(self.value(Key::JoinName))? }
+                let account = AccountName::try_from(account).map_err(|error| error.to_string())?;
+                let register = !self.value(Key::Register).is_empty();
+                Job::Login { hub, account, password, register, name: optional_machine(self.value(Key::LoginName))? }
             }
-            Kind::Revoke { name } => Job::Revoke { name: name.clone(), reason: self.value(Key::Reason) },
-            Kind::Leave => Job::Leave,
+            Kind::TokenLogin => {
+                let token = self.value(Key::Token);
+                if token.is_empty() {
+                    return Err(words.token_needed().to_string());
+                }
+                Job::LoginWithToken { token, name: optional_machine(self.value(Key::LoginName))? }
+            }
+            Kind::Token => {
+                let (hub, account) = hub_account(&self.value(Key::HubAccount))?;
+                let hours = self.value(Key::Hours).parse().map_err(|_| words.hours_wrong().to_string())?;
+                let kind = match self.value(Key::TokenFor).as_str() {
+                    "phone" => Some(fastctx_types::accounts::MemberKind::Phone),
+                    "computer" => Some(fastctx_types::accounts::MemberKind::Computer),
+                    _ => None,
+                };
+                Job::Token { hub, account, kind, hours }
+            }
+            Kind::Logout => {
+                let (hub, account) = hub_account(&self.value(Key::HubAccount))?;
+                Job::Logout { hub, account }
+            }
+            Kind::Remove { hub, account, name } => Job::Remove {
+                hub: hub.clone(),
+                account: account.clone(),
+                name: name.clone(),
+                reason: self.value(Key::Reason),
+                seen: false,
+            },
         })
     }
 
@@ -545,10 +632,11 @@ impl FormPage {
             Kind::OpenAgent { .. } => words.form_open_agent().to_string(),
             Kind::NewProject => words.form_new_project().to_string(),
             Kind::EditProject { town, .. } => words.form_edit_project(town.as_str()),
-            Kind::Invite => words.form_invite().to_string(),
-            Kind::Join => words.form_join().to_string(),
-            Kind::Revoke { name } => words.form_revoke(name.as_str()),
-            Kind::Leave => words.form_leave().to_string(),
+            Kind::Login => words.form_login().to_string(),
+            Kind::TokenLogin => words.form_token_login().to_string(),
+            Kind::Token => words.form_token().to_string(),
+            Kind::Logout => words.form_logout().to_string(),
+            Kind::Remove { name, account, .. } => words.form_remove(name.as_str(), account.as_str()),
         };
         let mut rows: Vec<Row> = Vec::new();
         let mut caret: Option<(usize, usize)> = None;
@@ -556,19 +644,18 @@ impl FormPage {
             rows.extend(result.iter().cloned().map(Row::new));
         } else {
             match &self.kind {
-                Kind::Revoke { name } => {
-                    for line in text::wrap_plain(&words.revoke_warning(name.as_str()), look.text(Role::Caution), width)
-                    {
+                Kind::Remove { name, account, .. } => {
+                    let warning = words.remove_warning(name.as_str(), account.as_str());
+                    for line in text::wrap_plain(&warning, look.text(Role::Caution), width) {
                         rows.push(Row::new(line));
                     }
                     rows.push(Row::blank());
                 }
-                Kind::Leave => {
-                    for line in text::wrap_plain(words.leave_warning(), look.text(Role::Caution), width) {
+                Kind::Logout => {
+                    for line in text::wrap_plain(words.logout_warning(), look.text(Role::Caution), width) {
                         rows.push(Row::new(line));
                     }
                     rows.push(Row::blank());
-                    rows.push(Row::new(quiet(ctx, words.enter_to_confirm())));
                 }
                 _ => {}
             }
@@ -582,6 +669,13 @@ impl FormPage {
                 let label = words.field(field.key);
                 let pad = " ".repeat(label_width - text::width(label));
                 let mut value_lines: Vec<Line<'static>> = match &field.value {
+                    Value::Text(editor) if field.secret => {
+                        let dots = "•".repeat(editor.text().chars().count());
+                        if focused {
+                            caret = Some((rows.len(), label_width + text::width(&dots)));
+                        }
+                        vec![Line::from(Span::styled(dots, look.text(Role::Text)))]
+                    }
                     Value::Text(editor) => {
                         let (lines, at) = editor.layout(value_width, look.text(Role::Text));
                         if focused {
@@ -706,4 +800,16 @@ impl FormPage {
             ));
         }
     }
+}
+
+/// The accounts to choose from, each shown as `account · hub`.
+fn account_options(logins: &[(HubName, AccountName)]) -> Vec<(String, String)> {
+    logins.iter().map(|(hub, account)| (format!("{account} · {hub}"), format!("{hub}/{account}"))).collect()
+}
+
+fn hub_account(value: &str) -> Result<(HubName, AccountName), String> {
+    let (hub, account) = value.split_once('/').ok_or_else(|| "choose an account".to_string())?;
+    let hub = HubName::try_from(hub).map_err(|error| error.to_string())?;
+    let account = AccountName::try_from(account).map_err(|error| error.to_string())?;
+    Ok((hub, account))
 }

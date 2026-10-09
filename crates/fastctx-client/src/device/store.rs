@@ -1,24 +1,22 @@
 //! An application-owned identity, independent of the local node's directory.
+//!
+//! ```text
+//! <root>/device.lock        held while an application has the identity open
+//! <root>/device.key         this device's key, the same on every hub
+//! <root>/hubs/<hub id>/     one link's records (`fastctx_net::link::state`)
+//! ```
 
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fastctx_net::link::{Keys, Membership, NetDir, state};
-use fastctx_net::seal::SealKey;
+use fastctx_net::ids::HubId;
+use fastctx_net::link::{Membership, NetDir, state};
 use fastctx_net::sign::SecretKey;
 use fastctx_platform::{FileLock, ensure_private_dir};
-use serde::{Deserialize, Serialize};
 
 pub(super) struct Store {
     root: PathBuf,
     _lock: FileLock,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub(super) struct Identity {
-    directory: String,
-    pub membership: Membership,
-    pub pending: bool,
 }
 
 impl Store {
@@ -33,68 +31,55 @@ impl Store {
         &self.root
     }
 
-    pub fn load(&self) -> io::Result<Option<Identity>> {
-        let identity: Option<Identity> = state::read_or(&self.root.join("identity.json"), None)?;
-        if let Some(identity) = &identity
-            && (identity.directory.len() != 16 || !identity.directory.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid device identity directory"));
-        }
-        Ok(identity)
-    }
-
-    pub fn save(&self, identity: Option<&Identity>) -> io::Result<()> {
-        state::write(&self.root.join("identity.json"), &identity)
-    }
-
-    /// Makes the keys of an identity still to be admitted, in a directory
-    /// of its own; the identity is kept once its name is known (`adopt`).
-    pub fn create(&self) -> io::Result<(String, Keys)> {
-        let directory: String = fastctx_net::sign::random::<8>()?.iter().map(|byte| format!("{byte:02x}")).collect();
-        let path = self.root.join(&directory);
-        ensure_private_dir(&path)?;
-        let key = SecretKey::generate()?;
-        key.create(&path.join("device.key"))?;
-        let seal = SealKey::generate()?;
-        seal.create(&path.join("seal.key"))?;
-        Ok((directory, Keys { sign: key, seal }))
-    }
-
-    /// Keeps the identity whose keys are in `directory`, pending admission.
-    /// Admission can consume a one-use invitation before its reply reaches
-    /// us: the keys and hub coordinates are kept before it is attempted.
-    pub fn adopt(&self, directory: String, membership: Membership) -> io::Result<Identity> {
-        let identity = Identity { directory, membership, pending: true };
-        self.save(Some(&identity))?;
-        Ok(identity)
-    }
-
-    /// The identity's keys. A device that joined before sealing makes its
-    /// sealing key now, once, and the link gives the hub its public half.
-    pub fn keys(&self, identity: &Identity) -> io::Result<Keys> {
-        let sign = SecretKey::load(&self.directory(identity).join("device.key"))?;
-        let path = self.directory(identity).join("seal.key");
-        let seal = match SealKey::load(&path) {
+    /// This device's key, made on first use.
+    pub fn key(&self) -> io::Result<SecretKey> {
+        let path = self.root.join("device.key");
+        match SecretKey::load(&path) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let seal = SealKey::generate()?;
-                seal.create(&path)?;
-                seal
+                let key = SecretKey::generate()?;
+                key.create(&path)?;
+                Ok(key)
             }
-            other => other?,
+            other => other,
+        }
+    }
+
+    fn hubs(&self) -> PathBuf {
+        self.root.join("hubs")
+    }
+
+    pub fn net(&self, hub: &HubId) -> NetDir {
+        NetDir::new(self.hubs().join(hub.as_str()))
+    }
+
+    /// The memberships kept, one per hub.
+    pub fn memberships(&self) -> io::Result<Vec<Membership>> {
+        let mut memberships = Vec::new();
+        let entries = match std::fs::read_dir(self.hubs()) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(memberships),
+            Err(error) => return Err(error),
         };
-        Ok(Keys { sign, seal })
+        for entry in entries {
+            let path = entry?.path();
+            match state::read::<Membership>(&path.join("membership.json")) {
+                Ok(membership) => memberships.push(membership),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(memberships)
     }
 
-    /// Removes the keys of an identity that was never kept.
-    pub fn discard(&self, directory: &str) {
-        let _ = std::fs::remove_dir_all(self.root.join(directory));
+    pub fn keep(&self, membership: &Membership) -> io::Result<()> {
+        let net = self.net(&membership.id);
+        net.prepare()?;
+        state::write(&net.membership(), membership)
     }
 
-    pub fn net(&self, identity: &Identity) -> NetDir {
-        NetDir::new(self.directory(identity).join("net"))
-    }
-
-    fn directory(&self, identity: &Identity) -> PathBuf {
-        self.root.join(&identity.directory)
+    /// Puts a hub's records aside once this device is logged out of it.
+    pub fn forget(&self, hub: &HubId) -> io::Result<()> {
+        let aside = self.root.join(format!("left-{hub}-{}", jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
+        std::fs::rename(self.net(hub).path(), aside)
     }
 }

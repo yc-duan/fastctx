@@ -64,7 +64,7 @@ pub struct About {
     /// The machine its scripts start on, its 这里 (`world-run.md`), when
     /// that is not the machine it lives on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub works_on: Option<MachineName>,
+    pub works_on: Option<crate::access::Written>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::AccountName;
+use crate::{AccountName, HubName, MachineName, NameError};
 
 /// A project as the hub and the wire know it, chosen at random when the
 /// project is opened. Its short name is the town's (`TownName`); the id is
@@ -208,5 +208,60 @@ pub enum Acting {
 impl Acting {
     pub fn one(hub: HubId, account: AccountName) -> Self {
         Acting::Accounts { accounts: vec![HubAccount { hub, account }] }
+    }
+}
+
+/// A machine as it is written (`world-network.md`): its name, or `name.hub`
+/// where two hubs a computer is on each have a different computer of that
+/// name. A computer has one name on every hub it is on.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Written {
+    pub name: MachineName,
+    pub hub: Option<HubName>,
+}
+
+impl Written {
+    pub fn parse(text: &str) -> Result<Self, NameError> {
+        let (name, hub) = match text.split_once('.') {
+            Some((name, hub)) => (name, Some(hub)),
+            None => (text, None),
+        };
+        Ok(Self { name: MachineName::try_from(name)?, hub: hub.map(HubName::try_from).transpose()? })
+    }
+}
+
+impl From<&MachineName> for Written {
+    fn from(name: &MachineName) -> Self {
+        Self { name: name.clone(), hub: None }
+    }
+}
+
+impl From<MachineName> for Written {
+    fn from(name: MachineName) -> Self {
+        Self { name, hub: None }
+    }
+}
+
+impl TryFrom<String> for Written {
+    type Error = NameError;
+
+    fn try_from(text: String) -> Result<Self, NameError> {
+        Self::parse(&text)
+    }
+}
+
+impl From<Written> for String {
+    fn from(written: Written) -> String {
+        written.to_string()
+    }
+}
+
+impl std::fmt::Display for Written {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.hub {
+            Some(hub) => write!(f, "{}.{hub}", self.name),
+            None => self.name.fmt(f),
+        }
     }
 }

@@ -28,7 +28,7 @@ pub(crate) fn peer(peer: &Peer) -> bool {
 }
 
 pub(crate) fn call(protocol: u32, peer: &Peer, call: &Call) -> bool {
-    if protocol == 5 && matches!(call, Call::Machines | Call::Page(_)) {
+    if protocol == 5 && matches!(call, Call::Machines { .. } | Call::Page(_)) {
         return false;
     }
     if let Peer::Supervisor { job: owned } = peer {
@@ -50,7 +50,7 @@ pub(crate) fn call(protocol: u32, peer: &Peer, call: &Call) -> bool {
             | Call::Project(_)
             | Call::Journal(_)
             | Call::Nodes
-            | Call::Machines
+            | Call::Machines { .. }
             | Call::Page(PageCall::Publish { .. } | PageCall::Read { .. } | PageCall::List { .. })
     )
 }

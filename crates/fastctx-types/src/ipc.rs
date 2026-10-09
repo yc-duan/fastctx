@@ -101,6 +101,8 @@ pub enum NodeFrame {
     FileRead { id: u64, part: crate::file_read::FileReadPart },
     /// Part of what an `On` call hands over, until its `Reply`.
     On { id: u64, piece: crate::on::OnPiece },
+    /// The tools a `WatchTools` session is offered may have changed.
+    ToolsChanged { id: u64 },
 }
 
 /// Why a call did not do what it asked, in words for whoever reads the

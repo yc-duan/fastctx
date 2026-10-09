@@ -275,18 +275,24 @@ pub fn machines_line(ctx: &Ctx, machines: &[MachineState]) -> Line<'static> {
 pub fn link_line(ctx: &Ctx, nodes: Option<&NodesReply>) -> Line<'static> {
     let words = &ctx.words;
     let Some(nodes) = nodes else { return Line::default() };
-    let (state, role) = match &nodes.link {
-        LinkState::Alone => (words.alone().to_string(), Role::Muted),
-        LinkState::Connecting { .. } => (words.connecting().to_string(), Role::Caution),
-        LinkState::Online { .. } => (words.hub_online().to_string(), Role::Muted),
-        LinkState::Stopped { .. } => (words.hub_stopped().to_string(), Role::Wrong),
+    // The hubs taken together: online when one is, and why not otherwise.
+    let links: Vec<&LinkState> = nodes.hubs.iter().map(|hub| &hub.link).collect();
+    let (state, role) = if links.is_empty() {
+        (words.alone().to_string(), Role::Muted)
+    } else if links.iter().any(|link| matches!(link, LinkState::Online { .. })) {
+        (words.hub_online().to_string(), Role::Muted)
+    } else if links.iter().any(|link| matches!(link, LinkState::Connecting { .. })) {
+        (words.connecting().to_string(), Role::Caution)
+    } else {
+        (words.hub_stopped().to_string(), Role::Wrong)
     };
     let mut spans = vec![Span::styled(nodes.machine.to_string(), ctx.look.text(Role::Muted))];
-    if !matches!(nodes.link, LinkState::Alone) {
-        spans.push(Span::styled(
-            format!("  ·  {}", words.machine_count(nodes.machines.len())),
-            ctx.look.text(Role::Faint),
-        ));
+    if !links.is_empty() {
+        let mut machines: Vec<&fastctx_types::MachineName> =
+            nodes.hubs.iter().flat_map(|hub| hub.machines.iter().map(|machine| &machine.name)).collect();
+        machines.sort();
+        machines.dedup();
+        spans.push(Span::styled(format!("  ·  {}", words.machine_count(machines.len())), ctx.look.text(Role::Faint)));
     }
     spans.push(Span::styled(format!("  ·  {state}"), ctx.look.text(role)));
     Line::from(spans)

@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use fastctx_types::access::Purpose;
 use fastctx_types::ipc::Failure;
 use fastctx_types::on::OnOrigin;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -118,17 +119,10 @@ async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) -> Result<(), Fai
         }
     }
     let mut delay = Backoff::default();
+    let acting = crate::on::acting(node, &pending.origin);
     loop {
-        let Some(link) = node.link() else {
-            node.log.line(format_args!(
-                "the stop of {:?} on {} remains pending: this node has no link",
-                pending.job, pending.machine
-            ));
-            tokio::time::sleep(delay.next()).await;
-            continue;
-        };
         let call = RemoteCall::StopOn { origin: pending.origin.clone(), job: pending.job.clone() };
-        match link.call(&pending.machine, call).await {
+        match node.call(&acting, &(&pending.machine).into(), Purpose::Hands, call).await {
             Ok(Ok(RemoteReply::OnDone)) => return Ok(()),
             Ok(Ok(_)) => node.log.line(format_args!(
                 "{} answered the stop of {:?} with an unrelated reply",

@@ -5,6 +5,8 @@ use crate::agents::AgentsReply;
 use crate::management::{Managed, Management};
 use serde::{Deserialize, Serialize};
 
+use crate::access::Purpose;
+
 use crate::JobId;
 use crate::copy::{CopyReport, Place};
 use crate::ipc::Failure;
@@ -114,12 +116,21 @@ pub enum RemoteCall {
     Canon {
         path: String,
     },
-    /// Start a colleague there for a resident of the calling machine.
+    /// Start a colleague there for a resident of the calling machine,
+    /// working for those of `accounts` that may use the agents there.
     Ask {
         asker: ResidentId,
         town: Option<TownName>,
         label: String,
         prompt: String,
+        #[serde(default)]
+        accounts: Vec<crate::AccountName>,
+    },
+    /// The user turns asking for colleagues on for a resident there, with
+    /// where they live, or off.
+    Colleagues {
+        resident: ResidentId,
+        lives_on: Option<crate::access::Written>,
     },
     /// Whether a resident with this id lives there.
     Find {
@@ -162,6 +173,10 @@ pub enum RemoteCall {
         reasoning_effort: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<crate::attachments::Attachment>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        works_on: Option<crate::access::Written>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        colleagues: Option<crate::access::Written>,
     },
     /// Stop the turn a resident there is running, for the user.
     Stop {
@@ -213,6 +228,49 @@ pub enum RemoteCall {
     Relay {
         made: serde_json::Value,
     },
+}
+
+impl RemoteCall {
+    /// What the call asks of the machine it is made of (`world-network.md`,
+    /// 一台机器给几个账号用): the caller names it, the hub and the machine
+    /// check it.
+    pub fn purpose(&self) -> Purpose {
+        match self {
+            RemoteCall::Run { .. }
+            | RemoteCall::Write { .. }
+            | RemoteCall::On { .. }
+            | RemoteCall::OnReceipt { .. }
+            | RemoteCall::Follow { .. }
+            | RemoteCall::StopOn { .. }
+            | RemoteCall::StopJob { .. }
+            | RemoteCall::FindFiles { .. }
+            | RemoteCall::ReadFile { .. }
+            | RemoteCall::Canon { .. }
+            | RemoteCall::CopySend { .. }
+            | RemoteCall::CopyFetch { .. }
+            | RemoteCall::CopyReceive { .. }
+            | RemoteCall::PageAction { .. } => Purpose::Hands,
+            RemoteCall::Composer { .. }
+            | RemoteCall::Ask { .. }
+            | RemoteCall::Talk { .. }
+            | RemoteCall::Watch { .. }
+            | RemoteCall::ClaudeConsent { .. }
+            | RemoteCall::Open { .. }
+            | RemoteCall::Colleagues { .. }
+            | RemoteCall::Stop { .. }
+            | RemoteCall::Manage { .. }
+            | RemoteCall::Control { .. }
+            | RemoteCall::Offers { .. }
+            | RemoteCall::Upload { .. } => Purpose::Agents,
+            RemoteCall::Agents
+            | RemoteCall::Look { .. }
+            | RemoteCall::Find { .. }
+            | RemoteCall::Who { .. }
+            | RemoteCall::Since { .. }
+            | RemoteCall::Facts
+            | RemoteCall::Relay { .. } => Purpose::Look,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,6 +334,8 @@ pub enum RemoteReply {
     Offers(Box<Offers>),
     /// A watch ended: the caller left, or the session's machine stopped it.
     Watched,
+    /// A conversation's setting there changed as asked.
+    Set,
     Facts(MachineFacts),
     Copied(CopyReport),
     Canon {
@@ -301,8 +361,15 @@ pub enum Letter {
     Notice { to: ResidentId, notice: Notice },
     /// Words from the resident `from` of the sending machine to the resident
     /// `to`, who is owed nothing; `from` is owed the end of the turn they go
-    /// into.
-    Speak { to: ResidentId, from: ResidentId, text: String },
+    /// into. `accounts` are the others of this hub `from` works for, any of
+    /// which `to` may work for; the letter is sent for one of them.
+    Speak {
+        to: ResidentId,
+        from: ResidentId,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        accounts: Vec<crate::AccountName>,
+    },
     /// The resident `resident` of the sending machine left: colleagues that
     /// work for it go to sleep once their turn ends.
     Left { resident: ResidentId },

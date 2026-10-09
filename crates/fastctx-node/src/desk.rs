@@ -130,7 +130,7 @@ fn send(node: &Arc<Node>, tell: Vec<(ResidentId, String)>, event: &str) {
         tokio::spawn(async move {
             let to = Address { machine: node.machine(), resident: resident.clone() };
             let notice = Notice::Words { from: Speaker::World, text };
-            if let Err(failure) = speech::tell(&node, &to, id, notice, Owed::Working).await {
+            if let Err(failure) = speech::tell(&node, &Default::default(), &to, id, notice, Owed::Working).await {
                 node.log.line(format_args!("telling {resident} about the desk: {failure}"));
             }
         });

@@ -159,7 +159,10 @@ async fn read_ready(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {
 /// project spans it or not. Reads may use an offline copy; an admission
 /// cannot use possibly superseded consent or a withdrawn publication.
 async fn current(node: &Arc<Node>, town: &TownName, required: bool) -> Result<(), Failure> {
-    let Some(link) = node.link() else { return require_town(node, town) };
+    let place = crate::ledger::names::place(&node.world, town).map_err(io_failure)?;
+    let Some((place, link)) = place.and_then(|place| node.link_of(&place.hub).map(|link| (place, link))) else {
+        return require_town(node, town);
+    };
     let _syncing = node.syncing.lock().await;
     let offline = || {
         Failure::new(format!(
@@ -169,16 +172,12 @@ async fn current(node: &Arc<Node>, town: &TownName, required: bool) -> Result<()
     let Some(catalog) = link.try_ledger_catalog().await.map_err(Failure::new)? else {
         return if required { Err(offline()) } else { Ok(()) };
     };
-    let id = crate::ledger::names::require(node, town).map_err(Failure::new)?;
     let latest = catalog
         .into_iter()
-        .find(|(listed, _)| *listed == id)
+        .find(|(listed, _)| *listed == place.town)
         .map(|(_, seq)| seq)
         .ok_or_else(|| crate::town::map::no_ledger(node, town))?;
-    let complete = crate::ledger::take(node, &link, &id, latest, true).await.map_err(Failure::new)?;
-    if !complete && required {
-        return Err(offline());
-    }
+    crate::ledger::take(node, &link, town, &place.town, latest).await.map_err(Failure::new)?;
     require_town(node, town)
 }
 
@@ -228,7 +227,7 @@ async fn validate_acts(node: &Arc<Node>, town: &TownName, acts: &[PageAct]) -> R
                     return Err(Failure::new("a page run needs its exact nonempty command"));
                 }
                 if machine != &node.machine()
-                    && !node.link().is_some_and(|link| link.members().0.machines().any(|m| &m.name == machine))
+                    && !node.links().iter().any(|link| link.view().machines().any(|m| &m.name == machine))
                 {
                     return Err(Failure::new(format!("there is no machine named {machine}")));
                 }

@@ -1,40 +1,41 @@
-//! What another member may ask of this machine (`world-network.md`, 管理权
-//! 与范围): every call is checked at this door against the scope of the
-//! member that makes it, as this machine works it out from the members
-//! table, before anything of it runs. A call is refused with what its
-//! scope lacks: this machine, the action, the kind of agent it reaches, or
-//! the project it is about.
+//! What another machine may ask of this one (`world-network.md`, 一台机器
+//! 给几个账号用): every call is checked at this door before anything of it
+//! runs, a second look after the hub's.
 //!
-//! What asks of the whole World (who is here, what happened since, the
-//! agents, a resident in detail) is answered with what the asker's scope
-//! covers and nothing more, so a member sees only what it may use.
+//! The door works out for itself what a call asks of this machine
+//! (`RemoteCall::purpose`) and checks that against the view: that the caller may act
+//! for the account it names, and that the account may do that here. A call
+//! about one resident goes on only when that resident works for the
+//! account; a call about a project, only when the account may use the
+//! project. What asks of the whole machine (who is here, what happened
+//! since) is answered with what the account may see (`seen`).
 
 use std::sync::Arc;
 
-use fastctx_net::scope::{Action, Denied, Scope};
-use fastctx_net::trust::Member;
+use fastctx_net::link::{Caller, Link};
+use fastctx_types::access::HubId;
 use fastctx_types::ipc::Failure;
 use fastctx_types::management::Management;
 use fastctx_types::remote::RemoteCall;
-use fastctx_types::{AgentName, MachineName, ResidentId, TownName};
+use fastctx_types::{AccountName, MachineName, ResidentId, TownName};
 
 use crate::Node;
 
 pub mod letters;
 pub mod seen;
 
-/// What `call` does here, in the terms of a scope: the action, the agent
-/// it reaches, and the project it is about.
-struct Asked<'a> {
-    action: Action,
-    agent: Option<AgentName>,
-    town: Option<&'a TownName>,
-    /// The resident of this machine it reaches, whose project counts too.
-    resident: Option<&'a ResidentId>,
+/// Who asked, and what that lets it see here.
+pub struct Asker {
+    pub machine: MachineName,
+    pub hub: HubId,
+    pub account: AccountName,
+    /// Whether the account may work on this machine, and so sees all of it.
+    pub hands: bool,
 }
 
-fn asked(call: &RemoteCall) -> Asked<'_> {
-    let reaches = match call {
+/// The resident of this machine `call` is about, if it is about one.
+fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
+    match call {
         RemoteCall::Talk { to: who, .. }
         | RemoteCall::Composer { resident: who, .. }
         | RemoteCall::Watch { resident: who, .. }
@@ -42,6 +43,7 @@ fn asked(call: &RemoteCall) -> Asked<'_> {
         | RemoteCall::Control { resident: who, .. }
         | RemoteCall::Manage { resident: who, .. }
         | RemoteCall::Offers { resident: who }
+        | RemoteCall::Colleagues { resident: who, .. }
         | RemoteCall::Upload {
             target:
                 fastctx_types::attachments::UploadTarget::Resident { resident: who }
@@ -49,135 +51,65 @@ fn asked(call: &RemoteCall) -> Asked<'_> {
             ..
         } => Some(who),
         _ => None,
-    };
-    let resident = |resident: &ResidentId| Some(resident.agent());
-    let (action, agent, town) = match call {
-        RemoteCall::Run { town, .. } => (Action::Run, None, town.as_ref()),
-        // Whoever may run commands there may stop what runs there.
-        RemoteCall::StopJob { .. } => (Action::Run, None, None),
+    }
+}
+
+/// The project `call` is about, if it names one.
+fn town_of(call: &RemoteCall) -> Option<&TownName> {
+    match call {
+        RemoteCall::Run { town, .. }
+        | RemoteCall::Write { town, .. }
+        | RemoteCall::Ask { town, .. }
+        | RemoteCall::Who { town, .. }
+        | RemoteCall::Since { town, .. }
+        | RemoteCall::Open { town, .. } => town.as_ref(),
         RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } | RemoteCall::StopOn { origin, .. } => {
-            (Action::Run, None, origin.town.as_ref())
+            origin.town.as_ref()
         }
-        RemoteCall::Write { town, .. } => (Action::Write, None, town.as_ref()),
-        RemoteCall::CopySend { .. } | RemoteCall::CopyReceive { .. } | RemoteCall::CopyFetch { .. } => {
-            (Action::Copy, None, None)
-        }
-        // A colleague is a Codex resident.
-        RemoteCall::Ask { town, .. } => (Action::AskColleague, Some(codex()), town.as_ref()),
-        RemoteCall::Who { town, .. } | RemoteCall::Since { town, .. } => (Action::W, None, town.as_ref()),
-        RemoteCall::Agents
-        | RemoteCall::Facts
-        | RemoteCall::Look { .. }
-        | RemoteCall::Find { .. }
-        | RemoteCall::OnReceipt { .. } => (Action::W, None, None),
-        RemoteCall::Talk { to, .. } => (Action::Talk, resident(to), None),
-        RemoteCall::Watch { resident: who, .. }
-        | RemoteCall::Composer { resident: who, .. }
-        | RemoteCall::Stop { resident: who }
-        | RemoteCall::Control { resident: who, .. }
-        | RemoteCall::Manage { resident: who, .. }
-        | RemoteCall::Offers { resident: who } => (Action::Talk, resident(who), None),
-        RemoteCall::Open { agent, town, .. } => (Action::Talk, Some(agent.clone()), town.as_ref()),
-        RemoteCall::Upload { target, .. } => match target {
-            fastctx_types::attachments::UploadTarget::Resident { resident: who }
-            | fastctx_types::attachments::UploadTarget::Draft { resident: who, .. } => {
-                (Action::Talk, resident(who), None)
-            }
-            fastctx_types::attachments::UploadTarget::New { agent, town } => {
-                (Action::Talk, Some(agent.clone()), town.as_ref())
-            }
-        },
-        RemoteCall::FindFiles { .. } => (Action::Talk, None, None),
-        RemoteCall::ReadFile { .. } | RemoteCall::Canon { .. } => (Action::Read, None, None),
-        RemoteCall::ClaudeConsent { .. } => (Action::Consent, Some(claude()), None),
-        RemoteCall::PageAction { source, .. } => (Action::Page, None, Some(&source.town)),
-        // Checked by what it asks, in `devices::relay`.
-        RemoteCall::Relay { .. } => (Action::W, None, None),
-        // Admitted by management rights alone, in `admit`.
-        RemoteCall::SetRelay { .. } => (Action::W, None, None),
-    };
-    Asked { action, agent, town, resident: reaches }
-}
-
-fn codex() -> AgentName {
-    AgentName::try_from("codex").expect("a valid agent name")
-}
-
-fn claude() -> AgentName {
-    AgentName::try_from("claude").expect("a valid agent name")
-}
-
-/// The member `from` as this machine trusts it.
-pub fn member(node: &Node, from: &MachineName) -> Result<Member, Failure> {
-    node.link()
-        .and_then(|link| link.members().0.get(from).cloned())
-        .ok_or_else(|| Failure::new(format!("{from} is not a member this machine trusts")))
-}
-
-/// Refuses a call `from` may not make.
-pub fn admit(node: &Arc<Node>, from: &MachineName, call: &RemoteCall) -> Result<Member, Failure> {
-    let member = member(node, from)?;
-    crate::devices::admit(&member, call)?;
-    if matches!(call, RemoteCall::Relay { .. }) {
-        return Ok(member);
+        RemoteCall::PageAction { source, .. } => Some(&source.town),
+        RemoteCall::Upload { target: fastctx_types::attachments::UploadTarget::New { town, .. }, .. } => town.as_ref(),
+        RemoteCall::Manage { action: Management::Move { town: Some(town) }, .. } => Some(town),
+        _ => None,
     }
-    // Where a machine relays is the World's shape, set by the machines that
-    // manage it.
-    if matches!(call, RemoteCall::SetRelay { .. }) {
-        if member.manage {
-            return Ok(member);
-        }
-        return Err(Failure::new(format!(
-            "{} refused {from}: only a machine with management rights sets where a machine relays",
-            node.machine()
-        )));
-    }
-    let asked = asked(call);
+}
+
+/// Refuses a call `caller` may not make here; otherwise, who asked.
+pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteCall) -> Result<Asker, Failure> {
     let here = node.machine();
-    let refuse = |denied: Denied| Failure::new(format!("{} refused {from}: {denied}", here));
-    // Consent to Claude Code's bypass mode is the user's alone, and only a
-    // member that manages the World speaks for the user on that.
-    if asked.action == Action::Consent && !member.manage && member.kind.is_machine() {
-        return Err(Failure::new(format!(
-            "{here} refused {from}: only the user, from a device or a machine with management rights, gives that consent"
+    // Nothing of a call turned away here ran.
+    let refuse = |why: String| Failure::not_run(format!("{here} refused {}: {why}", caller.machine));
+    let view = link.view();
+    view.admits(&caller.machine, &caller.account, &here, call.purpose()).map_err(refuse)?;
+    crate::devices::admit(&view, &caller.machine, call)?;
+    let hub = link.membership().id.clone();
+    if let Some(town) = town_of(call) {
+        let allowed = view
+            .projects
+            .iter()
+            .find(|project| project.name == *town)
+            .is_some_and(|project| view.in_project(&caller.account, &project.town));
+        if !allowed {
+            return Err(refuse(format!("the account {} may not use the project {town}", caller.account)));
+        }
+    }
+    if let Some(resident) = resident_of(call) {
+        let serves = node
+            .residents
+            .about(resident)
+            .is_some_and(|(about, _)| node.serves(&about.acting, &hub, &caller.account));
+        if !serves {
+            return Err(refuse(format!("{resident} does not work for the account {}", caller.account)));
+        }
+    }
+    // Consent to Claude Code's bypass mode is for the Claude logged in on
+    // this machine, and so its owner's alone.
+    if matches!(call, RemoteCall::ClaudeConsent { .. }) && view.me().and_then(|me| me.home.as_ref()) != Some(&caller.account)
+    {
+        return Err(refuse(format!(
+            "only the account this machine is registered under gives that consent, not {}",
+            caller.account
         )));
     }
-    member.scope.allows(&here, asked.action, asked.agent.as_ref()).map_err(refuse)?;
-    if let Some(town) = asked.town
-        && !in_scope(node, &member.scope, town)
-    {
-        return Err(refuse(Denied::Project));
-    }
-    if let RemoteCall::Manage { action: Management::Move { town: Some(town) }, .. } = call
-        && !in_scope(node, &member.scope, town)
-    {
-        return Err(refuse(Denied::Project));
-    }
-    if let Some(resident) = asked.resident
-        && let Some(Some(town)) = node.residents.town_of(resident)
-        && !in_scope(node, &member.scope, &town)
-    {
-        return Err(refuse(Denied::Project));
-    }
-    Ok(member)
-}
-
-/// Whether `scope` covers the project `town`.
-pub fn in_scope(node: &Node, scope: &Scope, town: &TownName) -> bool {
-    if scope.projects.is_all() {
-        return true;
-    }
-    crate::ledger::names::town_id(node, town).is_some_and(|id| scope.projects.contains(&id))
-}
-
-/// Whether `scope` covers a resident `id` of this machine, in `town`.
-pub fn sees(node: &Node, scope: &Scope, resident: &ResidentId, town: Option<&TownName>) -> bool {
-    scope.agents.contains(&resident.agent()) && town.is_none_or(|town| in_scope(node, scope, town))
-}
-
-/// Whether this machine's own scope covers `machine`: what it asks around
-/// the World, it asks only of those, so its residents and its user see only
-/// what they may use.
-pub fn reaches(node: &Node, table: &fastctx_net::trust::Table, machine: &MachineName) -> bool {
-    table.get(&node.machine()).is_none_or(|me| me.scope.machines.contains(machine))
+    let hands = view.rights(&caller.account, &here).hands;
+    Ok(Asker { machine: caller.machine.clone(), hub, account: caller.account.clone(), hands })
 }

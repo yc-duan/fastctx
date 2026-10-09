@@ -1,9 +1,9 @@
 //! What a device asks of the whole World, it asks of each machine itself
-//! (`world-network.md`, 机器与设备): each online machine its scope covers is
-//! asked for its own part, answers only what that scope may see, and seals
-//! its answer for this device alone; no machine reads another's answer on
-//! the device's behalf. What only the projects' ledgers know, a project's
-//! record or the World's projects, one machine answers from its own copy.
+//! (`world-network.md`, 四种话): each online machine its accounts may use is
+//! asked for its own part, for one of those accounts, and answers only what
+//! that account may see; no machine answers for another. What only the
+//! projects' ledgers know, a project's record or its projects, one machine
+//! that acts for the device's account answers from its own copy.
 
 use std::sync::Arc;
 
@@ -13,11 +13,11 @@ use fastctx_types::project::TownSummary;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::since::{MachineSince, SinceEvent, SinceIssue, SinceKind, SinceTown, WorldSince};
 use fastctx_types::town::{LookedUp, MachineWho, WhoScope, WorldWho};
-use fastctx_types::world::{Node as NodeView, NodesReply, Revoked, Standing};
-use fastctx_types::{Call, MachineName, ProjectCall, Reply, TownName};
+use fastctx_types::world::{HubNodes, Node as NodeView, NodesReply};
+use fastctx_types::{AccountName, Call, MachineName, ProjectCall, Reply, TownName};
 use jiff::Timestamp;
 
-use super::{Session, failed, link_state};
+use super::{Device, failed};
 use crate::Error;
 
 /// How one machine answered.
@@ -27,40 +27,48 @@ enum Heard {
     NoAnswer(String),
 }
 
-impl Session {
-    /// The machines this device's scope covers, by name.
-    fn reachable(&self) -> Vec<MachineName> {
-        let (table, _) = self.link.members();
-        let mine = table.get(&self.link.membership().name).map(|me| me.scope.clone());
-        table
-            .machines()
-            .filter(|member| mine.as_ref().is_none_or(|scope| scope.machines.contains(&member.name)))
-            .map(|member| member.name.clone())
-            .collect()
+/// A machine to ask, on the hub `link` reaches it through, with the
+/// device's account that may use it.
+struct Reachable {
+    link: Arc<Link>,
+    name: MachineName,
+    account: AccountName,
+}
+
+impl Device {
+    /// The machines this device's accounts may use, on every hub it is on.
+    fn reachable(&self) -> Vec<Reachable> {
+        let mut reachable = Vec::new();
+        for session in self.sessions() {
+            let view = session.link.view();
+            let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
+            for machine in view.machines() {
+                if let Some(account) = logins.iter().find(|account| view.rights(account, &machine.name).any()) {
+                    reachable.push(Reachable { link: session.link.clone(), name: machine.name.clone(), account: account.clone() });
+                }
+            }
+        }
+        reachable
     }
 
     /// Asks each of `machines` at once, the online ones by a call `call`
     /// makes for each.
-    async fn ask_each(
-        &self,
-        machines: Vec<MachineName>,
-        call: impl Fn(&MachineName) -> RemoteCall,
-    ) -> Vec<(MachineName, Heard)> {
-        let refreshed = self.link.refresh().await;
-        let (_, presence) = self.link.members();
+    async fn ask_each(&self, machines: Vec<Reachable>, call: impl Fn(&MachineName) -> RemoteCall) -> Vec<(MachineName, Heard)> {
         let mut heard = Vec::new();
         let mut asks = Vec::new();
-        for name in machines {
-            if let Err(error) = &refreshed {
+        for Reachable { link, name, account } in machines {
+            if let Err(error) = link.refresh().await {
                 let reason = format!("whether it is connected is not known: the hub could not be asked ({error})");
                 heard.push((name, Heard::NoAnswer(reason)));
                 continue;
             }
-            match presence.iter().find(|seen| seen.name == name) {
+            let seen = link.view().member(&name).cloned();
+            match seen {
                 Some(seen) if seen.online => {
-                    let (link, call): (Arc<Link>, RemoteCall) = (self.link.clone(), call(&name));
+                    let call = call(&name);
                     asks.push(tokio::spawn(async move {
-                        let answer = match link.call(&name, call).await {
+                        let purpose = call.purpose();
+                        let answer = match link.call(&name, &account, purpose, call).await {
                             Ok(Ok(reply)) => Heard::Answered(reply),
                             Ok(Err(failure)) => Heard::NoAnswer(failure.message),
                             Err(CallFailure::Offline { last_seen, .. }) => Heard::Offline(last_seen),
@@ -76,11 +84,15 @@ impl Session {
         for ask in asks {
             match ask.await {
                 Ok(answer) => heard.push(answer),
-                Err(error) => heard.push((self.link.membership().name.clone(), Heard::NoAnswer(error.to_string()))),
+                Err(error) => heard.push((self.here(), Heard::NoAnswer(error.to_string()))),
             }
         }
         heard.sort_by(|a, b| a.0.cmp(&b.0));
         heard
+    }
+
+    fn here(&self) -> MachineName {
+        self.state().name.unwrap_or_else(|| MachineName::try_from("device").expect("a valid name"))
     }
 
     /// A project's record and the machines it names, from a machine's copy.
@@ -100,12 +112,12 @@ impl Session {
     }
 
     /// The machines to ask about `scope`: those its project names, or every
-    /// machine; always only those this device's scope covers.
-    fn asked(&self, scope: &WhoScope) -> Vec<MachineName> {
+    /// machine; always only those this device's accounts may use.
+    fn asked(&self, scope: &WhoScope) -> Vec<Reachable> {
         let reachable = self.reachable();
         match scope {
             WhoScope::Town { record: Some(record), .. } => {
-                reachable.into_iter().filter(|name| record.machines.contains(name)).collect()
+                reachable.into_iter().filter(|machine| record.machines.contains(&machine.name)).collect()
             }
             _ => reachable,
         }
@@ -133,8 +145,7 @@ impl Session {
                 Heard::NoAnswer(reason) => MachineWho::NoAnswer { machine, reason },
             })
             .collect();
-        let mut reply =
-            WorldWho { machine: self.link.membership().name.clone(), scope, machines, you: None, history: None };
+        let mut reply = WorldWho { machine: self.here(), scope, machines, you: None, history: None };
         if let Some(since) = since {
             reply.collect_history(since, town);
         }
@@ -149,10 +160,10 @@ impl Session {
         let mut issues = Vec::new();
         let mut events = Vec::new();
         let mut undated = Vec::new();
-        let (_, presence) = self.link.members();
         let asked = self.asked(&scope);
-        for name in &asked {
-            if let Some(seen) = presence.iter().find(|seen| seen.name == *name)
+        for machine in &asked {
+            let name = &machine.name;
+            if let Some(seen) = machine.link.view().member(name).cloned()
                 && let Some(at) = seen.since.filter(|at| *at > since)
             {
                 events.push(SinceEvent {
@@ -189,7 +200,7 @@ impl Session {
         }
         let events = fastctx_types::since::merge_events(events, &mut issues);
         Ok(WorldSince {
-            machine: self.link.membership().name.clone(),
+            machine: self.here(),
             since,
             town,
             machines,
@@ -227,9 +238,14 @@ impl Session {
 
     pub(super) async fn agents(&self, machine: Option<MachineName>) -> Result<WorldAgents, Error> {
         let reachable = self.reachable();
-        let asked = match machine {
-            Some(machine) if reachable.contains(&machine) => vec![machine],
-            Some(machine) => return Err(failed(format!("{machine} is not a machine this device may use"))),
+        let asked: Vec<Reachable> = match machine {
+            Some(machine) => {
+                let asked: Vec<Reachable> = reachable.into_iter().filter(|one| one.name == machine).collect();
+                if asked.is_empty() {
+                    return Err(failed(format!("{machine} is not a machine this device may use")));
+                }
+                asked
+            }
             None => reachable,
         };
         let machines = self
@@ -245,75 +261,47 @@ impl Session {
                 Heard::NoAnswer(reason) => MachineAgents::NoAnswer { machine, reason },
             })
             .collect();
-        Ok(WorldAgents { machine: self.link.membership().name.clone(), machines })
+        Ok(WorldAgents { machine: self.here(), machines })
     }
 
     pub(super) async fn nodes(&self) -> Result<NodesReply, Error> {
-        let membership = self.link.membership();
-        let me = membership.name.clone();
-        let heard = self.ask_each(self.reachable(), |_| RemoteCall::Facts).await;
-        let (table, presence) = self.link.members();
-        // Projects are shown by their ids here: a device keeps no ledger
-        // that would name them.
-        let standing = |member: &fastctx_net::trust::Member| Standing {
-            scope: member.scope.named(|id| Some(id.to_string())).expect("every project has an id"),
-            manage: member.manage,
-            invited_by: member.invited_by.clone(),
-            delegated: member.delegated,
-            sealing: member.seal.is_some(),
-        };
-        let mut machines = vec![NodeView {
-            name: me.clone(),
-            online: Some(true),
-            since: None,
-            facts: Err("this device".to_string()),
-            revoked: None,
-            device: true,
-            standing: table.get(&me).map(standing),
-            place: fastctx_net::tree::place(&table, &me),
-        }];
-        for (name, heard) in heard {
-            let seen = presence.iter().find(|seen| seen.name == name);
-            let facts = match heard {
-                Heard::Answered(RemoteReply::Facts(facts)) => Ok(facts),
-                Heard::Answered(_) => Err("it answered something else".to_string()),
-                Heard::Offline(_) => Err("it is offline".to_string()),
-                Heard::NoAnswer(reason) => Err(reason),
-            };
-            machines.push(NodeView {
-                standing: table.get(&name).map(standing),
-                place: fastctx_net::tree::place(&table, &name),
-                online: seen.map(|seen| seen.online),
-                since: seen.and_then(|seen| seen.since),
-                name,
-                facts,
-                revoked: None,
-                device: false,
+        let mut hubs = Vec::new();
+        for session in self.sessions() {
+            let view = session.link.view();
+            let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
+            let reachable: Vec<Reachable> = self.reachable().into_iter().filter(|one| Arc::ptr_eq(&one.link, &session.link)).collect();
+            let heard = self.ask_each(reachable, |_| RemoteCall::Facts).await;
+            let machines = heard
+                .into_iter()
+                .map(|(name, heard)| {
+                    let seen = view.member(&name);
+                    NodeView {
+                        written: name.to_string(),
+                        online: seen.map(|seen| seen.online),
+                        since: seen.and_then(|seen| seen.since),
+                        through: seen.and_then(|seen| seen.through.clone()),
+                        facts: match heard {
+                            Heard::Answered(RemoteReply::Facts(facts)) => Ok(facts),
+                            Heard::Answered(_) => Err("it answered something else".to_string()),
+                            Heard::Offline(_) => Err("it is offline".to_string()),
+                            Heard::NoAnswer(reason) => Err(reason),
+                        },
+                        owner: seen.and_then(|seen| seen.home.clone()),
+                        rights: logins.iter().map(|account| (account.clone(), view.rights(account, &name))).collect(),
+                        name,
+                    }
+                })
+                .collect();
+            hubs.push(HubNodes {
+                hub: session.link.membership().id.clone(),
+                name: view.hub_name.clone(),
+                link: session.link.state(),
+                logins,
+                home: None,
+                machines,
             });
         }
-        for (name, revocation) in table.revoked_members() {
-            machines.push(NodeView {
-                name: name.clone(),
-                online: None,
-                since: None,
-                facts: Err("revoked".to_string()),
-                device: false,
-                revoked: Some(Revoked {
-                    by: revocation.by.clone(),
-                    at: revocation.at,
-                    reason: revocation.reason.clone(),
-                }),
-                standing: None,
-                place: None,
-            });
-        }
-        Ok(NodesReply {
-            machine: me,
-            world: Some(membership.world.to_string()),
-            link: link_state(&self.link),
-            machines,
-            joined: Vec::new(),
-        })
+        Ok(NodesReply { machine: self.here(), facts: None, hubs })
     }
 }
 

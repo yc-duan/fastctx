@@ -10,6 +10,7 @@
 //! and that the directory lets the sender say it for the account it names
 //! (`crate::directory`). The node checks again what each call asks.
 
+mod accounts;
 mod answering;
 mod calls;
 mod changes;
@@ -110,6 +111,8 @@ pub enum CallFailure {
     Offline { name: MachineName, last_seen: Option<Timestamp> },
     #[error("the hub did not pass the call to {name}: {reason}; nothing ran there")]
     Refused { name: MachineName, reason: String },
+    #[error("the call to {name} was not made: {reason}; nothing ran there")]
+    NotAllowed { name: MachineName, reason: String },
     #[error("{name} did not answer ({reason}); whether it did what was asked is not known")]
     Unknown { name: MachineName, reason: String },
     #[error("the call did not reach {name} ({reason}); nothing ran there")]
@@ -320,6 +323,11 @@ impl Link {
     /// This machine's view of the directory, as last given by the hub.
     pub fn view(&self) -> Arc<View> {
         self.inner.view()
+    }
+
+    /// The hub's short name, as the hub last said it.
+    pub fn hub_name(&self) -> fastctx_types::HubName {
+        self.inner.view().hub_name.clone()
     }
 
     /// Asks the hub for this machine's view again.
