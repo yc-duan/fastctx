@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use fastctx_net::link::{CallFailure, Link};
+use fastctx_types::access::HubAccount;
 use fastctx_types::agents::{MachineAgents, WorldAgents};
 use fastctx_types::project::TownSummary;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -17,7 +18,7 @@ use fastctx_types::world::{HubNodes, Node as NodeView, NodesReply};
 use fastctx_types::{AccountName, Call, MachineName, ProjectCall, Reply, TownName};
 use jiff::Timestamp;
 
-use super::{Device, failed};
+use super::{Device, Session, failed};
 use crate::Error;
 
 /// How one machine answered.
@@ -44,7 +45,11 @@ impl Device {
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             for machine in view.machines() {
                 if let Some(account) = logins.iter().find(|account| view.rights(account, &machine.name).any()) {
-                    reachable.push(Reachable { link: session.link.clone(), name: machine.name.clone(), account: account.clone() });
+                    reachable.push(Reachable {
+                        link: session.link.clone(),
+                        name: machine.name.clone(),
+                        account: account.clone(),
+                    });
                 }
             }
         }
@@ -53,7 +58,11 @@ impl Device {
 
     /// Asks each of `machines` at once, the online ones by a call `call`
     /// makes for each.
-    async fn ask_each(&self, machines: Vec<Reachable>, call: impl Fn(&MachineName) -> RemoteCall) -> Vec<(MachineName, Heard)> {
+    async fn ask_each(
+        &self,
+        machines: Vec<Reachable>,
+        call: impl Fn(&MachineName) -> RemoteCall,
+    ) -> Vec<(MachineName, Heard)> {
         let mut heard = Vec::new();
         let mut asks = Vec::new();
         for Reachable { link, name, account } in machines {
@@ -145,7 +154,30 @@ impl Device {
                 Heard::NoAnswer(reason) => MachineWho::NoAnswer { machine, reason },
             })
             .collect();
-        let mut reply = WorldWho { machine: self.here(), scope, machines, you: None, history: None, others: Vec::new() };
+        let mut reply =
+            WorldWho { machine: self.here(), scope, machines, you: None, history: None, others: Vec::new() };
+        // This device works for the accounts it is logged in to, on each hub.
+        let sessions = self.sessions();
+        let logins = |session: &Session| -> Vec<AccountName> {
+            session.link.view().me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default()
+        };
+        reply.mark_others(
+            |account| {
+                sessions.iter().any(|session| {
+                    session.link.membership().id == account.hub && logins(session).contains(&account.account)
+                })
+            },
+            |machine| {
+                sessions
+                    .iter()
+                    .flat_map(|session| {
+                        let hub = session.link.membership().id.clone();
+                        let logins = session.link.view().member(machine).map(|member| member.logins.clone());
+                        logins.into_iter().flatten().map(move |account| HubAccount { hub: hub.clone(), account })
+                    })
+                    .collect()
+            },
+        );
         if let Some(since) = since {
             reply.collect_history(since, town);
         }
@@ -269,7 +301,8 @@ impl Device {
         for session in self.sessions() {
             let view = session.link.view();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
-            let reachable: Vec<Reachable> = self.reachable().into_iter().filter(|one| Arc::ptr_eq(&one.link, &session.link)).collect();
+            let reachable: Vec<Reachable> =
+                self.reachable().into_iter().filter(|one| Arc::ptr_eq(&one.link, &session.link)).collect();
             let heard = self.ask_each(reachable, |_| RemoteCall::Facts).await;
             let machines = heard
                 .into_iter()

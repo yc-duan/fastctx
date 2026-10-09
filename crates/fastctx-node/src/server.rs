@@ -950,8 +950,8 @@ async fn who(
             }
         }
     }
-    let others = crate::who::others(node, acting, &machines);
-    let mut reply = WorldWho { machine: here, scope, machines, you: None, history: None, others };
+    let mut reply = WorldWho { machine: here, scope, machines, you: None, history: None, others: Vec::new() };
+    crate::who::mark_others(node, acting, &mut reply);
     if let Some(since) = since {
         reply.collect_history(since, town.clone());
         crate::since::presence_for_who(node, &mut reply).await?;

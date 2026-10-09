@@ -5,11 +5,11 @@ use std::io;
 use std::path::Path;
 
 use fastctx_hands::run::record;
+use fastctx_types::access::{Acting, HubAccount};
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{Activity, Moved};
-use fastctx_types::access::{Acting, HubAccount};
-use fastctx_types::town::{MachineWho, ResidentNow, RunningJob, WhoFor, WhoReply};
-use fastctx_types::{AccountName, MachineName, TownName};
+use fastctx_types::town::{ResidentNow, RunningJob, WhoReply};
+use fastctx_types::{MachineName, TownName};
 
 use crate::jobs::first_line;
 use crate::residents::{Former, OnRecord, last_action};
@@ -103,56 +103,22 @@ pub fn who(
     Ok(WhoReply { machine: machine.clone(), residents, jobs, history: None })
 }
 
-/// The residents and jobs `machines` answered with that work for no
-/// account `acting` works for, each with whom it works for, as this
-/// computer's views of its hubs say.
-pub(crate) fn others(node: &crate::Node, acting: &Acting, machines: &[MachineWho]) -> Vec<WhoFor> {
-    let mine = |account: &HubAccount| node.serves(acting, &account.hub, &account.account);
-    let names = |accounts: &[HubAccount]| {
-        let mut names: Vec<AccountName> = accounts.iter().map(|account| account.account.clone()).collect();
-        names.dedup();
-        names
-    };
-    let mut others = Vec::new();
-    for machine in machines {
-        let MachineWho::Answered { reply } = machine else { continue };
-        let mut working = std::collections::HashMap::new();
-        for resident in &reply.residents {
-            let accounts: Vec<HubAccount> = match &resident.about.acting {
-                Acting::Accounts { accounts } => accounts.clone(),
-                // A session the user opened there works for whoever is
-                // logged in there.
-                Acting::Here => node
-                    .links()
-                    .iter()
-                    .flat_map(|link| {
-                        let hub = link.membership().id.clone();
-                        let logins = link.view().member(&reply.machine).map(|member| member.logins.clone());
-                        logins.into_iter().flatten().map(move |account| HubAccount { hub: hub.clone(), account })
-                    })
-                    .collect(),
-            };
-            if !accounts.is_empty() && !accounts.iter().any(mine) {
-                let id = resident.about.id.to_string();
-                others.push(WhoFor { machine: reply.machine.clone(), id, accounts: names(&accounts) });
-            }
-            working.insert(resident.about.id.clone(), accounts);
-        }
-        for job in &reply.jobs {
-            let accounts = match (&job.account, job.owner.resident()) {
-                (Some(account), _) => vec![account.clone()],
-                (None, Some(owner)) if owner.machine == reply.machine => {
-                    working.get(&owner.resident).cloned().unwrap_or_default()
-                }
-                _ => Vec::new(),
-            };
-            if !accounts.is_empty() && !accounts.iter().any(mine) {
-                let id = job.job.to_string();
-                others.push(WhoFor { machine: reply.machine.clone(), id, accounts: names(&accounts) });
-            }
-        }
-    }
-    others
+/// Marks what `reply` shows that works for no account `acting` works for,
+/// as this computer's views of its hubs say.
+pub(crate) fn mark_others(node: &crate::Node, acting: &Acting, reply: &mut fastctx_types::town::WorldWho) {
+    reply.mark_others(
+        |account| node.serves(acting, &account.hub, &account.account),
+        |machine| {
+            node.links()
+                .iter()
+                .flat_map(|link| {
+                    let hub = link.membership().id.clone();
+                    let logins = link.view().member(machine).map(|member| member.logins.clone());
+                    logins.into_iter().flatten().map(move |account| HubAccount { hub: hub.clone(), account })
+                })
+                .collect()
+        },
+    );
 }
 
 /// The jobs in one resident's `jobs` directory that have not ended.

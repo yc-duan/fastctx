@@ -172,6 +172,54 @@ pub struct LookedUp {
 }
 
 impl WorldWho {
+    /// Marks the residents and jobs the machines answered with that work
+    /// for none of the reader's accounts, each with whom it works for
+    /// (`world-network.md`, 一台机器给几个账号用). `mine` says whether the
+    /// reader works for an account; `logged_in` names the accounts logged in
+    /// on a machine, for whom a session the user opened there works.
+    pub fn mark_others(
+        &mut self,
+        mine: impl Fn(&crate::access::HubAccount) -> bool,
+        logged_in: impl Fn(&MachineName) -> Vec<crate::access::HubAccount>,
+    ) {
+        use crate::access::{Acting, HubAccount};
+        let names = |accounts: &[HubAccount]| {
+            let mut names: Vec<crate::AccountName> = accounts.iter().map(|account| account.account.clone()).collect();
+            names.dedup();
+            names
+        };
+        let mut others = Vec::new();
+        for machine in &self.machines {
+            let MachineWho::Answered { reply } = machine else { continue };
+            let mut working = std::collections::HashMap::new();
+            for resident in &reply.residents {
+                let accounts = match &resident.about.acting {
+                    Acting::Accounts { accounts } => accounts.clone(),
+                    Acting::Here => logged_in(&reply.machine),
+                };
+                if !accounts.is_empty() && !accounts.iter().any(&mine) {
+                    let id = resident.about.id.to_string();
+                    others.push(WhoFor { machine: reply.machine.clone(), id, accounts: names(&accounts) });
+                }
+                working.insert(resident.about.id.clone(), accounts);
+            }
+            for job in &reply.jobs {
+                let accounts = match (&job.account, job.owner.resident()) {
+                    (Some(account), _) => vec![account.clone()],
+                    (None, Some(owner)) if owner.machine == reply.machine => {
+                        working.get(&owner.resident).cloned().unwrap_or_default()
+                    }
+                    _ => Vec::new(),
+                };
+                if !accounts.is_empty() && !accounts.iter().any(&mine) {
+                    let id = job.job.to_string();
+                    others.push(WhoFor { machine: reply.machine.clone(), id, accounts: names(&accounts) });
+                }
+            }
+        }
+        self.others = others;
+    }
+
     /// Merge the history obtained with each machine's current activity.
     pub fn collect_history(&mut self, since: Timestamp, town: Option<TownName>) {
         use crate::since::*;
