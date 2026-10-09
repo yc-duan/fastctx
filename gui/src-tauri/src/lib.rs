@@ -703,19 +703,6 @@ async fn apply_hosts(
         .map_err(|error| error.to_string())?
 }
 
-#[cfg(desktop)]
-#[tauri::command]
-async fn apply_host_status(
-    shell: tauri::State<'_, Shell>,
-    host: fastctx_install::apply::Host,
-    home: std::path::PathBuf,
-) -> Result<&'static str, String> {
-    shell.connection.local_program()?;
-    tauri::async_runtime::spawn_blocking(move || setup::host_status(host, home))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
 /// What of the window is kept from one run to the next: where it was and
 /// how large; never whether it shows or how it is framed, which the shell
 /// decides.
@@ -812,8 +799,6 @@ pub fn run() {
             renew_guardian_here,
             #[cfg(desktop)]
             apply_hosts,
-            #[cfg(desktop)]
-            apply_host_status,
             #[cfg(desktop)]
             attach_here,
             #[cfg(desktop)]

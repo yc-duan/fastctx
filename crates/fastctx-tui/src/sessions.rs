@@ -28,15 +28,6 @@ pub async fn status() -> Result<Status, String> {
     .await
 }
 
-/// Reads one explicitly selected host home without starting a host process.
-pub async fn status_at(host: Host, home: std::path::PathBuf) -> Result<Standing, String> {
-    blocking(move || {
-        let places = Places::here().map_err(|error| error.to_string())?;
-        apply::status_at(&places, host, &home).map_err(|error| error.to_string())
-    })
-    .await
-}
-
 /// Applies or withdraws one home; directory selection is independent of PATH.
 pub async fn change_at(host: Host, home: std::path::PathBuf, into: bool, raise: bool) -> Result<Report, Refused> {
     blocking(move || {

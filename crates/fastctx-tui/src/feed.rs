@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use fastctx_client::{Conversation, TownView, World};
 use fastctx_types::accounts::AccountChange;
-use fastctx_types::{Address, TownName};
+use fastctx_types::{Address, MachineName, TownName};
 use jiff::Timestamp;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
@@ -88,7 +88,7 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
         }
         // And this computer's agents, at first and then once a minute: asking
         // reads every login's usage from its agent's own servers.
-        if round % AGENTS_EVERY == 0
+        if round.is_multiple_of(AGENTS_EVERY)
             && let Some(machine) = here.take()
         {
             let agents = here_agents(&world, machine).await;

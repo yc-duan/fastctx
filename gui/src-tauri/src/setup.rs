@@ -210,8 +210,3 @@ pub fn hosts(codex: bool, claude: bool, raise: bool, into: bool, home: Option<Pa
         .chain(report.leftovers)
         .collect())
 }
-
-/// The integration of one directory, for interfaces that list several homes.
-pub fn host_status(host: apply::Host, home: PathBuf) -> Result<&'static str, String> {
-    apply::status_at(&places()?, host, &home).map(standing).map_err(|error| error.to_string())
-}
