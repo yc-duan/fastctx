@@ -14,6 +14,7 @@ import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
 import { ownerResident, type JobOwner, type ResidentNow, type RunningJob, type Writer } from "../world/world";
 import { Frontispiece } from "./frontispiece";
+import { worksFor } from "../app/store";
 import type { Away, Happening, WorldState } from "./model";
 import type { HomeWords } from "./words";
 import { agentName, titleOf } from "../world/names";
@@ -332,6 +333,16 @@ export class HomePage {
 
   private job(job: RunningJob): string {
     const { words } = this.options;
-    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(this.since(job.started_at))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(words.startedBy(this.ownerName(job.owner)))}</span></li>`;
+    const whose = accountTag(worksFor(this.world?.others, job.machine, job.job), words.forAccounts);
+    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(this.since(job.started_at))}${whose}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(words.startedBy(this.ownerName(job.owner)))}</span></li>`;
   }
+}
+
+/** A small mark of whom something runs for, when that is other accounts
+ *  than the reader's: a person and the account's name, said whole to a
+ *  screen reader. Empty when it is the reader's own. */
+export function accountTag(accounts: string | null, said: (accounts: string) => string): string {
+  if (!accounts) return "";
+  const label = said(accounts);
+  return `<span class="tag tag-account" title="${escape(label)}">${glyph("person", 12)}<span aria-hidden="true">${escape(accounts)}</span><span class="spoken">${escape(label)}</span></span>`;
 }

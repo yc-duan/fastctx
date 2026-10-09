@@ -116,7 +116,15 @@ export interface WorldWho {
   history?: import("./since").WorldSince;
   machines: MachineWho[];
   /** The residents and jobs shown that work for none of the asker's accounts. */
-  others?: { machine: MachineName; id: string; accounts: string[] }[];
+  others?: WhoFor[];
+}
+
+/** A resident or a job, by its id, that works for other accounts than the
+ *  asker's, with whom it works for. */
+export interface WhoFor {
+  machine: MachineName;
+  id: string;
+  accounts: string[];
 }
 
 export interface MachineFacts {

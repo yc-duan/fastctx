@@ -233,12 +233,24 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
               command: "python train.py --epochs 400 --joint all",
               output: "/home/me/.fastctx/world/towns/mark50/residents/codex-3c77/out/j-p0q1r2.log",
             },
+            // lab is lent to bob too: what bob runs there shows, marked as his.
+            {
+              job: "j-b0b7e1",
+              machine: "lab",
+              owner: address("bob-laptop", "codex-8e21"),
+              started_at: at("11:05:00"),
+              pid: 50277,
+              command: "python finetune.py --gpu 0 --steps 20000",
+              output: "/home/me/.fastctx/world/outside/residents/codex-8e21@bob-laptop/out/j-b0b7e1.log",
+              account: { hub: "w-0123456789abcdef", account: "bob" },
+            },
           ],
         },
       },
       { kind: "answered", reply: { machine: "server", residents: [], jobs: [] } },
       { kind: "offline", machine: "studio", since: at("12:52:00") },
     ],
+    others: [{ machine: "lab", id: "j-b0b7e1", accounts: ["bob"] }],
     towns: [
       { town: "mark50", record: record("mark50 研发", "为 Mark 50 战衣研发纳米单元的控制固件，并在真机上验证。", ["desktop", "laptop", "lab"]), journals: 7 },
       { town: "ingest", record: record("ingest 服务", "把传感器日志批量写进时序库的服务，跑在 lab 上。", ["laptop", "desktop", "lab"]), journals: 2 },
@@ -278,7 +290,7 @@ export function specimenNow(two = false): { world: WorldNow; now: Date; lastVisi
   return {
     world: {
       here: world.here,
-      who: { machine: world.here, scope: { kind: "world", towns: world.towns }, machines: world.machines },
+      who: { machine: world.here, scope: { kind: "world", towns: world.towns }, machines: world.machines, others: world.others ?? [] },
       nodes: { machine: world.here, facts: facts("desktop", "windows", "C:/Users/me"), hubs: nodes },
       towns: world.towns,
       accounts: { machine: world.here, hubs: accounts },

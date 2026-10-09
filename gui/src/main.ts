@@ -314,7 +314,7 @@ const seen = {
 };
 
 function stateOf(world: WorldNow, away: Away | null): WorldState {
-  return { here: world.here, machines: world.who.machines, nodes: machinesOf(world), towns: world.towns, away };
+  return { here: world.here, machines: world.who.machines, others: world.who.others ?? [], nodes: machinesOf(world), towns: world.towns, away };
 }
 
 /** The parts of the World's present whose change leaves something behind

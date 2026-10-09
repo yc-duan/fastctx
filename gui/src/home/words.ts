@@ -72,6 +72,8 @@ export interface HomeWords {
   awayTrouble(why: string): string;
   startedBy(who: string): string;
   ownerLeft(ago: string): string;
+  /** Said of a job or agent that works for other accounts than the reader's. */
+  forAccounts(accounts: string): string;
   open: string;
 }
 
@@ -167,6 +169,7 @@ export const zhHome: HomeWords = {
   awayTrouble: (why) => `问不到你不在时的事：${why}`,
   startedBy: (who) => `${who} 起的`,
   ownerLeft: (ago) => `它的主人 ${ago}走了`,
+  forAccounts: (accounts) => `替 ${accounts} 跑的`,
   open: "打开",
 };
 
@@ -233,5 +236,6 @@ export const enHome: HomeWords = {
   awayTrouble: (why) => `What happened while you were away could not be asked: ${why}`,
   startedBy: (who) => `started by ${who}`,
   ownerLeft: (ago) => `its owner left ${ago}`,
+  forAccounts: (accounts) => `runs for ${accounts}`,
   open: "Open",
 };

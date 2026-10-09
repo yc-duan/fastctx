@@ -9,12 +9,14 @@ import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
-import { ownerResident, type MapView, type ProjectRecord, type ResidentNow, type RunningJob, type WorldWho, type Writer } from "../world/world";
+import { ownerResident, type MapView, type ProjectRecord, type ResidentNow, type RunningJob, type WhoFor, type WorldWho, type Writer } from "../world/world";
 import type { PageSummary, PageWriter } from "../world/pages";
 import type { PageWords } from "../pages/words";
 import type { HomeWords } from "../home/words";
 import type { ProjectWords } from "./words";
 import { fileLink } from "../app/places";
+import { worksFor } from "../app/store";
+import { accountTag } from "../home/page";
 import { agentName, titleOf } from "../world/names";
 
 export interface ProjectOptions {
@@ -46,6 +48,8 @@ export class ProjectPage {
   private board: HTMLElement;
   private tab: Tab = "here";
   private record: ProjectRecord | null = null;
+  /** What runs in the town for other accounts than the reader's. */
+  private others: WhoFor[] | undefined;
   private drawn = "";
 
   constructor(private readonly options: ProjectOptions) {
@@ -84,6 +88,7 @@ export class ProjectPage {
     const residents = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => !r.removed);
     const here = residents.filter((r) => r.here);
     const jobs = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []));
+    this.others = who.others;
     const record = map.record;
     this.record = record;
     this.element.querySelector<HTMLButtonElement>(".revise")!.disabled = false;
@@ -249,7 +254,8 @@ export class ProjectPage {
 
   private jobLine(job: RunningJob, now: Date, by: string): string {
     const { home } = this.options;
-    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(home.for(home.lasted(now.getTime() - Date.parse(job.started_at))))}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(by)}</span></li>`;
+    const whose = accountTag(worksFor(this.others, job.machine, job.job), home.forAccounts);
+    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(home.for(home.lasted(now.getTime() - Date.parse(job.started_at))))}${whose}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(by)}</span></li>`;
   }
 
   private canon(map: MapView): string {

@@ -5,7 +5,7 @@
 
 import { inShell, worldNow, type WorldNow } from "../world/bridge";
 import type { Address } from "../world/events";
-import type { ResidentNow, RunningJob } from "../world/world";
+import type { ResidentNow, RunningJob, WhoFor } from "../world/world";
 import { signal, type Signal } from "./signals";
 
 export interface Store {
@@ -92,6 +92,14 @@ export function residentAt(world: WorldNow | null, address: Address): ResidentNo
 /** Every job still running, on every machine that answered. */
 export function jobsOf(world: WorldNow | null): RunningJob[] {
   return (world?.who.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []));
+}
+
+/** Whom the resident or job `id` on `machine` works for, when that is other
+ *  accounts than the viewer's: "bob", or "bob, carol". A machine lent to
+ *  several accounts shows what each runs there, marked with whose it is. */
+export function worksFor(others: WhoFor[] | undefined, machine: string, id: string): string | null {
+  const other = others?.find((o) => o.machine === machine && o.id === id);
+  return other ? other.accounts.join(", ") : null;
 }
 
 export const sameAddress = (a: Address, b: Address) => a.resident === b.resident && a.machine === b.machine;

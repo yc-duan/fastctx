@@ -630,6 +630,19 @@
   grid-column: 1 / -1;
 }
 
+/* Whose a job is, on a machine lent to several accounts. */
+.tag.tag-account {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: var(--space-2);
+  vertical-align: 1px;
+}
+
+.tag.tag-account .glyph {
+  color: var(--text-3);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .frontispiece .flow,
   .frontispiece-drawing.arriving .paper,
