@@ -164,10 +164,14 @@ impl Jobs {
         }
         let output = {
             let log = PathBuf::from(&record.output);
-            tokio::task::spawn_blocking(move || window::window(&log))
-                .await
-                .map_err(|error| Failure::new(format!("reading the output: {error}")))?
-                .map_err(|error| failure("reading the output", error))?
+            let through = record.output_drained.filter(|_| record.end.is_none()).map(|drained| drained.stdout);
+            tokio::task::spawn_blocking(move || match through {
+                Some(bytes) => window::window_through(&log, bytes),
+                None => window::window(&log),
+            })
+            .await
+            .map_err(|error| Failure::new(format!("reading the output: {error}")))?
+            .map_err(|error| failure("reading the output", error))?
         };
         if record.end.is_none() && record.owner.resident().is_some() {
             // The job goes on past this answer: its end is owed to the
@@ -291,14 +295,14 @@ fn outcome(reply: &RunReply) -> String {
     }
 }
 
-/// Whether the call can answer now: the job ended, or its shell exited
-/// and its output is complete.
 /// Whether the answer can be given now. With no process left, the end is
 /// moments away and the answer waits for it, so the resident is not also
 /// told by letter of an end it has already read.
 fn settled(record: &JobRecord) -> bool {
     record.end.is_some()
-        || (record.exit.is_some() && record.output_ended_at.is_some() && record.remaining.is_some_and(|n| n > 0))
+        || (record.exit.is_some()
+            && (record.output_drained.is_some() || record.output_ended_at.is_some())
+            && record.remaining.is_some_and(|n| n > 0))
 }
 
 fn state(record: &JobRecord) -> RunState {
@@ -312,8 +316,11 @@ fn state(record: &JobRecord) -> RunState {
         (Some(Ended { how: EndedHow::Finished, .. }), None) => {
             RunState::Failed { error: "its record says it finished but holds no exit status".to_string() }
         }
-        (None, Some(exit)) if record.output_ended_at.is_some() => {
-            RunState::Exited { status: exit.status, remaining: record.remaining.unwrap_or(0) }
+        (None, Some(exit))
+            if (record.output_drained.is_some() || record.output_ended_at.is_some())
+                && record.remaining.is_some_and(|n| n > 0) =>
+        {
+            RunState::Exited { status: exit.status, remaining: record.remaining.expect("checked") }
         }
         (None, _) => RunState::Running,
     }

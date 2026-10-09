@@ -86,19 +86,22 @@ fn exercise() -> Result {
         let bytes: Vec<u8> = (0..=255).cycle().take(1024 * 1024).collect();
         fs::write(&input, &bytes)?;
         let (gate, address) = new_gate()?;
-        let script = format!("exec 3<&0\n{} child {address} <&3 &\nexit 17\n", quote(&executable));
+        let script =
+            format!("exec 3<&0\n{} child {address} <&3 &\ncat {}\nexit 17\n", quote(&executable), quote(&input));
         let request = RunRequest { script, cwd: Some(display(&root)), writes_off: false, wait: None };
         let launch = run::Launch { request: &request, ..launch };
         let job = run::launch_with_io(&launch, OutputMode::Separate, Some(&input))?;
         let (mut child, identity) = arrived(&gate, &job).await?;
-        let running = until(&job, |r| r.exit.is_some()).await?;
+        let running = until(&job, |r| r.output_drained.is_some() && r.remaining.is_some_and(|n| n > 0)).await?;
         assert!(running.end.is_none() && running.output_ended_at.is_none());
+        assert_eq!(running.output_drained.unwrap().stdout, bytes.len() as u64);
+        assert_eq!(fs::read(&running.output)?, bytes);
         assert_eq!(running.stdin.as_deref().map(Path::new), Some(input.as_path()));
         child.write_all(&[1])?;
         let ended = until(&job, |r| r.end.is_some()).await?;
         assert!(matches!(ended.end.as_ref().unwrap().how, EndedHow::Finished));
         assert_eq!(ended.exit.unwrap().status, ExitStatus::Code(17));
-        assert_eq!(fs::read(&ended.output)?, bytes);
+        assert_eq!(fs::read(&ended.output)?, [bytes.as_slice(), bytes.as_slice()].concat());
         assert_eq!(fs::read(ended.stderr.as_ref().unwrap())?, stderr_bytes());
         assert!(ended.output_lost.is_none() && ended.stderr_lost.is_none());
         assert!(!is_alive(&identity)?);
@@ -186,6 +189,7 @@ fn exercise() -> Result {
                 script: format!("exec {} child {address}\n", quote(&executable)),
                 cwd: Some(display(&root)),
                 writes_off: false,
+                wait: None,
             };
             let launch = run::Launch { request: &request, ..launch };
             let job = run::launch(&launch)?;

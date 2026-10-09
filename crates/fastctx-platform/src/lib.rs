@@ -22,6 +22,8 @@ pub mod ipc;
 pub mod legacy_text;
 pub mod local_path;
 pub mod lock;
+#[cfg(any(target_os = "linux", windows))]
+pub mod output_pipe;
 pub mod parent;
 pub mod private;
 #[cfg(target_os = "linux")]

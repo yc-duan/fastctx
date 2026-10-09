@@ -107,7 +107,7 @@ pub enum RunState {
 pub struct OutputWindow {
     /// The file holding the whole output, on the machine it ran on.
     pub log: String,
-    /// How many bytes the log held when the window was taken.
+    /// How many bytes of the log were captured for this window.
     pub bytes: u64,
     /// How many lines the log held then; a last line without a newline
     /// counts.
@@ -233,7 +233,12 @@ pub struct JobRecord {
     /// Set after every output writer closed and both streams were drained.
     /// Check the loss fields before treating the logs as complete.
     pub output_ended_at: Option<Timestamp>,
-    /// The last observed count after the shell and its output ended; zero
+    /// A retained prefix covering every byte queued after the shell exited.
+    /// Writers may remain open and append more. Older supervisors only set
+    /// `output_ended_at`, which also establishes that the output was drained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_drained: Option<OutputDrained>,
+    /// The last observed count after the shell and its output drained; zero
     /// in a successfully finished or stopped record.
     pub remaining: Option<u32>,
     /// Set when the log could not take more output, as when the disk is
@@ -257,6 +262,13 @@ pub struct JobRecord {
     /// Set for a job an `on` sent here from another machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on: Option<OnJob>,
+}
+
+/// Log offsets acknowledged by both output readers after the shell exited.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputDrained {
+    pub stdout: u64,
+    pub stderr: u64,
 }
 
 /// What a job an `on` sent here has besides a script (`world-run.md`); its

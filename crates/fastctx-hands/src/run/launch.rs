@@ -153,6 +153,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
         pid: None,
         exit: None,
         output_ended_at: None,
+        output_drained: None,
         remaining: None,
         output_lost: None,
         stderr_lost: None,
