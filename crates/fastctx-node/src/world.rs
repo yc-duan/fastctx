@@ -251,11 +251,11 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::SetRelay { relay } => {
                     crate::relay::set(&node, relay).await.map(|relays_at| RemoteReply::Relaying { relays_at })
                 }
-                RemoteCall::Run { resident, town, request } => {
-                    let owner = Address { machine: from, resident };
-                    let (reply, _) = node.jobs.run(&node, owner.into(), town, request).await?;
-                    Ok(RemoteReply::Run(reply))
-                }
+                // What an older fastctx sends: commands and files go to another
+                // machine only as `on` now (`world-run.md`).
+                RemoteCall::Run { .. } | RemoteCall::Write { .. } => Err(Failure::new(format!(
+                    "{machine} takes commands and files from other machines only through `on`; the fastctx on {from} is older and needs updating"
+                ))),
                 RemoteCall::On { origin, sizes, writes_off } => {
                     let stream = stream.ok_or_else(|| Failure::new("an on comes with a data connection"))?;
                     crate::on::serve_on(&node, origin, sizes, writes_off, stream).await
@@ -331,17 +331,6 @@ impl fastctx_net::link::Node for Handler {
                         None => false,
                     };
                     Ok(RemoteReply::Found { lives_here })
-                }
-                RemoteCall::Write { resident, town, op } => {
-                    let owner = Address { machine: from, resident };
-                    let world = node.world.clone();
-                    let outcome = tokio::task::spawn_blocking(move || {
-                        crate::write::write_here(&world, &machine, &owner, town.as_ref(), op)
-                    })
-                    .await
-                    .map_err(|error| Failure::new(format!("writing: {error}")))?
-                    .map_err(|error| Failure::new(format!("writing: {error}")))?;
-                    Ok(RemoteReply::Written { outcome })
                 }
                 RemoteCall::Who { all, town, since } => crate::server::who_here(&node, all, town, since)
                     .await

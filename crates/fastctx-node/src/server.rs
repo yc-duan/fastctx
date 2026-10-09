@@ -641,8 +641,9 @@ fn member(node: &Node) -> Result<Arc<fastctx_net::link::Link>, Failure> {
     node.link().ok_or_else(|| Failure::new(format!("{} is not connected to any other machine", node.machine())))
 }
 
-/// Runs a script for a resident of this machine, here or on `target`, and
-/// records the action in the resident's records here.
+/// Runs a script for a resident of this machine and records the action in
+/// the resident's records. Other machines are reached with `on` inside the
+/// script; a session listed before `on` may still name one, and is told so.
 async fn run(
     node: &Arc<Node>,
     resident: ResidentId,
@@ -651,31 +652,15 @@ async fn run(
     target: Option<MachineName>,
 ) -> Result<RunReply, Failure> {
     let here = node.machine();
+    if let Some(target) = target.filter(|target| *target != here) {
+        return Err(Failure::new(format!(
+            "run goes to another machine only through `on`: write `on {target}` in the script to run part of it there"
+        )));
+    }
     let script = request.script.clone();
     let started_at = jiff::Timestamp::now();
-    let mut _reaching = None;
-    let reply = match target.filter(|target| *target != here) {
-        None => {
-            let owner = Address { machine: here.clone(), resident: resident.clone() };
-            node.jobs.run(node, owner.into(), town.clone(), request).await?.0
-        }
-        Some(target) => {
-            let link = node.link().ok_or_else(|| {
-                Failure::new(format!("there is no machine {target}: {here} is not connected to any other machine"))
-            })?;
-            // Held until the run is recorded: a job that ends at once is told
-            // of before.
-            _reaching = Some(node.reaching.hold(&resident, &target));
-            let call = RemoteCall::Run { resident: resident.clone(), town: town.clone(), request };
-            match link.call(&target, call).await.map_err(|failure| Failure::new(called(&failure)))? {
-                Ok(RemoteReply::Run(reply)) => reply,
-                Ok(_) => {
-                    return Err(Failure::new(format!("{target} answered something other than a run")));
-                }
-                Err(failure) => return Err(failure),
-            }
-        }
-    };
+    let owner = Address { machine: here.clone(), resident: resident.clone() };
+    let reply = node.jobs.run(node, owner.into(), town.clone(), request).await?.0;
     let action = crate::jobs::action(&reply, &script, started_at);
     let world = node.world.clone();
     blocking("recording the action", move || {
@@ -685,8 +670,9 @@ async fn run(
     Ok(reply)
 }
 
-/// Writes files for a resident of this machine, here or on `target`, and
-/// records the write in the resident's records here.
+/// Writes files for a resident of this machine, from a writing tool a
+/// session listed before writing became commands of the shell, and records
+/// the write in the resident's records. Files elsewhere are written there.
 async fn write(
     node: &Arc<Node>,
     resident: ResidentId,
@@ -695,40 +681,24 @@ async fn write(
     target: Option<MachineName>,
 ) -> Result<WriteOutcome, Failure> {
     let here = node.machine();
+    if let Some(target) = target.filter(|target| *target != here) {
+        return Err(Failure::new(format!(
+            "files on {target} are written there: `on {target} edit PATH` or `on {target} write PATH` in the run tool"
+        )));
+    }
     let started_at = jiff::Timestamp::now();
-    let (outcome, machine) = match target.filter(|target| *target != here) {
-        None => {
-            let owner = Address { machine: here.clone(), resident: resident.clone() };
-            let (world, machine, town, op) = (node.world.clone(), here.clone(), town.clone(), op.clone());
-            let outcome =
-                blocking("writing", move || crate::write::write_here(&world, &machine, &owner, town.as_ref(), op))
-                    .await?;
-            (outcome, here)
-        }
-        Some(target) => {
-            let link = node.link().ok_or_else(|| {
-                Failure::new(format!("there is no machine {target}: {here} is not connected to any other machine"))
-            })?;
-            let call = RemoteCall::Write { resident: resident.clone(), town: town.clone(), op: op.clone() };
-            match link.call(&target, call).await.map_err(|failure| Failure::new(called(&failure)))? {
-                Ok(RemoteReply::Written { outcome }) => (outcome, target),
-                Ok(_) => return Err(Failure::new(format!("{target} answered something other than a write"))),
-                Err(failure) => return Err(failure),
-            }
-        }
-    };
-    let action = crate::write::action(&op, &outcome, &machine, started_at);
+    let owner = Address { machine: here.clone(), resident: resident.clone() };
+    let (world, machine, writing, written) = (node.world.clone(), here.clone(), town.clone(), op.clone());
+    let outcome =
+        blocking("writing", move || crate::write::write_here(&world, &machine, &owner, writing.as_ref(), written))
+            .await?;
+    let action = crate::write::action(&op, &outcome, &here, started_at);
     let world = node.world.clone();
     blocking("recording the action", move || {
         crate::residents::record_action(&world, &resident, town.as_ref(), &action)
     })
     .await?;
     Ok(outcome)
-}
-
-/// A failed call, said for whoever reads the answer.
-fn called(failure: &CallFailure) -> String {
-    failure.to_string()
 }
 
 /// This machine's own answer to `fastctx w`: in `town`, or in every town
