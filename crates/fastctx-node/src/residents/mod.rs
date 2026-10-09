@@ -88,10 +88,10 @@ impl std::ops::DerefMut for StateGuard<'_> {
 
 impl Drop for StateGuard<'_> {
     fn drop(&mut self) {
-        if !std::thread::panicking() {
-            if let Err(error) = self.0.live.release() {
-                cache::failed("spilling inactive resident state", error);
-            }
+        if !std::thread::panicking()
+            && let Err(error) = self.0.live.release()
+        {
+            cache::failed("spilling inactive resident state", error);
         }
     }
 }

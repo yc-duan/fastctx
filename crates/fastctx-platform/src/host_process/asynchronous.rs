@@ -34,12 +34,10 @@ pub async fn exited(identity: &ProcessIdentity) -> io::Result<()> {
         fn drop(&mut self) {
             // SAFETY: unregister waits for the callback before its context and process are freed.
             unsafe {
-                if !self.registration.is_null() {
-                    if UnregisterWaitEx(self.registration, INVALID_HANDLE_VALUE) == 0 {
-                        eprintln!("could not release a process wait: {}", io::Error::last_os_error());
-                        // The callback still owns its context if cancellation could not be proved.
-                        std::process::abort();
-                    }
+                if !self.registration.is_null() && UnregisterWaitEx(self.registration, INVALID_HANDLE_VALUE) == 0 {
+                    eprintln!("could not release a process wait: {}", io::Error::last_os_error());
+                    // The callback still owns its context if cancellation could not be proved.
+                    std::process::abort();
                 }
                 CloseHandle(self.process);
             }

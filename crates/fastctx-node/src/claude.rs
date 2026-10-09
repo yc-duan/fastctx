@@ -573,10 +573,10 @@ async fn ended_for_process(
         Some(registration) => Some(registration),
         None => exchange::registration(&exchange::sessions(node.world.path()).join(session))?,
     };
-    if let Some(expected) = expected {
-        if registration.as_ref().and_then(|entry| entry.process.as_ref()) != Some(expected) {
-            return Ok(());
-        }
+    if let Some(expected) = expected
+        && registration.as_ref().and_then(|entry| entry.process.as_ref()) != Some(expected)
+    {
+        return Ok(());
     }
     if let Some(instance) = instance
         && registration.as_ref().is_none_or(|entry| entry.instance != instance)
