@@ -100,6 +100,16 @@ impl Session {
                     .to_string(),
             );
         }
+        // Hosts that do not check the schema pass on what a model wrote from
+        // habit, such as Codex's own `workdir`; ignored, the script would run
+        // somewhere it did not mean.
+        if let Some(unknown) = arguments.as_object().and_then(|arguments| {
+            arguments.keys().find(|key| !["command", "cwd", "wait", "node"].contains(&key.as_str()))
+        }) {
+            return Answer::error(format!(
+                "=== run (not run: run has no `{unknown}`; it takes `command`, `cwd` and `wait`) ==="
+            ));
+        }
         let wait = match arguments.get("wait") {
             None | Some(Value::Null) => None,
             Some(wait) => match wait.as_u64().and_then(|wait| u32::try_from(wait).ok()) {

@@ -91,8 +91,7 @@ fn run_definition(writes_off: bool, woken: bool, machines: Option<&Machines>) ->
                     "description": WAIT_DESCRIPTION
                 }
             },
-            "required": ["command"],
-            "additionalProperties": false
+            "required": ["command"]
         },
         "annotations": {
             "title": "Run a bash script",
@@ -210,8 +209,7 @@ fn ask_colleague_definition(woken: bool, machines: Option<&Machines>) -> Value {
                 },
                 "node": { "type": "string", "description": node }
             },
-            "required": ["prompt", "description"],
-            "additionalProperties": false
+            "required": ["prompt", "description"]
         },
         "annotations": {
             "title": "Ask a colleague",
@@ -260,8 +258,7 @@ fn message_colleague_definition() -> Value {
                     "description": "What to tell it, delivered word for word."
                 }
             },
-            "required": ["to", "message"],
-            "additionalProperties": false
+            "required": ["to", "message"]
         },
         "annotations": {
             "title": "Message a colleague",

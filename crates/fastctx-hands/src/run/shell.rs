@@ -222,7 +222,8 @@ pub fn bash() -> io::Result<PathBuf> {
         }
     }
     let env = user_environment()?;
-    if let Some((_, path)) = env.iter().find(|(name, _)| same_name(name, "PATH")) {
+    let variable = |wanted: &str| env.iter().find(|(name, _)| same_name(name, wanted)).map(|(_, value)| value);
+    if let Some(path) = variable("PATH") {
         for directory in std::env::split_paths(path) {
             if directory.join("git.exe").is_file()
                 && let Some(root) = directory.parent()
@@ -230,6 +231,20 @@ pub fn bash() -> io::Result<PathBuf> {
             {
                 return Ok(in_root(root));
             }
+        }
+    }
+    // Scoop puts only a shim on PATH; Git itself lives under its apps, for
+    // the user or for the machine.
+    let scoops = [
+        variable("SCOOP").map(PathBuf::from),
+        variable("USERPROFILE").map(|home| Path::new(home).join("scoop")),
+        variable("SCOOP_GLOBAL").map(PathBuf::from),
+        variable("ProgramData").map(|data| Path::new(data).join("scoop")),
+    ];
+    for scoop in scoops.into_iter().flatten() {
+        let bash = in_root(&scoop.join("apps").join("git").join("current"));
+        if bash.is_file() {
+            return Ok(bash);
         }
     }
     Err(io::Error::new(

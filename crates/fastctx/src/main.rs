@@ -361,9 +361,15 @@ fn node(
     ))
 }
 
+/// One per session and mostly waiting on the node, so one thread: a
+/// machine with many sessions open should not hold a pool of threads per
+/// core for each.
 fn serve(writes_off: bool) -> anyhow::Result<()> {
     let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_serve::serve(world, writes_off))
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(fastctx_serve::serve(world, writes_off))
 }
 
 /// A supervisor has no terminal: what it would print about its own failure

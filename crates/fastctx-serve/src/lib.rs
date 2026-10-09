@@ -34,12 +34,21 @@ pub async fn serve(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
     let (output, printing) = Output::start();
     let mut calls = JoinSet::new();
     let mut in_flight: HashMap<String, AbortHandle> = HashMap::new();
+    let mut ended = "standard input ended";
     while let Some(input) = input.recv().await {
         let line = match input {
             Input::Line(line) => line,
             Input::Failed(error) => {
                 eprintln!("fastctx serve: reading standard input: {error}");
+                ended = "reading standard input failed";
                 break;
+            }
+            Input::HostGone => {
+                // Nobody reads the answers now; what the calls started in
+                // the World goes on without them.
+                eprintln!("fastctx serve: the process that started it exited; leaving");
+                calls.abort_all();
+                return Ok(());
             }
         };
         if line.trim().is_empty() {
@@ -122,6 +131,13 @@ pub async fn serve(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
                 }
             }
             (Some(_), None) => {}
+            // Codex offers its models resource tools for every server; this
+            // one has none, and files are read in the shell.
+            (Some(method), Some(id)) if method.starts_with("resources/") => output.send(&error_response(
+                &id,
+                -32601,
+                "fastctx has no resources; to read a file, call the run tool with `fastctx view PATH`",
+            )),
             (Some(method), Some(id)) => {
                 output.send(&error_response(&id, -32601, &format!("method not found: {method}")))
             }
@@ -134,6 +150,7 @@ pub async fn serve(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
             }
         }
     }
+    eprintln!("fastctx serve: {ended}; answering the calls in flight, then leaving");
     while calls.join_next().await.is_some() {}
     drop(output);
     printing.await??;

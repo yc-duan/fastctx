@@ -5,6 +5,10 @@
 //! waiting forever, and that must not hold up anything else. A read error
 //! is kept apart from the end of input, so neither is mistaken for the
 //! other. Standard output has one writer, so lines never interleave.
+//!
+//! The host's process ending is a second sign the session is over: a host
+//! that dies without its writer closing, because another process inherited
+//! it, would otherwise leave this server running for good.
 
 use std::io::{self, BufRead as _};
 
@@ -15,11 +19,23 @@ use tokio::sync::{mpsc, oneshot};
 pub enum Input {
     Line(String),
     Failed(io::Error),
+    /// The process that started this server exited.
+    HostGone,
 }
 
 /// Lines from standard input until it ends.
 pub fn input() -> mpsc::Receiver<Input> {
     let (sender, receiver) = mpsc::channel(16);
+    // Where the platform cannot watch a process, standard input is the only
+    // sign, as it always was.
+    if let Ok(host) = fastctx_platform::host_process::parent_identity() {
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            if fastctx_platform::host_process::wait_for_exit(&host).is_ok() {
+                let _ = sender.blocking_send(Input::HostGone);
+            }
+        });
+    }
     std::thread::spawn(move || {
         let stdin = io::stdin();
         let mut stdin = stdin.lock();

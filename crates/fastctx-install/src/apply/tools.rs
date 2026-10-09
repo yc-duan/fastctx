@@ -28,8 +28,34 @@ pub(super) fn codex(places: &Places) -> ToolCheck {
     ToolCheck { host: "Codex", scope, result }
 }
 
+/// What decides the answer of `codex features list` here, as far as files
+/// show it: the program, the user's configuration and this directory's.
+type Inputs = (std::path::PathBuf, Vec<Option<(std::time::SystemTime, u64)>>);
+
+/// The last answer, kept while its inputs stand: an interface asks every few
+/// seconds, and each answer starts a Codex.
+static LAST: std::sync::Mutex<Option<(Inputs, Result<(), String>)>> = std::sync::Mutex::new(None);
+
 fn codex_in(home: &Path, cwd: &Path) -> Result<(), String> {
     let launch = fastctx_hosts::codex::launch::resolve(home, std::env::var_os("PATH").as_ref())?;
+    let stamp = |path: &Path| {
+        std::fs::metadata(path).ok().map(|meta| (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len()))
+    };
+    let inputs: Inputs = (
+        cwd.to_path_buf(),
+        vec![stamp(&launch.binary), stamp(&home.join("config.toml")), stamp(&cwd.join(".codex").join("config.toml"))],
+    );
+    if let Some((last, answer)) = LAST.lock().expect("never poisoned").as_ref()
+        && *last == inputs
+    {
+        return answer.clone();
+    }
+    let answer = features(&launch, home, cwd);
+    *LAST.lock().expect("never poisoned") = Some((inputs, answer.clone()));
+    answer
+}
+
+fn features(launch: &fastctx_hosts::codex::launch::Launch, home: &Path, cwd: &Path) -> Result<(), String> {
     let mut environment: Vec<_> =
         std::env::vars_os().filter(|(name, _)| !name.eq_ignore_ascii_case("CODEX_HOME")).collect();
     environment.push(("CODEX_HOME".into(), home.as_os_str().to_owned()));
