@@ -34,6 +34,41 @@ pub struct Dispatched {
 /// under there.
 type Went = (Written, Option<TownName>);
 
+/// Residents being born here, with whom they work for and where: their host
+/// starts their tool server before their record is written, and the tools
+/// it lists then must already be theirs, as Codex does not list them again
+/// (`world-colleagues.md`, 同事从哪里来、能去哪里).
+#[derive(Default)]
+pub struct Births(Mutex<HashMap<ResidentId, (Acting, Option<Written>)>>);
+
+/// A resident being born, until its record is written: dropping it ends
+/// the birth, written or not.
+pub(crate) struct Birth {
+    node: Arc<Node>,
+    id: ResidentId,
+}
+
+impl Drop for Birth {
+    fn drop(&mut self) {
+        self.node.births.0.lock().expect("never poisoned").remove(&self.id);
+    }
+}
+
+/// `id` is being born here, working for `acting`, on `works_on`.
+pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting, works_on: Option<Written>) -> Birth {
+    node.births.0.lock().expect("never poisoned").insert(id.clone(), (acting, works_on));
+    Birth { node: node.clone(), id: id.clone() }
+}
+
+/// Whom `id` works for and where it works, as its record says, or as its
+/// birth does until the record is written.
+pub(crate) fn placed(node: &Node, id: &ResidentId) -> Option<(Acting, Option<Written>)> {
+    match node.residents.about(id) {
+        Some((about, _)) => Some((about.acting, about.works_on)),
+        None => node.births.0.lock().expect("never poisoned").get(id).cloned(),
+    }
+}
+
 /// A job a run of a resident started on the machine it works on and left
 /// running there, kept here until word of its end comes: the line of jobs
 /// still running, at the end of each answer, names it (`world-run.md`, 怎样

@@ -1014,6 +1014,7 @@ pub async fn open_here(
     }
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
+    let _birth = crate::here::born(node, &id, opened.acting.clone(), opened.works_on.clone());
     if let Some(lives_on) = &opened.colleagues {
         crate::colleagues::setting::keep(node, &id, lives_on)?;
     }

@@ -130,6 +130,7 @@ pub async fn ask_here(
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
+    let _birth = crate::here::born(node, &id, acting.clone(), None);
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, None).await?;
     let (thread, model) = node.codex.start_thread(spec).await.map_err(|error| {
         Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))

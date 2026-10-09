@@ -964,12 +964,12 @@ async fn who(
 /// from the hubs' views as they stand, asking none of them; and where its
 /// colleagues live, when it may ask for them.
 fn machines(node: &Arc<Node>, resident: Option<&ResidentId>) -> Result<Reply, Failure> {
-    let about = resident.and_then(|resident| node.residents.about(resident)).map(|(about, _)| about);
-    let acting = about.as_ref().map(|about| about.acting.clone()).unwrap_or_default();
+    let placed = resident.and_then(|resident| crate::here::placed(node, resident));
+    let acting = placed.as_ref().map(|(acting, _)| acting.clone()).unwrap_or_default();
     let (here, mut others) = crate::world::machines(node, &acting);
     // The session's shell is where it works: that machine is "this one",
     // and the one it lives on is among the others (`world-run.md`, 这里).
-    let works_on = about.as_ref().and_then(|about| about.works_on.clone()).filter(|works_on| !node.is_here(works_on));
+    let works_on = placed.as_ref().and_then(|(_, works_on)| works_on.clone()).filter(|works_on| !node.is_here(works_on));
     let here = match works_on {
         Some(works_on) => {
             let written = works_on.to_string();
@@ -980,7 +980,7 @@ fn machines(node: &Arc<Node>, resident: Option<&ResidentId>) -> Result<Reply, Fa
         }
         None => here.to_string(),
     };
-    let colleagues = match resident.filter(|_| about.is_some()) {
+    let colleagues = match resident.filter(|_| placed.is_some()) {
         Some(resident) => crate::colleagues::setting::read(node, resident)
             .map_err(|error| Failure::new(format!("reading the colleague setting: {error}")))?,
         None => None,

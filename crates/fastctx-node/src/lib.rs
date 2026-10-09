@@ -129,6 +129,7 @@ pub(crate) struct Node {
     /// Jobs run for residents here on the machines they work on, answered
     /// whole, until their hosts have the answers (`here`).
     dispatched: here::Dispatched,
+    births: here::Births,
     /// The jobs `on` sent from here to other machines, by machine and id,
     /// as a letter telling one's end finds them (`on`).
     on_deliveries: on_delivery::Deliveries,
@@ -332,6 +333,7 @@ pub async fn run_replacing(
         following: Default::default(),
         words: Default::default(),
         dispatched: Default::default(),
+        births: Default::default(),
         on_deliveries: Default::default(),
         on_stopping: Default::default(),
         on_delivering: Default::default(),
