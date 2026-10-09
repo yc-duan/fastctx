@@ -294,70 +294,81 @@ impl Inner {
             sending,
             feeding: None,
         };
-        if connection.up.send(Up::Call { id, message }).is_err() {
-            return Err(CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() });
-        }
-        // Once queued to the connection, the call may have reached its
-        // target even if the hub's Delivered status never reached us.
-        let lost = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
-        let mut fed: Option<oneshot::Receiver<Result<(), String>>> = None;
-        loop {
-            let event = tokio::select! {
-                event = received.recv() => match event {
-                    Some(event) => event,
-                    None => return Err(lost("the link stopped".to_string())),
-                },
-                opened = async { opening.as_mut().expect("polled only while opening").await }, if opening.is_some() => {
-                    opening = None;
-                    match opened {
-                        Ok(Ok(stream)) => {
-                            let feed = feed.take().expect("a call that opens a data connection has a feed");
-                            let (done, finished) = oneshot::channel();
-                            waiting.feeding = Some(tokio::spawn(async move {
-                                let _ = done.send(feed(stream).await);
-                            }));
-                            fed = Some(finished);
-                            continue;
+        let result = async {
+            if connection.up.send(Up::Call { id, message }).is_err() {
+                return Err(CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() });
+            }
+            // Once queued to the connection, the call may have reached its
+            // target even if the hub's Delivered status never reached us.
+            let lost = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
+            let mut fed: Option<oneshot::Receiver<Result<(), String>>> = None;
+            loop {
+                let event = tokio::select! {
+                    event = received.recv() => match event {
+                        Some(event) => event,
+                        None => return Err(lost("the link stopped".to_string())),
+                    },
+                    opened = async { opening.as_mut().expect("polled only while opening").await }, if opening.is_some() => {
+                        opening = None;
+                        match opened {
+                            Ok(Ok(stream)) => {
+                                let feed = feed.take().expect("a call that opens a data connection has a feed");
+                                let (done, finished) = oneshot::channel();
+                                waiting.feeding = Some(tokio::spawn(async move {
+                                    let _ = done.send(feed(stream).await);
+                                }));
+                                fed = Some(finished);
+                                continue;
+                            }
+                            Ok(Err(error)) => return Err(lost(format!("opening its data connection: {error}"))),
+                            Err(_) => return Err(lost("opening its data connection stopped".to_string())),
                         }
-                        Ok(Err(error)) => return Err(lost(format!("opening its data connection: {error}"))),
-                        Err(_) => return Err(lost("opening its data connection stopped".to_string())),
                     }
-                }
-                finished = async { fed.as_mut().expect("polled only while feeding").await }, if fed.is_some() => {
-                    fed = None;
-                    match finished {
-                        Ok(Err(error)) => return Err(lost(format!("sending its data failed: {error}"))),
-                        // Fed in full; the answer decides.
-                        Ok(Ok(())) | Err(_) => continue,
+                    finished = async { fed.as_mut().expect("polled only while feeding").await }, if fed.is_some() => {
+                        fed = None;
+                        match finished {
+                            Ok(Err(error)) => return Err(lost(format!("sending its data failed: {error}"))),
+                            // Fed in full; the answer decides.
+                            Ok(Ok(())) | Err(_) => continue,
+                        }
                     }
-                }
-            };
-            match event {
-                CallEvent::Status(CallStatus::Delivered) => {}
-                CallEvent::Status(CallStatus::Offline { last_seen }) => {
-                    waiting.answered = true;
-                    return Err(CallFailure::Offline { name: to.clone(), last_seen });
-                }
-                CallEvent::Status(CallStatus::NotMember) => {
-                    waiting.answered = true;
-                    return Err(self.not_member(to));
-                }
-                CallEvent::Status(CallStatus::Lost) => {
-                    waiting.answered = true;
-                    return Err(lost("its connection to the hub ended".to_string()));
-                }
-                CallEvent::Answered(signed) => {
-                    waiting.answered = true;
-                    return self
-                        .check_answer(to, n, &signed)
-                        .map_err(|reason| CallFailure::Unknown { name: to.clone(), reason });
-                }
-                CallEvent::Disconnected(reason) => {
-                    waiting.answered = true;
-                    return Err(lost(reason));
+                };
+                match event {
+                    CallEvent::Status(CallStatus::Delivered) => {}
+                    CallEvent::Status(CallStatus::Offline { last_seen }) => {
+                        waiting.answered = true;
+                        return Err(CallFailure::Offline { name: to.clone(), last_seen });
+                    }
+                    CallEvent::Status(CallStatus::NotMember) => {
+                        waiting.answered = true;
+                        return Err(self.not_member(to));
+                    }
+                    CallEvent::Status(CallStatus::Lost) => {
+                        waiting.answered = true;
+                        return Err(lost("its connection to the hub ended".to_string()));
+                    }
+                    CallEvent::Answered(signed) => {
+                        waiting.answered = true;
+                        return self
+                            .check_answer(to, n, &signed)
+                            .map_err(|reason| CallFailure::Unknown { name: to.clone(), reason });
+                    }
+                    CallEvent::Disconnected(reason) => {
+                        waiting.answered = true;
+                        return Err(lost(reason));
+                    }
                 }
             }
         }
+        .await;
+        // abort only requests cancellation. A running feed can still commit
+        // bytes and resume offsets before its next suspension, so its caller
+        // must not start a replacement feed until this one has been dropped.
+        if let Some(task) = waiting.feeding.take() {
+            task.abort();
+            let _ = task.await;
+        }
+        result
     }
 
     /// The envelope answering this machine's call `n` to `to`, if `to`

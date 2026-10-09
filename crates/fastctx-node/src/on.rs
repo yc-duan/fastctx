@@ -35,7 +35,12 @@ use crate::Node;
 
 /// The most bytes read from a log and handed over at once: one data
 /// message (`fastctx_net::wire::MAX_DATA_MESSAGE`).
-const CHUNK: usize = 1024 * 1024;
+const CHUNK: usize = fastctx_net::wire::MAX_DATA_MESSAGE;
+
+/// One queued chunk overlaps the IPC writer with the next network read.
+/// Output waiting for that writer is at most 4 * ceil(CHUNK / 3) bytes;
+/// the producer reserves this slot before receiving or encoding a chunk.
+const QUEUED_PIECES: usize = 1;
 
 /// How long a follower waits before looking at a quiet log again. Output
 /// growing says nothing to anyone, so it is looked for; a tenth of a second
@@ -50,11 +55,11 @@ pub(crate) enum Piece {
 }
 
 #[derive(Clone)]
-struct Pieces(mpsc::UnboundedSender<Piece>);
+struct Pieces(mpsc::Sender<Piece>);
 
 impl Pieces {
-    fn send(&self, piece: Result<OnPiece, Failure>) -> Result<(), String> {
-        self.0.send(Piece::Value(piece)).map_err(|_| "the on that sent it left".to_string())
+    async fn send(&self, piece: Result<OnPiece, Failure>) -> Result<(), String> {
+        self.0.send(Piece::Value(piece)).await.map_err(|_| "the on that sent it left".to_string())
     }
 
     fn is_closed(&self) -> bool {
@@ -67,7 +72,7 @@ impl Pieces {
 
     async fn ended(&self, end: OnEnd) -> Result<bool, String> {
         let (taken, receipt) = oneshot::channel();
-        self.0.send(Piece::End { end, taken }).map_err(|_| "the on that sent it left".to_string())?;
+        self.0.send(Piece::End { end, taken }).await.map_err(|_| "the on that sent it left".to_string())?;
         Ok(receipt.await.is_ok())
     }
 }
@@ -81,9 +86,9 @@ pub async fn send(
     node: &Arc<Node>,
     mut origin: OnOrigin,
     request: OnRequest,
-) -> Result<mpsc::UnboundedReceiver<Piece>, Failure> {
+) -> Result<mpsc::Receiver<Piece>, Failure> {
     origin.request = Some(crate::speech::new_id("on"));
-    let (pieces, receiver) = mpsc::unbounded_channel();
+    let (pieces, receiver) = mpsc::channel(QUEUED_PIECES);
     let pieces = Pieces(pieces);
     let node = node.clone();
     tokio::spawn(async move {
@@ -105,7 +110,7 @@ pub async fn send(
             if local && !failure.not_run && pieces.is_closed() {
                 crate::on_stop::send(&node, &request.machine, &origin, None).await;
             }
-            let _ = pieces.send(Err(failure));
+            let _ = pieces.send(Err(failure)).await;
         }
     });
     Ok(receiver)
@@ -182,7 +187,7 @@ async fn here(
     let (job, record_path, follower) = start(node, origin, staged, request.package.writes_off).await?;
     waiting.lock().expect("never poisoned").started(&job);
     noted(node, origin, request, &job).await?;
-    let _ = pieces.send(Ok(OnPiece::Started { machine: node.machine(), job: job.clone() }));
+    let _ = pieces.send(Ok(OnPiece::Started { machine: node.machine(), job: job.clone() })).await;
     let mut sink = Sink::Local(pieces);
     let handed = hand_over(node, &job, &record_path, 0, 0, &mut sink).await;
     if matches!(handed, Ok(Handed { taken: true, complete: true })) {
@@ -382,25 +387,35 @@ fn feed(
                             followed.lock().expect("never poisoned").refused = Some(Failure::new(error.clone()));
                             return Err(error);
                         }
-                        let _ = pieces.send(Ok(OnPiece::Started { machine: machine.clone(), job }));
+                        let _ = pieces.send(Ok(OnPiece::Started { machine: machine.clone(), job })).await;
                     }
-                    OnWord::Out { bytes } | OnWord::Err { bytes } => {
+                    OnWord::Out { mut bytes } | OnWord::Err { mut bytes } => {
                         let error = matches!(word, OnWord::Err { .. });
-                        let mut taken = Vec::new();
-                        stream
-                            .take(bytes, |chunk| {
-                                taken.extend_from_slice(chunk);
-                                Ok(())
-                            })
-                            .await?;
-                        {
+                        while bytes > 0 {
+                            // Waiting for the CLI is not a silent network. Reserve
+                            // outside SILENT_FOR, before reading any more output.
+                            let slot = pieces.0.reserve().await.map_err(|_| "the on that sent it left".to_string())?;
+                            let count = bytes.min(CHUNK as u64);
+                            let mut taken = Vec::with_capacity(count as usize);
+                            stream
+                                .take(count, |chunk| {
+                                    taken.extend_from_slice(chunk);
+                                    Ok(())
+                                })
+                                .await?;
+                            let base64 = STANDARD.encode(&taken);
+                            let piece = if error { OnPiece::Err { base64 } } else { OnPiece::Out { base64 } };
+                            // A cancelled feed must either leave both unchanged
+                            // or retain the bytes and advance their resume offset.
+                            // No await may separate these two operations.
                             let mut followed = followed.lock().expect("never poisoned");
-                            if error { followed.err += bytes } else { followed.out += bytes }
-                        }
-                        let base64 = STANDARD.encode(&taken);
-                        let piece = if error { OnPiece::Err { base64 } } else { OnPiece::Out { base64 } };
-                        if pieces.send(Ok(piece)).is_err() {
-                            return Err("the on that sent it left".to_string());
+                            slot.send(Piece::Value(Ok(piece)));
+                            if error {
+                                followed.err += count
+                            } else {
+                                followed.out += count
+                            }
+                            bytes -= count;
                         }
                     }
                     OnWord::Still => {}
@@ -818,9 +833,11 @@ impl Sink<'_> {
                 stream.send(bytes).await
             }
             Sink::Local(pieces) => {
+                let slot = pieces.0.reserve().await.map_err(|_| "the on that sent it left".to_string())?;
                 let base64 = STANDARD.encode(bytes);
                 let piece = if error { OnPiece::Err { base64 } } else { OnPiece::Out { base64 } };
-                pieces.send(Ok(piece)).map_err(|_| "the on that sent it left".to_string())
+                slot.send(Piece::Value(Ok(piece)));
+                Ok(())
             }
         }
     }
