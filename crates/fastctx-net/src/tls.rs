@@ -4,6 +4,11 @@
 //! never replaced; machines accept exactly that certificate, by the SHA-256
 //! of its bytes, and nothing else. There is no certificate authority, no
 //! domain name and no expiry to check. Only TLS 1.3 is spoken.
+//!
+//! The one exception is the first contact of a password login: the device
+//! does not know the certificate yet, takes whichever the server presents,
+//! and learns it only once the login proved the server is the hub
+//! (`crate::login`).
 
 use std::sync::Arc;
 
@@ -12,7 +17,7 @@ use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 
-use crate::trust::CertPin;
+use crate::ids::CertPin;
 
 fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
@@ -56,8 +61,9 @@ impl HubCertificate {
     }
 }
 
-/// A client configuration that accepts the one certificate `pin` names.
-pub fn client_config(pin: CertPin) -> Arc<rustls::ClientConfig> {
+/// A client configuration that accepts the one certificate `pin` names, or,
+/// without a pin, any certificate whose key signs the handshake.
+pub fn client_config(pin: Option<CertPin>) -> Arc<rustls::ClientConfig> {
     let provider = provider();
     let mut config = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])
@@ -71,7 +77,7 @@ pub fn client_config(pin: CertPin) -> Arc<rustls::ClientConfig> {
 
 #[derive(Debug)]
 struct Pinned {
-    pin: CertPin,
+    pin: Option<CertPin>,
     provider: Arc<CryptoProvider>,
 }
 
@@ -85,13 +91,12 @@ impl ServerCertVerifier for Pinned {
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         let presented = CertPin::of(end_entity.as_ref());
-        if presented == self.pin {
-            Ok(ServerCertVerified::assertion())
-        } else {
-            Err(rustls::Error::General(format!(
-                "the server presented the certificate {presented}, not the hub's {}; something other than the hub answered",
-                self.pin
-            )))
+        match self.pin {
+            None => Ok(ServerCertVerified::assertion()),
+            Some(pin) if presented == pin => Ok(ServerCertVerified::assertion()),
+            Some(pin) => Err(rustls::Error::General(format!(
+                "the server presented the certificate {presented}, not the hub's {pin}; something other than the hub answered"
+            ))),
         }
     }
 

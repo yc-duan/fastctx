@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use super::state::{NetDir, read};
 use crate::message::LetterId;
-use crate::sign::{Digest, Signed};
+use crate::envelope::Envelope;
+use crate::sign::Digest;
 
 /// Letters not yet held by the hub, one file each, named by number.
 pub struct Outbox {
@@ -23,12 +24,12 @@ impl Outbox {
         Self { dir: net.outbox() }
     }
 
-    pub fn put(&self, seq: u64, message: &Signed) -> io::Result<()> {
+    pub fn put(&self, seq: u64, message: &Envelope) -> io::Result<()> {
         let bytes = serde_json::to_vec(message).map_err(io::Error::other)?;
         publish_new(&self.dir.join(format!("{seq:020}")), &bytes, Permissions::Private)
     }
 
-    pub fn get(&self, seq: u64) -> io::Result<Option<Signed>> {
+    pub fn get(&self, seq: u64) -> io::Result<Option<Envelope>> {
         match read(&self.dir.join(format!("{seq:020}"))) {
             Ok(message) => Ok(Some(message)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -96,10 +97,10 @@ pub struct Failure {
     /// `in` for a letter this machine received, `out` for one it sent.
     pub direction: String,
     pub reason: String,
-    pub message: Signed,
+    pub message: Envelope,
 }
 
-pub fn record_failure(net: &NetDir, direction: &str, reason: &str, message: &Signed) -> io::Result<PathBuf> {
+pub fn record_failure(net: &NetDir, direction: &str, reason: &str, message: &Envelope) -> io::Result<PathBuf> {
     let at = Timestamp::now();
     let failure =
         Failure { at, direction: direction.to_string(), reason: reason.to_string(), message: message.clone() };

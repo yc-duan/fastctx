@@ -2,7 +2,8 @@
 
 use crate::link::{Feed, Link};
 use crate::sign::{Domain, Signed};
-use fastctx_types::MachineName;
+use fastctx_types::access::Purpose;
+use fastctx_types::{AccountName, MachineName};
 use fastctx_types::file_search::{FileSearchReply, FileSearchRequest, FileSearchScope};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::RemoteCall;
@@ -26,6 +27,7 @@ impl Lease {
 pub async fn open(
     link: Arc<Link>,
     machine: MachineName,
+    account: AccountName,
     scope: FileSearchScope,
 ) -> Result<(FileSearchReply, Lease), Failure> {
     let (sender, receiver) = oneshot::channel();
@@ -44,8 +46,8 @@ pub async fn open(
         })
     });
     let task = tokio::spawn(async move {
-        let call =
-            link.call_with_stream(&machine, RemoteCall::FindFiles { request: FileSearchRequest::Open { scope } }, feed);
+        let open = RemoteCall::FindFiles { request: FileSearchRequest::Open { scope } };
+        let call = link.call_with_stream(&machine, &account, Purpose::Hands, open, feed);
         tokio::pin!(call);
         let result = tokio::select! {
             reply = opening => reply.map_err(|error| Failure::new(format!("opening the file search: {error}"))),

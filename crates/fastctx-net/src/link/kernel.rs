@@ -1,14 +1,14 @@
-//! Release information comes from the root, even on a relayed session.
+//! Release information comes from the hub, through a relay as well.
 
 use fastctx_types::kernel::KernelRelease;
 
 use super::Link;
-use crate::trust::CertPin;
+use crate::ids::CertPin;
 use crate::wire::{Question, Told};
 
 impl Link {
-    /// Gets a complete release and verifies its public certificate against
-    /// the root identity in this membership before callers compute an SPKI pin.
+    /// Gets a complete release and checks its certificate against the one
+    /// this membership pins, before callers compute an SPKI pin from it.
     pub async fn kernel_release(&self, version: &str) -> Result<(KernelRelease, Vec<u8>), String> {
         match self.inner.ask(Question::KernelRelease { version: version.to_owned() }).await? {
             Told::KernelRelease { release, certificate } => {
@@ -17,7 +17,7 @@ impl Link {
                 }
                 if CertPin::of(&certificate) != self.membership().cert {
                     return Err(
-                        "the release certificate is not the root hub certificate pinned by this membership".into()
+                        "the release certificate is not the hub certificate this membership pins".into()
                     );
                 }
                 Ok((release, certificate))

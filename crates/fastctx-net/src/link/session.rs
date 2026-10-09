@@ -1,11 +1,10 @@
 //! The link's connections: dialing an upstream, the welcome, and everything
 //! that passes on one connection until it ends; then dialing again.
 //!
-//! The upstreams are tried in the order the machine's route gives them
-//! (`crate::tree`); one that cannot be reached or does not take the session
-//! gives way to the next. A machine on a fallback asks its preferred
-//! upstreams now and then whether they take sessions again, and returns to
-//! the first that does.
+//! The ways to the hub are tried in order: the relays the machine's view
+//! lists for it, then the hub itself; one that cannot be reached gives way
+//! to the next. A machine on a later way asks the earlier ones now and then
+//! whether they take sessions again, and returns to the first that does.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,30 +18,28 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use super::letters::{self, Outbox, Receipt};
 use super::outgoing::Outgoing;
-use super::{CallEvent, Connection, Inner, Status};
+use super::{CallEvent, Connection, Inner, Status, Upstream};
 use crate::dial::{self, HubSocket};
-use crate::envelope::{self, Kind};
+use crate::envelope::{Envelope, Kind};
 use crate::message::LetterBody;
-use crate::seal::Sealed;
-use crate::sign::{Domain, Signed, sha256};
-use crate::tree::{Endpoint, Upstream};
+use crate::sign::{Domain, sha256};
 use crate::wire::{self, Down, HEARTBEAT, Intent, Letters, PROTOCOL, Refusal, SILENCE, Up};
 
 /// A connection that stays up this long counts as healthy: the next failure
 /// is tried again at once.
 const STABLE: Duration = Duration::from_secs(60);
 
-/// How often a machine on a fallback upstream asks its preferred ones
-/// whether they take sessions again: the longest it stays on the fallback
-/// after a relay it belongs under is back.
+/// How often a machine on a later way to the hub asks the earlier ones
+/// whether they take sessions again: the longest it stays on the later way
+/// after a relay it connects through first is back (`world-network.md`).
 const RETURN: Duration = Duration::from_secs(60);
 
 enum Ended {
     /// Try again.
     Retry(String),
-    /// Connect again at once, from the first upstream.
+    /// Connect again at once, by the first way.
     Reroute(String),
-    /// The hub refused this machine for good.
+    /// The hub removed this machine.
     Stop(String),
 }
 
@@ -115,7 +112,7 @@ fn reconnect(inner: &Inner, reason: &str) {
     dial::network_changed();
 }
 
-/// A session the hub welcomed, through one upstream.
+/// A session the hub welcomed, by one way.
 struct Opened {
     socket: HubSocket,
     address: std::net::SocketAddr,
@@ -124,25 +121,26 @@ struct Opened {
     hub_letters: u64,
 }
 
-/// Opens a session through the first upstream that takes it.
+/// Opens a session by the first way to the hub that takes it.
 async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ended {
-    let endpoints = inner.endpoints();
+    let upstreams = inner.upstreams();
     let mut failures = Vec::new();
-    for (index, endpoint) in endpoints.iter().enumerate() {
-        match open(inner, endpoint).await {
-            Ok(opened) => return connected(inner, online_since, &endpoints[..=index], opened).await,
-            Err(Ended::Retry(reason)) => failures.push(format!("{}: {reason}", endpoint.upstream)),
+    for (index, upstream) in upstreams.iter().enumerate() {
+        match open(inner, upstream).await {
+            Ok(opened) => return connected(inner, online_since, &upstreams[..=index], opened).await,
+            Err(Ended::Retry(reason)) => failures.push(format!("{upstream}: {reason}")),
             Err(ended) => return ended,
         }
     }
     Ended::Retry(failures.join("; "))
 }
 
-async fn open(inner: &Inner, endpoint: &Endpoint) -> Result<Opened, Ended> {
+async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
     let membership = &inner.membership;
-    let dialed = dial::dial(&endpoint.addresses, endpoint.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
-        .await
-        .map_err(Ended::Retry)?;
+    let dialed =
+        dial::dial(&upstream.addresses, Some(membership.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
+            .await
+            .map_err(Ended::Retry)?;
     let (address, route) = (dialed.address, dialed.route.clone());
     let mut socket = dialed.socket;
     let proof = inner.key.sign(Domain::Session, &dialed.binding);
@@ -169,10 +167,10 @@ async fn open(inner: &Inner, endpoint: &Endpoint) -> Result<Opened, Ended> {
         }
     };
     match welcome {
-        Down::Welcome { world, name, taken, letters, .. } => {
-            if world != membership.world || name != membership.name {
+        Down::Welcome { hub, name, taken, letters, .. } => {
+            if hub != membership.world || name != membership.name {
                 return Err(Ended::Retry(format!(
-                    "the hub knows this machine as {name} in {world}, not {} in {}",
+                    "the hub knows this machine as {name} on {hub}, not {} on {}",
                     membership.name, membership.world
                 )));
             }
@@ -187,11 +185,11 @@ async fn open(inner: &Inner, endpoint: &Endpoint) -> Result<Opened, Ended> {
 async fn connected(
     inner: &Arc<Inner>,
     online_since: &mut Option<Instant>,
-    tried: &[Endpoint],
+    tried: &[Upstream],
     opened: Opened,
 ) -> Ended {
     let Opened { socket, address, route, taken, hub_letters } = opened;
-    let endpoint = tried.last().expect("a session is opened through an upstream").clone();
+    let upstream = tried.last().expect("a session is opened by a way").clone();
 
     // The hub holds this machine's letters through `taken`.
     if let Err(error) = held(inner, taken) {
@@ -209,22 +207,24 @@ async fn connected(
     }
 
     // Registered before the connection is published, so a change of the
-    // upstreams noticed from then on ends it.
+    // ways noticed from then on ends it.
     let rerouted = inner.rerouted.notified();
     tokio::pin!(rerouted);
     rerouted.as_mut().enable();
 
     let generation = inner.next_id();
     let (up, mut outgoing) = Outgoing::channel();
-    *inner.connection.lock().expect("never poisoned") =
-        Some(Connection { generation, up: up.clone(), endpoint: endpoint.clone(), tried: tried.to_vec() });
-    let relay = match &endpoint.upstream {
-        Upstream::Hub => None,
-        Upstream::Relay { machine } => Some(machine.clone()),
-    };
+    *inner.connection.lock().expect("never poisoned") = Some(Connection {
+        generation,
+        up: up.clone(),
+        upstream: upstream.clone(),
+        address,
+        tried: tried.to_vec(),
+    });
+    let relay = upstream.relay.clone();
     inner.status.send_replace(Status::Online { since: Timestamp::now(), address, relay, route: route.clone() });
     *online_since = Some(Instant::now());
-    inner.node.log(format!("connected to {} at {address}, {route}", endpoint.upstream));
+    inner.node.log(format!("connected to the hub at {address} by {upstream}, {route}"));
 
     // This guard also runs when a network event cancels connect(). Pending
     // callers must learn that their old connection ended before another
@@ -256,23 +256,18 @@ async fn connected(
     ]);
     let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
     if tried.len() > 1 {
-        tasks.0.push(tokio::spawn(ask_preferred(tried[..tried.len() - 1].to_vec(), returned)));
+        let cert = inner.membership.cert;
+        tasks.0.push(tokio::spawn(ask_preferred(tried[..tried.len() - 1].to_vec(), cert, returned)));
     }
     {
         let inner = inner.clone();
         tasks.0.push(tokio::spawn(async move {
             if let Err(error) = inner.refresh().await {
-                inner.node.log(format!("asking the hub for the members: {error}"));
+                inner.node.log(format!("asking the hub for the view: {error}"));
             }
-            // A member of a World older than sealing gives the hub its
-            // sealing key the first time it connects.
-            if let Err(error) = inner.republish().await {
-                inner.node.log(format!("giving the hub this machine's sealing key: {error}"));
-            }
-            inner.node.members_changed();
-            // Whatever the towns' ledgers gained while this machine was away
-            // is taken now; the entries checked against the members just
-            // asked for.
+            inner.node.directory_changed();
+            // Whatever the projects' ledgers gained while this machine was
+            // away is taken now.
             inner.node.ledger_changed(None);
         }));
     }
@@ -288,7 +283,7 @@ async fn connected(
                 break Ended::Retry(format!("the hub did not answer a heartbeat for {} s", SILENCE.as_secs()));
             },
             _ = &mut writer_stopped => break Ended::Retry("writing to the hub failed".to_string()),
-            () = &mut rerouted => break Ended::Reroute("the upstreams this machine connects through changed".to_string()),
+            () = &mut rerouted => break Ended::Reroute("the ways this machine connects to the hub by changed".to_string()),
             Ok(upstream) = &mut preferred_back => break Ended::Reroute(format!("{upstream} takes sessions again")),
             failed = &mut letters_failed => break Ended::Retry(failed.unwrap_or_else(|_| "taking letters stopped".to_string())),
             failed = &mut outbox_failure => break Ended::Retry(failed.unwrap_or_else(|_| "sending letters stopped".to_string())),
@@ -343,23 +338,23 @@ async fn connected(
                     let _ = asker.send(answer);
                 }
             }
-            Down::MembersChanged => {
+            Down::DirectoryChanged => {
                 let inner = inner.clone();
                 tokio::spawn(async move {
                     if let Err(error) = inner.refresh().await {
-                        inner.node.log(format!("asking the hub for the members: {error}"));
+                        inner.node.log(format!("asking the hub for the view: {error}"));
                     }
-                    inner.node.members_changed();
+                    inner.node.directory_changed();
                 });
             }
             Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
             Down::Refused { reason } => break refused(reason),
             Down::Welcome { .. }
-            | Down::Joined { .. }
-            | Down::Endorsement { .. }
+            | Down::LoginResponse { .. }
+            | Down::RegisterResponse { .. }
+            | Down::LoggedIn { .. }
+            | Down::Registered
             | Down::Paired
-            | Down::Relaying { .. }
-            | Down::To { .. }
             | Down::Ready => {
                 break Ended::Retry("the hub sent a frame that belongs to another kind of connection".to_string());
             }
@@ -372,9 +367,9 @@ async fn connected(
         Ended::Retry(reason) | Ended::Reroute(reason) | Ended::Stop(reason) => reason.clone(),
     };
     if matches!(ended, Ended::Stop(_)) {
-        // Publish the authenticated revocation before dropping pending
-        // questions. When leaving, the hub may close the revoked session
-        // before the separate acknowledgement of the revocation arrives.
+        // Publish the removal before dropping pending questions. When
+        // leaving, the hub may close the session before the separate
+        // answer to the leaving arrives.
         inner.status.send_replace(Status::Stopped { reason: guard.reason.clone() });
     }
     ended
@@ -414,19 +409,19 @@ impl Drop for Tasks {
 
 fn refused(reason: Refusal) -> Ended {
     match reason {
-        Refusal::Revoked { .. } => Ended::Stop(reason.to_string()),
+        Refusal::Removed { .. } => Ended::Stop(reason.to_string()),
         other => Ended::Retry(other.to_string()),
     }
 }
 
-/// Asks the upstreams before the one this machine is on, every `RETURN`,
-/// whether they take sessions; says the first that does.
-async fn ask_preferred(preferred: Vec<Endpoint>, returned: oneshot::Sender<Upstream>) {
+/// Asks the ways before the one this machine is on, every `RETURN`, whether
+/// they take sessions; says the first that does.
+async fn ask_preferred(preferred: Vec<Upstream>, cert: crate::ids::CertPin, returned: oneshot::Sender<Upstream>) {
     loop {
         tokio::time::sleep(RETURN).await;
-        for endpoint in &preferred {
-            if dial::probe(&endpoint.addresses, endpoint.cert).await.is_ok() {
-                let _ = returned.send(endpoint.upstream.clone());
+        for upstream in &preferred {
+            if dial::probe(&upstream.addresses, cert).await.is_ok() {
+                let _ = returned.send(upstream.clone());
                 return;
             }
         }
@@ -509,7 +504,7 @@ async fn take_letters(
     inner: Arc<Inner>,
     up: Outgoing,
     hub_letters: u64,
-    mut delivered: mpsc::UnboundedReceiver<(u64, Signed)>,
+    mut delivered: mpsc::UnboundedReceiver<(u64, Envelope)>,
     failed: oneshot::Sender<String>,
 ) {
     while let Some((seq, message)) = delivered.recv().await {
@@ -539,57 +534,42 @@ async fn take_letters(
     }
 }
 
-/// Opens one letter and hands it to the node. A letter that cannot be
-/// opened or taken is set aside with the reason; only a failure of this
+/// Checks one letter and hands it to the node. A letter that cannot be
+/// read or taken is set aside with the reason; only a failure of this
 /// machine's own disk is an error, and the hub sends the letter again.
-async fn take_letter(inner: &Inner, message: &Signed) -> std::io::Result<()> {
+async fn take_letter(inner: &Inner, message: &Envelope) -> std::io::Result<()> {
     let set_aside = |reason: String| -> std::io::Result<()> {
         let path = letters::record_failure(&inner.dir, "in", &reason, message)?;
         inner.node.log(format!("a letter was set aside: {reason}; kept in {}", path.display()));
         Ok(())
     };
-    let claimed = match envelope::claim(message) {
-        Ok(claimed) => claimed,
-        Err(error) => return set_aside(format!("it cannot be read: {error}")),
-    };
-    if claimed.to != inner.membership.name || claimed.world != inner.membership.world {
-        return set_aside(format!("it is for {} in {}", claimed.to, claimed.world));
+    if message.kind != Kind::Letter {
+        return set_aside(format!("from {}: it is not a letter", message.from));
     }
-    let Some(key) = inner.key_of(&claimed.from).await else {
-        return set_aside(format!("{} is not a member this machine trusts", claimed.from));
+    let caller = match inner.admit(message).await {
+        Ok(caller) => caller,
+        Err(reason) => return set_aside(format!("from {}: {reason}", message.from)),
     };
-    let opened = match envelope::open(message, &key) {
-        Ok(opened) => opened,
-        Err(error) => return set_aside(format!("from {}: {error}", claimed.from)),
-    };
-    if opened.kind != Kind::Letter {
-        return set_aside(format!("from {}: it is not a letter", opened.from));
-    }
-    let info = super::calls::letter_info(&opened.world, &opened.from, &opened.to);
-    let plaintext = match Sealed::from_bytes(&opened.sealed.0)
-        .and_then(|sealed| inner.seal.open(&sealed, &info, &opened.header()))
-    {
-        Ok(plaintext) => plaintext,
-        Err(error) => return set_aside(format!("from {}: {error}", opened.from)),
-    };
-    let LetterBody { id, letter } = match serde_json::from_slice(&plaintext) {
+    let purpose = message.purpose.expect("an admitted letter names its purpose");
+    let LetterBody { id, letter } = match message.body() {
         Ok(body) => body,
-        Err(error) => return set_aside(format!("from {}: it cannot be read: {error}", opened.from)),
+        Err(error) => return set_aside(format!("from {}: {error}", message.from)),
     };
     let digest = crate::sign::Digest(sha256(&serde_json::to_vec(&letter).expect("letters serialize")));
-    match letters::receipt(&inner.dir, &opened.from, &id)? {
+    match letters::receipt(&inner.dir, &caller.machine, &id)? {
         Some(receipt) if receipt.digest == digest => return Ok(()),
         Some(_) => {
             return set_aside(format!(
                 "from {}: the id {} was used before for another letter",
-                opened.from,
+                caller.machine,
                 id.as_str()
             ));
         }
         None => {}
     }
-    if let Err(reason) = inner.node.letter(opened.from.clone(), id.clone(), letter).await? {
-        set_aside(format!("from {}: {reason}", opened.from))?;
+    let from = caller.machine.clone();
+    if let Err(reason) = inner.node.letter(caller, purpose, id.clone(), letter).await? {
+        set_aside(format!("from {from}: {reason}"))?;
     }
-    letters::keep_receipt(&inner.dir, &opened.from, &id, &Receipt { digest, at: Timestamp::now() })
+    letters::keep_receipt(&inner.dir, &from, &id, &Receipt { digest, at: Timestamp::now() })
 }

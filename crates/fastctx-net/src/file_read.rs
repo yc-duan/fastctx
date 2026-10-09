@@ -2,7 +2,8 @@
 
 use crate::link::{Feed, Link};
 use crate::sign::{Digest, Domain, Signed, sha256};
-use fastctx_types::MachineName;
+use fastctx_types::access::Purpose;
+use fastctx_types::{AccountName, MachineName};
 use fastctx_types::file_read::*;
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -36,6 +37,7 @@ pub enum Content {
 pub async fn read(
     link: &Arc<Link>,
     machine: MachineName,
+    account: AccountName,
     request: ReadFileRequest,
     sender: &Sender,
 ) -> Result<FileReadResult, Failure> {
@@ -88,7 +90,7 @@ pub async fn read(
         })
     });
     let reply = link
-        .call_with_stream(&machine, RemoteCall::ReadFile { request, read }, feed)
+        .call_with_stream(&machine, &account, Purpose::Hands, RemoteCall::ReadFile { request, read }, feed)
         .await
         .map_err(|e| Failure::new(e.to_string()))??;
     let RemoteReply::FileRead { result } = reply else {

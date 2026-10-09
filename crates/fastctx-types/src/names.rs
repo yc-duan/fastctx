@@ -113,6 +113,26 @@ name_type!(
 );
 
 name_type!(
+    /// A hub's short name, such as `home` or `acme`, chosen by its
+    /// administrator: what tells two hubs apart on a computer that uses both,
+    /// written after a machine's name as `gpu.acme`.
+    HubName,
+    "hub name",
+    "a word of lowercase letters, digits and hyphens, starting with a letter, at most 32 characters",
+    |text| is_word(text, 32)
+);
+
+name_type!(
+    /// An account on a hub, such as `alice` or `alice-work`: what a person,
+    /// several people or one of a person's roles logs in as. It belongs to
+    /// one hub; the same name on another hub is another account.
+    AccountName,
+    "account name",
+    "a word of lowercase letters, digits and hyphens, starting with a letter, at most 64 characters",
+    |text| is_word(text, 64)
+);
+
+name_type!(
     /// A town's short name, such as `mark50`: what commands, `fastctx w` and
     /// the World's directories use; the project's full name is free text.
     TownName,

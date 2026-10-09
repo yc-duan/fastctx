@@ -1,18 +1,20 @@
-//! The codes a person carries from one machine to another to join a World:
-//! the hub's founding code for the first machine, and an invitation for
-//! every machine and device after it (`world-network.md`, 邀请码).
+//! One-time enrollment tokens (`world-network.md`, 登录与入网): what a
+//! device that cannot type a password carries to log in, as a line of text
+//! for a server or a QR code for a phone.
 //!
-//! A code holds only what a machine needs before it has talked to anyone:
-//! where its upstream is and that upstream's certificate, which World, the
-//! founder's key, and a secret. An invitation itself, what it admits and
-//! until when, waits at the hub; the joining machine proves it holds the
-//! secret to get it. A code is a secret until it is used, since whoever
-//! holds it can join.
+//! A token holds only what a device needs before it has talked to anyone:
+//! where the hub is and its certificate, which hub, and a secret. What the
+//! token is for, which account, whether it registers the computer as a
+//! machine, until when, waits at the hub under the public half of the key
+//! the secret gives; the device proves it holds the secret by signing the
+//! connection's TLS exporter with that key. A token is a secret until it is
+//! used, since whoever holds it can log in.
 //!
-//! It is written as `FX4` followed by its bytes in Crockford's base32: upper
-//! case letters and digits a person can read out, that a QR code holds in
-//! its alphanumeric mode, and that pass through every shell unquoted. The
-//! last two bytes check the rest, so a mistyped code is told as such.
+//! It is written as `FX5` followed by its bytes in Crockford's base32:
+//! upper case letters and digits a person can read out, that a QR code
+//! holds in its alphanumeric mode, and that pass through every shell
+//! unquoted. The last two bytes check the rest, so a mistyped token is
+//! told as such.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
@@ -20,69 +22,53 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
-use crate::sign::{Digest, PublicKey, Secret, SecretKey};
-use crate::trust::{CertPin, WorldId};
+use crate::ids::{CertPin, WorldId};
+use crate::sign::{Digest, SecretKey};
 
-const PREFIX: &str = "FX4";
-const FOUNDING: u8 = 1;
-const INVITATION: u8 = 2;
+const PREFIX: &str = "FX5";
+const KIND: u8 = 1;
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-/// The secret of an invitation, from which its one-time key comes.
+/// A token's secret, from which its one-time key comes.
 #[derive(Clone, PartialEq, Eq)]
-pub struct InviteSecret(pub Zeroizing<[u8; 16]>);
+pub struct TokenSecret(pub Zeroizing<[u8; 16]>);
 
-impl std::fmt::Debug for InviteSecret {
+impl std::fmt::Debug for TokenSecret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("InviteSecret(..)")
+        f.write_str("TokenSecret(..)")
     }
 }
 
-impl InviteSecret {
+impl TokenSecret {
     pub fn generate() -> std::io::Result<Self> {
         Ok(Self(Zeroizing::new(crate::sign::random::<16>()?)))
     }
 
-    /// The invitation's one-time key.
+    /// The token's one-time key; the hub keeps its public half.
     pub fn key(&self) -> SecretKey {
         let mut seed = Zeroizing::new([0_u8; 32]);
         Hkdf::<Sha256>::new(None, &*self.0)
-            .expand(b"fastctx-world/3/invite", &mut *seed)
+            .expand(b"fastctx-hub/4/token", &mut *seed)
             .expect("32 bytes is a valid HKDF output");
         SecretKey::from_seed(&seed)
     }
 }
 
 #[derive(Clone, Debug)]
-pub enum Code {
-    /// Printed by a new hub: the first machine to join with it founds the
-    /// World.
-    Founding { hub: Vec<SocketAddr>, cert: CertPin, world: WorldId, secret: Secret },
-    /// Made by a member: the machine that joins with it fetches the
-    /// invitation from the hub with the key `secret` gives.
-    Invitation { hub: Vec<SocketAddr>, cert: CertPin, world: WorldId, founder: PublicKey, secret: InviteSecret },
+pub struct Token {
+    pub hub: Vec<SocketAddr>,
+    pub cert: CertPin,
+    pub world: WorldId,
+    pub secret: TokenSecret,
 }
 
-impl Code {
+impl Token {
     pub fn to_text(&self) -> String {
-        let mut bytes = Vec::new();
-        match self {
-            Code::Founding { hub, cert, world, secret } => {
-                bytes.push(FOUNDING);
-                addresses(&mut bytes, hub);
-                bytes.extend_from_slice(&cert.0.0);
-                bytes.extend_from_slice(&world.bytes());
-                bytes.extend_from_slice(&*secret.0);
-            }
-            Code::Invitation { hub, cert, world, founder, secret } => {
-                bytes.push(INVITATION);
-                addresses(&mut bytes, hub);
-                bytes.extend_from_slice(&cert.0.0);
-                bytes.extend_from_slice(&world.bytes());
-                bytes.extend_from_slice(founder.as_bytes());
-                bytes.extend_from_slice(&*secret.0);
-            }
-        }
+        let mut bytes = vec![KIND];
+        addresses(&mut bytes, &self.hub);
+        bytes.extend_from_slice(&self.cert.0.0);
+        bytes.extend_from_slice(&self.world.bytes());
+        bytes.extend_from_slice(&*self.secret.0);
         let check = crate::sign::sha256(&bytes);
         bytes.extend_from_slice(&check[..2]);
         format!("{PREFIX}{}", encode(&bytes))
@@ -91,8 +77,14 @@ impl Code {
     pub fn parse(text: &str) -> Result<Self, String> {
         let text: String = text.chars().filter(|c| !c.is_whitespace() && *c != '-').collect();
         let upper = text.to_ascii_uppercase();
-        let body = upper.strip_prefix(PREFIX).ok_or_else(|| format!("a World code starts with {PREFIX}"))?;
-        let mistyped = || "the code is mistyped or cut short: check it against where it came from".to_string();
+        let body = upper.strip_prefix(PREFIX).ok_or_else(|| {
+            if upper.starts_with("FX4") {
+                "this is an invitation of the network's third version; ask for an enrollment token instead".to_string()
+            } else {
+                format!("an enrollment token starts with {PREFIX}")
+            }
+        })?;
+        let mistyped = || "the token is mistyped or cut short: check it against where it came from".to_string();
         let bytes = decode(body).ok_or_else(mistyped)?;
         if bytes.len() < 3 {
             return Err(mistyped());
@@ -102,51 +94,22 @@ impl Code {
             return Err(mistyped());
         }
         let mut reader = Reader(bytes);
-        let kind = reader.take(1).ok_or_else(mistyped)?[0];
+        if reader.take(1).ok_or_else(mistyped)?[0] != KIND {
+            return Err("this token is of a kind this fastctx does not know; it may be newer".to_string());
+        }
         let hub = reader.addresses().ok_or_else(mistyped)?;
         let cert = CertPin(Digest(reader.array().ok_or_else(mistyped)?));
         let world = WorldId::from_bytes(reader.array().ok_or_else(mistyped)?);
-        let code = match kind {
-            FOUNDING => Code::Founding {
-                hub,
-                cert,
-                world,
-                secret: Secret(Zeroizing::new(reader.array().ok_or_else(mistyped)?)),
-            },
-            INVITATION => {
-                let founder = PublicKey::from_bytes(reader.array().ok_or_else(mistyped)?);
-                let secret = InviteSecret(Zeroizing::new(reader.array().ok_or_else(mistyped)?));
-                Code::Invitation { hub, cert, world, founder, secret }
-            }
-            _ => return Err("this code is of a kind this fastctx does not know; it may be newer".to_string()),
-        };
+        let secret = TokenSecret(Zeroizing::new(reader.array().ok_or_else(mistyped)?));
         if !reader.0.is_empty() {
             return Err(mistyped());
         }
-        Ok(code)
-    }
-
-    pub fn hub(&self) -> &[SocketAddr] {
-        match self {
-            Code::Founding { hub, .. } | Code::Invitation { hub, .. } => hub,
-        }
-    }
-
-    pub fn cert(&self) -> CertPin {
-        match self {
-            Code::Founding { cert, .. } | Code::Invitation { cert, .. } => *cert,
-        }
-    }
-
-    pub fn world(&self) -> &WorldId {
-        match self {
-            Code::Founding { world, .. } | Code::Invitation { world, .. } => world,
-        }
+        Ok(Token { hub, cert, world, secret })
     }
 }
 
 fn addresses(bytes: &mut Vec<u8>, addresses: &[SocketAddr]) {
-    bytes.push(u8::try_from(addresses.len()).expect("a code names at most 255 addresses"));
+    bytes.push(u8::try_from(addresses.len()).expect("a token names at most 255 addresses"));
     for address in addresses {
         match address.ip() {
             IpAddr::V4(ip) => {

@@ -1,5 +1,6 @@
 //! Reaching the hub: TCP, TLS on the pinned certificate, and a WebSocket
-//! on one of the hub's two paths.
+//! on one of the hub's two paths. Relays forward the hub's port as it is,
+//! so the same certificate answers through them.
 
 use std::net::SocketAddr;
 
@@ -11,7 +12,7 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
-use crate::trust::CertPin;
+use crate::ids::CertPin;
 use fastctx_types::world::Route;
 
 use crate::wire::{Down, EXPORTER_LABEL, SILENCE, Up};
@@ -27,6 +28,8 @@ pub struct Dialed {
     pub address: SocketAddr,
     /// The way the connection left this machine.
     pub route: Route,
+    /// The certificate the server presented, as DER.
+    pub certificate: Vec<u8>,
 }
 
 /// One way out of this machine (`route.rs`).
@@ -145,8 +148,9 @@ pub(crate) fn network_changed() {
 }
 
 /// Connects to the first of the hub's addresses that answers, each by the
-/// first way that reaches it.
-pub async fn dial(hub: &[SocketAddr], pin: CertPin, path: &str, max_message: usize) -> Result<Dialed, String> {
+/// first way that reaches it. Without `pin`, any certificate is taken: only
+/// for the first contact of a password login, which proves the hub itself.
+pub async fn dial(hub: &[SocketAddr], pin: Option<CertPin>, path: &str, max_message: usize) -> Result<Dialed, String> {
     #[cfg(target_os = "android")]
     {
         let mut changes = crate::android::changes();
@@ -161,7 +165,7 @@ pub async fn dial(hub: &[SocketAddr], pin: CertPin, path: &str, max_message: usi
     dial_routes(hub, pin, path, max_message).await
 }
 
-async fn dial_routes(hub: &[SocketAddr], pin: CertPin, path: &str, max_message: usize) -> Result<Dialed, String> {
+async fn dial_routes(hub: &[SocketAddr], pin: Option<CertPin>, path: &str, max_message: usize) -> Result<Dialed, String> {
     let mut failures = Vec::new();
     for address in hub {
         let (mut ways, note) = ways(*address);
@@ -194,7 +198,7 @@ async fn dial_routes(hub: &[SocketAddr], pin: CertPin, path: &str, max_message: 
 async fn dial_one(
     address: SocketAddr,
     way: &Way,
-    pin: CertPin,
+    pin: Option<CertPin>,
     path: &str,
     max_message: usize,
 ) -> Result<Dialed, String> {
@@ -222,12 +226,19 @@ async fn dial_one(
         .1
         .export_keying_material(&mut binding, EXPORTER_LABEL, None)
         .map_err(|error| format!("TLS exporter: {error}"))?;
+    let certificate = tls
+        .get_ref()
+        .1
+        .peer_certificates()
+        .and_then(|chain| chain.first())
+        .map(|certificate| certificate.as_ref().to_vec())
+        .ok_or_else(|| "the server presented no certificate".to_string())?;
     let url = format!("ws://{address}{path}");
     let (socket, _) = tokio_tungstenite::client_async_with_config(url, tls, Some(config(max_message)))
         .await
         .map_err(|error| format!("WebSocket: {error}"))?;
     let route = if address.ip().is_loopback() { Route::Local } else { way.route() };
-    Ok(Dialed { socket, binding, address, route })
+    Ok(Dialed { socket, binding, address, route, certificate })
 }
 
 pub fn config(max_message: usize) -> WebSocketConfig {
@@ -280,7 +291,7 @@ pub fn backoff(failures: u32) -> std::time::Duration {
 /// Asks the upstream at `addresses` whether it takes sessions now
 /// (`wire::Intent::Probe`).
 pub async fn probe(addresses: &[SocketAddr], pin: CertPin) -> Result<(), String> {
-    let mut socket = dial(addresses, pin, crate::wire::CONTROL_PATH, crate::wire::MAX_CONTROL_FRAME).await?.socket;
+    let mut socket = dial(addresses, Some(pin), crate::wire::CONTROL_PATH, crate::wire::MAX_CONTROL_FRAME).await?.socket;
     let hello = Up::Hello {
         protocol: crate::wire::PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
