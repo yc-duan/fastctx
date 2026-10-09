@@ -189,6 +189,10 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                                 command: "echo fixture".into(),
                                 output: "C:/example/job.log".into(),
                                 stderr: None,
+                                account: pid.map(|_| fastctx_types::access::HubAccount {
+                                    hub: "w-0123456789abcdef".parse().unwrap(),
+                                    account: "bob".parse().unwrap(),
+                                }),
                             })
                             .collect(),
                     },
@@ -197,6 +201,11 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                 MachineWho::Offline { machine: "unknown".parse().unwrap(), since: None },
                 MachineWho::NoAnswer { machine: "lab".parse().unwrap(), reason: "node disconnected".into() },
             ],
+            others: vec![fastctx_types::town::WhoFor {
+                machine: machine(),
+                id: "j-abc123".into(),
+                accounts: vec!["bob".parse().unwrap()],
+            }],
         })
         .collect()
 }

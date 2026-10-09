@@ -89,6 +89,10 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
             }
             None => job.owner.to_string(),
         };
+        let owner = match view.works_for(&job.machine, job.job.as_str()) {
+            Some(accounts) => format!("{owner} for {accounts}"),
+            None => owner,
+        };
         running.push((
             job.machine.clone(),
             format!("  {}  {}  {}  {owner}  {}\n", job.machine, job.job, ago(job.started_at, now), brief(&job.command)),
@@ -123,8 +127,12 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
     for resident in &view.residents {
         if busy(resident) || (resident.here && resident.now.is_none()) {
             let mark = if Some(&address(resident)) == you { " (you)" } else { "" };
+            let whom = view
+                .works_for(&resident.about.machine, resident.about.id.as_str())
+                .map(|accounts| format!(" for {accounts}"))
+                .unwrap_or_default();
             let line = format!(
-                "  {}{mark}  {}  {}{}  {}",
+                "  {}{mark}  {}  {}{whom}{}  {}",
                 resident.about.id,
                 resident.about.machine,
                 host(&resident.about.host),

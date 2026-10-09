@@ -145,7 +145,7 @@ impl Device {
                 Heard::NoAnswer(reason) => MachineWho::NoAnswer { machine, reason },
             })
             .collect();
-        let mut reply = WorldWho { machine: self.here(), scope, machines, you: None, history: None };
+        let mut reply = WorldWho { machine: self.here(), scope, machines, you: None, history: None, others: Vec::new() };
         if let Some(since) = since {
             reply.collect_history(since, town);
         }

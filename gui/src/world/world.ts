@@ -89,6 +89,8 @@ export interface RunningJob {
   command: string;
   output: string;
   stderr?: string;
+  /** The account it runs for, when another machine sent it. */
+  account?: { hub: string; account: string };
 }
 
 export interface WhoReply {
@@ -113,6 +115,8 @@ export interface WorldWho {
   you?: Address;
   history?: import("./since").WorldSince;
   machines: MachineWho[];
+  /** The residents and jobs shown that work for none of the asker's accounts. */
+  others?: { machine: MachineName; id: string; accounts: string[] }[];
 }
 
 export interface MachineFacts {

@@ -70,6 +70,9 @@ pub struct RunningJob {
     /// Separate standard error, when the job keeps it apart from stdout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stderr: Option<String>,
+    /// The account it runs for, when another machine sent it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
 }
 
 /// `fastctx w` in a town or across the World: each machine's answer, or why
@@ -84,6 +87,21 @@ pub struct WorldWho {
     pub machines: Vec<MachineWho>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<crate::since::WorldSince>,
+    /// The residents and jobs shown that work for none of the asker's
+    /// accounts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub others: Vec<WhoFor>,
+}
+
+/// A resident or a job on `machine`, by its id, that works for other
+/// accounts than the asker's: a machine lent to several accounts shows them
+/// all to those that may work on it, each marked with whom it works for
+/// (`world-network.md`, 一台机器给几个账号用).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WhoFor {
+    pub machine: MachineName,
+    pub id: String,
+    pub accounts: Vec<crate::AccountName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

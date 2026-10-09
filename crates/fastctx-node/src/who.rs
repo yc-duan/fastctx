@@ -7,8 +7,9 @@ use std::path::Path;
 use fastctx_hands::run::record;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{Activity, Moved};
-use fastctx_types::town::{ResidentNow, RunningJob, WhoReply};
-use fastctx_types::{MachineName, TownName};
+use fastctx_types::access::{Acting, HubAccount};
+use fastctx_types::town::{MachineWho, ResidentNow, RunningJob, WhoFor, WhoReply};
+use fastctx_types::{AccountName, MachineName, TownName};
 
 use crate::jobs::first_line;
 use crate::residents::{Former, OnRecord, last_action};
@@ -102,6 +103,58 @@ pub fn who(
     Ok(WhoReply { machine: machine.clone(), residents, jobs, history: None })
 }
 
+/// The residents and jobs `machines` answered with that work for no
+/// account `acting` works for, each with whom it works for, as this
+/// computer's views of its hubs say.
+pub(crate) fn others(node: &crate::Node, acting: &Acting, machines: &[MachineWho]) -> Vec<WhoFor> {
+    let mine = |account: &HubAccount| node.serves(acting, &account.hub, &account.account);
+    let names = |accounts: &[HubAccount]| {
+        let mut names: Vec<AccountName> = accounts.iter().map(|account| account.account.clone()).collect();
+        names.dedup();
+        names
+    };
+    let mut others = Vec::new();
+    for machine in machines {
+        let MachineWho::Answered { reply } = machine else { continue };
+        let mut working = std::collections::HashMap::new();
+        for resident in &reply.residents {
+            let accounts: Vec<HubAccount> = match &resident.about.acting {
+                Acting::Accounts { accounts } => accounts.clone(),
+                // A session the user opened there works for whoever is
+                // logged in there.
+                Acting::Here => node
+                    .links()
+                    .iter()
+                    .flat_map(|link| {
+                        let hub = link.membership().id.clone();
+                        let logins = link.view().member(&reply.machine).map(|member| member.logins.clone());
+                        logins.into_iter().flatten().map(move |account| HubAccount { hub: hub.clone(), account })
+                    })
+                    .collect(),
+            };
+            if !accounts.is_empty() && !accounts.iter().any(mine) {
+                let id = resident.about.id.to_string();
+                others.push(WhoFor { machine: reply.machine.clone(), id, accounts: names(&accounts) });
+            }
+            working.insert(resident.about.id.clone(), accounts);
+        }
+        for job in &reply.jobs {
+            let accounts = match (&job.account, job.owner.resident()) {
+                (Some(account), _) => vec![account.clone()],
+                (None, Some(owner)) if owner.machine == reply.machine => {
+                    working.get(&owner.resident).cloned().unwrap_or_default()
+                }
+                _ => Vec::new(),
+            };
+            if !accounts.is_empty() && !accounts.iter().any(mine) {
+                let id = job.job.to_string();
+                others.push(WhoFor { machine: reply.machine.clone(), id, accounts: names(&accounts) });
+            }
+        }
+    }
+    others
+}
+
 /// The jobs in one resident's `jobs` directory that have not ended.
 pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Result<()> {
     for path in read_dir(jobs)? {
@@ -110,6 +163,7 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
         }
         let job = record::read(&path)?;
         if job.end.is_none() {
+            let account = job.on.and_then(|on| on.account).or(job.account);
             running.push(RunningJob {
                 job: job.id,
                 town: job.town,
@@ -120,6 +174,7 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
                 command: first_line(&job.script),
                 output: job.output,
                 stderr: job.stderr,
+                account,
             });
         }
     }
