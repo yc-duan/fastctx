@@ -94,10 +94,13 @@ impl Session {
     pub async fn run(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
         let command = match arguments.get("command") {
             Some(Value::String(command)) => command.clone(),
-            _ => {
-                return Answer::error(
-                    "=== run (not run: `command` must be a string holding the script) ===".to_string(),
-                );
+            // Some hosts drop or reshape what the model wrote (#34); saying
+            // what arrived tells the model, and whoever reads the log, which.
+            other => {
+                return Answer::error(format!(
+                    "=== run (not run: `command` must be a string holding the script; {}) ===",
+                    arrived(arguments, other)
+                ));
             }
         };
         let cwd = match arguments.get("cwd") {
@@ -464,6 +467,27 @@ fn write_op(tool: &str, arguments: &Value) -> Result<WriteOp, String> {
         "apply_patch" => WriteOp::ApplyPatch(ApplyPatchRequest { input: text("input")? }),
         other => return Err(format!("{other} is not a writing tool")),
     })
+}
+
+/// What a call's arguments held where `command` was expected.
+fn arrived(arguments: &Value, command: Option<&Value>) -> String {
+    let kind = |value: &Value| match value {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    };
+    match (arguments, command) {
+        (Value::Object(_), Some(command)) => format!("it arrived as {}", kind(command)),
+        (Value::Object(fields), None) if fields.is_empty() => "the arguments arrived empty".to_string(),
+        (Value::Object(fields), None) => {
+            let names: Vec<String> = fields.keys().map(|name| format!("`{name}`")).collect();
+            format!("the arguments held only {}", names.join(", "))
+        }
+        (other, _) => format!("the arguments arrived as {}, not an object", kind(other)),
+    }
 }
 
 /// The agent a client name belongs to: `codex` and `claude` by the names
