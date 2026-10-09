@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationManagerCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.ref.WeakReference
 
@@ -28,7 +29,7 @@ object WorldRuntime {
     @Volatile var serviceError: String? = null
     @Volatile var observerError: String? = null
     @Volatile var connectionError: String? = null
-    @Volatile var connection = JSONObject().put("link", JSONObject().put("kind", "alone"))
+    @Volatile var connection = JSONObject().put("hubs", JSONArray())
     private val main = Handler(Looper.getMainLooper())
 
     private external fun startNative(directory: String): String?
@@ -69,11 +70,23 @@ object WorldRuntime {
         if (joining) main.post { startService() }
     }
 
+    /** How the phone's links to the hubs it is logged in to stand, in one word: "online" when any
+     *  is, "stopped" when every one was stopped by its hub or there is none, else "connecting". */
+    fun linkKind(state: JSONObject): String {
+        val hubs = state.optJSONArray("hubs") ?: return "stopped"
+        val kinds = (0 until hubs.length()).map { hubs.getJSONObject(it).getJSONObject("link").getString("kind") }
+        return when {
+            kinds.all { it == "stopped" } -> "stopped"
+            kinds.any { it == "online" } -> "online"
+            else -> "connecting"
+        }
+    }
+
     fun publishState(json: String) {
         val state = JSONObject(json)
         connection = state
         val joined = !state.isNull("name")
-        val running = joining || (joined && state.getJSONObject("link").getString("kind") != "stopped")
+        val running = joining || (joined && linkKind(state) != "stopped")
         val preferences = context.getSharedPreferences("world", Context.MODE_PRIVATE)
         if (preferences.getBoolean("keepConnected", false) != running && !preferences.edit().putBoolean("keepConnected", running).commit())
             throw IllegalStateException("Could not save World background connection preference")
@@ -98,7 +111,7 @@ object WorldRuntime {
     fun resume(activity: Activity) {
         currentActivity = WeakReference(activity)
         focused = activity.hasWindowFocus()
-        if (!serviceRunning && !connection.isNull("name") && connection.getJSONObject("link").optString("kind") != "stopped") startService()
+        if (!serviceRunning && !connection.isNull("name") && linkKind(connection) != "stopped") startService()
     }
 
     fun status(): JSONObject {
