@@ -539,7 +539,7 @@ impl Words {
     /// What the account goes on with once a window is used up.
     pub fn credits(&self, balance: Option<&str>, unlimited: bool) -> String {
         let balance = balance.map(|balance| match balance.parse::<f64>() {
-            Ok(amount) => format!("{}", amount.round() as i64),
+            Ok(amount) => grouped(amount.round() as i64),
             Err(_) => balance.to_string(),
         });
         match (self.lang, unlimited, balance) {
@@ -1615,6 +1615,19 @@ impl Words {
             Lang::En => format!("{} ago", self.duration(seconds)),
         }
     }
+}
+
+/// A whole number with its thousands set apart: `52,230`.
+fn grouped(value: i64) -> String {
+    let digits = value.unsigned_abs().to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    if value < 0 { format!("-{out}") } else { out }
 }
 
 fn seconds_between(then: Timestamp, now: Timestamp) -> u64 {
