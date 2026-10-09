@@ -41,7 +41,7 @@ class WorldNotices(private val context: Context) {
     }
 
     fun connectionNotification(state: JSONObject?): Notification {
-        val kind = state?.optJSONObject("link")?.optString("kind")
+        val kind = state?.let(WorldRuntime::linkKind)
         val text = when (kind) {
             "online" -> "Connected to your World"
             "stopped" -> "World connection stopped"
