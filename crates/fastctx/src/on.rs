@@ -85,7 +85,13 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
     let job = std::env::var("FASTCTX_JOB").ok().map(JobId::try_from).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
     let package = collect(&args.state, args.command.as_deref(), &args.words)?;
-    let request = OnRequest { machine: machine.clone(), receipt: true, job, package: package.clone() };
+    let request = OnRequest {
+        machine: machine.clone(),
+        receipt: true,
+        process: Some(fastctx_platform::current_identity()?),
+        job,
+        package: package.clone(),
+    };
     let call = Call::On { resident: resident.clone(), town, request };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let ended = runtime.block_on(async {
@@ -107,16 +113,22 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
                     // A reader that stopped reading, as `| head` does, is a
                     // stop: leaving stops the job there.
                     if out.write_all(&STANDARD.decode(base64)?).and_then(|()| out.flush()).is_err() {
+                        stream.stop().await?;
                         return Ok(Ended::ReaderLeft);
                     }
                 }
                 Ok(Some(OnPiece::Err { base64 })) => {
                     if err.write_all(&STANDARD.decode(base64)?).and_then(|()| err.flush()).is_err() {
+                        stream.stop().await?;
                         return Ok(Ended::ReaderLeft);
                     }
                 }
                 Ok(Some(OnPiece::Ended { end })) => {
-                    stream.taken().await.context("the node did not confirm keeping the completion receipt")?;
+                    // The authoritative result has already arrived. Receipt transport
+                    // failure cannot change the command's known exit status.
+                    if let Err(error) = stream.taken().await {
+                        eprintln!("on: keeping the completion receipt was not confirmed: {error}");
+                    }
                     return Ok(Ended::Job(end, started));
                 }
                 Ok(None) => bail!("the node ended the on without the job's end"),

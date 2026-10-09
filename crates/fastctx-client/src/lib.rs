@@ -240,6 +240,11 @@ pub struct OnStream {
 }
 
 impl OnStream {
+    /// Deliberately stops this hop when a downstream reader leaves.
+    pub async fn stop(&mut self) -> Result<(), CallError> {
+        self.client.connection.send(&to_json(&fastctx_types::on::STOP)).await.map_err(CallError::Broken)
+    }
+
     /// Confirms that the CLI read the completion and waits for the node to
     /// finish recording its receipt. This is not a receipt from the model.
     pub async fn taken(&mut self) -> Result<(), CallError> {

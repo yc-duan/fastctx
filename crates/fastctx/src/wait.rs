@@ -54,6 +54,7 @@ fn ended(record: &JobRecord) -> Notice {
         job: record.id.clone(),
         machine: record.machine.clone(),
         request: record.on.as_ref().and_then(|on| on.request.clone()),
+        follower: record.on.as_ref().and_then(|on| on.follower.clone()),
         how: end.how.clone(),
         status: record.exit.map(|exit| exit.status),
         at: end.at,

@@ -10,15 +10,15 @@ use std::sync::{Arc, Mutex};
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::on::OnOrigin;
 use fastctx_types::residents::{Delivery, Notice};
-use fastctx_types::{JobId, MachineName, NoticeId, ResidentId};
+use fastctx_types::{Address, JobId, MachineName, NoticeId, ResidentId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::Node;
 
-type Source = (ResidentId, MachineName);
-type Dispatch = (ResidentId, MachineName, Option<NoticeId>);
-type Job = (ResidentId, MachineName, JobId, Option<NoticeId>);
+type Source = (Address, MachineName);
+type Dispatch = (Address, MachineName, Option<NoticeId>);
+type Job = (Address, MachineName, JobId, Option<NoticeId>);
 
 #[derive(Default)]
 pub(crate) struct Deliveries {
@@ -35,8 +35,6 @@ struct State {
 pub(crate) struct Following {
     node: Arc<Node>,
     source: Source,
-    owner_machine: MachineName,
-    local: bool,
     request: Option<NoticeId>,
     job: Option<JobId>,
 }
@@ -44,14 +42,11 @@ pub(crate) struct Following {
 impl Following {
     /// Register before dispatch: a completion may precede Started.
     pub(crate) fn start(node: &Arc<Node>, origin: &OnOrigin, machine: &MachineName) -> Self {
-        let source = (origin.resident.resident.clone(), machine.clone());
+        let source = (origin.resident.clone(), machine.clone());
         let request = origin.request.clone();
         let dispatch = (source.0.clone(), source.1.clone(), request.clone());
-        let local = origin.resident.machine == node.machine();
-        if local {
-            *node.on_deliveries.state.lock().expect("never poisoned").starting.entry(dispatch).or_default() += 1;
-        }
-        Self { node: node.clone(), source, owner_machine: origin.resident.machine.clone(), local, request, job: None }
+        *node.on_deliveries.state.lock().expect("never poisoned").starting.entry(dispatch).or_default() += 1;
+        Self { node: node.clone(), source, request, job: None }
     }
 
     pub(crate) fn started(&mut self, job: &JobId) {
@@ -59,10 +54,6 @@ impl Following {
             return;
         }
         assert!(self.job.is_none(), "one on starts one job");
-        if !self.local {
-            self.job = Some(job.clone());
-            return;
-        }
         let mut state = self.node.on_deliveries.state.lock().expect("never poisoned");
         let key = (self.source.0.clone(), self.source.1.clone(), job.clone(), self.request.clone());
         *state.following.entry(key).or_default() += 1;
@@ -72,7 +63,14 @@ impl Following {
 
     pub(crate) fn taken(&self, job: &JobId) -> io::Result<()> {
         let _state = self.node.on_deliveries.state.lock().expect("never poisoned");
-        let path = receipt(&self.node, &self.owner_machine, &self.source.0, &self.source.1, job, self.request.as_ref());
+        let path = receipt(
+            &self.node,
+            &self.source.0.machine,
+            &self.source.0.resident,
+            &self.source.1,
+            job,
+            self.request.as_ref(),
+        );
         ensure_private_dir(path.parent().expect("receipt directory"))?;
         publish(&path, b"", Permissions::Private)
     }
@@ -80,9 +78,6 @@ impl Following {
 
 impl Drop for Following {
     fn drop(&mut self) {
-        if !self.local {
-            return;
-        }
         {
             let mut state = self.node.on_deliveries.state.lock().expect("never poisoned");
             match &self.job {
@@ -193,7 +188,7 @@ fn stopped(node: &Node, to: &ResidentId, machine: &MachineName, request: Option<
         .map(|yes| yes.unwrap_or(false))
 }
 
-fn held(state: &State, to: &ResidentId, machine: &MachineName, job: &JobId, request: Option<&NoticeId>) -> bool {
+fn held(state: &State, to: &Address, machine: &MachineName, job: &JobId, request: Option<&NoticeId>) -> bool {
     let starting = match request {
         Some(request) => state.starting.contains_key(&(to.clone(), machine.clone(), Some(request.clone()))),
         None => state.starting.keys().any(|(resident, source, _)| resident == to && source == machine),
@@ -212,23 +207,29 @@ fn held(state: &State, to: &ResidentId, machine: &MachineName, job: &JobId, requ
 
 /// Called after admission, before ordinary inbox delivery. A successful
 /// return may be acknowledged to the sender, even if the node now stops.
-pub(crate) fn park(node: &Node, to: &ResidentId, delivery: &Delivery) -> io::Result<bool> {
-    let Notice::JobEnded { job, machine, request, .. } = &delivery.notice else { return Ok(false) };
+pub(crate) fn park(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> io::Result<bool> {
+    let Notice::JobEnded { job, machine, request, follower, .. } = &delivery.notice else { return Ok(false) };
     let state = node.on_deliveries.state.lock().expect("never poisoned");
     let path = receipt(node, &node.machine(), to, machine, job, request.as_ref());
     if path.try_exists()? || stopped(node, to, machine, request.as_ref())? {
         return Ok(true);
     }
-    if !held(&state, to, machine, job, request.as_ref()) {
+    let owner = Address { machine: node.machine(), resident: to.clone() };
+    let nested = follower.as_ref().is_some_and(|follower| follower != &node.machine());
+    if !nested && !held(&state, &owner, machine, job, request.as_ref()) {
         return Ok(false);
     }
     ensure_private_dir(&directory(node))?;
     let parked = Parked { to: to.clone(), delivery: delivery.clone() };
     let bytes = serde_json::to_vec(&parked).map_err(io::Error::other)?;
     match publish_new(&path.with_extension("json"), &bytes, Permissions::Private) {
-        Err(error) if error.kind() != io::ErrorKind::AlreadyExists => Err(error),
-        _ => Ok(true),
+        Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
+        _ => {}
     }
+    if nested {
+        resume(node);
+    }
+    Ok(true)
 }
 
 /// Startup and follower departure both release durable, unclaimed letters.
@@ -278,17 +279,38 @@ async fn drain(node: &Arc<Node>) -> io::Result<()> {
 
 async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> io::Result<()> {
     let parked: Parked = serde_json::from_slice(&std::fs::read(path)?).map_err(io::Error::other)?;
-    let Notice::JobEnded { job, machine, request, .. } = &parked.delivery.notice else {
+    let Notice::JobEnded { job, machine, request, follower, .. } = &parked.delivery.notice else {
         return Err(io::Error::other(format!("{} is not a completion", path.display())));
     };
-    let taken = {
+    let owner = Address { machine: node.machine(), resident: parked.to.clone() };
+    let mut taken = {
         let state = node.on_deliveries.state.lock().expect("never poisoned");
-        if held(&state, &parked.to, machine, job, request.as_ref()) {
+        if held(&state, &owner, machine, job, request.as_ref()) {
             return Ok(());
         }
         receipt(node, &node.machine(), &parked.to, machine, job, request.as_ref()).try_exists()?
             || stopped(node, &parked.to, machine, request.as_ref())?
     };
+    if !taken && let Some(follower) = follower.as_ref().filter(|follower| *follower != &node.machine()) {
+        let link = node.link().ok_or_else(|| io::Error::other("no network for the nested completion receipt"))?;
+        let call = fastctx_types::remote::RemoteCall::OnReceipt {
+            owner,
+            machine: machine.clone(),
+            job: job.clone(),
+            request: request.clone(),
+        };
+        match link.call(follower, call).await {
+            Ok(Ok(fastctx_types::remote::RemoteReply::OnReceipt { taken: claimed, following })) => {
+                if following && !claimed {
+                    return Err(io::Error::other("the nested hop is still handing its end to its CLI"));
+                }
+                taken = claimed;
+            }
+            Ok(Ok(_)) => return Err(io::Error::other("the nested follower answered without a receipt decision")),
+            Ok(Err(error)) => return Err(io::Error::other(error.message)),
+            Err(error) => return Err(io::Error::other(error.to_string())),
+        }
+    }
     if !taken {
         // The inbox takes custody before the parked copy is removed.
         crate::speech::tell_here(node, &parked.to, parked.delivery, crate::speech::Owed::Working)
@@ -297,4 +319,18 @@ async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> io::Result<()> {
     }
     std::fs::remove_file(path)?;
     Ok(())
+}
+
+/// A snapshot taken under the same gate that publishes receipts and registers
+/// followers. A restarted intermediate node answers from its durable receipt.
+pub(crate) fn status(
+    node: &Node,
+    owner: &Address,
+    machine: &MachineName,
+    job: &JobId,
+    request: Option<&NoticeId>,
+) -> io::Result<(bool, bool)> {
+    let state = node.on_deliveries.state.lock().expect("never poisoned");
+    let taken = receipt(node, &owner.machine, &owner.resident, machine, job, request).try_exists()?;
+    Ok((taken, held(&state, owner, machine, job, request)))
 }

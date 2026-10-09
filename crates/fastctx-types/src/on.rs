@@ -15,6 +15,9 @@ pub struct OnRequest {
     /// the completion debt. Old clients only consumed the output stream.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub receipt: bool,
+    /// The local CLI's OS identity distinguishes its death from an IPC failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<crate::ProcessIdentity>,
     /// The job on this machine whose script this `on` is part of, when the
     /// World's shell runs it: its answer names where the script went.
     pub job: Option<JobId>,
@@ -121,6 +124,9 @@ fn code(status: ExitStatus) -> i32 {
 /// ran it sends no letter about it.
 pub const TAKEN: &str = "taken";
 
+/// The CLI's downstream reader deliberately stopped consuming output.
+pub const STOP: &str = "stop";
+
 /// How often a quiet `on` job says `Still`, and how long its follower waits
 /// without hearing anything before it takes the connection for broken: the
 /// control line's own heartbeat, ten seconds, and three of them missed
@@ -139,6 +145,9 @@ pub struct OnOrigin {
     /// even when the job id did not get back to the sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<crate::NoticeId>,
+    /// The machine whose CLI follows this hop, which may differ from the resident's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follower: Option<MachineName>,
 }
 
 /// What the node hands `fastctx on` as the job goes.

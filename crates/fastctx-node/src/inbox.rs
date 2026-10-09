@@ -321,6 +321,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
             job: record.id.clone(),
             machine: record.machine.clone(),
             request: record.on.as_ref().and_then(|on| on.request.clone()),
+            follower: record.on.as_ref().and_then(|on| on.follower.clone()),
             how,
             status: record.exit.map(|exit| exit.status),
             at: end.at,

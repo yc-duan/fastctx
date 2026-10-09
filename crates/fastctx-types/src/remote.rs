@@ -68,6 +68,14 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         job: Option<JobId>,
     },
+    /// The resident's machine arbitrates a nested completion using the
+    /// durable receipt kept by the machine whose CLI followed that hop.
+    OnReceipt {
+        owner: crate::Address,
+        machine: crate::MachineName,
+        job: JobId,
+        request: Option<crate::NoticeId>,
+    },
     /// Write files there for a resident of the calling machine.
     Write {
         resident: ResidentId,
@@ -234,6 +242,10 @@ pub enum RemoteReply {
     Run(RunReply),
     /// An `on` job's end was handed over, or it was stopped.
     OnDone,
+    OnReceipt {
+        taken: bool,
+        following: bool,
+    },
     /// The job's record once stopped, or as it was when it had ended already;
     /// `None` when this machine has no job with that id.
     JobStopped {
