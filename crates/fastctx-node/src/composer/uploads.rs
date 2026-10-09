@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UploadRecord {
     from: MachineName,
     scope: UploadScope,
@@ -14,12 +14,18 @@ pub struct UploadRecord {
     outcome: Outcome,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum Outcome {
     Uploading,
     Attached,
     Failed { why: String },
     Detached { why: String },
+}
+
+impl UploadRecord {
+    pub(super) fn finished(&self) -> bool {
+        !matches!(self.outcome, Outcome::Uploading)
+    }
 }
 
 pub async fn cached(
@@ -35,7 +41,7 @@ pub async fn cached(
     let mut cell = cell.lock().await;
     load(node, id, &mut cell)?;
     let state = cell.as_ref().expect("loaded");
-    let Some(record) = state.uploads.get(&scope.operation) else { return Ok(None) };
+    let Some(record) = receipts::upload(node, id, state, &scope.operation)? else { return Ok(None) };
     if record.scope != *scope || record.from != *from || record.attachment.file != *file {
         return Err(failure("that upload operation ID was reused for another device, file or draft"));
     }
@@ -68,8 +74,8 @@ pub async fn begin(
     load(node, id, &mut cell)?;
     let mut next = cell.as_ref().expect("loaded").clone();
     if scope.operation.is_empty()
-        || next.receipts.contains_key(&scope.operation)
-        || next.uploads.contains_key(&scope.operation)
+        || receipts::receipt(node, id, &next, &scope.operation)?.is_some()
+        || receipts::upload(node, id, &next, &scope.operation)?.is_some()
     {
         return Err(failure("a fresh upload operation ID is required"));
     }
@@ -181,12 +187,9 @@ pub async fn recover(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
             Ok(()) => {
                 if let Err(error) = complete(node, id, &record.scope, &record.attachment).await {
                     let cell = node.composers.cell(id);
-                    let cell = cell.lock().await;
-                    if !cell
-                        .as_ref()
-                        .expect("loaded")
-                        .uploads
-                        .get(&record.scope.operation)
+                    let mut cell = cell.lock().await;
+                    load(node, id, &mut cell)?;
+                    if !receipts::upload(node, id, cell.as_ref().expect("loaded"), &record.scope.operation)?
                         .is_some_and(|record| matches!(record.outcome, Outcome::Detached { .. }))
                     {
                         return Err(error);

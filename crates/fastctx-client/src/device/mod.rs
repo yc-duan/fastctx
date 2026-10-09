@@ -5,6 +5,7 @@ mod around;
 mod calls;
 mod connection_state;
 pub(crate) mod file_read;
+mod file_search;
 mod store;
 mod upload;
 pub(crate) mod watch;

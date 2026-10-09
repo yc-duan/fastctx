@@ -168,8 +168,8 @@ impl CodexHost {
     /// as live delivery. Subscribe before taking this snapshot.
     pub fn requests(&self, thread: &str) -> Vec<fastctx_types::session::SessionEvent> {
         use fastctx_types::session::{Happened, SessionChange, SessionEvent};
-        let state = self.lock();
-        let Some((server, _)) = &state.server else { return Vec::new() };
+        let mut state = self.lock();
+        let Some((server, _)) = state.server.clone() else { return Vec::new() };
         let Some(entry) = state.threads.get(thread) else { return Vec::new() };
         let mut requests: Vec<_> = entry
             .requests

@@ -76,13 +76,13 @@ pub async fn composer_watch(
     machine_name: Option<String>,
     pieces: Channel<Piece>,
 ) -> Result<Watching, String> {
+    let page = shell.page.load(std::sync::atomic::Ordering::Relaxed);
     let world = shell.world();
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
     let (composing, watch, composer) = open(&world, &resident, &machine).await?;
     let id = shell.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let task = tauri::async_runtime::spawn(stream(world, resident, machine, composing, watch.clone(), pieces));
-    shell.watches.lock().expect("watch table").insert(id, task);
+    shell.follow(page, id, stream(world, resident, machine, composing, watch.clone(), pieces))?;
     Ok(Watching { id, watch, composer })
 }
 

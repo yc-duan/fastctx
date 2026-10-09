@@ -14,6 +14,7 @@
 
 mod agents;
 mod answers;
+mod cache;
 #[cfg(test)]
 mod contract;
 mod controls;
@@ -120,7 +121,7 @@ pub const SERVER_NAME: &str = "fastctx";
 /// What a thread is started and resumed with. Kept, because `thread/resume`
 /// does not remember it, and a thread is resumed after every restart of the
 /// app-server.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ThreadSpec {
     pub cwd: PathBuf,
     pub developer_instructions: String,
@@ -234,6 +235,7 @@ pub struct CodexHost {
     log: Log,
     events: mpsc::UnboundedSender<HostEvent>,
     state: Mutex<State>,
+    finished: cache::Finished,
     // A notification and replacement of its server are one transition.
     generation: Mutex<()>,
     /// Starting the app-server is done by one caller at a time.
@@ -247,21 +249,41 @@ pub struct CodexHost {
     tools_changed: Notify,
 }
 
-#[derive(Default)]
 struct State {
     notification_sequence: u64,
     server_users: usize,
     server: Option<(Arc<AppServer>, Launch)>,
-    threads: HashMap<String, Thread>,
+    threads: cache::Threads,
 }
 
-#[derive(Default)]
+struct StateGuard<'a>(std::sync::MutexGuard<'a, State>);
+impl std::ops::Deref for StateGuard<'_> {
+    type Target = State;
+    fn deref(&self) -> &State {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for StateGuard<'_> {
+    fn deref_mut(&mut self) -> &mut State {
+        &mut self.0
+    }
+}
+impl Drop for StateGuard<'_> {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            self.0.threads.release();
+        }
+    }
+}
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 struct Thread {
     selection: controls::Selection,
     model: Option<String>,
     effort: Option<String>,
     usage: Option<Value>,
     metadata: Value,
+    #[serde(skip)]
     requests: HashMap<String, answers::Request>,
     created_here: bool,
     completed_item: bool,
@@ -277,13 +299,8 @@ struct Thread {
     /// but could not set up never starts, and the error it reports is its
     /// only end.
     started: HashSet<String>,
-    /// Turns that ended: an answer to `turn/start` that arrives after its
-    /// turn ended must not make it run again.
-    finished: HashSet<String>,
     /// Ends reported by the host but not yet made durable by the node.
     unsettled: HashSet<String>,
-    /// Errors for turns not yet named by the answer that started them.
-    failed_early: HashMap<String, String>,
     /// The agent's last message so far, and the turn it is in.
     last_message: Option<(String, String)>,
     /// The app-server said how the thread's World tools started since it was
@@ -292,7 +309,9 @@ struct Thread {
     tools_revision: u64,
     /// Why the World's tools are not there in the thread's current load.
     tools_missing: Option<String>,
+    #[serde(skip)]
     items: HashMap<(String, String), Value>,
+    #[serde(skip)]
     item_starts: HashMap<(String, String), Timestamp>,
 }
 
@@ -312,13 +331,16 @@ impl CodexHost {
         log: Log,
     ) -> (Arc<Self>, mpsc::UnboundedReceiver<HostEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
+        let threads = cache::Threads::new(&workdir);
+        let finished = cache::Finished::new(&workdir);
         let host = Arc::new(Self {
             codex_home,
             workdir,
             env,
             log,
             events,
-            state: Mutex::new(State::default()),
+            state: Mutex::new(State { threads, notification_sequence: 0, server_users: 0, server: None }),
+            finished,
             generation: Mutex::new(()),
             starting: tokio::sync::Mutex::new(()),
             loading: tokio::sync::Mutex::new(()),
@@ -381,7 +403,7 @@ impl CodexHost {
         entry.created_here = true;
         entry.model = model.clone();
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
-        entry.metadata = answer["thread"].clone();
+        entry.metadata = controls::metadata(&answer["thread"]);
         Ok((thread, model))
     }
 
@@ -438,6 +460,13 @@ impl CodexHost {
     /// it names. A thread not loaded is resumed first; call
     /// [`Self::prepare`] before to have its tools there.
     pub async fn send(self: &Arc<Self>, thread: &str, input: Input) -> Result<Sent, SendError> {
+        let (host, thread) = (self.clone(), thread.to_string());
+        tokio::spawn(async move { host.send_inner(&thread, input).await })
+            .await
+            .map_err(|error| SendError::Unknown(format!("the turn submission task stopped: {error}")))?
+    }
+
+    async fn send_inner(self: &Arc<Self>, thread: &str, input: Input) -> Result<Sent, SendError> {
         let server = self.server().await.map_err(SendError::NotSent)?;
         self.ensure_loaded(&server, thread).await.map_err(SendError::NotSent)?;
         let mut params = json!({
@@ -509,7 +538,7 @@ impl CodexHost {
             .and_then(Value::as_str)
             .ok_or_else(|| SendError::Unknown("turn/start answered without a turn id".to_string()))?
             .to_string();
-        let failed = {
+        {
             let mut state = self.lock();
             // An app-server that stopped, or was replaced, while it answered
             // runs nothing more: the turn they went into ended with it.
@@ -517,14 +546,10 @@ impl CodexHost {
                 return Ok(Sent { joined: before.as_deref() == Some(turn.as_str()), turn });
             }
             let entry = state.threads.entry(thread.to_string()).or_default();
-            if entry.turn.as_deref() != Some(turn.as_str()) && !entry.finished.contains(&turn) {
+            if entry.turn.as_deref() != Some(turn.as_str()) && !self.finished.contains(thread, &turn) {
                 entry.turn = Some(turn.clone());
                 entry.last_message = None;
             }
-            entry.failed_early.remove(&turn)
-        };
-        if let Some(reason) = failed {
-            self.end(thread, &turn, TurnHow::Failed, Some(reason), None, Timestamp::now());
         }
         let joined = before.as_deref() == Some(turn.as_str());
         Ok(Sent { turn, joined })
@@ -599,8 +624,8 @@ impl CodexHost {
         self.lock().threads.get(thread).and_then(|entry| entry.turn.clone())
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state.lock().expect("never poisoned")
+    fn lock(&self) -> StateGuard<'_> {
+        StateGuard(self.state.lock().expect("never poisoned"))
     }
 
     async fn ensure_loaded(&self, server: &Arc<AppServer>, thread: &str) -> Result<(), String> {
@@ -649,7 +674,7 @@ impl CodexHost {
         entry.selection = selection;
         entry.model = answer.get("model").and_then(Value::as_str).map(str::to_string);
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
-        entry.metadata = answer["thread"].clone();
+        entry.metadata = controls::metadata(&answer["thread"]);
         Ok(())
     }
 
@@ -718,6 +743,7 @@ impl CodexHost {
                 thread.usage = None;
             }
             state.server = Some((server.clone(), launch.clone()));
+            state.threads.restarted();
         }
         tokio::spawn(pump(server.clone(), inbound, Arc::downgrade(self)));
         let started = server
@@ -781,7 +807,7 @@ impl CodexHost {
             let mut state = self.lock();
             let entry = state.threads.entry(thread.to_string()).or_default();
             // One end a turn: a second report of it changes nothing.
-            if !entry.finished.insert(turn.to_string()) {
+            if !self.finished.insert(thread, turn) {
                 return;
             }
             entry.unsettled.insert(turn.to_string());
@@ -851,7 +877,7 @@ impl CodexHost {
                 {
                     let mut state = self.lock();
                     let entry = state.threads.entry(thread.clone()).or_default();
-                    if entry.finished.contains(&turn) {
+                    if self.finished.contains(&thread, &turn) {
                         return;
                     }
                     if entry.submitted && entry.turn.as_deref() != Some(turn.as_str()) {
@@ -1121,13 +1147,14 @@ impl CodexHost {
             let entry = state.threads.entry(thread.to_string()).or_default();
             let awaited = entry.turn.as_deref() == Some(turn.as_str());
             let started = entry.started.contains(&turn);
-            if !awaited && !started && !turn.is_empty() && !entry.finished.contains(&turn) {
+            if !awaited && !started && !turn.is_empty() && !self.finished.contains(thread, &turn) {
                 if entry.submitted {
                     entry.observed_submission = Some(turn.clone());
                     drop(state);
                     self.end(thread, &turn, TurnHow::Failed, Some(message), None, at);
                 } else {
-                    entry.failed_early.insert(turn, message);
+                    drop(state);
+                    self.end(thread, &turn, TurnHow::Failed, Some(message), None, at);
                 }
                 return;
             }
@@ -1144,7 +1171,7 @@ impl CodexHost {
     /// end with it, and every thread is resumed with its next words.
     fn exited(&self, server: &Arc<AppServer>, how: String) {
         let _generation = self.generation.lock().expect("never poisoned");
-        let turns = {
+        let (turns, unloaded) = {
             let mut state = self.lock();
             if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, server)) {
                 // One replaced on purpose exits after its successor may have
@@ -1160,18 +1187,22 @@ impl CodexHost {
                 entry.requests.clear();
                 if let Some(turn) = entry.turn.take() {
                     entry.started.remove(&turn);
-                    entry.finished.insert(turn.clone());
+                    self.finished.insert(thread, &turn);
                     entry.unsettled.insert(turn.clone());
                     entry.last_message = None;
                     turns.push((thread.clone(), turn));
                 }
+                entry.started.clear();
+                entry.items.clear();
+                entry.item_starts.clear();
+                entry.last_message = None;
             }
-            turns
+            (turns, state.threads.keys().cloned().collect::<Vec<_>>())
         };
         (self.log)(format!("the Codex app-server stopped ({how})"));
         let _ = self.events.send(HostEvent::Gone { how, turns });
-        for thread in self.lock().threads.keys() {
-            let _ = self.events.send(HostEvent::Unloaded { thread: thread.clone() });
+        for thread in unloaded {
+            let _ = self.events.send(HostEvent::Unloaded { thread });
         }
     }
 }

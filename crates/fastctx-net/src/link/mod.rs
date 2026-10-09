@@ -838,6 +838,17 @@ impl Inner {
         let id = self.next_id();
         let (answer, answered) = oneshot::channel();
         self.asks.lock().expect("never poisoned").insert(id, answer);
+        struct Waiting<'a>(&'a Inner, u64);
+        impl Drop for Waiting<'_> {
+            fn drop(&mut self) {
+                let mut asks = self.0.asks.lock().expect("never poisoned");
+                asks.remove(&self.1);
+                if asks.is_empty() {
+                    *asks = Default::default();
+                }
+            }
+        }
+        let _waiting = Waiting(self, id);
         if connection.up.send(crate::wire::Up::Ask { id, question }).is_err() {
             self.asks.lock().expect("never poisoned").remove(&id);
             return Ok(None);

@@ -6,6 +6,51 @@ use fastctx_types::session::{Content, Does, Happened, SessionChange, ToolStatus,
 use serde_json::{Value, json};
 use std::{path::PathBuf, sync::Arc};
 
+fn host() -> (Arc<CodexHost>, tokio::sync::mpsc::UnboundedReceiver<HostEvent>) {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "codex-contract-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    CodexHost::new(PathBuf::new(), root, Vec::new(), Arc::new(|_| {}))
+}
+
+#[test]
+fn dormant_threads_and_completed_turns_release_runtime_state_without_losing_identity() {
+    let (host, mut receiver) = host();
+    let at = jiff::Timestamp::now();
+    for index in 0..1024 {
+        let thread = format!("thread-{}", index / 16);
+        let turn = format!("turn-{index}");
+        host.adopt(
+            &thread,
+            super::ThreadSpec {
+                cwd: host.workdir.clone(),
+                developer_instructions: "private fixture".repeat(128),
+                config: json!({}),
+                name: None,
+            },
+        );
+        host.notified("turn/started", &json!({"threadId":thread,"turn":{"id":turn}}), at);
+        host.end(&thread, &turn, fastctx_types::session::TurnHow::Completed, None, None, at);
+        while let Ok(event) = receiver.try_recv() {
+            host.acknowledge(&event);
+        }
+        assert!(host.lock().threads.values().next().is_none());
+        assert!(host.finished.contains(&thread, &turn));
+        host.notified("turn/started", &json!({"threadId":thread,"turn":{"id":turn}}), at);
+        assert!(host.running_turn(&thread).is_none());
+        assert!(receiver.try_recv().is_err());
+    }
+    let spec = host.lock().threads.get("thread-0").unwrap().spec.clone().unwrap();
+    assert_eq!(spec.developer_instructions, "private fixture".repeat(128));
+    assert!(host.lock().threads.values().next().is_none());
+    let root = host.workdir.clone();
+    drop(host);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn item(value: Value, completed: bool) -> fastctx_types::session::Item {
     match items::read(&value, completed) {
         items::Read::Item(item) => item,
@@ -16,7 +61,7 @@ fn item(value: Value, completed: bool) -> fastctx_types::session::Item {
 #[test]
 fn captured_live_items_match_completed_history() {
     let fixture: Value = serde_json::from_str(include_str!("fixtures/session-0.160.json")).unwrap();
-    let (host, mut receiver) = CodexHost::new(PathBuf::new(), PathBuf::new(), Vec::new(), Arc::new(|_| {}));
+    let (host, mut receiver) = host();
     for message in fixture["notifications"].as_array().unwrap() {
         host.notified(message["method"].as_str().unwrap(), &message["params"], millis(message.get("emittedAtMs")));
     }
@@ -134,7 +179,7 @@ fn presentation_fields_and_hidden_items_follow_the_frozen_contract() {
 
 #[test]
 fn indexed_summaries_patch_replacement_and_thread_state() {
-    let (host, mut receiver) = CodexHost::new(PathBuf::new(), PathBuf::new(), Vec::new(), Arc::new(|_| {}));
+    let (host, mut receiver) = host();
     let at = jiff::Timestamp::from_millisecond(1000).unwrap();
     let send = |method: &str, params: Value| host.notified(method, &params, at);
     send(

@@ -186,6 +186,7 @@ fn exercise() -> Result {
                 script: format!("exec {} child {address}\n", quote(&executable)),
                 cwd: Some(display(&root)),
                 writes_off: false,
+                wait: None,
             };
             let launch = run::Launch { request: &request, ..launch };
             let job = run::launch(&launch)?;

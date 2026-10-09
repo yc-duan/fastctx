@@ -44,6 +44,7 @@ pub struct World {
     /// copy when unset, or this process when the World is not installed.
     node_program: Option<std::path::PathBuf>,
     device: Option<std::sync::Arc<crate::device::Device>>,
+    pub(crate) searches: std::sync::Arc<std::sync::Mutex<crate::file_search::Searches>>,
 }
 
 /// What became of words said to a resident.
@@ -64,7 +65,7 @@ pub struct TownRecord {
 
 impl World {
     pub fn new(dir: WorldDir, peer: Peer) -> Self {
-        Self { dir, peer, node_program: None, device: None }
+        Self { dir, peer, node_program: None, device: None, searches: Default::default() }
     }
 
     /// The same interface over a device's persistent network connection.
@@ -75,6 +76,7 @@ impl World {
             peer: Peer::Command { resident: None, session: None },
             node_program: None,
             device: Some(device),
+            searches: Default::default(),
         }
     }
 

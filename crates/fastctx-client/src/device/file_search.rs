@@ -1,0 +1,20 @@
+use super::{Device, failed};
+use crate::Error;
+use fastctx_types::MachineName;
+use fastctx_types::file_search::{FileSearchReply, FileSearchScope};
+
+impl Device {
+    pub(crate) async fn open_file_search(
+        &self,
+        machine: Option<MachineName>,
+        scope: FileSearchScope,
+    ) -> Result<(FileSearchReply, fastctx_net::file_search::Lease), Error> {
+        let machine = machine.ok_or_else(|| failed("choose a machine for file search; a device has no local files"))?;
+        let session = self.connected()?;
+        session.check_identity().await?;
+        session.machine(&machine)?;
+        fastctx_net::file_search::open(session.link.clone(), machine, scope)
+            .await
+            .map_err(|error| crate::CallError::Failed(error).into())
+    }
+}

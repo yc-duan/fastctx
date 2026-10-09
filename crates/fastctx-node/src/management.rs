@@ -115,6 +115,14 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             }
             result.removed = node.residents.removed(id);
             if result.removed.is_some() {
+                crate::desk::removed(node, id);
+                crate::composer::removed(node, id);
+                if about.host.agent.as_str() == "claude"
+                    && let Some(session) = &about.session
+                {
+                    crate::claude::control::ended(node, session);
+                    crate::claude::removed(node, id);
+                }
                 crate::colleagues::left(node, id.clone());
             }
         }

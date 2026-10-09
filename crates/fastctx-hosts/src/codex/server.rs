@@ -158,6 +158,17 @@ impl AppServer {
             }
             pending.waiting.insert(id, answer);
         }
+        struct Waiting<'a>(&'a AppServer, u64);
+        impl Drop for Waiting<'_> {
+            fn drop(&mut self) {
+                let mut pending = self.0.pending.lock().expect("never poisoned");
+                pending.waiting.remove(&self.1);
+                if pending.waiting.is_empty() {
+                    pending.waiting = HashMap::new();
+                }
+            }
+        }
+        let _waiting = Waiting(self, id);
         if let Err(error) = self.send(&json!({ "id": id, "method": method, "params": params })) {
             self.pending.lock().expect("never poisoned").waiting.remove(&id);
             return Err(Unanswered::Refused(error));

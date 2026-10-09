@@ -11,8 +11,7 @@ pub async fn watch(node: &Arc<Node>, id: &ResidentId, name: String) -> Result<Le
         }
         watches.insert(name.clone(), id.clone());
     }
-    let lease = Lease { node: node.clone(), id: id.clone(), name };
-    snapshot(node, id).await?;
+    let lease = Lease { node: node.clone(), id: id.clone(), name, cell: node.composers.cell(id) };
     Ok(lease)
 }
 
@@ -28,14 +27,14 @@ pub struct Lease {
     node: Arc<Node>,
     id: ResidentId,
     name: String,
+    cell: Cell,
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
         self.node.composers.watches.lock().expect("composer watches").remove(&self.name);
-        let (node, id, name) = (self.node.clone(), self.id.clone(), self.name.clone());
+        let (node, id, name, cell) = (self.node.clone(), self.id.clone(), self.name.clone(), self.cell.clone());
         tokio::spawn(async move {
-            let cell = node.composers.cell(&id);
             let mut cell = cell.lock().await;
             let Some(state) = cell.as_ref() else { return };
             let mut next = state.clone();

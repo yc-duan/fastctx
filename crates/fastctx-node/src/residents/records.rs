@@ -102,6 +102,9 @@ pub fn move_to(
         "turn-sessions",
         "session-events",
         "composer.json",
+        "composer-receipts",
+        "composer-uploads",
+        "composer-ended",
     ] {
         copy_state(&old.path().join(name), &new.path().join(name), true)?;
     }
@@ -269,6 +272,9 @@ pub fn carry_obligations(
         "session-events",
         "host-reports",
         "composer.json",
+        "composer-receipts",
+        "composer-uploads",
+        "composer-ended",
     ] {
         copy_state(&old.path().join(name), &new.path().join(name), false)?;
     }

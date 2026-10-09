@@ -2,7 +2,6 @@
 //! changing the paths held by running job supervisors and output writers.
 
 use std::io;
-use std::sync::Arc;
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish_new};
 use fastctx_types::ResidentId;
@@ -28,7 +27,7 @@ pub(super) fn refused(id: &ResidentId) -> Failure {
 
 impl Residents {
     pub fn active(&self, id: &ResidentId) -> Result<(), Failure> {
-        let state = self.lock();
+        let mut state = self.lock();
         let live = state.live.get(id).ok_or_else(|| Failure::new(format!("no resident {id} lives here")))?;
         if live.removed.is_some() { Err(refused(id)) } else { Ok(()) }
     }
@@ -37,11 +36,14 @@ impl Residents {
         self.lock().live.get(id).and_then(|live| live.removed)
     }
 
-    pub fn management(&self, id: &ResidentId) -> Result<Arc<tokio::sync::RwLock<()>>, Failure> {
+    pub fn management(
+        &self,
+        id: &ResidentId,
+    ) -> Result<crate::leases::Lease<ResidentId, tokio::sync::RwLock<()>>, Failure> {
         self.lock()
             .live
-            .get(id)
-            .map(|live| live.management.clone())
+            .contains_key(id)
+            .then(|| self.management.get_or_insert_with(id, Default::default))
             .ok_or_else(|| Failure::new(format!("no resident {id} lives here")))
     }
 

@@ -16,7 +16,7 @@ use crate::residents::{Former, OnRecord, last_action};
 pub fn who(
     world: &WorldDir,
     machine: &MachineName,
-    everyone: Vec<OnRecord>,
+    everyone: impl IntoIterator<Item = OnRecord>,
     former: Vec<Former>,
     all: bool,
     town: Option<&TownName>,

@@ -1,9 +1,9 @@
 //! Watching residents live: every event of a session the World hears from,
-//! handed to each watcher as it happens. A watcher that goes away is
-//! dropped the next time there is something to hand it.
+//! handed to each watcher as it happens. Closing a receiver releases its
+//! registration even when the session produces no further events.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use fastctx_types::ResidentId;
 use fastctx_types::session::SessionEvent;
@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 #[derive(Default)]
 pub struct Watchers {
-    watching: Mutex<HashMap<ResidentId, Watching>>,
+    watching: Arc<Mutex<HashMap<ResidentId, Watching>>>,
 }
 
 #[derive(Default)]
@@ -55,13 +55,51 @@ impl Watchers {
 
     /// Everything that happens in the resident's session from now on.
     pub fn watch(&self, id: &ResidentId) -> mpsc::UnboundedReceiver<SessionEvent> {
+        self.subscribe(id, false)
+    }
+
+    pub fn watch_composer(&self, id: &ResidentId) -> mpsc::UnboundedReceiver<SessionEvent> {
+        self.subscribe(id, true)
+    }
+
+    fn subscribe(&self, id: &ResidentId, composer: bool) -> mpsc::UnboundedReceiver<SessionEvent> {
         let (sender, receiver) = mpsc::unbounded_channel();
         let mut watching = self.watching.lock().expect("never poisoned");
         let session = watching.entry(id.clone()).or_default();
         for snapshot in session.live.snapshots() {
+            if composer
+                && matches!(
+                    &snapshot.happened,
+                    fastctx_types::session::Happened::Changed {
+                        change: fastctx_types::session::SessionChange::Composer { .. },
+                        ..
+                    }
+                )
+            {
+                continue;
+            }
             sender.send(snapshot.clone()).expect("receiver is still here");
         }
-        session.senders.push(sender);
+        session.senders.push(sender.clone());
+        let (registry, id) = (Arc::downgrade(&self.watching), id.clone());
+        tokio::spawn(async move {
+            sender.closed().await;
+            if let Some(registry) = registry.upgrade() {
+                let mut watching = registry.lock().expect("never poisoned");
+                if let Some(session) = watching.get_mut(&id) {
+                    session.senders.retain(|held| !held.same_channel(&sender));
+                    if session.senders.is_empty() {
+                        session.live.unwatched();
+                        if session.live.snapshots().next().is_none() {
+                            watching.remove(&id);
+                        }
+                    }
+                }
+                if watching.is_empty() {
+                    *watching = HashMap::new();
+                }
+            }
+        });
         receiver
     }
 
@@ -70,6 +108,9 @@ impl Watchers {
         let session = watching.entry(id.clone()).or_default();
         if session.live.observe(event) {
             session.senders.retain(|watcher| watcher.send(event.clone()).is_ok());
+        }
+        if session.senders.is_empty() {
+            session.live.unwatched();
         }
         if session.senders.is_empty() && session.live.snapshots().next().is_none() {
             watching.remove(id);

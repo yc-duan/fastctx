@@ -16,14 +16,15 @@
 //! A resident has a directory in each town it lived in; all but the one it
 //! lives in now are marked as left (`records::move_to`).
 
+pub(crate) mod cache;
 mod records;
 mod removal;
 pub use removal::removal;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
@@ -35,19 +36,64 @@ pub use records::{append_message, last_action, read_about, read_now, record_acti
 
 pub struct Residents {
     state: Mutex<State>,
+    speaking: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
+    paying: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
+    management: crate::leases::Registry<ResidentId, tokio::sync::RwLock<()>>,
 }
 
-#[derive(Default)]
 struct State {
-    live: HashMap<ResidentId, Live>,
+    live: cache::Cache,
     /// Codex thread id to the resident it is.
-    threads: HashMap<String, ResidentId>,
+    threads: cache::Index,
+    current_sessions: cache::Index,
     /// Residents of other machines that asked for colleagues here and have
     /// since left, as their machines wrote. They come back by asking or
     /// speaking again.
-    departed: HashSet<Address>,
-    /// Where residents lived before they moved.
-    former: Vec<Former>,
+    departed: cache::Index,
+    inboxes: cache::Index,
+}
+
+impl State {
+    fn record_session(&self, before: Option<&str>, after: &str) {
+        if before == Some(after) {
+            return;
+        }
+        if let Some(before) = before {
+            let count = self.current_sessions.get::<u64>(before).expect("recorded session");
+            if count == 1 {
+                self.current_sessions.remove(&before);
+            } else {
+                self.current_sessions.insert(before, count - 1);
+            }
+        }
+        let count = self.current_sessions.get::<u64>(after).unwrap_or(0);
+        self.current_sessions.insert(after, count + 1);
+    }
+}
+
+struct StateGuard<'a>(std::sync::MutexGuard<'a, State>);
+
+impl std::ops::Deref for StateGuard<'_> {
+    type Target = State;
+    fn deref(&self) -> &State {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for StateGuard<'_> {
+    fn deref_mut(&mut self) -> &mut State {
+        &mut self.0
+    }
+}
+
+impl Drop for StateGuard<'_> {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            if let Err(error) = self.0.live.release() {
+                cache::failed("spilling inactive resident state", error);
+            }
+        }
+    }
 }
 
 /// The directories a resident has, one in each town it lived in, and for
@@ -55,7 +101,7 @@ struct State {
 type Homes = Vec<(Option<TownName>, Option<Moved>)>;
 
 /// A town a resident lived in and moved away from.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Former {
     pub id: ResidentId,
     pub town: Option<TownName>,
@@ -65,15 +111,15 @@ pub struct Former {
 
 /// What a resident has been told of the town it lives in: the town, and
 /// how far into its ledger.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Heard {
     pub town: Option<TownName>,
     pub ledger: u64,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Live {
     removed: Option<Timestamp>,
-    management: Arc<tokio::sync::RwLock<()>>,
     about: About,
     town: Option<TownName>,
     /// A Claude session's inbox address, for commands from its native shell.
@@ -88,10 +134,9 @@ struct Live {
     /// Held while words go into its session until the turn they joined is
     /// known and owed, and while a turn's end is taken: so a turn's end goes
     /// to exactly those whose words went into it.
-    speaking: Arc<tokio::sync::Mutex<()>>,
-    paying: Arc<tokio::sync::Mutex<()>>,
     /// `None` until it is told who and where it is.
     heard: Option<Heard>,
+    former: Vec<Former>,
 }
 
 impl Live {
@@ -103,7 +148,6 @@ impl Live {
             .collect();
         Self {
             removed: None,
-            management: Arc::new(tokio::sync::RwLock::new(())),
             about,
             town,
             inbox: None,
@@ -111,9 +155,8 @@ impl Live {
             claude_here: false,
             now,
             owed,
-            speaking: Arc::new(tokio::sync::Mutex::new(())),
-            paying: Arc::new(tokio::sync::Mutex::new(())),
             heard: None,
+            former: Vec::new(),
         }
     }
 }
@@ -133,10 +176,18 @@ impl Residents {
     /// cannot be read is reported and left as it is.
     pub fn load(world: &WorldDir) -> io::Result<(Self, Vec<(PathBuf, io::Error)>)> {
         removal::recover(world)?;
-        let mut state = State::default();
+        let root = cache::prepare(world.path())?;
+        let mut state = State {
+            live: cache::Cache::new(root.join("residents"))?,
+            threads: cache::Index::new(root.join("threads"))?,
+            current_sessions: cache::Index::new(root.join("current-sessions"))?,
+            departed: cache::Index::new(root.join("departed"))?,
+            inboxes: cache::Index::new(root.join("inboxes"))?,
+        };
         let mut problems = Vec::new();
         // Each resident's directories, one in each town it lived in.
-        let mut homes: BTreeMap<ResidentId, Homes> = BTreeMap::new();
+        let home_index = root.join("homes");
+        fastctx_platform::ensure_private_dir(&home_index)?;
         for parent in world.resident_parents()? {
             let town = town_of(world, &parent);
             let entries = match std::fs::read_dir(&parent) {
@@ -156,12 +207,34 @@ impl Residents {
                     continue;
                 }
                 match records::read_moved(&directory) {
-                    Ok(moved) => homes.entry(id).or_default().push((town.clone(), moved)),
+                    Ok(moved) => {
+                        let path = home_index.join(format!("{id}.json"));
+                        let mut homes: Homes = match std::fs::read(&path) {
+                            Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+                            Err(error) => return Err(error),
+                        };
+                        homes.push((town.clone(), moved));
+                        fastctx_platform::publish(
+                            &path,
+                            &serde_json::to_vec(&homes).map_err(io::Error::other)?,
+                            fastctx_platform::Permissions::Private,
+                        )?;
+                    }
                     Err(error) => problems.push((directory.moved(), error)),
                 }
             }
         }
-        for (id, homes) in homes {
+        for entry in std::fs::read_dir(&home_index)? {
+            let path = entry?.path();
+            let id: ResidentId = path
+                .file_stem()
+                .and_then(|id| id.to_str())
+                .expect("resident index name")
+                .parse()
+                .map_err(io::Error::other)?;
+            let homes: Homes = serde_json::from_slice(&std::fs::read(path)?).map_err(io::Error::other)?;
+            let mut former = Vec::new();
             let town = match live_town(world, &id, &homes) {
                 Ok(town) => town,
                 Err(error) => {
@@ -176,12 +249,7 @@ impl Residents {
                 if let Some(moved) = moved
                     && *left != town
                 {
-                    state.former.push(Former {
-                        id: id.clone(),
-                        town: left.clone(),
-                        to: moved.to.clone(),
-                        at: moved.at,
-                    });
+                    former.push(Former { id: id.clone(), town: left.clone(), to: moved.to.clone(), at: moved.at });
                 }
             }
             let directory = world.resident(town.as_ref(), &id);
@@ -195,6 +263,7 @@ impl Residents {
             let now = records::read_now(&directory)?;
             if let Some(session) = &about.session {
                 state.threads.insert(session.clone(), about.id.clone());
+                state.record_session(None, session);
             }
             // Whoever sat at the desk sat there for a turn the node that
             // stopped kept; the desk is the new node's to see afresh.
@@ -206,9 +275,21 @@ impl Residents {
             // those turns ended once the node is up (`unfinished`).
             let mut live = Live::new(about, town.clone(), now);
             live.removed = removal(world, &id)?;
+            live.former = former;
             state.live.insert(live.about.id.clone(), live);
+            state.live.release()?;
         }
-        Ok((Self { state: Mutex::new(state) }, problems))
+        std::fs::remove_dir_all(home_index)?;
+        state.live.release()?;
+        Ok((
+            Self {
+                state: Mutex::new(state),
+                speaking: Default::default(),
+                paying: Default::default(),
+                management: Default::default(),
+            },
+            problems,
+        ))
     }
 
     /// The resident `id` lives in `town` from now on. Returns whether it
@@ -229,14 +310,15 @@ impl Residents {
         let from = live.town.clone();
         records::move_to(world, id, from.as_ref(), town, &live.about, live.now.as_ref())?;
         live.town = town.cloned();
-        state.former.retain(|former| !(former.id == *id && former.town.as_ref() == town));
-        state.former.push(Former { id: id.clone(), town: from, to: town.cloned(), at: Timestamp::now() });
+        live.former.retain(|former| former.town.as_ref() != town);
+        live.former.push(Former { id: id.clone(), town: from, to: town.cloned(), at: Timestamp::now() });
         Ok(true)
     }
 
     /// Where residents lived before they moved.
     pub fn former(&self) -> Vec<Former> {
-        self.lock().former.clone()
+        let ids = self.lock().live.ids();
+        ids.flat_map(|id| self.lock().live.get(&id).map(|live| live.former.clone()).unwrap_or_default()).collect()
     }
 
     /// What the resident has been told of where it lives.
@@ -261,8 +343,8 @@ impl Residents {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state.lock().expect("never poisoned")
+    fn lock(&self) -> StateGuard<'_> {
+        StateGuard(self.state.lock().expect("never poisoned"))
     }
 
     /// The resident a session is, made now if it is new.
@@ -289,7 +371,7 @@ impl Residents {
             };
         }
         if let Some(thread) = &hints.thread
-            && let Some(resident) = state.threads.get(thread).cloned()
+            && let Some(resident) = state.threads.get::<ResidentId>(thread)
             && let Some(live) = state.live.get_mut(&resident)
         {
             if live.removed.is_some() {
@@ -321,6 +403,7 @@ impl Residents {
         records::create(&world.resident(None, &resident), &about)
             .map_err(|error| Failure::new(format!("recording a new resident: {error}")))?;
         if let Some(thread) = hints.thread {
+            state.record_session(None, &thread);
             state.threads.insert(thread, resident.clone());
         }
         let mut live = Live::new(about, None, None);
@@ -353,6 +436,7 @@ impl Residents {
         let mut state = self.lock();
         if let Some(session) = &about.session {
             state.threads.insert(session.clone(), about.id.clone());
+            state.record_session(None, session);
         }
         // The durable identity already exists even if its initial activity
         // could not be written. Retain it so a retry cannot create a second one.
@@ -362,13 +446,21 @@ impl Residents {
 
     /// The resident whose Claude session has the inbox address `inbox`.
     pub fn resident_of_inbox(&self, inbox: &str) -> Option<ResidentId> {
-        self.lock().live.values().find(|live| live.inbox.as_deref() == Some(inbox)).map(|live| live.about.id.clone())
+        self.lock().inboxes.get(&inbox)
     }
 
     /// The mod's inbox address identifies commands from the host's native
     /// shell. MCP calls never use it as identity evidence.
     pub fn set_inbox(&self, id: &ResidentId, inbox: String) {
-        if let Some(live) = self.lock().live.get_mut(id) {
+        let mut state = self.lock();
+        let prior = state.live.get(id).and_then(|live| live.inbox.clone());
+        if let Some(prior) = prior
+            && state.inboxes.get::<ResidentId>(&prior).as_ref() == Some(id)
+        {
+            state.inboxes.remove(&prior);
+        }
+        state.inboxes.insert(&inbox, id);
+        if let Some(live) = state.live.get_mut(id) {
             live.inbox = Some(inbox);
         }
     }
@@ -401,6 +493,7 @@ impl Residents {
             return Ok(());
         }
         let mut about = live.about.clone();
+        let prior_session = about.session.clone();
         about.session = Some(session.to_string());
         if model.is_some() {
             about.model = model;
@@ -413,6 +506,7 @@ impl Residents {
         }
         records::write_about(&world.resident(live.town.as_ref(), id), &about)?;
         live.about = about;
+        state.record_session(prior_session.as_deref(), session);
         state.threads.insert(session.to_string(), id.clone());
         Ok(())
     }
@@ -437,32 +531,35 @@ impl Residents {
     }
 
     pub fn resident_of_thread(&self, thread: &str) -> Option<ResidentId> {
-        self.lock().threads.get(thread).cloned()
+        self.lock().threads.get(&thread)
     }
 
-    pub fn speaking(&self, id: &ResidentId) -> Option<Arc<tokio::sync::Mutex<()>>> {
-        self.lock().live.get(id).map(|live| live.speaking.clone())
+    pub fn records_for_session(&self, session: &str) -> u64 {
+        self.lock().current_sessions.get(session).unwrap_or(0)
     }
 
-    pub fn paying(&self, id: &ResidentId) -> Option<Arc<tokio::sync::Mutex<()>>> {
-        self.lock().live.get(id).map(|live| live.paying.clone())
+    pub fn speaking(&self, id: &ResidentId) -> Option<crate::leases::Lease<ResidentId, tokio::sync::Mutex<()>>> {
+        self.lock().live.contains_key(id).then(|| self.speaking.get_or_insert_with(id, Default::default))
+    }
+
+    pub fn paying(&self, id: &ResidentId) -> Option<crate::leases::Lease<ResidentId, tokio::sync::Mutex<()>>> {
+        self.lock().live.contains_key(id).then(|| self.paying.get_or_insert_with(id, Default::default))
     }
 
     /// Every resident on record.
-    pub fn everyone(&self) -> Vec<OnRecord> {
-        let state = self.lock();
-        state
-            .live
-            .iter()
-            .map(|(id, live)| OnRecord {
-                id: id.clone(),
+    pub fn everyone(&self) -> impl Iterator<Item = OnRecord> + '_ {
+        let ids = self.lock().live.ids();
+        ids.filter_map(|id| {
+            let mut state = self.lock();
+            state.live.get(&id).map(|live| OnRecord {
+                id,
                 removed: live.removed,
                 town: live.town.clone(),
                 here: here(live),
                 about: live.about.clone(),
                 now: live.now.clone(),
             })
-            .collect()
+        })
     }
 
     /// Codex residents the World holds that were working when the node
@@ -470,30 +567,27 @@ impl Residents {
     /// app-server stopped with the node. A Claude session runs on under
     /// Claude Code's own supervisor, and its turn ends as it ends.
     pub fn unfinished(&self) -> Vec<(ResidentId, String)> {
-        self.lock()
-            .live
-            .values()
-            .filter(|live| live.removed.is_none())
-            .flat_map(|live| {
-                let mut turns: BTreeSet<String> = live.owed.keys().cloned().collect();
-                if let Some(now) = &live.now
-                    && now.activity == Activity::Busy
-                    && let Some(turn) = &now.turn
-                {
-                    turns.insert(turn.clone());
-                }
-                turns.into_iter().map(|turn| (live.about.id.clone(), turn)).collect::<Vec<_>>()
-            })
-            .collect()
+        let ids = self.lock().live.ids();
+        ids.flat_map(|id| {
+            let mut state = self.lock();
+            let Some(live) = state.live.get(&id).filter(|live| live.removed.is_none()) else { return Vec::new() };
+            let mut turns: BTreeSet<String> = live.owed.keys().cloned().collect();
+            if let Some(now) = &live.now
+                && now.activity == Activity::Busy
+                && let Some(turn) = &now.turn
+            {
+                turns.insert(turn.clone());
+            }
+            turns.into_iter().map(|turn| (live.about.id.clone(), turn)).collect::<Vec<_>>()
+        })
+        .collect()
     }
 
     /// Every resident the World started whose words come from `asker`.
     pub fn colleagues_of(&self, asker: &Address) -> Vec<ResidentId> {
-        self.lock()
-            .live
-            .values()
+        self.everyone()
             .filter(|live| matches!(&live.about.origin, Origin::Colleague { asked_by, .. } if asked_by == asker))
-            .map(|live| live.about.id.clone())
+            .map(|live| live.about.id)
             .collect()
     }
 
@@ -501,7 +595,7 @@ impl Residents {
     /// machine that has not left, or one of another machine whose machine
     /// has not written that it left.
     pub fn requester_here(&self, asker: &Address, here_machine: &MachineName) -> bool {
-        let state = self.lock();
+        let mut state = self.lock();
         if asker.machine == *here_machine {
             state.live.get(&asker.resident).is_some_and(here)
         } else {
@@ -511,9 +605,9 @@ impl Residents {
 
     /// A resident of another machine left (`departed`) or came back.
     pub fn set_departed(&self, asker: Address, departed: bool) {
-        let mut state = self.lock();
+        let state = self.lock();
         if departed {
-            state.departed.insert(asker);
+            state.departed.insert(asker, true);
         } else {
             state.departed.remove(&asker);
         }
@@ -577,7 +671,7 @@ impl Residents {
     /// Who the resident is working for: those owed the turn it runs, or,
     /// between turns, those its latest turn anyone was owed was for.
     pub fn working_for(&self, id: &ResidentId) -> Vec<Address> {
-        let state = self.lock();
+        let mut state = self.lock();
         let Some(live) = state.live.get(id) else { return Vec::new() };
         let Some(now) = &live.now else { return Vec::new() };
         if now.activity == Activity::Busy
@@ -767,4 +861,49 @@ pub(crate) fn town_of(world: &WorldDir, parent: &std::path::Path) -> Option<Town
     let towns = world.path().join("towns");
     let town = parent.parent()?.strip_prefix(&towns).ok()?;
     TownName::try_from(town.to_str()?).ok()
+}
+
+#[cfg(test)]
+mod lifetime_tests {
+    use super::*;
+
+    #[test]
+    fn departed_residents_keep_identity_and_history_without_runtime_entries() {
+        let root = std::env::temp_dir().join(format!("resident-lifetimes-{}", std::process::id()));
+        let world = WorldDir::under(&root);
+        let (residents, problems) = Residents::load(&world).unwrap();
+        assert!(problems.is_empty());
+        let machine = "private-node".parse().unwrap();
+        let host = Host { agent: "codex".parse().unwrap(), version: "fixture".into(), client: "fixture".into() };
+        let hints =
+            |index| Hints { resident: None, thread: Some(format!("thread-{index}")), was: None, tool_use_id: None };
+        for index in 0..512 {
+            let arrived = residents.arrive(&world, &machine, host.clone(), hints(index)).unwrap();
+            let id = &arrived.resident;
+            residents.set_heard(id, Heard { town: None, ledger: index });
+            residents.set_inbox(id, format!("old-{index}"));
+            residents.set_inbox(id, format!("new-{index}"));
+            assert!(residents.resident_of_inbox(&format!("old-{index}")).is_none());
+            residents.left(std::slice::from_ref(id));
+            assert_eq!(residents.state.lock().unwrap().live.cached(), 0);
+            let held = residents.speaking(id).unwrap();
+            let again = residents.speaking(id).unwrap();
+            assert!(std::ptr::eq(&*held, &*again));
+            assert_eq!(residents.arrive(&world, &machine, host.clone(), hints(index)).unwrap().resident, *id);
+            assert_eq!(residents.heard(id).unwrap().ledger, index);
+            residents.left(std::slice::from_ref(id));
+        }
+        assert_eq!(residents.everyone().count(), 512);
+        assert_eq!(residents.state.lock().unwrap().live.cached(), 0);
+        let removed = residents.resident_of_thread("thread-0").unwrap();
+        residents.remove(&world, &removed).unwrap();
+        assert!(residents.arrive(&world, &machine, host.clone(), hints(0)).is_err());
+        drop(residents);
+        let (restored, problems) = Residents::load(&world).unwrap();
+        assert!(problems.is_empty());
+        assert_eq!(restored.everyone().count(), 512);
+        assert!(restored.arrive(&world, &machine, host, hints(0)).is_err());
+        drop(restored);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

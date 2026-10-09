@@ -15,6 +15,7 @@ pub mod data;
 pub mod dial;
 pub mod envelope;
 pub mod file_read;
+pub mod file_search;
 pub mod join;
 pub mod ledger;
 pub mod link;

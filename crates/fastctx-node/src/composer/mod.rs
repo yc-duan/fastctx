@@ -1,5 +1,6 @@
 //! The only writer and release coordinator of each conversation's composer.
 
+mod receipts;
 mod state;
 mod storage;
 mod submissions;
@@ -11,7 +12,7 @@ use storage::{event, load, publish};
 pub use submissions::resume;
 pub use submissions::{bound, turn_ended, uncertain};
 use submissions::{dispatch, schedule};
-pub use watching::watch;
+pub use watching::{snapshot, watch};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -26,17 +27,22 @@ use fastctx_types::{MachineName, ResidentId};
 use crate::Node;
 use state::{Entry, Flight, Receipt, Stored};
 
-type Cell = Arc<tokio::sync::Mutex<Option<Stored>>>;
+type Cell = crate::leases::Lease<ResidentId, tokio::sync::Mutex<Option<Stored>>>;
 
 #[derive(Default)]
 pub struct Composers {
-    cells: Mutex<HashMap<ResidentId, Cell>>,
+    cells: crate::leases::Registry<ResidentId, tokio::sync::Mutex<Option<Stored>>>,
     watches: Mutex<HashMap<String, ResidentId>>,
+    failed: Mutex<HashMap<ResidentId, Cell>>,
+}
+
+pub fn removed(node: &Node, id: &ResidentId) {
+    node.composers.failed.lock().expect("failed composer checkpoints").remove(id);
 }
 
 impl Composers {
     fn cell(&self, id: &ResidentId) -> Cell {
-        self.cells.lock().expect("composer cells").entry(id.clone()).or_default().clone()
+        self.cells.get_or_insert_with(id, Default::default)
     }
 }
 
@@ -83,10 +89,10 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
         return Err(failure("an operation ID is required"));
     }
     let state = cell.as_ref().expect("loaded");
-    if state.uploads.contains_key(&mutation.operation) {
+    if receipts::upload(node, id, state, &mutation.operation)?.is_some() {
         return Err(failure("that operation ID already belongs to an upload"));
     }
-    if let Some(receipt) = state.receipts.get(&mutation.operation) {
+    if let Some(receipt) = receipts::receipt(node, id, state, &mutation.operation)? {
         if receipt.from != *from || receipt.mutation != mutation {
             return Err(failure("an operation ID was reused for different content or a different device"));
         }
@@ -165,8 +171,10 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
         tokio::spawn(async move { dispatch(&sending_node, &sending_id, flight).await }).await.map_err(failure)?;
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
+    load(node, id, &mut cell)?;
     let mut next = cell.as_ref().expect("loaded").clone();
-    let receipt = next.receipts.get_mut(&mutation.operation).expect("kept receipt");
+    let receipt = receipts::receipt(node, id, &next, &mutation.operation)?.expect("kept receipt");
+    let receipt = next.receipts.entry(mutation.operation.clone()).or_insert(receipt);
     receipt.landed = delivered.as_ref().ok().cloned().flatten();
     receipt.failure = delivered.as_ref().err().map(|error| error.message.clone());
     publish(node, id, &mut cell, next)?;

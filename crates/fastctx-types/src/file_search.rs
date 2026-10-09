@@ -21,6 +21,9 @@ pub enum FileSearchRequest {
     /// Start when opening the conversation's composer, before the first `@`.
     /// Keep the index across its popovers; indexing runs in the background.
     Start { scope: FileSearchScope },
+    /// Own an index through this connection. Closing the connection releases it.
+    /// Interfaces use this form; Start remains the explicit-close legacy contract.
+    Open { scope: FileSearchScope },
     /// Ask on each edit, and again while `ready` is false. Queries are literal
     /// fuzzy text (including spaces and punctuation), not a query language.
     Query { search: String, query: String, limit: usize },

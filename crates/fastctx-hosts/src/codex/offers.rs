@@ -98,7 +98,7 @@ impl CodexHost {
                 path: Some(string(&skill, "path")?),
             });
         }
-        let state = self.lock();
+        let mut state = self.lock();
         let entry = state.threads.get(thread).ok_or("unknown Codex thread")?;
         let mut controls = vec![ControlKind::Command, ControlKind::Model, ControlKind::Rename, ControlKind::Fork];
         if entry.turn.is_none() && !entry.submitted {

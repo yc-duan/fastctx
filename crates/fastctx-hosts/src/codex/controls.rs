@@ -111,7 +111,7 @@ impl CodexHost {
         let server = self.server().await?;
         self.ensure_loaded(&server, source).await?;
         let selection = {
-            let state = self.lock();
+            let mut state = self.lock();
             let entry = state.threads.get(source).ok_or("unknown source thread")?;
             Selection {
                 model: entry.selection.model.clone().or_else(|| entry.model.clone()),
@@ -147,7 +147,7 @@ impl CodexHost {
         entry.completed_item = true;
         entry.model = model.clone();
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
-        entry.metadata = answer["thread"].clone();
+        entry.metadata = metadata(&answer["thread"]);
         selection
             .write(&self.workdir, &thread)
             .map_err(|error| format!("Codex created fork {thread}, but saving its choices failed: {error}"))?;
@@ -186,7 +186,7 @@ impl CodexHost {
         let entry = state.threads.get_mut(thread).ok_or("unknown Codex thread")?;
         // Turn-end notifications already retire the interrupted runtime.
         // Preserve reports from its replacement, even before this reply.
-        entry.metadata = answer["thread"].clone();
+        entry.metadata = metadata(&answer["thread"]);
         Ok(())
     }
 
@@ -199,7 +199,7 @@ impl CodexHost {
         let mut state = self.lock();
         let entry = state.threads.entry(thread.into()).or_default();
         match method {
-            "thread/started" => entry.metadata = params["thread"].clone(),
+            "thread/started" => entry.metadata = metadata(&params["thread"]),
             "thread/tokenUsage/updated" => entry.usage = Some(params["tokenUsage"].clone()),
             "thread/settings/updated" => {
                 entry.model = params.pointer("/threadSettings/model").and_then(Value::as_str).map(str::to_string);
@@ -212,4 +212,9 @@ impl CodexHost {
             _ => {}
         }
     }
+}
+
+pub(super) fn metadata(thread: &Value) -> Value {
+    // Control availability uses these flags; thread replies can also contain full turn history.
+    json!({ "historyMode": thread["historyMode"], "ephemeral": thread["ephemeral"] })
 }
