@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use toml_edit::Item;
 
-use crate::source::{Source, comma_in, newline, splice};
+use crate::source::{Source, comma_in, edit, newline, splice};
 use crate::{Error, Notice};
 
 pub(crate) const FEATURES: [&str; 2] = ["shell_tool", "view_image"];
@@ -77,8 +77,8 @@ pub(crate) fn unapply(original: &[u8], location: &str, receipt: &Receipt) -> Res
             Ok(range) => range,
             Err(_) => {
                 match rewritten(&source, key, setting)? {
-                    Some(edit) => {
-                        bytes = splice(&bytes, vec![edit])?;
+                    Some(next) => {
+                        bytes = next;
                         Source::parse(&bytes, location)?;
                     }
                     None => notices.push(notice(location, key, "changed since apply; left untouched")),
@@ -86,6 +86,10 @@ pub(crate) fn unapply(original: &[u8], location: &str, receipt: &Receipt) -> Res
                 continue;
             }
         };
+        if matches!(setting, Setting::Inserted { .. }) && edit::joins_lines(&bytes, &range) {
+            bytes = rewritten(&source, key, setting)?.expect("owned value was checked");
+            continue;
+        }
         let mut edits = Vec::new();
         let replacement = match setting {
             Setting::Replaced { before } => before.clone(),
@@ -113,8 +117,14 @@ pub(crate) fn unapply(original: &[u8], location: &str, receipt: &Receipt) -> Res
             Setting::Inserted { .. } => Vec::new(),
         };
         edits.push((range, replacement));
-        bytes = splice(&bytes, edits)?;
-        Source::parse(&bytes, location)?;
+        let next = splice(&bytes, edits)?;
+        bytes = if Source::parse(&next, location).is_ok() {
+            next
+        } else {
+            // Matching local bytes do not prove that a rewritten inline
+            // table still has the original separator arrangement.
+            rewritten(&source, key, setting)?.ok_or_else(|| Error::at(*key, "the recorded value changed"))?
+        };
     }
     Ok((bytes, notices))
 }
@@ -126,7 +136,10 @@ fn owned_range(source: &Source<'_>, key: &str, setting: &Setting) -> Result<std:
         .ok_or_else(|| Error::at(key, "the recorded value changed"))?;
     match setting {
         Setting::Replaced { .. } => Ok(range),
-        Setting::Inserted { prefix, suffix, .. } => {
+        Setting::Inserted { prefix, suffix, inline, .. } => {
+            if *inline != source.item(&["features"]).is_some_and(Item::is_inline_table) {
+                return Err(Error::at(key, "the assignment's table layout changed"));
+            }
             let start =
                 range.start.checked_sub(prefix.len()).ok_or_else(|| Error::at(key, "the assignment changed"))?;
             let end = range.end + suffix.len();
@@ -173,37 +186,18 @@ fn insert(source: &Source<'_>, key: &str) -> Result<(Vec<u8>, Setting), Error> {
     Ok((bytes, Setting::Inserted { prefix: prefix.into_bytes(), suffix: suffix.into_bytes(), inline, comma }))
 }
 
-/// Bytes to replace and what replaces them.
-type Edit = (std::ops::Range<usize>, Vec<u8>);
-
-/// The edit that takes back a setting still `false` whose surrounding bytes
-/// were rewritten: the earlier value restored, or the line this apply added
-/// removed. `None` when it is no longer ours, or sits in an inline table
-/// whose separators cannot be told apart from the user's.
-fn rewritten(source: &Source<'_>, key: &str, setting: &Setting) -> Result<Option<Edit>, Error> {
+/// Restore a setting still `false` using the current syntax, including inline
+/// and dotted tables. A different value is the user's and remains untouched.
+fn rewritten(source: &Source<'_>, key: &str, setting: &Setting) -> Result<Option<Vec<u8>>, Error> {
     let path = ["features", key];
     if source.item(&path).and_then(Item::as_bool) != Some(false) {
         return Ok(None);
     }
     match setting {
-        Setting::Replaced { before } => Ok(source.value_range(&path)?.map(|range| (range, before.clone()))),
-        Setting::Inserted { .. } => {
-            if !matches!(source.item(&["features"]), Some(Item::Table(_)) | None) {
-                return Ok(None);
-            }
-            let assignment = source.assignment(&path)?;
-            let bytes = source.bytes;
-            let start = bytes[..assignment.start].iter().rposition(|byte| *byte == b'\n').map_or(0, |at| at + 1);
-            if bytes[start..assignment.start].iter().any(|byte| !matches!(byte, b' ' | b'\t')) {
-                return Ok(None);
-            }
-            let rest = &bytes[assignment.end..];
-            let line = rest.iter().position(|byte| *byte == b'\n').map_or(rest.len(), |at| at + 1);
-            if rest[..line].iter().any(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n')) {
-                return Ok(None);
-            }
-            Ok(Some((start..assignment.end + line, Vec::new())))
+        Setting::Replaced { before } => {
+            source.value_range(&path)?.map(|range| splice(source.bytes, vec![(range, before.clone())])).transpose()
         }
+        Setting::Inserted { .. } => edit::remove(source, &path).map(Some),
     }
 }
 
