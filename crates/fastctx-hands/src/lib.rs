@@ -7,6 +7,7 @@ pub mod copy;
 pub mod encoding;
 pub mod files;
 pub mod image;
+pub mod lent;
 pub mod pages;
 pub mod run;
 mod spool;

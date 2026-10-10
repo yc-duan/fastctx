@@ -332,7 +332,8 @@ async fn there(
             )),
         });
     };
-    let followed_through = follow_there(node, (&link, &account), origin, &written, &job, &followed, pieces, waiting).await;
+    let followed_through =
+        follow_there(node, (&link, &account), origin, &written, &job, &followed, pieces, waiting).await;
     if matches!(followed_through, Ok(true)) {
         waiting
             .lock()
@@ -346,17 +347,22 @@ async fn there(
 /// Whether the output of an `on` to `from` may go straight to `to`, the
 /// machine of the `on` the script pipes it into: neither is this machine,
 /// through which it would come anyway, and `to` is a machine of `link`'s
-/// hub that `account` works on and trusts to act for it, as taking the
-/// output from `from` asks.
+/// hub, where `from` is, that `account` works on and that may act for it,
+/// as taking the output from `from` asks. A machine written `name.hub` of
+/// another hub is never reached by a stream of this one.
 fn straight(
     node: &Node,
     link: &fastctx_net::link::Link,
     account: &fastctx_types::AccountName,
     from: &MachineName,
-    to: &MachineName,
+    to: &crate::reach::Written,
 ) -> bool {
+    if to.hub.as_ref().is_some_and(|hub| *hub != link.membership().hub_name) {
+        return false;
+    }
     let here = node.machine();
     let view = link.view();
+    let to = &to.name;
     *from != here
         && *to != here
         && view.member(to).is_some()
@@ -872,7 +878,12 @@ fn piped_taken(node: &Arc<Node>, record_path: &Path) {
 /// Hands the standard output of `job`, an `on` job of `origin` whose output
 /// went straight on, to the machine of the `on` that reads it, as it is
 /// written and until it is all there.
-pub async fn serve_pipe(node: &Arc<Node>, origin: OnOrigin, job: JobId, mut stream: Stream) -> Result<RemoteReply, Failure> {
+pub async fn serve_pipe(
+    node: &Arc<Node>,
+    origin: OnOrigin,
+    job: JobId,
+    mut stream: Stream,
+) -> Result<RemoteReply, Failure> {
     let record_path = on_job(node, &origin, &job)?;
     piped_record(&record_path, &origin).await?;
     let failed = |error: String| Failure::new(format!("handing over the output of {job}: {error}"));

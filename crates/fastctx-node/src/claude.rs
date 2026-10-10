@@ -1037,6 +1037,9 @@ pub async fn open_here(
         crate::colleagues::setting::keep(node, &id, lives_on, opened.colleagues_home.clone())?;
     }
     let Command { program, env, .. } = command(node, opened.home.as_deref())?;
+    // A login lent to another account starts with none of its owner's
+    // settings (`background::Start::lent`).
+    let lent = node.works_here(&opened.acting).is_err();
     let (words, heard) = crate::colleagues::instructions(
         node,
         &id,
@@ -1081,7 +1084,7 @@ pub async fn open_here(
     let directory = node.world.resident(town.as_ref(), &id);
     let settings = directory.path().join("claude-settings.json");
     let instructions = directory.path().join("claude-instructions.md");
-    let written = std::fs::write(&settings, settings_json()).and_then(|()| std::fs::write(&instructions, words));
+    let written = std::fs::write(&settings, settings_json(lent)).and_then(|()| std::fs::write(&instructions, words));
     written.map_err(|error| Failure::new(format!("writing the session's settings: {error}")))?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
     let plugin = claude::plugin_dir(node.world.path());
@@ -1110,6 +1113,7 @@ pub async fn open_here(
             first_words: &text,
             model: options.model.as_deref(),
             reasoning_effort: options.reasoning_effort.as_deref(),
+            lent,
         };
         let args = background::start_args(&start);
         trust(&world, &env)?;
@@ -1200,13 +1204,18 @@ fn trust(world: &Path, env: &[(OsString, OsString)]) -> Result<(), String> {
 /// a tool answer opened past the World's own (`world-view.md`, 一次给多少),
 /// and the host's own shell, file and search tools turned off, since the
 /// World's take their place. The session runs without approvals
-/// (`background::settings_args`), so nothing else needs allowing.
-fn settings_json() -> String {
-    let settings = serde_json::json!({
+/// (`background::settings_args`), so nothing else needs allowing. A session
+/// of a lent login neither reads nor writes its owner's automatic memory,
+/// which that leaving out of the owner's settings does not reach.
+fn settings_json(lent: bool) -> String {
+    let mut settings = serde_json::json!({
         "env": { "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string() },
         "permissions": {
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
         },
     });
+    if lent {
+        settings["autoMemoryEnabled"] = serde_json::Value::Bool(false);
+    }
     serde_json::to_string_pretty(&settings).expect("JSON values serialize")
 }

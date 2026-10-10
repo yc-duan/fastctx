@@ -58,7 +58,8 @@ pub fn load(world: &WorldDir) -> io::Result<Vec<Membership>> {
     };
     for entry in entries {
         let path = entry?.path();
-        let Some(id) = path.file_name().and_then(|name| name.to_str()).and_then(|name| HubId::try_from(name.to_string()).ok())
+        let Some(id) =
+            path.file_name().and_then(|name| name.to_str()).and_then(|name| HubId::try_from(name.to_string()).ok())
         else {
             continue;
         };
@@ -224,7 +225,14 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
             link.refresh().await.map_err(|error| Failure::new(format!("logged in, but asking the hub: {error}")))?;
         }
         None => {
-            let membership = Membership { id: hub.clone(), hub_name: hub_name.clone(), name: name.clone(), addresses, cert, kind: Kind::Computer };
+            let membership = Membership {
+                id: hub.clone(),
+                hub_name: hub_name.clone(),
+                name: name.clone(),
+                addresses,
+                cert,
+                kind: Kind::Computer,
+            };
             let net = net_dir(&node.world, &hub);
             net.prepare()
                 .and_then(|()| fastctx_net::link::state::write(&net.membership(), &membership))
@@ -405,7 +413,12 @@ impl fastctx_net::link::Node for Handler {
         })
     }
 
-    fn call(&self, caller: Caller, call: RemoteCall, stream: Option<fastctx_net::data::Stream>) -> BoxFuture<RemoteResult> {
+    fn call(
+        &self,
+        caller: Caller,
+        call: RemoteCall,
+        stream: Option<fastctx_net::data::Stream>,
+    ) -> BoxFuture<RemoteResult> {
         let node = self.node.upgrade();
         let hub = self.hub.clone();
         Box::pin(async move {
@@ -463,9 +476,11 @@ impl fastctx_net::link::Node for Handler {
                     crate::on::serve_follow(&node, origin, job, out_from, err_from, stream).await
                 }
                 RemoteCall::StopOn { origin, job } => crate::on_stop::serve(&node, origin, job).await,
-                RemoteCall::StopJob { job, by } => crate::stop::here_(&node, &job, &format!("{by} on {from}, for {}", caller.account))
-                    .await
-                    .map(|record| RemoteReply::JobStopped { record: record.map(Box::new) }),
+                RemoteCall::StopJob { job, by } => {
+                    crate::stop::here_(&node, &job, &format!("{by} on {from}, for {}", caller.account))
+                        .await
+                        .map(|record| RemoteReply::JobStopped { record: record.map(Box::new) })
+                }
                 RemoteCall::Ask { asker: resident, town, label, prompt, accounts, home } => {
                     // The colleague works for each of the asker's accounts
                     // that may use the agents here, as this machine sees it.
@@ -479,20 +494,23 @@ impl fastctx_net::link::Node for Handler {
                     }
                     let acting = Acting::Accounts { accounts: working };
                     let asker = Address { machine: from, resident };
-                    let colleague = crate::colleagues::ask_here(&node, asker, acting, town, label, prompt, home).await?;
+                    let colleague =
+                        crate::colleagues::ask_here(&node, asker, acting, town, label, prompt, home).await?;
                     Ok(RemoteReply::Asked { colleague })
                 }
-                RemoteCall::Talk { to, text, attachments } => crate::talk::talk_here(&node, &from, &to, text, attachments)
-                    .await
-                    .map(|landed| RemoteReply::Said { landed }),
+                RemoteCall::Talk { to, text, attachments } => {
+                    crate::talk::talk_here(&node, &from, &to, text, attachments)
+                        .await
+                        .map(|landed| RemoteReply::Said { landed })
+                }
                 RemoteCall::Watch { resident, watch, composer } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
                     crate::talk::serve_watch(&node, &link, resident, watch, composer, stream).await
                 }
-                RemoteCall::Agents => {
-                    crate::agents::here(&node).await.map(|reply| RemoteReply::Agents(crate::admission::seen::agents(reply)))
-                }
+                RemoteCall::Agents => crate::agents::here(&node)
+                    .await
+                    .map(|reply| RemoteReply::Agents(crate::admission::seen::agents(&link.view(), &asker, reply))),
                 RemoteCall::ClaudeConsent { accept, home } => {
                     crate::consent::here(&node, accept, home, format!("the account {} from {from}", caller.account))
                         .await
@@ -577,7 +595,8 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::CopySend { from: path, to } => {
-                    let to_machine = to.written().ok_or_else(|| Failure::new("the copy names no machine to send to"))?;
+                    let to_machine =
+                        to.written().ok_or_else(|| Failure::new("the copy names no machine to send to"))?;
                     // This machine sends for the caller's account: the
                     // hub lets it only where that account may work.
                     crate::copy::send(&node, &acting, &path, &to_machine, &to.path).await.map(RemoteReply::Copied)
@@ -595,7 +614,8 @@ impl fastctx_net::link::Node for Handler {
                         .map(RemoteReply::Copied)
                 }
                 RemoteCall::Place { resident, attachment } => {
-                    let stream = stream.ok_or_else(|| Failure::new("a file comes with a data connection, and this one had none"))?;
+                    let stream = stream
+                        .ok_or_else(|| Failure::new("a file comes with a data connection, and this one had none"))?;
                     crate::attachments::take_placed(&node, &from, resident, attachment, stream)
                         .await
                         .map(RemoteReply::Uploaded)
@@ -707,10 +727,10 @@ impl fastctx_net::link::Node for Handler {
     }
 }
 
-/// The machines a session working for `acting` may use, each as it is
+/// The machines a session working for `acting` may work on, each as it is
 /// written here: its name, or `name.hub` where another hub this computer is
 /// on has a different computer of that name. A computer on several hubs is
-/// one machine.
+/// one machine. One whose agents alone it was lent is not among them.
 pub fn machines(node: &Node, acting: &Acting) -> (MachineName, Vec<String>) {
     let here = node.machine();
     let mut others: Vec<String> = Vec::new();
@@ -722,7 +742,7 @@ pub fn machines(node: &Node, acting: &Acting) -> (MachineName, Vec<String>) {
             if keys.contains(&machine.key) {
                 continue;
             }
-            if accounts.iter().any(|account| view.rights(account, &machine.name).any()) {
+            if accounts.iter().any(|account| view.rights(account, &machine.name).hands) {
                 keys.push(machine.key);
                 others.push(node.written(&link, &machine.name).to_string());
             }

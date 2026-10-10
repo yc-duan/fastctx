@@ -46,8 +46,16 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
         assert!(matches!(call, Call::Machines { .. }));
         probing.send(()).unwrap();
         released.await.unwrap();
-        let machines =
-            NodeFrame::Reply { id, reply: Ok(Reply::Machines { here: "fixture".parse().unwrap(), others: vec![], colleagues: None }) };
+        let machines = NodeFrame::Reply {
+            id,
+            reply: Ok(Reply::Machines {
+                here: Some("fixture".to_string()),
+                others: vec![],
+                program: None,
+                colleagues: None,
+                colleagues_lent: false,
+            }),
+        };
         let sent = connection.send(&serde_json::to_vec(&machines).unwrap()).await.map_err(|error| error.to_string());
         let retained = sent.is_ok();
         probe_finished.send(sent).unwrap();
@@ -56,7 +64,18 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
         }
         let next = request(&mut connection).await;
         assert!(matches!(next.1, Call::Machines { .. }), "a cancelled tool must not register a new arrival");
-        reply(&mut connection, next.0, Reply::Machines { here: "fixture".parse().unwrap(), others: vec![], colleagues: None }).await;
+        reply(
+            &mut connection,
+            next.0,
+            Reply::Machines {
+                here: Some("fixture".to_string()),
+                others: vec![],
+                program: None,
+                colleagues: None,
+                colleagues_lent: false,
+            },
+        )
+        .await;
         answered.send(()).unwrap();
         assert!(connection.recv().await.unwrap().is_none());
     });

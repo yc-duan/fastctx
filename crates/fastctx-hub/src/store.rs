@@ -5,8 +5,8 @@
 //! <hub>/tls/certificate.der   the hub's certificate, pinned by every member
 //! <hub>/tls/key.der
 //! <hub>/login.secret          the hub's OPAQUE secrets (`fastctx_net::login::HubSecrets`)
-//! <hub>/directory.json        accounts and their password records, members, grants, trust,
-//!                             projects, enrollment tokens, removed members
+//! <hub>/directory.json        accounts and their password records, members, shares, loans,
+//!                             acting, projects, enrollment tokens, removed members
 //! <hub>/letters.json          where each member's letters stand
 //! <hub>/outbox/<name>/<seq>   letters waiting for a member, one file each
 //! <hub>/ledger/<town>/<seq>.json   the projects' ledgers (`crate::ledger`)
@@ -60,7 +60,7 @@ pub struct Book {
     /// told so.
     #[serde(default)]
     pub removed: Vec<Removed>,
-    /// Projects of accounts that were deleted, kept whole for an
+    /// Projects of accounts that were deleted, kept whole for the super
     /// administrator to hand to another account.
     #[serde(default)]
     pub archived: Vec<Project>,
@@ -162,7 +162,7 @@ impl Store {
 
     pub fn open(dir: &Path) -> io::Result<Self> {
         let hub: HubFile = read(&Self::hub_file(dir))?;
-        let book: Book = read(&Self::directory_file(dir))?;
+        let book = Self::read_book(dir)?;
         let mut letters: BTreeMap<MachineName, Letters> = read_or_default(&dir.join("letters.json"))?;
         let mut changed = false;
         for (name, entry) in &mut letters {
@@ -186,6 +186,29 @@ impl Store {
             store.save_letters()?;
         }
         Ok(store)
+    }
+
+    /// The directory as kept; one kept in the shape before sharing and
+    /// lending (`crate::upgrade`) is kept again in today's, after a copy of
+    /// it as it was is left beside it, which going back to the earlier
+    /// fastctx needs.
+    fn read_book(dir: &Path) -> io::Result<Book> {
+        let path = Self::directory_file(dir);
+        let raw: serde_json::Value = read(&path)?;
+        let (upgraded, said) = crate::upgrade::upgrade(raw);
+        let book: Book = serde_json::from_value(upgraded)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
+        if !said.is_empty() {
+            let before = dir.join("directory.before-sharing.json");
+            if !before.exists() {
+                publish_new(&before, &std::fs::read(&path)?, Permissions::Private)?;
+            }
+            publish(&path, &json(&book)?, Permissions::Private)?;
+            let mut notes = said.join("\n");
+            notes.push('\n');
+            publish(&dir.join("directory.upgraded.txt"), notes.as_bytes(), Permissions::Private)?;
+        }
+        Ok(book)
     }
 
     pub fn save_hub(&self) -> io::Result<()> {

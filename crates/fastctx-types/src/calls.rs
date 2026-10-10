@@ -473,13 +473,24 @@ pub enum Reply {
     },
     Nodes(NodesReply),
     Machines {
-        /// Where the session's shell is, as written: the machine it works on.
-        here: String,
+        /// Where the session's shell starts, as written: the machine it
+        /// works on. None for an agent another account lent: it may not
+        /// work where it runs, and each of its commands names its machine.
+        here: Option<String>,
+        /// The other machines it may work on.
         others: Vec<String>,
+        /// The machine its own program runs on, when that is not `here` and
+        /// it may work there too; one it may not work on is not named.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        program: Option<String>,
         /// Where the calling session's colleagues live, when it may ask
         /// for them.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         colleagues: Option<crate::access::Written>,
+        /// Its colleagues are an agent another account lent, which may not
+        /// work where it runs.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        colleagues_lent: bool,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.

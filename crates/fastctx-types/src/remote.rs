@@ -318,13 +318,13 @@ impl RemoteCall {
             | RemoteCall::CopyReceive { .. }
             | RemoteCall::Place { .. }
             | RemoteCall::PipeOut { .. }
-            | RemoteCall::PageAction { .. } => Purpose::Hands,
+            | RemoteCall::PageAction { .. }
+            | RemoteCall::ClaudeConsent { .. }
+            | RemoteCall::Homes { .. } => Purpose::Hands,
             RemoteCall::Composer { .. }
             | RemoteCall::Ask { .. }
             | RemoteCall::Talk { .. }
             | RemoteCall::Watch { .. }
-            | RemoteCall::ClaudeConsent { .. }
-            | RemoteCall::Homes { .. }
             | RemoteCall::Open { .. }
             | RemoteCall::Colleagues { .. }
             | RemoteCall::WorksOn { .. }

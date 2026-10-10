@@ -15,7 +15,7 @@ use fastctx_net::sign::{PublicKey, Signature};
 use fastctx_net::wire::{self, CallStatus, Down, Letters, Question, Refusal, SILENCE, Told, Up};
 use fastctx_types::access::Purpose;
 use fastctx_types::remote::RemoteCall;
-use fastctx_types::{AccountName, MachineName};
+use fastctx_types::{AccountName, AgentName, MachineName};
 use futures_util::{SinkExt as _, StreamExt as _};
 use jiff::Timestamp;
 use tokio::sync::mpsc;
@@ -419,7 +419,7 @@ fn worked_for(message: &Envelope) -> Option<fastctx_types::Address> {
 /// machine was called to do for it, such as a job's end or a colleague's
 /// answer: that goes on after the account's right on the machine is taken
 /// back, as long as the account stands and the resident's machine still
-/// hosts it (`world-network.md`, 一台机器给几个账号用).
+/// hosts it (`world-network.md`, 收回立刻生效).
 fn echoes_work(hub: &Hub, message: &Envelope) -> bool {
     let (Ok((account, Purpose::Echo)), Ok(body)) =
         (message.standing(), message.body::<fastctx_net::message::LetterBody>())
@@ -431,6 +431,58 @@ fn echoes_work(hub: &Hub, message: &Envelope) -> bool {
     let resident = fastctx_types::Address { machine: message.to.clone(), resident: to };
     store.book.directory.admits_echo(&message.from, account, &message.to).is_ok()
         && store.worked.contains(&(message.from.clone(), resident))
+}
+
+/// The agent's login a call starts a session of, if it starts one: a
+/// session opened for the user, or a colleague asked; none is the agent's
+/// default login there.
+fn login_asked(message: &Envelope) -> Option<(AgentName, Option<std::path::PathBuf>)> {
+    let call = match message.body::<fastctx_net::message::Body>().ok()? {
+        fastctx_net::message::Body::Call { call } | fastctx_net::message::Body::StreamCall { call } => call,
+        _ => return None,
+    };
+    match call {
+        RemoteCall::Open { agent, home, .. } => Some((agent, home)),
+        RemoteCall::Ask { home, .. } => Some(("codex".parse().expect("an agent name"), home)),
+        _ => None,
+    }
+}
+
+/// Checks that a call starting a session may use that agent's login on the
+/// machine it goes to, and notes that machine acts for the account from now
+/// on when it did not: an agent of another's machine that works for an
+/// account has to reach the account's machines, and using it is the
+/// account's word for that (`world-network.md`, 一台机器什么时候能代一个
+/// 账号访问别的机器). Being shared a machine or lent a login does not do it.
+fn use_agent(hub: &Hub, message: &Envelope, standing: &Standing) -> Result<(), String> {
+    let Some((agent, home)) = login_asked(message) else { return Ok(()) };
+    let (account, to) = (&standing.account, &standing.to);
+    let noted = {
+        let mut store = hub.store();
+        let directory = &store.book.directory;
+        if !directory.may_use_login(account, to, &agent, home.as_deref()) {
+            let login = home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
+            return Err(format!("the account {account} may not use the {agent} login {login} on {to}"));
+        }
+        if directory.trusts(account, to) {
+            false
+        } else {
+            store.book.directory.acting.push(fastctx_net::directory::ActsFor {
+                machine: to.clone(),
+                account: account.clone(),
+                since: Timestamp::now(),
+            });
+            store
+                .save_book()
+                .map_err(|error| format!("the hub could not keep that {to} acts for {account}: {error}"))?;
+            true
+        }
+    };
+    if noted {
+        hub.log.line(format_args!("{to} acts for {account} from now on: it used an agent there"));
+        hub.changed();
+    }
+    Ok(())
 }
 
 fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelope) -> CallStatus {
@@ -452,6 +504,9 @@ fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelo
         Ok(standing) => standing,
         Err(reason) => return CallStatus::Refused { reason },
     };
+    if let Err(reason) = use_agent(hub, &message, &standing) {
+        return CallStatus::Refused { reason };
+    }
     if let Some(resident) = worked_for(&message)
         && let Err(error) = hub.store().note_worked(&to, resident)
     {

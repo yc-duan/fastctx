@@ -4,9 +4,11 @@
 //! A member sees itself; the accounts it may act for, the machines they may
 //! use and the devices logged in to them; the accounts that may use it, and
 //! the members that may act for those, which is whom calls to it come from;
-//! the grants, trust and projects of all these accounts; and whether each
-//! member it sees is online, since when, and through which relay. A device
-//! logged in to an administrator's account sees the whole directory.
+//! the shares, loans, acting and projects of all these accounts; the hub's
+//! super administrator, whom every member is told of, since it may use them
+//! all; and whether each member it sees is online, since when, and through
+//! which relay. A device logged in to the super administrator's account sees
+//! the whole directory.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -25,10 +27,8 @@ pub(crate) struct Presence {
 pub(crate) fn view_for(store: &Store, online: &HashMap<MachineName, Presence>, me: &MachineName) -> View {
     let all = &store.book.directory;
     let mine = all.acts_for(me);
-    let admin = mine.iter().any(|account| {
-        all.logged_in(me, account) && all.account(account).is_some_and(|account| account.admin && !account.locked)
-    });
-    let mut directory = if admin { all.clone() } else { cut(all, me, &mine) };
+    let whole = mine.iter().any(|account| all.logged_in(me, account) && all.is_super(account));
+    let mut directory = if whole { all.clone() } else { cut(all, me, &mine) };
     for member in &mut directory.members {
         present(store, online, member);
     }
@@ -60,27 +60,29 @@ fn cut(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Direc
         .cloned()
         .collect();
     let seen: BTreeSet<&MachineName> = members.iter().map(|member| &member.name).collect();
-    let grants: Vec<_> = all
-        .grants
+    // What concerns this member: given to the accounts it sees, of itself,
+    // or of a machine one of its accounts owns.
+    let concerns = |account: &AccountName, machine: &MachineName| {
+        accounts.contains(account)
+            || machine == me
+            || all.member(machine).and_then(|machine| machine.home.as_ref()).is_some_and(|home| mine.contains(home))
+    };
+    let shares: Vec<_> = all.shares.iter().filter(|share| concerns(&share.account, &share.machine)).cloned().collect();
+    let lends: Vec<_> = all.lends.iter().filter(|lend| concerns(&lend.account, &lend.machine)).cloned().collect();
+    let named: BTreeSet<&AccountName> = accounts
         .iter()
-        .filter(|grant| {
-            accounts.contains(&grant.account)
-                || grant.machine == *me
-                || all
-                    .member(&grant.machine)
-                    .and_then(|machine| machine.home.as_ref())
-                    .is_some_and(|home| mine.contains(home))
-        })
-        .cloned()
+        .chain(shares.iter().map(|share| &share.account))
+        .chain(lends.iter().map(|lend| &lend.account))
+        .chain(all.super_account().map(|account| &account.name))
         .collect();
-    let named: BTreeSet<&AccountName> = accounts.iter().chain(grants.iter().map(|grant| &grant.account)).collect();
     Directory {
         accounts: all.accounts.iter().filter(|account| named.contains(&account.name)).cloned().collect(),
-        grants,
-        trust: all
-            .trust
+        shares,
+        lends,
+        acting: all
+            .acting
             .iter()
-            .filter(|trust| accounts.contains(&trust.account) && seen.contains(&trust.machine))
+            .filter(|acting| accounts.contains(&acting.account) && seen.contains(&acting.machine))
             .cloned()
             .collect(),
         projects: all

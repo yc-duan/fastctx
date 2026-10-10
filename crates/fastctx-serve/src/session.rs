@@ -478,11 +478,15 @@ impl Session {
         let host = self.host(meta).ok()?;
         let mut client = Client::connect(&self.world, Peer::Session { host }).await.ok()?;
         match client.call(Call::Machines { resident: self.known_resident(meta) }).await {
-            Ok(Reply::Machines { here, others, colleagues }) => Some(crate::tools::Machines {
-                here: here.to_string(),
-                others: others.iter().map(ToString::to_string).collect(),
-                colleagues: colleagues.map(|lives_on| lives_on.to_string()),
-            }),
+            Ok(Reply::Machines { here, others, program, colleagues, colleagues_lent }) => {
+                Some(crate::tools::Machines {
+                    here,
+                    others,
+                    program,
+                    colleagues: colleagues.map(|lives_on| lives_on.to_string()),
+                    colleagues_lent,
+                })
+            }
             _ => None,
         }
     }
@@ -513,7 +517,8 @@ impl Session {
             if let Some((_, task)) = watching.take() {
                 task.abort();
             }
-            let (world, output, first) = (self.world.clone(), output.clone(), !self.watched.swap(true, std::sync::atomic::Ordering::AcqRel));
+            let (world, output, first) =
+                (self.world.clone(), output.clone(), !self.watched.swap(true, std::sync::atomic::Ordering::AcqRel));
             let watched = resident.clone();
             let task = tokio::spawn(async move {
                 let Ok(client) = Client::connect(&world, Peer::Session { host }).await else { return };

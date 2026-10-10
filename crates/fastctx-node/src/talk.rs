@@ -518,18 +518,20 @@ pub async fn open_here(
     choices: Choices,
 ) -> Result<(ResidentId, Landed), Failure> {
     let works_on = choices.works_on.filter(|works_on| !node.is_here(works_on));
+    // An agent lent to another account works on its machines, each command
+    // naming one, and on no machine by default (`world-run.md`, 这里).
+    let lent = node.works_here(&acting).is_err();
     match &works_on {
+        Some(works_on) if lent => {
+            return Err(Failure::not_run(format!(
+                "this agent is lent to the account it works for, so each of its commands names its machine; it works on no machine by default, {works_on} included"
+            )));
+        }
         Some(works_on) => {
             node.speaking(&acting, works_on, Purpose::Hands)
                 .map_err(|failure| Failure::not_run(format!("it cannot work on {works_on}: {failure}")))?;
         }
-        // An account lent only the agents here has a conversation opened
-        // here work elsewhere (`world-network.md`, 一台机器给几个账号用).
-        None => node.works_here(&acting).map_err(|why| {
-            Failure::not_run(format!(
-                "{why}, so a conversation opened here for it works on another machine: choose one"
-            ))
-        })?,
+        None => {}
     }
     // The home it is born in must be one this machine has; the default one
     // is recorded as none, so that it follows the user's environment.

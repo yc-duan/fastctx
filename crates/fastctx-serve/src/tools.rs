@@ -11,11 +11,25 @@ use serde_json::{Value, json};
 /// The machines a session works on as its tools were listed: this one, and
 /// the others its scope reaches.
 pub struct Machines {
-    pub here: String,
+    /// Where the session's shell starts; none for an agent another account
+    /// lent, each of whose commands names its machine.
+    pub here: Option<String>,
+    /// The other machines it may work on.
     pub others: Vec<String>,
+    /// The machine its own program runs on, when that is not `here` and it
+    /// may work there too.
+    pub program: Option<String>,
     /// Where this session's colleagues live, when the user turned asking
     /// for them on.
     pub colleagues: Option<String>,
+    /// The colleagues are an agent another account lent.
+    pub colleagues_lent: bool,
+}
+
+impl Machines {
+    fn lent(&self) -> bool {
+        self.here.is_none()
+    }
 }
 
 /// What tells the host to list the tools again.
@@ -33,8 +47,10 @@ pub fn list_changed() -> Value {
 /// the tools from Codex's `exec` must set.
 pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<&Machines>) -> Value {
     let mut tools = vec![run_definition(writes_off, woken, codex, machines)];
-    if let Some(lives_on) = machines.and_then(|machines| machines.colleagues.as_deref()) {
-        tools.push(ask_colleague_definition(woken, lives_on));
+    if let Some(machines) = machines
+        && let Some(lives_on) = machines.colleagues.as_deref()
+    {
+        tools.push(ask_colleague_definition(woken, lives_on, machines.colleagues_lent));
         tools.push(message_colleague_definition());
     }
     for tool in &mut tools {
@@ -53,23 +69,42 @@ pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<
     Value::Array(tools)
 }
 
-/// The machines there are, when the node could say: a model that knows
-/// them reaches the right one by the user's words.
-fn machine_names(machines: Option<&Machines>) -> String {
-    match machines {
-        Some(machines) => {
-            let mut names = vec![format!("{} (this one)", machines.here)];
-            names.extend(machines.others.iter().cloned());
-            format!("The user's machines, connected by fastctx: {}.", names.join(", "))
-        }
-        None => "The user's machines are connected by fastctx; `fastctx nodes` lists them.".to_string(),
+/// Where the session's shell is and which machines it may work on, first
+/// thing in the description, said the same way for every session; a model
+/// that knows them reaches the right one by the user's words. An agent
+/// another account lent is told it may not work where it runs, and that each
+/// of its commands names its machine (`fastctx_hands::lent`).
+fn opening(machines: Option<&Machines>) -> String {
+    const SHELL: &str = "This tool is your shell on all of them, with no address, login or key; `fastctx nodes` shows which are online.";
+    let Some(machines) = machines else {
+        return "The user's machines are connected by fastctx, and this tool is your shell on all of them: it runs a bash script on this machine, and inside the script `on MACHINE` runs a part of it on another machine, with no address, login or key. `fastctx nodes` lists them.".to_string();
+    };
+    let Some(here) = &machines.here else {
+        return format!("{}\n{SHELL}", fastctx_hands::lent::opening(&machines.others));
+    };
+    if machines.others.is_empty() {
+        return format!(
+            "Your shell is on {here}, this machine, the one machine of the user's you have access to now. This tool is your shell there; `fastctx nodes` shows the user's machines."
+        );
     }
+    let this = if machines.program.is_none() { ", this machine" } else { "" };
+    let example = &machines.others[0];
+    let program = match &machines.program {
+        Some(program) => format!(
+            " This program itself runs on {program}: the working directory, platform and paths your host reports are {program}'s, not {here}'s."
+        ),
+        None => String::new(),
+    };
+    format!(
+        "Your shell is on {here}{this}. You have access to these other machines: {}. To run anything on them, write `on MACHINE` before it, as in `on {example} cargo test`; a command without `on` runs on {here}.{program} {SHELL}",
+        machines.others.join(", ")
+    )
 }
 
 /// `run`'s `cwd`: weaker models reach for it to work on another machine's
 /// files, which only `on` does.
-fn cwd_description(machines: Option<&Machines>) -> String {
-    let here = machines.map(|machines| format!(" ({})", machines.here)).unwrap_or_default();
+fn cwd_description(here: Option<&str>) -> String {
+    let here = here.map(|here| format!(" ({here})")).unwrap_or_default();
     format!(
         "Absolute path of a directory on this machine{here} to start in; without it, the home directory. For a directory on another machine, write `on MACHINE` in the script and `cd` there."
     )
@@ -79,31 +114,39 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     let writing = if writes_off { "" } else { RUN_WRITING };
     let ends = if woken { RUN_ENDS_WOKEN } else { RUN_ENDS_ASKED };
     let exec = if codex { RUN_EXEC } else { "" };
+    let lent = machines.is_some_and(Machines::lent);
+    let start = if lent { RUN_START_LENT } else { RUN_START };
+    let together =
+        if lent { format!("{}\n{RUN_TOGETHER_LENT}", run_together(writes_off)) } else { run_together(writes_off) };
+    let mut properties = json!({
+        "command": {
+            "type": "string",
+            "description": "The bash script to run."
+        },
+        "wait": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": LONGEST_WAIT.as_secs(),
+            "description": WAIT_DESCRIPTION
+        }
+    });
+    // A lent agent's scripts start nowhere: each is one `on`, which starts
+    // in that machine's home.
+    if !lent {
+        properties["cwd"] = json!({
+            "type": "string",
+            "description": cwd_description(machines.and_then(|machines| machines.here.as_deref()))
+        });
+    }
     json!({
         "name": "run",
         "description": format!(
-            "{exec}{} {RUN_START}\n\n{RUN_SHELL}{ends}\n\n{RUN_FILES}{writing}{RUN_COPY}\n\n{RUN_ON}\n\n{}\n\n{RUN_COMMANDS}",
-            machine_names(machines),
-            run_together(writes_off)
+            "{exec}{}\n\n{RUN_SHELL}{start}\n{RUN_SHELL_REST}{ends}\n\n{RUN_FILES}{writing}{RUN_COPY}\n\n{RUN_ON}\n\n{together}\n\n{RUN_COMMANDS}",
+            opening(machines),
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The bash script to run."
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": cwd_description(machines)
-                },
-                "wait": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": LONGEST_WAIT.as_secs(),
-                    "description": WAIT_DESCRIPTION
-                }
-            },
+            "properties": properties,
             "required": ["command"]
         },
         "annotations": {
@@ -116,14 +159,22 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     })
 }
 
-const RUN_START: &str = "\
-This tool is your shell on all of them: it runs a bash script on this machine, and inside the script `on MACHINE` runs a part of it on another machine, with no address, login or key.";
-
 const RUN_SHELL: &str = "\
 Shell:
 - Every machine runs bash with the GNU tools and `rg`, Windows ones too (Git Bash). Write Windows paths like C:/Users/me, and use `ls`, `find`, `du` and `df` rather than PowerShell.
 - Git Bash rewrites arguments that look like Unix paths, such as /FI, before a Windows program sees them. Put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
-- Each call is a fresh login shell, starting in the home directory, or in `cwd`. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together; output too long to show whole comes back as its start and end, and the answer names the file that holds all of it.
+";
+
+const RUN_START: &str = "\
+- Each call is a fresh login shell, starting in the home directory, or in `cwd`. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together; output too long to show whole comes back as its start and end, and the answer names the file that holds all of it.";
+
+const RUN_START_LENT: &str = "\
+- Each call is a fresh login shell on the machine its `on` names, starting in that machine's home directory. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together; output too long to show whole comes back as its start and end, and the answer names the file that holds all of it.";
+
+const RUN_TOGETHER_LENT: &str = "\
+For you, each of these goes inside one `on`, as in `on laptop <<'EOF'`, then the commands, then `EOF`.";
+
+const RUN_SHELL_REST: &str = "\
 - Calls share nothing, so you can make several at once, and call this tool from your scripts and subagents like any other. The steps of one piece of work belong in one script; separate pieces of work can go in separate calls.
 - Images a program draws with the kitty or iTerm2 terminal protocols come back as images.
 - A call answers as soon as the script ends. A script still running after 15 seconds, or after `wait` seconds when you set it (up to 600), goes on by itself in the background as a job: it is never stopped for taking long, and the answer names the job and the file its output continues in. `wait` 0 sends the script to the background at once, before it has printed anything: for work you will not wait for.
@@ -217,11 +268,20 @@ More commands (`--help` on each gives all its options):
 - `fastctx project` lists the user's projects and shows their maps. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its map says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx journal` reads and adds to the project's journals, the history of its work. `fastctx page` publishes an HTML page the user opens in the World app.";
 
-fn ask_colleague_definition(woken: bool, lives_on: &str) -> Value {
+fn ask_colleague_definition(woken: bool, lives_on: &str, lent: bool) -> Value {
     let delivered = if woken { "" } else { " with the answer of your next call to a fastctx tool" };
+    // A colleague lent by another account may not work where it runs, and
+    // that machine goes unnamed to this session too.
+    let lives = if lent {
+        "It is an agent another account lent the user, the one the user chose for this conversation's colleagues: it has no access to the computer it runs on, so each of its commands names its machine with `on`, and it reaches the machines you have access to.".to_string()
+    } else {
+        format!(
+            "It lives on {lives_on}, the machine the user chose for this conversation's colleagues, and its scripts start there; it reaches the other machines the same way you do, with `on`."
+        )
+    };
     json!({
         "name": "ask_colleague",
-        "description": ASK_COLLEAGUE_DESCRIPTION.replace("{delivered}", delivered).replace("{lives_on}", lives_on),
+        "description": ASK_COLLEAGUE_DESCRIPTION.replace("{delivered}", delivered).replace("{lives}", &lives),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -249,7 +309,7 @@ fn ask_colleague_definition(woken: bool, lives_on: &str) -> Value {
 const ASK_COLLEAGUE_DESCRIPTION: &str = "\
 Start a colleague on a part of the work: a GPT agent, run by Codex, that works on its own while you go on. The call returns its id at once.
 
-A colleague is not a subagent inside this conversation. It lives on {lives_on}, the machine the user chose for this conversation's colleagues, and its scripts start there; it reaches the other machines the same way you do, with `on`. It knows nothing of this conversation, so the prompt must say which machines and paths it works on. It keeps working if you stop, and `fastctx w ID` shows what it is doing. Each time it ends a turn, its last message is delivered to you{delivered}, under a line saying how the turn ended: that message is its answer, or its question to you. Reply, or give it more, with message_colleague.
+A colleague is not a subagent inside this conversation. {lives} It knows nothing of this conversation, so the prompt must say which machines and paths it works on. It keeps working if you stop, and `fastctx w ID` shows what it is doing. Each time it ends a turn, its last message is delivered to you{delivered}, under a line saying how the turn ended: that message is its answer, or its question to you. Reply, or give it more, with message_colleague.
 
 When to ask one:
 - GPT is strong on a part and weak on the whole. Within one part it reads all the material before acting, works a hard point for hours, changes approach when one fails, and says plainly when it cannot do something. Asked to judge a whole that has not taken shape, or to build a whole thing from nothing, it returns pieces that are each careful and have no idea holding them together.

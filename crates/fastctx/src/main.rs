@@ -186,15 +186,18 @@ enum Command {
     /// Make a one-time token that logs another device in to an account, or,
     /// for a server, the line that installs and registers it.
     Token(world::TokenArgs),
-    /// The hubs this computer is on, with their accounts, machines, grants,
-    /// trust and projects, and who came into its accounts.
+    /// The hubs this computer is on, with their accounts, machines, what is
+    /// shared and lent, and projects, and who came into its accounts.
     Accounts,
-    /// Let another account work on one of an account's machines, or use its
-    /// agents, or take that back.
-    Grant(world::GrantArgs),
-    /// Trust a machine another account lets this one use, so sessions and
-    /// jobs there may act for this account on its other machines.
-    Trust(world::TrustArgs),
+    /// Share one of an account's machines with another account: it may work
+    /// on it and use every agent on it. Or take it back.
+    Share(world::ShareArgs),
+    /// Lend one agent's login on one of an account's machines to another
+    /// account: that login, not the machine. Or take it back.
+    Lend(world::LendArgs),
+    /// The agents on a machine of another account, which this account used,
+    /// no longer reach this account's machines.
+    Disallow(world::DisallowArgs),
     /// Take a device or a machine out of an account.
     Remove(world::RemoveArgs),
     /// Set the relays one of an account's machines connects through.
@@ -290,8 +293,9 @@ fn main() -> ExitCode {
         Command::Logout(args) => world::logout(args),
         Command::Token(args) => world::token(args),
         Command::Accounts => world::accounts(),
-        Command::Grant(args) => world::grant(args),
-        Command::Trust(args) => world::trust(args),
+        Command::Share(args) => world::share(args),
+        Command::Lend(args) => world::lend(args),
+        Command::Disallow(args) => world::disallow(args),
         Command::Remove(args) => world::remove(args),
         Command::Relays(args) => world::relays(args),
         Command::Relay(args) => world::relay(args),
@@ -315,9 +319,9 @@ fn print_licenses() -> ExitCode {
 
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
-const PEOPLE_ONLY: [&str; 20] = [
+const PEOPLE_ONLY: [&str; 21] = [
     "ui", "node", "renew", "service", "server", "serve", "talk", "attach", "login", "logout", "token", "accounts",
-    "grant", "trust", "remove", "relays", "relay", "hub", "apply", "unapply",
+    "share", "lend", "disallow", "remove", "relays", "relay", "hub", "apply", "unapply",
 ];
 
 /// The command line; in a resident's shell its help lists what a resident

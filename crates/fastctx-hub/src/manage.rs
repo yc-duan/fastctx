@@ -1,15 +1,16 @@
-//! Changes an account makes on its hub (`fastctx_net::wire::Change`): who
-//! may use its machines, which machines it trusts, its devices, tokens and
-//! password, its projects; and, for an administrator, the accounts and the
-//! hub's settings.
+//! Changes an account makes on its hub (`fastctx_net::wire::Change`): which
+//! of its machines it shares and which agents' logins it lends, which
+//! machines of others still act for it, its devices, tokens and password,
+//! its projects; and, for the super administrator, the accounts and the
+//! hub's settings (`world-network.md`, 账号只有两级).
 //!
 //! A change is made as an account, and the member asking must be logged in
 //! to it: what an account allows is decided by someone who typed its
-//! password on that device, never by a machine it merely trusts. Opening a
-//! project is the one change a trusted machine may make for an account, as
-//! a resident working there opens one.
+//! password on that device, never by a machine that merely acts for it.
+//! Opening a project is the one change a machine acting for an account may
+//! make for it, as a resident working there opens one.
 
-use fastctx_net::directory::{Account, Grant, Project, Trust};
+use fastctx_net::directory::{Account, Lend, Level, Project, Share};
 use fastctx_net::login::HubSecrets;
 use fastctx_net::sign::Bytes;
 use fastctx_net::token::{Token, TokenSecret};
@@ -37,8 +38,9 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
         if !allowed {
             return Err(format!("{asker} is not logged in to the account {account}"));
         }
-        let admin = found.admin;
-        let told = apply(hub, &mut store, asker, account, admin, change, &mut ended)?;
+        let super_ = found.level == Level::Super;
+        let told = apply(hub, &mut store, asker, account, super_, change, &mut ended)?;
+        store.book.directory.settle_acting();
         store.save_book().map_err(|error| format!("the hub could not keep the change: {error}"))?;
         told
     };
@@ -54,20 +56,21 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
 
 fn describe(change: &Change) -> String {
     match change {
-        Change::Grant { machine, to, rights } => {
-            format!("{to} may work on {machine}: {}, use its agents: {}", rights.hands, rights.agents)
-        }
-        Change::Trust { machine, trusted } => format!("trusts {machine}: {trusted}"),
+        Change::Share { machine, to, shared } => format!("shares {machine} with {to}: {shared}"),
+        Change::Lend { machine, to, agent, home, lent } => format!(
+            "lends {agent}'s login {} on {machine} to {to}: {lent}",
+            home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "(default)".to_string())
+        ),
+        Change::StopActing { machine } => format!("{machine} no longer acts for it"),
         Change::Relays { machine, relays } => format!("{machine} connects through {} relays", relays.len()),
         Change::Remove { name, .. } => format!("removed {name}"),
         Change::Logout => "logged out".to_string(),
         Change::Token { register, expires, .. } => format!("made a token (registers: {register}) until {expires}"),
         Change::PasswordStart { target, .. } => format!("began setting the password of {target}"),
         Change::PasswordFinish { target, .. } => format!("set the password of {target}"),
-        Change::OpenAccount { name, admin, .. } => format!("opened the account {name} (administrator: {admin})"),
-        Change::SetAccount { name, admin, may_register, locked } => {
-            format!("set {name}: administrator {admin}, may register {may_register}, locked {locked}")
-        }
+        Change::OpenAccount { name } => format!("opened the account {name}"),
+        Change::SetAccount { name, locked } => format!("set {name}: locked {locked}"),
+        Change::Transfer { to } => format!("handed being the super administrator to {to}"),
         Change::DeleteAccount { name } => format!("deleted the account {name}"),
         Change::Settings { self_registration } => format!("anyone may open an account: {self_registration}"),
         Change::OpenProject { name, .. } => format!("opened the project {name}"),
@@ -81,42 +84,43 @@ fn apply(
     store: &mut Store,
     asker: &MachineName,
     account: &AccountName,
-    admin: bool,
+    super_: bool,
     change: Change,
     ended: &mut Vec<(MachineName, Refusal)>,
 ) -> Result<Told, String> {
-    let need_admin = || if admin { Ok(()) } else { Err(format!("the account {account} is not an administrator")) };
+    let need_super =
+        || if super_ { Ok(()) } else { Err(format!("the account {account} is not the hub's super administrator")) };
     match change {
-        Change::Grant { machine, to, rights } => {
+        Change::Share { machine, to, shared } => {
             let directory = &mut store.book.directory;
-            own_machine(directory, account, admin, &machine)?;
-            if directory.account(&to).is_none() {
-                return Err(format!("there is no account {to}"));
-            }
-            if directory.member(&machine).and_then(|member| member.home.as_ref()) == Some(&to) {
-                return Err(format!("{machine} is the account {to}'s own"));
-            }
-            directory.grants.retain(|grant| !(grant.machine == machine && grant.account == to));
-            if rights.any() {
-                directory.grants.push(Grant { machine, account: to, rights });
+            let owner = own_machine(directory, account, super_, &machine)?;
+            other_account(directory, &owner, &to, &machine)?;
+            let share = Share { machine, account: to };
+            directory.shares.retain(|existing| *existing != share);
+            if shared {
+                directory.shares.push(share);
             }
             Ok(Told::Done)
         }
-        Change::Trust { machine, trusted } => {
+        Change::Lend { machine, to, agent, home, lent } => {
             let directory = &mut store.book.directory;
-            let trust = Trust { account: account.clone(), machine: machine.clone() };
-            directory.trust.retain(|existing| *existing != trust);
-            if trusted {
-                if !directory.rights(account, &machine).any() && !directory.logged_in(&machine, account) {
-                    return Err(format!("the account {account} does not use {machine}"));
-                }
-                directory.trust.push(trust);
+            let owner = own_machine(directory, account, super_, &machine)?;
+            other_account(directory, &owner, &to, &machine)?;
+            let lend = Lend { machine, account: to, agent, home };
+            directory.lends.retain(|existing| *existing != lend);
+            if lent {
+                directory.lends.push(lend);
             }
+            Ok(Told::Done)
+        }
+        Change::StopActing { machine } => {
+            let directory = &mut store.book.directory;
+            directory.acting.retain(|acting| !(acting.account == *account && acting.machine == machine));
             Ok(Told::Done)
         }
         Change::Relays { machine, relays } => {
             let directory = &mut store.book.directory;
-            own_machine(directory, account, admin, &machine)?;
+            own_machine(directory, account, super_, &machine)?;
             let member = directory.members.iter_mut().find(|member| member.name == machine).expect("checked");
             member.relays = relays;
             Ok(Told::Done)
@@ -124,7 +128,7 @@ fn apply(
         Change::Remove { name, reason } => {
             let directory = &store.book.directory;
             let member = directory.member(&name).cloned().ok_or_else(|| format!("there is no member {name}"))?;
-            if admin || member.home.as_ref() == Some(account) {
+            if super_ || member.home.as_ref() == Some(account) {
                 remove_member(store, &name, Some(account), &reason, ended)?;
             } else if member.logins.contains(account) {
                 log_out(store, &name, account, Some(account), &reason, ended)?;
@@ -138,9 +142,6 @@ fn apply(
             Ok(Told::Done)
         }
         Change::Token { register, name, kind, expires } => {
-            if register && !store.book.directory.account(account).is_some_and(|found| found.may_register) {
-                return Err(format!("the account {account} may not register machines"));
-            }
             if expires <= Timestamp::now() {
                 return Err("the token would have expired already".to_string());
             }
@@ -166,7 +167,7 @@ fn apply(
         }
         Change::PasswordStart { target, request } => {
             if target != *account {
-                need_admin()?;
+                need_super()?;
             }
             if store.book.directory.account(&target).is_none() {
                 return Err(format!("there is no account {target}"));
@@ -175,7 +176,7 @@ fn apply(
         }
         Change::PasswordFinish { target, upload } => {
             if target != *account {
-                need_admin()?;
+                need_super()?;
             }
             if store.book.directory.account(&target).is_none() {
                 return Err(format!("there is no account {target}"));
@@ -184,42 +185,58 @@ fn apply(
             store.book.passwords.insert(target, Bytes(record));
             Ok(Told::Done)
         }
-        Change::OpenAccount { name, admin: as_admin, may_register } => {
-            need_admin()?;
+        Change::OpenAccount { name } => {
+            need_super()?;
             if store.book.directory.account(&name).is_some() {
                 return Err(format!("the account {name} exists already"));
             }
             store.book.directory.accounts.push(Account {
                 name,
-                admin: as_admin,
-                may_register,
+                level: Level::Member,
                 locked: false,
                 opened: Timestamp::now(),
             });
             Ok(Told::Done)
         }
-        Change::SetAccount { name, admin: as_admin, may_register, locked } => {
-            need_admin()?;
+        Change::SetAccount { name, locked } => {
+            need_super()?;
             let directory = &mut store.book.directory;
-            let others =
-                directory.accounts.iter().filter(|other| other.name != name && other.admin && !other.locked).count();
-            if (!as_admin || locked) && others == 0 {
-                return Err("the hub would be left without an administrator".to_string());
-            }
             let found = directory.accounts.iter_mut().find(|found| found.name == name);
             let found = found.ok_or_else(|| format!("there is no account {name}"))?;
-            found.admin = as_admin;
-            found.may_register = may_register;
+            if locked && found.level == Level::Super {
+                return Err(format!(
+                    "{name} is the hub's super administrator and cannot be locked; hand that to another account first"
+                ));
+            }
             found.locked = locked;
             Ok(Told::Done)
         }
+        Change::Transfer { to } => {
+            need_super()?;
+            let directory = &mut store.book.directory;
+            if to == *account {
+                return Err(format!("{to} is the hub's super administrator already"));
+            }
+            let target = directory.account(&to).ok_or_else(|| format!("there is no account {to}"))?;
+            if target.locked {
+                return Err(format!("the account {to} is locked"));
+            }
+            for found in &mut directory.accounts {
+                if found.name == to {
+                    found.level = Level::Super;
+                } else if found.name == *account {
+                    found.level = Level::Member;
+                }
+            }
+            Ok(Told::Done)
+        }
         Change::DeleteAccount { name } => {
-            need_admin()?;
+            need_super()?;
             delete_account(store, &name, account, ended)?;
             Ok(Told::Done)
         }
         Change::Settings { self_registration } => {
-            need_admin()?;
+            need_super()?;
             store.hub.self_registration = self_registration;
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
@@ -242,7 +259,7 @@ fn apply(
             }
             let project = directory.projects.iter_mut().find(|project| project.town == town);
             let project = project.ok_or_else(|| format!("there is no project {town}"))?;
-            if project.owner != *account && !admin {
+            if project.owner != *account && !super_ {
                 return Err(format!("the project {} is the account {}'s", project.name, project.owner));
             }
             if shared {
@@ -253,7 +270,7 @@ fn apply(
             Ok(Told::Done)
         }
         Change::MoveProject { town, to } => {
-            need_admin()?;
+            need_super()?;
             let book = &mut store.book;
             if book.directory.account(&to).is_none() {
                 return Err(format!("there is no account {to}"));
@@ -271,20 +288,37 @@ fn apply(
     }
 }
 
-/// Checks `machine` is one of `account`'s machines, or that an
-/// administrator asks.
+/// Checks `machine` is one of `account`'s machines, or that the super
+/// administrator asks; the account it is registered under.
 fn own_machine(
     directory: &fastctx_net::directory::Directory,
     account: &AccountName,
-    admin: bool,
+    super_: bool,
+    machine: &MachineName,
+) -> Result<AccountName, String> {
+    let member = directory.member(machine).ok_or_else(|| format!("there is no machine {machine}"))?;
+    let Some(owner) = member.home.clone() else {
+        return Err(format!("{machine} is not registered as a machine"));
+    };
+    if owner != *account && !super_ {
+        return Err(format!("{machine} is not one of the account {account}'s machines"));
+    }
+    Ok(owner)
+}
+
+/// Checks `to` is an account other than `owner`, whose machine `machine` is:
+/// within one account nothing is shared or lent.
+fn other_account(
+    directory: &fastctx_net::directory::Directory,
+    owner: &AccountName,
+    to: &AccountName,
     machine: &MachineName,
 ) -> Result<(), String> {
-    let member = directory.member(machine).ok_or_else(|| format!("there is no machine {machine}"))?;
-    if !member.is_machine() {
-        return Err(format!("{machine} is not registered as a machine"));
+    if directory.account(to).is_none() {
+        return Err(format!("there is no account {to}"));
     }
-    if member.home.as_ref() != Some(account) && !admin {
-        return Err(format!("{machine} is not one of the account {account}'s machines"));
+    if to == owner {
+        return Err(format!("{machine} is the account {to}'s own"));
     }
     Ok(())
 }
@@ -311,8 +345,7 @@ fn log_out(
     }
     let left = member.logins.is_empty();
     if unregistered {
-        directory.grants.retain(|grant| grant.machine != *name);
-        directory.trust.retain(|trust| trust.machine != *name);
+        forget_machine(directory, name);
     }
     if left {
         remove_member(store, name, by, reason, ended)?;
@@ -320,8 +353,17 @@ fn log_out(
     Ok(())
 }
 
-/// Takes the member `name` off the hub: its logins, its grants and the
-/// trust in it go, its key is remembered as removed, and its session ends.
+/// What was shared and lent of `name`, and what it acted for, goes with it
+/// as a machine.
+fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &MachineName) {
+    directory.shares.retain(|share| share.machine != *name);
+    directory.lends.retain(|lend| lend.machine != *name);
+    directory.acting.retain(|acting| acting.machine != *name);
+}
+
+/// Takes the member `name` off the hub: its logins, what was shared and lent
+/// of it and what it acted for go, its key is remembered as removed, and its
+/// session ends.
 fn remove_member(
     store: &mut Store,
     name: &MachineName,
@@ -332,8 +374,7 @@ fn remove_member(
     let directory = &mut store.book.directory;
     let position = directory.members.iter().position(|member| member.name == *name);
     let member = directory.members.remove(position.ok_or_else(|| format!("there is no member {name}"))?);
-    directory.grants.retain(|grant| grant.machine != *name);
-    directory.trust.retain(|trust| trust.machine != *name);
+    forget_machine(directory, name);
     let at = Timestamp::now();
     store.book.removed.retain(|removed| removed.key != member.key);
     store.book.removed.push(Removed {
@@ -348,8 +389,9 @@ fn remove_member(
     Ok(())
 }
 
-/// Deletes `name`: its machines leave the hub, its logins and grants go, its
-/// projects are archived whole.
+/// Deletes `name`: its machines leave the hub, its logins and what it
+/// shared, lent and was shared and lent go, its projects are archived whole.
+/// The super administrator is not deleted: it hands that on first.
 fn delete_account(
     store: &mut Store,
     name: &AccountName,
@@ -358,8 +400,10 @@ fn delete_account(
 ) -> Result<(), String> {
     let directory = &store.book.directory;
     let found = directory.account(name).ok_or_else(|| format!("there is no account {name}"))?;
-    if found.admin && !directory.accounts.iter().any(|other| other.name != *name && other.admin && !other.locked) {
-        return Err("the hub would be left without an administrator".to_string());
+    if found.level == Level::Super {
+        return Err(format!(
+            "{name} is the hub's super administrator and cannot be deleted; hand that to another account first"
+        ));
     }
     let reason = format!("the account {name} was deleted");
     let machines: Vec<MachineName> = directory
@@ -384,8 +428,9 @@ fn delete_account(
     }
     let book = &mut store.book;
     book.directory.accounts.retain(|account| account.name != *name);
-    book.directory.grants.retain(|grant| grant.account != *name);
-    book.directory.trust.retain(|trust| trust.account != *name);
+    book.directory.shares.retain(|share| share.account != *name);
+    book.directory.lends.retain(|lend| lend.account != *name);
+    book.directory.acting.retain(|acting| acting.account != *name);
     let (archived, kept): (Vec<Project>, Vec<Project>) =
         std::mem::take(&mut book.directory.projects).into_iter().partition(|project| project.owner == *name);
     book.directory.projects = kept;

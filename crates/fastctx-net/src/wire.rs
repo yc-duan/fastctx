@@ -25,7 +25,7 @@ use crate::ids::HubId;
 use crate::sign::{Bytes, Digest, PublicKey, Signature, Signed};
 
 /// Raised whenever a change would make one side misread the other.
-pub const PROTOCOL: u32 = 9;
+pub const PROTOCOL: u32 = 10;
 
 pub const CONTROL_PATH: &str = "/fastctx/world/4";
 pub const DATA_PATH: &str = "/fastctx/world/4/data";
@@ -321,8 +321,8 @@ pub enum Question {
     /// This member's view of the directory.
     Directory,
     /// A change made as `account`, which must be logged in on the asking
-    /// member; changes to other accounts and to the hub need it to be an
-    /// administrator's.
+    /// member; changes to other accounts and to the hub need it to be the
+    /// super administrator's.
     Manage { account: AccountName, change: Change },
     /// Keep this entry in the ledger of `town`.
     LedgerWrite { town: TownId, entry: Signed },
@@ -341,17 +341,25 @@ pub enum Question {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "change")]
 pub enum Change {
-    /// What the account `to` may do on `machine`, one of the account's own;
-    /// no rights takes the grant away.
-    Grant {
+    /// Shares `machine`, one of the account's own, with `to`, or no longer.
+    Share {
         machine: MachineName,
         to: AccountName,
-        rights: fastctx_types::access::Rights,
+        shared: bool,
     },
-    /// Whether the account trusts `machine` to act for it.
-    Trust {
+    /// Lends `agent`'s login `home` on `machine`, one of the account's own,
+    /// to `to`, or no longer; none is that agent's default login there.
+    Lend {
         machine: MachineName,
-        trusted: bool,
+        to: AccountName,
+        agent: fastctx_types::AgentName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<std::path::PathBuf>,
+        lent: bool,
+    },
+    /// `machine` no longer acts for the account.
+    StopActing {
+        machine: MachineName,
     },
     /// The relays `machine`, one of the account's own, connects through.
     Relays {
@@ -359,7 +367,8 @@ pub enum Change {
         relays: Vec<Relay>,
     },
     /// Takes the member `name` out of the account: a device's login of it,
-    /// or one of its machines. An administrator takes it off the hub.
+    /// or one of its machines. The super administrator takes it off the
+    /// hub.
     Remove {
         name: MachineName,
         reason: String,
@@ -375,7 +384,7 @@ pub enum Change {
         kind: Kind,
         expires: Timestamp,
     },
-    /// Sets the password of `target`, the account itself or, for an
+    /// Sets the password of `target`, the account itself or, for the super
     /// administrator, another: the first OPAQUE registration message.
     PasswordStart {
         target: AccountName,
@@ -386,20 +395,22 @@ pub enum Change {
         target: AccountName,
         upload: Bytes,
     },
-    /// Opens an account; its password is set next.
+    /// Opens a member's account; its password is set next.
     OpenAccount {
         name: AccountName,
-        admin: bool,
-        may_register: bool,
     },
     SetAccount {
         name: AccountName,
-        admin: bool,
-        may_register: bool,
         locked: bool,
     },
-    /// Deletes an account: its machines leave the hub, its grants go, its
-    /// projects are archived for an administrator to hand on.
+    /// Hands being the super administrator to `to`; the asking account
+    /// becomes a member.
+    Transfer {
+        to: AccountName,
+    },
+    /// Deletes an account: its machines leave the hub, what it shared and
+    /// lent and was shared and lent goes, its projects are archived for the
+    /// super administrator to hand on.
     DeleteAccount {
         name: AccountName,
     },
@@ -419,7 +430,7 @@ pub enum Change {
         with: AccountName,
         shared: bool,
     },
-    /// Hands a project to another account; an administrator's change.
+    /// Hands a project to another account; the super administrator's change.
     MoveProject {
         town: TownId,
         to: AccountName,

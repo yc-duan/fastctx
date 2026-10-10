@@ -1,26 +1,29 @@
 //! Who is on a hub and what each may do (`world-network.md`).
 //!
-//! The hub is where this is decided: accounts, the computers and phones
-//! logged in to them, the machines registered under them, the grants and
-//! trust between accounts and machines, and whose each project is. Every
-//! member is given its own view of it (`View`), cut to what concerns it,
-//! and checks what reaches it against that view before acting: a second
-//! look that guards against the hub's mistakes, not against the hub.
+//! The hub is where this is decided: accounts and their level, the
+//! computers and phones logged in to them, the machines registered under
+//! them, the machines shared and the agents' logins lent between accounts,
+//! the machines that act for an account because it used an agent there,
+//! and whose each project is. Every member is given its own view of it
+//! (`View`), cut to what concerns it, and checks what reaches it against
+//! that view before acting: a second look that guards against the hub's
+//! mistakes, not against the hub.
 //!
 //! The judgments are here, on `Directory`, so the hub, which holds all of
 //! it, and every member, which holds its cut, make them the same way.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use fastctx_types::access::{Purpose, Rights, TownId, Use};
-use fastctx_types::{AccountName, HubName, MachineName, TownName};
+use fastctx_types::{AccountName, AgentName, HubName, MachineName, TownName};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::HubId;
 use crate::sign::PublicKey;
 
-pub use fastctx_types::accounts::{MemberKind as Kind, Relay};
+pub use fastctx_types::accounts::{Level, MemberKind as Kind, Relay};
 
 /// A computer, phone or web AI on the hub, under a name no other member
 /// on the hub has.
@@ -56,24 +59,47 @@ impl Member {
     }
 }
 
-/// What an account may do on a machine that is not its own.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Grant {
+/// A machine shared with an account that is not its own: working on it,
+/// and every agent logged in on it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Share {
     pub machine: MachineName,
     pub account: AccountName,
-    pub rights: Rights,
 }
 
-/// An account letting a machine act for it: what runs there for it may
-/// reach its other machines.
+/// One login of an agent on a machine, lent to an account that is not the
+/// machine's: that login, and not the machine.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Trust {
-    pub account: AccountName,
+pub struct Lend {
     pub machine: MachineName,
+    pub account: AccountName,
+    pub agent: AgentName,
+    /// The login's directory as the machine writes it; none for the
+    /// agent's default login there, which follows its user's environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<PathBuf>,
+}
+
+impl Lend {
+    /// Whether this lends `agent`'s login `home` there.
+    pub fn is(&self, agent: &AgentName, home: Option<&Path>) -> bool {
+        self.agent == *agent && self.home.as_deref() == home
+    }
+}
+
+/// A machine that acts for an account it is not logged in to: the account
+/// used an agent there, opening a session on it or asking it to be a
+/// colleague, which needs that machine to reach the account's machines
+/// (`world-network.md`, 一台机器什么时候替一个账号出手).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ActsFor {
+    pub machine: MachineName,
+    pub account: AccountName,
+    pub since: Timestamp,
 }
 
 /// A project: the account it was opened in, and the accounts it was
-/// granted to, which may read and write its records too.
+/// shared with, which may read and write its records too.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Project {
     pub town: TownId,
@@ -86,11 +112,16 @@ pub struct Project {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub name: AccountName,
-    pub admin: bool,
-    /// Whether computers logging in to it may register as its machines.
-    pub may_register: bool,
+    pub level: Level,
     pub locked: bool,
     pub opened: Timestamp,
+}
+
+impl Account {
+    /// Whether it is the hub's super administrator, and not locked.
+    pub fn is_super(&self) -> bool {
+        self.level == Level::Super && !self.locked
+    }
 }
 
 /// Accounts, members and what each may do: all of it on the hub, a cut of
@@ -99,8 +130,12 @@ pub struct Account {
 pub struct Directory {
     pub accounts: Vec<Account>,
     pub members: Vec<Member>,
-    pub grants: Vec<Grant>,
-    pub trust: Vec<Trust>,
+    #[serde(default)]
+    pub shares: Vec<Share>,
+    #[serde(default)]
+    pub lends: Vec<Lend>,
+    #[serde(default)]
+    pub acting: Vec<ActsFor>,
     pub projects: Vec<Project>,
 }
 
@@ -122,44 +157,77 @@ impl Directory {
         self.accounts.iter().find(|account| account.name == *name)
     }
 
+    /// Whether `account` is the hub's super administrator, and not locked.
+    pub fn is_super(&self, account: &AccountName) -> bool {
+        self.account(account).is_some_and(Account::is_super)
+    }
+
+    /// The hub's super administrator.
+    pub fn super_account(&self) -> Option<&Account> {
+        self.accounts.iter().find(|account| account.level == Level::Super)
+    }
+
     /// Whether `account` is logged in on `member`.
     pub fn logged_in(&self, member: &MachineName, account: &AccountName) -> bool {
         self.member(member).is_some_and(|member| member.logins.contains(account))
     }
 
+    /// Whether `machine` is shared with `account`.
+    pub fn shared(&self, account: &AccountName, machine: &MachineName) -> bool {
+        self.shares.iter().any(|share| share.account == *account && share.machine == *machine)
+    }
+
+    /// The agents' logins on `machine` lent to `account`.
+    pub fn lent<'a>(&'a self, account: &'a AccountName, machine: &'a MachineName) -> impl Iterator<Item = &'a Lend> {
+        self.lends.iter().filter(move |lend| lend.account == *account && lend.machine == *machine)
+    }
+
     /// What `account` may do on `machine`: everything on its own machines,
-    /// what its grants say on another's, nothing on what is no machine.
+    /// on those shared with it and, for the super administrator, on every
+    /// machine; the lent logins alone on another's; nothing on what is no
+    /// machine.
     pub fn rights(&self, account: &AccountName, machine: &MachineName) -> Rights {
         let Some(member) = self.member(machine) else { return Rights::NONE };
-        if member.home.as_ref() == Some(account) {
-            return Rights::ALL;
-        }
         if !member.is_machine() {
             return Rights::NONE;
         }
-        self.grants
-            .iter()
-            .filter(|grant| grant.machine == *machine && grant.account == *account)
-            .fold(Rights::NONE, |rights, grant| rights.union(grant.rights))
+        if member.home.as_ref() == Some(account) || self.is_super(account) || self.shared(account, machine) {
+            return Rights::ALL;
+        }
+        Rights { hands: false, agents: self.lent(account, machine).next().is_some() }
+    }
+
+    /// Whether `account` may use `agent`'s login `home` on `machine` (none
+    /// is that agent's default login there): any login of a machine it may
+    /// work on, else one lent to it.
+    pub fn may_use_login(
+        &self,
+        account: &AccountName,
+        machine: &MachineName,
+        agent: &AgentName,
+        home: Option<&Path>,
+    ) -> bool {
+        self.rights(account, machine).hands || self.lent(account, machine).any(|lend| lend.is(agent, home))
     }
 
     /// Whether `member` may act for `account`: the account is logged in on
-    /// it, or the account trusts it.
+    /// it, or used an agent there.
     pub fn trusts(&self, account: &AccountName, member: &MachineName) -> bool {
         self.logged_in(member, account)
-            || self.trust.iter().any(|trust| trust.account == *account && trust.machine == *member)
+            || self.acting.iter().any(|acting| acting.account == *account && acting.machine == *member)
     }
 
     /// The accounts `member` may act for.
     pub fn acts_for(&self, member: &MachineName) -> BTreeSet<AccountName> {
         let mut accounts: BTreeSet<AccountName> =
             self.member(member).map(|member| member.logins.clone()).unwrap_or_default();
-        accounts.extend(self.trust.iter().filter(|trust| trust.machine == *member).map(|trust| trust.account.clone()));
+        accounts
+            .extend(self.acting.iter().filter(|acting| acting.machine == *member).map(|acting| acting.account.clone()));
         accounts
     }
 
     /// Whether a resident of `account` may live on `member`, or be told
-    /// things there: the account is logged in on it or may use its agents.
+    /// things there: the account is logged in on it or may use agents there.
     pub fn hosts(&self, account: &AccountName, member: &MachineName) -> bool {
         self.logged_in(member, account) || self.rights(account, member).agents
     }
@@ -219,6 +287,11 @@ impl Directory {
                 format!("{to} is logged in to this hub but not registered as a machine, so no account can use it")
             }
             Some(_) => match purpose {
+                Purpose::Hands if rights.agents => {
+                    format!(
+                        "the account {account} was lent an agent on {to}, not the machine, so it may not work on {to}"
+                    )
+                }
                 Purpose::Hands => format!("the account {account} may not work on {to}"),
                 Purpose::Agents => format!("the account {account} may not use the agents on {to}"),
                 Purpose::Look => format!("the account {account} may not use {to}"),
@@ -241,12 +314,9 @@ impl Directory {
         })
     }
 
-    /// The machines `account` may use, each with what it may do there.
-    pub fn usable(&self, account: &AccountName) -> Vec<(&Member, Rights)> {
-        self.machines()
-            .map(|machine| (machine, self.rights(account, &machine.name)))
-            .filter(|(_, rights)| rights.any())
-            .collect()
+    /// The machines `account` may work on.
+    pub fn workable(&self, account: &AccountName) -> impl Iterator<Item = &Member> {
+        self.machines().filter(move |machine| self.rights(account, &machine.name).hands)
     }
 
     /// The first of `accounts` for which `from` may say something for
@@ -259,6 +329,17 @@ impl Directory {
         purpose: Purpose,
     ) -> Option<AccountName> {
         accounts.into_iter().find(|account| self.admits(from, account, to, purpose).is_ok()).cloned()
+    }
+
+    /// Drops what no longer stands of what acts for accounts: a machine acts
+    /// for an account that used an agent there only while the account may
+    /// still use agents there, so a share or a loan taken back takes it
+    /// along, and lending again needs another use.
+    pub fn settle_acting(&mut self) {
+        let keep: Vec<bool> =
+            self.acting.iter().map(|acting| self.rights(&acting.account, &acting.machine).agents).collect();
+        let mut keep = keep.into_iter();
+        self.acting.retain(|_| keep.next().expect("one per entry"));
     }
 
     pub fn project(&self, town: &TownId) -> Option<&Project> {

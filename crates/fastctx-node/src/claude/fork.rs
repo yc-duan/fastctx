@@ -27,14 +27,21 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let model = super::control::offers(node, resident).await?.model;
     let id = node.residents.new_id(&source.host.agent)?;
     let super::Command { program, env, .. } = super::command(node, source.home.as_deref())?;
-    let (words, heard) =
-        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting, source.works_on.as_ref())
-            .await?;
+    let (words, heard) = crate::colleagues::instructions(
+        node,
+        &id,
+        town.as_ref(),
+        &Origin::User,
+        &source.acting,
+        source.works_on.as_ref(),
+    )
+    .await?;
     let directory = node.world.resident(town.as_ref(), &id);
     fastctx_platform::ensure_private_dir(directory.path()).map_err(failure)?;
     let settings = directory.path().join("claude-settings.json");
     let instructions = directory.path().join("claude-instructions.md");
-    std::fs::write(&settings, super::settings_json())
+    let lent = node.works_here(&source.acting).is_err();
+    std::fs::write(&settings, super::settings_json(lent))
         .and_then(|()| std::fs::write(&instructions, words))
         .map_err(failure)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
@@ -51,6 +58,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
             first_words: "",
             model: selected_model.as_deref(),
             reasoning_effort: None,
+            lent,
         };
         super::trust(&world, &env)?;
         background::claude(&program, &background::fork_args(&source_session, &start), &cwd, &env)

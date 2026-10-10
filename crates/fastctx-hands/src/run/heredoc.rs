@@ -173,7 +173,11 @@ pub(super) fn on_machines(source: &str) -> Vec<(String, usize)> {
     for command in &scanner.commands {
         let mut words = command.words.iter().skip_while(|word| word.assignment);
         let (Some(on), Some(machine)) = (words.next(), words.next()) else { continue };
-        if on.text == b"on" && !on.quoted && !on.dynamic && !machine.dynamic && !machine.text.starts_with(b"-")
+        if on.text == b"on"
+            && !on.quoted
+            && !on.dynamic
+            && !machine.dynamic
+            && !machine.text.starts_with(b"-")
             && let Ok(name) = String::from_utf8(machine.text.clone())
         {
             named.push((name, machine.line));
@@ -229,10 +233,14 @@ pub(super) fn mark_on_pipes(source: &str) -> String {
             && bytes.get(head.offset..head.offset + 2) == Some(b"on".as_slice())
             && bytes.get(head.offset + 2).is_some_and(|byte| *byte == b' ' || *byte == b'\t');
         let name = std::str::from_utf8(&machine.text).ok()?;
-        let named = !machine.dynamic
-            && !name.is_empty()
-            && !name.starts_with('-')
-            && name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+        // A machine's name, or `name.hub`: at run time the two ends go
+        // straight only when they are of one hub.
+        let part = |part: &str| {
+            !part.is_empty()
+                && !part.starts_with('-')
+                && part.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        };
+        let named = !machine.dynamic && name.split('.').count() <= 2 && name.split('.').all(part);
         (written && named).then(|| (head.offset, name.to_string(), words.count()))
     };
     let mut marks: std::collections::BTreeMap<usize, (bool, Option<String>)> = std::collections::BTreeMap::new();
@@ -532,7 +540,10 @@ impl Scanner<'_> {
     /// before it if any, takes from `command`: its standard input, or its
     /// standard output, which standard error joining it counts as.
     fn redirected(&mut self, command: usize, operator: &[u8]) {
-        let number = self.descriptor.take().map(|text| std::str::from_utf8(&text).ok().and_then(|text| text.parse::<u32>().ok()));
+        let number = self
+            .descriptor
+            .take()
+            .map(|text| std::str::from_utf8(&text).ok().and_then(|text| text.parse::<u32>().ok()));
         // No descriptor is the operator's own; one named by a variable,
         // `{fd}>`, could be any.
         let is = |fd: u32| number.is_none_or(|number| number.is_none_or(|number| number == fd));

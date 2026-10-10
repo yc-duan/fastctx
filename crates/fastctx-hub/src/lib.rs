@@ -5,7 +5,8 @@
 //! connection open, so machines behind home routers, campus networks and
 //! company firewalls need no open port. The hub is where who is who is
 //! decided: accounts and their passwords, the devices logged in to them,
-//! the machines registered under them, grants, trust and projects. It
+//! the machines registered under them, the machines shared and the agents'
+//! logins lent between accounts, the machines acting for them, and projects. It
 //! passes calls between connected members and keeps letters for those that
 //! are away, only when the directory allows what is said; pairs the two
 //! ends of each data transfer; and keeps the projects' ledgers. It sees
@@ -22,9 +23,10 @@ mod log;
 mod login;
 mod manage;
 pub mod relay;
-pub mod third;
 mod releases;
 mod store;
+pub mod third;
+mod upgrade;
 mod views;
 
 use std::collections::HashMap;
@@ -64,13 +66,13 @@ pub struct New {
     /// Where machines reach the hub.
     pub public: Vec<SocketAddr>,
     pub listen: SocketAddr,
-    /// The first account, its administrator, and its password.
+    /// The first account, its super administrator, and its password.
     pub admin: AccountName,
     pub password: String,
 }
 
 /// Creates a hub in `dir`: its id, certificate and login secrets, and its
-/// first account, an administrator, with its password. Returns the
+/// first account, its super administrator, with its password. Returns the
 /// certificate's pin, which devices learn when they first log in.
 pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
     if Store::hub_file(dir).exists() {
@@ -82,8 +84,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
     let mut book = Book::default();
     book.directory.accounts.push(Account {
         name: new.admin.clone(),
-        admin: true,
-        may_register: true,
+        level: fastctx_net::directory::Level::Super,
         locked: false,
         opened: Timestamp::now(),
     });
@@ -100,7 +101,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
 }
 
 /// Sets the password of `account` on the hub kept in `dir`, from the hub's
-/// own machine: how an administrator who forgot theirs gets back in. The
+/// own machine: how a super administrator who forgot theirs gets back in. The
 /// hub must not be running.
 pub fn reset_password(dir: &Path, account: &AccountName, password: &str) -> anyhow::Result<()> {
     let mut store = Store::open(dir)?;

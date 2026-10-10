@@ -3,7 +3,7 @@
 
 use fastctx_types::AccountName;
 use fastctx_types::accounts::{
-    AccountChange, AccountSeen, GrantSeen, HubAccounts, MemberSeen, ProjectSeen, TrustSeen,
+    AccountChange, AccountSeen, ActingSeen, HubAccounts, LendSeen, MemberSeen, ProjectSeen, ShareSeen,
 };
 use fastctx_types::world::LinkState;
 
@@ -35,8 +35,9 @@ impl Link {
                 .ok_or_else(|| format!("there is no project {name} on {}", self.hub_name()))
         };
         let wire = match change {
-            AccountChange::Grant { machine, to, rights } => Change::Grant { machine, to, rights },
-            AccountChange::Trust { machine, trusted } => Change::Trust { machine, trusted },
+            AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
+            AccountChange::Lend { machine, to, agent, home, lent } => Change::Lend { machine, to, agent, home, lent },
+            AccountChange::StopActing { machine } => Change::StopActing { machine },
             AccountChange::Relays { machine, relays } => Change::Relays { machine, relays },
             AccountChange::Remove { name, reason } => Change::Remove { name, reason },
             AccountChange::Logout => Change::Logout,
@@ -45,14 +46,13 @@ impl Link {
                 self.set_password(account, &target, &password).await?;
                 return Ok(None);
             }
-            AccountChange::OpenAccount { name, admin, may_register, password } => {
-                self.manage(account, Change::OpenAccount { name: name.clone(), admin, may_register }).await?;
+            AccountChange::OpenAccount { name, password } => {
+                self.manage(account, Change::OpenAccount { name: name.clone() }).await?;
                 self.set_password(account, &name, &password).await?;
                 return Ok(None);
             }
-            AccountChange::SetAccount { name, admin, may_register, locked } => {
-                Change::SetAccount { name, admin, may_register, locked }
-            }
+            AccountChange::SetAccount { name, locked } => Change::SetAccount { name, locked },
+            AccountChange::Transfer { to } => Change::Transfer { to },
             AccountChange::DeleteAccount { name } => Change::DeleteAccount { name },
             AccountChange::Settings { self_registration } => Change::Settings { self_registration },
             AccountChange::ShareProject { town, with, shared } => {
@@ -94,8 +94,7 @@ impl Link {
                 .iter()
                 .map(|account| AccountSeen {
                     name: account.name.clone(),
-                    admin: account.admin,
-                    may_register: account.may_register,
+                    level: account.level,
                     locked: account.locked,
                     opened: account.opened,
                 })
@@ -116,15 +115,29 @@ impl Link {
                     key: member.key.to_string().chars().take(8).collect(),
                 })
                 .collect(),
-            grants: view
-                .grants
+            shares: view
+                .shares
                 .iter()
-                .map(|grant| GrantSeen { machine: grant.machine.clone(), account: grant.account.clone(), rights: grant.rights })
+                .map(|share| ShareSeen { machine: share.machine.clone(), account: share.account.clone() })
                 .collect(),
-            trust: view
-                .trust
+            lends: view
+                .lends
                 .iter()
-                .map(|trust| TrustSeen { account: trust.account.clone(), machine: trust.machine.clone() })
+                .map(|lend| LendSeen {
+                    machine: lend.machine.clone(),
+                    account: lend.account.clone(),
+                    agent: lend.agent.clone(),
+                    home: lend.home.clone(),
+                })
+                .collect(),
+            acting: view
+                .acting
+                .iter()
+                .map(|acting| ActingSeen {
+                    machine: acting.machine.clone(),
+                    account: acting.account.clone(),
+                    since: acting.since,
+                })
                 .collect(),
             projects: view
                 .projects

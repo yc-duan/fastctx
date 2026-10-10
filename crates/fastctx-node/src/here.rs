@@ -127,12 +127,14 @@ pub(crate) fn check_named(node: &Node, acting: &Acting, script: &str) -> Result<
         if !checked.insert(name.clone()) {
             continue;
         }
-        let refuse = |why: String| Failure::not_run(format!("nothing ran: line {line} names {name} after `on`, and {why}"));
+        let refuse =
+            |why: String| Failure::not_run(format!("nothing ran: line {line} names {name} after `on`, and {why}"));
         let written = Written::parse(&name).map_err(|error| refuse(error.to_string()))?;
         if node.is_here(&written) {
             continue;
         }
-        let speakers = node.speakers(acting, &written, Purpose::Hands).map_err(|failure| refuse(failure.to_string()))?;
+        let speakers =
+            node.speakers(acting, &written, Purpose::Hands).map_err(|failure| refuse(failure.to_string()))?;
         let seen: Vec<(bool, Option<jiff::Timestamp>)> = speakers
             .iter()
             .filter_map(|(link, _)| link.view().member(&written.name).map(|member| (member.online, member.since)))
@@ -277,7 +279,11 @@ pub(crate) async fn run(
             .insert((resident.clone(), reply.job.clone()), (works_on.clone(), town));
     } else {
         let command = crate::jobs::first_line(&script);
-        left_running(node, resident, &Elsewhere { machine: works_on.clone(), job: reply.job.clone(), command, started_at });
+        left_running(
+            node,
+            resident,
+            &Elsewhere { machine: works_on.clone(), job: reply.job.clone(), command, started_at },
+        );
     }
     Ok(reply)
 }
@@ -285,7 +291,8 @@ pub(crate) async fn run(
 /// The answer that showed `job` whole reached its host: where it ran, if
 /// it ran elsewhere, its files go.
 pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bool {
-    let Some((works_on, town)) = node.dispatched.jobs.lock().expect("never poisoned").remove(&(resident.clone(), job.clone()))
+    let Some((works_on, town)) =
+        node.dispatched.jobs.lock().expect("never poisoned").remove(&(resident.clone(), job.clone()))
     else {
         return false;
     };
@@ -294,7 +301,9 @@ pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bo
     tokio::spawn(async move {
         match node.call(&acting, &works_on, Purpose::Hands, call).await {
             Ok(Ok(_)) => {}
-            Ok(Err(failure)) => node.log.line(format_args!("removing a job shown whole on {}: {}", works_on.name, failure.message)),
+            Ok(Err(failure)) => {
+                node.log.line(format_args!("removing a job shown whole on {}: {}", works_on.name, failure.message))
+            }
             Err(failure) => node.log.line(format_args!("removing a job shown whole on {}: {failure}", works_on.name)),
         }
     });
@@ -344,7 +353,9 @@ pub(crate) async fn set(node: &Arc<Node>, resident: &ResidentId, works_on: Optio
     // the user opened works where it was opened, and a colleague where it
     // lives (`world-run.md`, 这里).
     if let fastctx_types::residents::Origin::Colleague { .. } = about.origin {
-        return Err(Failure::not_run(format!("{resident} is a colleague: it works where it lives, and goes elsewhere with `on`")));
+        return Err(Failure::not_run(format!(
+            "{resident} is a colleague: it works where it lives, and goes elsewhere with `on`"
+        )));
     }
     if !about.world_started {
         return Err(Failure::not_run(format!(
@@ -353,14 +364,16 @@ pub(crate) async fn set(node: &Arc<Node>, resident: &ResidentId, works_on: Optio
         )));
     }
     let works_on = works_on.filter(|works_on| !node.is_here(works_on));
-    match &works_on {
-        Some(works_on) => {
-            node.speaking(&about.acting, works_on, Purpose::Hands)
-                .map_err(|failure| Failure::not_run(format!("it cannot work on {works_on}: {failure}")))?;
-        }
-        None => node.works_here(&about.acting).map_err(|why| {
-            Failure::not_run(format!("it cannot work on {}, where it lives: {why}", node.machine()))
-        })?,
+    // An agent lent to another account works on no machine by default: each
+    // of its commands names one (`world-run.md`, 这里).
+    if node.works_here(&about.acting).is_err() {
+        return Err(Failure::not_run(format!(
+            "{resident} is an agent lent to the account it works for, so each of its commands names its machine; it works on no machine by default"
+        )));
+    }
+    if let Some(works_on) = &works_on {
+        node.speaking(&about.acting, works_on, Purpose::Hands)
+            .map_err(|failure| Failure::not_run(format!("it cannot work on {works_on}: {failure}")))?;
     }
     node.residents
         .set_works_on(&node.world, resident, works_on.clone())
@@ -372,9 +385,15 @@ pub(crate) async fn set(node: &Arc<Node>, resident: &ResidentId, works_on: Optio
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
     {
-        let (spec, _) =
-            crate::colleagues::thread_spec(node, resident, &about.origin, town.as_ref(), &about.acting, works_on.as_ref())
-                .await?;
+        let (spec, _) = crate::colleagues::thread_spec(
+            node,
+            resident,
+            &about.origin,
+            town.as_ref(),
+            &about.acting,
+            works_on.as_ref(),
+        )
+        .await?;
         node.codex.of(&about)?.adopt(thread, spec);
     }
     node.tools_changed(Some(resident));

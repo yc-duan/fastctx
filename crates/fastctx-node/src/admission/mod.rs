@@ -5,10 +5,12 @@
 //! The door works out for itself what a call asks of this machine
 //! (`RemoteCall::purpose`) and checks that against the view: that the caller may act
 //! for the account it names, and that the account may do that here. A call
-//! about one resident goes on only when that resident works for the
-//! account; a call about a project, only when the account may use the
-//! project. What asks of the whole machine (who is here, what happened
-//! since) is answered with what the account may see (`seen`).
+//! that starts a session goes on only when the account may use that agent's
+//! login here; a call about one resident, only when that resident works for
+//! the account and its login is still the account's to use; a call about a
+//! project, only when the account may use the project. What asks of the
+//! whole machine (who is here, what happened since, its agents) is answered
+//! with what the account may see (`seen`).
 
 use std::sync::Arc;
 
@@ -67,9 +69,7 @@ fn town_of(call: &RemoteCall) -> Option<&TownName> {
         RemoteCall::On { origin, .. }
         | RemoteCall::Follow { origin, .. }
         | RemoteCall::StopOn { origin, .. }
-        | RemoteCall::PipeOut { origin, .. } => {
-            origin.town.as_ref()
-        }
+        | RemoteCall::PipeOut { origin, .. } => origin.town.as_ref(),
         RemoteCall::PageAction { source, .. } => Some(&source.town),
         RemoteCall::Place { attachment, .. } => attachment.town.as_ref(),
         RemoteCall::Upload { target: fastctx_types::attachments::UploadTarget::New { town, .. }, .. } => town.as_ref(),
@@ -98,24 +98,40 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         }
     }
     if let Some(resident) = resident_of(call) {
-        let serves = node
-            .residents
-            .about(resident)
-            .is_some_and(|(about, _)| node.serves(&about.acting, &hub, &caller.account));
+        let serves =
+            node.residents.about(resident).is_some_and(|(about, _)| node.serves(&about.acting, &hub, &caller.account));
         if !serves {
             return Err(refuse(format!("{resident} does not work for the account {}", caller.account)));
         }
     }
-    // Consent to Claude Code's bypass mode is for the Claude logged in on
-    // this machine, and so its owner's alone; so is which of its agents'
-    // homes the World knows.
-    let owners = matches!(call, RemoteCall::ClaudeConsent { .. } | RemoteCall::Homes { .. });
-    if owners && view.me().and_then(|me| me.home.as_ref()) != Some(&caller.account) {
-        return Err(refuse(format!(
-            "only the account this machine is registered under does that, not {}",
-            caller.account
-        )));
-    }
     let hands = view.rights(&caller.account, &here).hands;
+    // Of another's machine, an account lent its agents' logins uses those
+    // logins alone (`world-network.md`, 共享机器与借出智能体).
+    let login = |agent: &fastctx_types::AgentName, home: Option<&std::path::Path>| {
+        if hands || view.may_use_login(&caller.account, &here, agent, home) {
+            return Ok(());
+        }
+        let login = home.map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
+        Err(refuse(format!("the {agent} login {login} on {here} is not lent to the account {}", caller.account)))
+    };
+    match call {
+        RemoteCall::Open { agent, home, .. } => login(agent, home.as_deref())?,
+        RemoteCall::Ask { home, .. } => login(&"codex".parse().expect("an agent name"), home.as_deref())?,
+        _ => {}
+    }
+    if let Some(resident) = resident_of(call)
+        && !hands
+        && let Some((about, _)) = node.residents.about(resident)
+    {
+        login(&about.host.agent, about.home.as_deref())?;
+        // An agent lent to another account works on its machines, each of
+        // its commands naming one; it has no machine to work on by default.
+        if let RemoteCall::WorksOn { works_on: Some(_), .. } = call {
+            return Err(refuse(format!(
+                "{resident} is an agent lent to the account {}, which names the machine of each command; it works on no machine by default",
+                caller.account
+            )));
+        }
+    }
     Ok(Asker { machine: caller.machine.clone(), hub, account: caller.account.clone(), hands })
 }

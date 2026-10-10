@@ -40,7 +40,8 @@ pub async fn ask(
 ) -> Result<Address, Failure> {
     let here = node.machine();
     let at = Timestamp::now();
-    let (about, _) = node.residents.about(&asker).ok_or_else(|| Failure::not_run(format!("no resident {asker} lives here")))?;
+    let (about, _) =
+        node.residents.about(&asker).ok_or_else(|| Failure::not_run(format!("no resident {asker} lives here")))?;
     if let Origin::Colleague { asked_by, .. } = &about.origin {
         return Err(Failure::not_run(format!(
             "you are a colleague {asked_by} asked for, and a colleague does not ask for colleagues; say what you need in your last message"
@@ -88,7 +89,9 @@ async fn ask_there(
 ) -> Result<Address, Failure> {
     let set = "the user chooses the machine colleagues live on in this conversation's details";
     let (link, account) = node.speaking(&asker.acting, lives_on, Purpose::Agents).map_err(|failure| {
-        Failure::not_run(format!("{lives_on}, where this conversation's colleagues live, cannot be asked: {failure}; {set}"))
+        Failure::not_run(format!(
+            "{lives_on}, where this conversation's colleagues live, cannot be asked: {failure}; {set}"
+        ))
     })?;
     let view = link.view();
     let here = node.machine();
@@ -100,13 +103,17 @@ async fn ask_there(
     // A project is of one hub; a colleague asked on another is born
     // outside it.
     let hub = link.membership().id.clone();
-    let town = town.filter(|town| crate::ledger::names::place(&node.world, town).ok().flatten().is_some_and(|place| place.hub == hub));
+    let town = town.filter(|town| {
+        crate::ledger::names::place(&node.world, town).ok().flatten().is_some_and(|place| place.hub == hub)
+    });
     let call = RemoteCall::Ask { asker: asker.id.clone(), town, label, prompt, accounts, home };
     match link.call(&lives_on.name, &account, Purpose::Agents, call).await {
         Ok(Ok(RemoteReply::Asked { colleague })) => Ok(Address { machine: lives_on.name.clone(), resident: colleague }),
         Ok(Ok(_)) => Err(Failure::new(format!("{lives_on} answered something other than a colleague"))),
         // What went wrong there is said of that machine, not the asker's.
-        Ok(Err(failure)) => Err(Failure { message: format!("on {lives_on}: {}", failure.message), not_run: failure.not_run }),
+        Ok(Err(failure)) => {
+            Err(Failure { message: format!("on {lives_on}: {}", failure.message), not_run: failure.not_run })
+        }
         Err(CallFailure::Offline { last_seen, .. }) => Err(Failure::not_run(format!(
             "{lives_on}, where this conversation's colleagues live, is offline{}; {set}",
             last_seen.map(|at| format!(" (since {at})")).unwrap_or_default()
@@ -312,11 +319,10 @@ pub(crate) async fn instructions(
 ) -> Result<(String, Heard), Failure> {
     let heard = heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
     let works_on = works_on.filter(|works_on| !node.is_here(works_on));
-    let lent = (works_on.is_none() && node.works_here(acting).is_err()).then_some(match acting {
-        Acting::Accounts { accounts } if accounts.len() > 1 => "The accounts you work for",
-        _ => "The account you work for",
-    });
-    let words = words(id, &node.machine(), works_on, lent, town, origin);
+    // An agent lent to another account is given the machines it may work
+    // on, and never the name of the one it runs on (`world-run.md`, 这里).
+    let lent = (works_on.is_none() && node.works_here(acting).is_err()).then(|| crate::world::machines(node, acting).1);
+    let words = words(id, &node.machine(), works_on, lent.as_deref(), town, origin);
     let text = match town {
         Some(town) => format!("{words}\n\n{}", crate::town::map::brief(node, town).await?),
         None => words,
@@ -324,13 +330,14 @@ pub(crate) async fn instructions(
     Ok((text, heard))
 }
 
-/// `lent` names whom it works for when they may use the agents here but
-/// not work here, so that none of its scripts starts here.
+/// `lent` holds the machines it may work on when it is an agent another
+/// account lent, which may not work on this machine: none of its scripts
+/// starts here, and this machine goes unnamed.
 fn words(
     id: &ResidentId,
     machine: &MachineName,
     works_on: Option<&Written>,
-    lent: Option<&str>,
+    lent: Option<&[String]>,
     town: Option<&TownName>,
     origin: &Origin,
 ) -> String {
@@ -352,23 +359,27 @@ fn words(
     // 这里), or that it has none where it lives (`world-network.md`,
     // 一台机器给几个账号用).
     let on = "`on MACHINE` in the script runs a part of it on another machine";
-    let (runs, elsewhere) = match (works_on, lent) {
+    let (who, runs, elsewhere) = match (works_on, lent) {
         (Some(works_on), _) => (
+            format!("an agent session on {machine}, one of the user's machines connected by fastctx"),
             format!("It runs bash on {works_on}, where you work, and {on}"),
             format!(
-                " You work on {works_on}: your shell and the files you work on are there. Your own program runs on {machine}, so its built-in tools act on {machine}, not on {works_on}."
+                " You work on {works_on}: your shell and the files you work on are there. Your own program runs on {machine}, so its built-in tools act on {machine}, and the working directory and platform your host reports are {machine}'s, not {works_on}'s."
             ),
         ),
-        (None, Some(whom)) => (
-            "A script that is a single `on MACHINE` and nothing else, such as `on MACHINE <<'EOF'`, the script, then `EOF`, runs whole on that machine".to_string(),
-            format!(
-                " {whom} may use the agents on {machine} but not work on it, so no script of yours starts there: each goes whole to a machine you work on. Your own program runs on {machine}, so its built-in tools act on {machine}."
-            ),
+        (None, Some(machines)) => (
+            "an agent session working on the user's machines, which fastctx connects".to_string(),
+            "Each script is a single `on MACHINE`, which runs it there".to_string(),
+            format!("\n\n{}", fastctx_hands::lent::opening(machines)),
         ),
-        (None, None) => (format!("It runs bash on this machine, and {on}"), String::new()),
+        (None, None) => (
+            format!("an agent session on {machine}, one of the user's machines connected by fastctx"),
+            format!("It runs bash on this machine, and {on}"),
+            String::new(),
+        ),
     };
     format!(
-        "You are {id}, an agent session on {machine}, one of the user's machines connected by fastctx.{elsewhere}{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. {runs}; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
+        "You are {id}, {who}.{elsewhere}{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. {runs}; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."
     )
 }
 

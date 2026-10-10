@@ -24,7 +24,7 @@ use crate::store::{Book, HubFile, Store};
 /// What the fourth version's hub is made with.
 pub struct Migrated {
     pub name: HubName,
-    /// The account the members go into, an administrator, and its password.
+    /// The account the members go into, the super administrator, and its password.
     pub admin: AccountName,
     pub password: String,
 }
@@ -88,8 +88,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
     let mut book = Book::default();
     book.directory.accounts.push(Account {
         name: new.admin.clone(),
-        admin: true,
-        may_register: true,
+        level: fastctx_net::directory::Level::Super,
         locked: false,
         opened: Timestamp::now(),
     });

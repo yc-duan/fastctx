@@ -1,16 +1,18 @@
 //! Accounts on the hubs this computer uses, as the command line and the
 //! interfaces see and change them (`world-network.md`): logging in and out,
-//! who may use which machine, which machines an account trusts, devices,
-//! tokens and passwords, and an administrator's accounts.
+//! machines shared and agents' logins lent between accounts, the machines
+//! that act for an account, devices, tokens and passwords, and the super
+//! administrator's accounts.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::access::{HubId, Rights};
+use crate::access::HubId;
 use crate::world::LinkState;
-use crate::{AccountName, HubName, MachineName, TownName};
+use crate::{AccountName, AgentName, HubName, MachineName, TownName};
 
 /// What a member of a hub is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -31,6 +33,19 @@ impl MemberKind {
     }
 }
 
+/// What an account is on its hub (`world-network.md`, 账号只有两级).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Level {
+    /// The hub's first account, and its controller: it may do everything,
+    /// on every machine. A hub has one, who may hand it to another account.
+    Super,
+    /// Registers its own computers as machines, shares them, lends their
+    /// agents' logins, and opens projects.
+    #[default]
+    Member,
+}
+
 /// A relay a machine connects through: a port forwarded to the hub.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Relay {
@@ -45,22 +60,80 @@ pub struct Relay {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "change")]
 pub enum AccountChange {
-    Grant { machine: MachineName, to: AccountName, rights: Rights },
-    Trust { machine: MachineName, trusted: bool },
-    Relays { machine: MachineName, relays: Vec<Relay> },
-    Remove { name: MachineName, reason: String },
+    /// Shares `machine`, one of the account's own, with `to`: working on it
+    /// and every agent logged in on it; or no longer.
+    Share {
+        machine: MachineName,
+        to: AccountName,
+        shared: bool,
+    },
+    /// Lends one login of an agent on `machine`, one of the account's own,
+    /// to `to`; or no longer. `home` is the login's directory as `machine`
+    /// writes it, none for that agent's default login there.
+    Lend {
+        machine: MachineName,
+        to: AccountName,
+        agent: AgentName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<PathBuf>,
+        lent: bool,
+    },
+    /// `machine`, another's, no longer acts for the account.
+    StopActing {
+        machine: MachineName,
+    },
+    Relays {
+        machine: MachineName,
+        relays: Vec<Relay>,
+    },
+    Remove {
+        name: MachineName,
+        reason: String,
+    },
     Logout,
-    Token { register: bool, name: Option<MachineName>, kind: MemberKind, expires: Timestamp },
-    SetPassword { target: AccountName, password: String },
-    OpenAccount { name: AccountName, admin: bool, may_register: bool, password: String },
-    SetAccount { name: AccountName, admin: bool, may_register: bool, locked: bool },
-    DeleteAccount { name: AccountName },
-    Settings { self_registration: bool },
-    ShareProject { town: TownName, with: AccountName, shared: bool },
-    MoveProject { town: TownName, to: AccountName },
+    Token {
+        register: bool,
+        name: Option<MachineName>,
+        kind: MemberKind,
+        expires: Timestamp,
+    },
+    SetPassword {
+        target: AccountName,
+        password: String,
+    },
+    OpenAccount {
+        name: AccountName,
+        password: String,
+    },
+    SetAccount {
+        name: AccountName,
+        locked: bool,
+    },
+    /// Hands being the hub's super administrator to `to`; the account that
+    /// hands it on becomes a member.
+    Transfer {
+        to: AccountName,
+    },
+    DeleteAccount {
+        name: AccountName,
+    },
+    Settings {
+        self_registration: bool,
+    },
+    ShareProject {
+        town: TownName,
+        with: AccountName,
+        shared: bool,
+    },
+    MoveProject {
+        town: TownName,
+        to: AccountName,
+    },
     /// The user saw that `name` came into the account; nothing goes to the
     /// hub.
-    Seen { name: MachineName },
+    Seen {
+        name: MachineName,
+    },
 }
 
 /// Every hub this computer is on, as the user sees it.
@@ -84,8 +157,11 @@ pub struct HubAccounts {
     pub self_registration: bool,
     pub accounts: Vec<AccountSeen>,
     pub members: Vec<MemberSeen>,
-    pub grants: Vec<GrantSeen>,
-    pub trust: Vec<TrustSeen>,
+    pub shares: Vec<ShareSeen>,
+    pub lends: Vec<LendSeen>,
+    /// Machines of others that act for an account, because it used an
+    /// agent there (`world-network.md`, 一台机器什么时候替一个账号出手).
+    pub acting: Vec<ActingSeen>,
     pub projects: Vec<ProjectSeen>,
     /// Who came into the accounts this computer is logged in to there,
     /// not yet shown to the user.
@@ -107,8 +183,7 @@ pub struct Arrival {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountSeen {
     pub name: AccountName,
-    pub admin: bool,
-    pub may_register: bool,
+    pub level: Level,
     pub locked: bool,
     pub opened: Timestamp,
 }
@@ -131,17 +206,31 @@ pub struct MemberSeen {
     pub key: String,
 }
 
+/// A machine shared with an account.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GrantSeen {
+pub struct ShareSeen {
     pub machine: MachineName,
     pub account: AccountName,
-    pub rights: Rights,
 }
 
+/// One login of an agent on a machine, lent to an account.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrustSeen {
-    pub account: AccountName,
+pub struct LendSeen {
     pub machine: MachineName,
+    pub account: AccountName,
+    pub agent: AgentName,
+    /// The login's directory as that machine writes it; none for the
+    /// agent's default login there.
+    pub home: Option<PathBuf>,
+}
+
+/// A machine of another that acts for an account, since it first used an
+/// agent there.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActingSeen {
+    pub machine: MachineName,
+    pub account: AccountName,
+    pub since: Timestamp,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

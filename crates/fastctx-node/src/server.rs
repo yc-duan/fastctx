@@ -634,9 +634,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::ClaudeConsent { machine, accept, home } => {
             users_voice(node, peer)?;
-            crate::consent::call(node, machine.clone(), accept, home).await.map(|(accepted, changed)| {
-                Reply::ClaudeConsent { machine, accepted, changed }
-            })
+            crate::consent::call(node, machine.clone(), accept, home)
+                .await
+                .map(|(accepted, changed)| Reply::ClaudeConsent { machine, accepted, changed })
         }
         Call::Homes { machine, change } => {
             users_voice(node, peer)?;
@@ -810,14 +810,13 @@ async fn run(
     let reply = match crate::here::start(node, &resident, request) {
         (Some(works_on), request) => crate::here::run(node, &resident, town.clone(), request, &works_on).await?,
         (None, request) => {
-            // For an account lent only the agents here, nothing starts here
-            // (`world-network.md`, 一台机器给几个账号用).
-            if let Some((about, _)) = node.residents.about(&resident) {
-                node.works_here(&about.acting).map_err(|why| {
-                    Failure::not_run(format!(
-                        "nothing ran: {why}, where you live; only a script that is a single `on MACHINE` and nothing else runs, on that machine"
-                    ))
-                })?;
+            // An agent lent to another account may not work where it runs,
+            // so nothing starts here, and the machine goes unnamed
+            // (`world-network.md`, 共享机器与借出智能体).
+            if let Some((about, _)) = node.residents.about(&resident)
+                && node.works_here(&about.acting).is_err()
+            {
+                return Err(Failure::not_run(lent_refusal(node, &script)));
             }
             let owner = Address { machine: here.clone(), resident: resident.clone() };
             node.jobs.run(node, owner.into(), town.clone(), request, None).await?.0
@@ -830,6 +829,16 @@ async fn run(
     })
     .await?;
     Ok(reply)
+}
+
+/// Why a script of an agent lent to another account did not run: it named
+/// the computer the agent runs on, which it may not work on, or it was not
+/// a single `on` (`world-run.md`, 这里).
+fn lent_refusal(node: &Node, script: &str) -> String {
+    match crate::here::single_on(script) {
+        Some((machine, _)) if node.is_here(&machine) => fastctx_hands::lent::here_refused(&machine.to_string()),
+        _ => fastctx_hands::lent::SCRIPT_REFUSED.to_string(),
+    }
 }
 
 /// Writes files for a resident of this machine, from a writing tool a
@@ -964,32 +973,43 @@ async fn who(
 
 /// `fastctx nodes`: this machine's link, and each member of the World its
 /// scope covers with what it says of itself and where it stands.
-/// For a session here: this machine and the other machines it may use,
-/// from the hubs' views as they stand, asking none of them; and where its
-/// colleagues live, when it may ask for them.
+/// For a session here: where its shell starts and the other machines it may
+/// work on, from the hubs' views as they stand, asking none of them; and
+/// where its colleagues live, when it may ask for them.
 fn machines(node: &Arc<Node>, resident: Option<&ResidentId>) -> Result<Reply, Failure> {
     let placed = resident.and_then(|resident| crate::here::placed(node, resident));
     let acting = placed.as_ref().map(|(acting, _)| acting.clone()).unwrap_or_default();
     let (here, mut others) = crate::world::machines(node, &acting);
     // The session's shell is where it works: that machine is "this one",
     // and the one it lives on is among the others (`world-run.md`, 这里).
-    let works_on = placed.as_ref().and_then(|(_, works_on)| works_on.clone()).filter(|works_on| !node.is_here(works_on));
-    let here = match works_on {
+    // An agent lent to another account has no shell anywhere, and the
+    // machine it runs on is not one it may work on, so it goes unnamed.
+    let works_on =
+        placed.as_ref().and_then(|(_, works_on)| works_on.clone()).filter(|works_on| !node.is_here(works_on));
+    let lent = works_on.is_none() && node.works_here(&acting).is_err();
+    let (here, program) = match works_on {
         Some(works_on) => {
             let written = works_on.to_string();
             others.retain(|other| *other != written);
             others.push(here.to_string());
             others.sort();
-            written
+            (Some(written), Some(here.to_string()))
         }
-        None => here.to_string(),
+        None if lent => (None, None),
+        None => (Some(here.to_string()), None),
     };
     let colleagues = match resident.filter(|_| placed.is_some()) {
         Some(resident) => crate::colleagues::setting::read(node, resident)
             .map_err(|error| Failure::new(format!("reading the colleague setting: {error}")))?,
         None => None,
     };
-    Ok(Reply::Machines { here, others, colleagues })
+    // A colleague whose machine the session's accounts may not work on is
+    // an agent lent to them, and goes unnamed as one too.
+    let colleagues_lent = colleagues.as_ref().is_some_and(|lives_on| {
+        let (_, workable) = crate::world::machines(node, &acting);
+        !workable.contains(&lives_on.to_string()) && !(node.is_here(lives_on) && !lent)
+    });
+    Ok(Reply::Machines { here, others, program, colleagues, colleagues_lent })
 }
 
 /// `fastctx nodes`: this computer, and hub by hub the machines its logins
@@ -1007,7 +1027,8 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
         for machine in view.machines().filter(|machine| machine.name != here) {
             let rights: Vec<_> =
                 logins.iter().map(|account| (account.clone(), view.rights(account, &machine.name))).collect();
-            let Some(account) = rights.iter().find(|(_, rights)| rights.any()).map(|(account, _)| account.clone()) else {
+            let Some(account) = rights.iter().find(|(_, rights)| rights.hands).map(|(account, _)| account.clone())
+            else {
                 continue;
             };
             let online = refreshed.is_ok().then_some(machine.online);
@@ -1018,7 +1039,8 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
             asks.push(tokio::spawn(async move {
                 let facts = match online {
                     Some(true) => {
-                        match link.call(&name, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
+                        match link.call(&name, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await
+                        {
                             Ok(Ok(RemoteReply::Facts(facts))) => Ok(facts),
                             Ok(Ok(_)) => Err("it answered something else".to_string()),
                             Ok(Err(failure)) => Err(failure.message),

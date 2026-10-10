@@ -193,7 +193,7 @@ pub(crate) async fn open_account(
     let refused = {
         let store = hub.store();
         if !store.hub.self_registration {
-            Some("this hub opens accounts only through its administrators".to_string())
+            Some("this hub opens accounts only through its super administrator".to_string())
         } else if store.book.directory.account(&account).is_some() {
             Some(format!("the account {account} exists already"))
         } else {
@@ -233,8 +233,7 @@ pub(crate) async fn open_account(
         }
         store.book.directory.accounts.push(Account {
             name: account.clone(),
-            admin: false,
-            may_register: true,
+            level: fastctx_net::directory::Level::Member,
             locked: false,
             opened: Timestamp::now(),
         });
@@ -281,7 +280,7 @@ fn join(
         let name = match directory.members.iter_mut().find(|member| member.key == joining.key) {
             Some(member) => {
                 member.logins.insert(account.clone());
-                if register && found.may_register && member.home.is_none() && member.kind.is_computer() {
+                if register && member.home.is_none() && member.kind.is_computer() {
                     member.home = Some(account.clone());
                 }
                 member.name.clone()
@@ -290,7 +289,7 @@ fn join(
                 if directory.member(&joining.name).is_some() {
                     return Err(format!("the name {} is taken on this hub; log in under another", joining.name));
                 }
-                let home = (register && found.may_register && joining.kind.is_computer()).then(|| account.clone());
+                let home = (register && joining.kind.is_computer()).then(|| account.clone());
                 directory.members.push(Member {
                     name: joining.name.clone(),
                     key: joining.key,

@@ -26,11 +26,11 @@ pub struct OnRequest {
     /// World's shell runs it: its answer names where the script went.
     pub job: Option<JobId>,
     pub package: OnPackage,
-    /// The machine of the `on` the script pipes this one's output into
-    /// (`world-run.md`, 数据跟着命令走): the output may go there without
-    /// passing here.
+    /// The machine of the `on` the script pipes this one's output into, as
+    /// the script wrote it (`world-run.md`, 数据跟着命令走): the output may
+    /// go there without passing here, when both are of one hub.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipe_to: Option<MachineName>,
+    pub pipe_to: Option<crate::access::Written>,
 }
 
 impl OnRequest {

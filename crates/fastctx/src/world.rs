@@ -61,17 +61,14 @@ pub struct TokenArgs {
 }
 
 #[derive(Args)]
-pub struct GrantArgs {
+pub struct ShareArgs {
     /// One of the account's machines.
     machine: MachineName,
-    /// The account it is given to.
+    /// The account it is shared with.
     to: AccountName,
-    /// It may work there: run commands, read and write files.
+    /// Take the share back.
     #[arg(long)]
-    hands: bool,
-    /// It may use the agents there.
-    #[arg(long)]
-    agents: bool,
+    off: bool,
     /// The account the machine is registered under; the one this computer
     /// is logged in to when not given.
     #[arg(long = "as")]
@@ -81,12 +78,31 @@ pub struct GrantArgs {
 }
 
 #[derive(Args)]
-pub struct TrustArgs {
-    /// A machine another account lets this one use.
+pub struct LendArgs {
+    /// One of the account's machines.
     machine: MachineName,
-    /// Take the trust back.
+    /// The account the login is lent to.
+    to: AccountName,
+    /// The agent: codex or claude.
+    #[arg(long)]
+    agent: fastctx_types::AgentName,
+    /// The login's directory on that machine (its CODEX_HOME or
+    /// CLAUDE_CONFIG_DIR); the agent's default login there when not given.
+    #[arg(long)]
+    home: Option<std::path::PathBuf>,
+    /// Take the login back.
     #[arg(long)]
     off: bool,
+    #[arg(long = "as")]
+    owner: Option<AccountName>,
+    #[arg(long)]
+    hub: Option<HubName>,
+}
+
+#[derive(Args)]
+pub struct DisallowArgs {
+    /// A machine of another account whose agents this account used.
+    machine: MachineName,
     #[arg(long = "as")]
     account: Option<AccountName>,
     #[arg(long)]
@@ -132,13 +148,13 @@ pub struct RelayArgs {
 
 #[derive(Subcommand)]
 pub enum HubCommand {
-    /// Create a hub on this machine, with its first account, an
+    /// Create a hub on this machine, with its first account, its super
     /// administrator, whose password is asked for.
     Init {
         /// The hub's short name: lowercase letters, digits and hyphens.
         #[arg(long)]
         name: HubName,
-        /// The administrator's account.
+        /// The super administrator's account.
         #[arg(long)]
         admin: AccountName,
         /// An address machines reach the hub at, as IP:PORT; give it once for
@@ -158,8 +174,8 @@ pub enum HubCommand {
         #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
-    /// Set an account's password from the hub's own machine, as for an
-    /// administrator who forgot theirs. The hub must not be running.
+    /// Set an account's password from the hub's own machine, as for a
+    /// super administrator who forgot theirs. The hub must not be running.
     Password {
         account: AccountName,
         #[arg(long, value_parser = crate::paths::parser())]
@@ -168,7 +184,7 @@ pub enum HubCommand {
     /// Make the hub kept in --dir, of the network's third version, a hub of
     /// the fourth: its id and certificate stay, so every machine reconnects
     /// with the key it has; its machines and devices go into one new
-    /// account, an administrator, whose password is asked for. The third
+    /// account, its super administrator, whose password is asked for. The third
     /// version's files are kept beside it. The hub must not be running.
     Migrate {
         /// The hub's short name: lowercase letters, digits and hyphens.
@@ -224,7 +240,9 @@ pub fn token(args: TokenArgs) -> anyhow::Result<()> {
         match call(Call::ServerCommand { hub: args.hub, account: args.account, name: args.name, expires })? {
             Reply::ServerInvitation { command } => {
                 println!("{command}");
-                eprintln!("Paste this line into the server's terminal, as the user it is for. It works once, until {until}.");
+                eprintln!(
+                    "Paste this line into the server's terminal, as the user it is for. It works once, until {until}."
+                );
             }
             other => anyhow::bail!("the node answered something else: {other:?}"),
         }
@@ -234,33 +252,53 @@ pub fn token(args: TokenArgs) -> anyhow::Result<()> {
     let token = change(args.hub, args.account, AccountChange::Token { register: false, name: None, kind, expires })?
         .ok_or_else(|| anyhow::anyhow!("the hub made no token"))?;
     println!("{token}");
-    eprintln!("On the other device, run `fastctx login --token <token>`, or scan it in the World app. It works once, until {until}.");
+    eprintln!(
+        "On the other device, run `fastctx login --token <token>`, or scan it in the World app. It works once, until {until}."
+    );
     Ok(())
 }
 
-pub fn grant(args: GrantArgs) -> anyhow::Result<()> {
+pub fn share(args: ShareArgs) -> anyhow::Result<()> {
     let owner = account_or_owner(args.hub.as_ref(), args.owner, Some(&args.machine))?;
-    let rights = fastctx_types::access::Rights { hands: args.hands, agents: args.agents };
-    let change = AccountChange::Grant { machine: args.machine.clone(), to: args.to.clone(), rights };
+    let change = AccountChange::Share { machine: args.machine.clone(), to: args.to.clone(), shared: !args.off };
     self::change(args.hub, owner, change)?;
-    let said = match (args.hands, args.agents) {
-        (true, true) => "may work on it and use its agents",
-        (true, false) => "may work on it",
-        (false, true) => "may use its agents",
-        (false, false) => "may not use it any more",
-    };
-    println!("{} {said}: {}", args.to, args.machine);
+    if args.off {
+        println!("{} no longer shares {}", args.to, args.machine);
+    } else {
+        println!(
+            "{} is shared with {}: it may work on it and use every agent on it, and you see all it does there",
+            args.machine, args.to
+        );
+    }
     Ok(())
 }
 
-pub fn trust(args: TrustArgs) -> anyhow::Result<()> {
-    let account = account_or_owner(args.hub.as_ref(), args.account, None)?;
-    self::change(args.hub, account.clone(), AccountChange::Trust { machine: args.machine.clone(), trusted: !args.off })?;
+pub fn lend(args: LendArgs) -> anyhow::Result<()> {
+    let owner = account_or_owner(args.hub.as_ref(), args.owner, Some(&args.machine))?;
+    let login = args.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
+    let change = AccountChange::Lend {
+        machine: args.machine.clone(),
+        to: args.to.clone(),
+        agent: args.agent.clone(),
+        home: args.home,
+        lent: !args.off,
+    };
+    self::change(args.hub, owner, change)?;
     if args.off {
-        println!("{account} no longer trusts {}: its sessions and jobs there no longer act for {account}", args.machine);
+        println!("the {} login {login} on {} is no longer lent to {}", args.agent, args.machine, args.to);
     } else {
-        println!("{account} trusts {}: its sessions and jobs there for {account} may go to {account}'s other machines", args.machine);
+        println!(
+            "the {} login {login} on {} is lent to {}: the account and its plan go with it, not the machine, and you see all it does there",
+            args.agent, args.machine, args.to
+        );
     }
+    Ok(())
+}
+
+pub fn disallow(args: DisallowArgs) -> anyhow::Result<()> {
+    let account = account_or_owner(args.hub.as_ref(), args.account, None)?;
+    self::change(args.hub, account.clone(), AccountChange::StopActing { machine: args.machine.clone() })?;
+    println!("the agents on {} no longer reach {account}'s machines", args.machine);
     Ok(())
 }
 
@@ -284,7 +322,10 @@ pub fn relays(args: RelaysArgs) -> anyhow::Result<()> {
     let said = if relays.is_empty() {
         "straight to the hub".to_string()
     } else {
-        format!("through {}, then the hub", relays.iter().map(|relay| relay.label.as_str()).collect::<Vec<_>>().join(", then "))
+        format!(
+            "through {}, then the hub",
+            relays.iter().map(|relay| relay.label.as_str()).collect::<Vec<_>>().join(", then ")
+        )
     };
     self::change(args.hub, account, AccountChange::Relays { machine: args.machine.clone(), relays })?;
     println!("{} connects {said} from now on", args.machine);
@@ -324,10 +365,11 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             let dir = dir(chosen);
             let listen = listen.unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], public[0].port())));
             let password = crate::secret::new_password(&format!("A password for {admin}: "))?;
-            let new = fastctx_hub::New { name: name.clone(), public: public.clone(), listen, admin: admin.clone(), password };
+            let new =
+                fastctx_hub::New { name: name.clone(), public: public.clone(), listen, admin: admin.clone(), password };
             fastctx_hub::init(&dir, new)?;
             let at = public.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
-            println!("the hub {name} is in {}; its administrator is {admin}", dir.display());
+            println!("the hub {name} is in {}; its super administrator is {admin}", dir.display());
             eprintln!(
                 "Start it with `fastctx hub serve` (or install its service); then log in from a computer with `fastctx login {} {admin}`. It is reached at {at}.",
                 public[0]
@@ -356,7 +398,10 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             std::fs::rename(&dir, &third)?;
             std::fs::rename(&fourth, &dir)?;
             let list = |names: &[MachineName]| names.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
-            println!("the hub {name} in {} is of the fourth version; its administrator is {admin}", dir.display());
+            println!(
+                "the hub {name} in {} is of the fourth version; its super administrator is {admin}",
+                dir.display()
+            );
             println!("machines of {admin}: {}", list(&report.machines));
             if !report.devices.is_empty() {
                 println!("devices logged in to {admin}: {}", list(&report.devices));
@@ -367,12 +412,18 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             if report.letters > 0 {
                 println!("{} letters the third version still held stay in {}", report.letters, third.display());
             }
-            eprintln!("The third version's files are in {}. Start the hub again; each machine reconnects once it runs the fourth version.", third.display());
+            eprintln!(
+                "The third version's files are in {}. Start the hub again; each machine reconnects once it runs the fourth version.",
+                third.display()
+            );
         }
         HubCommand::Show { dir: chosen } => {
             let (hub, pin) = fastctx_hub::describe(&dir(chosen))?;
             let public = hub.public.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
-            println!("hub {} ({})\nreached at {public}\nlistens on {}\ncertificate {pin}", hub.name, hub.id, hub.listen);
+            println!(
+                "hub {} ({})\nreached at {public}\nlistens on {}\ncertificate {pin}",
+                hub.name, hub.id, hub.listen
+            );
             if hub.self_registration {
                 println!("anyone who reaches it may open an account");
             }
@@ -497,11 +548,7 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
             Err(_) if node.online == Some(false) => String::new(),
             Err(error) => format!("  not known: {error}"),
         };
-        text.push_str(&format!(
-            "{:width$}  {state}{through}{owner} · {}{facts}\n",
-            node.written,
-            rights.join("; ")
-        ));
+        text.push_str(&format!("{:width$}  {state}{through}{owner} · {}{facts}\n", node.written, rights.join("; ")));
         if let Ok(facts) = &node.facts
             && let Some(warning) = facts.node_lifetime.as_ref().and_then(|lifetime| lifetime.warning())
         {
@@ -545,11 +592,8 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
         }
         for account in &hub.accounts {
             let mut marks = Vec::new();
-            if account.admin {
-                marks.push("administrator");
-            }
-            if !account.may_register {
-                marks.push("registers no machines");
+            if account.level == fastctx_types::accounts::Level::Super {
+                marks.push("super administrator");
             }
             if account.locked {
                 marks.push("locked");
@@ -559,27 +603,38 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
             for member in hub.members.iter().filter(|member| member.home.as_ref() == Some(&account.name)) {
                 text.push_str(&format!("  machine {} [{}]\n", member.name, member.key));
             }
-            for member in hub.members.iter().filter(|member| member.home.as_ref() != Some(&account.name) && member.logins.contains(&account.name)) {
+            for member in hub
+                .members
+                .iter()
+                .filter(|member| member.home.as_ref() != Some(&account.name) && member.logins.contains(&account.name))
+            {
                 text.push_str(&format!("  logged in on {} [{}]\n", member.name, member.key));
             }
         }
-        for grant in &hub.grants {
-            let rights = match (grant.rights.hands, grant.rights.agents) {
-                (true, true) => "work and agents",
-                (true, false) => "work",
-                (false, true) => "agents",
-                (false, false) => continue,
-            };
-            text.push_str(&format!("grant {} may use {} for {rights}\n", grant.account, grant.machine));
+        for share in &hub.shares {
+            text.push_str(&format!("shared {} with {}\n", share.machine, share.account));
         }
-        for trust in &hub.trust {
-            text.push_str(&format!("trust {} trusts {}\n", trust.account, trust.machine));
+        for lend in &hub.lends {
+            let login =
+                lend.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
+            text.push_str(&format!("lent the {} login {login} on {} to {}\n", lend.agent, lend.machine, lend.account));
+        }
+        for acting in &hub.acting {
+            text.push_str(&format!(
+                "the agents on {} reach {}'s machines, for {}\n",
+                acting.machine,
+                acting.account,
+                age(acting.since, now)
+            ));
         }
         for project in &hub.projects {
             let granted = if project.granted.is_empty() {
                 String::new()
             } else {
-                format!(", shared with {}", project.granted.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))
+                format!(
+                    ", shared with {}",
+                    project.granted.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+                )
             };
             text.push_str(&format!("project {} of {}{granted}\n", project.name, project.owner));
         }

@@ -16,12 +16,12 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use clap::Args;
 use fastctx_client::{CallError, Client};
+use fastctx_types::access::Written;
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::on::{OnEnd, OnPackage, OnPiece, OnRequest, OnSource, PIPE_LINE_MAX};
 use fastctx_types::run::EndedHow;
-use fastctx_types::access::Written;
-use fastctx_types::{Address, Call, JobId, MachineName, TownName};
+use fastctx_types::{Address, Call, JobId, TownName};
 
 /// What `on` exits with when the World could not carry the command through,
 /// as ssh does (`world-run.md`).
@@ -101,7 +101,7 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
         process: Some(fastctx_platform::current_identity()?),
         job,
         package: package.clone(),
-        pipe_to: args.pipe_to.as_deref().map(MachineName::try_from).transpose()?,
+        pipe_to: args.pipe_to.as_deref().map(Written::parse).transpose()?,
     };
     let call = Call::On { resident: resident.clone(), town, request };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
@@ -212,7 +212,12 @@ fn how_ended(how: &EndedHow) -> String {
 /// Writes the package beside the state: the state, the command's words or
 /// the script, and standard input read to its end, or where it is kept when
 /// it is the output of an `on` that went straight on.
-fn collect(state: &Option<PathBuf>, command: Option<&Path>, words: &[String], pipe_in: bool) -> anyhow::Result<OnPackage> {
+fn collect(
+    state: &Option<PathBuf>,
+    command: Option<&Path>,
+    words: &[String],
+    pipe_in: bool,
+) -> anyhow::Result<OnPackage> {
     let scratch = match std::env::var_os("FASTCTX_SCRATCH") {
         Some(scratch) => PathBuf::from(scratch),
         None => std::env::temp_dir(),
