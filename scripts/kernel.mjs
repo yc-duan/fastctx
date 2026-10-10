@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, renameSync } from "node:fs";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 export const toolchain = "+1.92.0";
@@ -27,11 +27,18 @@ export function buildKernel(target, environment = process.env) {
     { cwd: repo, env, stdio: "inherit" });
   const directory = resolve(repo, env.CARGO_TARGET_DIR ?? "target");
   const binary = join(directory, buildTarget, "release", windows ? "fastctx.exe" : "fastctx");
+  if (linux) {
+    execFileSync("zig", ["objcopy", "--strip-debug", binary, `${binary}.stripped`], { env, stdio: "inherit" });
+    renameSync(`${binary}.stripped`, binary);
+  }
   execFileSync("python", [join(repo, "scripts/package.py"), "check-binary", "--target", target.replace(/-unknown-linux-musl$/, "-unknown-linux-gnu"),
     "--binary", binary, "--notices", env.FASTCTX_THIRD_PARTY_LICENSES], { cwd: repo, env, stdio: "inherit" });
-  const metadata = JSON.parse(execFileSync("cargo", [toolchain, "metadata", "--no-deps", "--format-version", "1"], { cwd: repo, env }));
+  const metadata = JSON.parse(execFileSync("cargo", [toolchain, "metadata", "--locked", "--no-deps", "--format-version", "1"], { cwd: repo, env }));
   const version = metadata.packages.find(pkg => pkg.name === "fastctx").version;
-  const printed = execFileSync(binary, ["--version"], { env, encoding: "utf8" });
+  const architecture = buildTarget.split("-")[0];
+  const crossLinux = linux && host.includes("-unknown-linux-") && architecture !== host.split("-")[0];
+  const runner = crossLinux ? `qemu-${architecture}` : binary;
+  const printed = execFileSync(runner, crossLinux ? [binary, "--version"] : ["--version"], { env, encoding: "utf8" });
   if (printed.replace(/\r\n/g, "\n") !== `fastctx ${version}\n`) throw new Error(`invalid kernel version output: ${printed}`);
   return { binary, buildTarget, bundleTarget: target, version: printed.trim().slice("fastctx ".length) };
 }

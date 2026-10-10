@@ -1,0 +1,64 @@
+{
+  "description": "World carries the unmodified x86_64 AppImage type2 runtime from upstream commit 8f39b89e2ac31e1640b3d3f7e9a5108e6ce805fa. Its source and build scripts are available at https://github.com/AppImage/type2-runtime/tree/8f39b89e2ac31e1640b3d3f7e9a5108e6ce805fa and as a source archive at https://codeload.github.com/AppImage/type2-runtime/tar.gz/8f39b89e2ac31e1640b3d3f7e9a5108e6ce805fa . Upstream builds on Alpine 3.21, statically links musl, libfuse 3.15.0 (with its mount.c patch in that source tree), squashfuse 0.5.2, zstd, zlib and mimalloc. These notices cover the native components separately from the Rust kernel. The scripts identify the source archives, and the patch and complete MIT-licensed runtime source permit rebuilding and relinking with a modified libfuse. Squashfuse source: https://github.com/vasi/squashfuse/archive/0.5.2.tar.gz . Libfuse source: https://github.com/libfuse/libfuse/releases/download/fuse-3.15.0/fuse-3.15.0.tar.xz . Alpine native dependency sources: https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.21-stable/main .",
+  "runtime": {
+    "file": "runtime-x86_64.gz",
+    "sha256": "156f4bdbde9c52d01814600013e0a273f0118dc2de98975f3c8c63427ec79074"
+  },
+  "notices": [
+    {
+      "file": "type2-runtime-MIT.txt",
+      "url": "https://github.com/AppImage/type2-runtime/blob/8f39b89e2ac31e1640b3d3f7e9a5108e6ce805fa/LICENSE",
+      "sha256": "aa154fc9070614bbe7921f89db11efd1dba7a1f3a41685958110e2230f9c0ca1"
+    },
+    {
+      "file": "musl-COPYRIGHT.txt",
+      "url": "https://git.musl-libc.org/cgit/musl/tree/COPYRIGHT?h=v1.2.5",
+      "sha256": "f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af"
+    },
+    {
+      "file": "libfuse-LGPL2.txt",
+      "url": "https://github.com/libfuse/libfuse/blob/fuse-3.15.0/LGPL2.txt",
+      "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+    },
+    {
+      "file": "libfuse-LICENSE.txt",
+      "url": "https://github.com/libfuse/libfuse/blob/fuse-3.15.0/LICENSE",
+      "sha256": "b8832d9caaa075bbbd2aef24efa09f8b7ab66a832812d88c602da0c7b4397fad"
+    },
+    {
+      "file": "libfuse-AUTHORS.txt",
+      "url": "https://github.com/libfuse/libfuse/blob/fuse-3.15.0/AUTHORS",
+      "sha256": "fafe891ac0d23452355fe41d5e5538904fe5324b44cc03f519063e83deb9b0f8"
+    },
+    {
+      "file": "libfuse-GPL2.txt",
+      "url": "https://github.com/libfuse/libfuse/blob/fuse-3.15.0/GPL2.txt",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+    },
+    {
+      "file": "squashfuse-LICENSE.txt",
+      "url": "https://github.com/vasi/squashfuse/blob/0.5.2/LICENSE",
+      "sha256": "9e909cc8a8ba27b1a649c964cf9eda37de911f3138c2b64e6d2f01703904ac13"
+    },
+    {
+      "file": "zstd-LICENSE.txt",
+      "url": "https://github.com/facebook/zstd/blob/v1.5.6/LICENSE",
+      "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
+    },
+    {
+      "file": "zstd-COPYING.txt",
+      "url": "https://github.com/facebook/zstd/blob/v1.5.6/COPYING",
+      "sha256": "f9c375a1be4a41f7b70301dd83c91cb89e41567478859b77eef375a52d782505"
+    },
+    {
+      "file": "zlib-LICENSE.txt",
+      "url": "https://github.com/madler/zlib/blob/v1.3.1/LICENSE",
+      "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243"
+    },
+    {
+      "file": "mimalloc-LICENSE.txt",
+      "url": "https://github.com/microsoft/mimalloc/blob/v2.1.7/LICENSE",
+      "sha256": "19c99805e7a44a34b297a75d1edea9985e300066dfc024d5c99d4236d4573b5d"
+    }
+  ]
+}

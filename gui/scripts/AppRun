@@ -1,0 +1,15 @@
+#!/bin/sh
+# The runtime mounts this directory; GTK's deployment hook supplies its
+# relocated modules and schemas before the graphical program starts.
+set -eu
+APPDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export APPDIR
+export XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$APPDIR/usr/bin:$PATH"
+for hook in "$APPDIR"/apprun-hooks/*.sh; do
+    [ -f "$hook" ] || continue
+    . "$hook"
+done
+cd "$APPDIR/usr"
+exec "$APPDIR/usr/bin/World" "$@"

@@ -7,7 +7,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from license_text import fenced, share_html_notices
+from license_text import fenced, share_html_notices, gui_input_marker
 from package import legal_files
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,7 +55,14 @@ def main():
             text += section_notice(gui/'licenses'/name)
     for name in ('LICENSE-APACHE', 'NOTICE'):
         shutil.copyfile(ROOT/name, output/name)
+    text += '\n'+gui_input_marker(ROOT)+'\n'
     (output/'THIRD_PARTY_LICENSES.md').write_text(share_html_notices(text), encoding='utf-8', newline='\n')
+    if 'linux' in target:
+        (output/'copyright').write_text(
+            'World '+json.loads((gui/'package.json').read_text())['version']+'\n\n'
+            +(ROOT/'NOTICE').read_text(encoding='utf-8')+'\n'
+            +(ROOT/'LICENSE-APACHE').read_text(encoding='utf-8')+'\n'
+            +share_html_notices(text), encoding='utf-8', newline='\n')
     print(f'Prepared GUI legal resources for {target}: {output}')
 
 

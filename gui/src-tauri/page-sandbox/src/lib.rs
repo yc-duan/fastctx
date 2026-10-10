@@ -5,6 +5,7 @@
 mod windows;
 #[cfg(target_os = "android")]
 mod android;
+#[cfg(any(windows, target_os = "android"))]
 mod document;
 
 use serde::{Deserialize, Serialize};

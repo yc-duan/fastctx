@@ -1,7 +1,6 @@
-//! The fastctx this application placed, put on the user's own PATH so a
-//! terminal opened afterwards finds `fastctx`: one entry appended to `Path`
-//! in `HKCU\Environment`, everything already there kept as it was, and the
-//! windows that care told the environment changed.
+//! A terminal opened after installation finds the placed fastctx. Windows
+//! appends its directory to the user's registry PATH. Linux links it into
+//! ~/.local/bin, which Ubuntu's login profile adds without editing the profile.
 
 use std::path::Path;
 
@@ -25,7 +24,28 @@ pub fn add(dir: &Path) -> Result<Added, String> {
     Ok(added)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub fn add(dir: &Path) -> Result<Added, String> {
+    use std::os::unix::fs::symlink;
+    let home = fastctx_platform::user_home().map_err(|error| error.to_string())?;
+    let bin = home.join(".local/bin");
+    std::fs::create_dir_all(&bin).map_err(|error| error.to_string())?;
+    let link = bin.join("fastctx");
+    let target = dir.join("fastctx");
+    match symlink(&target, &link) {
+        Ok(()) => Ok(Added::Added),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if std::fs::read_link(&link).ok().as_ref() == Some(&target) {
+                Ok(Added::Already)
+            } else {
+                Err(format!("{} already names another program", link.display()))
+            }
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn add(_dir: &Path) -> Result<Added, String> {
     Err("putting fastctx on the PATH is made for Windows so far".into())
 }
@@ -62,6 +82,7 @@ pub fn add_to(key: &windows_registry::Key, dir: &Path) -> Result<Added, String> 
 
 /// A directory as Windows compares them: case and the kind of slash do not
 /// matter, nor a trailing one.
+#[cfg(windows)]
 fn normal(path: &str) -> String {
     path.replace('/', "\\").trim_end_matches('\\').to_lowercase()
 }

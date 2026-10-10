@@ -54,3 +54,15 @@ def fenced(text):
     runs = re.findall(r'`+', text)
     fence = '`' * max(3, max(map(len, runs), default=0) + 1)
     return f'{fence}text\n{text}\n{fence}\n'
+
+
+def gui_input_marker(root):
+    """Bind GUI resources to its locks and the frontend actually bundled."""
+    paths = [root/name for name in ('gui/package-lock.json', 'gui/src-tauri/Cargo.lock',
+             'gui/dist/THIRD_PARTY_FRONTEND.md', 'about.toml', 'about.hbs', 'LICENSE-APACHE', 'NOTICE')]
+    paths += [path for path in (root/'gui/licenses').rglob('*') if path.is_file()]
+    paths += [path for path in (root/'gui/dist/pdfjs').rglob('LICENSE*') if path.is_file()]
+    digest = hashlib.sha256()
+    for path in sorted(paths, key=lambda path: path.relative_to(root).as_posix()):
+        digest.update(path.relative_to(root).as_posix().encode()+b'\0'+path.read_bytes()+b'\0')
+    return f'<!-- world-notices-inputs: {digest.hexdigest()} -->'

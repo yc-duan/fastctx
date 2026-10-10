@@ -130,6 +130,10 @@ impl Connection {
                 {
                     let root = fastctx_platform::fastctx_root().map_err(|error| error.to_string())?;
                     let program = root.join("bin").join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
+                    #[cfg(target_os = "linux")]
+                    if !program.is_file() && crate::setup::carried().is_some() {
+                        crate::setup::place_initial()?;
+                    }
                     let world = World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None })
                         .starting_node_from(program.clone());
                     Ok(Selected { mode, world, program: Some(program) })

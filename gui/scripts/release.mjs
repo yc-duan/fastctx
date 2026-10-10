@@ -1,62 +1,68 @@
-// Builds World's installer with the fastctx it carries: the core's fastctx
-// built for release the way the release workflow builds it, placed where
-// Tauri takes a program to bundle beside the app, then Tauri's own build
-// with the release configuration (`src-tauri/tauri.release.conf.json`),
-// signed for the app's updater. Beside the installer and its signature it
-// writes `latest.json`, the file installed copies read from the project's
-// latest GitHub release to learn of this version.
-//
-//   TAURI_SIGNING_PRIVATE_KEY_PASSWORD=… node scripts/release.mjs [notes.md]
-//
-// TAURI_SIGNING_PRIVATE_KEY is the signing key, or the path to it; by
-// default the key kept in ~/.tauri (`atlas/repo.md`). The notes, when
-// given, are what the app shows of this version. CARGO_TARGET_DIR, when
-// set, is where both builds put their output; otherwise each uses its own
-// default.
-
+// Builds an installer carrying the matching, checked release kernel.
+// --unsigned omits updater artifacts and never selects a signing key.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildKernel } from "../../scripts/kernel.mjs";
+import { buildKernel, toolchain } from "../../scripts/kernel.mjs";
 
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// Where installed copies look for new versions (`plugins.updater` in
-// `src-tauri/tauri.conf.json`), and where this one will be downloaded from.
 const releases = "https://github.com/yc-duan/fastctx/releases";
-// No variable of the session that runs this reaches the builds.
+const args = process.argv.slice(2);
+const unsigned = args.includes("--unsigned");
+const notesFile = args.filter(arg => arg !== "--unsigned");
+if (notesFile.length > 1) throw new Error("Usage: node scripts/release.mjs [--unsigned] [notes.md]");
+const linux = process.platform === "linux";
+if (!linux && process.platform !== "win32") throw new Error("World release packaging supports Windows and Linux");
+if (linux && !unsigned) throw new Error("Linux packages must finish native notices and verification with scripts/release-linux.sh; updater signing is a separate step");
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("CLAUDE")));
-env.TAURI_SIGNING_PRIVATE_KEY ??= join(homedir(), ".tauri", "world-updater.key");
-if (env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined) {
-  throw new Error("TAURI_SIGNING_PRIVATE_KEY_PASSWORD is not set: the installer must be signed for the updater (atlas/repo.md)");
+env.RUSTUP_TOOLCHAIN = toolchain.slice(1);
+if (unsigned) {
+  delete env.TAURI_SIGNING_PRIVATE_KEY;
+  delete env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD;
+} else {
+  env.TAURI_SIGNING_PRIVATE_KEY ??= join(homedir(), ".tauri", "world-updater.key");
+  if (env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined) throw new Error("TAURI_SIGNING_PRIVATE_KEY_PASSWORD is required for signed updater artifacts");
 }
-const notes = process.argv[2] ? readFileSync(process.argv[2], "utf8").trim() : null;
-const run = (program, args, cwd) => execFileSync(program, args, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
-
+const notes = notesFile[0] ? readFileSync(notesFile[0], "utf8").trim() : null;
+const run = (program, argv, cwd) => execFileSync(program, argv, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
 const kernel = buildKernel(undefined, env);
-const { version, productName } = JSON.parse(readFileSync(join(gui, "src-tauri", "tauri.conf.json"), "utf8"));
+const { version } = JSON.parse(readFileSync(join(gui, "src-tauri", "tauri.conf.json"), "utf8"));
 if (kernel.version !== version) throw new Error(`the GUI is ${version}; its kernel is ${kernel.version}`);
+const guiMetadata = JSON.parse(execFileSync("cargo", [toolchain, "metadata", "--locked", "--manifest-path", join(gui, "src-tauri", "Cargo.toml"), "--no-deps", "--format-version", "1"], { env }));
+if (guiMetadata.packages.find(pkg => pkg.name === "fastctx-gui").version !== version || JSON.parse(readFileSync(join(gui, "package.json"), "utf8")).version !== version) {
+  throw new Error("the native GUI, frontend and installer versions differ");
+}
 const triple = kernel.bundleTarget;
-const exe = process.platform === "win32" ? ".exe" : "";
 const binaries = join(gui, "src-tauri", "binaries");
 mkdirSync(binaries, { recursive: true });
-copyFileSync(kernel.binary, join(binaries, `fastctx-${triple}${exe}`));
-
-run("npx", ["tauri", "build", "--config", join("src-tauri", "tauri.release.conf.json")], gui);
-
-const bundle = join(env.CARGO_TARGET_DIR ?? join(gui, "src-tauri", "target"), "release", "bundle", "nsis");
-const installer = `${productName}_${version}_x64-setup.exe`;
-const signature = join(bundle, `${installer}.sig`);
-if (!existsSync(signature)) throw new Error(`the build left no signature at ${signature}`);
-// The NSIS key comes first in the updater's search; a build without the
-// bundler's marker looks for the plain one, so both name the same file.
-const platform = { signature: readFileSync(signature, "utf8").trim(), url: `${releases}/download/v${version}/${installer}` };
-const latest = {
-  version,
-  ...(notes ? { notes } : {}),
-  pub_date: new Date().toISOString(),
-  platforms: { "windows-x86_64-nsis": platform, "windows-x86_64": platform },
-};
-writeFileSync(join(bundle, "latest.json"), `${JSON.stringify(latest, null, 2)}\n`);
-console.log(`\n${join(bundle, installer)}\n${signature}\n${join(bundle, "latest.json")}`);
+copyFileSync(kernel.binary, join(binaries, `fastctx-${triple}${linux ? "" : ".exe"}`));
+const config = { bundle: { externalBin: ["binaries/fastctx"], createUpdaterArtifacts: !unsigned } };
+if (linux) {
+  config.bundle.targets = ["deb", "appimage"];
+  config.bundle.linux = { deb: { depends: ["pkexec"], files: {
+    "/usr/share/doc/world/copyright": "licenses/copyright",
+    "/usr/share/doc/world/LICENSE-APACHE": "licenses/LICENSE-APACHE",
+    "/usr/share/doc/world/NOTICE": "licenses/NOTICE",
+    "/usr/share/doc/world/THIRD_PARTY_LICENSES.md": "licenses/THIRD_PARTY_LICENSES.md",
+  } } };
+}
+run("npx", ["tauri", "build", ...(unsigned ? ["--no-sign"] : []), "--config", JSON.stringify(config), "--", "--locked", "-j", env.CARGO_BUILD_JOBS ?? "4"], gui);
+const base = resolve(gui, "src-tauri", env.CARGO_TARGET_DIR ?? "target", "release", "bundle");
+const directory = join(base, linux ? "appimage" : "nsis");
+const extension = linux ? ".AppImage" : "-setup.exe";
+const installers = readdirSync(directory).filter(name => name.endsWith(extension));
+if (installers.length !== 1) throw new Error(`expected one installer in ${directory}: ${installers}`);
+const installer = installers[0];
+if (unsigned) {
+  console.log(`Unsigned local installer: ${join(directory, installer)}`);
+} else {
+  const signature = join(directory, `${installer}.sig`);
+  if (!existsSync(signature)) throw new Error(`the build left no signature at ${signature}`);
+  const platform = { signature: readFileSync(signature, "utf8").trim(), url: `${releases}/download/v${version}/${installer}` };
+  const arch = process.arch === "x64" ? "x86_64" : "aarch64";
+  const keys = linux ? [`linux-${arch}-appimage`, `linux-${arch}`] : ["windows-x86_64-nsis", "windows-x86_64"];
+  writeFileSync(join(directory, "latest.json"), `${JSON.stringify({ version, ...(notes ? { notes } : {}), pub_date: new Date().toISOString(), platforms: Object.fromEntries(keys.map(key => [key, platform])) }, null, 2)}\n`);
+  console.log(join(directory, installer));
+}

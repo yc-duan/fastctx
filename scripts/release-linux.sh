@@ -1,0 +1,48 @@
+#!/bin/bash
+# Native Linux release: Rust 1.92.0, Node 22, Python 3.11+, cargo-about 0.9.0,
+# cargo-zigbuild 0.23.0, Zig 0.14.1, qemu-user for ARM64 checks, and Tauri's
+# Ubuntu build prerequisites. cargo-about requires --features cli.
+# The caller supplies its resource-bounded filesystem and process scope.
+set -euo pipefail
+if [ "$(uname -m)" != x86_64 ]; then
+  printf 'This release script builds the x86_64 GUI and both Linux CLI architectures; run it on x86_64 Linux.\n' >&2
+  exit 1
+fi
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$repo"
+export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 RUSTUP_TOOLCHAIN=1.92.0
+export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$repo/target}
+mkdir -p dist
+mkdir -p "$CARGO_TARGET_DIR/launcher-check"
+node scripts/check-launcher.cjs "$CARGO_TARGET_DIR/launcher-check"
+python scripts/ripgrep.py verify
+cargo +1.92.0 fetch --locked
+cargo +1.92.0 fetch --locked --manifest-path "$repo/gui/src-tauri/Cargo.toml"
+cargo +1.92.0 run --locked --release -j 4 -p fastctx-tui --example syntax_notices > dist/syntax-notices.md
+python scripts/notices.py --syntax-notices dist/syntax-notices.md --output dist/THIRD_PARTY_LICENSES.md
+python scripts/package.py roots --notices dist/THIRD_PARTY_LICENSES.md --output dist
+export FASTCTX_THIRD_PARTY_LICENSES="$repo/dist/THIRD_PARTY_LICENSES.md"
+for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+  node scripts/kernel.mjs "$target"
+  if [ "$target" = x86_64-unknown-linux-gnu ]; then
+    cargo +1.92.0 test --locked -j 4 -p fastctx-ripgrep --target "$target"
+    export FASTCTX_TEST_BASH=/bin/bash
+    export FASTCTX_TEST_ROOT="$CARGO_TARGET_DIR/lifecycle-check"
+    mkdir -p "$FASTCTX_TEST_ROOT"
+    for contract in own_lifetime job_lifecycle; do
+      if [ "$contract" = own_lifetime ]; then package=fastctx-node; else package=fastctx-hands; fi
+      cargo +1.92.0 zigbuild --locked --release -j 4 -p "$package" --test "$contract" --target x86_64-unknown-linux-musl
+      mapfile -t tests < <(find "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/deps" -maxdepth 1 -name "$contract-*" ! -name '*.d' -type f -executable)
+      test "${#tests[@]}" = 1
+      "${tests[0]}"
+    done
+  fi
+  binary="$CARGO_TARGET_DIR/${target/-gnu/-musl}/release/fastctx"
+  python scripts/package.py platform --target "$target" --binary "$binary" --notices dist/THIRD_PARTY_LICENSES.md --output dist
+done
+python scripts/package.py verify --output dist
+cd "$repo/gui"
+npm ci
+npm run check:wire
+node scripts/release.mjs --unsigned
+python "$repo/scripts/linux-bundle.py" --target-dir "$CARGO_TARGET_DIR" --output "$repo/dist/gui"
