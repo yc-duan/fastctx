@@ -12,6 +12,7 @@ use crate::plan::CodexPlan;
 use crate::source::{Source, comma_in, edit, newline, same_value, splice};
 use crate::{Error, File, Notice, check_path, finish};
 
+mod command;
 mod shared;
 pub(crate) mod tools;
 
@@ -204,8 +205,16 @@ pub fn apply(
         receipt.server = Some(server);
     }
     Source::parse(&bytes, config.path)?;
-    let mut applied =
-        guidance::apply(File { path: agents.path, bytes: agents_bytes.as_deref() }, body, receipt.guidance.as_ref())?;
+    let input = File { path: agents.path, bytes: agents_bytes.as_deref() };
+    let mut applied = if receipt.portable {
+        let (applied, adopted) = guidance::apply_shared(input, body, receipt.guidance.as_ref())?;
+        if adopted {
+            messages.push(format!("{}: the matching shared fastctx guidance block is now owned by this login; surrounding user text stays in place", agents.path));
+        }
+        applied
+    } else {
+        guidance::apply(input, body, receipt.guidance.as_ref())?
+    };
     if let Some(existed) = legacy_agents_existed {
         applied.receipt.original_existed = existed;
     }
@@ -235,6 +244,8 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
     let mut messages = vec![];
     let mut bytes = config.bytes.map(<[u8]>::to_vec);
     if let Some(current) = &mut bytes {
+        let shared = receipt.portable || shared::portable(&Source::parse(current, config.path)?);
+        remaining.portable |= shared;
         if let Some(tools) = remaining.tools.take() {
             let (next, notices) = tools::unapply(current, config.path, &tools)?;
             *current = next;
@@ -243,10 +254,6 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
         if let Some(server) = &receipt.server {
             match remove_server(current, config.path, server) {
                 Ok(next) => {
-                    if shared::portable(&Source::parse(current, config.path)?) {
-                        remaining.portable = true;
-                        messages.push(shared::withdrawal(config.path));
-                    }
                     *current = next;
                     remaining.server = None;
                 }
@@ -267,6 +274,12 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
                     reason: error.to_string(),
                 }),
             }
+        }
+        if shared
+            && let Some(message) =
+                shared::withdrawal(config.bytes.expect("the current file exists"), current, config.path)?
+        {
+            messages.push(message);
         }
     } else {
         remaining.server = None;
@@ -305,6 +318,17 @@ pub fn unapply_legacy(config: File<'_>, agents: File<'_>, old: &legacy::Receipt)
 }
 
 impl Receipt {
+    pub(crate) fn guidance_path(&self) -> Option<&Path> {
+        self.guidance.as_ref().map(|guidance| Path::new(&guidance.path))
+    }
+
+    pub(crate) fn bind_home(&mut self, home: &Path) {
+        self.config_path = home.join("config.toml").to_string_lossy().into_owned();
+        if let Some(guidance) = &mut self.guidance {
+            guidance.path = home.join("AGENTS.md").to_string_lossy().into_owned();
+        }
+    }
+
     /// Active ownership is separate from the remembered shared command.
     pub(crate) fn has_work(&self) -> bool {
         self.server.is_some() || self.limit.is_some() || self.guidance.is_some()
@@ -439,8 +463,8 @@ fn check_server(source: &Source<'_>, server: &Server) -> Result<(), Error> {
     }
 }
 
-pub(crate) fn portable_on_path() -> bool {
-    shared::on_path()
+pub(crate) fn portable_on_path(home: &Path) -> Result<bool, String> {
+    command::available(home)
 }
 
 fn remove_server(bytes: &[u8], location: &str, server: &Server) -> Result<Vec<u8>, Error> {

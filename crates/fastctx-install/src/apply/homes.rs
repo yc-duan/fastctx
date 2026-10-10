@@ -7,6 +7,9 @@ use sha2::{Digest, Sha256};
 use super::*;
 use crate::transaction::CreatedDirectory;
 
+mod identity;
+use identity::key;
+
 /// The host whose configuration home is selected; executable discovery is separate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,30 +42,18 @@ pub(super) struct Records {
 }
 
 pub(super) fn resolve(home: &Path) -> Result<PathBuf, Error> {
-    if home.as_os_str().is_empty() {
-        return Err(Error::Io("host home must not be empty".into()));
-    }
-    let (path, _) = crate::snapshot::resolve(&home.join(".fastctx-home"))
-        .map_err(|error| FileError::io(home, "resolve host home", error))?;
-    Ok(path.parent().expect("resolved file has a parent").to_owned())
-}
-
-fn key(home: &Path) -> Result<String, Error> {
-    let home = resolve(home)?;
-    identity(&home)
-}
-
-fn identity(home: &Path) -> Result<String, Error> {
-    let text = home.to_str().ok_or_else(|| Error::Io("host home must be a UTF-8 path".into()))?;
-    Ok(if cfg!(windows) {
-        text.replace('\\', "/").trim_start_matches("//?/").to_ascii_lowercase()
-    } else {
-        text.to_owned()
-    })
+    identity::resolve(home)
 }
 
 fn parent(path: &Path) -> Result<PathBuf, Error> {
     resolve(path.parent().ok_or_else(|| Error::Io(format!("{} has no home directory", path.display())))?)
+}
+
+pub(super) fn check_file(recorded: &Path, selected: &Path) -> Result<(), Error> {
+    if recorded.file_name() != selected.file_name() || key(&parent(recorded)?)? != key(&parent(selected)?)? {
+        return Err(crate::Error::at(text(selected), format!("the receipt belongs to {}", recorded.display())).into());
+    }
+    Ok(())
 }
 
 impl Records {
@@ -106,9 +97,9 @@ impl Records {
         let records: Self = serde_json::from_slice(bytes)
             .map_err(|error| Error::Io(format!("reading {}: {error}", snapshot.path().display())))?;
         for (index, home) in records.homes.iter().enumerate() {
-            let identity = identity(&home.home)?;
+            let identity = key(&home.home)?;
             for previous in &records.homes[..index] {
-                if home.host == previous.host && identity == self::identity(&previous.home)? {
+                if home.host == previous.host && identity == key(&previous.home)? {
                     return Err(Error::Io(format!("duplicate apply home: {}", home.home.display())));
                 }
             }
@@ -119,7 +110,7 @@ impl Records {
     fn find(&self, host: Host, home: &Path) -> Result<Option<&Record>, Error> {
         let identity = key(home)?;
         for entry in &self.homes {
-            if entry.host == host && self::identity(&entry.home)? == identity {
+            if entry.host == host && key(&entry.home)? == identity {
                 return Ok(Some(&entry.receipt));
             }
         }
@@ -129,7 +120,7 @@ impl Records {
     pub(super) fn selected(&self, places: &Places, hosts: Hosts) -> Result<Record, Error> {
         let codex = if hosts.codex { self.find(Host::Codex, &places.codex_home)? } else { None };
         let claude = if hosts.claude { self.find(Host::Claude, &places.claude_home)? } else { None };
-        Ok(Record {
+        let mut record = Record {
             version: RECORD_VERSION,
             codex: codex.and_then(|record| record.codex.clone()),
             claude_md: claude.and_then(|record| record.claude_md.clone()),
@@ -137,7 +128,26 @@ impl Records {
             claude_tools: claude.and_then(|record| record.claude_tools.clone()),
             settings_created: claude.is_some_and(|record| record.settings_created),
             created: self.created.clone(),
-        })
+        };
+        if let Some(receipt) = &mut record.codex {
+            let home = resolve(&places.codex_home)?;
+            check_file(receipt.config_path(), &home.join("config.toml"))?;
+            if let Some(path) = receipt.guidance_path() {
+                check_file(path, &home.join("AGENTS.md"))?;
+            }
+            receipt.bind_home(&home);
+        }
+        if let Some(receipt) = &mut record.claude_md {
+            let path = resolve(&places.claude_home)?.join("CLAUDE.md");
+            check_file(Path::new(&receipt.path), &path)?;
+            receipt.path = text(&path);
+        }
+        if let Some(receipt) = &mut record.claude_tools {
+            let home = resolve(&places.claude_home)?;
+            check_file(receipt.settings_path(), &home.join("settings.json"))?;
+            receipt.bind_home(&home);
+        }
+        Ok(record)
     }
 
     fn put(&mut self, host: Host, home: PathBuf, selected: &Record) {
@@ -171,7 +181,7 @@ impl Records {
                 .collect::<Result<_, Error>>()?;
         let mut kept = Vec::new();
         for entry in self.homes.drain(..) {
-            let identity = identity(&entry.home)?;
+            let identity = key(&entry.home)?;
             if !targets.iter().any(|(host, _, target)| *host == entry.host && *target == identity) {
                 kept.push(entry);
             }
@@ -226,8 +236,20 @@ pub(super) fn plugin_record(places: &Places) -> Result<PathBuf, Error> {
             return Ok(old);
         }
     }
-    let digest = Sha256::digest(key(&places.claude_home)?.as_bytes());
-    Ok(places.root.join(format!("applied-claude-plugin-{digest:x}.json")))
+    let spelling = identity::spelling(&places.claude_home)?;
+    let digest = Sha256::digest(spelling.as_bytes());
+    let current = places.root.join(format!("applied-claude-plugin-{digest:x}.json"));
+    if cfg!(windows) && !current.try_exists().map_err(io("checking plugin record"))? {
+        let digest = Sha256::digest(spelling.to_ascii_lowercase().as_bytes());
+        let previous = places.root.join(format!("applied-claude-plugin-{digest:x}.json"));
+        if let Some(plugin) = load_plugin_record(&previous)?
+            && let Some(settings) = plugin.settings_path
+            && key(&parent(&settings)?)? == key(&places.claude_home)?
+        {
+            return Ok(previous);
+        }
+    }
+    Ok(current)
 }
 
 pub(super) fn old_plugin_home(places: &Places) -> Result<PathBuf, Error> {
