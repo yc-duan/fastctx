@@ -113,6 +113,7 @@ export class GiveSheet {
       for (const control of controls) control.disabled = false;
       const shown = sheet.body.querySelector<HTMLElement>(".sheet-note")!;
       shown.textContent = words.failed(error instanceof Error ? error.message : String(error));
+      shown.title = error instanceof Error ? error.message : String(error);
       shown.hidden = false;
     }
   }
@@ -215,7 +216,6 @@ export class RelaysSheet {
       <p class="confirm-what">${escape(words.relaysWhat)}</p>
       <div class="field">
         ${rows ? `<ol class="relay-rows">${rows}</ol>` : `<p class="field-hint">${escape(words.noRelays)}</p>`}
-        ${rows ? `<span class="field-hint">${escape(words.relayAddressesHint)}</span>` : ""}
         <button class="text-button add-relay" type="button">${glyph("plus", 16)}<span>${escape(words.addRelay)}</span></button>
         ${rows ? `<p class="relay-last">${glyph("relay", 14)}<span>${escape(words.hubLast)}</span></p>` : ""}
       </div>

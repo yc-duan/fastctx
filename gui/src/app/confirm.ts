@@ -99,6 +99,7 @@ export class Confirm {
           button.disabled = false;
           button.textContent = asked.go;
           note.textContent = words.failed(error instanceof Error ? error.message : String(error));
+          note.title = error instanceof Error ? error.message : String(error);
           note.hidden = false;
         });
     };

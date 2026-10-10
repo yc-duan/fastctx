@@ -246,7 +246,7 @@ export class MachinesPage implements Page {
   private share(login: Login, machine: string): void {
     const { access } = this.options;
     this.giving.open(
-      { title: access.shareTitle(machine), what: access.shareWhat, sees: access.shareSees, given: access.sharedTo, go: access.shareGo, after: access.shareAfter },
+      { title: access.shareTitle(machine), what: access.shareWhat, sees: access.shareSees, given: access.sharedTo, go: access.shareGo },
       this.sharedWith(login, machine),
       async (to, shared) => {
         await this.options.change(login, { change: "share", machine, to, shared });
@@ -482,14 +482,14 @@ export class MachinesPage implements Page {
     const factLine = facts
       ? [osName(facts.os), facts.arch, `fastctx ${facts.version}`, route].filter(Boolean).map(escape).join(`<span class="sep">·</span>`)
       : "Err" in machine.facts && machine.facts.Err && machine.online !== false
-        ? escape(words.factsUnknown(machine.facts.Err))
+        ? `<span title="${escape(machine.facts.Err)}">${escape(words.factsUnknown(machine.facts.Err))}</span>`
         : escape(route);
     // This computer, hub by hub: how it reaches each, and whose it is there.
     const hubs = machine.here
       ? world.nodes.hubs
           .map((hub) => {
             const stand = hub.home ? words.registeredUnder(hub.home) : hub.logins.length ? words.onlyLogins(hub.logins.join(words.separator)) : "";
-            return `<li class="panel-hub ${hub.link.kind}"><span class="panel-hub-name">${escape(hub.name)}</span><span>${escape([linkSaid(hub.link, words), stand].filter(Boolean).join(" · "))}</span></li>`;
+            return `<li class="panel-hub ${hub.link.kind}"><span class="panel-hub-name">${escape(hub.name)}</span><span${linkWhy(hub.link) ? ` title="${escape(linkWhy(hub.link))}"` : ""}>${escape([linkSaid(hub.link, words), stand].filter(Boolean).join(" · "))}</span></li>`;
           })
           .join("")
       : "";
@@ -599,7 +599,7 @@ export class MachinesPage implements Page {
     const { words } = this.options;
     const asked = this.asked.get(machine);
     if (!asked) return `<p class="machine-hosts-asking">${escape(words.asking)}</p>`;
-    if (asked.state === "unknown") return `<p class="machine-hosts-asking">${escape(words.notAsked(asked.why))}</p>`;
+    if (asked.state === "unknown") return `<p class="machine-hosts-asking" title="${escape(asked.why)}">${escape(words.notAsked(asked.why))}</p>`;
     const changeable = on.mine && !!this.options.homes;
     const agents = on.lent ? [...new Set(on.lent.map((one) => one.agent))] : ["codex", "claude"];
     const blocks = agents.map((agent) => this.agentBlock(machine, agent as "codex" | "claude", asked.facts, on, changeable, now));
@@ -707,6 +707,11 @@ export class MachinesPage implements Page {
         : `<span class="host-use"><span class="${unattended ? "" : "caution"}">${escape(unattended ? words.unattendedYes : words.unattendedNo)}</span><button class="text-button quiet-button" type="button" data-act="consent" data-home="${escape(choice)}" data-label="${escape(consentLabel)}" data-allow="${unattended ? "0" : "1"}">${escape(unattended ? words.withdraw : words.allow)}</button></span>`;
     return `<li class="host-home${out ? " logged-out" : ""}"><div class="home-head">${who}${where}${hide}${talk}</div>${limits}${tools || act ? `<span class="host-use">${tools ? `<span>${escape(tools)}</span>` : ""}${act}</span>` : ""}${consent}${lending}</li>`;
   }
+}
+
+/** Why a hub is not reached, in the kernel's words, for the hover. */
+export function linkWhy(link: LinkState): string {
+  return link.kind === "connecting" ? (link.last_error ?? "") : link.kind === "stopped" ? link.reason : "";
 }
 
 /** How this computer reaches a hub, in words. */

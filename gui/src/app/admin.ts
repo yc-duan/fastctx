@@ -7,6 +7,7 @@
 // project is handed to another account. Handing on and deleting say first
 // what they mean.
 
+import { passwordProblem } from "./password";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { loginsOf, type AccountChange, type HubAccounts, type Login } from "../world/accounts";
@@ -117,6 +118,8 @@ export class AdminPage implements Page {
           async (form) => {
             const password = this.password(form);
             if (password === null) return words.passwordsDiffer;
+            const problem = passwordProblem(name, password);
+            if (problem) return words.passwordRule[problem];
             await this.options.change(login, { change: "set_password", target: name, password });
           },
         );
@@ -144,6 +147,8 @@ export class AdminPage implements Page {
             const password = this.password(form);
             if (password === null) return words.passwordsDiffer;
             const name = form.querySelector<HTMLInputElement>("[name=name]")!.value.trim();
+            const problem = passwordProblem(name, password);
+            if (problem) return words.passwordRule[problem];
             await this.options.change(login, { change: "open_account", name, password });
           },
         );

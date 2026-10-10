@@ -72,6 +72,7 @@ export class ClaudeConsent {
             button.disabled = false;
             button.textContent = go;
             note.textContent = words.failed(error instanceof Error ? error.message : String(error));
+            note.title = error instanceof Error ? error.message : String(error);
             note.hidden = false;
           });
       };

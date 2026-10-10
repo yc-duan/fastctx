@@ -9,6 +9,7 @@
 // shared with; its password; logging out; and, for the super administrator,
 // the way to the hub's page.
 
+import { passwordProblem } from "./password";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { loginsOf, type AccountChange, type Arrival, type HubAccounts, type Login, type MemberSeen } from "../world/accounts";
@@ -199,6 +200,7 @@ export class AccountPage implements Page {
           button.disabled = false;
           button.textContent = go;
           note.textContent = words.failed(error instanceof Error ? error.message : String(error));
+          note.title = error instanceof Error ? error.message : String(error);
           note.hidden = false;
         });
     };
@@ -218,6 +220,8 @@ export class AccountPage implements Page {
       async (form) => {
         const password = form.querySelector<HTMLInputElement>("[name=password]")!.value;
         if (password !== form.querySelector<HTMLInputElement>("[name=again]")!.value) return words.passwordsDiffer;
+        const problem = passwordProblem(login.account, password);
+        if (problem) return words.passwordRule[problem];
         await this.options.change(login, { change: "set_password", target: login.account, password });
         this.said = { login: loginLabel(login), text: words.passwordDone };
       },

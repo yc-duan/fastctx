@@ -120,6 +120,7 @@ export class ReaderPage implements Page {
     } catch (error) {
       if (asked !== this.asked) return;
       this.facts.lastElementChild!.textContent = words.failed(String(error));
+      (this.facts.lastElementChild as HTMLElement).title = String(error);
       this.facts.lastElementChild!.classList.add("caution");
       return;
     }
@@ -174,6 +175,7 @@ export class ReaderPage implements Page {
       if (!read) {
         // Not read at all: said where the facts would be, as for any file.
         this.facts.lastElementChild!.textContent = words.failed(why);
+        (this.facts.lastElementChild as HTMLElement).title = why;
         this.facts.lastElementChild!.classList.add("caution");
         return;
       }

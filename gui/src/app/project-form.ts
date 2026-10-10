@@ -249,6 +249,7 @@ export class ProjectForm {
     } catch (error) {
       this.busy = false;
       note.textContent = words.failed(String(error));
+      note.title = String(error);
       note.hidden = false;
       go.disabled = false;
       go.textContent = this.editing ? words.save : words.open;
