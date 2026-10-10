@@ -506,10 +506,12 @@ impl Inner {
         self.next_id.fetch_add(1, Ordering::Relaxed) + 1
     }
 
+    /// Why a call found no connection, for whoever made the call, agents
+    /// included: the dialing error names the hub's addresses, which stay in
+    /// the node's log and the link's status for the people who look there.
     fn not_connected(&self) -> String {
         match &*self.status.borrow() {
-            Status::Connecting { last_error: Some(error), .. } => error.clone(),
-            Status::Connecting { last_error: None, .. } => "it is connecting".to_string(),
+            Status::Connecting { .. } => "it is reconnecting".to_string(),
             Status::Online { .. } => "the connection just ended".to_string(),
             Status::Stopped { reason } => reason.clone(),
         }

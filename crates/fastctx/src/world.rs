@@ -517,6 +517,20 @@ fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
 }
 
 fn link(link: &LinkState, now: Timestamp) -> String {
+    // A model names machines and never needs where the hub or any machine
+    // is on the network: in a script run for an agent the link says only
+    // whether it is up, for how long, and through which relay.
+    if std::env::var_os("FASTCTX_RESIDENT").is_some() {
+        return match link {
+            LinkState::Alone => "not connected".to_string(),
+            LinkState::Online { since, relay: None, .. } => format!("connected for {}", age(*since, now)),
+            LinkState::Online { since, relay: Some(relay), .. } => {
+                format!("connected through the relay {relay}, for {}", age(*since, now))
+            }
+            LinkState::Connecting { since, .. } => format!("not connected to the hub for {}", age(*since, now)),
+            LinkState::Stopped { reason } => format!("the hub removed this computer: {reason}"),
+        };
+    }
     match link {
         LinkState::Alone => "not connected".to_string(),
         LinkState::Online { since, hub, relay: None, route } => {
