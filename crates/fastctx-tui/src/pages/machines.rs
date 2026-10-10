@@ -5,7 +5,7 @@
 //! tokens for other devices, and who came into its accounts, with 「不是我」.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use fastctx_types::accounts::Arrival;
+use fastctx_types::accounts::{Arrival, HubAccounts, Level};
 use fastctx_types::agents::{AgentsReply, Integration};
 use fastctx_types::world::{HubNodes, LinkState, NodesReply};
 use fastctx_types::{AccountName, HubName, MachineName};
@@ -28,6 +28,8 @@ pub struct MachinesPage {
     nodes: Option<NodesReply>,
     /// Who came into this computer's accounts and was not shown yet.
     arrivals: Vec<Arrival>,
+    /// What this computer's accounts see of each hub, for their levels.
+    accounts: Vec<HubAccounts>,
     failed: Option<String>,
     had_at: Option<Timestamp>,
     list: List,
@@ -73,8 +75,9 @@ impl MachinesPage {
                 self.had_at = Some(Timestamp::now());
             }
             Data::Nodes(Err(why)) => self.failed = Some(why),
-            Data::Arrivals(arrivals) => {
-                self.arrivals = arrivals;
+            Data::Accounts(accounts) => {
+                self.arrivals = accounts.iter().flat_map(|hub| hub.arrivals.iter().cloned()).collect();
+                self.accounts = accounts;
                 self.list.clamp(self.entries().len());
             }
             Data::Done { job: Job::Seen { .. } | Job::Remove { .. }, result: Err(why) } => self.failed = Some(why),
@@ -409,7 +412,8 @@ impl MachinesPage {
                 rows.push(Row::blank());
             }
             for hub in &nodes.hubs {
-                hub_rows(ctx, &mut rows, &mut item, hub, &nodes.machine, width);
+                let seen = self.accounts.iter().find(|seen| seen.hub == hub.hub);
+                hub_rows(ctx, &mut rows, &mut item, hub, seen, &nodes.machine, width);
             }
         }
         let note = match (&self.failed, self.had_at) {
@@ -462,9 +466,17 @@ impl MachinesPage {
     }
 }
 
-/// One hub: how this computer is linked to it and with which accounts, and
-/// each machine its accounts may use there.
-fn hub_rows(ctx: &Ctx, rows: &mut Vec<Row>, item: &mut usize, hub: &HubNodes, here: &MachineName, width: usize) {
+/// One hub: how this computer is linked to it and with which accounts, at
+/// what level, and each machine its accounts may use there.
+fn hub_rows(
+    ctx: &Ctx,
+    rows: &mut Vec<Row>,
+    item: &mut usize,
+    hub: &HubNodes,
+    seen: Option<&HubAccounts>,
+    here: &MachineName,
+    width: usize,
+) {
     let words = &ctx.words;
     let look = &ctx.look;
     paint::open_section(
@@ -490,8 +502,25 @@ fn hub_rows(ctx: &Ctx, rows: &mut Vec<Row>, item: &mut usize, hub: &HubNodes, he
     for line in text::wrap_plain(&line, look.text(role), width) {
         rows.push(Row::new(line));
     }
-    let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
-    let said = words.logins_line(&logins, hub.home.as_ref().map(|home| home.as_str()));
+    let level = |account: &AccountName| {
+        seen.and_then(|seen| seen.accounts.iter().find(|one| one.name == *account)).map(|one| one.level)
+    };
+    let logins = hub
+        .logins
+        .iter()
+        .map(|login| match level(login) {
+            Some(Level::Super) => format!("{login}{}", words.aside(words.level_super())),
+            _ => login.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut said = words.logins_line(&logins, hub.home.as_ref().map(|home| home.as_str()));
+    // A member is told who the administrator is: that account may use every
+    // machine of theirs (`world-network.md`, 账号的两级).
+    let admin = seen.and_then(|seen| seen.accounts.iter().find(|one| one.level == Level::Super));
+    if let Some(admin) = admin.filter(|admin| !hub.logins.contains(&admin.name)) {
+        said.push_str(&words.admin_is(admin.name.as_str()));
+    }
     for line in text::wrap_plain(&said, look.text(Role::Faint), width) {
         rows.push(Row::new(line));
     }

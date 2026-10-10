@@ -12,7 +12,6 @@ use fastctx_types::project::{JournalView, MapView, RecordFields, TownSummary};
 use fastctx_types::session::SessionEvent;
 use fastctx_types::town::{ResidentNow, RunningJob};
 use fastctx_types::world::NodesReply;
-use fastctx_types::accounts::Arrival;
 use fastctx_types::{AccountName, AgentName, EntryId, HubName, JournalName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 use ratatui::Frame;
@@ -233,8 +232,9 @@ pub enum Data {
         map: Result<Box<MapView>, String>,
     },
     Nodes(Result<NodesReply, String>),
-    /// Who came into this computer's accounts and was not shown yet.
-    Arrivals(Vec<Arrival>),
+    /// What this computer's accounts see of each hub: who came in and was
+    /// not shown yet, and each account's level.
+    Accounts(Vec<fastctx_types::accounts::HubAccounts>),
     Choices {
         nodes: Result<NodesReply, String>,
         towns: Result<Vec<TownSummary>, String>,

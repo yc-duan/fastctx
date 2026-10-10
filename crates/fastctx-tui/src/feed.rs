@@ -97,14 +97,12 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
             }
         }
         round += 1;
-        // And who came into this computer's accounts.
+        // And what its accounts see: who came in, and their levels.
         if matches!(feed, Feed::Nodes)
             && let Ok(accounts) = world.accounts().await
+            && sender.send((page, Data::Accounts(accounts.hubs))).is_err()
         {
-            let arrivals = accounts.hubs.into_iter().flat_map(|hub| hub.arrivals).collect();
-            if sender.send((page, Data::Arrivals(arrivals))).is_err() {
-                return;
-            }
+            return;
         }
         tokio::time::sleep(EVERY).await;
     }

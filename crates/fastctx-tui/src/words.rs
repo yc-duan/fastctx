@@ -1220,6 +1220,19 @@ impl Words {
         }
     }
 
+    pub fn level_super(&self) -> &'static str {
+        self.pick("管理员", "administrator")
+    }
+
+    /// After a member's logins: who administers the hub, and so may use
+    /// every machine of theirs.
+    pub fn admin_is(&self, admin: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!(" · 管理员 {admin}（可访问你的所有机器）"),
+            Lang::En => format!(" · administrator {admin} (can access all your machines)"),
+        }
+    }
+
     pub fn owner_and_rights(&self, owner: Option<&str>, rights: &str) -> String {
         match (self.lang, owner) {
             (Lang::Zh, Some(owner)) => format!("{owner} 的机器  ·  {rights}"),
