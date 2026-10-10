@@ -1,4 +1,4 @@
-//! The frozen protocol-5/6/7/8 subset used by already running tool adapters
+//! The frozen protocol-5/6/7/8/9 subset used by already running tool adapters
 //! and job supervisors. A GUI is never admitted through this compatibility path.
 //! It can discover the mismatch and renew through the maintenance envelope.
 
@@ -14,7 +14,7 @@ use std::borrow::Cow;
 mod page_identity;
 
 pub(crate) fn enabled(protocol: u32, peer: &Peer) -> bool {
-    matches!(protocol, 5..=8) && self::peer(peer)
+    matches!(protocol, 5..=9) && self::peer(peer)
 }
 
 pub(crate) fn peer(peer: &Peer) -> bool {
@@ -149,6 +149,27 @@ pub(crate) fn frame(protocol: u32, id: u64, reply: &Result<Reply, fastctx_types:
     }
     let reply = reply.as_ref().map(|reply| Answer { protocol, reply });
     let frame = Frame { kind: "reply", id, reply };
+    if protocol < 10
+        && frame.reply.as_ref().is_ok_and(|answer| {
+            matches!(
+                answer.reply,
+                Reply::Controlled {
+                    controlled: fastctx_types::session::control::Controlled::Reported { .. }
+                        | fastctx_types::session::control::Controlled::Refused { .. }
+                        | fastctx_types::session::control::Controlled::ModelMenu { .. },
+                    ..
+                }
+            )
+        })
+    {
+        let value = serde_json::to_value(&frame).expect("the World's types always serialize");
+        let failure = fastctx_types::ipc::Failure::new(format!(
+            "The call completed. This fastctx cannot display the host's control result. The complete result follows as JSON (do not repeat the call):\n{}",
+            serde_json::to_string_pretty(&value["reply"]).expect("JSON serializes")
+        ));
+        return serde_json::to_vec(&Frame { kind: "reply", id, reply: Err(&failure) })
+            .expect("the World's types always serialize");
+    }
     // The machines hub by hub (`world-network.md`) have no shape in the
     // protocols before 8, which knew one World through one hub: the reply is
     // said whole, as text, rather than fitted into a shape that would

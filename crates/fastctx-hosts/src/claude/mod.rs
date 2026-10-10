@@ -9,7 +9,8 @@
 //! plugin is the one the next session starts with. A background session the
 //! World starts or wakes goes through the `claude` command (`background`).
 //!
-//! Uses Claude Code 2.1.289's public mod and plugin hook contracts.
+//! Uses Claude Code's public mod and plugin hook contracts, with command
+//! knowledge pinned to the statically inspected 2.1.294 program.
 
 pub mod agents;
 pub mod background;
@@ -127,7 +128,9 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
     // forward slashes, no `\\?\` prefix). A mod given a Windows short name
     // such as `MOTORW~1` writes nothing at all.
     let directory = trust::directory_key(world)?;
-    let module = MOD.replace("__FASTCTX_CONTROLS__", include_str!("control.js"));
+    let module = MOD
+        .replace("__FASTCTX_CONTROLS__", include_str!("control.js"))
+        .replace("__FASTCTX_COMMANDS__", include_str!("commands.js"));
     let module = module.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));
     let module = module
         .replace("__FASTCTX_COMMAND__", &serde_json::to_string(&fastctx.to_string_lossy()).expect("strings serialize"));

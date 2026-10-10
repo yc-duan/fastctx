@@ -14,6 +14,8 @@ use super::{CodexHost, ThreadSpec};
 pub(super) struct Selection {
     pub model: Option<String>,
     pub effort: Option<String>,
+    #[serde(default)]
+    pub service_tier: Option<String>,
 }
 
 impl Selection {
@@ -32,7 +34,7 @@ impl Selection {
         }
     }
 
-    fn write(&self, root: &Path, thread: &str) -> Result<(), String> {
+    pub(super) fn write(&self, root: &Path, thread: &str) -> Result<(), String> {
         let path = Self::path(root, thread);
         ensure_private_dir(path.parent().expect("choices directory"))
             .and_then(|()| publish(&path, &serde_json::to_vec(self)?, Permissions::Private))
@@ -45,6 +47,9 @@ impl Selection {
         }
         if let Some(effort) = &self.effort {
             params["effort"] = json!(effort);
+        }
+        if let Some(tier) = &self.service_tier {
+            params["serviceTier"] = json!(tier);
         }
     }
 }
@@ -64,6 +69,7 @@ impl CodexHost {
         let selection = Selection {
             model: model.or_else(|| entry.selection.model.clone()).or_else(|| entry.model.clone()),
             effort: effort.or_else(|| entry.selection.effort.clone()).or_else(|| entry.effort.clone()),
+            service_tier: entry.selection.service_tier.clone().or_else(|| entry.service_tier.clone()),
         };
         let selected = selection.model.as_deref().ok_or("Codex has not reported this thread's model")?;
         let model = models
@@ -76,6 +82,14 @@ impl CodexHost {
             return Err(format!(
                 "model {selected} does not offer reasoning effort {effort}; choose one of: {}",
                 model.efforts.join(", ")
+            ));
+        }
+        if let Some(tier) = &selection.service_tier
+            && tier != "default"
+            && !model.service_tiers.iter().any(|offer| &offer.id == tier)
+        {
+            return Err(format!(
+                "model {selected} does not offer service tier {tier}; select /tier default before changing models"
             ));
         }
         selection.write(&self.workdir, thread)?;
@@ -116,6 +130,7 @@ impl CodexHost {
             Selection {
                 model: entry.selection.model.clone().or_else(|| entry.model.clone()),
                 effort: entry.selection.effort.clone().or_else(|| entry.effort.clone()),
+                service_tier: entry.selection.service_tier.clone().or_else(|| entry.service_tier.clone()),
             }
         };
         let mut config = spec.config.clone();
@@ -130,6 +145,7 @@ impl CodexHost {
                     "model": selection.model, "approvalPolicy":"never", "sandbox":"danger-full-access",
                     "developerInstructions":spec.developer_instructions,"config":config,
                     "excludeTurns":true,
+                    "serviceTier":selection.service_tier,
                 }),
             )
             .await?;
@@ -147,6 +163,7 @@ impl CodexHost {
         entry.completed_item = true;
         entry.model = model.clone();
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
+        entry.service_tier = answer.get("serviceTier").and_then(Value::as_str).map(str::to_string);
         entry.metadata = metadata(&answer["thread"]);
         selection
             .write(&self.workdir, &thread)
@@ -204,6 +221,8 @@ impl CodexHost {
             "thread/settings/updated" => {
                 entry.model = params.pointer("/threadSettings/model").and_then(Value::as_str).map(str::to_string);
                 entry.effort = params.pointer("/threadSettings/effort").and_then(Value::as_str).map(str::to_string);
+                entry.service_tier =
+                    params.pointer("/threadSettings/serviceTier").and_then(Value::as_str).map(str::to_string);
             }
             "serverRequest/resolved" => {
                 entry.requests.remove(&resolved.expect("resolved address").to_string());

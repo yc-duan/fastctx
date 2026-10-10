@@ -3,21 +3,41 @@
 
 use std::sync::Arc;
 
-use fastctx_types::session::control::{CommandOffer, ContextUsage, ControlKind, Limit, ModelOffer, Offers, Usage};
+use fastctx_types::session::control::{
+    CommandArguments, CommandOffer, ContextUsage, ControlKind, Limit, ModelOffer, Offers, ServiceTierOffer, Usage,
+};
 use serde_json::{Value, json};
 
 use super::{CodexHost, Input, Sent, server::AppServer};
 
-pub(super) const COMMANDS: &[(&str, &str, Option<&str>)] = &[
-    ("compact", "Start context compaction between turns", None),
-    ("model", "Select the model and reasoning effort for subsequent World turns", Some("<model> [effort]")),
-    ("rename", "Rename this conversation", Some("<name>")),
-    ("fork", "Create a new resident with this conversation's history", None),
-    ("review", "Start an inline review", Some("[custom instructions]")),
-    ("mcp", "List this thread's MCP servers and tools", Some("[verbose]")),
-    ("skills", "List enabled skills for this conversation", None),
-    ("status", "Show this conversation's model, context and account usage", None),
-    ("usage", "Show context and account usage", None),
+pub(super) const COMMANDS: &[(&str, &str, Option<&str>, CommandArguments)] = &[
+    ("compact", "Start context compaction between turns", None, CommandArguments::None),
+    (
+        "model",
+        "Select the model and reasoning effort for subsequent World turns",
+        Some("[<model> [effort]]"),
+        CommandArguments::Optional,
+    ),
+    ("rename", "Rename this conversation", Some("<name>"), CommandArguments::Required),
+    ("fork", "Create a new resident with this conversation's history", None, CommandArguments::None),
+    ("review", "Start an inline review", Some("[custom instructions]"), CommandArguments::Optional),
+    ("mcp", "List this thread's MCP servers and tools", Some("[verbose]"), CommandArguments::Optional),
+    ("skills", "List enabled skills for this conversation", None, CommandArguments::None),
+    ("status", "Show this conversation's model, context and account usage", None, CommandArguments::None),
+    ("usage", "Show context and account usage", None, CommandArguments::None),
+    (
+        "goal",
+        "Read, set or clear this conversation's goal",
+        Some("[get | clear | set <objective>]"),
+        CommandArguments::Optional,
+    ),
+    (
+        "tier",
+        "Select a catalog service tier for subsequent World turns",
+        Some("[<tier-id> | default]"),
+        CommandArguments::Optional,
+    ),
+    ("debug-config", "Read effective configuration and its layers", None, CommandArguments::None),
 ];
 
 impl CodexHost {
@@ -38,6 +58,22 @@ impl CodexHost {
                         .collect::<Result<_, _>>()?,
                     default_effort: model["defaultReasoningEffort"].as_str().map(str::to_string),
                     default: model["isDefault"].as_bool().ok_or("model has no isDefault")?,
+                    service_tiers: match model.get("serviceTiers") {
+                        None => Vec::new(),
+                        Some(value) => value
+                            .as_array()
+                            .ok_or("model has no serviceTiers array")?
+                            .iter()
+                            .map(|tier| {
+                                Ok(ServiceTierOffer {
+                                    id: string(tier, "id")?,
+                                    name: string(tier, "name")?,
+                                    description: string(tier, "description")?,
+                                })
+                            })
+                            .collect::<Result<_, String>>()?,
+                    },
+                    default_service_tier: model["defaultServiceTier"].as_str().map(str::to_string),
                 })
             })
             .collect()
@@ -72,6 +108,7 @@ impl CodexHost {
         // Inspecting a sleeping resident must not subscribe it again.
         // Catalogs are server-wide; unavailable per-thread usage is reported.
         let models = self.models(&server).await?;
+        let fast_mode = self.read_config(thread).await?["config"]["features"]["fast_mode"] != false;
         let skills = self.skills(&server, thread).await?;
         let limits = server.request("account/rateLimits/read", json!({})).await;
         let account_usage = match server.request("account/usage/read", json!({"threadId":thread})).await {
@@ -80,26 +117,52 @@ impl CodexHost {
         };
         let mut commands: Vec<CommandOffer> = COMMANDS
             .iter()
-            .map(|(name, description, args)| CommandOffer {
+            .map(|(name, description, args, arguments)| CommandOffer {
                 name: (*name).into(),
                 description: (*description).into(),
                 args: args.map(str::to_string),
+                arguments: *arguments,
                 source: Some("codex".into()),
                 path: None,
             })
             .collect();
+        if !fast_mode {
+            commands.retain(|command| command.name != "tier");
+        }
         for skill in skills {
             let name = string(&skill, "name")?;
             commands.push(CommandOffer {
                 name,
                 description: string(&skill, "description")?,
                 args: Some("[instructions]".into()),
+                arguments: CommandArguments::Optional,
                 source: Some("skill".into()),
                 path: Some(string(&skill, "path")?),
             });
         }
         let mut state = self.lock();
         let entry = state.threads.get(thread).ok_or("unknown Codex thread")?;
+        let selected_model = entry.selection.model.as_ref().or(entry.model.as_ref());
+        if fast_mode && let Some(model) = models.iter().find(|model| Some(&model.id) == selected_model) {
+            for tier in &model.service_tiers {
+                let name = tier.name.to_lowercase();
+                // A tier name becomes a slash command only when it is a word
+                // and cannot shadow another host command or a named skill.
+                if !name.is_empty()
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                    && !commands.iter().any(|command| command.name == name)
+                {
+                    commands.push(CommandOffer {
+                        name,
+                        description: tier.description.clone(),
+                        args: None,
+                        arguments: CommandArguments::None,
+                        source: Some("codex".into()),
+                        path: None,
+                    });
+                }
+            }
+        }
         let mut controls = vec![ControlKind::Command, ControlKind::Model, ControlKind::Rename, ControlKind::Fork];
         if entry.turn.is_none() && !entry.submitted {
             controls.push(ControlKind::Compact);
@@ -160,6 +223,7 @@ impl CodexHost {
             models,
             model: entry.selection.model.clone().or_else(|| entry.model.clone()),
             effort: entry.selection.effort.clone().or_else(|| entry.effort.clone()),
+            service_tier: entry.selection.service_tier.clone().or_else(|| entry.service_tier.clone()),
             usage: Some(usage),
         })
     }

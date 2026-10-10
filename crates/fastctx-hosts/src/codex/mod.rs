@@ -16,6 +16,7 @@ mod account;
 mod agents;
 mod answers;
 mod cache;
+mod commands;
 #[cfg(test)]
 mod contract;
 mod controls;
@@ -285,6 +286,8 @@ struct Thread {
     selection: controls::Selection,
     model: Option<String>,
     effort: Option<String>,
+    #[serde(default)]
+    service_tier: Option<String>,
     usage: Option<Value>,
     metadata: Value,
     #[serde(skip)]
@@ -409,6 +412,7 @@ impl CodexHost {
         entry.created_here = true;
         entry.model = model.clone();
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
+        entry.service_tier = answer.get("serviceTier").and_then(Value::as_str).map(str::to_string);
         entry.metadata = controls::metadata(&answer["thread"]);
         Ok((thread, model))
     }
@@ -685,6 +689,7 @@ impl CodexHost {
         entry.selection = selection;
         entry.model = answer.get("model").and_then(Value::as_str).map(str::to_string);
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
+        entry.service_tier = answer.get("serviceTier").and_then(Value::as_str).map(str::to_string);
         entry.metadata = controls::metadata(&answer["thread"]);
         Ok(())
     }
