@@ -288,6 +288,8 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
                     | "service-node.log"
                     | "server-install.lock"
                     | "hub-services.json"
+                    | "upgrade-clean.lock"
+                    | "cache"
             )
         {
             add(
