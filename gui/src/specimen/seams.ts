@@ -16,16 +16,18 @@ import type { AttachSource } from "../conversation/attach";
 export const specimenOffers: Offers = {
   controls: ["command", "compact", "model", "rename", "fork", "rewind", "answer"],
   commands: [
-    { name: "review", description: "Review the changes so far", args: null, source: "Codex" },
-    { name: "init", description: "Write an AGENTS.md for this place", args: null, source: "Codex" },
-    { name: "mention", description: "Mention a file", args: "<path>", source: "Codex" },
+    { name: "review", description: "Review the changes so far", args: null, arguments: "optional", source: "codex" },
+    { name: "init", description: "Write an AGENTS.md for this place", args: null, arguments: "none", source: "codex" },
+    { name: "goal", description: "Set, show or clear the goal", args: "[get | clear | set <objective>]", arguments: "optional", source: "codex" },
+    { name: "fast", description: "Faster responses", args: null, arguments: "none", source: "codex" },
   ],
   models: [
-    { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", description: "The default", efforts: ["low", "medium", "high", "xhigh"], default_effort: "medium", default: true },
-    { id: "gpt-6-astra", name: "GPT-6 Astra", description: "Deeper, slower", efforts: ["medium", "high", "xhigh"], default_effort: "high", default: false },
+    { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", description: "The default", efforts: ["low", "medium", "high", "xhigh"], default_effort: "medium", default: true, service_tiers: [{ id: "priority", name: "Fast", description: "Faster responses" }], default_service_tier: null },
+    { id: "gpt-6-astra", name: "GPT-6 Astra", description: "Deeper, slower", efforts: ["medium", "high", "xhigh"], default_effort: "high", default: false, service_tiers: [], default_service_tier: null },
   ],
   model: "gpt-6.1-sol",
   effort: "medium",
+  service_tier: null,
   usage: {
     context: null,
     limits: [

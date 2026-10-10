@@ -9,7 +9,7 @@ import type { Attachment } from "../world/attachments";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { SendQueue, type Queued } from "./queue";
-import { Menu, commandRow, commandsOf, modelRow, type MenuCommand } from "./commands";
+import { Menu, commandFor, commandRow, commandsOf, modelRow, usageOf, type MenuCommand } from "./commands";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import type { Details } from "./details";
 import { glyph } from "./glyphs";
@@ -373,7 +373,11 @@ export class ConversationPage {
       const space = text.indexOf(" ");
       const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
       const args = space < 0 ? "" : text.slice(space + 1).trim();
-      const command = commandsOf(this.offered, this.options.controls.words.commands).find((c) => c.name === name);
+      const command = commandFor(commandsOf(this.offered, this.options.controls.words.commands), name, args);
+      if (command?.arguments === "required" && !args) {
+        this.say(this.options.controls.words.commands.needsArgs(usageOf(command)));
+        return;
+      }
       if (command) {
         this.clear();
         void this.run(command, args);
@@ -445,9 +449,10 @@ export class ConversationPage {
 
   /** A line beside the composer: what a command did, or that it did not,
    *  with the host's own words on hover. */
-  private say(text: string, detail = ""): void {
+  private say(text: string, detail = "", refused = false): void {
     this.note.textContent = text;
     this.note.title = detail;
+    this.note.classList.toggle("refused", refused);
   }
 
   /** What a command answered at length, in a panel above the composer
@@ -491,10 +496,11 @@ export class ConversationPage {
     const words = controls.words;
     this.commandMenu = new Menu<MenuCommand>("commands", (command) => commandRow(command), (command) => {
       this.commandMenu!.hide();
-      if (command.args) {
+      if (command.arguments === "required" || (command.arguments === "optional" && !command.control)) {
         this.input.value = `/${command.name} `;
         this.input.focus();
         this.drawAction();
+        if (command.args) this.say(usageOf(command));
       } else {
         this.clear();
         void this.run(command, "");
@@ -558,7 +564,7 @@ export class ConversationPage {
         // name the host did not take gives way to the one it has.
         const before = this.options.conversation.title;
         this.options.conversation.title = name;
-        void this.run({ name: "rename", description: "", args: null, control: "rename", source: null }, "", { do: "rename", name }).then((done) => {
+        void this.run({ name: "rename", description: "", args: null, arguments: "none", control: "rename", source: null }, "", { do: "rename", name }).then((done) => {
           if (!done && this.options.conversation.title === name) {
             this.options.conversation.title = before;
             this.drawState();
@@ -789,7 +795,7 @@ export class ConversationPage {
       () => {
         close();
         if (act === "rewind") {
-          void this.run({ name: "rewind", description: "", args: null, control: "rewind", source: null }, "", { do: "rewind", from: turn }).then(() => {
+          void this.run({ name: "rewind", description: "", args: null, arguments: "none", control: "rewind", source: null }, "", { do: "rewind", from: turn }).then(() => {
             if (words !== null && !this.input.value.trim()) {
               this.input.value = words;
               // What came with the words comes back with them.
@@ -801,7 +807,7 @@ export class ConversationPage {
             }
           });
         } else {
-          void this.run({ name: "fork", description: "", args: null, control: "fork", source: null }, "", { do: "fork", through: turn });
+          void this.run({ name: "fork", description: "", args: null, arguments: "none", control: "fork", source: null }, "", { do: "fork", through: turn });
         }
       },
       { once: true },
@@ -814,7 +820,8 @@ export class ConversationPage {
     this.chip.hidden = !shown;
     if (!shown) return;
     const model = offered.models.find((m) => m.id === offered.model);
-    this.chip.innerHTML = `<span>${escape(model?.name ?? offered.model ?? this.options.controls!.words.modelChip)}</span>${offered.effort ? `<span class="chip-effort">${escape(offered.effort)}</span>` : ""}${glyph("chevron", 14)}`;
+    const tier = offered.service_tier ? (model?.service_tiers.find((t) => t.id === offered.service_tier)?.name ?? offered.service_tier) : null;
+    this.chip.innerHTML = `<span>${escape(model?.name ?? offered.model ?? this.options.controls!.words.modelChip)}</span>${offered.effort ? `<span class="chip-effort">${escape(offered.effort)}</span>` : ""}${tier ? `<span class="chip-effort chip-tier">${escape(tier)}</span>` : ""}${glyph("chevron", 14)}`;
   }
 
   /** Opens the command menu while the words are a command being typed. */
@@ -870,7 +877,7 @@ export class ConversationPage {
   }
 
   private async setModel(model: string | null, effort: string | null): Promise<void> {
-    await this.run({ name: "model", description: "", args: null, control: "model", source: null }, "", { do: "model", model, effort });
+    await this.run({ name: "model", description: "", args: null, arguments: "optional", control: "model", source: null }, "", { do: "model", model, effort });
   }
 
   /** Does a command, the World's own control or the host's; says whether
@@ -919,6 +926,25 @@ export class ConversationPage {
         controls.forked(done.resident);
         return true;
       }
+      if (done.kind === "model_menu") {
+        this.say("");
+        this.modelMenu!.show(done.models, words.noModels);
+        return true;
+      }
+      if (done.kind === "refused") {
+        this.say(done.current_model ? words.refusedOn(done.said, done.current_model) : done.said, "", true);
+        void this.askOffers();
+        return false;
+      }
+      if (done.kind === "reported") {
+        const shown = done.said === null ? null : shownOf(command.name, what, done.said, words.said);
+        if (shown?.kind === "panel") {
+          this.say("");
+          this.showSaid(shown.title, shown.html);
+        } else this.say(shown?.text || words.reported(command.name));
+        void this.askOffers();
+        return true;
+      }
       const model = what.do === "model" ? this.offered?.models.find((m) => m.id === what.model) : undefined;
       const shown = shownOf(command.name, what.do === "model" && model ? { ...what, model: model.name ?? model.id } : what, done.said, words.said);
       if (shown?.kind === "panel") {
@@ -928,7 +954,7 @@ export class ConversationPage {
       void this.askOffers();
       return true;
     } catch (error) {
-      this.say(words.failed(detailOf(error)), detailOf(error));
+      this.say(words.failed(detailOf(error)), detailOf(error), true);
       return false;
     }
   }

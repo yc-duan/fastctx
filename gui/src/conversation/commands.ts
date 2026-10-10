@@ -1,12 +1,15 @@
 // The composer's two menus. Typing `/` at the start of the words opens the
-// conversation's commands: its host's own, as the host lists them now, and
-// the few the World does to any conversation it holds (compact, change the
-// model, rename, fork, stop), each offered only where the conversation
-// takes it. The model chip opens the models the host lists, each with the
-// reasoning efforts it takes.
+// conversation's commands: the few the World does to any conversation it
+// holds (compact, change the model, rename, fork, stop), each offered only
+// where the conversation takes it, and its host's own, as the host lists
+// them now. A World control stands for its name, so the same command does
+// the same thing on every host; the host's command of that name is kept
+// behind it for words the control does not take (`/compact` with
+// instructions). The model chip opens the models the host lists, each with
+// the reasoning efforts it takes.
 
 import { escape } from "./prose";
-import type { CommandOffer, ControlKind, ModelOffer, Offers } from "../world/control";
+import type { CommandArguments, CommandOffer, ControlKind, ModelOffer, Offers } from "../world/control";
 
 export interface CommandWords {
   world: string;
@@ -18,6 +21,10 @@ export interface CommandWords {
   noCommands: string;
   effort: string;
   current: string;
+  /** What rename takes, as a usage hint. */
+  renameArgs: string;
+  /** A command that takes words was sent without them. */
+  needsArgs(usage: string): string;
   /** Codex's commands the World carries out, said in the interface's
    *  words; the node lists them in the words of a command line. */
   host: Record<string, string>;
@@ -28,36 +35,53 @@ export interface MenuCommand {
   name: string;
   description: string;
   args: string | null;
+  arguments: CommandArguments;
   /** The World's control it stands for, when it is one of the World's. */
   control: ControlKind | "stop" | null;
   source: string | null;
   /** The host's own identity for it, handed back when it runs. */
   path?: string | undefined;
+  /** The host's command of the same name a World control stands for. */
+  host?: MenuCommand | undefined;
 }
 
-/** The commands a conversation offers now: its host's, then the World's
- *  for controls it takes whose names its host does not use. */
+/** The commands a conversation offers now: the World's for the controls
+ *  it takes, then its host's under the names left. */
 export function commandsOf(offers: Offers | null, words: CommandWords): MenuCommand[] {
   const own: MenuCommand[] = (offers?.commands ?? []).map((command: CommandOffer) => ({
     name: command.name,
     description: (command.source === "codex" && !command.path && words.host[command.name]) || command.description,
     args: command.args,
+    arguments: command.arguments ?? "optional",
     control: null,
     source: command.source,
     path: command.path,
   }));
-  const taken = new Set(own.map((command) => command.name));
-  const controls = new Set(offers?.controls ?? []);
-  const world: MenuCommand[] = [
-    { name: "compact", description: words.compact, args: null, control: "compact" as const },
-    { name: "model", description: words.model, args: null, control: "model" as const },
-    { name: "rename", description: words.rename, args: "…", control: "rename" as const },
-    { name: "fork", description: words.fork, args: null, control: "fork" as const },
-  ]
-    .filter((command) => controls.has(command.control) && !taken.has(command.name))
-    .map((command) => ({ ...command, source: words.world }));
-  const stop: MenuCommand = { name: "stop", description: words.stop, args: null, control: "stop", source: words.world };
-  return [...own, ...world, ...(taken.has("stop") ? [] : [stop])];
+  const controls = new Set<ControlKind | "stop">([...(offers?.controls ?? []), "stop"]);
+  // A skill keeps its own name even where it is a control's: it is the
+  // host's file, not the command.
+  const hostOf = (name: string) => own.find((command) => command.name === name && !command.path);
+  const world: MenuCommand[] = (
+    [
+      { name: "compact", description: words.compact, args: null, arguments: "none", control: "compact" },
+      { name: "model", description: words.model, args: null, arguments: "optional", control: "model" },
+      { name: "rename", description: words.rename, args: words.renameArgs, arguments: "required", control: "rename" },
+      { name: "fork", description: words.fork, args: null, arguments: "none", control: "fork" },
+      { name: "stop", description: words.stop, args: null, arguments: "none", control: "stop" },
+    ] as const
+  )
+    .filter((command) => controls.has(command.control))
+    .map((command) => ({ ...command, source: words.world, host: hostOf(command.name) }));
+  const standing = new Set(world.map((command) => command.name));
+  return [...world, ...own.filter((command) => command.path || !standing.has(command.name))];
+}
+
+/** What runs for `/name args`: the World's control, unless words follow that
+ *  it takes none of and the host's command of that name takes them. */
+export function commandFor(commands: MenuCommand[], name: string, args: string): MenuCommand | null {
+  const command = commands.find((one) => one.name === name && !one.path) ?? commands.find((one) => one.name === name) ?? null;
+  if (command?.control && args && command.arguments === "none" && command.host && command.host.arguments !== "none") return command.host;
+  return command;
 }
 
 /** A small menu floating above the composer, chosen from with the arrow
@@ -150,6 +174,12 @@ let menus = 0;
 
 export function commandRow(command: MenuCommand): string {
   return `<span class="menu-name">/${escape(command.name)}${command.args ? `<span class="menu-args"> ${escape(command.args)}</span>` : ""}</span><span class="menu-what">${escape(command.description)}</span>${command.source ? `<span class="menu-source">${escape(command.source)}</span>` : ""}`;
+}
+
+/** How a command is written with its words, for the hint while they are
+ *  typed. */
+export function usageOf(command: MenuCommand): string {
+  return `/${command.name}${command.args ? ` ${command.args}` : ""}`;
 }
 
 export function modelRow(model: ModelOffer, current: string | null, words: CommandWords): string {

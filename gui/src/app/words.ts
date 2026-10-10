@@ -3,6 +3,7 @@
 
 import type { AskWords } from "../conversation/asks";
 import type { SaidWords } from "../conversation/said";
+import type { CommandWords } from "../conversation/commands";
 import type { FileWords } from "../conversation/mention";
 import type { PresenceWords } from "./presence";
 import type { ReaderWords } from "./reader";
@@ -1026,19 +1027,7 @@ export interface ComposerWords {
   asks: AskWords;
   attach: AttachWords;
   files: FileWords;
-  commands: {
-    world: string;
-    compact: string;
-    model: string;
-    rename: string;
-    fork: string;
-    stop: string;
-    noCommands: string;
-    effort: string;
-    current: string;
-    /** Codex's commands the World carries out, said in the interface's words. */
-    host: Record<string, string>;
-  };
+  commands: CommandWords;
   said: SaidWords;
   modelChip: string;
   noModels: string;
@@ -1051,6 +1040,10 @@ export interface ComposerWords {
   unknown(name: string): string;
   running(name: string): string;
   done(name: string): string;
+  /** Carried out, with no word from the host on whether it took. */
+  reported(name: string): string;
+  /** The host refused, in its words; it is left on `model`. */
+  refusedOn(said: string, model: string): string;
   failed(why: string): string;
   context(percent: number, used: number, window: number): string;
   usage: {
@@ -1169,6 +1162,8 @@ export const zhComposer: ComposerWords = {
     noCommands: "无匹配命令",
     effort: "推理强度",
     current: "当前",
+    renameArgs: "<名称>",
+    needsArgs: (usage) => `需要参数：${usage}`,
     host: {
       compact: "压缩对话",
       model: "切换模型与推理强度",
@@ -1206,6 +1201,8 @@ export const zhComposer: ComposerWords = {
   unknown: (name) => `未知命令 /${name}`,
   running: (name) => `正在执行 /${name}…`,
   done: (name) => `/${name} 已完成`,
+  reported: (name) => `/${name} 已执行`,
+  refusedOn: (said, model) => `${said}（当前模型 ${model}）`,
   failed: failure(zhProblems, "执行失败"),
   context: (percent, used, window) => `上下文 ${percent}%（${used.toLocaleString()} / ${window.toLocaleString()}）`,
   usage: {
@@ -1331,6 +1328,8 @@ export const enComposer: ComposerWords = {
     noCommands: "No matching commands",
     effort: "Reasoning",
     current: "current",
+    renameArgs: "<name>",
+    needsArgs: (usage) => `Needs arguments: ${usage}`,
     host: {
       compact: "Compact conversation",
       model: "Switch model and reasoning",
@@ -1368,6 +1367,8 @@ export const enComposer: ComposerWords = {
   unknown: (name) => `Unknown command /${name}`,
   running: (name) => `Running /${name}…`,
   done: (name) => `/${name} done`,
+  reported: (name) => `/${name} ran`,
+  refusedOn: (said, model) => `${said} (now on ${model})`,
   failed: failure(enProblems, "Command failed"),
   context: (percent, used, window) => `Context ${percent}% (${used.toLocaleString()} / ${window.toLocaleString()})`,
   usage: {

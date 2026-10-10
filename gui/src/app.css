@@ -291,6 +291,16 @@
   color: var(--text-3);
 }
 
+/* A command the host refused, or that failed: in clay. */
+.composer-note.refused {
+  color: var(--accent);
+}
+
+/* The tier the next turn runs at, such as Fast. */
+.chip-tier {
+  color: var(--accent);
+}
+
 /* The composer's menus float just above it. */
 .composer {
   position: relative;
