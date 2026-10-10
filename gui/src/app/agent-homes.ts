@@ -97,8 +97,8 @@ const pad = (n: number) => String(n).padStart(2, "0");
 
 export const zhHomes: HomeWords = {
   defaultHome: "默认",
-  found: "自动找到",
-  added: "你添加的",
+  found: "自动发现",
+  added: "手动添加",
   window: (name, minutes) => {
     const model = /^seven_day_(\w+)$/.exec(name);
     if (model) return `7 天 · ${planName(model[1]!)}`;
@@ -114,16 +114,16 @@ export const zhHomes: HomeWords = {
     if (minutes < 7 * 24 * 60) return `周${"日一二三四五六"[at.getDay()]} ${clock} 重置`;
     return `${at.getMonth() + 1}月${at.getDate()}日重置`;
   },
-  observed: (when) => `${when} 读到`,
-  credits: (balance, unlimited) => (unlimited ? "用完后用 credits，不限" : balance ? `用完后用 credits，余 ${balance}` : "用完后用 credits"),
-  notRead: "额度要等这个账号的会话干过一轮才读得到",
-  limitsFailed: (why) => `额度没读到：${why}`,
+  observed: (when) => `${when} 更新`,
+  credits: (balance, unlimited) => (unlimited ? "超出后使用 credits（不限）" : balance ? `超出后使用 credits（余 ${balance}）` : "超出后使用 credits"),
+  notRead: "运行一轮后显示额度",
+  limitsFailed: () => "无法获取额度",
 };
 
 export const enHomes: HomeWords = {
   defaultHome: "default",
-  found: "found",
-  added: "added by you",
+  found: "detected",
+  added: "added manually",
   window: (name, minutes) => {
     const model = /^seven_day_(\w+)$/.exec(name);
     if (model) return `7 days · ${planName(model[1]!)}`;
@@ -138,11 +138,11 @@ export const enHomes: HomeWords = {
     if (minutes < 7 * 24 * 60) return `resets ${at.toLocaleString("en", { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false })}`;
     return `resets ${at.toLocaleString("en", { month: "short", day: "numeric" })}`;
   },
-  observed: (when) => `read ${when}`,
+  observed: (when) => `updated ${when}`,
   credits: (balance, unlimited) =>
     unlimited ? "then credits, unlimited" : balance ? `then credits, ${balance} left` : "then credits",
-  notRead: "Limits are read once a session of this account has worked a turn",
-  limitsFailed: (why) => `Limits not read: ${why}`,
+  notRead: "Limits appear after one turn",
+  limitsFailed: () => "Couldn't load limits",
 };
 
 /** How full a window is: past nine tenths it is said with care, and spent
@@ -188,7 +188,7 @@ export function limitsHtml(
   quiet: { notRead: boolean },
 ): string {
   if (!limits) return "";
-  if (limits.kind === "failed") return `<p class="home-limits-said">${escape(words.limitsFailed(limits.reason))}</p>`;
+  if (limits.kind === "failed") return `<p class="home-limits-said" title="${escape(limits.reason)}">${escape(words.limitsFailed(limits.reason))}</p>`;
   if (limits.kind === "unavailable") return quiet.notRead ? `<p class="home-limits-said">${escape(words.notRead)}</p>` : "";
   const windows = limits.value.windows;
   if (!windows.length) return "";

@@ -100,6 +100,7 @@ export class JournalForm {
       go.disabled = false;
       go.textContent = words.save;
       note.textContent = words.failed(String(error));
+      note.title = String(error);
       note.hidden = false;
     }
   }

@@ -186,7 +186,7 @@ export class ConversationView {
       case "health":
         return `<div class="note caution">${escape(entry.health.text)}</div>`;
       case "uncertain":
-        return `<div class="note caution">${escape(words.uncertain(entry.why))}</div>`;
+        return `<div class="note caution" title="${escape(entry.why)}">${escape(words.uncertain(entry.why))}</div>`;
       case "ask":
         return this.ask(entry);
       case "forked": {
@@ -293,9 +293,9 @@ export class ConversationView {
         from && from.machine !== this.context.here ? `<div class="bubble-from">${escape(words.you(from.machine))}</div>` : "";
       const state = sending ? ` ${sending.state}` : "";
       let note = "";
-      if (sending?.state === "failed") note = `<div class="bubble-note wrong">${escape(words.notSent(sending.why))}</div>`;
+      if (sending?.state === "failed") note = `<div class="bubble-note wrong" title="${escape(sending.why)}">${escape(words.notSent(sending.why))}</div>`;
       if (sending?.state === "landed") {
-        note = `<div class="bubble-note">${escape(words.landed(sending.how, sending.machine, sending.why ?? null))}</div>`;
+        note = `<div class="bubble-note"${sending.why ? ` title="${escape(sending.why)}"` : ""}>${escape(words.landed(sending.how, sending.machine, sending.why ?? null))}</div>`;
       }
       return `${who}<div class="bubble${state}">${plain(text)}</div>${note}`;
     }

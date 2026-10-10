@@ -111,6 +111,8 @@ export class ConversationPage {
   private looking = 0;
   private following = true;
   private gone: string | null = null;
+  /** Why the watch ended or broke, in the kernel's words, for the hover. */
+  private goneWhy = "";
   private offered: Offers | null = null;
   private wasMoving = false;
   private commandMenu: Menu<MenuCommand> | null = null;
@@ -1014,6 +1016,7 @@ export class ConversationPage {
    *  says it is no longer live. */
   lost(why: string | null): void {
     this.gone = this.options.words.watchEnded(why);
+    this.goneWhy = why ?? "";
     this.interrupted = false;
     this.drawState();
   }
@@ -1022,6 +1025,7 @@ export class ConversationPage {
    *  stays, and the bar says it is waiting. */
   broken(why: string | null): void {
     this.gone = this.options.words.watchInterrupted(why);
+    this.goneWhy = why ?? "";
     this.interrupted = true;
     this.drawState();
   }
@@ -1031,6 +1035,7 @@ export class ConversationPage {
     if (!this.interrupted) return;
     this.interrupted = false;
     this.gone = null;
+    this.goneWhy = "";
     this.drawState();
   }
 
@@ -1091,6 +1096,8 @@ export class ConversationPage {
     this.state.classList.toggle("working", working);
     this.state.classList.toggle("waiting", waiting);
     this.state.classList.toggle("gone", this.gone !== null);
+    if (this.goneWhy) this.state.title = this.goneWhy;
+    else this.state.removeAttribute("title");
     // How much of the context is used: the host's latest report, from the
     // conversation's events, or from what it offers when it says.
     const used = conversation.context ?? this.offered?.usage?.context ?? null;

@@ -262,7 +262,7 @@ export class ProjectPage {
     const { words } = this.options;
     if (!map.canon) return `<p class="quiet">${escape(words.noDecisions)}</p>`;
     if ("Err" in map.canon && map.canon.Err !== undefined) {
-      return `<p class="quiet caution">${escape(words.decisionsUnreadable(map.canon.Err))}</p>`;
+      return `<p class="quiet caution" title="${escape(map.canon.Err)}">${escape(words.decisionsUnreadable(map.canon.Err))}</p>`;
     }
     const heads = map.canon.Ok ?? [];
     const canon = map.record.canon;

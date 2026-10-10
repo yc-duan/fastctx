@@ -396,6 +396,7 @@ export class PageScreen {
       }
       if (note) {
         note.textContent = this.options.words.failed(error instanceof Error ? error.message : String(error));
+        note.title = error instanceof Error ? error.message : String(error);
         note.hidden = false;
       }
     }

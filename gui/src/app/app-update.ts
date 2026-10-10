@@ -97,6 +97,7 @@ export class AppUpdateRow {
     let said = "";
     let act = "";
     let notes = "";
+    let why = "";
     switch (state.kind) {
       case "checking":
         said = words.appChecking;
@@ -107,6 +108,7 @@ export class AppUpdateRow {
         break;
       case "unknown":
         said = words.appUnknown(state.why);
+        why = state.why;
         act = button("check", words.appCheckAgain);
         break;
       case "available":
@@ -122,11 +124,12 @@ export class AppUpdateRow {
         break;
       case "failed":
         said = words.appFailed(state.why);
+        why = state.why;
         act = button("install", words.appInstall);
         break;
     }
     this.element.hidden = false;
-    this.element.innerHTML = `<dt>${escape(words.app)}</dt><dd><span>${escape(this.version ? `World ${this.version}` : "World")}</span>${act}<p class="settings-said" role="status">${escape(said)}</p>${
+    this.element.innerHTML = `<dt>${escape(words.app)}</dt><dd><span>${escape(this.version ? `World ${this.version}` : "World")}</span>${act}<p class="settings-said" role="status"${why ? ` title="${escape(why)}"` : ""}>${escape(said)}</p>${
       notes ? `<p class="settings-notes">${escape(notes)}</p>` : ""
     }</dd>`;
   }

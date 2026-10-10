@@ -202,7 +202,7 @@ export class SettingsPage implements Page {
         .join("")}</div></div>`;
     this.element.querySelector(".look")!.innerHTML = [
       row("theme", words.theme, [["", words.system], ...themes.map((theme): [string, string] => [theme, words.themes[theme]])], chosenTheme() ?? ""),
-      row("size", words.textSize, [["", words.system], ...textSizes.map((size): [string, string] => [size, words.sizes[size]!])], chosenSize() ?? ""),
+      row("size", words.textSize, [["", words.sizeDefault], ...textSizes.map((size): [string, string] => [size, words.sizes[size]!])], chosenSize() ?? ""),
       row("language", words.language, [["zh", "中文"], ["en", "English"]], language),
       // Only where the shell can call the user from outside the window.
       desktopAvailable() || this.options.phone
@@ -219,7 +219,7 @@ export class SettingsPage implements Page {
     }
     // How this computer or device reaches each hub it is logged in to, and
     // as whom.
-    const hubs = world.nodes.hubs.map((hub): [string, string] => {
+    const hubs = world.nodes.hubs.map((hub): [string, string, string] => {
       const link = hub.link;
       const linked =
         link.kind === "alone"
@@ -229,16 +229,17 @@ export class SettingsPage implements Page {
             : link.kind === "connecting"
               ? words.connecting(link.last_error)
               : words.stopped(link.reason);
-      return [words.hub(hub.name), [linked, words.as(hub.logins.join(", "))].filter(Boolean).join(" · ")];
+      const why = link.kind === "connecting" ? (link.last_error ?? "") : link.kind === "stopped" ? link.reason : "";
+      return [words.hub(hub.name), [linked, words.as(hub.logins.join(", "))].filter(Boolean).join(" · "), why];
     });
-    const facts: [string, string][] = [
+    const facts: [string, string, string?][] = [
       [words.machine, world.here],
       ...(hubs.length ? hubs : [[words.link, words.alone] as [string, string]]),
       [words.version, world.nodes.facts?.version ?? ""],
     ];
     this.device.innerHTML = facts
       .filter(([, value]) => value)
-      .map(([name, value]) => `<dt>${escape(name)}</dt><dd>${escape(value)}</dd>`)
+      .map(([name, value, why]) => `<dt>${escape(name)}</dt><dd${why ? ` title="${escape(why)}"` : ""}>${escape(value)}</dd>`)
       .join("");
   }
 }

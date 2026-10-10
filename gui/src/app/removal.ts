@@ -182,7 +182,7 @@ export class RemovalSection {
       case "planning":
         return `<p class="removal-said">${escape(words.planning)}</p>`;
       case "unlisted":
-        return `<p class="removal-said removal-wrong">${escape(words.failed(state.why))}</p>`;
+        return `<p class="removal-said removal-wrong" title="${escape(state.why)}">${escape(words.failed(state.why))}</p>`;
       case "plan": {
         const { plan } = state;
         const admin = plan.steps.some((step) => step.admin);
@@ -219,7 +219,7 @@ export class RemovalSection {
               : ""
           }
           <div class="removal-go">
-            <span class="removal-admin">${escape(failed ? words.finishWhat : `${words.allDone} ${words.finishWhat}`)}</span>
+            <span class="removal-admin">${escape(failed ? words.finishWhat : `${words.allDone} · ${words.finishWhat}`)}</span>
             <button class="removal-button" type="button" data-removal="finish">${escape(words.finish)}</button>
           </div>
         </div>`;

@@ -25,6 +25,8 @@ const UNDER_WAY: RenewalPhase[] = ["preparing", "waiting_for_idle", "updating_gu
 export class RenewalRow {
   private status: RenewalStatus | null = null;
   private said = "";
+  /** The kernel's own words for what failed, for the hover. */
+  private why = "";
   private busy = false;
   private timer = 0;
   private left = false;
@@ -67,10 +69,12 @@ export class RenewalRow {
     if (this.busy) return;
     this.busy = true;
     this.said = "";
+    this.why = "";
     this.draw();
     (what === "renew" ? this.renewing.renew() : this.renewing.guardian())
       .catch((error: unknown) => {
         this.said = this.words.renewFailed(String(error));
+        this.why = String(error);
       })
       .finally(() => {
         this.busy = false;
@@ -99,10 +103,11 @@ export class RenewalRow {
         ? `<button class="text-button quiet-button" type="button" data-renew="guardian" title="${escape(words.guardianWhy)}"${this.busy ? " disabled" : ""}>${escape(words.guardian)}</button>`
         : "",
     ].join("");
+    const why = [phase === "failed" ? (status?.error ?? "") : "", this.why].filter(Boolean).join("\n");
     const notes = [step, failed, this.said].filter(Boolean);
     this.element.hidden = !state && !notes.length;
     this.element.innerHTML = `<dt>${escape(words.worldVersion)}</dt><dd><span>${escape(state)}</span>${buttons}${notes
-      .map((note) => `<p class="settings-said" role="status">${escape(note)}</p>`)
+      .map((note) => `<p class="settings-said" role="status"${why ? ` title="${escape(why)}"` : ""}>${escape(note)}</p>`)
       .join("")}</dd>`;
   }
 }
