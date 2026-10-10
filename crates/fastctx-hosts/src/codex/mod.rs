@@ -229,10 +229,7 @@ pub enum Desk {
 const COMPUTER_USE: &str = "node_repl";
 /// What the app's helper answers while another request is in flight.
 const HELPER_BUSY: &str = "Computer Use helper already has an active request";
-/// The line that opens the user's answers to questions asked without
-/// waiting, as Codex's own clients write them: the tag keeps its historical
-/// name.
-pub const ASYNC_REPLY_TAG: &str = "<send_user_message_question_reply>";
+pub use fastctx_types::residents::ASYNC_REPLY_TAG;
 
 pub struct CodexHost {
     codex_home: PathBuf,

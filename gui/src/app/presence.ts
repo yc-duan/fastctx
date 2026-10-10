@@ -1,23 +1,26 @@
-// When the World calls the user from outside the window: an agent began
-// waiting for their answer, a conversation they opened finished a turn, or
-// a device or a machine came into one of their accounts, while the window
-// is not in front of them. What is said is the World's own fact, never a
-// summary. A notification is taken back once what it
-// called for no longer holds, and a click on it opens that conversation.
-// The shell's own mechanics are in `world/desktop.ts`.
+// When the World calls the user from outside the window: an agent asked
+// them something, a conversation they opened finished a turn, or a device
+// or a machine came into one of their accounts, while the window is not in
+// front of them. The title says who; the body is what the agent said, its
+// question or its reply, never a summary. A question asked without waiting
+// with a few answers to choose from carries them as buttons, answered from
+// the notification without opening the window. A notification is taken
+// back once what it called for no longer holds, and a click on it opens
+// that conversation. The shell's own mechanics are in `world/desktop.ts`.
 
+import { replyOf } from "../conversation/async-ask";
 import { connectDesktop, desktopAvailable, dismissDesktopNotice, getWindowPresence, notifyDesktop } from "../world/desktop";
 import type { Address } from "../world/events";
-import type { ResidentNow } from "../world/world";
+import type { Asked, ResidentNow } from "../world/world";
 import { link, placeOf, talkLink } from "./places";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 
 export interface PresenceWords {
-  waiting(who: string): string;
-  waitingBody(town: string | null): string;
+  /** The agent asks the user something; `what` is what it wants of them,
+   *  `waiting` when its host said no more than that it waits. */
+  asked(who: string, what: Asked["what"] | "waiting"): string;
   finished(who: string): string;
-  finishedBody(town: string | null, last: string | null): string;
   open: string;
   stop: string;
   /** A device or a machine came into `login`, the account it logged in to. */
@@ -32,9 +35,15 @@ export interface PresenceOptions {
   someone(resident: ResidentNow): string;
   /** Stops the turn of the conversation a notification is about. */
   stop(address: Address): Promise<unknown>;
+  /** The user's words to the conversation, sent at once. */
+  say(address: Address, text: string): Promise<unknown>;
 }
 
 const KEY = "notify";
+
+/** The most answers a notification offers as buttons: what an Android
+ *  notification shows, kept the same on a computer. */
+export const ANSWER_BUTTONS = 3;
 
 /** Whether the user wants to be called; on unless they turned it off. */
 export function notifying(): boolean {
@@ -54,19 +63,60 @@ export function chooseNotifying(on: boolean): void {
   }
 }
 
+/** What a notification about a resident's question is keyed by: a new
+ *  question is a new call; none when it asks nothing. A host that only
+ *  says it waits is a question too. */
+export function askedKey(now: ResidentNow["now"]): string | null {
+  return now?.asked?.id ?? (now?.waiting_for_user ? "waiting" : null);
+}
+
+/** The answers a question offers as buttons: one question asked without
+ *  waiting, with a few options. */
+export function answerButtons(asked: Asked | undefined): string[] {
+  const options = asked?.options ?? [];
+  return asked && !asked.waits && asked.what === "answer" && options.length > 0 && options.length <= ANSWER_BUTTONS ? options : [];
+}
+
+/** The user's choice among a question's buttons, as the words that answer
+ *  it: Codex's own envelope. */
+export function answerWith(asked: Asked, choice: number): string {
+  return replyOf(asked.id, [{ title: asked.text, options: asked.options ?? null }], [asked.options![choice]!]);
+}
+
 export function startPresence(options: PresenceOptions): void {
   if (!desktopAvailable()) return;
   const { store, words } = options;
   void connectDesktop({
     async onActivation({ route, action }) {
-      if (route) location.hash = route;
       const target = route ? placeOf(route) : null;
+      const answer = /^answer:(\d+)$/.exec(action ?? "");
+      if (answer && target?.kind === "talk") {
+        await answerFrom(target.address, Number(answer[1]));
+        return;
+      }
+      if (route) location.hash = route;
       if (action === "stop" && target?.kind === "talk") await options.stop(target.address);
     },
     onError(error, notificationId) {
       console.error("World desktop", notificationId, error);
     },
   }).catch((error: unknown) => console.error("Connecting World's desktop", error));
+
+  /** Answers the question a notification's button was about, once the
+   *  World is known: a cold start from the button may come before it. */
+  async function answerFrom(address: Address, choice: number): Promise<void> {
+    const asked = await new Promise<Asked | undefined>((resolve) => {
+      const stop = effect(() => {
+        const world = store.world.get();
+        if (!world) return;
+        const resident = residentsOf(world).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
+        queueMicrotask(() => stop());
+        resolve(resident?.now?.asked);
+      });
+    });
+    if (!asked || !answerButtons(asked)[choice]) return;
+    await options.say(address, answerWith(asked, choice));
+  }
 
   // Who came into an account this computer or device is logged in to:
   // each called about once, the first look only learns.
@@ -90,7 +140,7 @@ export function startPresence(options: PresenceOptions): void {
   });
 
   // What each conversation was last seen doing; the first look only learns.
-  let seen: Map<string, { waiting: boolean; busy: boolean }> | null = null;
+  let seen: Map<string, { asked: string | null; busy: boolean }> | null = null;
   const shown = new Map<string, string>();
   const key = (r: ResidentNow) => `${r.about.id}@${r.about.machine}`;
 
@@ -99,31 +149,33 @@ export function startPresence(options: PresenceOptions): void {
     if (!world) return;
     const residents = residentsOf(world);
     const before = seen;
-    seen = new Map(residents.map((r) => [key(r), { waiting: !!r.now?.waiting_for_user, busy: r.now?.activity === "busy" }]));
+    seen = new Map(residents.map((r) => [key(r), { asked: askedKey(r.now), busy: r.now?.activity === "busy" }]));
     for (const r of residents) {
       const id = key(r);
       const now = seen.get(id)!;
-      // What a notification called for no longer holds: it is taken back.
-      if (!now.waiting && shown.has(`${id}:waiting`)) {
-        void dismissDesktopNotice(shown.get(`${id}:waiting`)!).catch(() => {});
-        shown.delete(`${id}:waiting`);
-      }
       const was = before?.get(id);
+      // What a notification called for no longer holds: it is taken back.
+      if (now.asked !== (was?.asked ?? null) && shown.has(`${id}:asked`)) {
+        void dismissDesktopNotice(shown.get(`${id}:asked`)!).catch(() => {});
+        shown.delete(`${id}:asked`);
+      }
       if (!before || !notifying()) continue;
       const address = { resident: r.about.id, machine: r.about.machine };
-      if (now.waiting && !was?.waiting) {
-        void call(`${id}:waiting`, {
-          title: words.waiting(options.someone(r)),
-          body: words.waitingBody(r.town),
+      if (now.asked && now.asked !== was?.asked) {
+        const asked = r.now?.asked;
+        const buttons = answerButtons(asked);
+        void call(`${id}:asked`, {
+          title: words.asked(options.someone(r), asked?.what ?? "waiting"),
+          body: asked?.text ?? "",
           route: talkLink(address),
-          actions: [{ id: "open", title: words.open }],
+          actions: buttons.length ? buttons.map((option, index) => ({ id: `answer:${index}`, title: option, quiet: true })) : [{ id: "open", title: words.open }],
         });
-      } else if (was?.busy && !now.busy && !now.waiting && r.about.origin.kind === "user" && r.about.world_started) {
+      } else if (was?.busy && !now.busy && !now.asked && r.about.origin.kind === "user" && r.about.world_started) {
         // Only conversations opened through the World: one the user opened
         // in an editor or an app is in front of them there.
         void call(`${id}:finished`, {
           title: words.finished(options.someone(r)),
-          body: words.finishedBody(r.town, r.last_action?.what ?? null),
+          body: r.now?.last_said ?? "",
           route: talkLink(address),
           actions: [{ id: "open", title: words.open }],
         });
@@ -132,7 +184,7 @@ export function startPresence(options: PresenceOptions): void {
   });
 
   /** Calls the user, unless the window is in front of them already. */
-  async function call(id: string, notice: { title: string; body: string; route: string; actions: { id: string; title: string }[] }): Promise<void> {
+  async function call(id: string, notice: { title: string; body: string; route: string; actions: { id: string; title: string; quiet?: boolean }[] }): Promise<void> {
     const presence = await getWindowPresence();
     if (presence.focused) return;
     const previous = shown.get(id);

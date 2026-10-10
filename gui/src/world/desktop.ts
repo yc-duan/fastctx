@@ -15,7 +15,9 @@ export interface DesktopNotice {
   title: string;
   body: string;
   route: string;
-  actions?: { id: string; title: string }[];
+  /** A quiet button hands its choice to the page without bringing the
+   *  window forward: an answer given from the notification. */
+  actions?: { id: string; title: string; quiet?: boolean }[];
 }
 
 export interface DesktopActivation {

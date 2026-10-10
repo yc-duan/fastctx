@@ -29,6 +29,9 @@ struct Activation {
     route: Option<String>,
     action: Option<String>,
     notification_id: Option<String>,
+    /// A quiet button's: the window stays where it is.
+    #[serde(skip)]
+    quiet: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -150,11 +153,12 @@ async fn launch(app: &tauri::AppHandle, launch: Launch) -> Result<(), String> {
                     if let Some(route) = &route {
                         notifications::route(route)?;
                     }
-                    Activation { route, action: None, notification_id: None }
+                    Activation { route, action: None, notification_id: None, quiet: false }
                 }
             };
+            let quiet = activation.quiet;
             state.push(&handle, Event::Activation(activation));
-            reveal(&handle)
+            if quiet { Ok(()) } else { reveal(&handle) }
         })();
         let _ = send.send(result);
     })

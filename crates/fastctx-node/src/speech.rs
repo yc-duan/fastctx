@@ -486,6 +486,9 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
         {
             node.log.line(format_args!("recording {id}'s first words: {error}"));
         }
+        if let Err(error) = crate::asked::settle(node, id, |asked| crate::asked::answers(&text, asked)) {
+            node.log.line(format_args!("recording that {id}'s question was answered: {error}"));
+        }
     }
     if let Some((about, town)) = node.residents.about(id)
         && matches!(about.origin, Origin::Colleague { .. })

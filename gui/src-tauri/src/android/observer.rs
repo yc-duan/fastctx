@@ -1,5 +1,9 @@
 //! Executes the page's explicit notification policy without a WebView.
 //! State survives process death; unavailable machines retain their last facts.
+//! The page gives the titles, in its words; the body is the agent's own:
+//! what it asks, or the reply that ended its turn. A question asked without
+//! waiting with a few answers carries them as buttons, each with the words
+//! that answer it, sent from the notification without opening the app.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -8,10 +12,11 @@ use std::time::Duration;
 
 use fastctx_client::World;
 use fastctx_platform::{Permissions, publish};
-use fastctx_types::residents::{Activity, Origin};
+use fastctx_types::residents::{Activity, Asked, AskedFor, Origin};
 use fastctx_types::town::{MachineWho, ResidentNow};
 use fastctx_types::world::LinkState;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::bridge::Bridge;
 
@@ -29,39 +34,28 @@ struct Policy {
 struct Rule {
     when: Transition,
     user_started_only: bool,
-    title: String,
-    body: Body,
+    title: Title,
 }
 
+/// A title, or one for each thing an agent may ask (`AskedFor`, and
+/// `waiting` for a host that only says it waits).
 #[derive(Deserialize)]
 #[serde(untagged)]
-enum Body {
+enum Title {
     Text(String),
-    Cases(BodyCases),
+    Kinds(BTreeMap<String, String>),
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BodyCases {
-    neither: String,
-    town: String,
-    last: String,
-    both: String,
-}
-
-impl Body {
-    fn template(&self, resident: &ResidentNow) -> &str {
+impl Title {
+    fn template(&self, asked: Option<&Asked>) -> Option<&str> {
         match self {
-            Self::Text(text) => text,
-            Self::Cases(cases) => match (
-                resident.town.is_some(),
-                resident.last_action.as_ref().is_some_and(|action| !action.what.is_empty()),
-            ) {
-                (false, false) => &cases.neither,
-                (true, false) => &cases.town,
-                (false, true) => &cases.last,
-                (true, true) => &cases.both,
-            },
+            Self::Text(text) => Some(text),
+            Self::Kinds(kinds) => {
+                let kind = asked.map_or(Value::from("waiting"), |asked| {
+                    serde_json::to_value(asked.what).expect("kinds serialize")
+                });
+                kinds.get(kind.as_str()?).map(String::as_str)
+            }
         }
     }
 }
@@ -69,14 +63,36 @@ impl Body {
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum Transition {
-    Waiting,
+    Asked,
     Finished,
+}
+
+/// The most answers a notification offers as buttons: what Android shows.
+const ANSWER_BUTTONS: usize = 3;
+
+/// The answers a question offers as buttons, with the words that give each.
+fn answers(asked: &Asked) -> Vec<(String, String)> {
+    if asked.waits || asked.what != AskedFor::Answer || asked.options.len() > ANSWER_BUTTONS {
+        return vec![];
+    }
+    (0..asked.options.len()).filter_map(|choice| Some((asked.options[choice].clone(), asked.reply(choice)?))).collect()
+}
+
+/// What a notification about a resident's question is keyed by: a new
+/// question is a new call (`gui/src/app/presence.ts`, `askedKey`).
+fn asked_key(resident: &ResidentNow) -> Option<String> {
+    let now = resident.now.as_ref()?;
+    now.asked.as_ref().map(|asked| asked.id.clone()).or_else(|| now.waiting_for_user.then(|| "waiting".into()))
 }
 
 pub(super) fn validate(json: &str) -> Result<(), String> {
     let policy: Policy = serde_json::from_str(json).map_err(|error| error.to_string())?;
     for (index, rule) in policy.rules.iter().enumerate() {
-        if rule.title.is_empty() {
+        let untitled = match &rule.title {
+            Title::Text(text) => text.is_empty(),
+            Title::Kinds(kinds) => kinds.is_empty() || kinds.values().any(String::is_empty),
+        };
+        if untitled {
             return Err("a notification rule needs a title".into());
         }
         if policy.rules[..index].iter().any(|other| other.when == rule.when) {
@@ -96,33 +112,16 @@ struct Observed {
 #[derive(Deserialize, Serialize)]
 struct Seen {
     machine: String,
-    waiting: bool,
+    #[serde(default)]
+    asked: Option<String>,
     busy: bool,
 }
 
+/// A title from the page's words, `{who}` standing for who it is about.
 fn format(template: &str, resident: &ResidentNow, policy: &Policy) -> String {
     let agent = resident.about.host.agent.to_string();
     let agent = policy.agent_names.get(&agent).map(String::as_str).unwrap_or(&agent);
-    let who = format!("{agent} · {}", resident.about.machine);
-    // Substitutions are made once, so user content containing a placeholder
-    // cannot turn into a second template expression.
-    let mut result = String::new();
-    let mut rest = template;
-    while let Some(start) = rest.find('{') {
-        result.push_str(&rest[..start]);
-        rest = &rest[start..];
-        let Some(end) = rest.find('}') else { break };
-        let replacement = match &rest[..=end] {
-            "{who}" => Some(who.as_str()),
-            "{town}" => Some(resident.town.as_ref().map(|town| town.as_str()).unwrap_or("")),
-            "{last}" => Some(resident.last_action.as_ref().map(|action| action.what.as_str()).unwrap_or("")),
-            _ => None,
-        };
-        result.push_str(replacement.unwrap_or(&rest[..=end]));
-        rest = &rest[end + 1..];
-    }
-    result.push_str(rest);
-    result
+    template.replacen("{who}", &format!("{agent} · {}", resident.about.machine), 1)
 }
 
 async fn observe(world: &World, bridge: &Bridge, observed: &mut Observed) -> Result<(), String> {
@@ -142,23 +141,24 @@ async fn observe(world: &World, bridge: &Bridge, observed: &mut Observed) -> Res
             .map(|(key, _)| key.clone())
             .collect();
         for key in removed {
-            bridge.action("dismissNotice", &format!("{key}:waiting"))?;
+            bridge.action("dismissNotice", &format!("{key}:asked"))?;
             observed.residents.remove(&key);
         }
         for resident in residents {
             let key = format!("{}@{}", resident.about.id, resident.about.machine);
             let now = Seen {
                 machine: resident.about.machine.to_string(),
-                waiting: resident.now.as_ref().is_some_and(|now| now.waiting_for_user),
+                asked: asked_key(&resident),
                 busy: resident.now.as_ref().is_some_and(|now| now.activity == Activity::Busy),
             };
-            if !now.waiting {
-                bridge.action("dismissNotice", &format!("{key}:waiting"))?;
-            }
             let before = observed.residents.get(&key);
-            let transition = if now.waiting && !before.is_some_and(|was| was.waiting) {
-                Some(Transition::Waiting)
-            } else if before.is_some_and(|was| was.busy) && !now.busy && !now.waiting {
+            // What a notification called for no longer holds: it is taken back.
+            if before.is_some_and(|was| was.asked.is_some() && was.asked != now.asked) {
+                bridge.action("dismissNotice", &format!("{key}:asked"))?;
+            }
+            let transition = if now.asked.is_some() && before.is_none_or(|was| was.asked != now.asked) {
+                Some(Transition::Asked)
+            } else if before.is_some_and(|was| was.busy) && !now.busy && now.asked.is_none() {
                 Some(Transition::Finished)
             } else {
                 None
@@ -172,20 +172,37 @@ async fn observe(world: &World, bridge: &Bridge, observed: &mut Observed) -> Res
                             || (resident.about.world_started && matches!(resident.about.origin, Origin::User)))
                 })
             {
-                let id = match rule.when {
-                    Transition::Waiting => format!("{key}:waiting"),
-                    Transition::Finished => format!("{key}:finished"),
+                let asked = resident.now.as_ref().and_then(|now| now.asked.as_ref());
+                let (id, body, version, answers) = match rule.when {
+                    Transition::Asked => (
+                        format!("{key}:asked"),
+                        asked.map(|asked| asked.text.clone()).unwrap_or_default(),
+                        now.asked.clone(),
+                        asked.map(answers).unwrap_or_default(),
+                    ),
+                    Transition::Finished => (
+                        format!("{key}:finished"),
+                        resident.now.as_ref().and_then(|now| now.last_said.clone()).unwrap_or_default(),
+                        resident.now.as_ref().map(|now| now.since.to_string()),
+                        vec![],
+                    ),
                 };
                 let route = format!("#/talk/{}%40{}", resident.about.id, resident.about.machine);
-                bridge.string_arg(
-                    "showNotice",
-                    &serde_json::json!({
-                        "id": id, "title": format(&rule.title, &resident, &policy),
-                        "body": format(rule.body.template(&resident), &resident, &policy), "route": route,
-                        "version": resident.now.as_ref().map(|now| now.since.to_string()),
-                    })
-                    .to_string(),
-                )?;
+                let answers: Vec<_> = answers
+                    .into_iter()
+                    .map(|(label, words)| serde_json::json!({"label": label, "words": words}))
+                    .collect();
+                if let Some(title) = rule.title.template(asked) {
+                    bridge.string_arg(
+                        "showNotice",
+                        &serde_json::json!({
+                            "id": id, "title": format(title, &resident, &policy), "body": body, "route": route,
+                            "version": version, "answers": answers,
+                            "to": {"resident": resident.about.id, "machine": resident.about.machine},
+                        })
+                        .to_string(),
+                    )?;
+                }
             }
             observed.residents.insert(key, now);
         }
@@ -218,7 +235,7 @@ pub(super) async fn run(world: World, directory: PathBuf, bridge: Arc<Bridge>) {
         let result = async {
             if observed.world != hubs {
                 for key in observed.residents.keys() {
-                    bridge.action("dismissNotice", &format!("{key}:waiting"))?;
+                    bridge.action("dismissNotice", &format!("{key}:asked"))?;
                     bridge.action("dismissNotice", &format!("{key}:finished"))?;
                 }
                 observed = Observed { world: hubs.clone(), ..Observed::default() };

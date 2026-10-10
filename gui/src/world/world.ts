@@ -61,6 +61,23 @@ export interface Now {
   /** The start of the last message of the latest turn that ended: what a
    *  notification of that turn says. */
   last_said?: string;
+  /** What the agent asked the user and has not had answered. */
+  asked?: Asked;
+}
+
+/** Something the agent asked the user: a request its turn waits on, or a
+ *  question asked without waiting. */
+export interface Asked {
+  /** A new one is a new question. */
+  id: string;
+  at: Timestamp;
+  waits: boolean;
+  what: "answer" | "command" | "change" | "tool" | "plan" | "form" | "other";
+  /** Its questions, one a line; the command, files or tool it asks leave
+   *  for; a form's message. */
+  text: string;
+  /** The answers offered to a single question. */
+  options?: string[];
 }
 
 export interface Action {

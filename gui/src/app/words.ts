@@ -34,7 +34,6 @@ export interface ShellWords {
   busy(lasted: string): string;
   idle: string;
   waiting: string;
-  asleep: string;
   offline: string;
   noProjects: string;
   nobodyHere: string;
@@ -60,6 +59,7 @@ export interface ShellWords {
 }
 
 export interface NewTalkWords {
+  english: boolean;
   title: string;
   /** Which agent, as one of its logins; and choosing another than the one
    *  chosen. */
@@ -86,14 +86,8 @@ export interface NewTalkWords {
   /** The first use of an agent on another's machine: what it lets that
    *  machine do; `everything` for the super administrator. */
   reaches(owner: string, machine: string, everything: boolean): string;
-  colleagues: string;
-  noColleagues: string;
-  /** A machine whose Codex was lent to the account. */
+  /** An agent lent to the account, by whom. */
   lentBy(owner: string): string;
-  /** What choosing where colleagues live means: the hover of its label. */
-  colleaguesWhat(machine: string): string;
-  /** The Codex login its colleagues use where they live. */
-  colleaguesLogin: string;
   /** Where a lent agent's files other than images go. */
   filesOn: string;
   /** The hover of the files row's label. */
@@ -131,6 +125,7 @@ export interface NewTalkWords {
 }
 
 export const zhNewTalk: NewTalkWords = {
+  english: false,
   title: "新对话",
   agent: "智能体",
   another: "更换",
@@ -149,11 +144,7 @@ export const zhNewTalk: NewTalkWords = {
     everything
       ? `首次使用后，${machine} 上的智能体可访问本服务器的所有机器，${owner} 也将能访问。可在账号页撤销。`
       : `首次使用后，${machine} 上的智能体可访问你的机器，${owner} 也将能访问。可在账号页撤销。`,
-  colleagues: "同事",
-  noColleagues: "不使用",
   lentBy: (owner) => `借自 ${owner}`,
-  colleaguesWhat: (machine) => `${machine} 上的 Codex 可分担工作，可在对话详情中更改`,
-  colleaguesLogin: "同事登录",
   filesOn: "文件存放",
   filesOnWhat: "图片留在智能体所在机器，其他文件存放到所选机器",
   noFilePlace: "没有可存放文件的机器",
@@ -183,6 +174,7 @@ export const zhNewTalk: NewTalkWords = {
 };
 
 export const enNewTalk: NewTalkWords = {
+  english: true,
   title: "New conversation",
   agent: "Agent",
   another: "Change",
@@ -201,11 +193,7 @@ export const enNewTalk: NewTalkWords = {
     everything
       ? `After first use, agents on ${machine} can access every machine on this server, and so can ${owner}. Revoke anytime on the Account page.`
       : `After first use, agents on ${machine} can access your machines, and so can ${owner}. Revoke anytime on the Account page.`,
-  colleagues: "Colleagues",
-  noColleagues: "None",
   lentBy: (owner) => `lent by ${owner}`,
-  colleaguesWhat: (machine) => `Codex on ${machine} can share the work; change it in the conversation's details`,
-  colleaguesLogin: "Colleague login",
   filesOn: "Files to",
   filesOnWhat: "Images stay with the agent; other files go to the machine you choose",
   noFilePlace: "No machine to store files",
@@ -235,10 +223,9 @@ export const enNewTalk: NewTalkWords = {
 };
 
 export const zhPresence: PresenceWords = {
-  waiting: (who) => `${who} 等待你回复`,
-  waitingBody: (town) => (town ? `项目 ${town}` : ""),
-  finished: (who) => `${who} 回复完成`,
-  finishedBody: (town, last) => [town ? `项目 ${town}` : null, last].filter(Boolean).join(" · "),
+  asked: (who, what) =>
+    `${who} ${{ answer: "问你", command: "想运行命令", change: "想改文件", tool: "想用工具", plan: "想按计划动手", form: "等你填写", other: "等你允许", waiting: "等你回复" }[what]}`,
+  finished: (who) => `${who} 回复了`,
   open: "打开",
   stop: "停止",
   arrived: (name, device, login) => `新${device ? "设备" : "机器"} ${name} 加入 ${login}`,
@@ -246,10 +233,9 @@ export const zhPresence: PresenceWords = {
 };
 
 export const enPresence: PresenceWords = {
-  waiting: (who) => `${who} is waiting for your reply`,
-  waitingBody: (town) => (town ? `Project ${town}` : ""),
+  asked: (who, what) =>
+    `${who} ${{ answer: "asks", command: "wants to run a command", change: "wants to change files", tool: "wants to use a tool", plan: "wants to start on its plan", form: "needs a form filled in", other: "needs your OK", waiting: "is waiting for your reply" }[what]}`,
   finished: (who) => `${who} replied`,
-  finishedBody: (town, last) => [town ? `Project ${town}` : null, last].filter(Boolean).join(" · "),
   open: "Open",
   stop: "Stop",
   arrived: (name, device, login) => `New ${device ? "device" : "machine"} ${name} joined ${login}`,
@@ -625,7 +611,6 @@ export interface DetailsWords {
   state: string;
   busy(lasted: string): string;
   idle(ago: string): string;
-  asleep(ago: string): string;
   removed(ago: string): string;
   waiting: string;
   trouble: string;
@@ -643,23 +628,8 @@ export interface DetailsWords {
    *  machine by default. */
   lentBy: string;
   worksLent: string;
-  /** A machine colleagues may live on whose Codex is lent. */
-  colleagueLent(owner: string): string;
   actingFor: string;
   separator: string;
-  /** Where its colleagues live, when it may ask for them. */
-  colleaguesLive(machine: string): string;
-  noColleagues: string;
-  allowColleagues: string;
-  changeColleagues: string;
-  colleaguesWhere: string;
-  colleaguesNone: string;
-  colleaguesOn(machine: string): string;
-  colleaguesOff: string;
-  /** Which Codex login they use where they live, where it has several. */
-  colleaguesLogin: string;
-  colleaguesAs(login: string): string;
-  defaultLogin: string;
   /** Which login of its agent it uses, where not the default one. */
   login: string;
   running: string;
@@ -677,12 +647,6 @@ export interface DetailsWords {
   cannotLook(why: string): string;
   notFound: string;
   manage: string;
-  sleep: string;
-  wake: string;
-  /** Why an agent in the middle of a turn cannot be put to sleep. */
-  cannotSleepBusy: string;
-  slept: string;
-  woke: string;
   move: string;
   moveTo: string;
   /** Beside the project it is in now. */
@@ -700,8 +664,6 @@ export interface DetailsWords {
   /** A stage of an act that was not done: where, how, and the World's
    *  own account of it. */
   unfinished(stage: string, outcome: "pending" | "unsupported" | "failed", detail: string): string;
-  /** Codex keeps an idle thread loaded a while before it lets it go. */
-  sleepPending: string;
   cancel: string;
   working: string;
   failed(why: string): string;
@@ -723,34 +685,21 @@ export const zhDetails: DetailsWords = {
   state: "状态",
   busy: (lasted) => `工作中 · ${lasted}`,
   idle: (ago) => `空闲 · ${ago}前`,
-  asleep: (ago) => `休眠 · ${ago}前`,
   removed: (ago) => `${ago}前已移除`,
   waiting: "等待回复",
   trouble: "异常",
   task: "任务",
-  colleagues: "同事",
+  colleagues: "调用的模型",
   worksOn: "工作机器",
   worksOnLives: "所在机器",
   lentBy: "借自",
   worksLent: "每条命令指定",
-  colleagueLent: (owner) => `借自 ${owner}`,
   worksOnThere: (machine) => machine,
   changeWorksOn: "更改",
   livesHere: (machine) => `所在机器（${machine}）`,
   worksOnSet: (machine) => `下一条命令起在 ${machine} 上运行`,
   actingFor: "所属账号",
   separator: "、",
-  colleaguesLive: (machine) => `同事在 ${machine}`,
-  noColleagues: "未启用",
-  allowColleagues: "启用",
-  changeColleagues: "更改",
-  colleaguesWhere: "同事所在机器",
-  colleaguesNone: "停用",
-  colleaguesOn: (machine) => `已启用，同事在 ${machine}`,
-  colleaguesOff: "已停用",
-  colleaguesLogin: "同事登录",
-  colleaguesAs: (login) => `同事将使用 ${login}`,
-  defaultLogin: "默认登录",
   login: "登录",
   running: "运行中的作业",
   actions: (shown, total) => (shown < total ? `最近动作 ${shown}/${total}` : "动作"),
@@ -767,11 +716,6 @@ export const zhDetails: DetailsWords = {
   cannotLook: () => "无法获取详情",
   notFound: "未找到该对话",
   manage: "管理",
-  sleep: "休眠",
-  wake: "唤醒",
-  cannotSleepBusy: "本轮结束后才能休眠",
-  slept: "已休眠，收到消息时自动唤醒",
-  woke: "已唤醒",
   move: "移动到项目",
   moveTo: "目标项目",
   inHere: "当前",
@@ -784,7 +728,6 @@ export const zhDetails: DetailsWords = {
   removeWhat: "移除后不再显示，记录归档保留，运行中的作业不受影响。",
   removeGo: "移除",
   removedButNot: "已移除，未完成：",
-  sleepPending: "空闲约一分钟后自动休眠",
   unfinished: (stage, outcome) =>
     `${{ host: "宿主", records: "记录", tools: "工具", notification: "通知" }[stage] ?? stage}${{ pending: "等待中", unsupported: "不支持", failed: "失败" }[outcome]}`,
   cancel: "关闭",
@@ -808,34 +751,21 @@ export const enDetails: DetailsWords = {
   state: "Status",
   busy: (lasted) => `working · ${lasted}`,
   idle: (ago) => `idle · ${ago} ago`,
-  asleep: (ago) => `sleeping · ${ago} ago`,
   removed: (ago) => `removed ${ago} ago`,
   waiting: "waiting for your reply",
   trouble: "Issues",
   task: "Task",
-  colleagues: "Colleagues",
+  colleagues: "Models it called",
   worksOn: "Works on",
   worksOnLives: "its own machine",
   lentBy: "Lent by",
   worksLent: "chosen per command",
-  colleagueLent: (owner) => `lent by ${owner}`,
   worksOnThere: (machine) => machine,
   changeWorksOn: "Change",
   livesHere: (machine) => `its own machine (${machine})`,
   worksOnSet: (machine) => `Runs on ${machine} from the next command`,
   actingFor: "Account",
   separator: ", ",
-  colleaguesLive: (machine) => `on ${machine}`,
-  noColleagues: "off",
-  allowColleagues: "Turn on",
-  changeColleagues: "Change",
-  colleaguesWhere: "Colleagues on",
-  colleaguesNone: "Turn off",
-  colleaguesOn: (machine) => `On, colleagues on ${machine}`,
-  colleaguesOff: "Turned off",
-  colleaguesLogin: "Colleague login",
-  colleaguesAs: (login) => `Colleagues will use ${login}`,
-  defaultLogin: "default login",
   login: "Login",
   running: "Running jobs",
   actions: (shown, total) => (shown < total ? `Recent actions ${shown}/${total}` : "Actions"),
@@ -852,11 +782,6 @@ export const enDetails: DetailsWords = {
   cannotLook: () => "Couldn't load details",
   notFound: "Conversation not found",
   manage: "Manage",
-  sleep: "Sleep",
-  wake: "Wake",
-  cannotSleepBusy: "Can sleep once this turn ends",
-  slept: "Sleeping; a new message wakes it",
-  woke: "Awake",
   move: "Move to project",
   moveTo: "Project",
   inHere: "current",
@@ -869,7 +794,6 @@ export const enDetails: DetailsWords = {
   removeWhat: "It will no longer be listed. Its records are archived; running jobs continue.",
   removeGo: "Remove",
   removedButNot: "Removed. Not finished: ",
-  sleepPending: "Sleeps after about a minute idle",
   unfinished: (stage, outcome) =>
     `${{ host: "host", records: "records", tools: "tools", notification: "notification" }[stage] ?? stage} ${{ pending: "pending", unsupported: "unsupported", failed: "failed" }[outcome]}`,
   cancel: "Close",
@@ -1460,7 +1384,6 @@ export const zhShell: ShellWords = {
   busy: (lasted) => `工作中 · ${lasted}`,
   idle: "空闲",
   waiting: "等待回复",
-  asleep: "休眠",
   offline: "离线",
   noProjects: "暂无项目",
   nobodyHere: "暂无对话",
@@ -1499,7 +1422,6 @@ export const enShell: ShellWords = {
   busy: (lasted) => `working · ${lasted}`,
   idle: "idle",
   waiting: "waiting for your reply",
-  asleep: "sleeping",
   offline: "offline",
   noProjects: "No projects yet",
   nobodyHere: "No conversations",

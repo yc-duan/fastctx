@@ -1056,12 +1056,12 @@ export class ConversationPage {
     }
   }
 
-  private away: "asleep" | "removed" | null = null;
+  private away: "removed" | null = null;
 
   /** Whether the World holds it asleep, or the user removed it, as the
    *  World last listed it. Removed, it is kept to read: the composer
    *  gives way to a line saying so, since words no longer reach it. */
-  presence(away: "asleep" | "removed" | null): void {
+  presence(away: "removed" | null): void {
     if (this.away === away) return;
     this.away = away;
     const removed = away === "removed";
@@ -1145,9 +1145,7 @@ export class ConversationPage {
           ? words.waitingForYou
           : working
             ? words.working
-            : this.away === "asleep"
-              ? words.asleep
-              : words.idle);
+            : words.idle);
     // A screen reader hears the conversation change state, once each time:
     // its words as they stream would be too many to hear.
     if (this.said !== null && this.said !== now) this.spoken.textContent = `${someone.agent} · ${now}`;

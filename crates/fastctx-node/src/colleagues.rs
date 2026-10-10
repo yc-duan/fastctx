@@ -189,6 +189,7 @@ pub async fn ask_here(
         last_tool_at: None,
         first_words: None,
         last_said: None,
+        asked: None,
     };
     node.residents
         .create(&node.world, about.clone(), town.clone(), now)

@@ -256,36 +256,6 @@ export function filePlaces(world: WorldNow | null, login: Login): Machine[] {
   return machinesOf(world).filter((machine) => (machine.here ? owns(machine, login) : rightsOn(machine, login).hands));
 }
 
-/** A machine colleagues may live on, and whose agents there are lent to
- *  the account rather than its own to use. */
-export interface ColleagueHome {
-  name: MachineName;
-  written: string;
-  here: boolean;
-  online: boolean | null;
-  /** Who lent the Codex there, where it is lent. */
-  lentBy: AccountName | null;
-}
-
-/** Where the colleagues of a conversation living on `lives` and working
- *  for `login` may live: machines whose agents the account may use,
- *  reached from where it lives; those it may work on, then those whose
- *  Codex was lent to it. */
-export function colleagueHomes(world: WorldNow | null, lives: Machine | null, login: Login | null): ColleagueHome[] {
-  const workable = machinesOf(world).filter((machine) => {
-    if (lives && machine.written === lives.written) return true;
-    if (!login) return false;
-    if (machine.here) return !!lives?.here || owns(machine, login);
-    return rightsOn(machine, login).hands;
-  });
-  const lent = login ? borrowedOf(world).filter((one) => sameLogin(one.login, login) && one.agent === "codex") : [];
-  const homes: ColleagueHome[] = workable.map((machine) => ({ name: machine.name, written: machine.written, here: machine.here, online: machine.here ? true : machine.online, lentBy: null }));
-  for (const one of lent) {
-    if (!homes.some((home) => home.written === one.written)) homes.push({ name: one.machine, written: one.written, here: false, online: one.online, lentBy: one.owner });
-  }
-  return homes;
-}
-
 /** One agent's login on a machine, as the new conversation names it. */
 export function loginKey(machine: string, agent: string, home: string | null): string {
   return `${machine}|${agent}|${home ?? ""}`;

@@ -51,7 +51,27 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
         })?;
         if !waiting {
             crate::composer::changed(node, id);
+            crate::asked::settle(node, id, |asked| asked.waits)?;
         }
+    }
+    // What it asks the user, for whoever calls them about it.
+    match &event.happened {
+        Happened::Changed { change: SessionChange::Request { id: request_id, request, params }, .. } => {
+            if let Some(asked) = crate::asked::of_request(request_id, request, params, event.at) {
+                crate::asked::ask(node, id, asked)?;
+            }
+        }
+        Happened::Changed { change: SessionChange::Resolved { id: request_id, .. }, .. } => {
+            let request_id = request_id.as_str().map(str::to_string).unwrap_or_else(|| request_id.to_string());
+            crate::asked::settle(node, id, |asked| asked.waits && asked.id == request_id)?;
+        }
+        Happened::Finished { item, .. } => {
+            if let Some(asked) = crate::asked::of_item(item, event.at) {
+                crate::asked::ask(node, id, asked)?;
+            }
+        }
+        Happened::TurnEnded { .. } => crate::asked::settle(node, id, |asked| asked.waits)?,
+        _ => {}
     }
     if let Happened::Began { item, .. } | Happened::Updated { item, .. } = &event.happened
         && matches!(item.what, fastctx_types::session::What::Tool(_))

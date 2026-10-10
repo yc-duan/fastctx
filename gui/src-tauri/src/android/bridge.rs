@@ -150,6 +150,24 @@ pub extern "system" fn Java_dev_fastctx_world_WorldRuntime_wakePageNative(_: JNI
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_fastctx_world_WorldRuntime_sayNative(
+    mut env: JNIEnv<'_>,
+    _: JObject<'_>,
+    resident: JString<'_>,
+    machine: JString<'_>,
+    text: JString<'_>,
+) -> jstring {
+    let said = (|| {
+        let mut read = |value: &JString<'_>| -> Result<String, String> {
+            env.get_string(value).map(Into::into).map_err(|error| error.to_string())
+        };
+        let (resident, machine, text) = (read(&resident)?, read(&machine)?, read(&text)?);
+        super::say(resident, machine, text)
+    })();
+    result(&mut env, said.err())
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_fastctx_world_WorldRuntime_validateConfigurationNative(
     mut env: JNIEnv<'_>,
     _: JObject<'_>,

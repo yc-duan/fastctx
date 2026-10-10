@@ -4260,7 +4260,14 @@
                     "waiting_for_user": true,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": "端口对拍",
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "asked": {
+                      "id": "[\"codex\",\"r-1\"]",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": true,
+                      "what": "command",
+                      "text": "cargo test"
+                    }
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -4329,7 +4336,20 @@
                     "waiting_for_user": false,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": null,
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "first_words": "把端口对拍一遍",
+                    "last_said": "两边一致，共 12 个端口。",
+                    "asked": {
+                      "id": "msg-7",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": false,
+                      "what": "answer",
+                      "text": "要重新允许 computer-use 吗？",
+                      "options": [
+                        "允许",
+                        "不用"
+                      ]
+                    }
                   },
                   "last_action": null,
                   "tools": [
@@ -4528,7 +4548,14 @@
                     "waiting_for_user": true,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": "端口对拍",
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "asked": {
+                      "id": "[\"codex\",\"r-1\"]",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": true,
+                      "what": "command",
+                      "text": "cargo test"
+                    }
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -5675,7 +5702,14 @@
                     "waiting_for_user": true,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": "端口对拍",
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "asked": {
+                      "id": "[\"codex\",\"r-1\"]",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": true,
+                      "what": "command",
+                      "text": "cargo test"
+                    }
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -5744,7 +5778,20 @@
                     "waiting_for_user": false,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": null,
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "first_words": "把端口对拍一遍",
+                    "last_said": "两边一致，共 12 个端口。",
+                    "asked": {
+                      "id": "msg-7",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": false,
+                      "what": "answer",
+                      "text": "要重新允许 computer-use 吗？",
+                      "options": [
+                        "允许",
+                        "不用"
+                      ]
+                    }
                   },
                   "last_action": null,
                   "tools": [
@@ -5943,7 +5990,14 @@
                     "waiting_for_user": true,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": "端口对拍",
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "asked": {
+                      "id": "[\"codex\",\"r-1\"]",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": true,
+                      "what": "command",
+                      "text": "cargo test"
+                    }
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -6089,7 +6143,14 @@
                     "waiting_for_user": true,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": "端口对拍",
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "asked": {
+                      "id": "[\"codex\",\"r-1\"]",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": true,
+                      "what": "command",
+                      "text": "cargo test"
+                    }
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",
@@ -6158,7 +6219,20 @@
                     "waiting_for_user": false,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": null,
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "first_words": "把端口对拍一遍",
+                    "last_said": "两边一致，共 12 个端口。",
+                    "asked": {
+                      "id": "msg-7",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": false,
+                      "what": "answer",
+                      "text": "要重新允许 computer-use 吗？",
+                      "options": [
+                        "允许",
+                        "不用"
+                      ]
+                    }
                   },
                   "last_action": null,
                   "tools": [
@@ -6357,7 +6431,14 @@
                     "waiting_for_user": true,
                     "waiting_since": "2026-10-04T12:06:07Z",
                     "title": "端口对拍",
-                    "last_tool_at": "2026-10-04T12:06:07Z"
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "asked": {
+                      "id": "[\"codex\",\"r-1\"]",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": true,
+                      "what": "command",
+                      "text": "cargo test"
+                    }
                   },
                   "last_action": {
                     "at": "2026-10-04T12:06:07Z",

@@ -61,11 +61,6 @@ export interface LoginWords {
   kept: Record<"declined" | "unsupported", string>;
   keepGo: string;
   keptCommand: string;
-  hostsWhat: string;
-  codex: string;
-  claude: string;
-  applyGo: string;
-  applying: string;
   addDevice: string;
   enter: string;
   back: string;
@@ -128,11 +123,6 @@ export const zhLogin: LoginWords = {
   kept: { declined: "开机自启未设置", unsupported: "此系统不支持开机自启" },
   keepGo: "设置",
   keptCommand: "开机自启需在终端运行",
-  hostsWhat: "让你在这台电脑上打开的 Codex 和 Claude Code 使用世界的工具",
-  codex: "Codex 尚未接入",
-  claude: "Claude Code 尚未接入",
-  applyGo: "接入",
-  applying: "正在接入…",
   addDevice: "添加设备",
   enter: "进入",
   back: "返回",
@@ -189,11 +179,6 @@ export const enLogin: LoginWords = {
   kept: { declined: "Start at boot isn't set up", unsupported: "This system doesn't support start at boot" },
   keepGo: "Set up",
   keptCommand: "To start at boot, run in a terminal",
-  hostsWhat: "Give the Codex and Claude Code you open on this computer the World's tools",
-  codex: "Codex isn't connected",
-  claude: "Claude Code isn't connected",
-  applyGo: "Connect",
-  applying: "Connecting…",
   addDevice: "Add a device",
   enter: "Enter",
   back: "Back",

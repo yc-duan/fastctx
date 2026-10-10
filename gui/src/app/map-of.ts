@@ -32,7 +32,7 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
   const residents = residentsOf(world).filter((r) => r.here || r.now?.waiting_for_user);
   const marks = (machine: string) =>
     residents
-      .filter((r) => r.about.machine === machine && r.now?.activity !== "asleep")
+      .filter((r) => r.about.machine === machine)
       .map((r) => (r.now?.waiting_for_user ? "waiting" : r.now?.activity === "busy" ? "busy" : "idle") as MapNode["marks"][number]);
   const logins = loginsOf(world.accounts);
   const hubs: MapHub[] = world.accounts.hubs.filter((hub) => hub.logins.length).map((hub) => ({ id: hub.hub, name: hub.name, online: hub.link.kind === "online" }));

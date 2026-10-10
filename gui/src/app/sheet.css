@@ -70,6 +70,17 @@
   color: var(--text-3);
 }
 
+/* The effort's label stands level with the slider's ruled line, which lies
+   13px above the slider's foot. */
+.effort-row {
+  align-items: end;
+}
+
+.effort-row .choice-label {
+  line-height: 20px;
+  margin-bottom: 3px;
+}
+
 .choice-options {
   display: flex;
   flex-wrap: wrap;

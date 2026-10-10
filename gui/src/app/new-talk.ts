@@ -7,8 +7,8 @@
 // Then the account it works for where more than one may open it there,
 // which model and how hard it thinks, which project, the machine it works
 // on (the one it lives on unless another is chosen, `world-run.md`, 这里),
-// whether it may ask for colleagues, where they would live and as which
-// Codex login there, and the first words. An agent lent to the user works
+// and the first words. Which agents may call which models is the model
+// collaboration feature's, never a conversation's. An agent lent to the user works
 // on no machine of its own choosing: each of its commands names one of the
 // user's machines, so it is asked no machine to work on, and the files
 // attached for it, other than images, go to a machine of the user's chosen
@@ -28,6 +28,7 @@
 // place with all of them.
 
 import { AttachTray, type AttachSource, type AttachWords } from "../conversation/attach";
+import { EffortSlider, effortLabel } from "../conversation/effort-slider";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
@@ -41,7 +42,6 @@ import type { WorldNow } from "../world/bridge";
 import type { Address } from "../world/events";
 import {
   borrowedOf,
-  colleagueHomes,
   filePlaces,
   groupsOf,
   isSuper,
@@ -75,14 +75,9 @@ export interface Begun {
   account: HubAccount | null;
   /** The machine it works on, as written, when not the one it lives on. */
   worksOn: string | null;
-  /** Where its colleagues live; without it, it asks for none. */
-  colleagues: string | null;
   /** The agent's login on the machine it lives on, as its home's
    *  directory; null for the default one. */
   home: string | null;
-  /** The Codex login its colleagues use where they live; null for the
-   *  default one there. */
-  colleaguesHome: string | null;
   /** Where its files other than images go, for an agent lent to the user. */
   filesOn: string | null;
 }
@@ -191,14 +186,10 @@ export class NewTalk {
   private effort: string | null = null;
   /** The account chosen, as `hub/account`. */
   private account: string | null = remembered("account");
-  /** Where it works and where its colleagues live, as written; null for
-   *  the machine it lives on, and for no colleagues. */
+  /** Where it works, as written; null for the machine it lives on. */
   private worksOn: string | null = null;
-  private colleagues: string | null = null;
-  /** The Codex login its colleagues use where they live, as its home's
-   *  directory or null for the default one; undefined until one is, when
-   *  the one used last on that machine is taken. */
-  private colleaguesHome: string | null | undefined = undefined;
+  /** How hard it thinks, drawn by hand as in a conversation. */
+  private readonly slider: EffortSlider;
   /** Where the files of a lent agent go, as written. */
   private filesOn: string | null = null;
   private asked = new Map<string, Asked>();
@@ -242,6 +233,9 @@ export class NewTalk {
     this.input = this.dialog.querySelector("textarea")!;
     this.note = this.dialog.querySelector<HTMLElement>(".sheet-note")!;
     this.start = this.dialog.querySelector<HTMLButtonElement>(".sheet-go")!;
+    this.slider = new EffortSlider(words.effort, (effort) => {
+      this.effort = effort;
+    });
     this.dialog.querySelector(".sheet-close")!.addEventListener("click", () => this.close());
     // A click on the backdrop, outside the sheet, closes it.
     this.dialog.addEventListener("click", (event) => {
@@ -259,33 +253,19 @@ export class NewTalk {
           this.pick = value;
           this.choosing = false;
           this.worksOn = null;
-          this.colleagues = null;
-          this.colleaguesHome = undefined;
           this.model = null;
           this.effort = null;
           break;
         case "account":
           this.account = value;
           this.worksOn = null;
-          this.colleagues = null;
           break;
         case "works":
           this.worksOn = value || null;
           break;
-        case "colleagues":
-          this.colleagues = value || null;
-          this.colleaguesHome = undefined;
-          if (button.dataset.machine) this.ask(button.dataset.machine);
-          break;
-        case "colleagues-home":
-          this.colleaguesHome = value || null;
-          break;
         case "model":
           this.model = value;
           this.effort = null;
-          break;
-        case "effort":
-          this.effort = value;
           break;
         case "files-on":
           this.filesOn = value;
@@ -443,8 +423,6 @@ export class NewTalk {
     this.model = null;
     this.effort = null;
     this.worksOn = null;
-    this.colleagues = null;
-    this.colleaguesHome = undefined;
     this.note.hidden = true;
     // What is on each machine is asked again each time: a program may have
     // been installed, logged in or updated since.
@@ -482,30 +460,6 @@ export class NewTalk {
       })
       .finally(() => {
         this.askingAll = false;
-        if (this.dialog.open) this.draw();
-      });
-  }
-
-  /** Asks one machine what agents it has, where the asking of all did
-   *  not answer for it. */
-  private ask(machine: string): void {
-    if (this.asked.has(machine) || this.askingAll) return;
-    this.asked.set(machine, { state: "asking" });
-    this.options
-      .agents(machine)
-      .then((world) => {
-        const answer = world.machines.find((m) => (m.kind === "answered" ? m.reply.machine : m.machine) === machine);
-        this.asked.set(
-          machine,
-          answer?.kind === "answered"
-            ? { state: "known", facts: answer.reply.agents }
-            : answer?.kind === "offline"
-              ? { state: "offline" }
-              : { state: "unknown", why: answer?.kind === "no_answer" ? answer.reason : "" },
-        );
-      })
-      .catch((error: unknown) => this.asked.set(machine, { state: "unknown", why: String(error) }))
-      .finally(() => {
         if (this.dialog.open) this.draw();
       });
   }
@@ -741,25 +695,6 @@ export class NewTalk {
         }))
       : [];
     if (this.worksOn && !places.some((choice) => choice.value === this.worksOn)) this.worksOn = null;
-    const colleagueMachines = option ? colleagueHomes(world, lives, login) : [];
-    const homes: (Choice & { machine?: string })[] = option
-      ? [
-          { value: "", label: words.noColleagues },
-          ...colleagueMachines.map((machine) => ({
-            value: machine.written,
-            label: machine.written,
-            machine: machine.name,
-            note: machine.here ? words.here : machine.lentBy ? words.lentBy(machine.lentBy) : machine.online === false ? words.offline : undefined,
-          })),
-        ]
-      : [];
-    if (this.colleagues && !homes.some((choice) => choice.value === this.colleagues)) this.colleagues = null;
-    // Where colleagues live, the Codex login they use there: the only one
-    // there, or of several the one chosen.
-    const colleaguesOn = colleagueMachines.find((machine) => machine.written === this.colleagues)?.name ?? null;
-    if (colleaguesOn) this.ask(colleaguesOn);
-    const colleagueLogins = colleaguesOn ? this.logins(colleaguesOn, "codex") : [];
-    this.colleaguesHome = settle(colleagueLogins, this.colleaguesHome, `home:${colleaguesOn}:codex`);
     const models = this.models(option);
     const agent = option?.agent ?? "";
     const model =
@@ -772,7 +707,7 @@ export class NewTalk {
     const efforts = model?.reasoning_efforts.map((e) => e.effort) ?? [];
     const effort = [this.effort, remembered(`effort:${agent}`), model?.default_reasoning_effort].find((e) => e && efforts.includes(e)) ?? null;
     this.effort = effort;
-    const row = (kind: string, label: string, choices: (Choice & { machine?: string })[], chosen: string | null, hint = "") =>
+    const row = (kind: string, label: string, choices: Choice[], chosen: string | null, hint = "") =>
       `<div class="choice-row" role="radiogroup" aria-label="${escape(label)}">
         <span class="choice-label"${hint ? ` title="${escape(hint)}"` : ""}>${escape(label)}</span>
         <div class="choice-options">${
@@ -780,7 +715,7 @@ export class NewTalk {
             ? choices
                 .map(
                   (choice) =>
-                    `<button type="button" class="choice${choice.value === (chosen ?? "") ? " chosen" : ""}" role="radio" aria-checked="${choice.value === (chosen ?? "")}" data-choice="${kind}" data-value="${escape(choice.value)}"${choice.machine ? ` data-machine="${escape(choice.machine)}"` : ""}${choice.disabled ? " disabled" : ""}>${escape(choice.label)}${choice.note ? `<span class="choice-note">${escape(choice.note)}</span>` : ""}</button>`,
+                    `<button type="button" class="choice${choice.value === (chosen ?? "") ? " chosen" : ""}" role="radio" aria-checked="${choice.value === (chosen ?? "")}" data-choice="${kind}" data-value="${escape(choice.value)}"${choice.disabled ? " disabled" : ""}>${escape(choice.label)}${choice.note ? `<span class="choice-note">${escape(choice.note)}</span>` : ""}</button>`,
                 )
                 .join("")
             : `<span class="choice-none">${escape(words.noMachine)}</span>`
@@ -794,7 +729,8 @@ export class NewTalk {
     // them while it is being chosen, or while none can begin.
     const line = lines.find((one) => option && one.options.includes(option));
     const folded = !this.choosing && !!option && !!line && this.startable(option, line);
-    this.dialog.querySelector(".choices")!.innerHTML = [
+    const choices = this.dialog.querySelector(".choices")!;
+    choices.innerHTML = [
       folded ? this.chosenLine(option!, line!) : this.picker(lines),
       logins.all.length > 1
         ? row(
@@ -812,13 +748,21 @@ export class NewTalk {
             this.model,
           )
         : "",
-      efforts.length > 1 ? row("effort", words.effort, efforts.map((e) => ({ value: e, label: e })), this.effort) : "",
+      efforts.length > 1
+        ? `<div class="choice-row effort-row"><span class="choice-label">${escape(words.effort)}</span><div class="effort-place"></div></div>`
+        : "",
       towns.length > 1 ? row("town", words.project, towns, this.town) : "",
       !lent && places.length > 1 ? row("works", words.worksOn, places, this.worksOn ?? "") : "",
-      homes.length > 1 ? row("colleagues", words.colleagues, homes, this.colleagues ?? "", this.colleagues ? words.colleaguesWhat(this.colleagues) : "") : "",
-      colleagueLogins.length > 1 ? row("colleagues-home", words.colleaguesLogin, colleagueLogins, this.colleaguesHome ?? "") : "",
       reaching && owner && login && option ? `<p class="choice-margin choice-warn">${escape(words.reaches(owner, option.written, isSuper(world, login)))}</p>` : "",
     ].join("");
+    const place = choices.querySelector(".effort-place");
+    if (place) {
+      this.slider.set(
+        efforts.map((value) => ({ value, label: effortLabel(value, words.english) })),
+        this.effort,
+      );
+      place.replaceWith(this.slider.element);
+    }
     // What was sent went for another machine, agent or project: it is sent
     // again, to the one chosen now, when the conversation begins.
     if (this.draft && this.draft.for !== this.chosen()) {
@@ -894,7 +838,6 @@ export class NewTalk {
     this.note.hidden = true;
     remember("pick", option.key);
     remember("agent", option.agent);
-    const colleaguesHome = this.colleagues && this.colleaguesHome !== undefined ? this.colleaguesHome : null;
     const world = this.options.store.world.peek();
     const login = this.loginFor(world, option);
     if (login && !option.lent) remember("account", `${login.hub}/${login.account}`);
@@ -921,9 +864,7 @@ export class NewTalk {
         attachments: (this.tray?.arrived ?? []) as Attachment[],
         account: login ? { hub: login.hub, account: login.account } : null,
         worksOn: option.lent ? null : this.worksOn,
-        colleagues: this.colleagues,
         home: option.home,
-        colleaguesHome,
         filesOn: option.lent && (this.tray?.files ?? 0) > 0 ? this.filesOn : null,
       });
       this.input.value = "";
@@ -943,21 +884,6 @@ export class NewTalk {
       this.drawStart();
     }
   }
-}
-
-/** Which of several logins stays chosen: the one chosen, while it can
- *  start; else the one used last there, else the default one, else the
- *  first that can. Undefined where there is no choice to make. */
-function settle(choices: Choice[], chosen: string | null | undefined, key: string): string | null | undefined {
-  if (!choices.length) return undefined;
-  const can = (value: string | null | undefined) =>
-    value !== undefined && choices.some((choice) => choice.value === (value ?? "") && !choice.disabled);
-  if (can(chosen)) return chosen;
-  const kept = remembered(key);
-  if (kept !== null && can(kept || null)) return kept || null;
-  if (can(null)) return null;
-  const first = choices.find((choice) => !choice.disabled);
-  return first ? first.value || null : undefined;
 }
 
 /** A file attached to the first words did not reach the machine; the tray

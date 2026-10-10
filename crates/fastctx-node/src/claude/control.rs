@@ -397,13 +397,29 @@ fn resolved(node: &Node, key: &str, answer: Answer) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Whether the resident waits on the user, and for what: the latest of its
+/// requests still open.
 fn waiting_state(node: &Node, resident: &ResidentId) -> std::io::Result<()> {
     let requests = node.claude.bridge.requests.lock().expect("never poisoned");
-    let waiting = requests.values().any(|request| &request.resident == resident);
-    if node.residents.now(resident).is_some_and(|now| now.waiting_for_user == waiting) {
+    let latest = requests.values().filter(|request| &request.resident == resident).max_by_key(|request| request.waiting.at);
+    let waiting = latest.is_some();
+    let asked = latest.and_then(|request| {
+        let question = &request.waiting.question;
+        crate::asked::of_request(&question.address(), &question.request, &question.params, request.waiting.at)
+    });
+    let now = node.residents.now(resident);
+    let asked = match asked {
+        Some(asked) => Some(asked),
+        // A question asked without waiting is not settled by a request.
+        None => now.as_ref().and_then(|now| now.asked.clone()).filter(|asked| !asked.waits),
+    };
+    if now.is_some_and(|now| now.waiting_for_user == waiting && now.asked == asked) {
         return Ok(());
     }
-    node.residents.change_now(&node.world, resident, |now| now.waiting_for_user = waiting)
+    node.residents.change_now(&node.world, resident, |now| {
+        now.waiting_for_user = waiting;
+        now.asked = asked;
+    })
 }
 
 fn changed(node: &Node, request: &Request, change: SessionChange) {

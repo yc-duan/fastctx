@@ -19,31 +19,24 @@ export const onPhone = (): boolean => isTauri() && /Android/i.test(navigator.use
 const call = <T>(command: string, args?: Record<string, unknown>) => invoke<T>(`plugin:android-world|${command}`, args);
 
 interface Rule {
-  when: "waiting" | "finished";
+  when: "asked" | "finished";
   userStartedOnly: boolean;
-  title: string;
-  body: string | { neither: string; town: string; last: string; both: string };
+  /** One title, or one for each thing an agent may ask. */
+  title: string | Record<string, string>;
 }
+
+const ASKED_FOR = ["answer", "command", "change", "tool", "plan", "form", "other", "waiting"] as const;
 
 /** Gives the phone the rules it calls the user by, in the interface's
  *  words, or turns them off. The same rules as a computer's: an agent that
- *  starts waiting for the user, and a conversation the user opened through
- *  the World that finishes. */
+ *  asks the user something, and a conversation the user opened through the
+ *  World that finishes. The phone writes the body from the agent's own
+ *  words, as a computer does. */
 export function configurePhone(words: PresenceWords, enabled: boolean): Promise<void> {
   const who = "{who}";
   const rules: Rule[] = [
-    { when: "waiting", userStartedOnly: false, title: words.waiting(who), body: { neither: words.waitingBody(null), town: words.waitingBody("{town}"), last: words.waitingBody(null), both: words.waitingBody("{town}") } },
-    {
-      when: "finished",
-      userStartedOnly: true,
-      title: words.finished(who),
-      body: {
-        neither: words.finishedBody(null, null),
-        town: words.finishedBody("{town}", null),
-        last: words.finishedBody(null, "{last}"),
-        both: words.finishedBody("{town}", "{last}"),
-      },
-    },
+    { when: "asked", userStartedOnly: false, title: Object.fromEntries(ASKED_FOR.map((what) => [what, words.asked(who, what)])) },
+    { when: "finished", userStartedOnly: true, title: words.finished(who) },
   ];
   return call("configure", { configuration: { enabled, agentNames: { codex: "Codex", claude: "Claude" }, rules } });
 }

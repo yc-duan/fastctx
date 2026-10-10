@@ -383,7 +383,25 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
     version: { kind: "known", value: "2.1.289 (Claude Code)" },
     launch: { kind: "known", value: { kind: "claude_command" } },
     login: { kind: "known", value: machine === "lab" ? { kind: "logged_out" } : { kind: "logged_in", method: "claude.ai" } },
-    models: { kind: "unavailable", reason: "no public non-session CLI catalog" },
+    // Claude Code's documented aliases, as a node gives them for a login
+    // that has run no session yet.
+    models: {
+      kind: "known",
+      value: [
+        ["opus", "Opus", "medium"],
+        ["fable", "Fable", "high"],
+        ["sonnet", "Sonnet", "medium"],
+        ["haiku", "Haiku", "medium"],
+      ].map(([model, name, effort], at) => ({
+        id: model!,
+        model: model!,
+        display_name: name!,
+        description: "",
+        is_default: at === 0,
+        default_reasoning_effort: effort!,
+        reasoning_efforts: efforts(["low", "medium", "high", "xhigh", "max"]),
+      })),
+    },
     integration: { kind: "known", value: "in" },
     unattended: { kind: "known", value: true },
     timings: [],

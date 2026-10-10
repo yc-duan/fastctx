@@ -71,7 +71,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, zhAccount, zhAdmin, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
-import { borrowedBy, borrowedOf, colleagueHomes, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { borrowedBy, borrowedOf, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import { Details, type Manage } from "./conversation/details";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/model";
@@ -155,7 +155,6 @@ import {
   accountChange,
   agentHomes,
   serverCommand,
-  setColleagues,
   setWorksOn,
 } from "./world/bridge";
 import { en, zh } from "./words";
@@ -257,14 +256,12 @@ const newTalk = new NewTalk({
   words: english ? enNewTalk : zhNewTalk,
   homeWords: agentHomeWords,
   agents: (machine) => agentsOn(machine),
-  async begin({ agent, machine, town, text, model, effort, attachments, account, worksOn, colleagues, home, colleaguesHome, filesOn }) {
+  async begin({ agent, machine, town, text, model, effort, attachments, account, worksOn, home, filesOn }) {
     if (!live) throw new Error(specimenSaid);
     const { to } = await openAgent(agent, machine, town, text, model, effort, attachments, {
       ...(account ? { account } : {}),
       ...(worksOn ? { works_on: worksOn } : {}),
-      ...(colleagues ? { colleagues } : {}),
       ...(home ? { home } : {}),
-      ...(colleagues && colleaguesHome ? { colleagues_home: colleaguesHome } : {}),
       ...(filesOn ? { files_on: filesOn } : {}),
     });
     void store.refresh();
@@ -484,10 +481,6 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
           : () => new Promise<void>((resolve) => setTimeout(resolve, 2400)),
       markdown,
       manage: live ? liveManage(address) : specimenManage(),
-      colleagues: {
-        homes: () => homesFor(address),
-        set: (livesOn, home) => (live ? setColleagues(address, livesOn, home) : Promise.reject(new Error(specimenSaid))),
-      },
       logins: loginsOn,
       worksOn: {
         places: () => worksPlacesFor(address),
@@ -532,13 +525,6 @@ function livesFor(address: Address): { lives: Machine | null; login: Login | nul
   return { lives, login };
 }
 
-/** Where the colleagues of the agent at `address` may live: machines whose
- *  agents an account it works for may use. */
-function homesFor(address: Address): { machine: string; lentBy: string | null }[] {
-  const found = livesFor(address);
-  return colleagueHomes(store.world.peek(), found.lives, found.login).map((home) => ({ machine: home.written, lentBy: home.lentBy }));
-}
-
 /** Where the agent at `address` may work: machines an account it works for
  *  may work on. */
 function worksPlacesFor(address: Address): string[] {
@@ -561,20 +547,9 @@ function liveManage(address: Address): Manage {
     void store.refresh();
     return managed.steps
       .filter((step): step is typeof step & { outcome: "pending" | "unsupported" | "failed" } => step.outcome !== "done")
-      .map((step) =>
-        // Codex unloading the thread in its own time is how sleeping goes,
-        // not something left undone.
-        action.do === "sleep" &&
-        step.stage === "host" &&
-        step.outcome === "pending" &&
-        residentsOf(store.world.peek()).some((r) => sameAddress(addressOf(r), address) && r.about.host.agent === "codex")
-          ? detailsWords.sleepPending
-          : detailsWords.unfinished(step.stage, step.outcome, step.detail),
-      );
+      .map((step) => detailsWords.unfinished(step.stage, step.outcome, step.detail));
   };
   return {
-    sleep: () => act({ do: "sleep" }),
-    wake: () => act({ do: "wake" }),
     move: (town) => act({ do: "move", town }),
     remove: () => act({ do: "remove" }),
     towns: townsOn,
@@ -592,8 +567,6 @@ function specimenManage(): Manage {
       setTimeout(() => reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")), 700),
     );
   return {
-    sleep: refuse,
-    wake: refuse,
     move: refuse,
     remove: refuse,
     towns: townsOn,
@@ -1003,7 +976,7 @@ function liveTalk(address: Address): Page {
         const known = residentAt(now, address);
         const who = someoneOf(now, address);
         if (!known || !who || left) return;
-        page.presence(known.removed ? "removed" : known.now?.activity === "asleep" ? "asleep" : null);
+        page.presence(known.removed ? "removed" : null);
         if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model && who.worksOn === shown.worksOn) return;
         shown = who;
         page.identify(who);
@@ -1518,4 +1491,5 @@ startPresence({
   words: presenceWords,
   someone: (r) => shellWords.someone(agentName(r.about.host.agent), r.about.machine),
   stop: (address) => stop(address),
+  say: (address, text) => talk(address, text),
 });

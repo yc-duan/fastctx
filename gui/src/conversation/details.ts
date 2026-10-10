@@ -1,13 +1,11 @@
 // What the World knows of the agent in a conversation, opened from the
 // conversation's head: who it is and where it lives and works, which login
 // of its agent it uses there, whom it works for, how it came, what it is
-// doing, whether it may ask for colleagues, where they live and as which
-// Codex login, the colleagues it asked, what it started that still runs, its
-// latest actions, and what can be done to it. The same
-// facts as `fastctx w <id>`, asked of the machine it lives on while the card
-// is open. Asking for colleagues is turned on here by the user, choosing
-// where they live; a colleague's own card has no such choice
-// (`world-colleagues.md`).
+// doing, the models it called, what it started that still runs, its latest
+// actions, and what can be done to it. The same facts as `fastctx w <id>`,
+// asked of the machine it lives on while the card is open. Which agents may
+// call which models is the model collaboration feature's, never a single
+// conversation's (`world-gui.md`, 功能).
 
 import { escape } from "./prose";
 import { glyph } from "./glyphs";
@@ -26,8 +24,6 @@ import { agentName, titleOf } from "../world/names";
 export type Unfinished = string[];
 
 export interface Manage {
-  sleep(): Promise<Unfinished>;
-  wake(): Promise<Unfinished>;
   /** Into a project, or out of any where null. */
   move(town: string | null): Promise<Unfinished>;
   remove(): Promise<Unfinished>;
@@ -54,9 +50,6 @@ export interface DetailsOptions {
   markdown?: (() => string) | undefined;
   /** Managing it, where the World can. */
   manage?: Manage | undefined;
-  /** Where its colleagues may live, and turning asking for them on there
-   *  or off; none for a colleague. */
-  colleagues?: Colleagues | undefined;
   /** "hangzhou · ada" for each account it works for; empty for this
    *  computer's logins. */
   actingFor(resident: ResidentNow): string[];
@@ -79,16 +72,7 @@ export interface Login {
   disabled?: boolean | undefined;
 }
 
-export interface Colleagues {
-  /** The machines, as written, its colleagues may live on, and who lent
-   *  the Codex there where it is lent. */
-  homes(): { machine: string; lentBy: string | null }[];
-  /** Where they live, and the Codex login they use there: its home's
-   *  directory, or null for the default one. */
-  set(livesOn: string | null, home: string | null): Promise<void>;
-}
-
-type Managing = "sleep" | "wake" | "move" | "colleagues" | "works";
+type Managing = "move" | "works";
 
 export class Details {
   readonly element: HTMLElement;
@@ -102,9 +86,6 @@ export class Details {
   private managing: Managing | null = null;
   /** Whether the projects to move it to are shown. */
   private moving = false;
-  /** Whether the machines its colleagues may live on are shown. */
-  private choosing = false;
-  private colleaguesNote = "";
   /** Whether the machines it may work on are shown. */
   private placing = false;
   private worksNote = "";
@@ -159,12 +140,6 @@ export class Details {
               this.say(this.note);
             });
           return;
-        case "sleep":
-          if (manage) this.manageWith("sleep", () => manage.sleep(), words.slept);
-          return;
-        case "wake":
-          if (manage) this.manageWith("wake", () => manage.wake(), words.woke);
-          return;
         case "move":
           this.moving = !this.moving;
           this.redraw();
@@ -179,10 +154,6 @@ export class Details {
         }
         case "remove":
           if (manage && this.shown) this.askRemove(manage, this.shown.detail.resident);
-          return;
-        case "colleagues":
-          this.choosing = !this.choosing;
-          this.redraw();
           return;
         case "works":
           this.placing = !this.placing;
@@ -211,39 +182,6 @@ export class Details {
             .finally(() => {
               this.managing = null;
               this.spoken.textContent = this.worksNote;
-              this.redraw();
-            });
-          return;
-        }
-        case "colleagues-on":
-        case "colleagues-login": {
-          const colleagues = options.colleagues;
-          if (!colleagues || !this.shown) return;
-          const detail = this.shown.detail;
-          const login = button.dataset.act === "colleagues-login";
-          const home = login ? (detail.colleagues ?? null) : button.dataset.home || null;
-          const codex = login ? button.dataset.login || null : null;
-          this.choosing = false;
-          this.managing = "colleagues";
-          this.colleaguesNote = "";
-          this.redraw();
-          colleagues
-            .set(home, codex)
-            .then(() => {
-              if (home) detail.colleagues = home;
-              else delete detail.colleagues;
-              if (codex) detail.colleagues_home = codex;
-              else delete detail.colleagues_home;
-              const label = codex ? this.logins.get(`${home}/codex`) : null;
-              const named = Array.isArray(label) ? label.find((one) => one.value === codex)?.label : null;
-              this.colleaguesNote = login ? words.colleaguesAs(named ?? codex ?? words.defaultLogin) : home ? words.colleaguesOn(home) : words.colleaguesOff;
-            })
-            .catch((error: unknown) => {
-              this.colleaguesNote = words.failed(error instanceof Error ? error.message : String(error));
-            })
-            .finally(() => {
-              this.managing = null;
-              this.spoken.textContent = this.colleaguesNote;
               this.redraw();
             });
           return;
@@ -315,7 +253,6 @@ export class Details {
     this.element.hidden = !shown;
     if (!shown) {
       this.moving = false;
-      this.choosing = false;
       this.placing = false;
     }
   }
@@ -367,11 +304,9 @@ export class Details {
       ? words.waiting
       : r.now?.activity === "busy"
         ? words.busy(ago(r.now.since))
-        : r.now?.activity === "asleep"
-          ? words.asleep(ago(r.now.since))
-          : r.now
-            ? words.idle(ago(r.now.since))
-            : "";
+        : r.now
+          ? words.idle(ago(r.now.since))
+          : "";
     const origin =
       about.origin.kind === "colleague"
         ? words.askedBy(this.options.someone(about.origin.asked_by), about.origin.label)
@@ -444,7 +379,7 @@ export class Details {
       ${section(words.manage, this.manageBody(r), " details-manage")}
       ${section(words.worksOn, this.worksBody(r))}
       ${section(words.task, task)}
-      ${section(words.colleagues, this.colleaguesBody(detail) + asked)}
+      ${section(words.colleagues, asked)}
       ${section(words.running, running)}
       ${section(words.actions(detail.actions.length, detail.actions_total), actions)}
       <p class="details-records"><span>${escape(words.records)}</span><code>${escape(`${about.machine}:${detail.records}`)}</code></p>`;
@@ -481,58 +416,14 @@ export class Details {
     return `${said}${choices}${this.worksNote ? `<p class="details-note">${escape(this.worksNote)}</p>` : ""}`;
   }
 
-  /** Whether it may ask for colleagues and where they live, with the
-   *  machines to choose from when asked; a colleague asks for none. */
-  private colleaguesBody(detail: ResidentDetail): string {
-    const { words, colleagues } = this.options;
-    const r = detail.resident;
-    if (!colleagues || r.removed || r.about.origin.kind === "colleague") return "";
-    const home = detail.colleagues ?? null;
-    const doing = this.managing === "colleagues";
-    const said = `<p class="details-colleagues"><span>${escape(home ? words.colleaguesLive(home) : words.noColleagues)}</span><button class="text-button" type="button" data-act="colleagues" aria-expanded="${this.choosing}"${doing ? " disabled" : ""}>${glyph("colleague", 14)}<span>${escape(doing ? words.working : home ? words.changeColleagues : words.allowColleagues)}</span></button></p>`;
-    const choices = this.choosing
-      ? `<div class="details-move" role="group" aria-label="${escape(words.colleaguesWhere)}"><span class="details-faint">${escape(words.colleaguesWhere)}</span><div class="choice-options">${[
-          ...colleagues.homes().map(
-            ({ machine, lentBy }) =>
-              `<button type="button" class="choice${machine === home ? " chosen" : ""}" data-act="colleagues-on" data-home="${escape(machine)}"${machine === home ? ` disabled aria-current="true"` : ""}>${escape(machine)}${lentBy ? `<span class="choice-note">${escape(words.colleagueLent(lentBy))}</span>` : ""}</button>`,
-          ),
-          home ? `<button type="button" class="choice" data-act="colleagues-on" data-home="">${escape(words.colleaguesNone)}</button>` : "",
-        ].join("")}</div></div>`
-      : "";
-    // Where Codex there has more than one login, which of them they use.
-    const logins = home ? (this.loginsOn(home, "codex") ?? []) : [];
-    const as = detail.colleagues_home ?? "";
-    const loginRow =
-      logins.length > 1
-        ? `<div class="details-move" role="group" aria-label="${escape(words.colleaguesLogin)}"><span class="details-faint">${escape(words.colleaguesLogin)}</span><div class="choice-options">${logins
-            .map(
-              (one) =>
-                `<button type="button" class="choice${one.value === as ? " chosen" : ""}" data-act="colleagues-login" data-login="${escape(one.value)}"${one.value === as ? ` disabled aria-current="true"` : one.disabled || doing ? " disabled" : ""}>${escape(one.label)}${one.note ? `<span class="choice-note">${escape(one.note)}</span>` : ""}</button>`,
-            )
-            .join("")}</div></div>`
-        : "";
-    return `${said}${choices}${loginRow}${this.colleaguesNote ? `<p class="details-note">${escape(this.colleaguesNote)}</p>` : ""}`;
-  }
-
-  /** Sleep or wake, move to a project, remove: what the World can do to
-   *  it for the user, and the projects to move it to when asked. */
+  /** Move to a project, remove: what the World can do to it for the user,
+   *  and the projects to move it to when asked. */
   private manageBody(r: ResidentNow): string {
     const { words, manage } = this.options;
     if (!manage || r.removed) return "";
     const doing = this.managing;
-    const busy = r.now?.activity === "busy";
     const button = (act: string, icon: Parameters<typeof glyph>[0], label: string, disabled: boolean, extra = "") =>
       `<button class="text-button" type="button" data-act="${act}"${disabled ? " disabled" : ""}${extra}>${glyph(icon, 14)}<span>${escape(label)}</span></button>`;
-    const rest =
-      r.now?.activity === "asleep"
-        ? button("wake", "wake", doing === "wake" ? words.working : words.wake, doing !== null)
-        : button(
-            "sleep",
-            "sleep",
-            doing === "sleep" ? words.working : words.sleep,
-            doing !== null || busy,
-            busy ? ` title="${escape(words.cannotSleepBusy)}"` : "",
-          );
     const move = button(
       "move",
       "move",
@@ -554,7 +445,7 @@ export class Details {
         elsewhere ? `<div class="choice-options">${choices.join("")}</div>` : `<span class="choice-none">${escape(words.noOtherProject)}</span>`
       }</div>`;
     }
-    return `<div class="details-acts">${rest}${move}${remove}</div>${projects}<p class="details-note details-manage-note">${escape(this.manageNote)}</p>`;
+    return `<div class="details-acts">${move}${remove}</div>${projects}<p class="details-note details-manage-note">${escape(this.manageNote)}</p>`;
   }
 }
 

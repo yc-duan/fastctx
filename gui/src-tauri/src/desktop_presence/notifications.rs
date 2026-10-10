@@ -20,6 +20,9 @@ use super::{Activation, Event, Presence, identity};
 pub struct Action {
     pub id: String,
     pub title: String,
+    /// Handed to the page without bringing the window forward.
+    #[serde(default)]
+    pub quiet: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -172,11 +175,16 @@ impl Notifications {
         let action = if selected == 0 {
             None
         } else {
-            Some(notice.actions.get(selected - 1).ok_or("unknown notification button")?.id.clone())
+            Some(notice.actions.get(selected - 1).ok_or("unknown notification button")?)
         };
         self.remove_history(id)?;
         std::fs::remove_file(path).map_err(|e| e.to_string())?;
-        Ok(Activation { route: Some(notice.route), action, notification_id: Some(id.to_owned()) })
+        Ok(Activation {
+            route: Some(notice.route),
+            quiet: action.is_some_and(|action| action.quiet),
+            action: action.map(|action| action.id.clone()),
+            notification_id: Some(id.to_owned()),
+        })
     }
 
     pub fn remove(&self, id: &str) -> Result<(), String> {

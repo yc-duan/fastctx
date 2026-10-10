@@ -80,8 +80,6 @@ export interface Words {
   /** The turn's line while the agent writes its answer. */
   answering: string;
   idle: string;
-  /** Not here: the World holds its session asleep; words wake it. */
-  asleep: string;
   /** The user removed it from the World: kept to read, not to speak to. */
   removed: string;
   removedNote: string;
@@ -267,7 +265,6 @@ export const zh: Words = {
   working: "工作中",
   answering: "书写回答",
   idle: "空闲",
-  asleep: "休眠中，发消息即可唤醒",
   removed: "已移除",
   removedNote: "已移除，对话仅供查看",
   waitingForYou: "等待回复",
@@ -414,7 +411,6 @@ export const en: Words = {
   working: "Working",
   answering: "Writing",
   idle: "Idle",
-  asleep: "Sleeping; send a message to wake it",
   removed: "Removed",
   removedNote: "Removed; the conversation is read-only",
   waitingForYou: "Waiting for your reply",
