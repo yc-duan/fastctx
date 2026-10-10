@@ -27,8 +27,6 @@ export interface LoginWords {
   passwordRule: Record<PasswordProblem, string>;
   /** How strong a password that passes is, from enough to strong. */
   strength: [string, string, string];
-  register: string;
-  registerWhat: string;
   name: string;
   phoneName: string;
   go: string;
@@ -92,8 +90,6 @@ export const zhLogin: LoginWords = {
   passwordsDiffer: "两次输入的密码不一致",
   passwordRule: zhPasswordRule,
   strength: ["强度一般", "强度较高", "强度高"],
-  register: "将这台电脑添加为我的机器",
-  registerWhat: "智能体可以在这台电脑上运行和工作；不勾选则只登录",
   name: "电脑名称",
   phoneName: "手机名称",
   go: "登录",
@@ -148,8 +144,6 @@ export const enLogin: LoginWords = {
   passwordsDiffer: "Passwords don't match",
   passwordRule: enPasswordRule,
   strength: ["Fair", "Good", "Strong"],
-  register: "Add this computer as my machine",
-  registerWhat: "Agents can run and work on this computer; leave unchecked to only log in",
   name: "Computer name",
   phoneName: "Phone name",
   go: "Log in",
