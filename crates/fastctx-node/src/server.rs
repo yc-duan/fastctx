@@ -60,7 +60,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     // The residents that arrived on this connection are here until it
     // closes, however it closes; what was collected for them and not taken
     // is free to be handed over again then.
-    let mut arrived = Arrived { node, residents: Vec::new(), collected: Vec::new(), notes: Vec::new() };
+    let mut arrived = Arrived { node, residents: Vec::new(), collected: Vec::new(), notes: Vec::new(), completed: None };
     while let Some(frame) = reader.recv().await? {
         let ClientFrame::Call { id, call } = match parse(&frame) {
             Ok(call) => call,
@@ -128,7 +128,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             }
         }
-        if let Call::Wait { jobs, receipt } = call {
+        if let Call::Wait { jobs, receipt, parent } = call {
             // A wait keeps the connection until the jobs end; its leaving
             // hands back the ends the wait held (`waiting`).
             let caller = match caller::of(node, &hello.peer) {
@@ -140,7 +140,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             };
             let waited = tokio::select! {
-                waited = crate::waiting::wait(node, caller, jobs) => waited,
+                waited = crate::waiting::wait(node, caller, jobs, parent) => waited,
                 // The client says nothing more on a wait.
                 _ = reader.recv() => return Ok(()),
             };
@@ -156,7 +156,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                             return Err(std::io::Error::other("the wait client did not acknowledge its end"));
                         }
                     }
-                    let taken = ready.take().await.map(|()| Reply::Done);
+                    let taken = ready.take(receipt).await.map(|()| Reply::Done);
                     if receipt {
                         writer.send(&json(&NodeFrame::Reply { id, reply: taken })).await?;
                     } else if let Err(error) = taken {
@@ -305,13 +305,16 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
         let cancellable = matches!(&call, Call::Offers { .. });
+        let run_resident = match &call { Call::Run { resident, .. } => Some(resident.clone()), _ => None };
         let answer = async {
             match call {
                 Call::Collect { resident, answering } => {
                     collect(node, resident, answering, &mut arrived.collected, &mut arrived.notes).await
                 }
-                Call::Taken { resident, ids, shown } => {
-                    taken(node, resident, ids, shown, &mut arrived.collected, &mut arrived.notes).await
+                Call::Taken { resident, ids, shown, completed } => {
+                    let pending = arrived.completed.take().filter(|(owner, _)| *owner == resident).map(|(_, job)| job);
+                    let completed = completed.or(pending);
+                    taken(node, resident, ids, shown, completed, &mut arrived.collected, &mut arrived.notes).await
                 }
                 call => handle(node, &hello.peer, call).await,
             }
@@ -321,6 +324,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         } else {
             answer.await
         };
+        if let Ok(Reply::Run(run)) = &reply
+            && !matches!(run.state, fastctx_types::run::RunState::Running | fastctx_types::run::RunState::Exited { .. })
+            && let Some(owner) = run_resident
+        {
+            arrived.completed = Some((owner, fastctx_types::run::CompletedJob {
+                machine: run.machine.clone(), job: run.job.clone(), output: run.output.log.clone(),
+            }));
+        }
         if legacy && let Ok(reply) = &mut reply {
             crate::renewal_legacy::reply(hello.protocol, reply);
         }
@@ -377,6 +388,7 @@ struct Arrived<'a> {
     residents: Vec<ResidentId>,
     collected: Vec<(ResidentId, NoticeId, Option<String>)>,
     notes: Vec<(ResidentId, crate::residents::Heard)>,
+    completed: Option<(ResidentId, fastctx_types::run::CompletedJob)>,
 }
 
 impl Drop for Arrived<'_> {
@@ -496,6 +508,7 @@ async fn taken(
     resident: ResidentId,
     ids: Vec<NoticeId>,
     shown: Option<fastctx_types::JobId>,
+    completed: Option<fastctx_types::run::CompletedJob>,
     collected: &mut Vec<(ResidentId, NoticeId, Option<String>)>,
     collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
@@ -529,7 +542,7 @@ async fn taken(
             // A host that exposes no turn identity can acknowledge transport
             // delivery, but cannot establish an answer obligation for a turn.
             for input in inputs {
-                crate::speech::settle(&directory, &input.delivery.id).await?;
+                crate::speech::settle(node, &directory, &input.delivery.id).await?;
             }
         }
     }
@@ -544,7 +557,13 @@ async fn taken(
         node.residents.acknowledge_heard(owner, heard.clone());
         false
     });
-    if let Some(job) = shown
+    if let Some(completed) = completed {
+        let owner = fastctx_types::Address { machine: node.machine(), resident: resident.clone() };
+        crate::retention::confirmed(node, owner, completed.machine, fastctx_types::run::JobDelivery {
+            shown_whole: shown.as_ref() == Some(&completed.job), job: completed.job,
+            output: completed.output, at: jiff::Timestamp::now(),
+        }, None).map_err(|error| Failure::new(format!("recording job delivery: {error}")))?;
+    } else if let Some(job) = shown
         && !crate::here::forget(node, &resident, &job)
     {
         let (node, owner) = (node.clone(), fastctx_types::Address { machine: node.machine(), resident });

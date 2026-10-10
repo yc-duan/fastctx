@@ -79,6 +79,8 @@ pub enum Call {
         /// The command acknowledges the rendered result before taking its ends.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         receipt: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<JobId>,
     },
     /// Copies files or a directory from one machine to another.
     Copy {
@@ -276,6 +278,8 @@ pub enum Call {
         /// (`world-run.md`, 输出).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shown: Option<JobId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completed: Option<crate::run::CompletedJob>,
     },
     /// `fastctx project`.
     Project(ProjectCall),

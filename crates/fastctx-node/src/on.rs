@@ -56,7 +56,17 @@ pub(crate) enum Piece {
 }
 
 #[derive(Clone)]
-struct Pieces(mpsc::Sender<Piece>, watch::Receiver<bool>);
+struct Pieces(mpsc::Sender<Piece>, watch::Receiver<bool>, Arc<Mutex<ReceiptContext>>);
+
+struct ReceiptContext {
+    node: Arc<Node>,
+    parent: Option<PathBuf>,
+    origin: OnOrigin,
+    destination: crate::reach::Written,
+    acting: Acting,
+    job: Option<JobId>,
+    consumed: Vec<fastctx_types::run::ConsumedEnd>,
+}
 
 pub(crate) struct OnFollowing {
     pub(crate) pieces: mpsc::Receiver<Piece>,
@@ -65,6 +75,9 @@ pub(crate) struct OnFollowing {
 
 impl Pieces {
     async fn send(&self, piece: Result<OnPiece, Failure>) -> Result<(), String> {
+        if let Ok(OnPiece::Started { job, .. }) = &piece {
+            self.2.lock().expect("never poisoned").job = Some(job.clone());
+        }
         self.0.send(Piece::Value(piece)).await.map_err(|_| "the on that sent it left".to_string())
     }
 
@@ -81,9 +94,28 @@ impl Pieces {
     }
 
     async fn ended(&self, end: OnEnd) -> Result<bool, String> {
+        let complete = !matches!(&end, OnEnd::Exited { remaining, .. } if *remaining > 0);
+        let (node, origin, consumed) = {
+            let context = self.2.lock().expect("never poisoned");
+            (context.node.clone(), context.origin.clone(), context.consumed.clone())
+        };
+        if origin.resident.machine == node.machine() && !consumed.is_empty() {
+            let directory = node.world.resident(origin.town.as_ref(), &origin.resident.resident);
+            tokio::task::spawn_blocking(move || {
+                let (_transaction, directory) = crate::resident_storage::current(&directory)?;
+                crate::job_receipts::apply_consumed(&directory, &consumed)
+            }).await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())?;
+        }
         let (taken, receipt) = oneshot::channel();
         self.0.send(Piece::End { end, taken }).await.map_err(|_| "the on that sent it left".to_string())?;
-        Ok(receipt.await.is_ok())
+        let received = receipt.await.is_ok();
+        if received && complete {
+            let context = self.2.lock().expect("never poisoned");
+            let job = context.job.as_ref().expect("started before end");
+            crate::job_receipts::on_taken(&context.node, context.parent.as_deref(), &context.origin,
+                &context.destination, &context.acting, job, &context.consumed).map_err(|error| error.to_string())?;
+        }
+        Ok(received)
     }
 }
 
@@ -120,7 +152,10 @@ pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) ->
     origin.follower = Some(node.machine());
     let (pieces, receiver) = mpsc::channel(QUEUED_PIECES);
     let (stop, stopping) = watch::channel(false);
-    let pieces = Pieces(pieces, stopping);
+    let parent = request.job.as_ref().map(|job| node.world.job_owner(&node.machine(), origin.town.as_ref(), &origin.resident.clone().into()).job_record(job));
+    let context = ReceiptContext { node: node.clone(), parent, acting: acting(node, &origin), origin: origin.clone(),
+        destination: request.written(), job: None, consumed: Vec::new() };
+    let pieces = Pieces(pieces, stopping, Arc::new(Mutex::new(context)));
     let node = node.clone();
     tokio::spawn(async move {
         let waiting = Arc::new(Mutex::new(crate::on_delivery::Following::start(&node, &origin, &request.machine)));
@@ -258,6 +293,7 @@ async fn there(
     // Recorded here under its project; there, under it only on its hub.
     let local_origin = origin;
     let origin = &OnOrigin { town: node.town_across(&link, origin.town.as_ref()), ..origin.clone() };
+    pieces.2.lock().expect("never poisoned").origin = origin.clone();
     let sizes = sizes(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
     requested(node, local_origin, request).await?;
     let followed = Arc::new(Mutex::new(Followed::default()));
@@ -507,7 +543,8 @@ fn feed(
                         }
                     }
                     OnWord::Still => {}
-                    OnWord::Ended { end, .. } => {
+                    OnWord::Ended { end, consumed, .. } => {
+                        pieces.2.lock().expect("never poisoned").consumed = consumed;
                         let mut receipt = offer_end(&followed, &pieces, &waiting, end);
                         let taken = loop {
                             tokio::select! {
@@ -767,6 +804,7 @@ async fn take_piped(
 async fn take_output(node: &Arc<Node>, producer: &OnOrigin, source: &OnSource, path: &Path) -> Result<(), Failure> {
     if source.machine == node.machine() {
         let record_path = on_job(node, producer, &source.job)?;
+        let _reading = crate::job_reader::open(node, &record_path).await?;
         piped_record(&record_path, producer).await?;
         let mut changes = node.jobs.subscribe();
         let record = loop {
@@ -871,7 +909,7 @@ fn piped_taken(node: &Arc<Node>, record_path: &Path) {
         return;
     }
     if record_path.with_extension("on-taken").exists() {
-        crate::job_watch::forget(node, record_path);
+        crate::job_watch::copied(node, record_path);
     }
 }
 
@@ -938,7 +976,7 @@ pub async fn serve_follow(
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let record_path = on_job(node, &origin, &job)?;
-    let follower = Follower::new(node, &record_path);
+    let follower = Follower::new(node, &record_path).await?;
     let mut sink = Sink::Stream(&mut stream);
     let handed = hand_over(node, &job, &record_path, out_from, err_from, &mut sink).await;
     follower.finish(handed).await?;
@@ -1077,12 +1115,24 @@ pub(crate) type Registration = Arc<Mutex<Option<Follower>>>;
 pub(crate) struct Follower {
     node: Arc<Node>,
     path: PathBuf,
+    _reader: crate::job_reader::Lease,
 }
 
 impl Follower {
-    pub(crate) fn new(node: &Arc<Node>, path: &Path) -> Self {
+    pub(crate) fn reserved(node: &Arc<Node>, path: &Path) -> Self {
         *node.following.lock().expect("never poisoned").entry(path.to_path_buf()).or_default() += 1;
-        Self { node: node.clone(), path: path.to_path_buf() }
+        Self { node: node.clone(), path: path.to_path_buf(), _reader: crate::job_reader::hold(node, path) }
+    }
+
+    async fn new(node: &Arc<Node>, path: &Path) -> Result<Self, Failure> {
+        let (node, path) = (node.clone(), path.to_path_buf());
+        tokio::task::spawn_blocking(move || {
+            let _gate = node.disk.lock().expect("never poisoned");
+            fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
+            Ok(Self::reserved(&node, &path))
+        })
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
     }
 
     async fn finish(self, handed: Result<Handed, String>) -> Result<(), Failure> {
@@ -1157,10 +1207,10 @@ impl Sink<'_> {
     }
 
     /// Hands over the end; true when the other side says it has it.
-    async fn ended(&mut self, end: OnEnd, lettered: bool) -> Result<bool, String> {
+    async fn ended(&mut self, end: OnEnd, lettered: bool, consumed: Vec<fastctx_types::run::ConsumedEnd>) -> Result<bool, String> {
         match self {
             Sink::Stream(stream) => {
-                stream.say(&OnWord::Ended { end, lettered }).await?;
+                stream.say(&OnWord::Ended { end, lettered, consumed }).await?;
                 loop {
                     match tokio::time::timeout(SILENT_FOR, stream.hear::<String>()).await {
                         Ok(Ok(word)) if word == WAITING => continue,
@@ -1170,7 +1220,10 @@ impl Sink<'_> {
                     }
                 }
             }
-            Sink::Local(pieces) => pieces.ended(end).await,
+            Sink::Local(pieces) => {
+                pieces.2.lock().expect("never poisoned").consumed = consumed;
+                pieces.ended(end).await
+            },
         }
     }
 
@@ -1228,7 +1281,10 @@ async fn hand_over(
             let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(job);
             let lettered = record.end.is_some() && matches!(tokio::fs::try_exists(&owed).await, Ok(false));
             let complete = record.end.is_some();
-            return sink.ended(end, lettered).await.map(|taken| Handed { taken, complete });
+            let (node, path) = (node.clone(), record_path.to_path_buf());
+            let consumed = tokio::task::spawn_blocking(move || crate::job_receipts::snapshot(&node, &path))
+                .await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())?;
+            return sink.ended(end, lettered, consumed).await.map(|taken| Handed { taken, complete });
         }
         if quiet_since.elapsed() >= STILL_EVERY {
             sink.still().await?;

@@ -4,6 +4,11 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+#[path = "collection.rs"]
+mod collection;
+
+pub use collection::collect_finished;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Version {
     identity: Identity,
@@ -135,21 +140,36 @@ pub fn retained_archives(root: &Path) -> Result<Vec<PathBuf>, FileError> {
         let directory = entry.map_err(|error| FileError::io(&history, "list retained user versions", error))?.path();
         paths.push(directory.clone());
         let manifest = directory.join("manifest.json");
-        if !manifest.is_file() { continue; }
+        if !manifest.is_file() {
+            continue;
+        }
         let journal = Journal::read(&manifest)?;
         let mut object = |path: &Path| {
-            if !path.starts_with(&history) && !path.starts_with(&canonical_history) && let Some(parent) = path.parent() {
+            if !path.starts_with(&history)
+                && !path.starts_with(&canonical_history)
+                && let Some(parent) = path.parent()
+            {
                 paths.push(parent.to_path_buf());
             }
         };
         for entry in &journal.entries {
-            for version in [&entry.observed, &entry.after].into_iter().flatten() { object(&version.path); }
-            for revision in &entry.command_revisions { object(&revision.path); }
-            for restoration in &entry.restorations { object(&restoration.source.path); object(&restoration.displaced); }
-            object(&entry.displaced); object(&entry.withdrawn);
+            for version in [&entry.observed, &entry.after].into_iter().flatten() {
+                object(&version.path);
+            }
+            for revision in &entry.command_revisions {
+                object(&revision.path);
+            }
+            for restoration in &entry.restorations {
+                object(&restoration.source.path);
+                object(&restoration.displaced);
+            }
+            object(&entry.displaced);
+            object(&entry.withdrawn);
         }
     }
-    paths.sort(); paths.dedup(); Ok(paths)
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
 }
 
 /// Takes out of finished host publications the retained objects of files
@@ -165,7 +185,8 @@ pub fn prune_owned(root: &Path) -> Result<Vec<(PathBuf, io::Error)>, FileError> 
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(FileError::io(&history, "list retained versions", error)),
     };
-    let roots = [root.to_path_buf(), fs::canonicalize(root).map_err(|error| FileError::io(root, "locate the World", error))?];
+    let roots =
+        [root.to_path_buf(), fs::canonicalize(root).map_err(|error| FileError::io(root, "locate the World", error))?];
     let owned = |target: &Path| roots.iter().any(|root| target.starts_with(root));
     let mut kept = Vec::new();
     for entry in entries {
@@ -209,14 +230,19 @@ pub fn prune_owned(root: &Path) -> Result<Vec<(PathBuf, io::Error)>, FileError> 
 pub fn pending_record(root: &Path) -> Result<Option<Snapshot>, FileError> {
     let active = Snapshot::read(root.join("applied-files-pending.json"))?;
     let Some(bytes) = active.bytes() else { return Ok(None) };
-    let pointer: Active = serde_json::from_slice(bytes).map_err(|error| FileError::io(active.path(), "read pending host record", io::Error::other(error)))?;
+    let pointer: Active = serde_json::from_slice(bytes)
+        .map_err(|error| FileError::io(active.path(), "read pending host record", io::Error::other(error)))?;
     let history = root.join("apply-history");
-    if pointer.version != 1 || !pointer.manifest.starts_with(&history) { return Err(invalid(active.path(), "pending record belongs to another installation")); }
+    if pointer.version != 1 || !pointer.manifest.starts_with(&history) {
+        return Err(invalid(active.path(), "pending record belongs to another installation"));
+    }
     let journal = Journal::read(&pointer.manifest)?;
     let target = root.join("applied.json");
     let object = journal.entries.iter().find(|entry| entry.target == target).and_then(|entry| entry.after.as_ref());
     let Some(object) = object else { return Ok(None) };
-    if !object.path.starts_with(&history) { return Err(invalid(&object.path, "pending ownership record is outside this installation's archive")); }
+    if !object.path.starts_with(&history) {
+        return Err(invalid(&object.path, "pending ownership record is outside this installation's archive"));
+    }
     Ok(Some(Snapshot::read(&object.path)?))
 }
 
@@ -255,11 +281,16 @@ pub fn recover(active: impl AsRef<Path>) -> Result<Receipt, FileError> {
         Phase::Forward => {
             if let Err(cause) = journal.forward() {
                 let failures = journal.rollback();
+                let mut retained = true;
                 if failures.is_empty() {
                     journal.retire_publications()?;
                     clear_active(active)?;
+                    if journal.conflicts.is_empty() {
+                        collection::discard(&journal)?;
+                        retained = false;
+                    }
                 }
-                return Err(journal.failure(cause, &failures));
+                return Err(journal.failure(cause, &failures, retained));
             }
         }
         Phase::Rollback => {
@@ -279,6 +310,7 @@ pub fn recover(active: impl AsRef<Path>) -> Result<Receipt, FileError> {
             &format!("{}\npreserved versions: {}", journal.conflicts.join("\n"), journal.manifest.display()),
         ));
     }
+    collection::discard(&journal)?;
     Ok(receipt)
 }
 
@@ -392,8 +424,13 @@ pub(super) fn commit(
         Ok(()) => {
             let journal = journal.expect("successful preparation");
             let mut receipt = journal.receipt();
-            if let Err(error) = journal.retire_publications().and_then(|()| clear_active(active)) {
+            if let Err(error) = journal
+                .retire_publications()
+                .and_then(|()| clear_active(active))
+                .and_then(|()| collection::discard(&journal))
+            {
                 receipt.cleanup.push(error);
+                receipt.preserved.push(journal.manifest.clone());
             }
             Ok(receipt)
         }
@@ -407,7 +444,7 @@ pub(super) fn commit(
                 });
             };
             let rollback = journal.rollback();
-            let cause = journal.failure(cause, &rollback);
+            let mut retained = true;
             let mut cleanup = vec![];
             if rollback.is_empty() {
                 if let Err(error) = journal.retire_publications() {
@@ -416,9 +453,15 @@ pub(super) fn commit(
                     cleanup.extend(journal.cleanup_directories());
                     if let Err(error) = clear_active(active) {
                         cleanup.push(error);
+                    } else if journal.conflicts.is_empty() {
+                        match collection::discard(&journal) {
+                            Ok(()) => retained = false,
+                            Err(error) => cleanup.push(error),
+                        }
                     }
                 }
             }
+            let cause = journal.failure(cause, &rollback, retained);
             Err(Failure { cause: Box::new(cause), rollback, cleanup, created: journal.created })
         }
     }
@@ -846,7 +889,7 @@ impl Journal {
             } else {
                 super::cleanup_directories(&self.cleanup_on_commit)
             },
-            preserved: vec![self.manifest.clone()],
+            preserved: if self.conflicts.is_empty() { vec![] } else { vec![self.manifest.clone()] },
         }
     }
 
@@ -866,13 +909,17 @@ impl Journal {
         self.save()
     }
 
-    fn failure(&self, cause: FileError, rollback: &[FileError]) -> FileError {
+    fn failure(&self, cause: FileError, rollback: &[FileError], retained: bool) -> FileError {
         invalid(
             &cause.path,
             &format!(
-                "{cause}{}\npreserved file versions and recovery state: {}",
+                "{cause}{}{}",
                 rollback.iter().map(|e| format!("\nrollback: {e}")).collect::<String>(),
-                self.manifest.display()
+                if retained {
+                    format!("\npreserved file versions and recovery state: {}", self.manifest.display())
+                } else {
+                    String::new()
+                }
             ),
         )
     }

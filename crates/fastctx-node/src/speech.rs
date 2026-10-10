@@ -430,7 +430,7 @@ pub async fn bind(
     for input in &handover.inputs {
         crate::composer::bound(node, id, &input.delivery.id, turn).await?;
         heard(node, id, &input.delivery, turn);
-        settle(directory, &input.delivery.id).await?;
+        settle(node, directory, &input.delivery.id).await?;
     }
     Ok(())
 }
@@ -519,9 +519,10 @@ async fn set_state(directory: &ResidentDir, id: &NoticeId, state: PendingState) 
 }
 
 /// Something kept went in: it is no longer kept, and its id is known.
-pub async fn settle(directory: &ResidentDir, id: &NoticeId) -> Result<Option<Pending>, Failure> {
+pub async fn settle(node: &Arc<Node>, directory: &ResidentDir, id: &NoticeId) -> Result<Option<Pending>, Failure> {
     let (directory, id) = (directory.clone(), id.clone());
-    tokio::task::spawn_blocking(move || crate::inbox::settle(&directory, &id))
+    let node = node.clone();
+    tokio::task::spawn_blocking(move || crate::inbox::settle(&node, &directory, &id))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("settling what went in: {error}")))

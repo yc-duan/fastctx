@@ -236,7 +236,7 @@ async fn finish_at(
     crate::composer::turn_ended(node, id, turn, &finished.end.how).await.map_err(std::io::Error::other)?;
     for handover in &accepted {
         for input in &handover.inputs {
-            crate::inbox::settle(&directory, &input.delivery.id)?;
+            crate::inbox::settle(node, &directory, &input.delivery.id)?;
         }
     }
     if matches!(about.origin, Origin::Colleague { .. }) {

@@ -36,8 +36,14 @@ pub(crate) fn restore(node: &Arc<Node>, record: &JobRecord) -> std::io::Result<(
     Ok(())
 }
 
-/// Removes an ended job's files now, or when its watch ends.
-pub(crate) fn forget(node: &Arc<Node>, path: &Path) {
+/// Releases transferred bytes after the final reader leaves. Metadata and
+/// scratch await the enclosing answer's host receipt.
+pub(crate) fn copied(node: &Arc<Node>, path: &Path) {
+    let _gate = node.disk.lock().expect("never poisoned");
+    if let Err(error) = fastctx_platform::publish(&path.with_extension("copied"), b"", fastctx_platform::Permissions::Private) {
+        node.log.line(format_args!("recording transferred command output: {error}"));
+        return;
+    }
     {
         let mut watched = node.job_watches.0.lock().expect("never poisoned");
         if watched.watching.contains(path) {
@@ -48,16 +54,21 @@ pub(crate) fn forget(node: &Arc<Node>, path: &Path) {
     remove(node, path.to_path_buf());
 }
 
+/// A maintenance pass already runs off the control loop. Remove settled
+/// jobs sequentially rather than queueing one blocking task per old record.
+pub(crate) fn collect(node: &Node, path: &Path) -> std::io::Result<()> {
+    let mut watched = node.job_watches.0.lock().expect("never poisoned");
+    if watched.watching.contains(path) {
+        watched.forgetting.insert(path.to_path_buf());
+        return Ok(());
+    }
+    drop(watched);
+    crate::jobs::remove(path)
+}
+
 fn remove(node: &Arc<Node>, path: PathBuf) {
-    let node = node.clone();
-    tokio::spawn(async move {
-        let removed = tokio::task::spawn_blocking(move || crate::jobs::remove(&path)).await;
-        match removed {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => node.log.line(format_args!("removing a job shown whole: {error}")),
-            Err(error) => node.log.line(format_args!("removing a job shown whole: {error}")),
-        }
-    });
+    node.disk_due.lock().expect("never poisoned").insert(path);
+    node.disk_changed.notify_one();
 }
 
 /// Without an identity, the supervisor lock witnesses whether an exited

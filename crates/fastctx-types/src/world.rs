@@ -30,6 +30,9 @@ pub struct MachineFacts {
     /// as the platform has it by default.
     pub case_sensitive: bool,
     pub version: String,
+    /// The node's local protocol identifies optional runtime features.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<u32>,
     /// The bash `run` uses there, such as `bash 5.2.37 (Git for Windows,
     /// MSYS)`: on MSYS, arguments shaped like Unix paths are rewritten
     /// before a Windows program sees them (`world-run.md`). Empty when the

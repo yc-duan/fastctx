@@ -21,6 +21,8 @@ pub struct Program {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
     pub candidate: Program,
+    /// Recovery checks this build against the stable program. The path is
+    /// where it was observed, not an extra executable kept for rollback.
     pub previous: Option<Program>,
     pub phase: Phase,
     pub error: Option<String>,
@@ -223,8 +225,7 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
         fastctx_client::renewal::Probe::Absent => installed_build.as_ref().map(|_| installed(root)),
     };
     let previous = if let Some(previous_path) = previous_path {
-        let path = copy_image(root, &previous_path)?;
-        let previous = crate::program::inspect(&path)?;
+        let previous = crate::program::inspect(&previous_path)?;
         if let fastctx_client::renewal::Probe::Running(node) = &serving {
             anyhow::ensure!(
                 previous == node.build,
@@ -237,7 +238,7 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
             build.version,
             previous.version
         );
-        Some(Program { build: previous, path })
+        Some(Program { build: previous, path: previous_path })
     } else {
         None
     };
@@ -320,6 +321,7 @@ pub fn publish_image(source: &Path, target: &Path) -> io::Result<()> {
 /// not cancel an idle handover. The worker serializes concurrent requests.
 /// Only an explicit placement, retry, or approval retries a known failure.
 pub fn request(root: &Path, retry: bool) -> anyhow::Result<()> {
+    let _starting = FileLock::acquire(&directory(root).join("request.lock"))?;
     if let Some(plan) = read(root)? {
         verify(&plan.candidate)?;
         let mut args = vec!["renew".into(), "run".into(), "--dir".into(), root.into()];

@@ -324,7 +324,7 @@ pub(crate) async fn connected(
         refuse(&mut socket, Refusal::Broken { reason: "the first frame must be a hello".to_string() }).await;
         return;
     };
-    if protocol != PROTOCOL {
+    if !wire::accepts(protocol) {
         hub.log.line(format_args!("{peer}: refused fastctx {version}, which speaks protocol {protocol}"));
         refuse(&mut socket, Refusal::Protocol { hub: PROTOCOL, version: env!("CARGO_PKG_VERSION").to_string() }).await;
         return;

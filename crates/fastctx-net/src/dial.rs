@@ -299,7 +299,7 @@ pub async fn probe(addresses: &[SocketAddr], pin: CertPin) -> Result<(), String>
     let mut socket =
         dial(addresses, Some(pin), crate::wire::CONTROL_PATH, crate::wire::MAX_CONTROL_FRAME).await?.socket;
     let hello = Up::Hello {
-        protocol: crate::wire::PROTOCOL,
+        protocol: crate::wire::GREETING_PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
         intent: crate::wire::Intent::Probe,
     };

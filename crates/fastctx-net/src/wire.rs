@@ -27,6 +27,14 @@ use crate::sign::{Bytes, Digest, PublicKey, Signature, Signed};
 /// Raised whenever a change would make one side misread the other.
 pub const PROTOCOL: u32 = 12;
 
+/// Protocol 12's transport is also understood by released protocol 11 hubs.
+/// Feature-bearing calls are selected from the destination node's facts.
+pub const GREETING_PROTOCOL: u32 = 11;
+
+pub fn accepts(protocol: u32) -> bool {
+    matches!(protocol, GREETING_PROTOCOL | PROTOCOL)
+}
+
 pub const CONTROL_PATH: &str = "/fastctx/world/4";
 pub const DATA_PATH: &str = "/fastctx/world/4/data";
 

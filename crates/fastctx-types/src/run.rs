@@ -71,7 +71,7 @@ pub struct StopRequested {
 pub struct RunReply {
     /// Completion notices taken by waits of this owner on the executing node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub consumed: Option<Box<Vec<crate::NoticeId>>>,
+    pub consumed: Option<Box<Vec<ConsumedEnd>>>,
     pub machine: MachineName,
     pub job: JobId,
     pub state: RunState,
@@ -350,6 +350,32 @@ pub struct JobProgram {
     /// Identifies the boot even if the starter dies before the supervisor
     /// publishes its own identity.
     pub starter: ProcessIdentity,
+}
+
+/// A host received an ended job's answer. The output name distinguishes
+/// identical short job IDs in different towns without trusting a remote path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobDelivery {
+    pub job: JobId,
+    pub output: String,
+    pub at: Timestamp,
+    pub shown_whole: bool,
+}
+
+/// An ended job included in an MCP response, awaiting its transport receipt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompletedJob {
+    pub machine: MachineName,
+    pub job: JobId,
+    pub output: String,
+}
+
+/// Consumption travels through enclosing hops with the source that sent
+/// its notice. The source also identifies the letter's wrapper receipt.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ConsumedEnd {
+    pub machine: MachineName,
+    pub id: crate::NoticeId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

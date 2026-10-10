@@ -29,13 +29,14 @@ pub mod path_command;
 pub mod placement;
 pub mod plan;
 pub mod program;
+pub mod program_collection;
 pub mod renewal;
 pub mod server;
 pub mod service;
 mod source;
 pub mod transaction;
-pub mod upgrade;
 pub mod uninstall;
+pub mod upgrade;
 
 mod disk;
 mod snapshot;

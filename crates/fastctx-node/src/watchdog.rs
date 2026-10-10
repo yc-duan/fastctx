@@ -1,7 +1,6 @@
 //! The control loop must remain schedulable while jobs and network I/O wait.
 
 use std::io;
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 
@@ -21,8 +20,7 @@ struct Progress {
 }
 
 impl Watchdog {
-    pub fn start(path: &Path) -> io::Result<Self> {
-        let log = crate::log::Log::open(path)?;
+    pub fn start(log: Arc<crate::log::Log>) -> io::Result<Self> {
         let initial = Sample::now()?;
         let progress = Arc::new(Progress { answered: AtomicU64::new(0), wake: Notify::new() });
         let (stop, stopped) = mpsc::channel();

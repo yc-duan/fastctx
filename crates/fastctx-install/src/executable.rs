@@ -14,6 +14,19 @@ pub fn installed_path(root: &Path) -> PathBuf {
 
 const PREFIX: &str = ".fastctx-exe-retired-";
 
+pub(crate) fn retain_archived(directory: &Path, source: &Path, file: &std::fs::File) -> std::io::Result<PathBuf> {
+    let identity = disk::identity(file)?;
+    let prefix = format!("{PREFIX}{:016x}-{:032x}-", identity.volume, identity.file);
+    let path = disk::unique_path(directory, &prefix)?;
+    fs::hard_link(source, &path)?;
+    let retained = disk::open(&path)?;
+    if disk::identity(&retained)? != identity {
+        return Err(std::io::Error::other("retired image changed while linked"));
+    }
+    disk::sync_parent(&path)?;
+    Ok(path)
+}
+
 pub(crate) fn retain(snapshot: &Snapshot) -> Result<Option<PathBuf>, FileError> {
     if !cfg!(windows) {
         return Ok(None);
@@ -57,6 +70,45 @@ pub fn cleanup_retired(installed: &Path) -> Vec<FileError> {
     paths.sort();
     for path in paths {
         if let Err(error) = delete_retired(&path) {
+            errors.push(error);
+        }
+    }
+    errors
+}
+
+/// Maintenance keeps mapped images and holds execution exclusion while
+/// removing only names whose embedded identity still matches the object.
+pub fn cleanup_retired_unused(installed: &Path) -> Vec<FileError> {
+    let Some(parent) = installed.parent() else { return Vec::new() };
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => return vec![FileError::io(parent, "list retired images", error)],
+    };
+    let mut errors = Vec::new();
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(error) => {
+                errors.push(FileError::io(parent, "list retired image", error));
+                continue;
+            }
+        };
+        let Some(expected) = retained_identity(&path) else { continue };
+        let result = (|| {
+            let Some(unused) = fastctx_platform::image_usage::unused(&path)
+                .map_err(|error| FileError::io(&path, "reserve retired image", error))?
+            else {
+                return Ok(());
+            };
+            if disk::identity(&unused).map_err(|error| FileError::io(&path, "identify retired image", error))?
+                != expected
+            {
+                return Err(FileError::changed(&path));
+            }
+            fs::remove_file(&path).map_err(|error| FileError::io(&path, "delete unused retired image", error))
+        })();
+        if let Err(error) = result {
             errors.push(error);
         }
     }

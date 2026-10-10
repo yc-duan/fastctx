@@ -218,6 +218,9 @@ fn reserve(resident: &ResidentDir) -> io::Result<(JobId, PathBuf)> {
             continue;
         }
         let output = resident.job_output(&job);
+        if resident.job_scratch(&job).try_exists()? {
+            continue;
+        }
         match OpenOptions::new().write(true).create_new(true).open(&output) {
             Ok(_) => return Ok((job, output)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,

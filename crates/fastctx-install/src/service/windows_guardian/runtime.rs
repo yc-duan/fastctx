@@ -1,8 +1,7 @@
 //! The guardian owns at most a serving process and one prepared successor.
 //! Busy/idle is entirely the node's decision, communicated on its private pipe.
 
-use std::fs::{File, OpenOptions};
-use std::io::Write as _;
+use fastctx_platform::rolling_log::RollingLog;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -60,7 +59,7 @@ pub(super) fn run(
     if config.target.is_some() {
         account::enable_privileges()?;
     }
-    let mut log = OpenOptions::new().create(true).append(true).open(config.root()?.join("guardian.log"))?;
+    let mut log = RollingLog::open(&config.root()?.join("guardian.log"))?;
     let mut active: Option<Node> = None;
     let mut candidate: Option<Node> = None;
     // Keep one explicit profile reference across crashes as well as handoffs.
@@ -188,7 +187,7 @@ fn reconcile(
     active: &mut Option<Node>,
     candidate: &mut Option<Node>,
     sender: &SyncSender<Event>,
-    log: &mut File,
+    log: &mut RollingLog,
 ) -> anyhow::Result<()> {
     let full = match &config.target {
         Some(target) => account::interactive(target, active.as_ref().map(|node| node.child.identity))
@@ -237,7 +236,7 @@ fn reconcile(
     Ok(())
 }
 
-fn advance(active: &mut Option<Node>, candidate: &mut Option<Node>, log: &mut File) -> anyhow::Result<()> {
+fn advance(active: &mut Option<Node>, candidate: &mut Option<Node>, log: &mut RollingLog) -> anyhow::Result<()> {
     if !candidate.as_ref().is_some_and(|node| node.prepared) {
         return Ok(());
     }
@@ -260,7 +259,7 @@ fn advance(active: &mut Option<Node>, candidate: &mut Option<Node>, log: &mut Fi
     Ok(())
 }
 
-fn cancel_yield(active: &mut Option<Node>, log: &mut File) {
+fn cancel_yield(active: &mut Option<Node>, log: &mut RollingLog) {
     if let Some(node) = active.as_mut().filter(|node| node.yielding && !node.yielded && !node.cancel_requested) {
         match node.child.send(ServiceCommand::CancelYield) {
             Ok(()) => node.cancel_requested = true,
@@ -269,10 +268,10 @@ fn cancel_yield(active: &mut Option<Node>, log: &mut File) {
     }
 }
 
-fn line(file: &mut File, text: &str) {
+fn line(file: &mut RollingLog, text: &str) {
     // Diagnostic IO must not take a working node offline. A failed log write
     // is surfaced to the Windows debugger without restarting the process.
-    if let Err(error) = writeln!(file, "{text}") {
+    if let Err(error) = file.write(format!("{text}\n").as_bytes()) {
         let message: Vec<u16> = format!("fastctx guardian log failed: {error}\n").encode_utf16().chain([0]).collect();
         unsafe {
             windows_sys::Win32::System::Diagnostics::Debug::OutputDebugStringW(message.as_ptr());

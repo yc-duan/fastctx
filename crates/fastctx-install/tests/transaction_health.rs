@@ -41,8 +41,7 @@ fn host_files_and_record_share_a_transaction() {
 }
 
 #[test]
-fn unchanged_inputs_guard_receipt_publication_and_recovery() {
-    use fastctx_install::transaction::recover;
+fn unchanged_inputs_guard_receipt_publication() {
     let home = tempfile::tempdir().unwrap();
     let config = home.path().join("config.toml");
     let record = home.path().join("applied.json");
@@ -53,17 +52,10 @@ fn unchanged_inputs_guard_receipt_publication_and_recovery() {
         .unwrap();
     assert_eq!(receipt.changed.len(), 1);
     assert_eq!(fs::read(&config).unwrap(), b"observed");
-    let manifest = &receipt.preserved[0];
-    let mut journal: serde_json::Value = serde_json::from_slice(&fs::read(manifest).unwrap()).unwrap();
-    assert_eq!(journal["guards"][0]["target"].as_str(), Some(fs::canonicalize(&config).unwrap().to_str().unwrap()));
-    journal["phase"] = "Forward".into();
-    fs::write(manifest, serde_json::to_vec(&journal).unwrap()).unwrap();
-    fs::write(&active, serde_json::to_vec(&serde_json::json!({"version": 1, "manifest": manifest})).unwrap()).unwrap();
-    fs::write(&config, b"concurrent user's words").unwrap();
-    assert!(recover(&active).unwrap_err().to_string().contains("changed since"));
-    assert_eq!(fs::read(&config).unwrap(), b"concurrent user's words");
-    assert!(!record.exists());
+    assert!(receipt.preserved.is_empty());
+    assert_eq!(fs::read_dir(home.path().join("apply-history")).unwrap().count(), 0);
     assert!(!active.exists());
+    fs::remove_file(&record).unwrap();
 
     let before = Snapshot::read(&config).unwrap();
     let failure = Transaction::new([FileChange::write(before, b"concurrent user's words".as_slice())])

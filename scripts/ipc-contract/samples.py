@@ -71,7 +71,7 @@ def replies(fixtures):
                           "escaped_lines": 0}, "answered": answered}
     yield {"reply": "run", "machine": "desktop", "job": "j-abc123", "state": {"kind": "ended", "status": {"code": 0}},
            "output": {"log": "C:/job.log", "bytes": 0, "lines": 0, "pieces": [], "legacy": [], "escaped_lines": 0},
-           "consumed": ["desktop-j-def456"]}
+           "consumed": [{"machine": "desktop", "id": "desktop-j-def456"}]}
     notices = []
     for how in [{"kind": "finished"}, {"kind": "stopped"}, {"kind": "interrupted", "reason": "restart"},
                 {"kind": "failed", "error": "disk full"}]:
