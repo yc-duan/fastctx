@@ -143,7 +143,8 @@ for (const session of sessions) {
       const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
-      const url = written ? `${base}/page-specimen.html?theme=${theme}${extra ? `&${extra}` : ""}` : `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}`;
+      const specimen = named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
+      const url = specimen ? `${base}/${specimen}?theme=${theme}${extra ? `&${extra}` : ""}` : `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}`;
       await send("Page.navigate", { url });
       await loaded;
       // The interface loads after the engine check: wait until it is there.

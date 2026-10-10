@@ -1,0 +1,9 @@
+html, body { height: 100%; overflow: hidden; }
+.lv-specimen-shell { height: 100%; display: flex; flex-direction: column; }
+.lv-specimen-head { display: flex; gap: var(--space-4); padding: var(--space-4) var(--gutter); background: var(--bg-sunken); }
+.lv-specimen-head strong { font-family: var(--font-emphasis); font-weight: 400; }
+.lv-specimen-head span { color: var(--text-3); }
+#conversation { flex: 1; min-height: 0; overflow: auto; }
+#content { width: min(calc(100% - 2 * var(--gutter)), var(--column)); margin: 0 auto; padding: var(--space-6) 0; }
+#content p { margin: var(--space-6) 0; }
+.lv-specimen-grow { min-height: 44px; padding: 0 var(--space-3); background: var(--fill); border-radius: var(--radius-s); }

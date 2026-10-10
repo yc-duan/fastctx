@@ -1,0 +1,254 @@
+import type { LineMatch, LineSource } from "./source";
+import { chainTouch } from "./touch";
+
+export interface LineViewportOptions {
+  label: string;
+  /** Limits a preview without changing the source's identity. */
+  limit?: number;
+  follow?: boolean;
+  loading?: string;
+  failed?: string | ((error: unknown) => string);
+}
+
+/** Fixed-height logical lines; native horizontal scrolling preserves shaping,
+ * tabs, CJK, emoji, and long lines without guessing character widths.
+ * DOM and cache contain only the current visible range. No whole-source scan.
+ * CSS scroll-height saturation is measured and mapped to logical positions. */
+export class LineViewport {
+  readonly element = document.createElement("div");
+  readonly track = document.createElement("div");
+  readonly status = document.createElement("div");
+  private rows = new Map<number, HTMLElement>();
+  private cache = new Map<number, string>();
+  private painted = new WeakMap<HTMLElement, { value: string; match: string }>();
+  private request: AbortController | null = null;
+  private unsubscribe: () => void;
+  private observer: ResizeObserver;
+  private lineHeight = 0;
+  private width = 0;
+  private maximumWidth = 0;
+  private first = 0;
+  private end = 0;
+  private destroyed = false;
+  private match: LineMatch | null = null;
+  private lastTop = 0;
+  private atEnd = true;
+  private pending: Promise<void> = Promise.resolve();
+  private requestRange: [number, number] | null = null;
+  private unchain: () => void;
+
+  constructor(readonly source: LineSource, private options: LineViewportOptions) {
+    this.element.className = "lv-viewport";
+    this.element.tabIndex = 0;
+    this.element.setAttribute("role", "region");
+    this.element.setAttribute("aria-label", options.label);
+    this.track.className = "lv-track";
+    this.status.className = "lv-status";
+    this.status.setAttribute("role", "status");
+    this.element.append(this.track, this.status);
+    this.element.addEventListener("scroll", this.scroll, { passive: true });
+    this.element.addEventListener("wheel", this.wheel, { passive: false });
+    this.unchain = chainTouch(this);
+    this.unsubscribe = source.subscribe(({ from }) => {
+      if (this.match && this.match.line >= from) this.match = null;
+      for (const index of this.cache.keys()) if (index >= from) this.cache.delete(index);
+      this.request?.abort();
+      this.requestRange = null;
+      this.resize();
+    });
+    this.observer = new ResizeObserver(() => this.resize());
+    this.observer.observe(this.element);
+  }
+
+  get length(): number {
+    const length = this.source.extent.length;
+    if (!Number.isSafeInteger(length) || length < 0) throw new RangeError("source length must be a nonnegative safe integer");
+    return Math.min(length, this.options.limit ?? Infinity);
+  }
+  get rowHeight(): number { return this.lineHeight || parseFloat(getComputedStyle(this.element).lineHeight); }
+  get ready(): Promise<void> {
+    return (async () => { do { await this.pending; } while (this.requestRange); })();
+  }
+  get range(): { start: number; end: number; cached: number; drawn: number } {
+    return { start: this.first, end: this.end, cached: this.cache.size, drawn: this.rows.size };
+  }
+
+  get top(): number {
+    const physical = this.element.scrollHeight - this.element.clientHeight;
+    const logical = Math.max(0, this.length * this.rowHeight - this.element.clientHeight);
+    return physical > 0 ? this.element.scrollTop * logical / physical : 0;
+  }
+
+  setTop(top: number): void {
+    const logical = Math.max(0, this.length * this.rowHeight - this.element.clientHeight);
+    const physical = this.element.scrollHeight - this.element.clientHeight;
+    this.element.scrollTop = logical > 0 ? Math.max(0, Math.min(logical, top)) * physical / logical : 0;
+    this.scroll();
+  }
+
+  /** Returns unused vertical distance for scroll chaining. */
+  scrollBy(delta: number): number {
+    const before = this.top;
+    this.setTop(before + delta);
+    return delta - (this.top - before);
+  }
+
+  setLimit(limit: number | undefined): void {
+    if (limit === undefined) delete this.options.limit;
+    else this.options.limit = limit;
+    this.resize();
+  }
+
+  jump(line: number, match: LineMatch | null = null): void {
+    if (!Number.isSafeInteger(line) || line < 0 || line >= this.length) throw new RangeError("line is outside the source");
+    this.match = match;
+    this.setTop(line * this.rowHeight);
+  }
+
+  setMatch(match: LineMatch | null): void { this.match = match; this.draw(); }
+
+  private resize(): void {
+    if (this.destroyed || this.element.clientHeight === 0) return;
+    const top = this.lastTop;
+    this.lineHeight = parseFloat(getComputedStyle(this.element).lineHeight);
+    if (!(this.lineHeight > 0)) throw new Error("line-height must resolve to pixels");
+    if (this.width !== this.element.clientWidth) {
+      this.width = this.element.clientWidth;
+      this.maximumWidth = 0;
+      this.track.style.width = "100%";
+    }
+    this.track.style.height = `${this.length * this.lineHeight}px`;
+    this.setTop(this.options.follow && this.atEnd ? this.length * this.lineHeight : top);
+  }
+
+  private scroll = (): void => {
+    if (this.destroyed || !this.lineHeight || this.element.clientHeight === 0) return;
+    this.status.style.top = `${this.element.scrollTop}px`;
+    this.status.style.left = `${this.element.scrollLeft}px`;
+    const top = this.top;
+    this.lastTop = top;
+    this.atEnd = Math.ceil(top + this.element.clientHeight) >= Math.floor(this.length * this.lineHeight);
+    const first = Math.max(0, Math.floor(top / this.lineHeight));
+    const end = Math.min(this.length, Math.ceil((top + this.element.clientHeight) / this.lineHeight));
+    const changed = first !== this.first || end !== this.end;
+    this.first = first;
+    this.end = end;
+    for (const index of this.cache.keys()) if (index < first || index >= end) this.cache.delete(index);
+    this.draw();
+    if (changed && this.requestRange && (this.requestRange[0] < first || this.requestRange[1] > end)) {
+      this.request?.abort();
+      this.requestRange = null;
+    }
+    if (this.requestRange) return;
+    const missing: number[] = [];
+    for (let index = first; index < end; index++) if (!this.cache.has(index)) missing.push(index);
+    if (!missing.length) { this.status.textContent = ""; return; }
+    const start = missing[0];
+    const count = missing[missing.length - 1] + 1 - start;
+    const request = new AbortController();
+    this.request = request;
+    this.requestRange = [start, start + count];
+    this.status.textContent = this.options.loading ?? "Loading…";
+    this.element.setAttribute("aria-busy", "true");
+    let succeeded = false;
+    this.pending = this.source.read(start, count, request.signal).then((lines) => {
+      if (request.signal.aborted || this.destroyed) return;
+      if (lines.length !== count) throw new Error(`source returned ${lines.length} lines for ${start}+${count}`);
+      if (lines.some((line) => typeof line !== "string")) throw new TypeError("source lines must be strings");
+      for (let offset = 0; offset < count; offset++) {
+        const index = start + offset;
+        if (index >= this.first && index < this.end) this.cache.set(index, lines[offset]);
+      }
+      this.status.textContent = "";
+      this.draw();
+      succeeded = true;
+    }).catch((error: unknown) => {
+      if (request.signal.aborted) return;
+      this.status.textContent = typeof this.options.failed === "function" ? this.options.failed(error)
+        : (this.options.failed ?? "Unable to read content");
+      this.status.title = String(error);
+      throw error;
+    }).finally(() => {
+      if (this.request === request) {
+        this.requestRange = null;
+        this.element.setAttribute("aria-busy", "false");
+        if (succeeded) this.scroll();
+      }
+    });
+    // The visible error remains; callers can also await ready to receive it.
+    void this.pending.catch(() => {});
+  };
+
+  private draw(): void {
+    for (const [index, row] of this.rows) {
+      if (index < this.first || index >= this.end) { row.remove(); this.rows.delete(index); }
+    }
+    for (let index = this.first; index < this.end; index++) {
+      let row = this.rows.get(index);
+      if (!row) {
+        row = document.createElement("div");
+        row.className = "lv-line";
+        row.dataset.line = String(index);
+        const number = document.createElement("span");
+        number.className = "lv-number";
+        number.textContent = String(index + 1);
+        number.setAttribute("aria-hidden", "true");
+        const text = document.createElement("span");
+        text.className = "lv-text";
+        row.append(number, text);
+        this.rows.set(index, row);
+        this.track.append(row);
+      }
+      row.style.top = `${this.element.scrollTop + index * this.lineHeight - this.top}px`;
+      row.style.height = `${this.lineHeight}px`;
+      const text = row.lastElementChild as HTMLElement;
+      const value = this.cache.get(index) ?? "";
+      const matchKey = this.match?.line === index ? `${this.match.start}:${this.match.end}` : "";
+      const painted = this.painted.get(text);
+      if (painted?.value !== value || painted.match !== matchKey) {
+        this.painted.set(text, { value, match: matchKey });
+        if (this.match?.line === index) {
+          const mark = document.createElement("mark");
+          mark.textContent = value.slice(this.match.start, this.match.end);
+          text.replaceChildren(value.slice(0, this.match.start), mark, value.slice(this.match.end));
+          mark.scrollIntoView({ block: "nearest", inline: "nearest" });
+        } else text.textContent = value;
+      }
+    }
+    this.maximumWidth = Math.max(this.maximumWidth, ...Array.from(this.rows.values(), (row) => row.scrollWidth));
+    this.track.style.width = `${Math.max(this.width, this.maximumWidth)}px`;
+  }
+
+  private wheel = (event: WheelEvent): void => {
+    if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    // Above the engine's CSS-height range, native wheel distances would scale.
+    if (this.length * this.rowHeight <= this.element.scrollHeight + 1) return;
+    event.preventDefault();
+    const delta = event.deltaY * (event.deltaMode === 1 ? this.rowHeight : event.deltaMode === 2 ? this.element.clientHeight : 1);
+    this.chain(this.scrollBy(delta));
+  };
+
+  /** Used by touch routing as well as saturated scroll ranges. */
+  chain(delta: number): void {
+    for (let parent = this.element.parentElement; parent && Math.abs(delta) >= 1; parent = parent.parentElement) {
+      if (!/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) continue;
+      const before = parent.scrollTop;
+      parent.scrollTop += delta;
+      delta -= parent.scrollTop - before;
+    }
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+    this.unchain();
+    this.request?.abort();
+    this.unsubscribe();
+    this.observer.disconnect();
+    this.element.removeEventListener("scroll", this.scroll);
+    this.element.removeEventListener("wheel", this.wheel);
+    this.cache.clear();
+    this.rows.clear();
+    this.track.replaceChildren();
+    this.element.remove();
+  }
+}
