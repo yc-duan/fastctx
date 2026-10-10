@@ -33,8 +33,10 @@ for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
     mkdir -p "$FASTCTX_TEST_ROOT"
     for contract in own_lifetime job_lifecycle; do
       if [ "$contract" = own_lifetime ]; then package=fastctx-node; else package=fastctx-hands; fi
-      cargo +1.92.0 zigbuild --locked --release -j 4 -p "$package" --test "$contract" --target x86_64-unknown-linux-musl
-      mapfile -t tests < <(find "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/deps" -maxdepth 1 -name "$contract-*" ! -name '*.d' -type f -executable)
+      # The test executable this build made, as cargo reports it: a reused target directory keeps
+      # the ones earlier builds made beside it.
+      mapfile -t tests < <(cargo +1.92.0 zigbuild --locked --release -j 4 -p "$package" --test "$contract"         --target x86_64-unknown-linux-musl --message-format=json-render-diagnostics |
+        python -c 'import json, sys; [print(m["executable"]) for m in map(json.loads, sys.stdin) if m.get("reason") == "compiler-artifact" and m.get("executable") and m["target"]["name"] == sys.argv[1]]' "$contract")
       test "${#tests[@]}" = 1
       "${tests[0]}"
     done
