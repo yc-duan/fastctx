@@ -112,6 +112,9 @@ export const zhRemoval: RemovalWords = {
     linger: "systemd linger",
   },
   leftWhy: {
+    data: "按你的选择保留",
+    legacy: "按你的选择保留",
+    "other-program": "不归 World 管理，保持不变",
     "user-files": "保留你文件的原始版本，避免丢失之后的写入",
     "claude-permission": "这是你给的授权，原值未记录，保持不变",
     "account-right": "安装前的状态未记录，保持不变",
@@ -182,6 +185,9 @@ export const enRemoval: RemovalWords = {
     linger: "systemd linger",
   },
   leftWhy: {
+    data: "Kept as you chose",
+    legacy: "Kept as you chose",
+    "other-program": "Not managed by World, so it stays",
     "user-files": "Kept so later writes to your files aren't lost",
     "claude-permission": "Your own permission; its earlier value wasn't recorded, so it stays",
     "account-right": "Its state before installation wasn't recorded, so it stays",
