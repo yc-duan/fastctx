@@ -19,7 +19,7 @@ pub fn place(root: &Path, source: &Path) -> anyhow::Result<PathBuf> {
     for (name, text) in crate::program::notices(&installed)? {
         let bytes = text.as_bytes();
         let destination = licenses.join(&name);
-        if read_if_present(&destination)?.as_deref() != Some(&bytes) {
+        if read_if_present(&destination)?.as_deref() != Some(bytes) {
             let mut staged = crate::disk::Staged::create(&destination, 0o600)?;
             staged.file.write_all(bytes)?;
             staged.file.sync_all()?;

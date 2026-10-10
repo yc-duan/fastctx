@@ -2,7 +2,7 @@
 
 use super::Installation;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Legacy {
@@ -82,7 +82,7 @@ mod windows {
             let Some(command) = text("Exec", "Command") else { continue };
             let Some(arguments) = text("Exec", "Arguments") else { continue };
             if name == "\\FastCtx Node" {
-                if arguments != "node run" || installation.root.join("bin/fastctx.exe") != Path::new(command) {
+                if arguments != "node run" || installation.root.join("bin/fastctx.exe") != std::path::Path::new(command) {
                     continue;
                 }
             } else {
