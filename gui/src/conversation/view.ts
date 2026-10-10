@@ -16,6 +16,7 @@ import { numbered, parse, renderRows } from "./diff";
 import { groupHeading, headline, tenseOf } from "./tool";
 import { drawDiagrams } from "./diagrams";
 import { readTold, worldSaid, type WorldSaid } from "./told";
+import { detailOf } from "../app/problem";
 
 export interface Context {
   words: Words;
@@ -277,7 +278,8 @@ export class ConversationView {
     } catch (error) {
       for (const control of controls) control.disabled = false;
       card.classList.remove("busy");
-      status.textContent = asks.words.failed(String(error));
+      status.textContent = asks.words.failed(detailOf(error));
+      status.title = detailOf(error);
       status.classList.add("wrong");
     }
   }

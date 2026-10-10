@@ -324,7 +324,7 @@ export class Details {
   unknown(why: string | null): void {
     const { words } = this.options;
     this.shown = null;
-    this.body.innerHTML = `<p class="quiet">${escape(why ? words.cannotLook(why) : words.notFound)}</p>`;
+    this.body.innerHTML = `<p class="quiet"${why ? ` title="${escape(why)}"` : ""}>${escape(why ? words.cannotLook(why) : words.notFound)}</p>`;
   }
 
   private redraw(): void {

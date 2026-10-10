@@ -665,11 +665,12 @@ export class NewTalk {
     const facts = this.factsOf(option);
     const spent = facts && !loggedOut(facts) ? this.spent(facts) : null;
     const notes = [line.here ? words.here : "", option.lent ? words.lentBy(option.lent.owner ?? "") : line.owner && line.hold !== "mine" ? words.ownedBy(line.owner) : ""].filter(Boolean);
+    const lentWhy = option.lent ? words.lentWorks(option.lent.owner ?? "") : "";
     const who = facts && (line.options.filter((other) => other.agent === option.agent).length > 1 || option.lent) ? (accountOf(facts).email ?? homeLabel(facts, this.options.homeWords)) : null;
     return `<div class="choice-row agent-chosen">
       <span class="choice-label">${escape(words.agent)}</span>
       <div class="choice-options">
-        <span class="chosen-login${option.lent ? " lent" : ""}"><span class="login-agent">${escape(programName(option.agent))}</span><span class="chosen-machine"><span class="dot" aria-hidden="true"></span>${escape(option.written)}</span>${notes.map((note) => `<span class="picker-note">${escape(note)}</span>`).join("")}${who ? `<span class="login-who">${escape(who)}</span>` : ""}${spent ? spent.html : ""}</span>
+        <span class="chosen-login${option.lent ? " lent" : ""}"${lentWhy ? ` title="${escape(lentWhy)}"` : ""}><span class="login-agent">${escape(programName(option.agent))}</span><span class="chosen-machine"><span class="dot" aria-hidden="true"></span>${escape(option.written)}</span>${notes.map((note) => `<span class="picker-note">${escape(note)}</span>`).join("")}${who ? `<span class="login-who">${escape(who)}</span>` : ""}${spent ? spent.html : ""}</span>
         <button type="button" class="text-button quiet-button chosen-change" data-choice="expand" data-value="" aria-expanded="false">${escape(words.another)}</button>
       </div>
     </div>`;
@@ -771,9 +772,9 @@ export class NewTalk {
     const efforts = model?.reasoning_efforts.map((e) => e.effort) ?? [];
     const effort = [this.effort, remembered(`effort:${agent}`), model?.default_reasoning_effort].find((e) => e && efforts.includes(e)) ?? null;
     this.effort = effort;
-    const row = (kind: string, label: string, choices: (Choice & { machine?: string })[], chosen: string | null, none = words.noMachine) =>
+    const row = (kind: string, label: string, choices: (Choice & { machine?: string })[], chosen: string | null, hint = "") =>
       `<div class="choice-row" role="radiogroup" aria-label="${escape(label)}">
-        <span class="choice-label">${escape(label)}</span>
+        <span class="choice-label"${hint ? ` title="${escape(hint)}"` : ""}>${escape(label)}</span>
         <div class="choice-options">${
           choices.length
             ? choices
@@ -782,10 +783,9 @@ export class NewTalk {
                     `<button type="button" class="choice${choice.value === (chosen ?? "") ? " chosen" : ""}" role="radio" aria-checked="${choice.value === (chosen ?? "")}" data-choice="${kind}" data-value="${escape(choice.value)}"${choice.machine ? ` data-machine="${escape(choice.machine)}"` : ""}${choice.disabled ? " disabled" : ""}>${escape(choice.label)}${choice.note ? `<span class="choice-note">${escape(choice.note)}</span>` : ""}</button>`,
                 )
                 .join("")
-            : `<span class="choice-none">${escape(none)}</span>`
+            : `<span class="choice-none">${escape(words.noMachine)}</span>`
         }</div>
       </div>`;
-    const said = (text: string, kind = "", whole = "") => `<p class="choice-said${kind}"${whole ? ` title="${escape(whole)}"` : ""}>${escape(text)}</p>`;
     // Using an agent on another's machine lets that machine reach the
     // account's machines, from the first time on: said before it begins.
     const owner = option ? (lent ? lent.owner : lives && login && !owns(lives, login) ? ownerOf(lives, login) : null) : null;
@@ -814,11 +814,10 @@ export class NewTalk {
         : "",
       efforts.length > 1 ? row("effort", words.effort, efforts.map((e) => ({ value: e, label: e })), this.effort) : "",
       towns.length > 1 ? row("town", words.project, towns, this.town) : "",
-      lent ? said(words.lentWorksShort, " choice-margin", words.lentWorks(lent.owner ?? "")) : places.length > 1 ? row("works", words.worksOn, places, this.worksOn ?? "") : "",
-      homes.length > 1 ? row("colleagues", words.colleagues, homes, this.colleagues ?? "") : "",
+      !lent && places.length > 1 ? row("works", words.worksOn, places, this.worksOn ?? "") : "",
+      homes.length > 1 ? row("colleagues", words.colleagues, homes, this.colleagues ?? "", this.colleagues ? words.colleaguesWhat(this.colleagues) : "") : "",
       colleagueLogins.length > 1 ? row("colleagues-home", words.colleaguesLogin, colleagueLogins, this.colleaguesHome ?? "") : "",
-      this.colleagues ? said(words.colleaguesWhat(this.colleagues)) : "",
-      reaching && owner && login && option ? said(words.reaches(owner, option.written, isSuper(world, login)), " choice-margin choice-warn") : "",
+      reaching && owner && login && option ? `<p class="choice-margin choice-warn">${escape(words.reaches(owner, option.written, isSuper(world, login)))}</p>` : "",
     ].join("");
     // What was sent went for another machine, agent or project: it is sent
     // again, to the one chosen now, when the conversation begins.
@@ -846,7 +845,7 @@ export class NewTalk {
     const usual = [this.filesOn, remembered("files-on")].find((written) => written && places.some((machine) => machine.written === written));
     this.filesOn = usual ?? places.find((machine) => machine.here)?.written ?? places.find((machine) => machine.online !== false)?.written ?? null;
     const html = `<div class="choice-row files-row" role="radiogroup" aria-label="${escape(words.filesOn)}">
-      <span class="choice-label">${escape(words.filesOn)}</span>
+      <span class="choice-label" title="${escape(words.filesOnWhat)}">${escape(words.filesOn)}</span>
       <div class="choice-options">${
         places.length
           ? places
@@ -858,7 +857,7 @@ export class NewTalk {
               .join("")
           : `<span class="choice-none">${escape(words.noFilePlace)}</span>`
       }</div>
-    </div><p class="choice-said">${escape(words.filesOnWhat)}</p>`;
+    </div>`;
     if (box.innerHTML !== html) box.innerHTML = html;
   }
 
@@ -935,8 +934,9 @@ export class NewTalk {
       this.options.opened(address);
     } catch (error) {
       this.busy = false;
-      this.note.textContent =
-        error instanceof NotSent ? words.filesNotSent : words.notOpened(error instanceof Error ? error.message : String(error));
+      const why = error instanceof Error ? error.message : String(error);
+      this.note.textContent = error instanceof NotSent ? words.filesNotSent : words.notOpened(why);
+      this.note.title = error instanceof NotSent ? "" : why;
       this.note.hidden = false;
     } finally {
       this.start.textContent = this.options.words.start;

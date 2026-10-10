@@ -18,6 +18,7 @@ import { escape } from "./prose";
 import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
 import { ConversationView } from "./view";
+import { detailOf } from "../app/problem";
 
 export interface Someone {
   /** "Claude" or "Codex": the agent by the name it goes by. */
@@ -442,9 +443,11 @@ export class ConversationPage {
     this.drawAction();
   }
 
-  /** A line beside the composer: what a command did, or why it did not. */
-  private say(text: string): void {
+  /** A line beside the composer: what a command did, or that it did not,
+   *  with the host's own words on hover. */
+  private say(text: string, detail = ""): void {
     this.note.textContent = text;
+    this.note.title = detail;
   }
 
   /** What a command answered at length, in a panel above the composer
@@ -605,12 +608,12 @@ export class ConversationPage {
       const usual = choosing.usual();
       this.filesOn = places.find((place) => place.value === usual && !place.disabled)?.value ?? places.find((place) => !place.disabled)?.value ?? null;
     }
-    const html = `<span class="files-on-label">${escape(choosing.label)}</span><span class="choice-options">${places
+    const html = `<span class="files-on-label" title="${escape(choosing.what)}">${escape(choosing.label)}</span><span class="choice-options">${places
       .map(
         (place) =>
           `<button type="button" class="choice${place.value === this.filesOn ? " chosen" : ""}" aria-pressed="${place.value === this.filesOn}" data-files-on="${escape(place.value)}"${place.disabled ? " disabled" : ""}>${escape(place.label)}${place.note ? `<span class="choice-note">${escape(place.note)}</span>` : ""}</button>`,
       )
-      .join("")}</span><span class="files-on-what">${escape(choosing.what)}</span>`;
+      .join("")}</span>`;
     if (box.innerHTML !== html) box.innerHTML = html;
     box.hidden = false;
   }
@@ -925,7 +928,7 @@ export class ConversationPage {
       void this.askOffers();
       return true;
     } catch (error) {
-      this.say(words.failed(String(error)));
+      this.say(words.failed(detailOf(error)), detailOf(error));
       return false;
     }
   }

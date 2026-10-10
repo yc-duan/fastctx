@@ -600,20 +600,6 @@ a.text-button {
   padding-left: calc(var(--space-3) - 2px);
 }
 
-/* What choosing where colleagues live means, under the choices. */
-.choice-said {
-  margin: 0 0 var(--space-1) calc(6.5em + var(--space-4));
-  font-size: var(--size-small);
-  line-height: var(--leading-ui);
-  color: var(--text-3);
-}
-
-@media (max-width: 760px) {
-  .choice-said {
-    margin-left: 0;
-  }
-}
-
 /* Whether the agent may ask for colleagues, in the details card. */
 .details-colleagues {
   display: flex;

@@ -8,7 +8,7 @@
 
 import type { MemberKind } from "../world/accounts";
 import type { PasswordProblem } from "./password";
-import type { ProblemWords } from "./problem";
+import { enProblems, zhProblems, type ProblemWords } from "./problem";
 
 export interface LoginWords {
   lede: string;
@@ -77,36 +77,6 @@ export interface LoginWords {
   place: string;
   problems: ProblemWords;
 }
-
-export const zhProblems: ProblemWords = {
-  wrongPassword: "账号或密码不正确",
-  tooManyTries: "尝试次数过多，请稍后再试",
-  locked: "该账号已被锁定，请联系管理员",
-  unreachable: "无法连接服务器，请检查地址和网络",
-  nameTaken: "这个名称已被使用",
-  accountTaken: "这个账号已存在",
-  noSelfRegistration: "该服务器不开放注册，请联系管理员",
-  codeUsed: "二维码已使用过",
-  codeExpired: "二维码已过期",
-  codeWrong: "二维码无效",
-  weakPassword: "密码不符合要求",
-  somethingElse: "操作未完成",
-};
-
-export const enProblems: ProblemWords = {
-  wrongPassword: "Wrong account or password",
-  tooManyTries: "Too many attempts. Try again later",
-  locked: "This account is locked. Contact the administrator",
-  unreachable: "Can't reach the server. Check the address and network",
-  nameTaken: "That name is already in use",
-  accountTaken: "That account already exists",
-  noSelfRegistration: "This server doesn't allow sign-up. Contact the administrator",
-  codeUsed: "This code has already been used",
-  codeExpired: "This code has expired",
-  codeWrong: "This code isn't valid",
-  weakPassword: "The password doesn't meet the requirements",
-  somethingElse: "Something went wrong",
-};
 
 export const zhLogin: LoginWords = {
   lede: "你的几台电脑，和电脑上的 Codex、Claude，同在一个世界。",

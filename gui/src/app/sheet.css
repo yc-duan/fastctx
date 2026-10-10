@@ -404,10 +404,6 @@
   padding-top: var(--space-3);
 }
 
-.files-on .choice-said {
-  margin-bottom: var(--space-2);
-}
-
 /* The same choice in a conversation's composer, where words are written. */
 .composer-files-on {
   display: flex;
@@ -423,10 +419,6 @@
   min-height: 26px;
   padding: 2px 10px;
   font-size: var(--size-small);
-}
-
-.files-on-what {
-  flex-basis: 100%;
 }
 
 .new-talk-sheet .drop-veil {
