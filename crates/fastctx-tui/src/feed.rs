@@ -139,8 +139,27 @@ async fn ask(world: &World, feed: &Feed) -> Data {
         }
         Feed::Nodes => Data::Nodes(world.nodes().await.map_err(text)),
         Feed::Choices => {
-            let (nodes, towns) = tokio::join!(world.nodes(), world.towns());
-            Data::Choices { nodes: nodes.map_err(text), towns: towns.map_err(text) }
+            let (nodes, towns, accounts) = tokio::join!(world.nodes(), world.towns(), world.accounts());
+            // A lent agent is offered when the accounts can be asked; the
+            // machines and projects stand without it.
+            let lent = accounts
+                .map(|accounts| {
+                    accounts
+                        .hubs
+                        .iter()
+                        .flat_map(|hub| {
+                            hub.lends.iter().filter(|lend| hub.logins.contains(&lend.account)).map(|lend| crate::app::Lent {
+                                machine: lend.machine.clone(),
+                                agent: lend.agent.clone(),
+                                home: lend.home.clone(),
+                                owner: hub.members.iter().find(|member| member.name == lend.machine).and_then(|member| member.home.clone()),
+                                to: fastctx_types::access::HubAccount { hub: hub.hub.clone(), account: lend.account.clone() },
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Data::Choices { nodes: nodes.map_err(text), towns: towns.map_err(text), lent }
         }
         Feed::Watch { .. } => unreachable!("a watch is not asked"),
     }
@@ -251,7 +270,9 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
         Job::Talk { to, machine, text } => Done::Said(world.talk(to, Some(machine), text).await?),
         Job::Stop { resident, machine } => Done::Stopped(world.stop(resident, Some(machine)).await?.1),
         Job::Attach { resident } => Done::Attachable(world.attach(resident).await?),
-        Job::Open { agent, town, node, text } => Done::Opened(world.open(agent, town, node, text).await?),
+        Job::Open { agent, town, node, text, choices } => {
+            Done::Opened(world.open_with(agent, town, node, text, Default::default(), choices).await?)
+        }
         Job::OpenTown { town, fields } => Done::Record(Box::new(world.open_town(town, fields, None, None).await?)),
         Job::EditTown { town, fields } => Done::Record(Box::new(world.edit_town(Some(town), fields).await?)),
         Job::Journal { town, journal, before } => {

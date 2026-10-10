@@ -1283,17 +1283,26 @@ impl Words {
         }
     }
 
-    /// What `account` may do on a machine, in a few words.
-    pub fn rights(&self, account: &str, hands: bool, agents: bool) -> String {
-        match (self.lang, hands, agents) {
-            (Lang::Zh, true, true) => format!("{account} 能在上面干活、用智能体"),
-            (Lang::Zh, true, false) => format!("{account} 能在上面干活"),
-            (Lang::Zh, false, true) => format!("{account} 能用上面的智能体"),
-            (Lang::Zh, false, false) => format!("{account} 不能用它"),
-            (Lang::En, true, true) => format!("{account} may work on it and use its agents"),
-            (Lang::En, true, false) => format!("{account} may work on it"),
-            (Lang::En, false, true) => format!("{account} may use its agents"),
-            (Lang::En, false, false) => format!("{account} may not use it"),
+    /// A choice of an agent lent to this computer's accounts: the machine it
+    /// lives on, whose that is, and which agent.
+    pub fn lent_choice(&self, machine: &str, owner: Option<&str>, agent: &str) -> String {
+        let agent = if agent == "claude" { "Claude" } else if agent == "codex" { "Codex" } else { agent };
+        match (self.lang, owner) {
+            (Lang::Zh, Some(owner)) => format!("{agent} · {machine}（借自 {owner}）"),
+            (Lang::Zh, None) => format!("{agent} · {machine}（借来的）"),
+            (Lang::En, Some(owner)) => format!("{agent} on {machine} (lent by {owner})"),
+            (Lang::En, None) => format!("{agent} on {machine} (lent)"),
+        }
+    }
+
+    /// Whether `account` may use a machine: work on it and use every agent
+    /// on it, which go together (`world-network.md`, 共享机器与借出智能体).
+    pub fn rights(&self, account: &str, hands: bool) -> String {
+        match (self.lang, hands) {
+            (Lang::Zh, true) => format!("{account} 能用"),
+            (Lang::Zh, false) => format!("{account} 不能用"),
+            (Lang::En, true) => format!("{account} may use it"),
+            (Lang::En, false) => format!("{account} may not use it"),
         }
     }
 

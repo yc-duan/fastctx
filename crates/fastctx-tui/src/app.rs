@@ -71,6 +71,7 @@ pub enum Job {
         town: Option<TownName>,
         node: Option<MachineName>,
         text: String,
+        choices: fastctx_types::agents::Choices,
     },
     OpenTown {
         town: TownName,
@@ -203,6 +204,20 @@ pub enum Feed {
     },
 }
 
+/// One login of an agent another account lent to one of this computer's,
+/// on a machine of that account's (`world-network.md`, 共享机器与借出智能体).
+#[derive(Clone, Debug)]
+pub struct Lent {
+    pub machine: MachineName,
+    pub agent: AgentName,
+    /// The login's directory there; none for the agent's default login.
+    pub home: Option<std::path::PathBuf>,
+    /// Whose machine it is.
+    pub owner: Option<AccountName>,
+    /// The account it is lent to.
+    pub to: fastctx_types::access::HubAccount,
+}
+
 /// Something that came back for a page.
 #[derive(Debug)]
 pub enum Data {
@@ -220,6 +235,8 @@ pub enum Data {
     Choices {
         nodes: Result<NodesReply, String>,
         towns: Result<Vec<TownSummary>, String>,
+        /// The agents other accounts lent to this computer's.
+        lent: Vec<Lent>,
     },
     History(Vec<SessionEvent>),
     Event(SessionEvent),

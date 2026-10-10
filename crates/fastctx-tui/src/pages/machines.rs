@@ -519,8 +519,8 @@ fn hub_rows(ctx: &Ctx, rows: &mut Vec<Row>, item: &mut usize, hub: &HubNodes, he
         let rights = node
             .rights
             .iter()
-            .filter(|(_, rights)| rights.any())
-            .map(|(account, rights)| words.rights(account.as_str(), rights.hands, rights.agents))
+            .filter(|(_, rights)| rights.hands)
+            .map(|(account, rights)| words.rights(account.as_str(), rights.hands))
             .collect::<Vec<_>>()
             .join("; ");
         let standing = words.owner_and_rights(node.owner.as_ref().map(|owner| owner.as_str()), &rights);

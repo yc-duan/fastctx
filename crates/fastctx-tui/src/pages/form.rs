@@ -2,8 +2,9 @@
 //! with a new agent, a project opened or its record written anew, logging
 //! this computer in to an account or out of one, a token for another
 //! device, a member taken out of an account. Choices come from what the
-//! World says now: the machines online, the projects that span the chosen
-//! machine, the accounts this computer is logged in to.
+//! World says now: the machines online, the agents lent to this computer's
+//! accounts, the projects that span the chosen machine, the accounts this
+//! computer is logged in to.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fastctx_types::project::{Listing, Location, Record, RecordFields, TownSummary};
@@ -15,12 +16,16 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
 use super::{Page, project, quiet, talk, wrong};
-use crate::app::{Act, Ctx, Data, Done, Feed, Job};
+use crate::app::{Act, Ctx, Data, Done, Feed, Job, Lent};
 use crate::design::Role;
 use crate::editor::{Edit, Editor};
 use crate::paint::{self, Row};
 use crate::text;
 use crate::words::FieldName as Key;
+
+/// How a machine choice names an agent lent to this computer's accounts:
+/// this, then its place among them.
+const LENT: &str = "lent:";
 
 pub struct FormPage {
     kind: Kind,
@@ -32,6 +37,7 @@ pub struct FormPage {
     result: Option<Vec<Line<'static>>>,
     nodes: Option<NodesReply>,
     towns: Vec<TownSummary>,
+    lent: Vec<Lent>,
     top: usize,
 }
 
@@ -104,6 +110,7 @@ impl FormPage {
             result: None,
             nodes: None,
             towns: Vec::new(),
+            lent: Vec::new(),
             top: 0,
         }
     }
@@ -249,10 +256,11 @@ impl FormPage {
 
     pub fn data(&mut self, ctx: &Ctx, data: Data) -> Act {
         match data {
-            Data::Choices { nodes, towns } => {
+            Data::Choices { nodes, towns, lent } => {
                 if let Ok(nodes) = nodes {
                     self.nodes = Some(nodes);
                 }
+                self.lent = lent;
                 if let Ok(towns) = towns {
                     self.towns = towns;
                 }
@@ -293,6 +301,7 @@ impl FormPage {
             }
         }
         let towns = self.towns.clone();
+        let self_lent = self.lent.clone();
         let words = ctx.words;
         let initial = match &self.kind {
             Kind::EditProject { machines, .. } => machines.clone(),
@@ -316,6 +325,11 @@ impl FormPage {
                     (shown, machine.to_string())
                 })
                 .collect();
+            // An agent lent to one of this computer's accounts lives on a
+            // machine of another's, which it works for them from.
+            options.extend(self_lent.iter().enumerate().map(|(at, lent)| {
+                (words.lent_choice(lent.machine.as_str(), lent.owner.as_ref().map(|owner| owner.as_str()), lent.agent.as_str()), format!("{LENT}{at}"))
+            }));
             *index = options.iter().position(|(_, value)| *value == chosen).unwrap_or(0);
         }
         let machine = self.value(Key::Machine);
@@ -529,15 +543,26 @@ impl FormPage {
                 if text.is_empty() {
                     return Err(words.say_something_first().to_string());
                 }
-                let agent = AgentName::try_from(self.value(Key::Agent)).map_err(|error| error.to_string())?;
                 let town = self.value(Key::Project);
                 let town = if town.is_empty() {
                     None
                 } else {
                     Some(TownName::try_from(town).map_err(|error| error.to_string())?)
                 };
-                let node = optional_machine(self.value(Key::Machine))?;
-                Job::Open { agent, town, node, text }
+                let machine = self.value(Key::Machine);
+                // A lent agent is the agent lent, in the login lent, for the
+                // account it is lent to.
+                if let Some(lent) = machine.strip_prefix(LENT).and_then(|at| at.parse::<usize>().ok()).and_then(|at| self.lent.get(at)) {
+                    let choices = fastctx_types::agents::Choices {
+                        account: Some(lent.to.clone()),
+                        home: lent.home.clone(),
+                        ..Default::default()
+                    };
+                    return Ok(Job::Open { agent: lent.agent.clone(), town, node: Some(lent.machine.clone()), text, choices });
+                }
+                let agent = AgentName::try_from(self.value(Key::Agent)).map_err(|error| error.to_string())?;
+                let node = optional_machine(machine)?;
+                Job::Open { agent, town, node, text, choices: Default::default() }
             }
             Kind::NewProject => {
                 let town = TownName::try_from(self.value(Key::Slug)).map_err(|error| error.to_string())?;

@@ -774,14 +774,14 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
     typing.paste("跑完以后把结果写进 pid-fixed-point 那份手记，\n条件写清楚：板子、固件版本、增益。".into());
 
     let mut open = FormPage::open_agent(Some(town("mark50")));
-    open.data(ctx, Data::Choices { nodes: Ok(nodes(now)), towns: Ok(towns(now)) });
+    open.data(ctx, Data::Choices { nodes: Ok(nodes(now)), towns: Ok(towns(now)), lent: Vec::new() });
     for _ in 0..3 {
         open.key(ctx, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     }
     open.paste("看一下 laptop 上 /data/mark50-sim 里最新那批仿真数据，有没有哪一组的超调明显偏大。".into());
 
     let mut new_project = FormPage::new_project();
-    new_project.data(ctx, Data::Choices { nodes: Ok(nodes(now)), towns: Ok(towns(now)) });
+    new_project.data(ctx, Data::Choices { nodes: Ok(nodes(now)), towns: Ok(towns(now)), lent: Vec::new() });
     new_project.paste("probe".into());
     new_project.key(ctx, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     new_project.paste("深空探测器".into());

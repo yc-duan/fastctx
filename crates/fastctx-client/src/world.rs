@@ -283,6 +283,20 @@ impl World {
         text: String,
         options: fastctx_types::agents::SessionOptions,
     ) -> Result<Said, Error> {
+        self.open_with(agent, town, node, text, options, Default::default()).await
+    }
+
+    /// Opens with the user's selections and choices: the account it works
+    /// for, the login it uses, where it works.
+    pub async fn open_with(
+        &self,
+        agent: AgentName,
+        town: Option<TownName>,
+        node: Option<MachineName>,
+        text: String,
+        options: fastctx_types::agents::SessionOptions,
+        choices: fastctx_types::agents::Choices,
+    ) -> Result<Said, Error> {
         match self
             .ask(Call::Open {
                 agent,
@@ -292,7 +306,7 @@ impl World {
                 model: options.model,
                 reasoning_effort: options.reasoning_effort,
                 attachments: Vec::new(),
-                choices: Default::default(),
+                choices,
             })
             .await?
         {
