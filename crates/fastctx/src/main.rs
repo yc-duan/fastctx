@@ -235,16 +235,18 @@ enum Command {
 
 fn main() -> ExitCode {
     // A command forwarded to the World program ends with the entry it came
-    // through; what it starts does not inherit that.
+    // through, and the entry's parent is the process that started it; what
+    // it starts does not inherit that.
     #[cfg(windows)]
     if let Some(forwarder) = std::env::var_os(program::FORWARDER) {
         // SAFETY: the first thing in main, before any other thread exists.
         unsafe { std::env::remove_var(program::FORWARDER) };
-        if let Some(pid) = forwarder.to_str().and_then(|text| text.parse::<u32>().ok())
-            && let Err(error) = fastctx_platform::parent::follow_forwarder(pid)
-        {
-            eprintln!("fastctx: {error}");
-            return ExitCode::FAILURE;
+        if let Some(pid) = forwarder.to_str().and_then(|text| text.parse::<u32>().ok()) {
+            fastctx_platform::host_process::forwarded_by(pid);
+            if let Err(error) = fastctx_platform::parent::follow_forwarder(pid) {
+                eprintln!("fastctx: {error}");
+                return ExitCode::FAILURE;
+            }
         }
     }
     if std::env::args_os().skip(1).eq(["--licenses"]) {

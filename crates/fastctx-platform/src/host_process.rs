@@ -6,8 +6,21 @@ use std::io;
 mod asynchronous;
 pub use asynchronous::exited;
 
+/// The process that started this one. A command an entry forwarded to the
+/// World program counts the entry's parent, as it would had the entry
+/// replaced itself with this program (`forwarded_by`).
 pub fn parent_identity() -> io::Result<ProcessIdentity> {
     crate::identity_of(parent_pid()?)?.ok_or_else(|| io::Error::other("the parent process already exited"))
+}
+
+#[cfg(windows)]
+static FORWARDER: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+
+/// Records that this process runs for the entry with this process id, which
+/// forwarded it to the World program and waits for it: Windows has no exec.
+#[cfg(windows)]
+pub fn forwarded_by(forwarder: u32) {
+    let _ = FORWARDER.set(forwarder);
 }
 
 #[cfg(unix)]
@@ -18,6 +31,17 @@ fn parent_pid() -> io::Result<u32> {
 
 #[cfg(windows)]
 fn parent_pid() -> io::Result<u32> {
+    let parent = parent_of(std::process::id())?
+        .ok_or_else(|| io::Error::other("the current process was absent from the process snapshot"))?;
+    if FORWARDER.get() != Some(&parent) {
+        return Ok(parent);
+    }
+    // The entry waits for this process, so it is still in the snapshot.
+    parent_of(parent)?.ok_or_else(|| io::Error::other("the entry that forwarded this command already exited"))
+}
+
+#[cfg(windows)]
+fn parent_of(pid: u32) -> io::Result<Option<u32>> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
@@ -33,14 +57,14 @@ fn parent_pid() -> io::Result<u32> {
         let mut found = None;
         let mut more = Process32FirstW(snapshot, &mut entry);
         while more != 0 {
-            if entry.th32ProcessID == std::process::id() {
+            if entry.th32ProcessID == pid {
                 found = Some(entry.th32ParentProcessID);
                 break;
             }
             more = Process32NextW(snapshot, &mut entry);
         }
         CloseHandle(snapshot);
-        found.ok_or_else(|| io::Error::other("the current process was absent from the process snapshot"))
+        Ok(found)
     }
 }
 
