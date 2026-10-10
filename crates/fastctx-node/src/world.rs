@@ -679,6 +679,7 @@ impl fastctx_net::link::Node for Handler {
             match letter {
                 Letter::Fragment { .. } => unreachable!("nested fragments are rejected"),
                 Letter::Notice { to, notice } => {
+                    let notice = *notice;
                     if let Notice::JobEnded { job, machine, .. } = &notice {
                         crate::here::ended_elsewhere(&node, &to, machine, job);
                     }

@@ -19,7 +19,8 @@ static SENDING: Mutex<()> = Mutex::new(());
 /// (`admission::letters`, which checks the same on the other side).
 fn purpose(letter: &Letter) -> Purpose {
     match letter {
-        Letter::Speak { .. } | Letter::Notice { notice: Notice::Words { .. } | Notice::Attached { .. }, .. } => {
+        Letter::Speak { .. } => Purpose::Words,
+        Letter::Notice { notice, .. } if matches!(notice.as_ref(), Notice::Words { .. } | Notice::Attached { .. }) => {
             Purpose::Words
         }
         Letter::Left { .. } | Letter::Fragment { .. } | Letter::Notice { .. } => Purpose::Echo,
@@ -30,7 +31,8 @@ fn purpose(letter: &Letter) -> Purpose {
 /// not fit one message.
 pub fn send(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut letter: Letter) -> io::Result<()> {
     let purpose = purpose(&letter);
-    let (link, account) = node.speaking(acting, to, purpose).map_err(|failure| io::Error::other(failure.to_string()))?;
+    let (link, account) =
+        node.speaking(acting, to, purpose).map_err(|failure| io::Error::other(failure.to_string()))?;
     if let Letter::Speak { accounts, .. } = &mut letter {
         *accounts = node.accounts_on(&link, acting).into_iter().filter(|other| *other != account).collect();
     }

@@ -70,7 +70,7 @@ pub async fn tell(
         {
             Letter::Speak { to: to.resident.clone(), from: address.resident, text, accounts: Vec::new() }
         }
-        notice => Letter::Notice { to: to.resident.clone(), notice },
+        notice => Letter::Notice { to: to.resident.clone(), notice: Box::new(notice) },
     };
     crate::letters::send(node, acting, &(&to.machine).into(), id, letter)
         .map_err(|error| Failure::new(format!("sending to {}: {error}", to.machine)))?;
