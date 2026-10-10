@@ -264,6 +264,7 @@ fn finish(_app: &AppHandle, _everything: bool) -> Result<(), String> {
     Err("package uninstall is supported on Windows and Linux".into())
 }
 
+#[cfg(windows)]
 pub(crate) fn at_package_uninstall() -> Result<(), String> {
     let mut command = Command::new(program()?);
     command.args(["uninstall", "run", "--json"]).stdin(Stdio::null());

@@ -577,6 +577,9 @@ pub(crate) fn run_system_phase(request: &Request, early: bool, mut events: impl 
                                 | "directory.upgraded.txt"
                                 | "ledger"
                                 | "outbox"
+                                // The Linux programs this hub hands out to the
+                                // one-line server install.
+                                | "releases"
                         ) {
                             uninstall::delete_tree(&entry.path())?;
                         } else if name == "tls" {

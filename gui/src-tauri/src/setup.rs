@@ -228,6 +228,7 @@ pub async fn keep(world: &World) -> Result<KeptNow, String> {
 /// neither: a newer World is put in place by the user, from the settings.
 /// Declined rights leave the installation standing; the settings offer the
 /// service again.
+#[cfg(windows)]
 pub fn keep_at_install() -> Result<String, String> {
     let places = places()?;
     let _uninstall = fastctx_platform::uninstall_gate::Gate::try_acquire(&places.root).map_err(|error| error.to_string())?
@@ -247,6 +248,7 @@ pub fn keep_at_install() -> Result<String, String> {
 
 /// Asks the node running for this World, if one is, to hand the World over
 /// to the service's; none is started for the asking.
+#[cfg(windows)]
 fn hand_over_running(places: &Places) -> Result<(), String> {
     let world = WorldDir::under(&places.root);
     tauri::async_runtime::block_on(yield_running(&world))

@@ -265,6 +265,14 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
                     Action::Delete(entry.path()),
                 );
             }
+        } else if everything && name == "hub-third" && entry.path().join("hub.json").try_exists()? {
+            add(
+                "hub-data",
+                "Delete the third-version hub files its migration kept",
+                entry.path().display().to_string(),
+                false,
+                Action::Delete(entry.path()),
+            );
         } else if everything && name == "world" {
             add(
                 "data",

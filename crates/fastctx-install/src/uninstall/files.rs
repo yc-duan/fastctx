@@ -14,6 +14,16 @@ pub fn delete_file(path: &Path) -> io::Result<()> {
     if crate::disk::is_link(&metadata) {
         return if metadata.is_dir() { fs::remove_dir(path) } else { fs::remove_file(path) };
     }
+    #[cfg(unix)]
+    {
+        // A socket a stopped node left behind cannot be opened (ENXIO), nor
+        // a FIFO without blocking; neither holds data, so its name goes.
+        use std::os::unix::fs::FileTypeExt as _;
+        let kind = metadata.file_type();
+        if kind.is_socket() || kind.is_fifo() {
+            return fs::remove_file(path);
+        }
+    }
     let file = crate::disk::open(path)?;
     crate::disk::delete(&file, path)
 }
