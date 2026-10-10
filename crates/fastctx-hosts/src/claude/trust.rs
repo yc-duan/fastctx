@@ -8,7 +8,6 @@ mod lease;
 mod state_file;
 
 use std::collections::BTreeMap;
-use std::env;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -93,7 +92,7 @@ impl StatePaths {
     /// `CLAUDE_CONFIG_DIR` the session starts with; `None` is unset.
     fn resolve(configured: Option<&std::ffi::OsStr>) -> io::Result<Self> {
         #[cfg(windows)]
-        let home = env::var_os("USERPROFILE")
+        let home = std::env::var_os("USERPROFILE")
             .filter(|value| !value.is_empty())
             .map_or_else(fastctx_platform::user_home, |value| Ok(PathBuf::from(value)))?;
         #[cfg(not(windows))]
