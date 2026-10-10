@@ -194,11 +194,11 @@ You must begin every `exec` script that calls this tool with `// @exec: {\"max_o
 ";
 
 const RUN_ENDS_WOKEN: &str = "\
-- When a job of yours ends, you are told automatically, with its exit status and last lines, while you work or after you end your turn. Meanwhile do what suits you: other work, end your turn, or wait for it with `fastctx wait JOB` in a call with a longer `wait`.
+- When a job of yours ends, you are told automatically, with its exit status and last lines, while you work or after you end your turn, unless a `fastctx wait` of yours already took that end. Meanwhile do what suits you: other work, end your turn, or wait for it with `fastctx wait JOB` in a call with a longer `wait`.
 - While jobs of yours run, each answer ends with a line naming them.";
 
 const RUN_ENDS_ASKED: &str = "\
-- When a job of yours ends, the answer of your next call to this tool says so, with its exit status and last lines; nothing reaches you after you end your turn. Meanwhile do what suits you: other work, or wait for it with `fastctx wait JOB` in a call with a longer `wait`.
+- When a job of yours ends, the answer of your next call to this tool says so, with its exit status and last lines, unless a `fastctx wait` of yours already took that end; nothing reaches you after you end your turn. Meanwhile do what suits you: other work, or wait for it with `fastctx wait JOB` in a call with a longer `wait`.
 - While jobs of yours run, each answer ends with a line naming them.";
 
 const WAIT_DESCRIPTION: &str = "\
@@ -232,7 +232,7 @@ const RUN_WRITING: &str = "\
 ";
 
 const RUN_COPY: &str = "\
-- `fastctx copy SOURCE... DEST` copies files and directories between machines, each end MACHINE:PATH or a path on this machine. DEST is what the copy becomes; end it with / to copy into that directory, as several sources need.";
+- `fastctx copy SOURCE... DEST` copies files and directories, on one machine or between machines, each end MACHINE:PATH or a path on this machine. DEST is what the copy becomes; end it with / to copy into that directory, as several sources need.";
 
 const RUN_ON: &str = "\
 Other machines: write `on MACHINE` before a command, or give it a script on standard input:

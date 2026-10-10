@@ -154,14 +154,13 @@ enum Command {
     Wait(wait::WaitArgs),
     /// List the user's machines: which are online and what each is like.
     Nodes,
-    /// Copy files and directories from one of the user's machines to another.
+    /// Copy files and directories on one of the user's machines or between them.
     ///
     /// Each end is MACHINE:PATH, or a path on this machine; the last is the
     /// destination. The destination path is what the copy becomes; ending it
     /// with / copies into that directory instead, as several sources must. Files already there with the same contents are not
     /// sent again, so running the same copy again sends only what changed.
-    /// Links are copied as links. The bytes go between the machines, never
-    /// through the terminal.
+    /// Links are copied as links. The bytes never go through the terminal.
     Copy(copy::CopyArgs),
     /// Talk to a resident on any machine, or open a session to talk to.
     Talk(talk::TalkArgs),
