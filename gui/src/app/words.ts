@@ -318,8 +318,6 @@ export interface SettingsWords {
   serviceOff: string;
   keep: string;
   keepAsks: string;
-  release: string;
-  releaseAgain: string;
   kept: Record<"already" | "installed" | "declined" | "unsupported" | "removed" | "not_kept", string>;
   command(command: string): string;
   legacy: string;
@@ -418,12 +416,10 @@ export const zhSettings: SettingsWords = {
     other: [],
   },
   phoneOpenApp: "打开世界的应用详情",
-  serviceOn: "装着：这台电脑开机后，没人登录，世界也在这里",
-  serviceOff: "没装：只有你登录着时，世界才在这里",
+  serviceOn: "开机就在世界里，断了网自己连回来",
+  serviceOff: "还没装上：只有你登录着时才在世界里",
   keep: "装上",
   keepAsks: "要管理员确认一次",
-  release: "拿掉",
-  releaseAgain: "再按一次，拿掉开机服务",
   kept: {
     already: "已经装着",
     installed: "装上了",
@@ -531,12 +527,10 @@ export const enSettings: SettingsWords = {
     other: [],
   },
   phoneOpenApp: "Open World's app details",
-  serviceOn: "Installed: the World is here from boot, before anyone signs in",
-  serviceOff: "Not installed: the World is here only while you are signed in",
+  serviceOn: "In the World from boot, back by itself after the network drops",
+  serviceOff: "Not installed yet: in the World only while you are signed in",
   keep: "Install",
   keepAsks: "Asks an administrator once",
-  release: "Remove",
-  releaseAgain: "Press again to remove the startup service",
   kept: {
     already: "Already installed",
     installed: "Installed",

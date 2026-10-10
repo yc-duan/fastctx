@@ -17,6 +17,7 @@ import "./app/sheet.css";
 import "./app/pages.css";
 import "./app/accounts.css";
 import "./app/machines.css";
+import "./app/removal.css";
 import "./app.css";
 import "./home/home.css";
 import "./project/project.css";
@@ -57,6 +58,7 @@ import {
   zhSettings,
   zhShell,
   readerWords } from "./app/words";
+import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, zhAccount, zhAdmin, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
 import { borrowedBy, borrowedOf, colleagueHomes, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
@@ -111,7 +113,9 @@ import {
   uploadPath,
   readBytes,
   keepHere,
-  releaseHere,
+  removalPlan,
+  removeHere,
+  removeApp,
   journal as readJournal,
   journalAdd,
   look,
@@ -1219,6 +1223,7 @@ function show(next: Place): void {
       page = new SettingsPage({
         store,
         words: english ? enSettings : zhSettings,
+        removalWords: english ? enRemoval : zhRemoval,
         head,
         language,
         chooseLanguage(chosen) {
@@ -1242,7 +1247,7 @@ function show(next: Place): void {
             ? {
                 setup: setupState,
                 keep: keepHere,
-                release: releaseHere,
+                removing: { plan: removalPlan, run: removeHere, finish: removeApp },
                 renewing: {
                   state: renewalState,
                   // The program the interface carries is put in place,

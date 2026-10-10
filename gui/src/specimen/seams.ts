@@ -2,9 +2,10 @@
 // nothing anywhere, so each part of the interface can be looked at in a
 // plain browser.
 
+import type { Removing } from "../app/removal";
 import type { PhoneSeam } from "../app/phone";
 import type { RenewalStatus } from "../world/renewal";
-import type { Setup } from "../world/bridge";
+import type { RemovalItem, RemovalPlan, Setup } from "../world/bridge";
 import type { FileRange } from "../world/file-read";
 import type { TextRead } from "../app/reader";
 import type { Offers } from "../world/control";
@@ -85,10 +86,7 @@ export function specimenComputer() {
       kept = true;
       return after({ kind: "installed" as const });
     },
-    release: () => {
-      kept = false;
-      return after({ kind: "removed" as const });
-    },
+    removing: specimenRemoving(),
     // An older World than the interface, as a computer that has not been
     // brought up to date shows it.
     renewing: {
@@ -187,3 +185,39 @@ export const specimenPhone: PhoneSeam = {
   allow: async () => {},
   open: () => Promise.reject(new Error("this is a specimen")),
 };
+
+/** What removing fastctx from a specimen computer would take: one that is
+ *  also the hub of a World, with an npm fastctx on its PATH; its steps
+ *  tick off one by one, one of them failing. */
+function specimenRemoving(): Removing {
+  const item = (id: string, kind: string, where: string | null, admin = false): RemovalItem => ({ id, kind, what: kind, where, admin });
+  const plan = (everything: boolean): RemovalPlan => ({
+    everything,
+    steps: [
+      item("service", "service", "fastctx-node-me", true),
+      item("task", "task", "fastctx-node-me-check", true),
+      item("codex", "codex", "C:/Users/me/.codex"),
+      item("claude", "claude", "C:/Users/me/.claude"),
+      ...(everything
+        ? [item("hub-service", "hub-service", "fastctx-hub-lab", true), item("firewall", "firewall", "fastctx-hub-lab", true), item("hub-data", "hub-data", "C:/Users/me/.fastctx/hub"), item("logout", "logout", "lab · me"), item("data", "data", "C:/Users/me/.fastctx")]
+        : []),
+      item("path", "path", "C:/Users/me/.fastctx/bin"),
+      item("program", "program", "C:/Users/me/.fastctx/bin/fastctx.exe"),
+      item("app", "app", "C:/Users/me/AppData/Local/World"),
+    ],
+    keeps: everything ? [] : [item("data", "data", "C:/Users/me/.fastctx/world"), item("hub-data", "hub-data", "C:/Users/me/.fastctx/hub")],
+    hub: { name: "lab", dir: "C:/Users/me/.fastctx/hub" },
+    other: { path: "C:/Users/me/AppData/Roaming/npm/fastctx.cmd", version: "0.2.6" },
+  });
+  return {
+    plan: (everything) => new Promise((resolve) => setTimeout(() => resolve(plan(everything)), 500)),
+    run: async (everything, onEvent) => {
+      for (const step of plan(everything).steps) {
+        await new Promise((resolve) => setTimeout(resolve, 420));
+        onEvent(step.id === "claude" ? { step: step.id, result: "failed", why: "settings.json changed while it was being read" } : { step: step.id, result: step.id === "task" ? "skipped" : "done", why: null });
+      }
+      onEvent({ left: [{ kind: "claude", what: "In Claude Code", where: "C:/Users/me/.claude/settings.json", why: "it changed while it was being read" }] });
+    },
+    finish: () => Promise.reject(new Error("this is a specimen")),
+  };
+}

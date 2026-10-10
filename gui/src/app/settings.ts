@@ -15,21 +15,25 @@ import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
 import type { SettingsWords } from "./words";
+import { RemovalSection, type Removing } from "./removal";
+import type { RemovalWords } from "./removal-words";
 
 export interface SettingsOptions {
   store: Store;
   words: SettingsWords;
+  removalWords: RemovalWords;
   head(title: string, actions?: string): string;
   language: "zh" | "en";
   chooseLanguage(language: "zh" | "en"): void;
   /** Says a moment as the front page does: how long ago. */
   ago(at: Date, now: Date): string;
-  /** This computer, where the shell can set it up: where it stands, and
-   *  installing or removing the service that keeps its node. */
+  /** This computer, where the shell can set it up: where it stands,
+   *  installing the service that keeps its node when it is missing, and
+   *  taking fastctx off it. */
   computer?: {
     setup(): Promise<Setup>;
     keep(): Promise<KeptNow>;
-    release(): Promise<KeptNow>;
+    removing: Removing;
     /** Which World it runs, and putting a new one in place. */
     renewing: Renewing;
     /** The app's own version, and a newer one from its releases. */
@@ -62,7 +66,6 @@ export class SettingsPage implements Page {
   private device: HTMLElement;
   private service: HTMLElement;
   private setup: Setup | null = null;
-  private armed = false;
   private busy = false;
   private said = "";
 
@@ -79,6 +82,7 @@ export class SettingsPage implements Page {
         <section class="home-section"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
+        ${options.computer ? `<section class="home-section"><h2 class="section-title">${escape(options.removalWords.title)}</h2><div class="removal"></div></section>` : ""}
       </div>`;
     this.device = this.element.querySelector<HTMLElement>(".device")!;
     this.service = this.element.querySelector<HTMLElement>(".settings-service")!;
@@ -96,17 +100,10 @@ export class SettingsPage implements Page {
       );
     }
     if (options.phone) new PhoneRow(this.element.querySelector<HTMLElement>(".settings-phone")!, words, options.phone);
+    if (options.computer) new RemovalSection(this.element.querySelector<HTMLElement>(".removal")!, options.removalWords, options.computer.removing);
     this.service.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-service]");
-      if (button && !button.disabled) this.serve(button.dataset.service as "keep" | "release");
-    });
-    // A removal waits for a second press; it is let go when the reader
-    // moves on.
-    this.service.addEventListener("focusout", () => {
-      if (this.armed) {
-        this.armed = false;
-        this.drawService();
-      }
+      if (button && !button.disabled) this.keep();
     });
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-choice]");
@@ -153,21 +150,17 @@ export class SettingsPage implements Page {
     );
   }
 
-  private serve(act: "keep" | "release"): void {
+  /** Installs the service an installation would have, when it is missing:
+   *  the rights were declined, or fastctx came here another way. */
+  private keep(): void {
     const service = this.options.computer;
     if (!service || this.busy) return;
-    if (act === "release" && !this.armed) {
-      this.armed = true;
-      this.drawService();
-      this.service.querySelector<HTMLButtonElement>("[data-service]")?.focus();
-      return;
-    }
-    this.armed = false;
     this.busy = true;
     this.said = "";
     this.drawService();
     const { words } = this.options;
-    (act === "keep" ? service.keep() : service.release())
+    service
+      .keep()
       .then(
         (done) => {
           this.said = done.kind === "command" ? words.command(done.command) : words.kept[done.kind];
@@ -188,11 +181,9 @@ export class SettingsPage implements Page {
     if (kept === null && !this.said) return;
     const state = kept === null ? "" : kept ? words.serviceOn : words.serviceOff;
     const button =
-      kept === null
-        ? ""
-        : kept
-          ? `<button class="text-button quiet-button${this.armed ? " armed" : ""}" type="button" data-service="release"${this.busy ? " disabled" : ""}>${escape(this.armed ? words.releaseAgain : words.release)}</button>`
-          : `<button class="text-button quiet-button" type="button" data-service="keep" title="${escape(words.keepAsks)}"${this.busy ? " disabled" : ""}>${escape(words.keep)}</button>`;
+      kept === false
+        ? `<button class="text-button quiet-button" type="button" data-service="keep" title="${escape(words.keepAsks)}"${this.busy ? " disabled" : ""}>${escape(words.keep)}</button>`
+        : "";
     this.service.hidden = false;
     const old = legacySaid(this.setup?.legacy ?? null, words);
     this.service.innerHTML = `<dt>${escape(words.service)}</dt><dd><span>${escape(state)}</span>${button}${this.said ? `<p class="settings-said">${escape(this.said)}</p>` : ""}</dd>${

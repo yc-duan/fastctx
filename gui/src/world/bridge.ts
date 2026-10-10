@@ -358,6 +358,60 @@ export function releaseHere(): Promise<KeptNow> {
   return invoke("release_here");
 }
 
+/** One thing removing fastctx from this computer takes away, or leaves,
+ *  as `fastctx remove plan` lists it. `kind` names what it is, for the page
+ *  to say in its own words; `what` is the kernel's words for a kind the
+ *  page does not know; `where` is a path, a service's or a hub's name. */
+export interface RemovalItem {
+  id: string;
+  kind: string;
+  what: string;
+  where: string | null;
+  /** Taking it away needs administrator rights. */
+  admin: boolean;
+}
+
+export interface RemovalPlan {
+  everything: boolean;
+  steps: RemovalItem[];
+  /** What stays when the data is kept. */
+  keeps: RemovalItem[];
+  /** The World this computer is the hub of, if it is one. */
+  hub: { name: string; dir: string } | null;
+  /** Another fastctx on the PATH that is not the World's, such as one npm
+   *  installed; it is not taken away. */
+  other: { path: string; version: string | null } | null;
+}
+
+/** What came of one step, and at the end what is left and why. */
+export type RemovalEvent =
+  | { step: string; result: "done" | "failed" | "skipped"; why: string | null }
+  | { left: { kind: string; what: string; where: string | null; why: string }[] };
+
+export function removalPlan(everything: boolean): Promise<RemovalPlan> {
+  return invoke("removal_plan", { everything });
+}
+
+/** Removes fastctx from this computer, telling each step as it is done;
+ *  the rights it needs are asked for once. */
+export function removeHere(everything: boolean, onEvent: (event: RemovalEvent) => void): Promise<void> {
+  const events = new Channel<RemovalEvent>();
+  events.onmessage = (event) => {
+    try {
+      onEvent(event);
+    } catch (error) {
+      console.error("a step of the removal could not be shown", event, error);
+    }
+  };
+  return invoke("removal_run", { everything, events });
+}
+
+/** Closes World and has its own uninstaller take it, and with everything
+ *  its data, off this computer. */
+export function removeApp(everything: boolean): Promise<void> {
+  return invoke("removal_finish", { everything });
+}
+
 /** Opens a resident on this computer in its own official interface, in a
  *  terminal window of its own; resolves when that attach ends. */
 export function attachHere(resident: string): Promise<void> {

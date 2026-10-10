@@ -45,7 +45,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "share", "lend", "relays", "palette", "login", "token-login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
+const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "share", "lend", "relays", "palette", "login", "token-login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "remove-keep", "remove-erase", "remove-run", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -137,7 +137,7 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named === "drawer" || named === "palette" ? "home" : named === "service" ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "token-login" || named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "lend" || named === "relays" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
+      const shown = named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "token-login" || named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "lend" || named === "relays" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
       const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "");
@@ -290,10 +290,35 @@ for (const session of sessions) {
         });
       }
       if (session === "service") {
-        // The startup service installed, then removal armed by one press.
+        // The startup service missing, then installed.
         await send("Runtime.evaluate", {
           awaitPromise: true,
-          expression: "new Promise(r => setTimeout(r, 200)).then(() => { document.querySelector('[data-service=keep]')?.click(); return new Promise(r => setTimeout(r, 1300)); }).then(() => document.querySelector('[data-service=release]')?.click())",
+          expression: "new Promise(r => setTimeout(r, 200)).then(() => { document.querySelector('[data-service=keep]')?.click(); return new Promise(r => setTimeout(r, 1300)); })",
+        });
+      }
+      if (session.startsWith("remove-")) {
+        // Taking fastctx off the computer: keeping the data; everything,
+        // with its list open; everything, done step by step.
+        const way = session === "remove-keep" ? "keep" : "erase";
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `(async () => {
+            const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+            await pause(300);
+            document.querySelector('[data-removal=${way}]').click();
+            await pause(800);
+            if (${JSON.stringify(session)} === "remove-erase") document.querySelector('[data-removal=list]').click();
+            if (${JSON.stringify(session)} === "remove-run") {
+              const name = document.querySelector('[data-removal-name]');
+              name.value = 'lab';
+              name.dispatchEvent(new Event('input', { bubbles: true }));
+              document.querySelector('[data-removal=go]').click();
+              document.querySelector('[data-removal=go]').click();
+              await pause(5200);
+            }
+            document.querySelector('.removal').scrollIntoView({ block: 'start' });
+            await pause(500);
+          })()`,
         });
       }
       if (session === "about") {
