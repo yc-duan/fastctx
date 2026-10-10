@@ -20,6 +20,7 @@ REVISIONS = {
     6: "f00f76c68d27d74204110c876860e4ab61a7f85f",
     7: "bd905f697fbf793f9f755561f36b0758fb08e383",
     8: "52d3e985cace21aab0ec8b01f824f45fc187d60f",
+    9: "287bacbb4e59cf755eb0d2fdf4840705e1ebff61",
 }
 
 
@@ -36,6 +37,22 @@ def prepare():
             destination = directory / file.removeprefix("crates/fastctx-types/")
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(git("show", f"{revision}:{file}"))
+        # Compile each decoder beside its unchanged historical types. Putting
+        # all serde monomorphizations in the driver scales its compiler memory
+        # with the number of protocol revisions instead of one revision.
+        with (directory / "src/lib.rs").open("a", encoding="utf-8", newline="\n") as source:
+            source.write('''
+pub fn contract_frame(value: serde_json::Value, request: bool) -> serde_json::Value {
+    if request {
+        serde_json::to_value(serde_json::from_value::<ipc::ClientFrame>(value).unwrap()).unwrap()
+    } else {
+        serde_json::to_value(serde_json::from_value::<ipc::NodeFrame>(value).unwrap()).unwrap()
+    }
+}
+pub fn contract_welcome(value: serde_json::Value) -> serde_json::Value {
+    serde_json::to_value(serde_json::from_value::<ipc::Welcome>(value).unwrap()).unwrap()
+}
+''')
         (directory / "Cargo.toml").write_text(f'''[package]
 name = "ipc-reader-v{protocol}"
 version = "0.0.0"
@@ -66,8 +83,13 @@ serde_json = "1"
     (WORK / "Cargo.lock").write_bytes((ROOT / "Cargo.lock").read_bytes())
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith("CLAUDE")}
     env["CARGO_TARGET_DIR"] = str(TARGET)
-    subprocess.run(["cargo", "build", "--offline", "-j", "2", "--manifest-path", str(WORK / "Cargo.toml")],
-                   cwd=ROOT, env=env, check=True)
+    # Each historical reader derives serde for the whole wire contract. Build
+    # them one at a time rather than keeping four copies of that compiler work
+    # in memory; ordinary dependency compilation still has four cargo jobs.
+    build = ["cargo", "build", "--offline", "-j", "4", "--manifest-path", str(WORK / "Cargo.toml")]
+    for protocol in REVISIONS:
+        subprocess.run([*build, "-p", f"ipc-reader-v{protocol}"], cwd=ROOT, env=env, check=True)
+    subprocess.run(build, cwd=ROOT, env=env, check=True)
     return TARGET / "debug" / ("ipc-historical-readers.exe" if os.name == "nt" else "ipc-historical-readers")
 
 

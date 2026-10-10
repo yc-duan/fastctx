@@ -34,6 +34,9 @@ pub fn fixtures() -> Fixtures {
             Controlled::Done { said: None },
             Controlled::Done { said: Some("Conversation rewound. Files have not been restored.".into()) },
             Controlled::Forked { resident: "codex-ab12@desktop".parse().unwrap() },
+            Controlled::Reported { said: Some("Host output without a success flag".into()) },
+            Controlled::Refused { said: "The host refused this change".into(), current_model: Some("model".into()) },
+            Controlled::ModelMenu { models: Vec::new(), model: None, effort: None, service_tier: None },
         ],
         offers: vec![
             Offers::default(),
@@ -52,6 +55,7 @@ pub fn fixtures() -> Fixtures {
                         name: "compact".into(),
                         description: "Compact".into(),
                         args: None,
+                        arguments: CommandArguments::None,
                         source: Some("codex".into()),
                         path: None,
                     },
@@ -59,8 +63,17 @@ pub fn fixtures() -> Fixtures {
                         name: "skill".into(),
                         description: "A skill".into(),
                         args: Some("[instructions]".into()),
+                        arguments: CommandArguments::Optional,
                         source: Some("skill".into()),
                         path: Some("C:/skills/example/SKILL.md".into()),
+                    },
+                    CommandOffer {
+                        name: "rename".into(),
+                        description: "Rename".into(),
+                        args: Some("<name>".into()),
+                        arguments: CommandArguments::Required,
+                        source: Some("builtin".into()),
+                        path: None,
                     },
                 ],
                 models: vec![ModelOffer {
@@ -70,9 +83,16 @@ pub fn fixtures() -> Fixtures {
                     efforts: vec!["custom-effort".into()],
                     default_effort: Some("custom-effort".into()),
                     default: true,
+                    service_tiers: vec![ServiceTierOffer {
+                        id: "priority".into(),
+                        name: "Fast".into(),
+                        description: "Faster responses".into(),
+                    }],
+                    default_service_tier: None,
                 }],
                 model: Some("model".into()),
                 effort: Some("custom-effort".into()),
+                service_tier: Some("priority".into()),
                 usage: Some(Usage {
                     context: Some(ContextUsage { used: 42, window: Some(1000) }),
                     limits: vec![Limit {

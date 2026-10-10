@@ -64,12 +64,13 @@ async function controlOpen($, sessions, sessionId) {
     const identity = JSON.parse(header)
     const host = {
       session: sessionId, process: identity.process, parent: identity.parent,
+      command_contract: 1,
       // Persisted before polling: even a reload in the same clock tick or
       // after a clock rollback gets a different answer address.
       instance: String(Math.max(Date.now(), Number(prior?.instance ?? 0) + 1)),
     }
     const state = { directory, host, closed: false, busy: false, turn: null, looking: false,
-      sequence: 0, calls: new Map(), replies: new Map(), handled: new Set(), timer: null, guard }
+      sequence: 0, calls: new Map(), replies: new Map(), handled: new Set(), pending: new Map(), timer: null, guard }
     const closed = await controlNames($, directory + '/closed')
     if (files.includes('activity.json') && prior && !closed.includes(prior.instance + '.json') && controlSame(prior.parent, host.parent)) {
       const controlActivity = JSON.parse(await $.fs.read(directory + '/activity.json'))
@@ -119,54 +120,58 @@ async function controlPoll($, state) {
       const request = await readReport($, state.directory + '/inbox/' + file.slice(0, -5))
       if (request.instance !== state.host.instance) continue
       state.handled.add(file)
-      let reply
-      try {
-        reply = state.replies.get(file)
-        if (reply === undefined) {
-          const owner = await $.process.run([FASTCTX, 'claude-control-owner', WORLD])
-          if (owner.exitCode !== 0) throw new Error('checking the World node: ' + owner.stderr)
-          if (!controlSame(JSON.parse(owner.stdout), request.controller)) throw new Error('the World node that requested this control exited')
-          reply = { ok: await controlExecute($, state, request.control) }
-        }
-      } catch (error) {
-        reply = { error: String(error) }
-      }
-      // Retain a completed result in memory until its marker is written;
-      // retrying publication must never execute a command a second time.
-      const path = state.directory + '/replies/' + file
-      try {
-        await writeReport($, path.slice(0, -5), JSON.stringify(reply))
-        await $.fs.write(path.slice(0, -5) + '.done', '')
-        state.replies.delete(file)
-      } catch (error) {
-        state.handled.delete(file)
-        // Replace the request with a publish-only entry in this activation.
-        state.replies.set(file, reply)
-        throw error
-      }
+      // The scanner alone is serialized. A command waiting in the host must
+      // not hold the scanner, offers, config writes or question answers.
+      const pending = controlReply($, state, file, request)
+      state.pending.set(file, pending)
+      void pending.catch((error) => $.ui.log(String(error), { to: 'debug' }))
+        .finally(() => state.pending.delete(file))
     }
   } finally {
     state.looking = false
   }
 }
 
+async function controlReply($, state, file, request) {
+  let reply = state.replies.get(file)
+  if (reply === undefined) {
+    try {
+      const owner = await $.process.run([FASTCTX, 'claude-control-owner', WORLD])
+      if (owner.exitCode !== 0) throw new Error('checking the World node: ' + owner.stderr)
+      if (!controlSame(JSON.parse(owner.stdout), request.controller)) throw new Error('the World node that requested this control exited')
+      reply = { ok: await controlExecute($, state, request.control) }
+    } catch (error) { reply = { error: String(error) } }
+  }
+  // A failed publication retries only publication, never the host operation.
+  state.replies.set(file, reply)
+  const path = state.directory + '/replies/' + file.slice(0, -5)
+  try {
+    await writeReport($, path, JSON.stringify(reply))
+    await $.fs.write(path + '.done', '')
+    state.replies.delete(file)
+  } catch (error) {
+    state.handled.delete(file)
+    throw error
+  }
+}
+
 async function controlExecute($, state, control) {
   if (state.closed) throw new Error('this Claude conversation ended')
   if (control.do === 'offers') {
-    const commands = await $.command.list()
+    const commands = await controlCatalog($, state)
     const rows = await $.config.list()
     const modelRow = rows.find((row) => row.key === 'model')
     const usage = await $.session.usage()
     const controls = ['command']
     if (state.busy === false) controls.push('compact')
-    if (commands.some((command) => command.name === 'model' || command.name === 'effort')) controls.push('model')
+    if (modelRow !== undefined) controls.push('model')
     if (commands.some((command) => command.name === 'rename')) controls.push('rename')
     return {
       controls, commands: commands.map((command) => ({ name: command.name, description: command.description,
-        args: null, source: command.source })),
+        args: command.args, arguments: command.arguments, source: command.source })),
       models: (modelRow?.options ?? []).map((id) => ({ id, name: null, description: null,
-        efforts: [], default_effort: null, default: id === 'default' })),
-      model: await $.session.model(), effort: null,
+        efforts: [], default_effort: null, default: id === 'default', service_tiers: [], default_service_tier: null })),
+      model: await $.session.model(), effort: null, service_tier: null,
       usage: {
         context: usage.context.tokens === undefined ? null : { used: usage.context.tokens, window: usage.context.window },
         limits: usage.rateLimits.map((limit) => ({ name: limit.kind, used_percent: limit.percentUsed, resets_at: limit.resetsAt ?? null })),
@@ -175,41 +180,22 @@ async function controlExecute($, state, control) {
     }
   }
   if (control.do === 'compact') {
-    if (state.busy === true) throw new Error('Claude Code can compact only between turns')
-    const result = await $.session.compact()
-    if (state.busy === null && result.skip === undefined) {
-      state.busy = false
-      state.turn = null
-    }
-    return { kind: 'done', said: result.skip ?? null }
+    return controlCompact($, state)
   }
   if (control.do === 'command') {
-    const result = await $.command.run({ command: control.name, args: control.args })
-    if (result.exitCode !== undefined && result.exitCode !== 0) throw new Error(result.text ?? 'Claude command failed')
-    return { kind: 'done', said: result.text ?? null }
+    return controlCommand($, state, control)
   }
   if (control.do === 'rename') {
     if (!control.name.trim()) throw new Error('a conversation name cannot be empty')
-    const result = await $.command.run({ command: 'rename', args: control.name })
-    return { kind: 'done', said: result.text ?? null }
+    return controlCommand($, state, { name: 'rename', args: control.name })
   }
   if (control.do === 'model') {
-    const said = []
-    if (control.model !== null && control.model !== undefined) {
-      if (!control.model.trim()) throw new Error('a model cannot be empty; use default to reset it')
-      const result = await $.command.run({ command: 'model', args: control.model })
-      if (result.text !== undefined) said.push(result.text)
-      // Read back the host's selection, including aliases and hook rewrites.
-      said.push('Current model: ' + await $.session.model())
-    }
     if (control.effort !== null && control.effort !== undefined) {
-      if (!control.effort.trim()) throw new Error('an effort cannot be empty; use auto to reset it')
-      const result = await $.command.run({ command: 'effort', args: control.effort })
-      if (result.text !== undefined) said.push(result.text)
-      const status = await $.command.run({ command: 'effort', args: 'status' })
-      if (status.text !== undefined) said.push(status.text)
+      throw new Error('Claude Code exposes no background-safe write of ordinary reasoning effort; its command may require terminal confirmation')
     }
-    return { kind: 'done', said: said.length ? said.join('\n') : null }
+    if (control.model !== null && control.model !== undefined) return controlSetModel($, control.model)
+    const offers = await controlExecute($, state, { do: 'offers' })
+    return { kind: 'model_menu', models: offers.models, model: offers.model, effort: null, service_tier: null }
   }
   throw new Error('Claude Code has no mod control for ' + control.do)
 }

@@ -18,6 +18,10 @@ def frame(reply):
 
 
 def replies(fixtures):
+    for offers in fixtures["control"]["offers"]:
+        yield {"reply": "offers", "resident": ADDRESS, "offers": offers}
+    for controlled in fixtures["control"]["controlled"]:
+        yield {"reply": "controlled", "resident": ADDRESS, "controlled": controlled}
     yield {"reply": "done"}
     yield {"reply": "arrived", "resident": ADDRESS["resident"], "town": "project"}
     yield {"reply": "machines", "here": "desktop", "others": ["laptop"]}
@@ -174,7 +178,7 @@ def page_identity(value):
 
 def samples(root):
     fixtures = json.loads((root / "gui/fixtures/wire.json").read_text(encoding="utf-8"))
-    for protocol in [5, 6, 7, 8]:
+    for protocol in [5, 6, 7, 8, 9]:
         for lifetime in [None, fixtures["world"]["nodes"][0]["facts"]["node_lifetime"]]:
             welcome = {"kind": "accepted", "machine": "desktop", "version": "1.0.0"}
             if lifetime is not None:
@@ -188,7 +192,7 @@ def samples(root):
                 case["encodings"] = [part["encoding"] for part in reply["output"]["legacy"]]
             case["attached"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "attached"
             # Hub-by-hub nodes have no shape before protocol 8 and are said as text.
-            case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8)
+            case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and reply["controlled"]["kind"] in ["reported", "refused", "model_menu"])
             yield case
         yield {"mode": "reply", "protocol": protocol, "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}
         for call, peer, admitted in calls(fixtures):

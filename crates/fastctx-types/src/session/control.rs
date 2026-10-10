@@ -62,9 +62,23 @@ pub enum ControlKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Controlled {
-    /// Done; `said` is what the host answered in words, when it did (a
-    /// command's output, a compaction that was skipped and why).
+    /// A confirmed action; `said` is what the host answered in words, when
+    /// it did. Merely finishing an invocation is `Reported`, a veto `Refused`.
     Done { said: Option<String> },
+    /// The host completed the invocation but supplied no success/failure
+    /// contract. Its words must be shown without a success assertion.
+    Reported { said: Option<String> },
+    /// A structured host refusal, with the host's words unchanged.
+    Refused {
+        said: String,
+        /// Some host writers change the live selection before failing to
+        /// persist it. A refusal must not claim those effects rolled back.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        current_model: Option<String>,
+    },
+    /// Open the model selector with this catalog and the next World turn's
+    /// selections. This is a UI request, not a command's textual output.
+    ModelMenu { models: Vec<ModelOffer>, model: Option<String>, effort: Option<String>, service_tier: Option<String> },
     /// The fork, a resident of its own.
     Forked { resident: Address },
 }
@@ -83,6 +97,10 @@ pub struct Offers {
     /// or the latest host-reported defaults when no choice was made.
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// Selected service tier for the next World turn, or the host's report
+    /// without a World choice. Catalog defaults do not mean a tier is active.
+    #[serde(default)]
+    pub service_tier: Option<String>,
     /// How much of its context, and of the account's limits, is used, when
     /// the host says.
     pub usage: Option<Usage>,
@@ -95,12 +113,25 @@ pub struct CommandOffer {
     pub description: String,
     /// What it takes after its name, as the host hints it.
     pub args: Option<String>,
+    /// Whether arguments are accepted or required. Older catalogs without
+    /// this field make no requirement; keep their arguments optional.
+    #[serde(default)]
+    pub arguments: CommandArguments,
     /// Where it comes from: the host itself, a skill, a plugin, an MCP
     /// server, a prompt file; as the host says, kept verbatim.
     pub source: Option<String>,
     /// Pass this path unchanged with the command when selecting a skill.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandArguments {
+    None,
+    #[default]
+    Optional,
+    Required,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,6 +145,17 @@ pub struct ModelOffer {
     pub default_effort: Option<String>,
     /// Whether the host uses it when none is chosen.
     pub default: bool,
+    #[serde(default)]
+    pub service_tiers: Vec<ServiceTierOffer>,
+    #[serde(default)]
+    pub default_service_tier: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceTierOffer {
+    pub id: String,
+    pub name: String,
+    pub description: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

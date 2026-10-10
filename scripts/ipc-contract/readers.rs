@@ -9,11 +9,7 @@ mod compat;
 fn decode(protocol: u64, value: Value, request: bool) -> Value {
     macro_rules! read {
         ($version:ident) => {
-            if request {
-                serde_json::to_value(serde_json::from_value::<$version::ipc::ClientFrame>(value).unwrap()).unwrap()
-            } else {
-                serde_json::to_value(serde_json::from_value::<$version::ipc::NodeFrame>(value).unwrap()).unwrap()
-            }
+            $version::contract_frame(value, request)
         };
     }
     match protocol {
@@ -21,6 +17,7 @@ fn decode(protocol: u64, value: Value, request: bool) -> Value {
         6 => read!(v6),
         7 => read!(v7),
         8 => read!(v8),
+        9 => read!(v9),
         _ => panic!("no frozen reader for {protocol}"),
     }
 }
@@ -36,7 +33,7 @@ fn main() {
                 let wire = serde_json::to_value(current).unwrap();
                 macro_rules! welcome {
                     ($version:ident) => {
-                        serde_json::to_value(serde_json::from_value::<$version::ipc::Welcome>(wire).unwrap()).unwrap()
+                        $version::contract_welcome(wire)
                     };
                 }
                 let read = match protocol {
@@ -44,6 +41,7 @@ fn main() {
                     6 => welcome!(v6),
                     7 => welcome!(v7),
                     8 => welcome!(v8),
+                    9 => welcome!(v9),
                     _ => panic!("no frozen reader for {protocol}"),
                 };
                 json!({"read": read})

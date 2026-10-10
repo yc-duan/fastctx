@@ -10,12 +10,19 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// The background-safe command/argument/result contract of this mod.
+pub const COMMAND_CONTRACT: u32 = 1;
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Host {
     pub session: String,
     pub instance: String,
     /// The process stream owned by this mod activation, not the Claude process.
     pub process: ProcessIdentity,
+    /// Old activations may still report the unfiltered terminal menu until
+    /// hot reload. They remain request bridges, but do not offer controls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_contract: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

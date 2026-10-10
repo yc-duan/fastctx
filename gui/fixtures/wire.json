@@ -261,6 +261,9 @@
         "colleagues": "gpu",
         "home": "C:/Users/ada/.claude-work",
         "colleagues_home": "/home/ada/.codex-gpu"
+      },
+      {
+        "files_on": "laptop"
       }
     ]
   },
@@ -10153,7 +10156,8 @@
         "model": "opus",
         "reasoning_effort": "high",
         "colleagues": "desktop",
-        "home": "/home/ada/.claude-work"
+        "home": "/home/ada/.claude-work",
+        "files_on": "laptop"
       },
       {
         "call": "claude_consent",
@@ -10593,6 +10597,22 @@
           "machine": "desktop",
           "resident": "codex-ab12"
         }
+      },
+      {
+        "kind": "reported",
+        "said": "Host output without a success flag"
+      },
+      {
+        "kind": "refused",
+        "said": "The host refused this change",
+        "current_model": "model"
+      },
+      {
+        "kind": "model_menu",
+        "models": [],
+        "model": null,
+        "effort": null,
+        "service_tier": null
       }
     ],
     "offers": [
@@ -10602,6 +10622,7 @@
         "models": [],
         "model": null,
         "effort": null,
+        "service_tier": null,
         "usage": null
       },
       {
@@ -10619,14 +10640,23 @@
             "name": "compact",
             "description": "Compact",
             "args": null,
+            "arguments": "none",
             "source": "codex"
           },
           {
             "name": "skill",
             "description": "A skill",
             "args": "[instructions]",
+            "arguments": "optional",
             "source": "skill",
             "path": "C:/skills/example/SKILL.md"
+          },
+          {
+            "name": "rename",
+            "description": "Rename",
+            "args": "<name>",
+            "arguments": "required",
+            "source": "builtin"
           }
         ],
         "models": [
@@ -10638,11 +10668,20 @@
               "custom-effort"
             ],
             "default_effort": "custom-effort",
-            "default": true
+            "default": true,
+            "service_tiers": [
+              {
+                "id": "priority",
+                "name": "Fast",
+                "description": "Faster responses"
+              }
+            ],
+            "default_service_tier": null
           }
         ],
         "model": "model",
         "effort": "custom-effort",
+        "service_tier": "priority",
         "usage": {
           "context": {
             "used": 42,
@@ -11503,7 +11542,8 @@
             "size": 3145728,
             "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           }
-        ]
+        ],
+        "files_on": "laptop"
       },
       {
         "call": "open",
@@ -11949,6 +11989,7 @@
       "models": [],
       "model": null,
       "effort": null,
+      "service_tier": null,
       "usage": null
     },
     "idle": {
@@ -11963,6 +12004,7 @@
       "models": [],
       "model": null,
       "effort": null,
+      "service_tier": null,
       "usage": null
     }
   },

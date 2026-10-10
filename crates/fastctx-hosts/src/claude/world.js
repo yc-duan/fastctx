@@ -36,6 +36,7 @@ const LOOK_MS = 2000
 const FILE_BYTES = 4 * 1024 * 1024
 
 __FASTCTX_CONTROLS__
+__FASTCTX_COMMANDS__
 
 // /clear may replace even the same session ID. Keep the old object alive for
 // its timers, queued writes and late turn/tool results; never reset it in place.

@@ -14,7 +14,7 @@ const fixturePath = path.join(gui, "fixtures/wire.json");
 const flags = process.argv.slice(2);
 assert(flags.every((flag) => flag === "--rust" || flag === "--write"), "expected --rust or --write");
 if (flags.length) {
-  const generated = execFileSync("cargo", ["run", "--locked", "--quiet", "-p", "fastctx-types", "--example", "gui_wire_fixtures"], {
+  const generated = execFileSync("cargo", ["run", "--locked", "--quiet", "-j", "4", "--manifest-path", path.join(path.dirname(gui), "Cargo.toml"), "-p", "fastctx-types", "--example", "gui_wire_fixtures"], {
     cwd: path.dirname(gui), encoding: "utf8", stdio: ["ignore", "pipe", "inherit"],
   });
   if (flags.includes("--write")) writeFileSync(fixturePath, generated);

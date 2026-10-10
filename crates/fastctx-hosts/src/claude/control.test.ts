@@ -6,6 +6,7 @@ test('uses the public controls and request return types through the official eng
   const clock = mock.clock(on)
   mock.env(on, {})
   const files = new Map<string, string>()
+  const markers = new Map<string, () => void>()
   const normalize = (path: string) => path.replaceAll('\\', '/')
   let model = 'opus'
   let busy = false
@@ -20,9 +21,9 @@ test('uses the public controls and request return types through the official eng
   on('session.cwd', () => ({ value: '/fixture' }))
   on('session.model', () => ({ value: model }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
-  on('session.version', () => ({ value: { version: '2.1.289' } }))
+  on('session.version', () => ({ value: { version: '2.1.294' } }))
   on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify(e.argv[1] === 'claude-control-owner' && !ownerAlive ? null : { pid: 123, token: 'lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
-  on('fs.write', (_, e) => { files.set(normalize(e.path), e.text); return { value: undefined } })
+  on('fs.write', (_, e) => { const path = normalize(e.path); files.set(path, e.text); markers.get(path)?.(); return { value: undefined } })
   on('fs.read', (_, e) => {
     const path = normalize(e.path)
     if (!files.has(path)) throw new Error('missing fixture: ' + path)
@@ -48,6 +49,7 @@ test('uses the public controls and request return types through the official eng
     { name: 'fixture:skill', description: 'Skill', source: 'plugin', plugin: 'fixture' },
   ] }))
   on('config.list', () => ({ value: [{ key: 'model', label: 'Model', kind: 'choice', value: 'opus', options: ['default', 'opus', 'sonnet'], provider: { plugin: 'engine', tier: 'core' }, isLocked: false }] }))
+  on('config.set', (_, e) => { if (e.key === 'model') model = String(e.value); return { value: e.value } })
   on('session.usage', () => ({ value: { startedAt: 1, context: { tokens: 123, window: 200000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 12.5, resetsAt: '2026-10-04T17:00:00Z' }], cost: { usd: 0.125 } } }))
   on('command.run', (_, e) => {
     expect(e.origin).toEqual(expect.objectContaining({ kind: 'plugin' }))
@@ -91,7 +93,10 @@ test('uses the public controls and request return types through the official eng
   async function invoke(control: any) {
     const key = 'control-' + ++sequence
     files.set(directory + '/inbox/' + key + '.json', JSON.stringify({ instance: host.instance, controller: { pid: 123, token: 'lifetime' }, control }))
+    const done = new Promise<void>((resolve) => markers.set(directory + '/replies/' + key + '.done', resolve))
     await clock.advance(2000)
+    await done
+    markers.delete(directory + '/replies/' + key + '.done')
     expect(files.has(directory + '/replies/' + key + '.done')).toBe(true)
     return JSON.parse(files.get(directory + '/replies/' + key + '.json')!)
   }
@@ -100,13 +105,14 @@ test('uses the public controls and request return types through the official eng
   expect(offers.effort).toBe(null)
   expect(offers.usage.context).toEqual({ used: 123, window: 200000 })
   expect(offers.usage.cost_usd).toBe(0.125)
-  expect(offers.commands[3].source).toBe('plugin')
-  expect((await invoke({ do: 'command', name: 'panel', args: '' })).ok.said).toContain('requires')
-  // The test engine skips a throwing bottom hook and rejects the call.
-  expect((await invoke({ do: 'command', name: 'bad', args: '' })).error).toContain('command.run')
-  expect((await invoke({ do: 'model', model: 'sonnet', effort: 'high' })).ok.said).toContain('Current model: sonnet')
-  expect(commands.slice(-3)).toEqual([{ command: 'model', args: 'sonnet' }, { command: 'effort', args: 'high' }, { command: 'effort', args: 'status' }])
+  expect(offers.commands.some((command: any) => command.source === 'plugin')).toBe(false)
+  expect((await invoke({ do: 'command', name: 'panel', args: '' })).error).toContain('background-safe')
+  expect((await invoke({ do: 'command', name: 'bad', args: '' })).error).toContain('background-safe')
+  expect((await invoke({ do: 'model', model: 'sonnet', effort: 'high' })).error).toContain('no background-safe')
+  expect((await invoke({ do: 'model', model: 'sonnet', effort: null })).ok.said).toBe('Current model: sonnet')
+  expect(commands).toEqual([])
   expect((await invoke({ do: 'rename', name: '新名字' })).ok.said).toBe('rename:新名字')
+  expect((await invoke({ do: 'rename', name: '新名字' })).ok.kind).toBe('reported')
   ownerAlive = false
   const ran = commands.length
   expect((await invoke({ do: 'rename', name: 'abandoned' })).error).toContain('exited')
@@ -114,7 +120,7 @@ test('uses the public controls and request return types through the official eng
   ownerAlive = true
   expect((await invoke({ do: 'compact' })).ok).toEqual({ kind: 'done', said: null })
   skip = true
-  expect((await invoke({ do: 'compact' })).ok.said).toBe('host veto')
+  expect((await invoke({ do: 'compact' })).ok).toEqual({ kind: 'refused', said: 'host veto' })
   await $.turn.start({ turnId: 'turn-1', text: 'work' })
   expect((await invoke({ do: 'compact' })).error).toContain('between turns')
   expect((await invoke({ do: 'offers' })).ok.controls.includes('compact')).toBe(false)

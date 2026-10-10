@@ -52,10 +52,13 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
                 let words: Vec<_> = args.split_whitespace().collect();
                 match words.as_slice() {
                     [] => {
-                        return done(
-                            &serde_json::to_string(&offers(node, resident).await?)
-                                .map_err(|error| Failure::new(error.to_string()))?,
-                        );
+                        let offers = offers(node, resident).await?;
+                        return Ok(Controlled::ModelMenu {
+                            models: offers.models,
+                            model: offers.model,
+                            effort: offers.effort,
+                            service_tier: offers.service_tier,
+                        });
                     }
                     [model] => Control::Model { model: Some((*model).into()), effort: None },
                     [model, effort] => Control::Model { model: Some((*model).into()), effort: Some((*effort).into()) },
@@ -103,6 +106,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             done("Selection saved for the next turn started through the World. The running turn keeps its settings.")
         }
         Control::Rename { name } => {
+            if name.trim().is_empty() {
+                return Err(Failure::new("a conversation name cannot be empty"));
+            }
             codex.rename(&thread, &name).await.map_err(Failure::new)?;
             Ok(Controlled::Done { said: None })
         }
@@ -119,7 +125,44 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
                 "Review started using Codex's current review/default settings. Pending model choices apply to the next ordinary turn. {answer}"
             ))
         }
+        Control::Command { name, args, path: None } if name == "goal" => {
+            done(&codex.goal(&thread, &args).await.map_err(Failure::new)?.to_string())
+        }
+        Control::Command { name, args, path: None } if name == "debug-config" => {
+            no_args(&args)?;
+            done(&codex.read_config(&thread).await.map_err(Failure::new)?.to_string())
+        }
         Control::Command { name, args, path } => {
+            if path.is_none() {
+                let catalog = codex.offers(&thread).await.map_err(Failure::new)?;
+                if name == "tier" {
+                    if args.trim().is_empty() {
+                        let model = catalog.models.iter().find(|model| Some(&model.id) == catalog.model.as_ref());
+                        return done(
+                            &serde_json::json!({"service_tier":catalog.service_tier,
+                            "default_service_tier":model.and_then(|model| model.default_service_tier.as_ref()),
+                            "service_tiers":model.map(|model| &model.service_tiers)})
+                            .to_string(),
+                        );
+                    }
+                    let selected = codex.select_tier(&thread, args.trim(), false).await.map_err(Failure::new)?;
+                    return done(&format!("Service tier {selected} saved for the next World turn."));
+                }
+                if catalog
+                    .commands
+                    .iter()
+                    .any(|command| command.name == name && command.source.as_deref() == Some("codex"))
+                    && let Some(tier) = catalog
+                        .models
+                        .iter()
+                        .find(|model| Some(&model.id) == catalog.model.as_ref())
+                        .and_then(|model| model.service_tiers.iter().find(|tier| tier.name.to_lowercase() == name))
+                {
+                    no_args(&args)?;
+                    let selected = codex.select_tier(&thread, &tier.id, true).await.map_err(Failure::new)?;
+                    return done(&format!("Service tier {selected} saved for the next World turn."));
+                }
+            }
             let sent = codex.skill(&thread, &name, path.as_deref(), &args).await.map_err(Failure::new)?;
             done(&format!("Skill input {} turn {}", if sent.joined { "joined" } else { "started" }, sent.turn))
         }

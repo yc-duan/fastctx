@@ -55,7 +55,8 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     if let Some(session) = &about.session {
         let directory = files::directory(node.world.path(), session);
         if let Some(host) = files::host(&directory).map_err(failure)? {
-            running = files::active(&directory, &host).map_err(failure)?;
+            running = files::active(&directory, &host).map_err(failure)?
+                && host.command_contract == Some(files::COMMAND_CONTRACT);
         }
     }
     let mut offers = if running {
@@ -83,6 +84,11 @@ fn live_host(node: &Node, resident: &ResidentId) -> Result<(PathBuf, Host), Fail
     })?;
     if !files::active(&directory, &host).map_err(failure)? {
         return Err(Failure::new("this Claude session is not running; reopen it before controlling it"));
+    }
+    if host.command_contract != Some(files::COMMAND_CONTRACT) {
+        return Err(Failure::new(
+            "this Claude session's World mod still has the old terminal command contract; reload it before using conversation controls",
+        ));
     }
     Ok((directory, host))
 }
