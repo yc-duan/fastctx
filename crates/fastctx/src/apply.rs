@@ -113,6 +113,9 @@ fn hosts(places: &Places, apply: bool) -> anyhow::Result<Hosts> {
 }
 
 fn say(report: &Report) {
+    for message in &report.messages {
+        println!("{message}");
+    }
     for manifest in &report.preserved {
         println!("preserved file versions: {}", shown(manifest));
     }

@@ -165,7 +165,11 @@ pub fn status(places: &Places) -> Result<Status, Error> {
     // The old fastctx kept its record in its settings, only for Codex.
     let old = record.codex.is_none() && homes::legacy(places)?.is_some();
     Ok(Status {
-        codex: if old { Standing::Old } else { standing(present.codex, record.codex.is_some()) },
+        codex: if old {
+            Standing::Old
+        } else {
+            standing(present.codex, record.codex.as_ref().is_some_and(codex::Receipt::has_work))
+        },
         claude: standing(
             present.claude,
             record.claude_md.is_some() || record.settings.is_some() || record.claude_tools.is_some() || plugin,
@@ -183,7 +187,7 @@ pub fn status_at(places: &Places, host: Host, home: &Path) -> Result<Standing, E
     let records = homes::Records::read(&Snapshot::read(places.record())?, &places)?;
     let record = records.selected(&places, host.only())?;
     Ok(match host {
-        Host::Codex if record.codex.is_some() => Standing::In,
+        Host::Codex if record.codex.as_ref().is_some_and(codex::Receipt::has_work) => Standing::In,
         Host::Codex if homes::legacy(&places)?.is_some() => Standing::Old,
         Host::Codex if places.codex_home.is_dir() => Standing::Out,
         Host::Codex => Standing::Absent,
@@ -252,6 +256,8 @@ pub fn consent_claude(places: &Places, accept: bool) -> Result<bool, Error> {
 /// What an apply or unapply did, for the person who asked.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
+    /// Facts about the resulting configuration and effects of synchronization.
+    pub messages: Vec<String>,
     /// Files written or removed.
     pub changed: Vec<PathBuf>,
     /// The `claude` commands that changed Claude Code, as run.
@@ -395,7 +401,11 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         change(&mut changes, config, Some(applied.config));
         change(&mut changes, agents, Some(applied.agents));
         record.codex = Some(applied.receipt);
+        if record.codex.as_ref().is_some_and(codex::Receipt::portable) && !codex::portable_on_path() {
+            report.messages.push(format!("{}: command = \"fastctx\" is preserved, but fastctx was not found on this process's PATH; Codex cannot start the World's tools unless fastctx is on the PATH Codex inherits", config_path));
+        }
         report.notices.extend(applied.notices);
+        report.messages.extend(applied.messages);
         if old.is_some() {
             retire_legacy(&mut changes, old_file.expect("legacy receipt came from this snapshot"))?;
         }
@@ -557,6 +567,7 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
             change(&mut changes, agents, taken.agents);
             record.codex = taken.receipt;
             report.notices.extend(taken.retained);
+            report.messages.extend(taken.messages);
             if old.is_some() {
                 retire_legacy(&mut changes, old_file.expect("legacy receipt came from this snapshot"))?;
             }
@@ -841,12 +852,11 @@ fn rollback_plugin(
 }
 
 /// Adds the change that takes `file` from what it was read as to `after`
-/// (`None`: no file), when that is a change.
+/// (`None`: no file). Unchanged inputs still guard receipt publication.
 fn change(changes: &mut Vec<FileChange>, file: Snapshot, after: Option<Vec<u8>>) {
     match after {
-        Some(bytes) if file.bytes() != Some(bytes.as_slice()) => changes.push(FileChange::write(file, bytes)),
-        None if file.exists() => changes.push(FileChange::delete(file)),
-        _ => {}
+        Some(bytes) => changes.push(FileChange::write(file, bytes)),
+        None => changes.push(FileChange::delete(file)),
     }
 }
 

@@ -78,6 +78,49 @@ fn released_ownership_is_bound_and_retired_with_the_host_files() {
     apply::unapply(&places, hosts).unwrap();
     assert!(!places.codex_home.exists());
     home_lifecycle(&places);
+    shared_lifecycle(&places);
+}
+
+fn shared_lifecycle(base: &Places) {
+    use fastctx_install::apply::{Host, Standing};
+    let hosts = Host::Codex.only();
+    let first = base.at_home(Host::Codex, &base.root.parent().unwrap().join("shared-home")).unwrap();
+    let mut second = first.clone();
+    second.root = base.root.parent().unwrap().join("second-machine");
+    second.world = second.root.join("world");
+    fs::create_dir(&first.codex_home).unwrap();
+    let config = first.codex_home.join("config.toml");
+    let words = b"# user\r\nmodel = 'user'\r\n";
+    fs::write(&config, words).unwrap();
+    apply::apply(&first, hosts, Approval::Require).unwrap();
+    let text = fs::read_to_string(&config).unwrap();
+    let command = toml_edit::Value::from(first.installed().to_str().unwrap()).to_string();
+    fs::write(&config, text.replacen(&format!("command = {command}"), "command = \"fastctx\"", 1)).unwrap();
+    let shared = fs::read(&config).unwrap();
+    let report = apply::apply(&first, hosts, Approval::Require).unwrap();
+    assert!(report.messages.iter().any(|message| message.contains("not found")));
+    assert_eq!(fs::read(&config).unwrap(), shared);
+
+    // Only config.toml is shared; each machine keeps its own instructions.
+    second.codex_home = first.codex_home.with_file_name("second-home");
+    fs::create_dir(&second.codex_home).unwrap();
+    fs::write(second.codex_home.join("config.toml"), &shared).unwrap();
+    apply::apply(&second, hosts, Approval::Require).unwrap();
+    let report = apply::unapply(&first, hosts).unwrap();
+    assert_eq!(report.messages.len(), 1);
+    assert_eq!(apply::status_at(&first, Host::Codex, &first.codex_home).unwrap(), Standing::Out);
+    assert!(fs::read(&config).unwrap().starts_with(words));
+    fs::copy(&config, second.codex_home.join("config.toml")).unwrap();
+    apply::apply(&second, hosts, Approval::Require).unwrap();
+    let parsed: toml::Value =
+        toml::from_str(&fs::read_to_string(second.codex_home.join("config.toml")).unwrap()).unwrap();
+    assert_eq!(parsed["mcp_servers"]["fastctx"]["command"].as_str(), Some("fastctx"));
+    assert_eq!(parsed["features"]["shell_tool"].as_bool(), Some(false));
+    apply::unapply(&second, hosts).unwrap();
+    apply::apply(&first, hosts, Approval::Require).unwrap();
+    let parsed: toml::Value = toml::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+    assert_eq!(parsed["mcp_servers"]["fastctx"]["command"].as_str(), Some("fastctx"));
+    apply::unapply(&first, hosts).unwrap();
 }
 
 fn home_lifecycle(base: &Places) {
