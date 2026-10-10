@@ -310,6 +310,7 @@ const change = async (login: Login, made: AccountChange): Promise<void> => {
 const accountConfirm = new Confirm(english ? enAccess : zhAccess);
 const tokens = new Tokens({
   words: english ? enToken : zhToken,
+  addresses: (login) => store.world.peek()?.accounts.hubs.find((hub) => hub.hub === login.hub)?.addresses ?? (live ? [] : ["192.168.1.20:7443"]),
   // A specimen shows what a token looks like; it lets nobody in.
   token: (login, kind, register, name, hours) =>
     live
@@ -1186,7 +1187,7 @@ function show(next: Place): void {
           ? undefined
           : (world, admin, password, reach, register, name) =>
               live ? createWorld(world, admin, password, reach, register, name) : Promise.resolve({ hub: world, name: name ?? "desktop", account: admin, kept: { kind: "installed" as const } }),
-        invite: (login) => tokens.open(login, "computer"),
+        invite: (login) => tokens.open(login),
         // A phone reads the token off the computer's screen; a specimen
         // shows the button when asked as a phone.
         scan: canScan() ? scanToken : !live && params.has("phone") ? async () => "FX5SPECIMEN" : undefined,

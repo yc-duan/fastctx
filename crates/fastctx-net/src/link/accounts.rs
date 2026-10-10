@@ -86,6 +86,7 @@ impl Link {
         HubAccounts {
             hub: self.membership().id.clone(),
             name: view.hub_name.clone(),
+            addresses: self.membership().addresses.clone(),
             link: self.state(),
             logins: me.map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),
             home: me.and_then(|me| me.home.clone()),

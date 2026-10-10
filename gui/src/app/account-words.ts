@@ -848,123 +848,71 @@ export const enAccount: AccountWords = {
   failed: (why) => `Not done: ${why}`,
 };
 
-/** The sheet that makes a one-time token for another device. */
+/** The sheet that adds another device to an account. */
 export interface TokenWords {
-  title(login: string): string;
-  what: string;
-  kinds: Record<"phone" | "computer" | "server", string>;
-  hints: Record<"phone" | "computer" | "server", string>;
-  register: string;
-  registerWhat: string;
+  title: string;
+  kinds: Record<"computer" | "phone" | "server", string>;
+  hub: string;
+  account: string;
   name: string;
-  nameHint: string;
+  nameAuto: string;
   valid: string;
   hours(n: number): string;
-  make: string;
+  makeCode: string;
+  makeCommand: string;
   making: string;
   qr: string;
-  token: string;
   command: string;
   copy: string;
   copied: string;
   until(at: string): string;
-  steps: Record<"phone" | "computer" | "server", string[]>;
-  howTo: string;
   again: string;
   close: string;
-  failed(why: string): string;
+  problems: ProblemWords;
 }
 
 export const zhToken: TokenWords = {
-  title: (login) => `让一台设备进入 ${login}`,
-  what: "它是",
-  kinds: { phone: "一部手机", computer: "一台电脑", server: "一台 Linux 服务器" },
-  hints: {
-    phone: "手机扫二维码登录这个账号，只用来看和说话，上面不跑任何东西。",
-    computer: "在那台电脑上的 World 里选「用一次性令牌登录」，粘贴令牌。",
-    server: "在服务器的终端里运行一整行命令：它装好 fastctx，登记成这个账号的机器，再装开机服务。",
-  },
-  register: "登记成这个账号的机器",
-  registerWhat: "这个账号的智能体就能住在它上面、在上面干活；不勾就只登录。",
-  name: "它叫什么",
-  nameHint: "小写字母、数字与连字符；不写就由它自己定",
-  valid: "多久内有效",
+  title: "添加设备",
+  kinds: { computer: "电脑", phone: "手机", server: "Linux 主机" },
+  hub: "服务器地址",
+  account: "账号",
+  name: "主机名称",
+  nameAuto: "自动",
+  valid: "有效期",
   hours: (n) => (n < 24 ? `${n} 小时` : `${n / 24} 天`),
-  make: "生成令牌",
+  makeCode: "生成二维码",
+  makeCommand: "生成命令",
   making: "正在生成…",
-  qr: "令牌的二维码，用手机上的 World 扫它",
-  token: "令牌",
-  command: "在服务器上运行",
+  qr: "登录二维码",
+  command: "在主机终端中运行",
   copy: "复制",
   copied: "已复制",
-  until: (at) => `${at} 之前有效，只能用一次`,
-  steps: {
-    phone: [
-      "在手机上装好 World，打开它，选「用一次性令牌登录」，扫这个码；扫不了就粘贴令牌。",
-      "它以这个账号的身份进来：能看、能说话，但不在它上面跑任何东西。",
-      "要它在后台也连着，按它的提示在手机的设置里放行后台运行。",
-    ],
-    computer: [
-      "在那台电脑上装好 World，打开它，选「用一次性令牌登录」，粘贴令牌；",
-      "或者在它的终端里运行 fastctx login --token <令牌>。",
-      "登录时会请一次管理员确认，装上开机自启的服务，之后它就一直连着。",
-    ],
-    server: [
-      "把这一整行粘进 Linux 服务器的终端运行；",
-      "它下载 fastctx、核对摘要无误后才解包，凭令牌登录并登记成这个账号的机器；",
-      "装开机服务那一步要管理员权限，不是 root 时它会说明怎样用 sudo。中途断了，同一行再跑一次就接着做完。",
-    ],
-  },
-  howTo: "在那台设备上",
-  again: "再生成一个",
+  until: (at) => `${at} 前有效，仅可使用一次`,
+  again: "重新生成",
   close: "关闭",
-  failed: (why) => `没办成：${why}`,
+  problems: zhProblems,
 };
 
 export const enToken: TokenWords = {
-  title: (login) => `Let a device into ${login}`,
-  what: "It is",
-  kinds: { phone: "A phone", computer: "A computer", server: "A Linux server" },
-  hints: {
-    phone: "The phone scans the QR code and logs in to this account, to look and talk only; nothing runs on it.",
-    computer: "In World on that computer, choose “Log in with a one-time token” and paste the token.",
-    server: "Run one line in the server's terminal: it installs fastctx, registers it as one of this account's machines, and installs the startup service.",
-  },
-  register: "Register it as one of this account's machines",
-  registerWhat: "Then the account's agents can live and work on it; unticked, it only logs in.",
-  name: "Its name",
-  nameHint: "lowercase letters, digits and hyphens; left empty, it names itself",
+  title: "Add a device",
+  kinds: { computer: "Computer", phone: "Phone", server: "Linux host" },
+  hub: "Server address",
+  account: "Account",
+  name: "Host name",
+  nameAuto: "automatic",
   valid: "Valid for",
   hours: (n) => (n < 24 ? `${n} hour${n === 1 ? "" : "s"}` : `${n / 24} day${n === 24 ? "" : "s"}`),
-  make: "Make a token",
-  making: "Making it…",
-  qr: "The token's QR code: scan it with World on the phone",
-  token: "Token",
-  command: "Run on the server",
+  makeCode: "Create QR code",
+  makeCommand: "Create command",
+  making: "Creating…",
+  qr: "Login QR code",
+  command: "Run in the host's terminal",
   copy: "Copy",
   copied: "Copied",
-  until: (at) => `valid until ${at}, once`,
-  steps: {
-    phone: [
-      "Install World on the phone, open it, choose “Log in with a one-time token”, and scan this code; or paste the token.",
-      "It comes in as this account: it can look and talk, and nothing runs on it.",
-      "To keep it connected in the background, allow it in the phone's settings as it asks.",
-    ],
-    computer: [
-      "Install World on that computer, open it, choose “Log in with a one-time token”, and paste the token;",
-      "or run fastctx login --token <token> in its terminal.",
-      "Logging in asks an administrator once to install the startup service; after that it stays connected.",
-    ],
-    server: [
-      "Paste this whole line into the Linux server's terminal and run it;",
-      "it downloads fastctx, unpacks it only once the digest checks out, logs in with the token and registers as one of this account's machines;",
-      "installing the startup service needs administrator rights; when not root it says how to use sudo. If it is cut off, run the same line again and it finishes.",
-    ],
-  },
-  howTo: "On that device",
-  again: "Make another",
+  until: (at) => `Valid until ${at}, once`,
+  again: "Create again",
   close: "Close",
-  failed: (why) => `Not done: ${why}`,
+  problems: enProblems,
 };
 
 export interface AdminWords {

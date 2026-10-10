@@ -104,6 +104,8 @@ export interface Arrival {
 export interface HubAccounts {
   hub: HubId;
   name: HubName;
+  /** The hub's own addresses, as it publishes them. */
+  addresses: string[];
   link: LinkState;
   logins: AccountName[];
   home: AccountName | null;

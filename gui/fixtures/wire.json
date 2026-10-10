@@ -7,6 +7,9 @@
           {
             "hub": "w-0123456789abcdef",
             "name": "home",
+            "addresses": [
+              "203.0.113.10:7443"
+            ],
             "link": {
               "kind": "online",
               "since": "2026-10-09T08:30:00Z",
@@ -261,6 +264,9 @@
         "colleagues": "gpu",
         "home": "C:/Users/ada/.claude-work",
         "colleagues_home": "/home/ada/.codex-gpu"
+      },
+      {
+        "files_on": "laptop"
       }
     ]
   },
@@ -10153,7 +10159,8 @@
         "model": "opus",
         "reasoning_effort": "high",
         "colleagues": "desktop",
-        "home": "/home/ada/.claude-work"
+        "home": "/home/ada/.claude-work",
+        "files_on": "laptop"
       },
       {
         "call": "claude_consent",
@@ -11503,7 +11510,8 @@
             "size": 3145728,
             "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           }
-        ]
+        ],
+        "files_on": "laptop"
       },
       {
         "call": "open",

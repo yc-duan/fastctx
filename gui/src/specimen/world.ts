@@ -116,6 +116,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       logins: ["me"],
       home: "me",
       self_registration: false,
+    addresses: ["192.168.1.20:7443"],
       accounts: [
         { name: "me", level: "super", locked: false, opened: at("00:00:00") },
         { name: "ada", level: "member", locked: false, opened: at("00:05:00") },
@@ -157,6 +158,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       logins: ["yc"],
       home: null,
       self_registration: false,
+    addresses: ["192.168.1.20:7443"],
       accounts: [
         { name: "ops", level: "super", locked: false, opened: at("00:00:00") },
         { name: "yc", level: "member", locked: false, opened: at("00:01:00") },

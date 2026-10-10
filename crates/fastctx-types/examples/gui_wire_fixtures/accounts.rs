@@ -26,6 +26,7 @@ fn hub() -> HubAccounts {
     HubAccounts {
         hub: "w-0123456789abcdef".parse().unwrap(),
         name: "home".parse().unwrap(),
+        addresses: vec!["203.0.113.10:7443".parse().unwrap()],
         link: online(),
         logins: vec!["ada".parse().unwrap()],
         home: Some("ada".parse().unwrap()),

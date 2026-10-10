@@ -148,6 +148,10 @@ pub struct AccountsReply {
 pub struct HubAccounts {
     pub hub: HubId,
     pub name: HubName,
+    /// The hub's own addresses, as it publishes them: what another device
+    /// is given to reach it.
+    #[serde(default)]
+    pub addresses: Vec<SocketAddr>,
     pub link: LinkState,
     /// The accounts this computer is logged in to there.
     pub logins: Vec<AccountName>,

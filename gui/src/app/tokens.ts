@@ -1,9 +1,9 @@
-// Letting another device into an account (`world-network.md`, 登录与入网): a
-// one-time token, valid an hour, a day or three. A phone scans it as a QR
-// code; a computer pastes it, registering as one of the account's machines
-// unless told only to log in; a Linux server runs one line that installs
-// fastctx and logs in with it. The token is shown once and goes nowhere
-// else.
+// Adding another device to an account (`world-network.md`, 登录与入网). A
+// computer with a screen joins with the server's address, the account and
+// its password, so the sheet shows the first two to copy. A phone scans a
+// QR code holding a one-time login, valid an hour; a Linux host without a
+// screen runs one line holding such a login, so no password ends up in
+// its shell's history. Neither is shown again.
 
 import qrcode from "qrcode-generator";
 import { glyph } from "../conversation/glyphs";
@@ -11,15 +11,17 @@ import { escape } from "../conversation/prose";
 import type { Login } from "../world/accounts";
 import type { TokenWords } from "./account-words";
 import { Sheet } from "./confirm";
-import { loginLabel } from "./reach";
+import { plainly } from "./problem";
 
-export type TokenKind = "phone" | "computer" | "server";
+export type TokenKind = "computer" | "phone" | "server";
 
 export interface TokensOptions {
   words: TokenWords;
-  /** A token for `kind` as `login`; a computer's registers it when asked. */
-  token(login: Login, kind: "phone" | "computer", register: boolean, name: string | null, hours: number): Promise<string>;
-  /** The line a server runs, registering it as `login`'s machine. */
+  /** The addresses the server of `login` publishes. */
+  addresses(login: Login): string[];
+  /** A one-time login to `login` for a phone. */
+  token(login: Login, kind: "phone", register: boolean, name: string | null, hours: number): Promise<string>;
+  /** The line a Linux host runs, registering it as `login`'s machine. */
   server(login: Login, name: string | null, hours: number): Promise<string>;
   /** A moment as the interface says it. */
   when(at: Date): string;
@@ -33,7 +35,7 @@ const machineRule = "[a-z][a-z0-9\\-]{0,31}";
 export function qrSvg(text: string, label: string): string {
   const code = qrcode(0, "L");
   // Upper case letters and digits fit the alphanumeric mode, which packs
-  // them densest; a token is written that way on purpose.
+  // them densest; a login code is written that way on purpose.
   code.addData(text, /^[0-9A-Z $%*+\-./:]*$/.test(text) ? "Alphanumeric" : "Byte");
   code.make();
   const count = code.getModuleCount();
@@ -51,9 +53,8 @@ export function qrSvg(text: string, label: string): string {
 export class Tokens {
   private readonly sheet = new Sheet("device-sheet token-sheet");
   private login: Login | null = null;
-  private kind: TokenKind = "phone";
+  private kind: TokenKind = "computer";
   private hours = 1;
-  private register = true;
 
   constructor(private readonly options: TokensOptions) {
     const { body } = this.sheet;
@@ -85,24 +86,23 @@ export class Tokens {
       }
       if (target.closest(".make-again")) this.draw();
     });
-    body.addEventListener("change", (event) => {
-      const box = event.target as HTMLInputElement;
-      if (box.name === "register") this.register = box.checked;
-    });
     body.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.make();
     });
   }
 
-  /** Opens the sheet for `login`, ready to make a token for `kind`. */
-  open(login: Login, kind: TokenKind = "phone"): void {
+  /** Opens the sheet for `login`, on `kind`. */
+  open(login: Login, kind: TokenKind = "computer"): void {
     this.login = login;
     this.kind = kind;
-    this.register = true;
     this.draw();
     this.sheet.show();
     this.sheet.body.querySelector<HTMLElement>(".choice.chosen")?.focus();
+  }
+
+  private copy(text: string): string {
+    return `<button class="text-button copy-code" type="button" data-copy="${escape(text)}">${glyph("copy", 16)}<span>${escape(this.options.words.copy)}</span></button>`;
   }
 
   private draw(): void {
@@ -115,67 +115,64 @@ export class Tokens {
             `<button type="button" class="choice${item === chosen ? " chosen" : ""}" role="radio" aria-checked="${item === chosen}" ${attribute}="${escape(item)}">${escape(title(item))}</button>`,
         )
         .join("")}</div>`;
-    const kinds: TokenKind[] = ["phone", "computer", "server"];
-    // A name is the one a registered machine takes; a phone names itself.
-    const named = this.kind === "server" || (this.kind === "computer" && this.register);
+    const kinds: TokenKind[] = ["computer", "phone", "server"];
+    let body: string;
+    if (this.kind === "computer") {
+      // Joined from that computer's own World with the account's password.
+      const address = this.options.addresses(login).join("  ");
+      body = `<dl class="facts device-facts">
+          <dt>${escape(words.hub)}</dt><dd><span class="mono">${escape(address || "—")}</span>${address ? this.copy(this.options.addresses(login)[0]!) : ""}</dd>
+          <dt>${escape(words.account)}</dt><dd><span class="mono">${escape(login.account)}</span></dd>
+        </dl>`;
+    } else {
+      body = `
+        ${
+          this.kind === "server"
+            ? `<label class="field"><span class="field-label">${escape(words.name)}</span>
+          <input name="name" autocomplete="off" spellcheck="false" autocapitalize="off" class="mono" pattern="${machineRule}" placeholder="${escape(words.nameAuto)}"></label>
+        <div class="field"><span class="field-label">${escape(words.valid)}</span>
+          ${choices(words.valid, "data-hours", validity.map(String), String(this.hours), (hours) => words.hours(Number(hours)))}</div>`
+            : ""
+        }
+        <p class="sheet-note" role="alert" hidden></p>
+        <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(this.kind === "phone" ? words.makeCode : words.makeCommand)}</button></footer>`;
+    }
     this.sheet.body.innerHTML = `
-      ${this.sheet.head(words.title(loginLabel(login)), words.close)}
-      <div class="field"><span class="field-label">${escape(words.what)}</span>
-        ${choices(words.what, "data-kind", kinds, this.kind, (kind) => words.kinds[kind as TokenKind])}
-        <span class="field-hint">${escape(words.hints[this.kind])}</span></div>
-      ${
-        this.kind === "computer"
-          ? `<label class="check-row"><input type="checkbox" name="register"${this.register ? " checked" : ""}><span><span class="check-title">${escape(words.register)}</span><span class="field-hint">${escape(words.registerWhat)}</span></span></label>`
-          : ""
-      }
-      ${
-        named
-          ? `<label class="field"><span class="field-label">${escape(words.name)}</span>
-        <input name="name" autocomplete="off" spellcheck="false" autocapitalize="off" class="mono" pattern="${machineRule}">
-        <span class="field-hint">${escape(words.nameHint)}</span></label>`
-          : ""
-      }
-      <div class="field"><span class="field-label">${escape(words.valid)}</span>
-        ${choices(words.valid, "data-hours", validity.map(String), String(this.hours), (hours) => words.hours(Number(hours)))}</div>
-      <p class="sheet-note" role="alert" hidden></p>
-      <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.make)}</button></footer>`;
+      ${this.sheet.head(words.title, words.close)}
+      ${choices(words.title, "data-kind", kinds, this.kind, (kind) => words.kinds[kind as TokenKind])}
+      <div class="device-body">${body}</div>`;
   }
 
   private async make(): Promise<void> {
     const { words } = this.options;
     const { sheet } = this;
     const login = this.login;
-    if (sheet.busy || !login) return;
+    if (sheet.busy || !login || this.kind === "computer") return;
     const go = sheet.body.querySelector<HTMLButtonElement>(".sheet-go");
     const note = sheet.body.querySelector<HTMLElement>(".sheet-note");
     if (!go || !note) return;
     const name = sheet.body.querySelector<HTMLInputElement>("[name=name]")?.value.trim() || null;
     const kind = this.kind;
-    const hours = this.hours;
-    const register = kind === "computer" && this.register;
+    const hours = kind === "phone" ? 1 : this.hours;
     sheet.busy = true;
     go.disabled = true;
     go.textContent = words.making;
     try {
-      const made = kind === "server" ? await this.options.server(login, name, hours) : await this.options.token(login, kind, register, name, hours);
-      const until = this.options.when(new Date(Date.now() + hours * 3_600_000));
-      const copy = `<button class="text-button copy-code" type="button" data-copy="${escape(made)}">${glyph("copy", 16)}<span>${escape(words.copy)}</span></button>`;
-      const text = `<div class="invitation-text">
-          <p class="field-label">${escape(kind === "server" ? words.command : words.token)}</p>
-          <p class="invite-code mono">${escape(made)}</p>
-          <p class="field-hint">${escape(words.until(until))}</p>
-          ${copy}
-        </div>`;
-      sheet.body.innerHTML = `
-        ${sheet.head(words.title(loginLabel(login)), words.close)}
-        ${kind === "phone" ? `<div class="invitation"><div class="qr-frame">${qrSvg(made, words.qr)}</div>${text}</div>` : `<div class="invitation invitation-wide">${text}</div>`}
-        <section class="how-to"><h3 class="field-label">${escape(words.howTo)}</h3><ol>${words.steps[kind].map((step) => `<li>${escape(step)}</li>`).join("")}</ol></section>
+      const made = kind === "server" ? await this.options.server(login, name, hours) : await this.options.token(login, "phone", false, null, hours);
+      const until = words.until(this.options.when(new Date(Date.now() + hours * 3_600_000)));
+      const shown =
+        kind === "phone"
+          ? `<div class="invitation"><div class="qr-frame">${qrSvg(made, words.qr)}</div><p class="field-hint">${escape(until)}</p></div>`
+          : `<div class="invitation invitation-wide"><p class="field-label">${escape(words.command)}</p><p class="invite-code mono">${escape(made)}</p><p class="field-hint">${escape(until)}</p>${this.copy(made)}</div>`;
+      sheet.body.querySelector(".device-body")!.innerHTML = `${shown}
         <footer class="sheet-foot"><span></span><button class="text-button make-again" type="button">${escape(words.again)}</button></footer>`;
     } catch (error) {
-      note.textContent = words.failed(error instanceof Error ? error.message : String(error));
+      const { text, detail } = plainly(error, words.problems);
+      note.textContent = text;
+      note.title = detail;
       note.hidden = false;
       go.disabled = false;
-      go.textContent = words.make;
+      go.textContent = kind === "phone" ? words.makeCode : words.makeCommand;
     } finally {
       sheet.busy = false;
     }
