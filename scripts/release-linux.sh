@@ -5,11 +5,14 @@
 # The caller supplies its resource-bounded filesystem and process scope.
 # A tree without git passes the commit's time as SOURCE_DATE_EPOCH: it orders
 # builds of the same version (crates/fastctx-install/build.rs).
+# FASTCTX_RELEASE_GUI=0 builds the CLI and server archives only, without
+# World's Linux packages.
 set -euo pipefail
 if [ "$(uname -m)" != x86_64 ]; then
   printf 'This release script builds the x86_64 GUI and both Linux CLI architectures; run it on x86_64 Linux.\n' >&2
   exit 1
 fi
+gui=${FASTCTX_RELEASE_GUI:-1}
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo"
 # FASTCTX_RELEASE_JOBS sizes the compilers to the machine; the caller bounds memory and processes.
@@ -20,7 +23,9 @@ mkdir -p "$CARGO_TARGET_DIR/launcher-check"
 node scripts/check-launcher.cjs "$CARGO_TARGET_DIR/launcher-check"
 python scripts/ripgrep.py verify
 cargo +1.92.0 fetch --locked
-cargo +1.92.0 fetch --locked --manifest-path "$repo/gui/src-tauri/Cargo.toml"
+if [ "$gui" != 0 ]; then
+  cargo +1.92.0 fetch --locked --manifest-path "$repo/gui/src-tauri/Cargo.toml"
+fi
 cargo +1.92.0 run --locked --release -j "$CARGO_BUILD_JOBS" -p fastctx-tui --example syntax_notices > dist/syntax-notices.md
 python scripts/notices.py --syntax-notices dist/syntax-notices.md --output dist/THIRD_PARTY_LICENSES.md
 python scripts/package.py roots --notices dist/THIRD_PARTY_LICENSES.md --output dist
@@ -46,6 +51,9 @@ for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
   python scripts/package.py platform --target "$target" --binary "$binary" --notices dist/THIRD_PARTY_LICENSES.md --output dist
 done
 python scripts/package.py verify --output dist
+if [ "$gui" = 0 ]; then
+  exit 0
+fi
 cd "$repo/gui"
 npm ci
 npm run check:wire
