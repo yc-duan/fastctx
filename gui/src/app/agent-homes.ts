@@ -1,4 +1,4 @@
-// An agent's homes on a machine (`world-gui.md`, 账号、机器与授权): each is
+// An agent's homes on a machine (`world-gui.md`, 账号、机器、共享与借出): each is
 // one login of that agent, Codex's `CODEX_HOME` or Claude Code's
 // `CLAUDE_CONFIG_DIR`, and the machine answers once for each. Who is logged
 // in there, the plan, and how much of each usage window is spent are said as
@@ -37,6 +37,12 @@ export function installed(facts: AgentFacts): boolean {
 
 export function loggedOut(facts: AgentFacts): boolean {
   return facts.login.kind === "known" && facts.login.value.kind === "logged_out";
+}
+
+/** A login an agent can start in: its program is there and it is not
+ *  known to be logged out. */
+export function usableHome(facts: AgentFacts): boolean {
+  return installed(facts) && !loggedOut(facts);
 }
 
 /** The program's version, as numbers: "0.160.0". */
@@ -153,6 +159,22 @@ function amount(balance: string): string {
 
 function percent(window: LimitWindow): string {
   return window.used_tenths > 0 && window.used_tenths < 10 ? "<1%" : `${Math.round(window.used_tenths / 10)}%`;
+}
+
+/** A home's usage windows in a few characters each, as Claude Code's own
+ *  status line writes them: "5h", "7d" and how much is used; the first
+ *  limit's windows only, for those of another limit and of one model are
+ *  named on the machines page. */
+export function windowsShort(limits: Fact<AgentLimits> | undefined): { label: string; percent: string; level: "" | "high" | "spent" }[] {
+  if (limits?.kind !== "known") return [];
+  const first = limits.value.windows[0]?.name;
+  return limits.value.windows
+    .filter((window) => window.name === first || /^(five_hour|seven_day)$/.test(window.name))
+    .map((window) => {
+      const span = length(window.name, window.minutes ?? null);
+      const label = span ? `${span.n}${{ minute: "m", hour: "h", day: "d" }[span.unit]}` : window.name;
+      return { label, percent: percent(window), level: window.used_tenths >= 1000 ? "spent" : window.used_tenths >= 900 ? "high" : "" };
+    });
 }
 
 /** The usage windows of one home, a bar each, and when they were read.

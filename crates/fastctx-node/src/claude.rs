@@ -1088,6 +1088,9 @@ pub async fn open_here(
     written.map_err(|error| Failure::new(format!("writing the session's settings: {error}")))?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
     let plugin = claude::plugin_dir(node.world.path());
+    // Its files other than images go where it works, or where the user
+    // chose, as later words' do.
+    let attachments = crate::attachments::place(node, &id, attachments, opened.files_on.as_ref()).await?;
     // The first words go in as the prompt the session starts with, which it
     // reads as the user's: they are. They are kept until its first turn
     // takes them, so whoever follows them knows which turn that is.

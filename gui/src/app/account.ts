@@ -1,10 +1,13 @@
 // The accounts this computer or device is logged in to (`world-gui.md`,
-// 账号、机器与授权), one after another: the hub and how it is reached; who
-// came into the account lately, each with "that wasn't me"; the devices
-// logged in, each removable; letting another device in with a one-time
-// token; the account's projects and whom they are shared with; its
-// password; logging out; and, for an administrator, the way to the hub's
-// accounts.
+// 账号、机器、共享与借出), one after another: the hub and how it is reached,
+// and whether the account is its super administrator or a member, a member
+// told what the super administrator may do; who came into the account
+// lately, each with "that wasn't me"; the devices logged in, each
+// removable; the machines of others whose agents may reach the account's
+// machines, since it used one there, each to take back; letting another
+// device in with a one-time token; the account's projects and whom they are
+// shared with; its password; logging out; and, for the super administrator,
+// the way to the hub's page.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -15,7 +18,7 @@ import { Confirm, Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { linkSaid } from "./machines";
 import { link } from "./places";
-import { loginLabel } from "./reach";
+import { loginLabel, superOf } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
@@ -108,6 +111,17 @@ export class AccountPage implements Page {
       case "invite":
         this.options.invite(login, button.dataset.kind as TokenKind);
         return;
+      case "stop-reaching": {
+        const owner = this.hubOf(login)?.members.find((member) => member.name === name)?.home ?? null;
+        this.options.confirm.ask({
+          title: words.stopReachingTitle(name),
+          what: words.stopReachingWhat(name, owner),
+          go: words.stopReachingGo,
+          act: () => this.options.change(login, { change: "stop_acting", machine: name }),
+          done: () => void this.options.store.refresh(),
+        });
+        return;
+      }
       case "unshare":
         void this.quietly(button, login, { change: "share_project", town: button.dataset.town!, with: name, shared: false });
         return;
@@ -247,23 +261,43 @@ export class AccountPage implements Page {
     const linked = linkSaid(hub.link, this.options.machines);
     const facts: [string, string][] = [
       [words.hub, [hub.name, linked].filter(Boolean).join(" · ")],
-      [words.account, [login.account, me?.admin ? words.admin : ""].filter(Boolean).join(" · ")],
+      [words.account, [login.account, me ? words.level[me.level] : ""].filter(Boolean).join(" · ")],
     ];
+    const admin = superOf(world, login);
+    const superNote = admin && admin !== login.account ? `<p class="machines-note account-super">${glyph("shield", 14)}<span>${escape(words.superNote(admin))}</span></p>` : "";
+    const reaching = hub.acting.filter((acting) => acting.account === login.account);
     const arrivals = hub.arrivals.filter((arrival) => arrival.account === login.account);
     const devices = hub.members.filter((member) => member.logins.includes(login.account));
     const projects = hub.projects.filter((project) => project.owner === login.account || project.granted.includes(login.account));
     const said = this.said?.login === loginLabel(login) ? `<p class="settings-said" role="status">${escape(this.said.text)}</p>` : "";
-    const kinds: TokenKind[] = me?.may_register ? ["phone", "computer", "server"] : ["phone", "computer"];
+    const kinds: TokenKind[] = ["phone", "computer", "server"];
     const inviteLabel = (kind: TokenKind) => (kind === "phone" ? words.invitePhone : kind === "computer" ? words.inviteComputer : words.inviteServer);
     const inviteGlyph = (kind: TokenKind) => glyph(kind === "phone" ? "phone" : kind === "computer" ? "machine" : "command", 16);
     return `<section class="home-section account-section" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}">
       <h2 class="section-title account-title">${glyph("person", 18)}<span>${escape(loginLabel(login))}</span></h2>
       <dl class="facts">${facts.map(([name, value]) => `<dt>${escape(name)}</dt><dd>${escape(value)}</dd>`).join("")}</dl>
+      ${superNote}
       ${said}
       ${arrivals.length ? `<ul class="joined-lines" aria-live="polite">${arrivals.map((arrival) => this.arrival(arrival, now)).join("")}</ul>` : ""}
       <h3 class="account-part">${escape(words.devices)}</h3>
       <p class="field-hint">${escape(words.devicesWhat)}</p>
       <ul class="account-devices">${devices.map((device) => this.device(device, login, world, when)).join("")}</ul>
+      <h3 class="account-part">${escape(words.reaching)}</h3>
+      <p class="field-hint">${escape(words.reachingWhat)}</p>
+      ${
+        reaching.length
+          ? `<ul class="account-reaching">${reaching
+              .map((acting) => {
+                const owner = hub.members.find((member) => member.name === acting.machine)?.home ?? null;
+                return `<li class="account-reach">
+                  <span class="reach-mark" aria-hidden="true">${glyph("shield", 15)}</span>
+                  <span class="account-device-text"><span class="account-device-name">${escape(words.reachingLine(acting.machine, owner))}</span><span class="account-device-facts">${escape(words.reachingSince(when(acting.since)))}</span></span>
+                  <button class="text-button quiet-button" type="button" data-act="stop-reaching" data-name="${escape(acting.machine)}">${escape(words.stopReaching)}</button>
+                </li>`;
+              })
+              .join("")}</ul>`
+          : `<p class="account-empty">${escape(words.reachingNone)}</p>`
+      }
       <h3 class="account-part">${escape(words.invite)}</h3>
       <p class="field-hint">${escape(words.inviteWhat)}</p>
       <div class="account-acts">${kinds
@@ -296,7 +330,7 @@ export class AccountPage implements Page {
       <h3 class="account-part">${escape(words.password)}</h3>
       <div class="account-acts">
         <button class="text-button" type="button" data-act="password">${glyph("key", 16)}<span>${escape(words.changePassword)}</span></button>
-        ${me?.admin ? `<a class="text-button" href="${link({ kind: "admin" })}">${glyph("settings", 16)}<span>${escape(words.adminPage)}</span></a>` : ""}
+        ${me?.level === "super" && !me.locked ? `<a class="text-button" href="${link({ kind: "admin" })}">${glyph("settings", 16)}<span>${escape(words.adminPage)}</span></a>` : ""}
         <button class="text-button account-logout" type="button" data-act="logout">${glyph("logout", 16)}<span>${escape(words.logout)}</span></button>
       </div>
     </section>`;

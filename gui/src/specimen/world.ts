@@ -83,7 +83,10 @@ function node(name: string, online: boolean | null, since: string, owner: string
 }
 
 /** The hubs this desktop is logged in to, as `nodes` and `accounts` see
- *  them: its own, and with `two`, a second one at work. */
+ *  them: its own, where it is the super administrator, has shared lab with
+ *  ada and lent ada a Codex login of this computer's, and once used an
+ *  agent on bo's gpu; and with `two`, a second one at work, where it is a
+ *  member that ops shared build with and lent the Claude on render. */
 function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
   const link = { kind: "online" as const, since: at("01:10:02"), hub: "203.0.113.10:7443", route: { kind: "card" as const, name: "Ethernet" } };
   const nodes: HubNodes[] = [
@@ -98,7 +101,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         node("lab", true, "00:00:00", "me", "linux", "/home/me", ["me", true, true], "la"),
         node("server", true, "00:00:00", "me", "linux", "/root", ["me", true, true]),
         node("studio", false, "12:52:00", "me", "windows", "C:/Users/me", ["me", true, true]),
-        node("gpu", true, "03:30:00", "ada", "linux", "/home/ada", ["me", false, true], "la"),
+        node("gpu", true, "03:30:00", "bo", "linux", "/home/bo", ["me", true, true], "la"),
       ],
     },
   ];
@@ -114,8 +117,9 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       home: "me",
       self_registration: false,
       accounts: [
-        { name: "me", admin: true, may_register: true, locked: false, opened: at("00:00:00") },
-        { name: "ada", admin: false, may_register: true, locked: false, opened: at("00:00:00") },
+        { name: "me", level: "super", locked: false, opened: at("00:00:00") },
+        { name: "ada", level: "member", locked: false, opened: at("00:05:00") },
+        { name: "bo", level: "member", locked: false, opened: at("00:06:00") },
       ],
       members: [
         member("desktop", "computer", ["me"], "me", "00:10:00", true, "5be1fcee"),
@@ -124,13 +128,11 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         member("server", "computer", ["me"], "me", "00:00:00", true, "c0ffee12"),
         member("studio", "computer", ["me"], "me", "00:40:00", false, "9e8d7c6b"),
         member("pixel", "phone", ["me"], null, "13:20:00", true, "4f2a91aa"),
-        member("gpu", "computer", ["ada"], "ada", "03:30:00", true, "be3f0a77"),
+        member("gpu", "computer", ["bo"], "bo", "03:30:00", true, "be3f0a77"),
       ],
-      grants: [
-        { machine: "gpu", account: "me", rights: { hands: false, agents: true } },
-        { machine: "lab", account: "ada", rights: { hands: true, agents: false } },
-      ],
-      trust: [],
+      shares: [{ machine: "lab", account: "ada" }],
+      lends: [{ machine: "desktop", account: "ada", agent: "codex", home: "C:/Users/me/.codex-work" }],
+      acting: [{ machine: "gpu", account: "me", since: at("03:42:00") }],
       projects: [
         { name: "mark50", owner: "me", granted: ["ada"] },
         ...(two ? [] : [{ name: "ingest", owner: "me", granted: [] }]),
@@ -146,10 +148,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       link: work,
       logins: ["yc"],
       home: null,
-      machines: [
-        node("laptop", true, "02:04:00", "yc", "windows", "C:/Users/me", ["yc", true, true]),
-        node("build", true, "00:05:00", "ops", "linux", "/home/ops", ["yc", true, true]),
-      ],
+      machines: [node("build", true, "00:05:00", "ops", "linux", "/home/ops", ["yc", true, true])],
     });
     accounts.push({
       hub: ACME,
@@ -158,10 +157,18 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       logins: ["yc"],
       home: null,
       self_registration: false,
-      accounts: [{ name: "yc", admin: false, may_register: false, locked: false, opened: at("00:00:00") }],
-      members: [member("desktop", "computer", ["yc"], null, "00:12:00", true, "5be1fcee")],
-      grants: [{ machine: "build", account: "yc", rights: { hands: true, agents: true } }],
-      trust: [],
+      accounts: [
+        { name: "ops", level: "super", locked: false, opened: at("00:00:00") },
+        { name: "yc", level: "member", locked: false, opened: at("00:01:00") },
+      ],
+      members: [
+        member("desktop", "computer", ["yc"], null, "00:12:00", true, "5be1fcee"),
+        member("build", "computer", ["ops"], "ops", "00:05:00", true, "0b5e7a11"),
+        member("render", "computer", ["ops"], "ops", "00:07:00", true, "4e11d3a9"),
+      ],
+      shares: [{ machine: "build", account: "yc" }],
+      lends: [{ machine: "render", account: "yc", agent: "claude", home: null }],
+      acting: [{ machine: "build", account: "yc", since: at("09:15:00") }],
       projects: [{ name: "ingest", owner: "yc", granted: [] }],
       arrivals: [],
     });
@@ -306,7 +313,7 @@ export function specimenNow(two = false): { world: WorldNow; now: Date; lastVisi
  *  the desktop app with its models, Claude Code logged in; on this
  *  computer, a second Codex login for work, nearly spent, and a second
  *  Claude login that was logged out; on lab, Claude Code installed but not
- *  logged in. */
+ *  logged in; on render, another's, only the Claude lent to this account. */
 export function specimenAgents(machine: string, at: Date = new Date()): WorldAgents {
   const efforts = (names: string[]) => names.map((effort) => ({ effort, description: "" }));
   const now = at.getTime();
@@ -379,7 +386,8 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
     integration: { kind: "known", value: "out" },
     unattended: { kind: "known", value: false },
   };
-  const agents = machine === "desktop" ? [codex, claude, work, personal] : [codex, claude];
+  // A machine of another answers only with the logins lent to the asker.
+  const agents = machine === "desktop" ? [codex, claude, work, personal] : machine === "render" ? [claude] : [codex, claude];
   return {
     machine,
     machines: [{ kind: "answered", reply: { machine, checked_at: at.toISOString(), elapsed_ms: 180, agents } }],

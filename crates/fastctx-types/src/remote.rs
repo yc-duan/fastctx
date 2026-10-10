@@ -196,6 +196,10 @@ pub enum RemoteCall {
         text: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<crate::attachments::Attachment>,
+        /// Where the attached files other than images go, when the user
+        /// chose.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        files_on: Option<crate::access::Written>,
     },
     /// Keep here a file the user attached to their words for `resident`, of
     /// the calling machine, which works here (`world-gui.md`): its receipt
@@ -242,6 +246,10 @@ pub enum RemoteCall {
         /// The Codex home its colleagues use, when not the default one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         colleagues_home: Option<std::path::PathBuf>,
+        /// Where the files attached to its first words go, other than
+        /// images, when the user chose.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        files_on: Option<crate::access::Written>,
     },
     /// Stop the turn a resident there is running, for the user.
     Stop {

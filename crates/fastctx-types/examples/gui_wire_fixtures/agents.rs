@@ -138,6 +138,7 @@ pub fn fixtures() -> Fixtures {
                     colleagues: Some("lab.home".parse().unwrap()),
                     home: Some("C:/Users/ada/.codex-work".into()),
                     colleagues_home: Some("/home/ada/.codex-lab".into()),
+                    files_on: None,
                 },
             },
             Call::Open {
@@ -187,6 +188,7 @@ pub fn fixtures() -> Fixtures {
                 colleagues: Some("desktop".parse().unwrap()),
                 home: Some("/home/ada/.claude-work".into()),
                 colleagues_home: None,
+                files_on: Some("laptop".parse().unwrap()),
             },
             RemoteCall::ClaudeConsent { accept: true, home: Some("/home/ada/.claude-work".into()) },
             RemoteCall::Homes {

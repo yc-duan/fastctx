@@ -32,7 +32,7 @@
   padding: var(--space-5) var(--space-6);
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop), 0 0 0 1px var(--hairline);
+  box-shadow: var(--shadow-pop);
 }
 
 .sheet-head {
@@ -56,7 +56,7 @@
 }
 
 /* A choice among a few: the question on the left, its answers as quiet
-   pills, the chosen one washed in clay. */
+   solid pills, the chosen one washed in clay. */
 .choice-row {
   display: grid;
   grid-template-columns: 6.5em minmax(0, 1fr);
@@ -83,27 +83,27 @@
   min-height: 30px;
   padding: 4px 12px;
   border-radius: var(--radius-full);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: var(--fill);
   color: var(--text-2);
   font-size: var(--size-ui);
   line-height: var(--leading-ui);
-  transition: color var(--hover) ease, background-color var(--hover) ease, box-shadow var(--hover) ease;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
 }
 
 .choice:hover:not(:disabled) {
   color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--rule);
+  background: var(--fill-strong);
 }
 
-.choice.chosen {
+.choice.chosen,
+.choice.chosen:hover:not(:disabled) {
   color: var(--text-strong);
   background: var(--accent-wash);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .choice:disabled {
   color: var(--text-3);
-  opacity: 0.6;
+  background: color-mix(in srgb, var(--fill) 50%, transparent);
 }
 
 .choice-note {
@@ -135,17 +135,11 @@
   border-radius: var(--radius-m);
   outline: 0;
   resize: none;
-  background: var(--bg);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: var(--field);
   color: var(--text);
   font: inherit;
   font-size: var(--body-size);
   line-height: var(--leading-prose);
-  transition: box-shadow var(--hover) ease;
-}
-
-.first-words:focus {
-  box-shadow: inset 0 0 0 1px var(--focus);
 }
 
 .first-words::placeholder {
@@ -182,9 +176,257 @@
   margin-left: -6px;
 }
 
-/* A drop over the sheet covers just the sheet. */
+/* A drop over the sheet covers just the sheet. The sheet is as tall as
+   its choices, up to most of the screen; past that the choices scroll and
+   the first words stay in view. */
+.new-talk-sheet {
+  margin-top: 7vh;
+}
+
 .new-talk-sheet .sheet-body {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(660px, 100vw - 32px);
+  max-height: min(88dvh, 920px);
+}
+
+.new-talk-sheet .choices {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  margin: 0 calc(-1 * var(--space-6));
+  padding: 0 var(--space-6);
+}
+
+/* Which agent, across the whole sheet since it is the choice the rest
+   follow from: the logins grouped as the user holds them, a small head
+   ruled across for each group, then a line a machine: its name with a dot,
+   and its logins as pills, each the program, who is logged in where that
+   tells them apart, and how much of each usage window is spent. */
+.agent-picker {
+  padding: var(--space-1) 0 var(--space-3);
+}
+
+.picker-label {
+  display: block;
+  margin-bottom: var(--space-2);
+}
+
+.picker-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.picker-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-reading);
+  font-weight: 400;
+  font-size: var(--size-small);
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+}
+
+.picker-title::after {
+  content: "";
+  flex: 1;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+}
+
+.picker-lent .picker-title {
+  color: var(--text-2);
+}
+
+.picker-line {
+  display: grid;
+  grid-template-columns: 9em minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: baseline;
+  padding: 3px 0;
+}
+
+.picker-machine {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.picker-machine .dot {
+  flex: none;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.picker-line.offline .dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.2px var(--text-3);
+}
+
+.picker-lent .picker-machine .dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.6px var(--accent);
+}
+
+.picker-line.offline .picker-name {
+  color: var(--text-3);
+}
+
+.picker-note {
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.login-choice {
+  max-width: 100%;
+  align-items: center;
+}
+
+.login-agent {
+  flex: none;
+}
+
+.login-who {
+  min-width: 0;
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.login-choice .choice-note {
+  white-space: nowrap;
+}
+
+/* How much of a login's usage is spent, window by window, as Claude
+   Code's status line writes it: "5h 42% · 7d 18%", a window past nine
+   tenths in the caution colour and a spent one in the warning colour. */
+.login-limits {
+  display: inline-flex;
+  gap: 0;
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.limit-short + .limit-short::before {
+  content: "·";
+  margin: 0 5px;
+  color: var(--text-3);
+}
+
+.limit-short.high {
+  color: var(--caution);
+}
+
+.limit-short.spent {
+  color: var(--wrong);
+}
+
+.choice-note.caution {
+  color: var(--caution);
+}
+
+/* The login chosen, folded into a line: what it is and how much is spent,
+   on the clay wash of a chosen answer, and the way to choose another. */
+.chosen-login {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 30px;
+  padding: 4px 14px;
+  border-radius: var(--radius-full);
+  background: var(--accent-wash);
+  color: var(--text-strong);
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+}
+
+.chosen-machine {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.chosen-machine .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.chosen-login.lent .chosen-machine .dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.chosen-change {
+  align-self: center;
+}
+
+.choice-none.quiet {
+  color: var(--text-3);
+}
+
+/* A margin note under the choices lines up with their answers. */
+.new-talk-sheet .choice-margin {
+  margin-left: calc(6.5em + var(--space-4));
+}
+
+.new-talk-sheet .agent-picker + .choice-row,
+.new-talk-sheet .agent-picker + .choice-margin {
+  margin-top: var(--space-1);
+}
+
+/* Where a lent agent's files go, under what waits to be sent. */
+.files-on .choice-row {
+  padding-top: var(--space-3);
+}
+
+.files-on .choice-said {
+  margin-bottom: var(--space-2);
+}
+
+/* The same choice in a conversation's composer, where words are written. */
+.composer-files-on {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px var(--space-2);
+  padding: var(--space-2) var(--space-3) 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.composer-files-on .choice {
+  min-height: 26px;
+  padding: 2px 10px;
+  font-size: var(--size-small);
+}
+
+.files-on-what {
+  flex-basis: 100%;
 }
 
 .new-talk-sheet .drop-veil {
@@ -243,6 +485,24 @@
     row-gap: var(--space-2);
   }
 
+  .picker-line {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 4px;
+  }
+
+  .new-talk-sheet {
+    margin-top: auto;
+  }
+
+  .new-talk-sheet .sheet-body {
+    width: 100%;
+    max-height: 92dvh;
+  }
+
+  .new-talk-sheet .choice-margin {
+    margin-left: 0;
+  }
+
   .sheet-hint {
     display: none;
   }
@@ -284,7 +544,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  border-top: 1px solid var(--hairline);
 }
 
 .palette-group {
@@ -410,13 +669,11 @@
   border: 0;
   border-radius: var(--radius-m);
   outline: 0;
-  background: var(--bg);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: var(--field);
   color: var(--text);
   font: inherit;
   font-size: var(--size-ui);
   line-height: var(--leading-ui);
-  transition: box-shadow var(--hover) ease;
 }
 
 .field textarea {
@@ -437,16 +694,6 @@
 .field select option {
   background: var(--bg-elevated);
   color: var(--text);
-}
-
-.field input:focus,
-.field textarea:focus,
-.field select:focus {
-  box-shadow: inset 0 0 0 1px var(--focus);
-}
-
-.field input:user-invalid:not(:focus) {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wrong) 60%, transparent);
 }
 
 .field ::placeholder {
@@ -518,7 +765,6 @@
   padding: 10px;
   border-radius: var(--radius-m);
   background: #fff;
-  box-shadow: 0 0 0 1px var(--hairline);
 }
 
 .qr {
@@ -589,8 +835,9 @@
   }
 }
 
-/* Lending a machine: who has it already, then whom to lend it to. */
-.grant-sheet .sheet-body {
+/* Giving a machine or a login: who has it already, then whom to give it
+   to. */
+.give-sheet .sheet-body {
   width: min(600px, 100vw - 32px);
 }
 
@@ -602,7 +849,7 @@
    width it takes on a wider screen. */
 @media (max-width: 760px) {
   .device-sheet .sheet-body,
-  .grant-sheet .sheet-body {
+  .give-sheet .sheet-body {
     width: 100%;
   }
 }

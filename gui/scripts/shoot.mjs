@@ -5,7 +5,10 @@
 // Drives a headless Chromium over the DevTools protocol; the dev server
 // must be running (`npm run dev`).
 //
-//   node scripts/shoot.mjs [--url http://localhost:5317] [--only claude] [--theme warm-black] [--width phone] [--out shots]
+//   node scripts/shoot.mjs [--url http://localhost:5317] [--only claude] [--theme warm-black] [--width phone] [--out shots] [--probe <expression>]
+//
+// `--probe` evaluates an expression in each scene once it has settled and
+// prints what it returns, for measuring a layout rather than eyeing it.
 //
 // `drawer` is the front page with the sidebar pulled out as a drawer;
 // `about` is a conversation with the card about its agent open; a name
@@ -25,6 +28,7 @@ const base = option("url", "http://localhost:5317");
 const out = option("out", "shots");
 const only = option("only", null);
 const extra = option("query", "");
+const probe = option("probe", null);
 
 const browsers = [
   "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -41,7 +45,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "grant", "relays", "trust", "palette", "login", "token-login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "new-codex", "new-attach", "new-lent", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
+const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "share", "lend", "relays", "palette", "login", "token-login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -133,7 +137,7 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named === "drawer" || named === "palette" ? "home" : named === "service" ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" ? "new" : named === "manage" ? "about" : named === "token-login" ? "login" : named === "grant" || named === "relays" || named === "trust" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
+      const shown = named === "drawer" || named === "palette" ? "home" : named === "service" ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "token-login" ? "login" : named === "share" || named === "lend" || named === "relays" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
       const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
@@ -212,11 +216,18 @@ for (const session of sessions) {
         await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 200)).then(() => document.querySelector('.composer-context')?.click())", awaitPromise: true });
       }
       if (session === "new-codex") {
-        await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-choice=agent][data-value=codex]')?.click())", awaitPromise: true });
+        await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-choice=pick][data-value=\"desktop|codex|\"]')?.click())", awaitPromise: true });
       }
-      if (session === "new-lent") {
-        // Living on a machine whose agents alone are lent, it must work on another.
-        await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-choice=machine][data-value=gpu]')?.click())", awaitPromise: true });
+      if (named === "new-lent") {
+        // An agent lent by another account: asked no machine to work on.
+        await send("Runtime.evaluate", {
+          expression: "new Promise(r => setTimeout(r, 600)).then(() => { document.querySelector('[data-choice=expand]')?.click(); return new Promise(r => setTimeout(r, 100)); }).then(() => document.querySelector('.picker-lent .login-choice')?.click())",
+          awaitPromise: true,
+        });
+      }
+      if (named === "new-pick") {
+        // Choosing another login: every one, as the user holds them.
+        await send("Runtime.evaluate", { expression: "new Promise(r => setTimeout(r, 600)).then(() => document.querySelector('[data-choice=expand]')?.click())", awaitPromise: true });
       }
       if (session === "new-attach") {
         // A picture and a log dropped on the sheet wait there; beginning
@@ -244,11 +255,14 @@ for (const session of sessions) {
           })()`,
         });
       }
-      if (session === "grant" || session === "relays" || session === "trust") {
-        // Lending lab, the relays it connects through, and trusting a
-        // machine lent by another account.
-        const button = session === "trust" ? '[data-machine="gpu"] [data-act="trust"]' : `[data-machine="lab"] [data-act="${session}"]`;
-        await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('${button}')?.click())` });
+      if (session === "share" || session === "lend" || session === "relays") {
+        // Sharing lab, lending a login of this computer's, and the relays
+        // lab connects through.
+        // lab is pointed at on the drawing first; the panel shows this
+        // computer until then.
+        const button = session === "lend" ? '[data-machine="desktop"] [data-act="lend"]' : `[data-machine="lab"] [data-act="${session}"]`;
+        const pick = session === "lend" ? "" : `document.querySelector('.map-node[data-key="m:lab"]')?.click();`;
+        await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => setTimeout(r, 300)).then(() => { ${pick} return new Promise(r => setTimeout(r, 900)); }).then(() => document.querySelector('${button}')?.click())` });
       }
       if (session === "token-login") {
         await send("Runtime.evaluate", { expression: "document.querySelector('[data-way=token]')?.click()" });
@@ -324,6 +338,10 @@ for (const session of sessions) {
       }
       // A page an agent wrote scrolls inside the frame the host gives it.
       if (!written && page.h > page.inner + 1) problems.push(`${session} ${size.name} ${theme}: the page scrolls, ${page.h}px in a ${page.inner}px screen`);
+      if (probe) {
+        const { result: probed } = await send("Runtime.evaluate", { expression: `JSON.stringify(${probe})`, returnByValue: true });
+        console.log(`${session} ${size.name} ${theme}: ${probed.value}`);
+      }
       const shot = await send("Page.captureScreenshot", { format: "png" });
       const file = join(out, `${session}-${size.name}-${theme}.png`);
       writeFileSync(file, Buffer.from(shot.data, "base64"));

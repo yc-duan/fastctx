@@ -43,7 +43,9 @@ export type Held = "stopped" | "not_taken" | "unsure";
 export interface Queued {
   key: string;
   text: string;
-  attached: { refs: unknown[]; shown: Attached[] };
+  /** What arrived of what was attached; for an agent lent to the user,
+   *  the machine its files other than images go to. */
+  attached: { refs: unknown[]; shown: Attached[]; filesOn?: string | null };
 }
 
 export interface QueueActions {

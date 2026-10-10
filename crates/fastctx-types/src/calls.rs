@@ -182,6 +182,10 @@ pub enum Call {
         text: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<crate::attachments::Attachment>,
+        /// Where the attached files other than images go, when the user
+        /// chose; see `agents::Choices::files_on`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        files_on: Option<crate::access::Written>,
     },
     /// The user's byte stream, followed by an empty frame, on its own IPC
     /// connection. The final Uploaded reply is sent only after verification.

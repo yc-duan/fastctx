@@ -498,8 +498,8 @@ impl fastctx_net::link::Node for Handler {
                         crate::colleagues::ask_here(&node, asker, acting, town, label, prompt, home).await?;
                     Ok(RemoteReply::Asked { colleague })
                 }
-                RemoteCall::Talk { to, text, attachments } => {
-                    crate::talk::talk_here(&node, &from, &to, text, attachments)
+                RemoteCall::Talk { to, text, attachments, files_on } => {
+                    crate::talk::talk_here(&node, &from, &to, text, attachments, files_on.as_ref())
                         .await
                         .map(|landed| RemoteReply::Said { landed })
                 }
@@ -541,10 +541,17 @@ impl fastctx_net::link::Node for Handler {
                     colleagues,
                     home,
                     colleagues_home,
+                    files_on,
                 } => {
                     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
-                    let choices =
-                        fastctx_types::agents::Choices { account: None, works_on, colleagues, home, colleagues_home };
+                    let choices = fastctx_types::agents::Choices {
+                        account: None,
+                        works_on,
+                        colleagues,
+                        home,
+                        colleagues_home,
+                        files_on,
+                    };
                     let (resident, landed) =
                         crate::talk::open_here(&node, &from, acting, agent, town, text, options, attachments, choices)
                             .await?;

@@ -46,6 +46,7 @@ pub async fn talk(
     machine: Option<MachineName>,
     text: String,
     attachments: Vec<Attachment>,
+    files_on: Option<Written>,
 ) -> Result<(Address, Landed), Failure> {
     let here = node.machine();
     let machine = match machine {
@@ -53,10 +54,10 @@ pub async fn talk(
         None => locate(node, &to).await?,
     };
     if machine == here {
-        let landed = talk_here(node, &here, &to, text, attachments).await?;
+        let landed = talk_here(node, &here, &to, text, attachments, files_on.as_ref()).await?;
         return Ok((Address { machine: here, resident: to }, landed));
     }
-    let call = RemoteCall::Talk { to: to.clone(), text, attachments };
+    let call = RemoteCall::Talk { to: to.clone(), text, attachments, files_on };
     match node
         .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
         .await
@@ -68,16 +69,19 @@ pub async fn talk(
     }
 }
 
-/// The user's words, typed on `typed_on`, to a resident of this machine.
+/// The user's words, typed on `typed_on`, to a resident of this machine;
+/// its attached files other than images go to `files_on` when the user
+/// chose.
 pub async fn talk_here(
     node: &Arc<Node>,
     typed_on: &MachineName,
     to: &ResidentId,
     text: String,
     attachments: Vec<Attachment>,
+    files_on: Option<&Written>,
 ) -> Result<Landed, Failure> {
     crate::attachments::resolve(node, to, &attachments).await?;
-    let attachments = crate::attachments::place(node, to, attachments).await?;
+    let attachments = crate::attachments::place(node, to, attachments, files_on).await?;
     let delivery = crate::attachments::delivery(typed_on, text, attachments);
     speech::tell_here(node, to, delivery, Owed::Nobody).await
 }
@@ -491,6 +495,7 @@ pub async fn open(
                 colleagues: choices.colleagues,
                 home: choices.home,
                 colleagues_home: choices.colleagues_home,
+                files_on: choices.files_on,
             };
             let reply = node.call(&acting, &(&target).into(), Purpose::Agents, call).await;
             match reply.map_err(|failure| Failure::new(failure.to_string()))? {
@@ -544,8 +549,14 @@ pub async fn open_here(
             (home.found != fastctx_types::agents::HomeFound::Default).then_some(home.dir)
         }
     };
-    let opened =
-        Opened { acting, works_on, colleagues: choices.colleagues, home, colleagues_home: choices.colleagues_home };
+    let opened = Opened {
+        acting,
+        works_on,
+        colleagues: choices.colleagues,
+        home,
+        colleagues_home: choices.colleagues_home,
+        files_on: choices.files_on,
+    };
     match agent.as_str() {
         "codex" => {}
         "claude" => return crate::claude::open_here(node, typed_on, opened, town, text, options, attachments).await,
@@ -609,7 +620,7 @@ pub async fn open_here(
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
     node.residents.set_heard(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
-    let landed = talk_here(node, typed_on, &id, text, attachments).await?;
+    let landed = talk_here(node, typed_on, &id, text, attachments, opened.files_on.as_ref()).await?;
     Ok((id, landed))
 }
 
@@ -677,4 +688,7 @@ pub struct Opened {
     /// The Codex home its colleagues use where they live, when not the
     /// default one there.
     pub colleagues_home: Option<std::path::PathBuf>,
+    /// Where the files attached to its first words go, other than images,
+    /// when the user chose.
+    pub files_on: Option<Written>,
 }

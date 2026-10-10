@@ -60,6 +60,7 @@ pub fn fixtures() -> Fixtures {
                 machine: Some(owner.machine.clone()),
                 text: text.clone(),
                 attachments: attachments.clone(),
+                files_on: Some("laptop".parse().unwrap()),
             },
             Call::Open {
                 agent: "codex".parse().unwrap(),
@@ -85,7 +86,12 @@ pub fn fixtures() -> Fixtures {
         ],
         remote_calls: vec![
             RemoteCall::Upload { target, file, composer: None },
-            RemoteCall::Talk { to: owner.resident.clone(), text: text.clone(), attachments: attachments.clone() },
+            RemoteCall::Talk {
+                to: owner.resident.clone(),
+                text: text.clone(),
+                attachments: attachments.clone(),
+                files_on: None,
+            },
             RemoteCall::Open {
                 agent: "codex".parse().unwrap(),
                 town,
@@ -97,6 +103,7 @@ pub fn fixtures() -> Fixtures {
                 colleagues: None,
                 home: None,
                 colleagues_home: None,
+                files_on: None,
             },
         ],
         remote_replies: vec![RemoteReply::Uploaded(attachment)],

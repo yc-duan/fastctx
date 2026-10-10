@@ -154,6 +154,15 @@ pub(crate) fn elsewhere(node: &Node, resident: &ResidentId) -> Option<Written> {
     about.works_on.filter(|works_on| !node.is_here(works_on))
 }
 
+/// Whether `resident`, of this machine, is an agent lent to the account it
+/// works for, which may not work here and so has no here
+/// (`world-run.md`, 这里).
+pub(crate) fn lent(node: &Node, resident: &ResidentId) -> bool {
+    node.residents
+        .about(resident)
+        .is_some_and(|(about, _)| about.works_on.is_none() && node.works_here(&about.acting).is_err())
+}
+
 /// Where a run of `resident`, of this machine, goes, and what runs there:
 /// another machine, or here when it is `None`.
 pub(crate) fn start(node: &Node, resident: &ResidentId, request: RunRequest) -> (Option<Written>, RunRequest) {

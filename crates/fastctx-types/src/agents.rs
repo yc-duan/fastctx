@@ -264,6 +264,11 @@ pub struct Choices {
     /// default one there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colleagues_home: Option<PathBuf>,
+    /// Where the files attached to its first words go, other than images,
+    /// when the user chose: an agent lent to the account has no machine it
+    /// works on (`world-run.md`, 这里).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_on: Option<crate::access::Written>,
 }
 
 /// Omitted fields keep the official program's configured defaults.

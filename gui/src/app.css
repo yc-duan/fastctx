@@ -28,27 +28,6 @@
   min-width: 0;
 }
 
-.bar-back {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  margin-left: -8px;
-  border-radius: var(--radius-full);
-  color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
-}
-
-.bar-back .glyph {
-  transform: rotate(90deg);
-}
-
-.bar-back:hover {
-  color: var(--text);
-  background: var(--hairline);
-}
-
 .who-name {
   margin: 0;
   font-family: var(--font-emphasis);
@@ -168,8 +147,7 @@
   padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
-  box-shadow: 0 0 0 1px var(--hairline), 0 6px 24px rgba(0, 0, 0, 0.12);
-  transition: box-shadow var(--hover) ease;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
 }
 
 /* Removed from the World: a quiet line where the composer was. */
@@ -334,7 +312,7 @@
   padding: var(--space-1);
   border-radius: var(--radius-m);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop), 0 0 0 1px var(--hairline);
+  box-shadow: var(--shadow-pop);
   animation: sheet-in var(--enter) var(--fold-easing) both;
 }
 
@@ -448,7 +426,7 @@
   scrollbar-width: thin;
   border-radius: var(--radius-l);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop), 0 0 0 1px var(--hairline);
+  box-shadow: var(--shadow-pop);
   animation: sheet-in var(--enter) var(--fold-easing) both;
 }
 
@@ -704,12 +682,12 @@
   padding: 4px 30px 4px 4px;
   border-radius: var(--radius-m);
   background: var(--bg);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: var(--fill);
   overflow: hidden;
 }
 
 .attach-item.failed {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wrong) 60%, transparent);
+  background: color-mix(in srgb, var(--wrong) 14%, transparent);
 }
 
 .attach-thumb {
@@ -835,7 +813,7 @@
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-m);
   background: var(--bg);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--caution) 45%, transparent);
+  background: color-mix(in srgb, var(--caution) 14%, transparent);
   font-size: var(--size-ui);
   line-height: var(--leading-ui);
   color: var(--text-2);
@@ -1009,7 +987,7 @@ button.composer-context[hidden] {
   margin: 0 0 var(--space-2);
   border-radius: var(--radius-m);
   background: var(--bg);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: var(--fill);
   font-size: var(--size-small);
 }
 
@@ -1122,7 +1100,7 @@ button.composer-context[hidden] {
   outline: 0;
   resize: vertical;
   background: var(--bg-elevated);
-  box-shadow: inset 0 0 0 1px var(--focus);
+  background: var(--field);
   color: var(--text);
   font: inherit;
   font-size: var(--size-small);

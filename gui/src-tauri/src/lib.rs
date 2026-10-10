@@ -261,7 +261,8 @@ fn unwatch(shell: tauri::State<'_, Shell>, id: u64) {
     }
 }
 
-/// The user's words to a resident, with the files uploaded for them.
+/// The user's words to a resident, with the files uploaded for them; those
+/// other than images go to `files_on` when the user chose a machine.
 #[tauri::command]
 async fn talk(
     shell: tauri::State<'_, Shell>,
@@ -269,10 +270,20 @@ async fn talk(
     machine_name: Option<String>,
     text: String,
     attachments: Option<Vec<fastctx_types::attachments::Attachment>>,
+    files_on: Option<String>,
 ) -> Result<Spoken, String> {
+    let files_on = files_on
+        .map(|written| written.parse::<fastctx_types::access::Written>().map_err(|error| error.to_string()))
+        .transpose()?;
     let said = shell
         .world()
-        .talk_with_attachments(resident(resident_id)?, machine(machine_name)?, text, attachments.unwrap_or_default())
+        .talk_with_attachments(
+            resident(resident_id)?,
+            machine(machine_name)?,
+            text,
+            attachments.unwrap_or_default(),
+            files_on,
+        )
         .await
         .map_err(|error| error.to_string())?;
     Ok(Spoken { to: said.to, landed: said.landed })

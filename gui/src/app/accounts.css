@@ -1,7 +1,8 @@
-/* Accounts and the machines they use (`world-gui.md`, 账号、机器与授权):
-   logging in, the machines page grouped by account, the sheets that lend
-   a machine and set its relays, the account page, an administrator's page,
-   and the sidebar's parts, one an account. */
+/* Accounts and the machines they use (`world-gui.md`, 账号、机器、共享与借出):
+   logging in, the machines page grouped by account with the agents lent to
+   each, the sheets that share a machine, lend a login and set the relays,
+   the account page, the super administrator's page, and the sidebar's
+   parts, one an account. */
 
 /* A tick with what it means beside it, said in a line under its name. */
 .check-row {
@@ -125,37 +126,6 @@ a.text-button {
   margin-left: calc(-1 * var(--space-3));
 }
 
-/* The machines page, account by account: a quiet head over each part. */
-.machines-section {
-  margin-top: var(--space-6);
-}
-
-.machines-group {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-  font-family: var(--font-reading);
-  font-weight: 400;
-  font-size: var(--size-small);
-  letter-spacing: 0.02em;
-  color: var(--text-3);
-}
-
-.machines-group .glyph {
-  color: var(--text-3);
-}
-
-.machines-group::after {
-  content: "";
-  flex: 1;
-  height: 8px;
-  background: var(--pen-rule);
-  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
-  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
-}
-
-.machines-none,
 .machines-alone {
   margin: var(--space-3) 0 var(--space-8);
   font-size: var(--size-ui);
@@ -167,116 +137,30 @@ a.text-button {
   margin-top: var(--space-6);
 }
 
-.machine-entries.machine-here {
-  padding-bottom: 0;
-}
-
-/* With one account there is no head between this computer and the rest:
-   the first of them is ruled off as every next one is. */
-.machine-here + .machines-section > .machine-entries:first-child {
-  padding-top: var(--space-4);
-}
-
-.machine-here + .machines-section > .machine-entries:first-child > .machine-entry:first-child::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -4px;
-  height: 8px;
-  background: var(--pen-rule);
-  opacity: 0.7;
-  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-}
-
-.machine-here + .machines-section {
-  margin-top: 0;
-}
-
-/* This computer, hub by hub: how it reaches each, whose machine it is
-   there, and what its owner sets on it. */
-.machine-hubs {
-  list-style: none;
-  margin: var(--space-2) 0 0;
-  padding: 0 0 0 calc(8px + 2px + var(--space-2));
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.machine-hub {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px var(--space-3);
-}
-
-.machine-hub-text {
-  flex: 1 1 18em;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.machine-hub-name {
-  font-size: var(--size-small);
-  color: var(--text-2);
-  overflow-wrap: anywhere;
-}
-
-.machine-hub.stopped .machine-hub-name {
-  color: var(--caution);
-}
-
-.machine-hub.connecting .machine-hub-name {
-  color: var(--text-3);
-}
-
-.machine-hub-stand {
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.machine-hub-acts {
-  display: flex;
-  gap: 2px;
-  margin-left: auto;
-  opacity: 0;
-  transition: opacity var(--hover) ease;
-}
-
-.machine-entry:hover .machine-hub-acts,
-.machine-hub-acts:focus-within {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .machine-hub-acts {
-    opacity: 1;
-  }
-}
-
-.machine-line .tag {
-  align-self: center;
-}
-
 .tag.tag-own {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
-  background: transparent;
-  color: var(--text-2);
+  background: var(--fill-strong);
+  color: var(--text);
 }
 
-.tag.tag-trust {
+/* A machine of another whose agents may reach the account's machines: a
+   quiet mark in clay, since it is the one thing about it the account
+   itself let happen. */
+.tag.tag-reach {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  box-shadow: inset 0 0 0 1px var(--hairline);
-  background: transparent;
+  background: var(--accent-wash);
+  color: var(--text);
 }
 
-.tag.tag-trust .glyph {
+/* An agent lent to the account, on a machine of another's: clay, as its
+   ring is on the drawing. */
+.tag.tag-lent {
+  background: var(--accent-wash);
+  color: var(--text);
+}
+
+.tag.tag-reach .glyph {
   color: var(--accent);
 }
 
@@ -288,31 +172,32 @@ a.text-button {
   color: color-mix(in srgb, var(--wrong) 80%, var(--text));
 }
 
-/* Lending a machine: the line on what its owner sees, those it is lent
-   to with a switch for each right, then whom to lend it to. */
-.grant-sees {
+/* Giving a machine or one agent's login to other accounts: what it gives
+   and what its owner sees, said with the shield; those it is given to,
+   each with a way to take it back; then whom to give it to. */
+.give-sees {
   display: flex;
   align-items: flex-start;
   gap: 6px;
   margin: var(--space-3) 0 0;
 }
 
-.grant-sees .glyph {
+.give-sees .glyph {
   flex: none;
   margin-top: 2px;
   color: var(--accent);
 }
 
-.grant-list {
+.give-list {
   margin-top: var(--space-5);
 }
 
-.grant-list .field-label {
+.give-list .field-label {
   margin: 0 0 var(--space-2);
   font-weight: 400;
 }
 
-.grant-rows {
+.give-rows {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -320,41 +205,50 @@ a.text-button {
   flex-direction: column;
 }
 
-.grant-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+.give-row {
+  position: relative;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
-  min-height: 38px;
-  border-top: 1px solid var(--hairline);
+  min-height: 40px;
 }
 
-.grant-row:last-child {
-  border-bottom: 1px solid var(--hairline);
+.give-row + .give-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  background: var(--pen-rule);
+  opacity: 0.6;
+  -webkit-mask: var(--pen-rule-3) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-3) 0 50% / 100% 100% no-repeat;
 }
 
-.grant-who {
+.give-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
   font-size: var(--size-small);
   color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.grant-new {
-  margin-top: var(--space-2);
+.give-who .glyph {
+  flex: none;
+  color: var(--text-3);
 }
 
-@media (max-width: 760px) {
-  .grant-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    padding: var(--space-2) 0;
-  }
+.give-new .field {
+  margin-top: var(--space-4);
+}
 
-  .grant-row .check-row {
-    grid-column: 1;
-  }
+.give-after {
+  margin: var(--space-3) 0 0;
 }
 
 /* The relays a machine connects through, in the order it tries them. */
@@ -380,7 +274,7 @@ a.text-button {
   width: 22px;
   height: 22px;
   border-radius: var(--radius-full);
-  box-shadow: inset 0 0 0 1px var(--rule);
+  background: var(--fill-strong);
   font-size: var(--size-small);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
@@ -444,10 +338,16 @@ a.text-button {
   margin-top: var(--space-4);
 }
 
+/* Devices, projects, accounts and the machines reaching this account's:
+   each a slip of fill, set a little apart, none outlined. */
 .account-devices,
 .account-projects,
-.admin-accounts {
+.admin-accounts,
+.account-reaching {
   list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin: 0;
   padding: 0;
 }
@@ -456,14 +356,9 @@ a.text-button {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-2) 0;
-  border-top: 1px solid var(--hairline);
-}
-
-.account-device:last-child,
-.admin-account:last-child,
-.account-project:last-child {
-  border-bottom: 1px solid var(--hairline);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
 }
 
 .account-device .dot {
@@ -533,8 +428,9 @@ a.text-button {
   align-items: center;
   gap: var(--space-1) var(--space-3);
   min-height: 40px;
-  padding: var(--space-1) 0;
-  border-top: 1px solid var(--hairline);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
 }
 
 .account-project-name {
@@ -565,7 +461,7 @@ a.text-button {
   height: 24px;
   padding: 0 4px 0 9px;
   border-radius: var(--radius-full);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: var(--fill-strong);
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
   font-size: var(--size-small);
@@ -584,7 +480,7 @@ a.text-button {
 
 .chip-x:hover {
   color: var(--wrong);
-  background: var(--hairline);
+  background: color-mix(in srgb, var(--wrong) 14%, transparent);
 }
 
 .admin-section .check-row {
@@ -592,8 +488,9 @@ a.text-button {
 }
 
 .admin-account {
-  padding: var(--space-2) 0;
-  border-top: 1px solid var(--hairline);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
 }
 
 .admin-account.locked .admin-account-name {
@@ -735,4 +632,104 @@ a.text-button {
 .details-colleagues .text-button {
   height: 28px;
   font-size: var(--size-small);
+}
+
+/* A sentence set off in the margin, as a reader pencils beside a passage:
+   what the super administrator may do, what a lent agent cannot touch, what
+   using another's agent lets happen. A ruled line down its left edge, in
+   graphite, or in clay where it asks for care. */
+.machines-note,
+.choice-margin,
+.admin-super {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: var(--space-3) 0 var(--space-2);
+  padding: 2px 0 2px var(--space-4);
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text-2);
+}
+
+.machines-note::before,
+.choice-margin::before,
+.admin-super::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: var(--pen-graphite);
+  opacity: 0.55;
+  mix-blend-mode: var(--pen-blend);
+  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+}
+
+.machines-note .glyph,
+.admin-super .glyph {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.choice-margin.choice-warn {
+  color: var(--text);
+}
+
+.choice-margin.choice-warn::before {
+  background: var(--pen-clay);
+  opacity: 0.9;
+}
+
+.host-home .home-talk {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.host-home .home-talk .glyph {
+  margin-right: 2px;
+}
+
+/* The machines whose agents may reach the account's, on its page: each a
+   line with the shield, set as the devices are. */
+.account-reach {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.reach-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.account-reach .quiet-button {
+  flex: none;
+}
+
+.account-empty {
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.account-super {
+  margin-top: var(--space-4);
+}
+
+.admin-super {
+  margin-top: var(--space-1);
+}
+
+.admin-super + .account-acts {
+  margin-bottom: var(--space-2);
 }

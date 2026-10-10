@@ -16,6 +16,7 @@ import "./app/shell.css";
 import "./app/sheet.css";
 import "./app/pages.css";
 import "./app/accounts.css";
+import "./app/machines.css";
 import "./app.css";
 import "./home/home.css";
 import "./project/project.css";
@@ -58,7 +59,7 @@ import {
   readerWords } from "./app/words";
 import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, zhAccount, zhAdmin, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
-import { colleagueHomes, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { borrowedBy, borrowedOf, colleagueHomes, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import { Details, type Manage } from "./conversation/details";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/model";
@@ -197,10 +198,15 @@ const consent = new ClaudeConsent(english ? enConsent : zhConsent, (machine, acc
   live ? claudeConsent(machine, accept, home) : Promise.reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")),
 );
 
-/** What a machine's own programs say of its agents, as a live World or
- *  the specimen answers. */
+/** What a machine's own programs say of its agents, or with null every
+ *  machine's this computer reaches, as a live World or the specimen
+ *  answers. */
 function agentsOn(machine: string | null) {
-  return live ? agents(machine) : Promise.resolve(specimenAgents(machine ?? specimen.world.here, specimen.now));
+  if (live) return agents(machine);
+  const names = machine
+    ? [machine]
+    : [...new Set([...machinesOf(specimen.world).filter((one) => one.here || one.online).map((one) => one.name), ...borrowedOf(specimen.world).map((one) => one.machine)])];
+  return Promise.resolve({ machine: specimen.world.here, machines: names.flatMap((name) => specimenAgents(name, specimen.now).machines) });
 }
 
 /** The logins of `agent` on a machine, named or as written, as choices:
@@ -224,7 +230,7 @@ const newTalk = new NewTalk({
   words: english ? enNewTalk : zhNewTalk,
   homeWords: agentHomeWords,
   agents: (machine) => agentsOn(machine),
-  async begin({ agent, machine, town, text, model, effort, attachments, account, worksOn, colleagues, home, colleaguesHome }) {
+  async begin({ agent, machine, town, text, model, effort, attachments, account, worksOn, colleagues, home, colleaguesHome, filesOn }) {
     if (!live) throw new Error(specimenSaid);
     const { to } = await openAgent(agent, machine, town, text, model, effort, attachments, {
       ...(account ? { account } : {}),
@@ -232,6 +238,7 @@ const newTalk = new NewTalk({
       ...(colleagues ? { colleagues } : {}),
       ...(home ? { home } : {}),
       ...(colleagues && colleaguesHome ? { colleagues_home: colleaguesHome } : {}),
+      ...(filesOn ? { files_on: filesOn } : {}),
     });
     void store.refresh();
     return to;
@@ -297,8 +304,6 @@ const tokens = new Tokens({
       : Promise.resolve(`FX5${"0SPECIMEN0NOT0A0REAL0TOKEN".repeat(4)}${hours}`),
   server: (login, name, hours) =>
     live ? serverCommand(login.hubName, login.account, name, hours) : Promise.resolve("echo 'Specimen: no real token or download'"),
-  mayRegister: (login) =>
-    store.world.peek()?.accounts.hubs.find((hub) => hub.hub === login.hub)?.accounts.find((account) => account.name === login.account)?.may_register ?? false,
   when: (at) => when(at, new Date()),
 });
 
@@ -454,6 +459,10 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
         places: () => worksPlacesFor(address),
         set: (worksOn) => (live ? setWorksOn(address, worksOn) : Promise.reject(new Error(specimenSaid))),
       },
+      lentBy: (r) => {
+        const lent = borrowedBy(store.world.peek(), r);
+        return lent ? (lent.owner ?? lent.machine) : null;
+      },
       actingFor: (r) => {
         const acting = r.about.acting;
         if (!acting || acting.kind === "here") return [];
@@ -476,12 +485,12 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
   };
 }
 
-/** The machine the agent at `address` lives on, and the login it works
- *  for among this computer's, as this computer reaches them. */
-function livesFor(address: Address): { lives: Machine; login: Login | null } | null {
+/** The machine the agent at `address` lives on, where an account it works
+ *  for may work on it (not so for an agent lent to the user), and the login
+ *  it works for among this computer's, as this computer reaches them. */
+function livesFor(address: Address): { lives: Machine | null; login: Login | null } {
   const world = store.world.peek();
-  const lives = machinesOf(world).find((machine) => machine.name === address.machine);
-  if (!lives) return null;
+  const lives = machinesOf(world).find((machine) => machine.name === address.machine) ?? null;
   const acting = residentAt(world, address)?.about.acting;
   const logins = loginsOf(world?.accounts);
   const login =
@@ -491,16 +500,16 @@ function livesFor(address: Address): { lives: Machine; login: Login | null } | n
 
 /** Where the colleagues of the agent at `address` may live: machines whose
  *  agents an account it works for may use. */
-function homesFor(address: Address): string[] {
+function homesFor(address: Address): { machine: string; lentBy: string | null }[] {
   const found = livesFor(address);
-  return found ? colleagueHomes(store.world.peek(), found.lives, found.login).map((machine) => machine.written) : [];
+  return colleagueHomes(store.world.peek(), found.lives, found.login).map((home) => ({ machine: home.written, lentBy: home.lentBy }));
 }
 
 /** Where the agent at `address` may work: machines an account it works for
  *  may work on. */
 function worksPlacesFor(address: Address): string[] {
   const found = livesFor(address);
-  return found ? workPlaces(store.world.peek(), found.lives, found.login).map((machine) => machine.written) : [];
+  return found.lives ? workPlaces(store.world.peek(), found.lives, found.login).map((machine) => machine.written) : [];
 }
 
 /** The projects an agent on `machine` can be in: those spanning it. */
@@ -722,10 +731,12 @@ function specimenTalk(address: Address): Page {
 function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address): Someone | null {
   const known = residentAt(world, address);
   if (!known) return null;
+  const lent = borrowedBy(world, known);
   return {
     agent: agentName(known.about.host.agent),
     machine: address.machine,
     worksOn: known.about.works_on && known.about.works_on !== address.machine ? known.about.works_on : null,
+    lentBy: lent ? (lent.owner ?? lent.machine) : null,
     model: known.about.model ?? null,
     project: known.town ? (world?.towns.find((t) => t.town === known.town)?.record.name ?? known.town) : null,
   };
@@ -781,6 +792,29 @@ function liveTalk(address: Address): Page {
         },
       },
       drops: windowDrops,
+      filesOn: {
+        places: () => {
+          const known = residentAt(store.world.peek(), address);
+          const lent = known ? borrowedBy(store.world.peek(), known) : null;
+          return lent
+            ? filePlaces(store.world.peek(), lent.login).map((machine) => ({
+                value: machine.written,
+                label: machine.written,
+                note: machine.here ? (english ? "this one" : "这台") : machine.online === false ? (english ? "offline" : "离线") : undefined,
+                disabled: !machine.here && machine.online === false,
+              }))
+            : null;
+        },
+        usual: () => {
+          try {
+            return localStorage.getItem("files-on");
+          } catch {
+            return null;
+          }
+        },
+        label: (english ? enNewTalk : zhNewTalk).filesOn,
+        what: (english ? enNewTalk : zhNewTalk).filesOnWhat,
+      },
     },
     details: detailsOf(address, async () => {
       const [found] = await look([address.resident]);
@@ -796,7 +830,7 @@ function liveTalk(address: Address): Page {
         attached.shown.map(({ name, size, image, preview }) => ({ name, size, image, preview })),
       );
       page.update();
-      return talk(address, text, attached.refs as Attachment[])
+      return talk(address, text, attached.refs as Attachment[], attached.filesOn ?? null)
         .then(({ to, landed }) => {
           // Words in a turn take their place when the session hears them;
           // words in no turn yet say where they are.
@@ -1079,15 +1113,8 @@ function show(next: Place): void {
         focus: next.kind === "machine" ? next.name : null,
         when,
         homeWords: agentHomeWords,
-        agents: () =>
-          live
-            ? agents(null)
-            : Promise.resolve({
-                machine: specimen.world.here,
-                machines: machinesOf(specimen.world)
-                  .filter((machine) => machine.here || machine.online)
-                  .flatMap((machine) => specimenAgents(machine.name, specimen.now).machines),
-              }),
+        agents: () => agentsOn(null),
+        talkWith: (key) => newTalk.open(null, key),
         applyHere: (agent, into, home) => (live ? applyHosts(agent === "codex", agent === "claude", false, into, home) : notLive()),
         consent: {
           allow: (machine, home) => consent.allow(machine, (english ? enConsent : zhConsent).allow, home),

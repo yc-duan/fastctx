@@ -301,8 +301,14 @@ impl Device {
         for session in self.sessions() {
             let view = session.link.view();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
-            let reachable: Vec<Reachable> =
-                self.reachable().into_iter().filter(|one| Arc::ptr_eq(&one.link, &session.link)).collect();
+            // The machines its accounts may work on; one whose lent agents
+            // alone they may use is no machine of theirs to list.
+            let reachable: Vec<Reachable> = self
+                .reachable()
+                .into_iter()
+                .filter(|one| Arc::ptr_eq(&one.link, &session.link))
+                .filter(|one| logins.iter().any(|account| view.rights(account, &one.name).hands))
+                .collect();
             let heard = self.ask_each(reachable, |_| RemoteCall::Facts).await;
             let machines = heard
                 .into_iter()

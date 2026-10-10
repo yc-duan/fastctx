@@ -1,8 +1,10 @@
-// What the pages about accounts say (`world-gui.md`, 账号、机器与授权):
-// logging in; the machines a login may use, and what is set on them; the
-// account itself, with its devices, who came into it, the one-time tokens
-// that let another device in, its password and its projects; and an
-// administrator's page of accounts. In the user's words (`world-gui.md`, 用词).
+// What the pages about accounts say (`world-gui.md`, 账号、机器、共享与借出):
+// logging in; the machines a login may use, the agents lent to it, and what
+// is set on them; the account itself, with its level, its devices, who came
+// into it, the machines whose agents may reach its machines, the one-time
+// tokens that let another device in, its password and its projects; and the
+// super administrator's page of the hub. In the user's words
+// (`world-gui.md`, 用词).
 
 import type { MemberKind } from "../world/accounts";
 
@@ -202,15 +204,28 @@ export interface MachinesWords {
   /** The head's button that lets another machine or device in. */
   add: string;
   here: string;
-  /** A login, heading the machines it may use. */
-  group(login: string): string;
+  /** What the hub's super administrator may do, said behind a pointer's
+   *  rest on a member's hub; the short of it, on the page. */
+  superNote(admin: string): string;
+  superShort(admin: string): string;
   online(since: string): string;
   onlineNow: string;
   offline(since: string | null): string;
   unknown: string;
   factsUnknown(why: string): string;
+  /** A hub on the map, by how this computer reaches it; pointed at, its
+   *  title and how many machines are registered on it. */
+  hubOnline: string;
+  hubConnecting: string;
+  hubOff: string;
+  hubTitle(name: string): string;
+  hubMachines(n: number): string;
+  /** The account's level on a hub, and what it does there. */
+  levelSuper: string;
+  levelMember: string;
+  inviteDevice: string;
+  manageHub: string;
   /** How this computer reaches a hub. */
-  link(hub: string, state: string): string;
   linkOnline(address: string): string;
   linkVia(relay: string, address: string): string;
   linkConnecting(error: string | null): string;
@@ -222,18 +237,21 @@ export interface MachinesWords {
   direct: string;
   yours: string;
   ownedBy(account: string): string;
-  /** What another account let this one do on a machine. */
-  granted(owner: string, rights: string): string;
-  /** Whom this account let use its machine. */
-  grantsOut(list: string): string;
-  /** One account it lent the machine to, and for what. */
-  lent(account: string, rights: string): string;
+  /** Another's machine shared with this account; a member's, used as the
+   *  super administrator: the tag, and the saying behind it. */
+  sharedInShort(owner: string): string;
+  superInShort(owner: string): string;
+  sharedIn(owner: string): string;
+  superIn(owner: string): string;
+  /** Whom this account shared its machine with, and lent a login to,
+   *  each taken back with a press. */
+  sharedTo: string;
+  lentTo: string;
+  takeBack(to: string): string;
   separator: string;
-  hands: string;
-  agentsRight: string;
-  and: string;
-  trusted: string;
-  agents: string;
+  /** A machine of another whose agents may reach this account's machines. */
+  reaching: string;
+  reachingWhat: string;
   nobody: string;
   jobs(n: number): string;
   home: string;
@@ -268,14 +286,18 @@ export interface MachinesWords {
   hideHomeWhat: string;
   homeHidden(name: string): string;
   homeNotChanged(why: string): string;
-  grant: string;
+  share: string;
+  lend: string;
   relays: string;
   remove: string;
-  trust: string;
-  untrust: string;
-  /** The logins see no machine but this computer. */
-  none: string;
-  noneDevice: string;
+  /** An agent lent to the account, on a machine of another's: the tag on
+   *  the map, the one line on its panel, and the saying behind both. */
+  lentShort(owner: string): string;
+  borrowedNote: string;
+  borrowedSaid(owner: string): string;
+  /** A lent login its machine does not list. */
+  borrowedGone: string;
+  talk: string;
   /** On its own, logged in nowhere. */
   alone: string;
   logIn: string;
@@ -285,13 +307,22 @@ export const zhMachines: MachinesWords = {
   title: "机器",
   add: "添加",
   here: "这台",
-  group: (login) => login,
+  superNote: (admin) => `这个中枢的超级管理员是 ${admin}：你的每一台机器，${admin} 都看得见、用得了。`,
+  superShort: (admin) => `${admin} 能用你的机器`,
   online: (since) => `在线，${since} 起`,
   onlineNow: "在线",
   offline: (since) => (since ? `离线，${since} 起` : "离线"),
   unknown: "不知道在不在线",
   factsUnknown: (why) => `问不到它的情况：${why}`,
-  link: (hub, state) => `中枢 ${hub}：${state}`,
+  hubOnline: "连着",
+  hubConnecting: "正在连",
+  hubOff: "没连上",
+  hubTitle: (name) => `中枢 ${name}`,
+  hubMachines: (n) => `${n} 台机器登记在这里`,
+  levelSuper: "超级管理员",
+  levelMember: "成员",
+  inviteDevice: "加一台设备…",
+  manageHub: "管理账号",
   linkOnline: (address) => `直连着，${address}`,
   linkVia: (relay, address) => `经转接站 ${relay} 连着，${address}`,
   linkConnecting: (error) => (error ? `正在连，上一次没连上：${error}` : "正在连"),
@@ -302,15 +333,16 @@ export const zhMachines: MachinesWords = {
   direct: "直连中枢",
   yours: "你的",
   ownedBy: (account) => `${account} 的`,
-  granted: (owner, rights) => `${owner} 授权你${rights}；你在上面做的事、留在那里的输出，${owner} 都看得见`,
-  grantsOut: (list) => `也授权给了 ${list}`,
-  lent: (account, rights) => `${account}（${rights}）`,
+  sharedInShort: (owner) => `${owner} 共享的`,
+  superInShort: (owner) => `成员 ${owner} 的`,
+  sharedIn: (owner) => `${owner} 把它共享给了你：能在上面干活，也能用上面的全部智能体；你在上面做的事、留在那里的输出，${owner} 都看得见。`,
+  superIn: (owner) => `这是成员 ${owner} 的机器，你是超级管理员，所以能用它；你在上面做的事 ${owner} 都看得见。`,
+  sharedTo: "共享给",
+  lentTo: "借给",
+  takeBack: (to) => `从 ${to} 那里收回`,
   separator: "、",
-  hands: "在上面干活",
-  agentsRight: "用上面的智能体",
-  and: "、",
-  trusted: "信任",
-  agents: "上面的智能体",
+  reaching: "能访问你的机器",
+  reachingWhat: "你用过它上面的智能体，所以它上面的智能体能访问你的机器；在账号页上可以拿掉。",
   nobody: "此刻没有智能体",
   jobs: (n) => `${n} 个作业在跑`,
   home: "家目录",
@@ -343,13 +375,15 @@ export const zhMachines: MachinesWords = {
   hideHomeWhat: "世界不再列出、也不再用这个登录；在「添加一个登录」里写回它的目录，它就回来",
   homeHidden: (name) => `不再列出 ${name}；在「添加一个登录」里写回它的目录，它就回来`,
   homeNotChanged: (why) => `没改成：${why}`,
-  grant: "授权…",
+  share: "共享…",
+  lend: "借给…",
   relays: "转接站…",
   remove: "移除…",
-  trust: "信任…",
-  untrust: "不再信任",
-  none: "这个账号此刻只能用这台电脑。在别的电脑上登录同一个账号并登记，或者让别的账号授权给你，它们就出现在这里。",
-  noneDevice: "这个账号此刻没有能用的机器。在一台电脑上登录同一个账号并登记，它就出现在这里。",
+  lentShort: (owner) => `借自 ${owner}`,
+  borrowedNote: "在你的机器上干活，不碰这一台",
+  borrowedSaid: (owner) => `${owner} 借给你的。它跑在 ${owner} 的这台机器上，却碰不到这台电脑：替你干活时，它的每条命令都写明去你的哪台机器。`,
+  borrowedGone: "这台机器上找不到这个登录了",
+  talk: "开一段对话",
   alone: "这台电脑还没有登录任何账号：它独自一台，只有它自己。",
   logIn: "登录…",
 };
@@ -358,13 +392,22 @@ export const enMachines: MachinesWords = {
   title: "Machines",
   add: "Add",
   here: "this one",
-  group: (login) => login,
+  superNote: (admin) => `${admin} is this hub's super administrator, and sees and may use every machine of yours.`,
+  superShort: (admin) => `${admin} may use your machines`,
   online: (since) => `online since ${since}`,
   onlineNow: "online",
   offline: (since) => (since ? `offline since ${since}` : "offline"),
   unknown: "not known whether online",
   factsUnknown: (why) => `could not be asked: ${why}`,
-  link: (hub, state) => `Hub ${hub}: ${state}`,
+  hubOnline: "connected",
+  hubConnecting: "connecting",
+  hubOff: "not connected",
+  hubTitle: (name) => `Hub ${name}`,
+  hubMachines: (n) => `${n} machine${n === 1 ? "" : "s"} registered here`,
+  levelSuper: "super administrator",
+  levelMember: "member",
+  inviteDevice: "Add a device…",
+  manageHub: "Accounts",
   linkOnline: (address) => `connected directly, ${address}`,
   linkVia: (relay, address) => `connected through the relay ${relay}, ${address}`,
   linkConnecting: (error) => (error ? `connecting; the last try failed: ${error}` : "connecting"),
@@ -375,15 +418,16 @@ export const enMachines: MachinesWords = {
   direct: "reaches the hub directly",
   yours: "yours",
   ownedBy: (account) => `${account}'s`,
-  granted: (owner, rights) => `${owner} lets you ${rights}, and sees what you do there and the output you leave`,
-  grantsOut: (list) => `also lent to ${list}`,
-  lent: (account, rights) => `${account} (to ${rights})`,
-  separator: "; ",
-  hands: "work on it",
-  agentsRight: "use its agents",
-  and: " and ",
-  trusted: "trusted",
-  agents: "Agents on it",
+  sharedInShort: (owner) => `shared by ${owner}`,
+  superInShort: (owner) => `member ${owner}'s`,
+  sharedIn: (owner) => `${owner} shared it with you: you may work on it and use every agent on it, and ${owner} sees what you do there and the output you leave.`,
+  superIn: (owner) => `A machine of the member ${owner}; you may use it as the super administrator, and ${owner} sees what you do there.`,
+  sharedTo: "Shared with",
+  lentTo: "Lent to",
+  takeBack: (to) => `Take back from ${to}`,
+  separator: ", ",
+  reaching: "can reach your machines",
+  reachingWhat: "You used an agent on it, so its agents can reach your machines; you can take that back on the account page.",
   nobody: "No agent right now",
   jobs: (n) => `${n} job${n === 1 ? "" : "s"} running`,
   home: "Home",
@@ -416,37 +460,38 @@ export const enMachines: MachinesWords = {
   hideHomeWhat: "The World no longer lists or uses this login; write its directory under Add a login and it comes back",
   homeHidden: (name) => `No longer listing ${name}; write its directory under Add a login and it comes back`,
   homeNotChanged: (why) => `Not changed: ${why}`,
-  grant: "Lend…",
+  share: "Share…",
+  lend: "Lend…",
   relays: "Relays…",
   remove: "Remove…",
-  trust: "Trust…",
-  untrust: "Stop trusting",
-  none: "This account can use only this computer for now. Log in to it on another computer and register it, or have another account lend you one, and it shows here.",
-  noneDevice: "This account has no machine to use yet. Log in to it on a computer and register it, and it shows here.",
+  lentShort: (owner) => `lent by ${owner}`,
+  borrowedNote: "Works on your machines, never on this one",
+  borrowedSaid: (owner) => `Lent to you by ${owner}. It runs on this machine of ${owner}'s, which it cannot touch: working for you, each of its commands names one of your machines.`,
+  borrowedGone: "this machine no longer has this login",
+  talk: "Talk to it",
   alone: "This computer is logged in to no account: it is on its own, a World of one.",
   logIn: "Log in…",
 };
 
-/** The sheets on a machine: whom its owner lends it to, whether to trust
- *  one lent, the relays it connects through, and removing it. */
+/** The sheets on a machine: whom its owner shares it with, whom it lends
+ *  one login of an agent on it, the relays it connects through, and
+ *  removing it. */
 export interface AccessWords {
-  grantTitle(machine: string): string;
-  grantWhat: string;
-  grantSees: string;
+  shareTitle(machine: string): string;
+  shareWhat: string;
+  shareSees: string;
+  sharedTo: string;
+  shareGo: string;
+  shareAfter: string;
+  lendTitle(login: string, machine: string): string;
+  lendWhat: string;
+  lendSees: string;
   lentTo: string;
+  lendGo: string;
   nobodyYet: string;
   to: string;
   toHint: string;
-  hands: string;
-  handsWhat: string;
-  agents: string;
-  agentsWhat: string;
-  grantGo: string;
-  change: string;
   takeBack: string;
-  trustTitle(machine: string): string;
-  trustWhat(owner: string): string;
-  trustGo: string;
   relaysTitle(machine: string): string;
   relaysWhat: string;
   relayLabel: string;
@@ -470,24 +515,21 @@ export interface AccessWords {
 }
 
 export const zhAccess: AccessWords = {
-  grantTitle: (machine) => `把 ${machine} 授权给别的账号`,
-  grantWhat: "同一个中枢上的别的账号，可以在你这台机器上干活，或者用上面的智能体，或者两样都行。",
-  grantSees: "对方在这台机器上做的一切你都看得见；它跑的命令是这台机器上真实的进程。",
-  lentTo: "已经授权给",
-  nobodyYet: "还没授权给谁。",
+  shareTitle: (machine) => `把 ${machine} 共享给别的账号`,
+  shareWhat: "共享出去，对方就能在这台机器上干活，也能用上面登录着的全部智能体，包括以后才登录上来的。",
+  shareSees: "对方在这台机器上做的一切你都看得见；它跑的命令是这台机器上真实的进程。只共享给信得过的人。",
+  sharedTo: "已经共享给",
+  shareGo: "共享",
+  shareAfter: "只想给一个智能体、不给机器？在机器页上那个登录旁边点「借给…」。",
+  lendTitle: (login, machine) => `把 ${machine} 上的 ${login} 借给别的账号`,
+  lendWhat: "借出去的只是这一个登录，不是机器：对方能和它说话、请它当同事，它替对方在对方自己的机器上干活。",
+  lendSees: "借出去的是这个登录的整个账号，订阅额度跟着一起用；它替对方干的一切都在你的这台机器上，你看得见、停得掉。只借给信得过的人。",
+  lentTo: "已经借给",
+  lendGo: "借出",
+  nobodyYet: "还没给谁。",
   to: "对方的账号",
   toHint: "对方在这个中枢上的账号名",
-  hands: "在上面干活",
-  handsWhat: "在这台机器上跑命令、读写文件",
-  agents: "用上面的智能体",
-  agentsWhat: "和住在这台机器上的智能体说话，在这里开新的对话",
-  grantGo: "授权",
-  change: "改好",
   takeBack: "收回",
-  trustTitle: (machine) => `信任 ${machine}`,
-  trustWhat: (owner) =>
-    `在它上面替你干活的会话，能去你的其它机器，就像你自己的电脑一样；你在它上面做的一切，它的主人 ${owner} 看得见。只信任你信得过它主人的机器。`,
-  trustGo: "信任它",
   relaysTitle: (machine) => `${machine} 经哪些转接站连中枢`,
   relaysWhat: "转接站是一个只转发到中枢的端口，比如另一台线路更好的机器上的 fastctx relay。这台机器按顺序先试这些地址，都不通再直连中枢；它读不到经过的内容。",
   relayLabel: "叫什么",
@@ -502,7 +544,7 @@ export const zhAccess: AccessWords = {
   relaysGo: "就这样连",
   removeTitle: (machine) => `移除 ${machine}`,
   removeWhat: (machine) =>
-    `${machine} 从中枢上除名：不再连这个中枢，它在这里登录的账号都随之退出，授权与信任一并作废。它身上的东西不会被删掉；要回来，得在它上面重新登录。`,
+    `${machine} 从中枢上除名：不再连这个中枢，它在这里登录的账号都随之退出，它的共享与借出一并作废。它身上的东西不会被删掉；要回来，得在它上面重新登录。`,
   removeGo: "移除它",
   reason: "原因",
   reasonDefault: "removed",
@@ -512,24 +554,21 @@ export const zhAccess: AccessWords = {
 };
 
 export const enAccess: AccessWords = {
-  grantTitle: (machine) => `Lend ${machine} to another account`,
-  grantWhat: "Another account on the same hub can work on this machine of yours, use the agents on it, or both.",
-  grantSees: "You see everything it does on this machine; the commands it runs are real processes here.",
+  shareTitle: (machine) => `Share ${machine} with another account`,
+  shareWhat: "Shared, it lets the other account work on this machine and use every agent logged in on it, including those that log in later.",
+  shareSees: "You see everything it does on this machine; the commands it runs are real processes here. Share only with people you trust.",
+  sharedTo: "Shared with",
+  shareGo: "Share",
+  shareAfter: "To give one agent and not the machine, press Lend… beside that login on the machines page.",
+  lendTitle: (login, machine) => `Lend ${login} on ${machine} to another account`,
+  lendWhat: "What is lent is this one login, not the machine: the other account can talk to it and ask it as a colleague, and it works for them on their own machines.",
+  lendSees: "It lends that login's whole account, its subscription's usage with it; everything it does for them happens on this machine of yours, where you see it and can stop it. Lend only to people you trust.",
   lentTo: "Lent to",
-  nobodyYet: "Lent to nobody yet.",
+  lendGo: "Lend it",
+  nobodyYet: "Given to nobody yet.",
   to: "Their account",
   toHint: "Their account's name on this hub",
-  hands: "Work on it",
-  handsWhat: "run commands and read and write files on this machine",
-  agents: "Use its agents",
-  agentsWhat: "talk to the agents that live on this machine, and open new conversations here",
-  grantGo: "Lend it",
-  change: "Change",
   takeBack: "Take back",
-  trustTitle: (machine) => `Trust ${machine}`,
-  trustWhat: (owner) =>
-    `Conversations working for you on it can go to your other machines, as from a computer of your own; ${owner}, who owns it, sees everything you do on it. Trust only machines whose owner you trust.`,
-  trustGo: "Trust it",
   relaysTitle: (machine) => `The relays ${machine} connects through`,
   relaysWhat: "A relay is a port that forwards only to the hub, such as fastctx relay on another machine with a better line. This machine tries them in order and goes straight to the hub when none answers; a relay cannot read what passes through it.",
   relayLabel: "Name",
@@ -544,7 +583,7 @@ export const enAccess: AccessWords = {
   relaysGo: "Connect this way",
   removeTitle: (machine) => `Remove ${machine}`,
   removeWhat: (machine) =>
-    `${machine} is taken off the hub: it no longer connects to it, every account it is logged in to there logs it out, and what was lent to it or trusted in it ends. Nothing on it is deleted; to come back it logs in again.`,
+    `${machine} is taken off the hub: it no longer connects to it, every account it is logged in to there logs it out, and what it shared and lent ends. Nothing on it is deleted; to come back it logs in again.`,
   removeGo: "Remove it",
   reason: "Reason",
   reasonDefault: "removed",
@@ -557,7 +596,9 @@ export interface AccountWords {
   title: string;
   hub: string;
   account: string;
-  admin: string;
+  level: Record<"super" | "member", string>;
+  /** On a member's page: what the super administrator may do. */
+  superNote(admin: string): string;
   thisOne: string;
   /** Who came into the account. */
   arrived(kind: string, name: string, at: string): string;
@@ -582,6 +623,16 @@ export interface AccountWords {
   invitePhone: string;
   inviteComputer: string;
   inviteServer: string;
+  /** The machines of others whose agents may reach the account's. */
+  reaching: string;
+  reachingWhat: string;
+  reachingNone: string;
+  reachingLine(machine: string, owner: string | null): string;
+  reachingSince(at: string): string;
+  stopReaching: string;
+  stopReachingTitle(machine: string): string;
+  stopReachingWhat(machine: string, owner: string | null): string;
+  stopReachingGo: string;
   projects: string;
   noProjects: string;
   sharedWith: string;
@@ -618,7 +669,8 @@ export const zhAccount: AccountWords = {
   title: "账号",
   hub: "中枢",
   account: "账号",
-  admin: "管理员",
+  level: { super: "超级管理员", member: "成员" },
+  superNote: (admin) => `这个中枢的超级管理员是 ${admin}：你的每一台机器，${admin} 都看得见、用得了。`,
   thisOne: "这台",
   arrived: (kind, name, at) => `${at}，账号里进来了${kind} ${name}`,
   me: "是我",
@@ -637,7 +689,7 @@ export const zhAccount: AccountWords = {
   removeDeviceTitle: (name) => `移除 ${name}`,
   removeDeviceWhat: (name, account, machine) =>
     machine
-      ? `${name} 是 ${account} 的机器。移除以后它从中枢上除名，不再连这个中枢，它在这里登录的账号都随之退出，授权与信任一并作废。它身上的东西不会被删掉。`
+      ? `${name} 是 ${account} 的机器。移除以后它从中枢上除名，不再连这个中枢，它在这里登录的账号都随之退出，它的共享与借出一并作废。它身上的东西不会被删掉。`
       : `${name} 退出 ${account}：它不能再以这个账号的身份看、说话或干活。它还登录着这个中枢上别的账号的话，那些照旧。`,
   removeDeviceGo: "移除",
   invite: "让别的设备进来",
@@ -645,6 +697,16 @@ export const zhAccount: AccountWords = {
   invitePhone: "一部手机",
   inviteComputer: "一台电脑",
   inviteServer: "一台 Linux 服务器",
+  reaching: "能访问你的机器的智能体",
+  reachingWhat: "你用过别人机器上的智能体，那台机器上的智能体就能访问你的机器，那台机器的主人因此也能。不再用了，就在这里拿掉。",
+  reachingNone: "还没有。你第一次用别人机器上的智能体时，那台机器会出现在这里。",
+  reachingLine: (machine, owner) => (owner ? `${owner} 的 ${machine} 上的智能体能访问你的机器` : `${machine} 上的智能体能访问你的机器`),
+  reachingSince: (at) => `${at} 起`,
+  stopReaching: "拿掉…",
+  stopReachingTitle: (machine) => `不让 ${machine} 上的智能体再访问你的机器`,
+  stopReachingWhat: (machine, owner) =>
+    `拿掉以后，${machine} 上替你干活的对话再去你的机器会被拒绝。你下次再用它上面的智能体，它又能访问你的机器。${owner ? `${owner} 那边` : "那台机器上"}什么都不会被删掉。`,
+  stopReachingGo: "拿掉",
   projects: "项目",
   noProjects: "这个账号还没有项目。",
   sharedWith: "共享给",
@@ -667,7 +729,7 @@ export const zhAccount: AccountWords = {
   logoutTitle: (login) => `从 ${login} 退出`,
   logoutWhat: (login, registered) =>
     registered
-      ? `这台电脑从 ${login} 退出，也不再是这个账号的机器：这个账号的智能体不能再住在这里、在这里干活，授权与信任一并作废。这台电脑上的东西不会被删掉。`
+      ? `这台电脑从 ${login} 退出，也不再是这个账号的机器：这个账号的智能体不能再住在这里、在这里干活，它的共享与借出一并作废。这台电脑上的东西不会被删掉。`
       : `这台设备从 ${login} 退出，不能再以这个账号的身份看和说话。`,
   logoutGo: "退出",
   adminPage: "管理这个中枢…",
@@ -683,7 +745,8 @@ export const enAccount: AccountWords = {
   title: "Account",
   hub: "Hub",
   account: "Account",
-  admin: "administrator",
+  level: { super: "super administrator", member: "member" },
+  superNote: (admin) => `${admin} is this hub's super administrator, and sees and may use every machine of yours.`,
   thisOne: "this one",
   arrived: (kind, name, at) => `${at}: the ${kind} ${name} came into the account`,
   me: "That was me",
@@ -702,7 +765,7 @@ export const enAccount: AccountWords = {
   removeDeviceTitle: (name) => `Remove ${name}`,
   removeDeviceWhat: (name, account, machine) =>
     machine
-      ? `${name} is a machine of ${account}. Removed, it is taken off the hub and no longer connects to it; every account it is logged in to there logs it out, and what was lent to it or trusted in it ends. Nothing on it is deleted.`
+      ? `${name} is a machine of ${account}. Removed, it is taken off the hub and no longer connects to it; every account it is logged in to there logs it out, and what it shared and lent ends. Nothing on it is deleted.`
       : `${name} logs out of ${account}: it can no longer look, talk or work as this account. Other accounts it is logged in to on this hub stay as they are.`,
   removeDeviceGo: "Remove",
   invite: "Let another device in",
@@ -710,6 +773,16 @@ export const enAccount: AccountWords = {
   invitePhone: "A phone",
   inviteComputer: "A computer",
   inviteServer: "A Linux server",
+  reaching: "Agents that can reach your machines",
+  reachingWhat: "Once you used an agent on another's machine, the agents on that machine can reach your machines, and so can its owner. Take it back here when you no longer use them.",
+  reachingNone: "None yet. The first time you use an agent on another's machine, that machine shows here.",
+  reachingLine: (machine, owner) => (owner ? `The agents on ${owner}'s ${machine} can reach your machines` : `The agents on ${machine} can reach your machines`),
+  reachingSince: (at) => `since ${at}`,
+  stopReaching: "Take back…",
+  stopReachingTitle: (machine) => `Stop the agents on ${machine} reaching your machines`,
+  stopReachingWhat: (machine, owner) =>
+    `Then conversations on ${machine} working for you are refused when they go to your machines. The next time you use an agent there, it can reach them again. Nothing ${owner ? `of ${owner}'s` : "on that machine"} is deleted.`,
+  stopReachingGo: "Take it back",
   projects: "Projects",
   noProjects: "This account has no projects yet.",
   sharedWith: "Shared with",
@@ -732,7 +805,7 @@ export const enAccount: AccountWords = {
   logoutTitle: (login) => `Log out of ${login}`,
   logoutWhat: (login, registered) =>
     registered
-      ? `This computer logs out of ${login} and is no longer one of its machines: the account's agents can no longer live or work here, and what was lent to it or trusted in it ends. Nothing on this computer is deleted.`
+      ? `This computer logs out of ${login} and is no longer one of its machines: the account's agents can no longer live or work here, and what it shared and lent ends. Nothing on this computer is deleted.`
       : `This device logs out of ${login} and can no longer look or talk as this account.`,
   logoutGo: "Log out",
   adminPage: "Manage this hub…",
@@ -752,7 +825,6 @@ export interface TokenWords {
   hints: Record<"phone" | "computer" | "server", string>;
   register: string;
   registerWhat: string;
-  mayNotRegister: string;
   name: string;
   nameHint: string;
   valid: string;
@@ -783,7 +855,6 @@ export const zhToken: TokenWords = {
   },
   register: "登记成这个账号的机器",
   registerWhat: "这个账号的智能体就能住在它上面、在上面干活；不勾就只登录。",
-  mayNotRegister: "这个账号不能登记机器，问中枢的管理员。",
   name: "它叫什么",
   nameHint: "小写字母、数字与连字符；不写就由它自己定",
   valid: "多久内有效",
@@ -830,7 +901,6 @@ export const enToken: TokenWords = {
   },
   register: "Register it as one of this account's machines",
   registerWhat: "Then the account's agents can live and work on it; unticked, it only logs in.",
-  mayNotRegister: "This account may not register machines; ask the hub's administrator.",
   name: "Its name",
   nameHint: "lowercase letters, digits and hyphens; left empty, it names itself",
   valid: "Valid for",
@@ -869,18 +939,22 @@ export const enToken: TokenWords = {
 export interface AdminWords {
   title: string;
   hub(name: string): string;
+  /** Being the super administrator: what it means, and handing it on. */
+  superPart: string;
+  superWhat: string;
+  transfer: string;
+  transferTitle: string;
+  transferWhat: string;
+  transferTo: string;
+  transferGo: string;
+  noOther: string;
   selfRegistration: string;
   selfRegistrationWhat: string;
   accounts: string;
   opened(at: string): string;
-  admin: string;
-  mayRegister: string;
+  superTag: string;
   locked: string;
   you: string;
-  makeAdmin: string;
-  unmakeAdmin: string;
-  allowRegister: string;
-  forbidRegister: string;
   lock: string;
   unlock: string;
   resetPassword: string;
@@ -893,14 +967,12 @@ export interface AdminWords {
   deleteGo: string;
   openAccount: string;
   openTitle: string;
+  openWhat: string;
   name: string;
   nameHint: string;
   password: string;
   passwordAgain: string;
   passwordsDiffer: string;
-  asAdmin: string;
-  asAdminWhat: string;
-  mayRegisterWhat: string;
   openGo: string;
   projects: string;
   owner: string;
@@ -917,18 +989,21 @@ export interface AdminWords {
 export const zhAdmin: AdminWords = {
   title: "管理中枢",
   hub: (name) => `中枢 ${name}`,
+  superPart: "超级管理员",
+  superWhat: "你是这个中枢的超级管理员：每一台机器你都能用，账号与中枢的设置都归你管。一个中枢只有一个超级管理员，可以交给另一个账号。",
+  transfer: "交给另一个账号…",
+  transferTitle: "把超级管理员交给另一个账号",
+  transferWhat: "交出去之后你就是成员：只能用自己的机器，和别人共享、借给你的东西，这一页也不再归你。对方从此能用这个中枢上的每一台机器。",
+  transferTo: "交给",
+  transferGo: "交出去",
+  noOther: "这个中枢上还没有别的账号可以交。",
   selfRegistration: "允许自己注册",
-  selfRegistrationWhat: "打开以后，任何够得着这个中枢的人都能自己开一个账号；新账号默认不是管理员。",
+  selfRegistrationWhat: "打开以后，任何够得着这个中枢的人都能自己开一个账号；自己注册来的都是成员。",
   accounts: "账号",
   opened: (at) => `${at} 开的`,
-  admin: "管理员",
-  mayRegister: "能登记机器",
+  superTag: "超级管理员",
   locked: "已锁定",
   you: "你",
-  makeAdmin: "设为管理员",
-  unmakeAdmin: "取消管理员",
-  allowRegister: "允许登记机器",
-  forbidRegister: "不许登记机器",
   lock: "锁定",
   unlock: "解锁",
   resetPassword: "重设口令…",
@@ -941,20 +1016,18 @@ export const zhAdmin: AdminWords = {
     [
       `删除 ${account} 不能撤回。`,
       machines.length ? `它名下的机器 ${machines.join("、")} 随之移除，不再连这个中枢。` : "它名下没有机器。",
-      "它授出去的与收到的授权一并作废。",
+      "它给出与收到的共享、借出一并作废。",
       projects.length ? `项目 ${projects.join("、")} 的账本挪进归档，一个字不删，可以交给另一个账号。` : "它没有项目。",
     ].join(""),
   deleteGo: "删除",
   openAccount: "开一个账号…",
   openTitle: "开一个账号",
+  openWhat: "开出来的账号都是成员：能登记自己的电脑、把机器共享出去、把智能体借出去、开项目。",
   name: "账号名",
   nameHint: "小写字母、数字与连字符，以字母开头",
   password: "口令",
   passwordAgain: "再输一遍口令",
   passwordsDiffer: "两遍口令不一样。",
-  asAdmin: "管理员",
-  asAdminWhat: "能管这一页的一切：开、锁、删账号，重设口令",
-  mayRegisterWhat: "电脑登录它时能登记成它的机器",
   openGo: "开账号",
   projects: "项目",
   owner: "属于",
@@ -962,7 +1035,7 @@ export const zhAdmin: AdminWords = {
   handTitle: (project) => `把项目 ${project} 交给另一个账号`,
   handWhat: "项目连同账本整个归到那个账号名下；它横跨的机器若不是那个账号能干活的，那个账号的智能体就进不去。",
   handGo: "交出去",
-  notAdmin: "这台设备登录的账号都不是管理员。",
+  notAdmin: "这台设备登录的账号都不是哪个中枢的超级管理员。",
   working: "稍等…",
   close: "关闭",
   failed: (why) => `没办成：${why}`,
@@ -971,18 +1044,21 @@ export const zhAdmin: AdminWords = {
 export const enAdmin: AdminWords = {
   title: "Manage the hub",
   hub: (name) => `Hub ${name}`,
+  superPart: "Super administrator",
+  superWhat: "You are this hub's super administrator: you may use every machine on it, and its accounts and settings are yours to manage. A hub has one, and you can hand it to another account.",
+  transfer: "Hand it to another account…",
+  transferTitle: "Hand being super administrator to another account",
+  transferWhat: "Once handed on, you are a member: you use your own machines and what others share and lend you, and this page is no longer yours. The other account may use every machine on this hub from then on.",
+  transferTo: "Hand to",
+  transferGo: "Hand it on",
+  noOther: "This hub has no other account to hand it to yet.",
   selfRegistration: "Anyone may open an account",
-  selfRegistrationWhat: "Then anyone who reaches this hub can open an account of their own; a new account is never an administrator.",
+  selfRegistrationWhat: "Then anyone who reaches this hub can open an account of their own; each is a member.",
   accounts: "Accounts",
   opened: (at) => `opened ${at}`,
-  admin: "administrator",
-  mayRegister: "may register machines",
+  superTag: "super administrator",
   locked: "locked",
   you: "you",
-  makeAdmin: "Make administrator",
-  unmakeAdmin: "No longer administrator",
-  allowRegister: "Let it register machines",
-  forbidRegister: "Stop it registering machines",
   lock: "Lock",
   unlock: "Unlock",
   resetPassword: "Reset the password…",
@@ -995,20 +1071,18 @@ export const enAdmin: AdminWords = {
     [
       `Deleting ${account} cannot be undone. `,
       machines.length ? `Its machines ${machines.join(", ")} are taken off the hub with it. ` : "No machine is registered under it. ",
-      "What it lent and was lent ends. ",
+      "What it shared and lent, and what was shared and lent to it, ends. ",
       projects.length ? `The projects ${projects.join(", ")} go to the archive whole, not a word lost, and can be handed to another account.` : "It has no projects.",
     ].join(""),
   deleteGo: "Delete",
   openAccount: "Open an account…",
   openTitle: "Open an account",
+  openWhat: "Every account opened is a member: it registers its own computers, shares its machines, lends its agents and opens projects.",
   name: "Account name",
   nameHint: "lowercase letters, digits and hyphens, starting with a letter",
   password: "Password",
   passwordAgain: "Password again",
   passwordsDiffer: "The two passwords differ.",
-  asAdmin: "Administrator",
-  asAdminWhat: "manages everything on this page: opens, locks and deletes accounts, resets passwords",
-  mayRegisterWhat: "a computer logging in to it may register as its machine",
   openGo: "Open it",
   projects: "Projects",
   owner: "Belongs to",
@@ -1016,7 +1090,7 @@ export const enAdmin: AdminWords = {
   handTitle: (project) => `Hand ${project} to another account`,
   handWhat: "The project, ledger and all, goes to that account. Where it spans machines that account cannot work on, that account's agents cannot go in.",
   handGo: "Hand it over",
-  notAdmin: "No account this device is logged in to is an administrator.",
+  notAdmin: "No account this device is logged in to is a hub's super administrator.",
   working: "Working…",
   close: "Close",
   failed: (why) => `Not done: ${why}`,

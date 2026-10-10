@@ -10,13 +10,11 @@
   height: 100%;
 }
 
-.settings,
-.machines-list {
+.settings {
   flex: 1;
 }
 
-.settings > *,
-.machines-list > * {
+.settings > * {
   width: var(--board);
   margin-left: auto;
   margin-right: auto;
@@ -57,111 +55,12 @@
   grid-column: 1 / -1;
 }
 
-/* Machines: each a short entry under its name, ruled from the next. */
-.machine-entries {
-  list-style: none;
-  padding: var(--space-2) 0 var(--space-12);
-}
-
-.machine-entry {
-  position: relative;
-  padding: var(--space-4) 0;
-}
-
-.machine-entry + .machine-entry::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -4px;
-  height: 8px;
-  background: var(--pen-rule);
-  opacity: 0.7;
-  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-}
-
-.machine-line {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.machine-entry .dot {
-  flex: none;
-  align-self: center;
-  width: 8px;
-  height: 8px;
-  margin-right: 2px;
-  border-radius: var(--radius-full);
-  background: var(--text-2);
-}
-
-.machine-entry.offline .dot,
-.machine-entry.unknown .dot,
-.machine-entry.revoked .dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.2px var(--text-3);
-}
-
-.machine-title {
-  margin: 0;
-  font-family: var(--font-emphasis);
-  font-weight: 400;
-  font-size: var(--size-h3);
-  line-height: var(--leading-heading);
-  color: var(--text-strong);
-}
-
-/* A machine named in the address is marked as with a highlighter. */
-.machine-entry.focused .machine-title {
-  position: relative;
-  isolation: isolate;
-}
-
-.machine-entry.focused .machine-title::before {
-  content: "";
-  position: absolute;
-  inset: 3px -6px 1px;
-  z-index: -1;
-  background: color-mix(in srgb, var(--pen-clay) var(--swash-strength), transparent);
-  -webkit-mask: var(--pen-swash) center / 100% 100% no-repeat;
-  mask: var(--pen-swash) center / 100% 100% no-repeat;
-}
-
-.machine-entry.offline .machine-title,
-.machine-entry.revoked .machine-title {
-  color: var(--text-2);
-}
-
-.machine-state {
-  margin-left: auto;
-  font-size: var(--size-small);
-  color: var(--text-3);
-  white-space: nowrap;
-}
-
-.machine-entry.offline .machine-state {
-  color: var(--caution);
-}
-
-.machine-facts,
-.machine-home,
 .machine-quiet,
 .machine-jobs {
   margin: var(--space-1) 0 0;
   padding-left: calc(8px + 2px + var(--space-2));
   font-size: var(--size-small);
   color: var(--text-3);
-}
-
-.machine-home code {
-  margin-left: var(--space-2);
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  color: var(--text-2);
-  overflow-wrap: anywhere;
 }
 
 .machine-agents {
@@ -180,16 +79,16 @@
   min-height: 28px;
   padding: 2px 10px 2px 9px;
   border-radius: var(--radius-full);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: var(--fill);
   color: var(--text-2);
   font-size: var(--size-ui);
   text-decoration: none;
-  transition: color var(--hover) ease, box-shadow var(--hover) ease;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
 }
 
 .machine-agents a:hover {
   color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--rule);
+  background: var(--fill-strong);
 }
 
 .machine-acts {
@@ -199,7 +98,6 @@
   transition: opacity var(--hover) ease;
 }
 
-.machine-entry:hover .machine-acts,
 .machine-acts:focus-within {
   opacity: 1;
 }
@@ -290,57 +188,6 @@
   padding-bottom: var(--space-12);
 }
 
-.welcome-paths {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.welcome-paths li + li {
-  position: relative;
-}
-
-.welcome-paths li + li::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -4px;
-  height: 8px;
-  background: var(--pen-rule);
-  opacity: 0.7;
-  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-}
-
-.welcome-path {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  margin: 0 calc(-1 * var(--space-3));
-  padding: var(--space-4) var(--space-3);
-  border-radius: var(--radius-m);
-  box-sizing: content-box;
-  transition: background-color var(--hover) ease;
-}
-
-.welcome-path:hover {
-  background: var(--hairline);
-}
-
-.welcome-path-title {
-  font-family: var(--font-emphasis);
-  font-size: var(--size-h3);
-  color: var(--text-strong);
-}
-
-.welcome-path-what {
-  font-size: var(--size-ui);
-  line-height: var(--leading-prose);
-  color: var(--text-2);
-}
-
 .welcome-form-title {
   margin: 0;
   font-family: var(--font-emphasis);
@@ -355,13 +202,6 @@
   align-items: center;
   justify-content: space-between;
   margin-top: var(--space-5);
-}
-
-.welcome-steps {
-  margin: var(--space-4) 0 0;
-  padding-left: 1.4em;
-  font-size: var(--size-ui);
-  line-height: var(--leading-prose);
 }
 
 .welcome-kept {
@@ -512,8 +352,6 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding-left: var(--space-3);
-  border-left: 1px solid var(--hairline);
   font-size: var(--size-small);
   color: var(--text-3);
 }
@@ -537,7 +375,7 @@
 .home-plan {
   padding: 0 6px;
   border-radius: var(--radius-full);
-  box-shadow: inset 0 0 0 1px var(--rule);
+  background: var(--fill-strong);
   font-size: calc(var(--size-small) - 1px);
   line-height: 1.55;
   color: var(--text-3);
@@ -664,17 +502,11 @@
   border: 0;
   border-radius: var(--radius-s);
   outline: 0;
-  background: var(--bg);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: var(--field);
   color: var(--text);
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
   font-size: var(--size-code);
-  transition: box-shadow var(--hover) ease;
-}
-
-.home-add-dir:focus {
-  box-shadow: inset 0 0 0 1px var(--focus);
 }
 
 .home-add-dir::placeholder {
@@ -702,7 +534,8 @@
   min-width: 1.6em;
   padding: 1px 6px;
   border-radius: var(--radius-s);
-  box-shadow: inset 0 0 0 1px var(--rule), inset 0 -1px 0 var(--rule);
+  background: var(--fill-strong);
+  box-shadow: inset 0 -1px 0 var(--rule);
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
   font-size: var(--size-small);
@@ -884,7 +717,7 @@ a.details-job {
 /* Each page a sheet of paper on the desk: its own white, a soft edge. */
 .reader-pdf .world-pdf-page {
   border-radius: var(--radius-s);
-  box-shadow: 0 0 0 1px var(--hairline), 0 6px 18px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
 }
 
 .reader-pdf .world-pdf-pages {
@@ -918,7 +751,6 @@ a.details-job {
   max-width: 100%;
   height: auto;
   border-radius: var(--radius-m);
-  box-shadow: 0 0 0 1px var(--hairline);
 }
 
 /* On a phone, scanning the computer's QR code is the way in: one wide
@@ -933,7 +765,7 @@ a.details-job {
   margin: var(--space-2) 0 var(--space-4);
   border-radius: var(--radius-m);
   background: var(--accent-wash);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-wash);
   color: var(--text-strong);
   font-size: var(--size-ui);
   transition: background-color var(--hover) ease;
@@ -946,7 +778,6 @@ a.details-job {
 .scan-code .glyph {
   color: var(--accent);
 }
-
 
 /* Who came into an account lately: each a line saying who and when, with
    what can be done about it, until it is seen. */
@@ -987,11 +818,3 @@ a.details-job {
   color: var(--wrong);
 }
 
-/* What an account may do on a machine, or whom its owner lent it to,
-   under its facts. */
-.machine-standing {
-  margin: var(--space-1) 0 0;
-  padding-left: calc(8px + 2px + var(--space-2));
-  font-size: var(--size-small);
-  color: var(--text-2);
-}

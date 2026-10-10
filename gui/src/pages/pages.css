@@ -40,8 +40,7 @@
   margin: 0 var(--gutter) var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-m);
-  background: var(--bg-elevated);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  background: var(--fill);
   font-size: var(--size-ui);
   color: var(--text-2);
 }

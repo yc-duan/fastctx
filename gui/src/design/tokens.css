@@ -2,6 +2,11 @@
    interface uses comes from here; components never write a colour, a size
    or a duration of their own.
 
+   Boxes are solid: a pill, a field, a card is a fill a shade off the
+   paper, never a line drawn round it (the user's taste, 2026-10-10); a
+   field keeps one fill whether pointed at, pressed or typed in. Lines on
+   the page are the pen's: ruled across, down a margin.
+
    Colour is by role. The three themes are the user's own, from incipit,
    value for value, and the terminal interface takes the same ones
    (`crates/fastctx-tui/src/design.rs`): warm black, the default dark; ink
@@ -104,6 +109,11 @@
   --hairline: rgba(245, 242, 232, 0.1);
   --divider: rgba(245, 242, 232, 0.06);
   --rule: rgba(245, 242, 232, 0.16);
+  /* Solid boxes: a quiet fill, a stronger one under the pointer, and the
+     well a field is typed into. */
+  --fill: rgba(245, 242, 232, 0.06);
+  --fill-strong: rgba(245, 242, 232, 0.1);
+  --field: rgba(0, 0, 0, 0.2);
 
   --add-fg: #7cb27c;
   --add-line: #23863633;
@@ -161,6 +171,9 @@
   --hairline: rgba(255, 255, 255, 0.1);
   --divider: rgba(255, 255, 255, 0.08);
   --rule: rgba(255, 255, 255, 0.16);
+  --fill: rgba(255, 255, 255, 0.065);
+  --fill-strong: rgba(255, 255, 255, 0.11);
+  --field: rgba(0, 0, 0, 0.35);
 
   --add-fg: #7cb27c;
   --add-line: #23863633;
@@ -213,6 +226,9 @@
   --hairline: rgba(60, 55, 40, 0.1);
   --divider: rgba(60, 55, 40, 0.06);
   --rule: rgba(60, 55, 40, 0.16);
+  --fill: rgba(60, 55, 40, 0.055);
+  --fill-strong: rgba(60, 55, 40, 0.095);
+  --field: rgba(60, 55, 40, 0.06);
 
   --add-fg: #1c9c1c;
   --add-line: #dafbe180;

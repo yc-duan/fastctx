@@ -1,7 +1,9 @@
 // Accounts on the hubs this computer uses, as the shell hands them over
-// (`fastctx_types::accounts`, `::access`): who may use which machine, which
-// machines an account trusts, the devices logged in, the projects, and who
-// came into an account lately. Serialized replies, before any presentation.
+// (`fastctx_types::accounts`, `::access`): each account's level, the
+// machines shared and the agents' logins lent between accounts, the
+// machines of others whose agents may reach an account's machines, the
+// devices logged in, the projects, and who came into an account lately.
+// Serialized replies, before any presentation.
 
 import type { LinkState } from "./world";
 import type { MachineName, Timestamp, TownName } from "./wire";
@@ -10,7 +12,9 @@ export type AccountName = string;
 export type HubName = string;
 export type HubId = string;
 
-/** What an account may do on a machine (`fastctx_types::access::Rights`). */
+/** What an account may do on a machine (`fastctx_types::access::Rights`):
+ *  work on it, which brings every agent there; or use only the logins lent
+ *  to it there. */
 export interface Rights {
   hands: boolean;
   agents: boolean;
@@ -32,10 +36,12 @@ export interface Relay {
   addresses: string[];
 }
 
+/** What an account is on its hub: the one super administrator, or a member. */
+export type Level = "super" | "member";
+
 export interface AccountSeen {
   name: AccountName;
-  admin: boolean;
-  may_register: boolean;
+  level: Level;
   locked: boolean;
   opened: Timestamp;
 }
@@ -55,15 +61,28 @@ export interface MemberSeen {
   key: string;
 }
 
-export interface GrantSeen {
+/** A machine shared with an account: working on it and every agent there. */
+export interface ShareSeen {
   machine: MachineName;
   account: AccountName;
-  rights: Rights;
 }
 
-export interface TrustSeen {
-  account: AccountName;
+/** One login of an agent on a machine, lent to an account. */
+export interface LendSeen {
   machine: MachineName;
+  account: AccountName;
+  agent: string;
+  /** The login's directory as that machine writes it; null for the
+   *  agent's default login there. */
+  home: string | null;
+}
+
+/** A machine of another whose agents may reach an account's machines,
+ *  since the account first used one of them. */
+export interface ActingSeen {
+  machine: MachineName;
+  account: AccountName;
+  since: Timestamp;
 }
 
 export interface ProjectSeen {
@@ -91,8 +110,9 @@ export interface HubAccounts {
   self_registration: boolean;
   accounts: AccountSeen[];
   members: MemberSeen[];
-  grants: GrantSeen[];
-  trust: TrustSeen[];
+  shares: ShareSeen[];
+  lends: LendSeen[];
+  acting: ActingSeen[];
   projects: ProjectSeen[];
   arrivals: Arrival[];
 }
@@ -104,15 +124,17 @@ export interface AccountsReply {
 
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
-  | { change: "grant"; machine: MachineName; to: AccountName; rights: Rights }
-  | { change: "trust"; machine: MachineName; trusted: boolean }
+  | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
+  | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home?: string; lent: boolean }
+  | { change: "stop_acting"; machine: MachineName }
   | { change: "relays"; machine: MachineName; relays: Relay[] }
   | { change: "remove"; name: MachineName; reason: string }
   | { change: "logout" }
   | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp }
   | { change: "set_password"; target: AccountName; password: string }
-  | { change: "open_account"; name: AccountName; admin: boolean; may_register: boolean; password: string }
-  | { change: "set_account"; name: AccountName; admin: boolean; may_register: boolean; locked: boolean }
+  | { change: "open_account"; name: AccountName; password: string }
+  | { change: "set_account"; name: AccountName; locked: boolean }
+  | { change: "transfer"; to: AccountName }
   | { change: "delete_account"; name: AccountName }
   | { change: "settings"; self_registration: boolean }
   | { change: "share_project"; town: TownName; with: AccountName; shared: boolean }

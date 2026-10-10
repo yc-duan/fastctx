@@ -53,22 +53,42 @@ export interface ShellWords {
 
 export interface NewTalkWords {
   title: string;
-  machine: string;
+  /** Which agent, as one of its logins; and choosing another than the one
+   *  chosen. */
+  agent: string;
+  another: string;
+  /** The agents' groups: on the user's own machines, on machines of
+   *  others they may work on (all shared with them, or not), lent. */
+  mine: string;
+  others(allShared: boolean): string;
+  lent: string;
+  ownedBy(owner: string): string;
+  noAgents: string;
+  /** A login lent, which its machine does not list. */
+  lentGone: string;
+  /** A login whose usage window is spent goes on with credits. */
+  onCredits: string;
   /** Which account it works for. */
   account: string;
   worksOn: string;
   sameMachine: string;
+  /** Why a lent agent is asked no machine to work on. */
+  lentWorks(owner: string): string;
+  /** The first use of an agent on another's machine: what it lets that
+   *  machine do; `everything` for the super administrator. */
+  reaches(owner: string, machine: string, everything: boolean): string;
   colleagues: string;
   noColleagues: string;
+  /** A machine whose Codex was lent to the account. */
+  lentBy(owner: string): string;
   /** What choosing where colleagues live means. */
   colleaguesWhat(machine: string): string;
-  /** Why it must work on another machine than the one it lives on. */
-  lentOnly(machine: string): string;
-  agent: string;
-  /** Which of the agent's logins there, where it has several; and the
-   *  Codex login its colleagues use where they live. */
-  login: string;
+  /** The Codex login its colleagues use where they live. */
   colleaguesLogin: string;
+  /** Where a lent agent's files other than images go. */
+  filesOn: string;
+  filesOnWhat: string;
+  noFilePlace: string;
   project: string;
   noProject: string;
   here: string;
@@ -101,17 +121,32 @@ export interface NewTalkWords {
 
 export const zhNewTalk: NewTalkWords = {
   title: "新对话",
-  machine: "住在哪台",
+  agent: "用哪个智能体",
+  another: "换一个…",
+  mine: "我的机器",
+  others: (allShared) => (allShared ? "共享给我的" : "别人的机器"),
+  lent: "借给我的",
+  ownedBy: (owner) => `${owner} 的`,
+  noAgents: "上面没找到能用的智能体",
+  lentGone: "那台机器上找不到这个登录了",
+  onCredits: "在用 credits",
   account: "替哪个账号",
   worksOn: "在哪台干活",
   sameMachine: "同一台",
+  lentWorks: (owner) =>
+    `这个智能体借自 ${owner}，跑在 ${owner} 的机器上，却碰不到那台电脑：它的每条命令都会写明去你的哪台机器，所以这里不用替它选在哪台干活。`,
+  reaches: (owner, machine, everything) =>
+    everything
+      ? `这是你第一次用 ${machine} 上的智能体。你是超级管理员：用了它，${machine} 上的智能体就能访问这个中枢上的每一台机器，而 ${machine} 归 ${owner}，等于 ${owner} 也能。以后可以在账号页上拿掉。`
+      : `这是你第一次用 ${machine} 上的智能体。用了它，${machine} 上的智能体就能访问你的机器，而 ${machine} 归 ${owner}，等于 ${owner} 也能。只用信得过的人的智能体；以后可以在账号页上拿掉。`,
   colleagues: "同事住哪台",
   noColleagues: "不请同事",
+  lentBy: (owner) => `借自 ${owner}`,
   colleaguesWhat: (machine) => `它能请同事来分担活儿，同事是住在 ${machine} 上的 Codex；以后在对话的详情里也能改、能关掉。`,
-  lentOnly: (machine) => `这个账号在 ${machine} 上只能用智能体、不能干活，所以对话要在另一台它能干活的机器上干活。`,
-  agent: "用哪一位",
-  login: "用哪个登录",
   colleaguesLogin: "同事用哪个登录",
+  filesOn: "文件放在",
+  filesOnWhat: "图片放在它所在的那台，它用眼睛看；别的文件放进你选的这台，它在那里用命令处理。",
+  noFilePlace: "你还没有能放文件的机器",
   project: "进哪个项目",
   noProject: "不进项目",
   here: "这台",
@@ -139,17 +174,32 @@ export const zhNewTalk: NewTalkWords = {
 
 export const enNewTalk: NewTalkWords = {
   title: "New conversation",
-  machine: "Lives on",
+  agent: "Which agent",
+  another: "Choose another…",
+  mine: "My machines",
+  others: (allShared) => (allShared ? "Shared with me" : "Others' machines"),
+  lent: "Lent to me",
+  ownedBy: (owner) => `${owner}'s`,
+  noAgents: "no agent found that can start",
+  lentGone: "that machine no longer has this login",
+  onCredits: "on credits",
   account: "Works for",
   worksOn: "Works on",
   sameMachine: "the same one",
+  lentWorks: (owner) =>
+    `This agent is lent by ${owner} and runs on ${owner}'s machine, which it cannot touch: each of its commands names one of your machines, so there is no machine to choose for it here.`,
+  reaches: (owner, machine, everything) =>
+    everything
+      ? `This is the first time you use an agent on ${machine}. You are the super administrator: once you do, the agents on ${machine} can reach every machine on this hub, and ${machine} is ${owner}'s, so ${owner} can too. You can take that back on the account page.`
+      : `This is the first time you use an agent on ${machine}. Once you do, the agents on ${machine} can reach your machines, and ${machine} is ${owner}'s, so ${owner} can too. Use only agents of people you trust; you can take that back on the account page.`,
   colleagues: "Colleagues on",
   noColleagues: "no colleagues",
+  lentBy: (owner) => `lent by ${owner}`,
   colleaguesWhat: (machine) => `It can ask colleagues to share the work: Codex living on ${machine}. You can change or turn this off later in the conversation's details.`,
-  lentOnly: (machine) => `This account may use the agents on ${machine} but not work on it, so the conversation works on another machine the account works on.`,
-  agent: "With whom",
-  login: "Signed in as",
   colleaguesLogin: "Colleagues as",
+  filesOn: "Files go to",
+  filesOnWhat: "Pictures stay where it runs, for it to look at; other files go to the machine you choose, where it works on them with commands.",
+  noFilePlace: "You have no machine to put files on yet",
   project: "In which project",
   noProject: "No project",
   here: "this one",
@@ -569,6 +619,12 @@ export interface DetailsWords {
   /** The choice of the machine it lives on. */
   livesHere(machine: string): string;
   worksOnSet(machine: string, lives: boolean): string;
+  /** An agent lent to the user: who lent it, and that it works on no
+   *  machine by default. */
+  lentBy: string;
+  worksLent: string;
+  /** A machine colleagues may live on whose Codex is lent. */
+  colleagueLent(owner: string): string;
   actingFor: string;
   separator: string;
   /** Where its colleagues live, when it may ask for them. */
@@ -655,6 +711,9 @@ export const zhDetails: DetailsWords = {
   colleagues: "同事",
   worksOn: "在哪台干活",
   worksOnLives: "就在它住的那台：它的命令从那里开始",
+  lentBy: "借自",
+  worksLent: "借来的智能体碰不到它所在的那台电脑，也没有默认干活的机器：它的每条命令都写明去你的哪台机器。",
+  colleagueLent: (owner) => `借自 ${owner}`,
   worksOnThere: (machine) => `在 ${machine}：它的命令从那里开始，它住的那台用 on 去`,
   changeWorksOn: "改…",
   livesHere: (machine) => `它住的那台（${machine}）`,
@@ -738,6 +797,9 @@ export const enDetails: DetailsWords = {
   colleagues: "Colleagues",
   worksOn: "Works on",
   worksOnLives: "the machine it lives on: its commands start there",
+  lentBy: "Lent by",
+  worksLent: "An agent lent to you cannot touch the computer it runs on and works on no machine by default: each of its commands names one of your machines.",
+  colleagueLent: (owner) => `lent by ${owner}`,
   worksOnThere: (machine) => `${machine}: its commands start there, and it reaches the machine it lives on with on`,
   changeWorksOn: "Change…",
   livesHere: (machine) => `where it lives (${machine})`,

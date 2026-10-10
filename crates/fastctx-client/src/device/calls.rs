@@ -69,9 +69,9 @@ impl Device {
             }
             Call::ClaudeConsent { machine, accept, home } => (machine, RemoteCall::ClaudeConsent { accept, home }, None),
             Call::Homes { machine, change } => (machine, RemoteCall::Homes { change }, None),
-            Call::Talk { to, machine, text, attachments } => {
+            Call::Talk { to, machine, text, attachments, files_on } => {
                 let machine = self.find(&to, machine).await?;
-                (machine, RemoteCall::Talk { to: to.clone(), text, attachments }, Some(to))
+                (machine, RemoteCall::Talk { to: to.clone(), text, attachments, files_on }, Some(to))
             }
             Call::Open { agent, town, node, text, model, reasoning_effort, attachments, choices } => {
                 let machine =
@@ -88,6 +88,7 @@ impl Device {
                     colleagues: choices.colleagues,
                     home: choices.home,
                     colleagues_home: choices.colleagues_home,
+                    files_on: choices.files_on,
                 };
                 (machine, open, None)
             }

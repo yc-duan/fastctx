@@ -1,9 +1,9 @@
 // Letting another device into an account (`world-network.md`, 登录与入网): a
 // one-time token, valid an hour, a day or three. A phone scans it as a QR
 // code; a computer pastes it, registering as one of the account's machines
-// when the account may register them; a Linux server runs one line that
-// installs fastctx and logs in with it. The token is shown once and goes
-// nowhere else.
+// unless told only to log in; a Linux server runs one line that installs
+// fastctx and logs in with it. The token is shown once and goes nowhere
+// else.
 
 import qrcode from "qrcode-generator";
 import { glyph } from "../conversation/glyphs";
@@ -21,8 +21,6 @@ export interface TokensOptions {
   token(login: Login, kind: "phone" | "computer", register: boolean, name: string | null, hours: number): Promise<string>;
   /** The line a server runs, registering it as `login`'s machine. */
   server(login: Login, name: string | null, hours: number): Promise<string>;
-  /** Whether `login`'s account may register machines. */
-  mayRegister(login: Login): boolean;
   /** A moment as the interface says it. */
   when(at: Date): string;
 }
@@ -110,7 +108,6 @@ export class Tokens {
   private draw(): void {
     const { words } = this.options;
     const login = this.login!;
-    const registers = this.options.mayRegister(login);
     const choices = (label: string, attribute: string, items: string[], chosen: string, title: (item: string) => string) =>
       `<div class="choice-options" role="radiogroup" aria-label="${escape(label)}">${items
         .map(
@@ -118,18 +115,16 @@ export class Tokens {
             `<button type="button" class="choice${item === chosen ? " chosen" : ""}" role="radio" aria-checked="${item === chosen}" ${attribute}="${escape(item)}">${escape(title(item))}</button>`,
         )
         .join("")}</div>`;
-    const kinds: TokenKind[] = registers ? ["phone", "computer", "server"] : ["phone", "computer"];
-    if (!kinds.includes(this.kind)) this.kind = "phone";
+    const kinds: TokenKind[] = ["phone", "computer", "server"];
     // A name is the one a registered machine takes; a phone names itself.
-    const named = this.kind === "server" || (this.kind === "computer" && registers && this.register);
+    const named = this.kind === "server" || (this.kind === "computer" && this.register);
     this.sheet.body.innerHTML = `
       ${this.sheet.head(words.title(loginLabel(login)), words.close)}
       <div class="field"><span class="field-label">${escape(words.what)}</span>
         ${choices(words.what, "data-kind", kinds, this.kind, (kind) => words.kinds[kind as TokenKind])}
-        <span class="field-hint">${escape(words.hints[this.kind])}</span>
-        ${registers ? "" : `<span class="field-hint">${escape(words.mayNotRegister)}</span>`}</div>
+        <span class="field-hint">${escape(words.hints[this.kind])}</span></div>
       ${
-        this.kind === "computer" && registers
+        this.kind === "computer"
           ? `<label class="check-row"><input type="checkbox" name="register"${this.register ? " checked" : ""}><span><span class="check-title">${escape(words.register)}</span><span class="field-hint">${escape(words.registerWhat)}</span></span></label>`
           : ""
       }
@@ -157,7 +152,7 @@ export class Tokens {
     const name = sheet.body.querySelector<HTMLInputElement>("[name=name]")?.value.trim() || null;
     const kind = this.kind;
     const hours = this.hours;
-    const register = kind === "computer" && this.options.mayRegister(login) && this.register;
+    const register = kind === "computer" && this.register;
     sheet.busy = true;
     go.disabled = true;
     go.textContent = words.making;

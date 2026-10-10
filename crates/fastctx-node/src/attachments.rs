@@ -2,7 +2,9 @@
 //! A session that works on another machine is given its files other than
 //! images there (`world-gui.md`): each is placed on that machine, beside the
 //! session's other things there, while the upload kept where it lives stays
-//! the conversation's record.
+//! the conversation's record. Where the user chose a machine for them, they
+//! go there instead; an agent lent to the account works on no machine, so
+//! for it the user must choose one.
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -456,25 +458,50 @@ struct Need {
 /// on, where its commands handle them. A copy placed there before is placed
 /// again from the upload kept here, and so is one placed on a machine it no
 /// longer works on.
-pub async fn place(node: &Arc<Node>, resident: &ResidentId, attachments: Vec<Attachment>) -> Result<Vec<Attachment>, Failure> {
+pub async fn place(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    attachments: Vec<Attachment>,
+    files_on: Option<&Written>,
+) -> Result<Vec<Attachment>, Failure> {
     if attachments.is_empty() {
         return Ok(attachments);
     }
-    let works_on = crate::here::elsewhere(node, resident);
+    let lent = crate::here::lent(node, resident);
+    // Where they go: where the user chose, else where it works when that is
+    // another machine, else here; a lent agent cannot reach here.
+    let goes_to = match files_on {
+        Some(files_on) if node.is_here(files_on) && lent => {
+            return Err(Failure::not_run(format!(
+                "{files_on} is the computer this agent runs on, which it cannot reach; choose one of your machines for the files"
+            )));
+        }
+        Some(files_on) if node.is_here(files_on) => None,
+        Some(files_on) => Some(files_on.clone()),
+        None => crate::here::elsewhere(node, resident),
+    };
     let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
     let mut given = Vec::with_capacity(attachments.len());
     for attachment in &attachments {
         let kept = kept_here(node, resident, attachment)?;
-        given.push(match &works_on {
-            Some(works_on) if !kept.is_image() => send_placed(node, &acting, works_on, resident, kept).await?,
-            _ => kept,
+        given.push(match &goes_to {
+            _ if kept.is_image() => kept,
+            Some(goes_to) => send_placed(node, &acting, goes_to, resident, kept).await?,
+            None if lent && files_on.is_none() => {
+                return Err(Failure::not_run(format!(
+                    "{} cannot stay where this agent runs, a computer it cannot reach; choose one of your machines for the files",
+                    kept.file.name
+                )));
+            }
+            None => kept,
         });
     }
     Ok(given)
 }
 
-/// Places `kept`, an upload of `resident` kept here, on `works_on`, for
-/// whom it works; answers the copy there.
+/// Places `kept`, an upload of `resident` kept here, on `works_on`, where
+/// it works or where the user chose, for whom it works; answers the copy
+/// there.
 async fn send_placed(
     node: &Arc<Node>,
     acting: &Acting,
@@ -501,9 +528,7 @@ async fn send_placed(
             })
         })
     };
-    let refused = |why: String| {
-        Failure::new(format!("{} goes to {works_on}, where the session works, and did not get there: {why}", kept.file.name))
-    };
+    let refused = |why: String| Failure::new(format!("{} goes to {works_on} and did not get there: {why}", kept.file.name));
     let mine = Address { machine: works_on.name.clone(), resident: resident.clone() };
     match node.call_with_stream(acting, works_on, Purpose::Hands, call, feed).await {
         Ok(Ok(RemoteReply::Uploaded(placed))) if placed.id == kept.id && placed.file == kept.file && placed.owner == mine => {

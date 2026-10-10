@@ -24,8 +24,13 @@
             "accounts": [
               {
                 "name": "ada",
-                "admin": true,
-                "may_register": true,
+                "level": "super",
+                "locked": false,
+                "opened": "2026-10-09T08:30:00Z"
+              },
+              {
+                "name": "bo",
+                "level": "member",
                 "locked": false,
                 "opened": "2026-10-09T08:30:00Z"
               }
@@ -67,20 +72,31 @@
                 "key": "4f2a91aa"
               }
             ],
-            "grants": [
+            "shares": [
               {
                 "machine": "desktop",
-                "account": "bo",
-                "rights": {
-                  "hands": true,
-                  "agents": false
-                }
+                "account": "bo"
               }
             ],
-            "trust": [
+            "lends": [
               {
+                "machine": "desktop",
+                "account": "cy",
+                "agent": "codex",
+                "home": null
+              },
+              {
+                "machine": "gpu",
                 "account": "ada",
-                "machine": "gpu"
+                "agent": "claude",
+                "home": "/home/bo/.claude-team"
+              }
+            ],
+            "acting": [
+              {
+                "machine": "gpu",
+                "account": "ada",
+                "since": "2026-10-09T08:30:00Z"
               }
             ],
             "projects": [
@@ -111,18 +127,22 @@
     ],
     "changes": [
       {
-        "change": "grant",
+        "change": "share",
         "machine": "desktop",
         "to": "bo",
-        "rights": {
-          "hands": false,
-          "agents": true
-        }
+        "shared": true
       },
       {
-        "change": "trust",
-        "machine": "gpu",
-        "trusted": true
+        "change": "lend",
+        "machine": "desktop",
+        "to": "cy",
+        "agent": "codex",
+        "home": "C:/Users/ada/.codex-work",
+        "lent": true
+      },
+      {
+        "change": "stop_acting",
+        "machine": "gpu"
       },
       {
         "change": "relays",
@@ -159,16 +179,16 @@
       {
         "change": "open_account",
         "name": "bo",
-        "admin": false,
-        "may_register": true,
         "password": "fixture"
       },
       {
         "change": "set_account",
         "name": "bo",
-        "admin": false,
-        "may_register": false,
         "locked": true
+      },
+      {
+        "change": "transfer",
+        "to": "bo"
       },
       {
         "change": "delete_account",

@@ -1,0 +1,499 @@
+/* The machines page: the account's World drawn by hand, and beside it
+   what is known of the one pointed at. On a wide screen the drawing fills
+   the left and the panel stands at the right; on a narrow one the drawing
+   sits above and the panel scrolls under it. Nothing is outlined: the
+   panel is a quiet fill, each login on it a slip of paper laid on that. */
+
+.machines-page {
+  container: machines / inline-size;
+}
+
+.machines-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  gap: var(--space-4);
+  padding: 0 var(--gutter) var(--gutter);
+}
+
+/* The drawing, as the front page's, but every hub and machine is a
+   button. */
+.network-map {
+  position: relative;
+  min-width: 0;
+  min-height: 300px;
+  margin: 0;
+}
+
+.map-drawing,
+.map-drawing svg,
+.map-marks,
+.map-marks svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.map-marks {
+  pointer-events: none;
+}
+
+.network-map .paper path {
+  fill: var(--pen-graphite);
+}
+
+.network-map .paper .minor {
+  opacity: 0.14;
+}
+
+.network-map .paper .major {
+  opacity: 0.26;
+}
+
+.network-map .ink {
+  mix-blend-mode: var(--pen-blend);
+}
+
+.network-map .graphite {
+  fill: var(--pen-graphite);
+  opacity: 0.9;
+}
+
+.network-map .graphite .second {
+  opacity: 0.45;
+}
+
+.network-map .dry {
+  fill: var(--pen-graphite);
+  opacity: 0.5;
+}
+
+.network-map .clay {
+  fill: var(--pen-clay);
+}
+
+.network-map .flow {
+  fill: none;
+  stroke: var(--pen-clay);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-dasharray: 3 14 6 11;
+  animation: pen-flow 2.8s linear infinite;
+}
+
+.map-drawing.arriving .paper {
+  animation: paper-in 0.6s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.map-drawing.arriving .ink,
+.map-drawing.arriving .flows {
+  animation: paper-in 0.9s cubic-bezier(0.33, 1, 0.68, 1) 0.25s both;
+}
+
+/* The circle round the one chosen is drawn in as a hand circles a word. */
+.map-marks .clay path {
+  animation: paper-in 0.35s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.map-labels {
+  position: absolute;
+  inset: 0;
+}
+
+.map-hub,
+.map-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  max-width: 13em;
+  padding: 3px 7px;
+  border-radius: var(--radius-s);
+  /* The paper shows through a little, so a line passing under a name
+     does not run through its letters. */
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  line-height: 1.25;
+  text-align: inherit;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  transition: background-color var(--hover) ease;
+}
+
+.map-hub {
+  align-items: center;
+}
+
+.map-node.start {
+  align-items: flex-start;
+  transform: translate(0, -50%);
+}
+
+.map-node.middle {
+  align-items: center;
+}
+
+.map-node.end {
+  align-items: flex-end;
+  transform: translate(-100%, -50%);
+}
+
+.map-hub:hover,
+.map-node:hover,
+.map-hub:focus-visible,
+.map-node:focus-visible {
+  outline: 0;
+  background: color-mix(in srgb, var(--text) 7%, var(--bg));
+}
+
+.map-labels .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  font-family: var(--font-emphasis);
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.map-hub .name {
+  font-family: var(--font-reading);
+  font-size: var(--size-small);
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+
+.map-labels .sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.map-labels .chosen .name {
+  color: var(--text-strong);
+}
+
+.map-labels .lost .name {
+  color: var(--text-3);
+}
+
+.map-node.hold-lent .sub {
+  color: var(--accent);
+}
+
+/* Over each ring, a round button the size of the ring; pointed at, a soft
+   disc of fill comes up under the ink. */
+.map-ring {
+  position: absolute;
+  border-radius: var(--radius-full);
+  transform: translate(-50%, -50%);
+  transition: background-color var(--hover) ease;
+}
+
+.map-ring:hover {
+  background: var(--fill);
+}
+
+/* What is known of the one pointed at. */
+.machine-panel {
+  min-height: 0;
+  padding: var(--space-5);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px var(--space-2);
+}
+
+.panel-head .dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.panel-head.offline .dot,
+.panel-head.unknown .dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.4px var(--text-3);
+}
+
+.panel-head.lent .dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.8px var(--accent);
+}
+
+.panel-head .knot {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 2px var(--text-2);
+}
+
+.panel-title {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h2);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+}
+
+.panel-head .tag {
+  align-self: center;
+}
+
+.panel-state {
+  flex-basis: 100%;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.panel-head.offline .panel-state {
+  color: var(--caution);
+}
+
+.panel-facts,
+.panel-home {
+  margin: var(--space-2) 0 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.panel-home {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.panel-home code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  color: var(--text-2);
+}
+
+.panel-hubs {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+}
+
+.panel-hub {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.panel-hub-name {
+  color: var(--text-2);
+}
+
+.panel-hub.stopped,
+.panel-hub.stopped .panel-hub-name {
+  color: var(--caution);
+}
+
+/* Whom it is shared with, or a login lent to, each a pill taken back with
+   its cross, and the way to give it to another at the end. */
+.given-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-3);
+}
+
+.given-label {
+  margin-right: 2px;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.given-row .quiet-button,
+.host-home .given-row .text-button {
+  height: 24px;
+  margin-left: 0;
+  padding: 0 var(--space-2);
+}
+
+.panel-said {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-3) 0 0;
+  font-size: var(--size-small);
+  color: var(--text-2);
+  cursor: default;
+}
+
+.panel-said .glyph {
+  flex: none;
+  color: var(--accent);
+}
+
+.panel-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: var(--space-4) 0 0 calc(-1 * var(--space-3));
+}
+
+/* Inside the panel the parts of a machine stand flush, not set in under
+   a dot as on a list. */
+.machine-panel .machine-agents,
+.machine-panel .machine-hosts,
+.machine-panel .machine-quiet,
+.machine-panel .machine-jobs,
+.machine-panel .machine-hosts-asking,
+.machine-panel .machine-note {
+  padding-left: 0;
+}
+
+.machine-panel .machine-agents {
+  margin-top: var(--space-4);
+}
+
+.machine-panel .machine-quiet {
+  margin-top: var(--space-4);
+}
+
+.machine-panel .machine-hosts {
+  margin-top: var(--space-5);
+  gap: var(--space-4);
+}
+
+.machine-panel .host-homes {
+  gap: 6px;
+}
+
+/* Each login a slip laid on the panel. */
+.machine-panel .host-home {
+  gap: 4px;
+  padding: var(--space-3);
+  border-left: 0;
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+}
+
+.machine-panel .host-home .given-row {
+  margin-top: 4px;
+}
+
+.machine-panel .home-add-open {
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.machine-panel .home-add {
+  padding-left: 0;
+}
+
+.machine-panel .machines-alone {
+  margin: 0 0 var(--space-4);
+}
+
+/* A hub: the account's level there, who administers it, and the ways to
+   let a device in or manage its accounts, a slip for each login on it. */
+.panel-logins {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+}
+
+.panel-login {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+}
+
+.panel-login-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.panel-login-name .glyph {
+  color: var(--text-3);
+}
+
+.panel-login .panel-said {
+  margin-top: 0;
+}
+
+.panel-login-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.panel-login-acts a.text-button {
+  text-decoration: none;
+}
+
+/* A narrow page (a phone, or a tablet with the sidebar open): the drawing
+   above, a little under half the height, the panel scrolling in what is
+   left. */
+@container machines (max-width: 860px) {
+  .machines-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(240px, 40dvh) minmax(0, 1fr);
+    gap: var(--space-2);
+    padding: 0 var(--space-4) var(--space-4);
+  }
+
+  .network-map {
+    min-height: 0;
+  }
+
+  .machine-panel {
+    padding: var(--space-4);
+  }
+
+}
+
+/* A phone's page: the names alone, a size smaller. */
+@container machines (max-width: 520px) {
+  .map-labels .sub {
+    display: none;
+  }
+
+  .map-labels .name {
+    font-size: var(--size-small);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .network-map .flow,
+  .map-drawing.arriving .paper,
+  .map-drawing.arriving .ink,
+  .map-drawing.arriving .flows,
+  .map-marks .clay path {
+    animation: none;
+  }
+}

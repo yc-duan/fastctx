@@ -125,6 +125,12 @@ export class AttachTray {
     return this.items.length;
   }
 
+  /** How many of what is held are files other than images: those go where
+   *  the agent works, not where it lives. */
+  get files(): number {
+    return this.items.filter((item) => !item.image).length;
+  }
+
   /** What the World answered for each attached file that has arrived. */
   get arrived(): unknown[] {
     return this.items.filter((item) => item.state === "ready").map((item) => item.ref);

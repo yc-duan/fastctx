@@ -27,6 +27,9 @@ export interface Someone {
   /** The machine its commands start on, as written, when not the one it
    *  lives on (`world-run.md`, 这里). */
   worksOn?: string | null;
+  /** Who lent it, for an agent another account lent the user: it works on
+   *  no machine by default, each command naming one. */
+  lentBy?: string | null;
   model: string | null;
   /** The project it is in, by the name the user gave it. */
   project: string | null;
@@ -75,6 +78,10 @@ export interface PageOptions {
     /** Files dropped onto the window, by path, where the shell gives
      *  them so; returns how to stop listening. */
     drops?(on: { over(over: boolean): void; dropped(paths: string[]): void }): () => void;
+    /** For an agent lent to the user, which has no machine it works on:
+     *  the user's machines its files other than images may go to, the one
+     *  to go to first, and what the choice says. */
+    filesOn?: { places(): { value: string; label: string; note?: string | undefined; disabled?: boolean }[] | null; usual(): string | null; label: string; what: string };
   };
   /** Files on the agent's machine, found as the user types `@` and a few
    *  letters; the one chosen goes into the words as its path. */
@@ -87,7 +94,7 @@ export interface PageOptions {
   };
   /** Sends the user's words, and what arrived of what was attached;
    *  resolves with what came of them. */
-  send(text: string, attached: { refs: unknown[]; shown: Attached[] }): Promise<Sent> | void;
+  send(text: string, attached: { refs: unknown[]; shown: Attached[]; filesOn?: string | null }): Promise<Sent> | void;
   stop(): void;
 }
 
@@ -146,6 +153,7 @@ export class ConversationPage {
           <div class="composer-confirm" hidden></div>
           <div class="composer-queue"></div>
           <div class="composer-tray"></div>
+          <div class="composer-files-on" hidden></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
@@ -348,7 +356,14 @@ export class ConversationPage {
       this.say(this.options.attach!.words.wait);
       return;
     }
-    const attached = this.tray?.count ? this.tray.take() : { refs: [], shown: [] };
+    const choosing = this.tray?.files ? (this.options.attach?.filesOn?.places() ?? null) : null;
+    const filesOn = choosing ? this.filesOn : null;
+    if (choosing && !filesOn) {
+      this.say(this.options.attach!.filesOn!.label);
+      return;
+    }
+    const attached = this.tray?.count ? { ...this.tray.take(), filesOn } : { refs: [], shown: [], filesOn: null };
+    this.drawFilesOn();
     if (!text && !attached.refs.length) {
       if (this.options.conversation.moving()) this.options.stop();
       return;
@@ -565,6 +580,8 @@ export class ConversationPage {
     field.addEventListener("blur", () => finish(true));
   }
   private tray: AttachTray | null = null;
+  /** Where a lent agent's files other than images go, as written. */
+  private filesOn: string | null = null;
   private queue!: SendQueue;
   /** How many turns had ended when the last queued words were sent. */
   private released: number | null = null;
@@ -573,11 +590,45 @@ export class ConversationPage {
   private failed: "not_taken" | "unsure" | null = null;
   private stopDrops: (() => void) | null = null;
 
+  /** For a lent agent given files other than images: which of the user's
+   *  machines they go to, chosen where they wait. */
+  private drawFilesOn(): void {
+    const box = this.element.querySelector<HTMLElement>(".composer-files-on")!;
+    const choosing = this.options.attach?.filesOn;
+    const places = choosing && this.tray?.files ? choosing.places() : null;
+    if (!choosing || !places) {
+      box.hidden = true;
+      box.innerHTML = "";
+      return;
+    }
+    if (!places.some((place) => place.value === this.filesOn && !place.disabled)) {
+      const usual = choosing.usual();
+      this.filesOn = places.find((place) => place.value === usual && !place.disabled)?.value ?? places.find((place) => !place.disabled)?.value ?? null;
+    }
+    const html = `<span class="files-on-label">${escape(choosing.label)}</span><span class="choice-options">${places
+      .map(
+        (place) =>
+          `<button type="button" class="choice${place.value === this.filesOn ? " chosen" : ""}" aria-pressed="${place.value === this.filesOn}" data-files-on="${escape(place.value)}"${place.disabled ? " disabled" : ""}>${escape(place.label)}${place.note ? `<span class="choice-note">${escape(place.note)}</span>` : ""}</button>`,
+      )
+      .join("")}</span><span class="files-on-what">${escape(choosing.what)}</span>`;
+    if (box.innerHTML !== html) box.innerHTML = html;
+    box.hidden = false;
+  }
+
   /** Files come with the words: picked with the paperclip, pasted, or
    *  dropped anywhere on the page. */
   private attaching(attach: NonNullable<PageOptions["attach"]>): void {
-    const tray = new AttachTray(attach.words, attach.seam, () => this.drawAction());
+    const tray = new AttachTray(attach.words, attach.seam, () => {
+      this.drawFilesOn();
+      this.drawAction();
+    });
     this.tray = tray;
+    this.element.querySelector(".composer-files-on")!.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-files-on]");
+      if (!button || button.disabled) return;
+      this.filesOn = button.dataset.filesOn!;
+      this.drawFilesOn();
+    });
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
     const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
     const pick = this.element.querySelector<HTMLInputElement>(".composer-pick")!;
@@ -1000,7 +1051,7 @@ export class ConversationPage {
     const facts = [
       now,
       title ? `${someone.agent} · ${someone.machine}` : null,
-      someone.worksOn ? words.worksOn(someone.worksOn) : null,
+      someone.lentBy ? words.lentBy(someone.lentBy) : someone.worksOn ? words.worksOn(someone.worksOn) : null,
       someone.project,
       someone.model,
     ].filter(Boolean) as string[];

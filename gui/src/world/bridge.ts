@@ -88,8 +88,11 @@ export function unwatch(id: number): Promise<void> {
   return invoke("unwatch", { id });
 }
 
-export function talk(who: Address, text: string, attachments: Attachment[] = []): Promise<{ to: Address; landed: Landed }> {
-  return invoke("talk", { residentId: who.resident, machineName: who.machine, text, attachments });
+/** The user's words to a resident, with the files uploaded for them;
+ *  those other than images go to `filesOn` when the user chose a machine
+ *  (an agent lent to them works on none of its own). */
+export function talk(who: Address, text: string, attachments: Attachment[] = [], filesOn: string | null = null): Promise<{ to: Address; landed: Landed }> {
+  return invoke("talk", { residentId: who.resident, machineName: who.machine, text, attachments, filesOn });
 }
 
 /** Carries a file on this computer to a machine, for an agent there or
@@ -129,6 +132,9 @@ export interface Choices {
   /** The Codex home its colleagues use where they live, when not the
    *  default one there. */
   colleagues_home?: string;
+  /** Where the files attached to its first words go, other than images,
+   *  for an agent lent to the user. */
+  files_on?: string;
 }
 
 /** Opens a conversation with an agent; the model and reasoning effort are

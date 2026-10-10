@@ -60,6 +60,9 @@ export interface DetailsOptions {
   /** "hangzhou · ada" for each account it works for; empty for this
    *  computer's logins. */
   actingFor(resident: ResidentNow): string[];
+  /** Who lent it, for an agent another account lent the user; null for
+   *  one of the user's own. */
+  lentBy?: ((resident: ResidentNow) => string | null) | undefined;
   /** The machines, as written, it may work on, and setting it: a machine,
    *  or with null the one it lives on. None for a colleague. */
   worksOn?: { places(): string[]; set(worksOn: string | null): Promise<void> } | undefined;
@@ -77,8 +80,9 @@ export interface Login {
 }
 
 export interface Colleagues {
-  /** The machines, as written, its colleagues may live on. */
-  homes(): string[];
+  /** The machines, as written, its colleagues may live on, and who lent
+   *  the Codex there where it is lent. */
+  homes(): { machine: string; lentBy: string | null }[];
   /** Where they live, and the Codex login they use there: its home's
    *  directory, or null for the default one. */
   set(livesOn: string | null, home: string | null): Promise<void>;
@@ -373,6 +377,7 @@ export class Details {
         ? words.askedBy(this.options.someone(about.origin.asked_by), about.origin.label)
         : words.openedByYou;
     const acting = this.options.actingFor(r);
+    const lentBy = this.options.lentBy?.(r) ?? null;
     // Which login it uses, where it is not its machine's default one: who
     // is logged in there, as that machine says, else the directory.
     const login = about.home
@@ -383,6 +388,7 @@ export class Details {
       [words.model, about.model ? about.model : ""],
       [words.machine, about.machine],
       [words.login, login],
+      [words.lentBy, lentBy ?? ""],
       [words.actingFor, acting.join(words.separator)],
       [words.host, `${agentName(about.host.agent)} ${about.host.version}${about.world_started ? ` · ${words.startedByWorld}` : ""}`],
       [words.origin, origin],
@@ -449,6 +455,7 @@ export class Details {
   private worksBody(r: ResidentNow): string {
     const { words, worksOn } = this.options;
     const about = r.about;
+    if (this.options.lentBy?.(r)) return `<p class="details-colleagues"><span>${escape(words.worksLent)}</span></p>`;
     const elsewhere = about.works_on && about.works_on !== about.machine ? about.works_on : null;
     // Only a conversation the World opened chose where it works.
     const changeable = !!worksOn && !r.removed && about.origin.kind !== "colleague" && about.world_started;
@@ -486,8 +493,8 @@ export class Details {
     const choices = this.choosing
       ? `<div class="details-move" role="group" aria-label="${escape(words.colleaguesWhere)}"><span class="details-faint">${escape(words.colleaguesWhere)}</span><div class="choice-options">${[
           ...colleagues.homes().map(
-            (machine) =>
-              `<button type="button" class="choice${machine === home ? " chosen" : ""}" data-act="colleagues-on" data-home="${escape(machine)}"${machine === home ? ` disabled aria-current="true"` : ""}>${escape(machine)}</button>`,
+            ({ machine, lentBy }) =>
+              `<button type="button" class="choice${machine === home ? " chosen" : ""}" data-act="colleagues-on" data-home="${escape(machine)}"${machine === home ? ` disabled aria-current="true"` : ""}>${escape(machine)}${lentBy ? `<span class="choice-note">${escape(words.colleagueLent(lentBy))}</span>` : ""}</button>`,
           ),
           home ? `<button type="button" class="choice" data-act="colleagues-on" data-home="">${escape(words.colleaguesNone)}</button>` : "",
         ].join("")}</div></div>`

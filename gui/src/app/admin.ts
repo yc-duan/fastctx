@@ -1,14 +1,15 @@
-// An administrator's page of a hub (`world-gui.md`, 账号、机器与授权): for
-// each hub this computer or device is logged in to as an administrator,
-// whether anyone may open an account, every account with what it may do,
-// and every project with the account it belongs to. Accounts are opened,
-// locked, given or denied rights, have their passwords reset and are
-// deleted here; a project is handed to another account. Deleting says first
-// what goes with it.
+// The super administrator's page of a hub (`world-gui.md`, 账号、机器、共享与
+// 借出): for each hub this computer or device is logged in to as its super
+// administrator, what being it means and handing it to another account,
+// whether anyone may open an account, every account, and every project
+// with the account it belongs to. Accounts are opened, always as members,
+// locked and unlocked, have their passwords reset and are deleted here; a
+// project is handed to another account. Handing on and deleting say first
+// what they mean.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import { loginsOf, type AccountChange, type AccountSeen, type HubAccounts, type Login } from "../world/accounts";
+import { loginsOf, type AccountChange, type HubAccounts, type Login } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { AdminWords } from "./account-words";
 import { Confirm, Sheet } from "./confirm";
@@ -28,12 +29,12 @@ export interface AdminOptions {
 
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 
-/** The logins that administer their hub. */
+/** The logins that are their hub's super administrator. */
 function administering(world: WorldNow | null): { login: Login; hub: HubAccounts }[] {
   return loginsOf(world?.accounts).flatMap((login) => {
     const hub = world?.accounts.hubs.find((hub) => hub.hub === login.hub);
     const me = hub?.accounts.find((account) => account.name === login.account);
-    return hub && me?.admin && !me.locked ? [{ login, hub }] : [];
+    return hub && me?.level === "super" && !me.locked ? [{ login, hub }] : [];
   });
 }
 
@@ -83,25 +84,31 @@ export class AdminPage implements Page {
     const { words } = this.options;
     const name = button.dataset.name ?? "";
     const account = hub.accounts.find((found) => found.name === name);
-    const set = (change: Partial<Pick<AccountSeen, "admin" | "may_register" | "locked">>) =>
-      account &&
-      void this.quietly(button, login, {
-        change: "set_account",
-        name,
-        admin: change.admin ?? account.admin,
-        may_register: change.may_register ?? account.may_register,
-        locked: change.locked ?? account.locked,
-      });
     switch (button.dataset.act) {
-      case "admin":
-        set({ admin: !account?.admin });
-        return;
-      case "register":
-        set({ may_register: !account?.may_register });
-        return;
       case "lock":
-        set({ locked: !account?.locked });
+        if (account) void this.quietly(button, login, { change: "set_account", name, locked: !account.locked });
         return;
+      case "transfer": {
+        const others = hub.accounts.filter((found) => found.name !== login.account && !found.locked);
+        this.form(
+          words.transferTitle,
+          `<p class="confirm-what">${escape(words.transferWhat)}</p>
+          ${
+            others.length
+              ? `<label class="field"><span class="field-label">${escape(words.transferTo)}</span><select name="to" required>${others
+                  .map((found) => `<option value="${escape(found.name)}">${escape(found.name)}</option>`)
+                  .join("")}</select></label>`
+              : `<p class="field-hint">${escape(words.noOther)}</p>`
+          }`,
+          words.transferGo,
+          async (form) => {
+            const to = form.querySelector<HTMLSelectElement>("[name=to]")?.value;
+            if (!to) return words.noOther;
+            await this.options.change(login, { change: "transfer", to });
+          },
+        );
+        return;
+      }
       case "reset":
         this.form(
           words.resetTitle(name),
@@ -129,22 +136,15 @@ export class AdminPage implements Page {
       case "open":
         this.form(
           words.openTitle,
-          `<label class="field"><span class="field-label">${escape(words.name)}</span><input name="name" required autocomplete="off" spellcheck="false" autocapitalize="off" pattern="${accountRule}"><span class="field-hint">${escape(words.nameHint)}</span></label>
-          ${this.passwords()}
-          <label class="check-row"><input type="checkbox" name="may-register" checked><span><span class="check-title">${escape(words.mayRegister)}</span><span class="field-hint">${escape(words.mayRegisterWhat)}</span></span></label>
-          <label class="check-row"><input type="checkbox" name="admin"><span><span class="check-title">${escape(words.asAdmin)}</span><span class="field-hint">${escape(words.asAdminWhat)}</span></span></label>`,
+          `<p class="confirm-what">${escape(words.openWhat)}</p>
+          <label class="field"><span class="field-label">${escape(words.name)}</span><input name="name" required autocomplete="off" spellcheck="false" autocapitalize="off" pattern="${accountRule}"><span class="field-hint">${escape(words.nameHint)}</span></label>
+          ${this.passwords()}`,
           words.openGo,
           async (form) => {
             const password = this.password(form);
             if (password === null) return words.passwordsDiffer;
-            const field = (name: string) => form.querySelector<HTMLInputElement>(`[name="${name}"]`)!;
-            await this.options.change(login, {
-              change: "open_account",
-              name: field("name").value.trim(),
-              admin: field("admin").checked,
-              may_register: field("may-register").checked,
-              password,
-            });
+            const name = form.querySelector<HTMLInputElement>("[name=name]")!.value.trim();
+            await this.options.change(login, { change: "open_account", name, password });
           },
         );
         return;
@@ -256,22 +256,16 @@ export class AdminPage implements Page {
     const accounts = hub.accounts
       .map((account) => {
         const you = account.name === login.account;
-        const tags = [
-          you ? words.you : "",
-          account.admin ? words.admin : "",
-          account.may_register ? words.mayRegister : "",
-          account.locked ? words.locked : "",
-        ].filter(Boolean);
+        const top = account.level === "super";
+        const tags = [you ? words.you : "", top ? words.superTag : "", account.locked ? words.locked : ""].filter(Boolean);
         return `<li class="admin-account${account.locked ? " locked" : ""}">
           <div class="admin-account-line"><span class="admin-account-name">${escape(account.name)}</span>${tags
             .map((tag) => `<span class="tag">${escape(tag)}</span>`)
             .join("")}<span class="admin-account-opened">${escape(words.opened(when(account.opened)))}</span></div>
           <div class="machine-acts">
-            ${button("admin", account.admin ? words.unmakeAdmin : words.makeAdmin, account.name)}
-            ${button("register", account.may_register ? words.forbidRegister : words.allowRegister, account.name)}
-            ${you ? "" : button("lock", account.locked ? words.unlock : words.lock, account.name)}
+            ${you || top ? "" : button("lock", account.locked ? words.unlock : words.lock, account.name)}
             ${button("reset", words.resetPassword, account.name)}
-            ${you ? "" : button("delete", words.deleteAccount, account.name, " data-danger")}
+            ${you || top ? "" : button("delete", words.deleteAccount, account.name, " data-danger")}
           </div>
         </li>`;
       })
@@ -288,6 +282,9 @@ export class AdminPage implements Page {
     return `<section class="home-section admin-section" data-hub="${escape(hub.hub)}">
       <h2 class="section-title account-title">${glyph("settings", 18)}<span>${escape(words.hub(hub.name))}</span></h2>
       ${said}
+      <h3 class="account-part">${escape(words.superPart)}</h3>
+      <p class="admin-super">${glyph("shield", 15)}<span>${escape(words.superWhat)}</span></p>
+      <div class="account-acts"><button class="text-button" type="button" data-act="transfer">${glyph("move", 16)}<span>${escape(words.transfer)}</span></button></div>
       <label class="check-row"><input type="checkbox" name="self-registration"${hub.self_registration ? " checked" : ""}><span><span class="check-title">${escape(words.selfRegistration)}</span><span class="field-hint">${escape(words.selfRegistrationWhat)}</span></span></label>
       <h3 class="account-part">${escape(words.accounts)}</h3>
       <ul class="admin-accounts">${accounts}</ul>
