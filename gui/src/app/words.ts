@@ -1416,7 +1416,7 @@ export const zhShell: ShellWords = {
   colleagueFor: (asker) => `${asker} 的同事`,
   busy: (lasted) => `工作中 · ${lasted}`,
   idle: "空闲",
-  waiting: "等你回复",
+  waiting: "等待回复",
   asleep: "休眠",
   offline: "离线",
   noProjects: "暂无项目",

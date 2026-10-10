@@ -118,7 +118,7 @@ export const zhHome: HomeWords = {
   machinesOnline: (online, all) => (online === all ? `${all} 台机器在线` : `${online}/${all} 台机器在线`),
   agentsWorking: (n) => (n ? `${n} 个智能体工作中` : "无智能体工作"),
   waiting: "等待回复",
-  waitingFor: "等待你回复",
+  waitingFor: "等待回复",
   now: "工作中",
   nobodyWorking: "暂无工作中的智能体",
   idle: (names) => `空闲：${names}`,
