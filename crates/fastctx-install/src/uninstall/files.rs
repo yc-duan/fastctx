@@ -12,7 +12,15 @@ pub fn delete_file(path: &Path) -> io::Result<()> {
         Err(error) => return Err(error),
     };
     if crate::disk::is_link(&metadata) {
-        return if metadata.is_dir() { fs::remove_dir(path) } else { fs::remove_file(path) };
+        #[cfg(windows)]
+        let directory = {
+            use std::os::windows::fs::MetadataExt as _;
+            // A directory link has a link file type but keeps its directory attribute.
+            metadata.file_attributes() & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY != 0
+        };
+        #[cfg(not(windows))]
+        let directory = metadata.is_dir();
+        return if directory { fs::remove_dir(path) } else { fs::remove_file(path) };
     }
     #[cfg(unix)]
     {
@@ -25,50 +33,54 @@ pub fn delete_file(path: &Path) -> io::Result<()> {
         }
     }
     let file = crate::disk::open(path)?;
-    crate::disk::delete(&file, path)
+    crate::disk::delete_owned(&file, path)
 }
 
 /// Removes an explicitly selected product data tree without following links.
 /// Mounted or redirected parents are rejected before walking descendants.
+/// Every entry is tried; failures identify the paths that remain for retry.
 pub fn delete_tree(path: &Path) -> io::Result<()> {
+    let mut failed = Vec::new();
+    if let Err(error) = delete_tree_entry(path, &mut failed) {
+        failed.push((path.to_path_buf(), error));
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            failed.iter().map(|(path, error)| format!("{}: {error}", path.display())).collect::<Vec<_>>().join("; "),
+        ))
+    }
+}
+
+fn delete_tree_entry(path: &Path, failed: &mut Vec<(PathBuf, io::Error)>) -> io::Result<()> {
     super::checked_path(path)?;
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
-    if crate::disk::is_link(&metadata) || !metadata.is_dir() {
+    if crate::disk::is_link(&metadata) {
         return delete_file(path);
     }
+    if !metadata.is_dir() {
+        return delete_file(path);
+    }
+    let before = failed.len();
     for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let metadata = fs::symlink_metadata(entry.path())?;
-        if crate::disk::is_link(&metadata) {
-            delete_file(&entry.path())?;
-        } else if metadata.is_dir() {
-            delete_tree(&entry.path())?;
-        } else {
-            if metadata.permissions().readonly() {
-                #[cfg(windows)]
-                {
-                    let mut permissions = metadata.permissions();
-                    // Windows has only the read-only attribute to clear.
-                    #[allow(clippy::permissions_set_readonly_false)]
-                    permissions.set_readonly(false);
-                    fs::set_permissions(entry.path(), permissions)?;
-                }
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mut permissions = metadata.permissions();
-                    permissions.set_mode(permissions.mode() | 0o200);
-                    fs::set_permissions(entry.path(), permissions)?;
+        match entry {
+            Ok(entry) => {
+                if let Err(error) = delete_tree_entry(&entry.path(), failed) {
+                    failed.push((entry.path(), error));
                 }
             }
-            delete_file(&entry.path())?;
+            Err(error) => failed.push((path.to_path_buf(), error)),
         }
     }
-    fs::remove_dir(path)
+    if failed.len() == before {
+        fs::remove_dir(path)?;
+    }
+    Ok(())
 }
 
 /// What retiring the program directories left: additions that are not

@@ -58,6 +58,7 @@ export function groupOf(kind: string): RemovalGroup {
       return "hub";
     case "codex":
     case "claude":
+    case "claude-cache":
     case "claude-trust":
       return "agents";
     case "data":
@@ -97,6 +98,7 @@ export const zhRemoval: RemovalWords = {
     "hub-data": "服务器数据",
     codex: "Codex 接入",
     claude: "Claude Code 接入",
+    "claude-cache": "Claude Code 插件缓存",
     "claude-trust": "Claude Code 目录信任",
     program: "fastctx 程序",
     path: "PATH 条目",
@@ -170,6 +172,7 @@ export const enRemoval: RemovalWords = {
     "hub-data": "Server data",
     codex: "Codex integration",
     claude: "Claude Code integration",
+    "claude-cache": "Claude Code plugin cache",
     "claude-trust": "Claude Code folder trust",
     program: "fastctx program",
     path: "PATH entry",

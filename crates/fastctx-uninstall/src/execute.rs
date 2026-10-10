@@ -291,10 +291,14 @@ fn boot_registration(step: &Step) -> bool {
 }
 
 fn blocked_by(request: &Request, progress: &Progress) -> String {
-    let reasons = request
-        .steps
-        .iter()
-        .filter(|step| matches!(step.action, Action::Stop) || boot_registration(step))
+    blocked_steps(
+        request.steps.iter().filter(|step| matches!(step.action, Action::Stop) || boot_registration(step)),
+        progress,
+    )
+}
+
+fn blocked_steps<'a>(steps: impl Iterator<Item = &'a Step>, progress: &Progress) -> String {
+    let reasons = steps
         .filter(|step| !done(step, progress))
         .map(|step| {
             let reason = progress
@@ -453,6 +457,19 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
                 });
             }
             anyhow::ensure!(report.leftovers.is_empty(), "{}", report.leftovers.join("; "));
+        }
+        Action::ClaudeCache(home) => {
+            let withdrawal = request
+                .steps
+                .iter()
+                .find(|step| {
+                    matches!(&step.action, Action::Host(integration)
+                    if integration.host == apply::Host::Claude && &integration.home == home)
+                })
+                .context("the Claude cache has no integration withdrawal step")?;
+            anyhow::ensure!(done(withdrawal, progress), "{}", blocked_steps(std::iter::once(withdrawal), progress));
+            mods_stood_aside(installation).await?;
+            uninstall::delete_tree(&crate::claude_cache::directory(home))?;
         }
         Action::Legacy(legacy) => legacy.uninstall(installation)?,
         Action::Trust { home, key } => {

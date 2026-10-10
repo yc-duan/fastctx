@@ -317,6 +317,21 @@ pub(crate) fn delete_staged(file: &File, _path: &Path) -> io::Result<()> {
 }
 
 pub(crate) fn delete(file: &File, path: &Path) -> io::Result<()> {
+    delete_with_flags(file, path, FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS)
+}
+
+/// Retires an owned name without changing attributes shared by hard links.
+pub(crate) fn delete_owned(file: &File, path: &Path) -> io::Result<()> {
+    delete_with_flags(
+        file,
+        path,
+        FILE_DISPOSITION_FLAG_DELETE
+            | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+            | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+    )
+}
+
+fn delete_with_flags(file: &File, path: &Path, flags: u32) -> io::Result<()> {
     let deleting = OpenOptions::new()
         .read(true)
         .access_mode(DELETE | GENERIC_READ)
@@ -325,7 +340,7 @@ pub(crate) fn delete(file: &File, path: &Path) -> io::Result<()> {
     if identity(&deleting)? != identity(file)? {
         return Err(io::Error::other("file identity changed before deletion"));
     }
-    let info = FILE_DISPOSITION_INFO_EX { Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS };
+    let info = FILE_DISPOSITION_INFO_EX { Flags: flags };
     // SAFETY: deletion is by this verified file's handle, with DELETE access.
     check(unsafe {
         SetFileInformationByHandle(
