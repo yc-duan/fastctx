@@ -2,10 +2,10 @@
 // that is in none yet is offered two ways: join one with the server's
 // address, an account and its password, or create one with this computer
 // as its server and the person its administrator. A phone scans the code a
-// computer shows, or logs in with an account and password. A computer
-// registers as one of the account's machines unless told not to. Once in,
-// the World's tools can be put into this computer's agents, and on a World
-// just made another device can be added at once.
+// computer shows, or logs in with an account and password. A computer that
+// logs in joins as one of the account's machines; a phone only logs in.
+// Once in, the page only confirms it; on a World just made another device
+// can be added at once.
 
 import { escape } from "../conversation/prose";
 import type { KeptNow, LoggedIn, Setup } from "../world/bridge";
@@ -51,7 +51,6 @@ export interface LoginOptions {
   /** Reads a QR code with the camera, where the shell can; null when the
    *  person turned back. */
   scan?: (() => Promise<string | null>) | undefined;
-  applyHosts?: ((codex: boolean, claude: boolean) => Promise<string[]>) | undefined;
   /** Installs the startup service where it is missing. */
   keep?: (() => Promise<KeptNow>) | undefined;
   /** The World's drawing, with this computer marked on it once it is in. */
@@ -80,7 +79,7 @@ export class LoginPage implements Page {
   private created = false;
   private busy = false;
   /** What was typed, kept when moving between the ways in. */
-  private typed = { hub: "", account: "", register: true, world: "", port: String(hubPort), extra: "" };
+  private typed = { hub: "", account: "", world: "", port: String(hubPort), extra: "" };
   /** This computer's addresses, once asked, and those chosen. */
   private addresses: HereAddress[] | null = null;
   private chosen = new Set<string>();
@@ -106,9 +105,6 @@ export class LoginPage implements Page {
     this.here = this.element.querySelector<HTMLElement>(".welcome-here")!;
     this.body = this.element.querySelector<HTMLElement>(".welcome-body")!;
     this.element.addEventListener("click", (event) => void this.click(event));
-    this.element.addEventListener("change", (event) => {
-      if ((event.target as HTMLInputElement).name === "register") this.drawName();
-    });
     this.element.addEventListener("input", (event) => {
       const input = event.target as HTMLInputElement;
       if (input.name === "password" || input.name === "account") this.drawStrength();
@@ -176,8 +172,6 @@ export class LoginPage implements Page {
     this.typed.world = value("world")?.value ?? this.typed.world;
     this.typed.port = value("port")?.value ?? this.typed.port;
     this.typed.extra = value("extra")?.value ?? this.typed.extra;
-    const register = value("register");
-    if (register) this.typed.register = register.checked;
   }
 
   private loggedIn(): boolean {
@@ -190,9 +184,6 @@ export class LoginPage implements Page {
       `<p class="sheet-note" role="alert" hidden></p>
       <footer class="welcome-foot"><span class="login-ways">${ways}</span><button class="sheet-go" type="submit"${title ? ` title="${escape(title)}"` : ""}>${escape(go)}</button></footer>`;
     const way = (to: Step, label: string) => `<button class="text-button login-way" type="button" data-way="${to}">${escape(label)}</button>`;
-    const register = this.options.device
-      ? ""
-      : `<label class="check-row" title="${escape(words.registerWhat)}"><input type="checkbox" name="register"${this.typed.register ? " checked" : ""}><span class="check-title">${escape(words.register)}</span></label>`;
     const newPassword = (pair: boolean) => {
       const fields = `<label class="field"><span class="field-label">${escape(words.password)}</span>
         <input name="password" type="password" required autocomplete="new-password"></label>
@@ -233,7 +224,6 @@ export class LoginPage implements Page {
                 : `<label class="field"><span class="field-label">${escape(words.password)}</span>
               <input name="password" type="password" required autocomplete="current-password"></label>`
             }
-            ${register}
             <div class="login-name"></div>
             ${foot(ways, opening ? words.signUpGo : words.go)}
           </form>`;
@@ -266,7 +256,6 @@ export class LoginPage implements Page {
                 <label class="reach-port"><span>${escape(words.port)}</span><input name="port" class="mono" inputmode="numeric" pattern="[0-9]{2,5}" required value="${escape(this.typed.port)}"></label>
               </div>
             </div>
-            ${register}
             <div class="login-name"></div>
             ${foot(this.backWay(), words.createGo, words.createAsks)}
           </form>`;
@@ -334,19 +323,17 @@ export class LoginPage implements Page {
       : `<span class="field-hint">${escape(words.noAddresses)}</span>`;
   }
 
-  /** A name is asked where one is chosen now: a phone's first login, or a
-   *  computer registering on its first server. A device keeps one name on
-   *  every server after that. */
+  /** A name is asked where one is chosen now: the first login, a phone's
+   *  or a computer's, which joins as one of the account's machines. A
+   *  device keeps one name on every server after that. */
   private drawName(): void {
     const slot = this.body.querySelector<HTMLElement>(".login-name");
     if (!slot) return;
     const { words, store } = this.options;
     const world = store.world.peek();
     const first = !loginsOf(world?.accounts).length;
-    const registering = this.body.querySelector<HTMLInputElement>("[name=register]")?.checked ?? false;
     const typed = slot.querySelector<HTMLInputElement>("[name=name]")?.value ?? "";
-    const asked = first && (this.options.device || registering);
-    if (!asked) {
+    if (!first) {
       slot.innerHTML = "";
       return;
     }
@@ -357,9 +344,9 @@ export class LoginPage implements Page {
   }
 
   /** What is left for the person once in: a startup service that did not
-   *  install, and the agents on this computer not yet given the World's
-   *  tools. Nothing when all is well. */
-  private wanting(): { kept: string; hosts: ("codex" | "claude")[] } {
+   *  install. Nothing when all is well. Agents are not set up here
+   *  (`world-gui.md`, 账号、机器、共享与借出): their own page does that. */
+  private wanting(): { kept: string } {
     const { words } = this.options;
     const kept = this.done?.kept;
     const said =
@@ -370,11 +357,7 @@ export class LoginPage implements Page {
           : kept.kind === "declined" || kept.kind === "unsupported"
             ? words.kept[kept.kind]
             : "";
-    const hosts =
-      this.options.device || !this.options.applyHosts || !this.setup
-        ? []
-        : (["codex", "claude"] as const).filter((key) => this.setup![key] === "out" || this.setup![key] === "old");
-    return { kept: said, hosts: [...hosts] };
+    return { kept: said };
   }
 
   /** In: the World's drawing with this computer on it, a short title, and
@@ -390,10 +373,6 @@ export class LoginPage implements Page {
         : wanting.kept
           ? `<div class="welcome-slip"><span>${escape(wanting.kept)}</span>${this.options.keep && kept?.kind === "declined" ? `<button class="text-button keep-now" type="button">${escape(words.keepGo)}</button>` : ""}</div>`
           : "",
-      ...wanting.hosts.map(
-        (key) =>
-          `<div class="welcome-slip" title="${escape(words.hostsWhat)}"><span>${escape(words[key])}</span><button class="text-button apply-host" type="button" data-host="${key}">${escape(words.applyGo)}</button></div>`,
-      ),
     ].join("");
     const who = [done.account, this.options.device ? "" : done.name].filter(Boolean).join(" · ");
     this.body.innerHTML = `
@@ -418,7 +397,7 @@ export class LoginPage implements Page {
   private async arrived(): Promise<void> {
     await this.refreshSetup();
     const wanting = this.wanting();
-    if (!this.created && !wanting.kept && !wanting.hosts.length) {
+    if (!this.created && !wanting.kept) {
       this.options.enter();
       return;
     }
@@ -501,27 +480,6 @@ export class LoginPage implements Page {
       }
       return;
     }
-    const applying = target.closest<HTMLButtonElement>(".apply-host");
-    if (applying && !this.busy && this.options.applyHosts) {
-      const codex = applying.dataset.host === "codex";
-      const claude = applying.dataset.host === "claude";
-      const button = applying;
-      this.busy = true;
-      button.disabled = true;
-      button.textContent = this.options.words.applying;
-      try {
-        const notes = await this.options.applyHosts(codex, claude);
-        await this.refreshSetup();
-        this.draw();
-        if (notes.length) this.note("", notes.join("\n"));
-      } catch (error) {
-        this.problem(error);
-        button.disabled = false;
-        button.textContent = this.options.words.applyGo;
-      } finally {
-        this.busy = false;
-      }
-    }
   }
 
   private async submit(): Promise<void> {
@@ -554,13 +512,14 @@ export class LoginPage implements Page {
       if (!create || !world || !account || !password || !fresh(account, password)) return;
       const reach = [...this.chosen, ...this.extraAddresses()].map((address) => `${address}:${this.typed.port.trim()}`);
       if (!reach.length) return this.note(words.noReach);
-      const register = field("register")?.checked ?? false;
-      act = () => create(world, account, password, reach, register, name);
+      act = () => create(world, account, password, reach, true, name);
     } else {
       const hub = field("hub")?.value.trim() ?? "";
       const account = field("account")?.value.trim() ?? "";
       const password = field("password")?.value ?? "";
-      const register = !this.options.device && (field("register")?.checked ?? false);
+      // A computer logging in joins as one of the account's machines; a
+      // phone only logs in (`world-network.md`, 一台电脑和中枢).
+      const register = !this.options.device;
       if (!hub || !account || !password) return;
       if (this.step === "open") {
         const open = this.options.openAccount;

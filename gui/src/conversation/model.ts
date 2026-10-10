@@ -3,11 +3,12 @@
 // terminal's (`crates/fastctx-tui/src/transcript.rs`), so every interface
 // shows a session alike.
 
-import type { Health, MachineName, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
+import type { Health, MachineName, Notice, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
 import type { Attachment } from "../world/attachments";
 import type { JsonValue } from "../world/wire";
 import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
+import { readReply, type AsyncQuestion } from "./async-ask";
 
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
@@ -38,6 +39,13 @@ export type Entry =
       /** The attachments as the World answered for them, kept where they
        *  arrived: words taken back to send again take these with them. */
       kept?: Attachment[];
+      /** What the World told the session, as facts, when it was the World
+       *  or another agent that spoke. */
+      notice?: Notice;
+      /** The user's answers to a question the agent asked without waiting,
+       *  sent as the official client writes them: shown as answers, never
+       *  as the envelope. */
+      reply?: { item: string; answers: string[] };
     }
   | {
       kind: "prose";
@@ -61,7 +69,11 @@ export type Entry =
   /** This conversation was forked from another one. */
   | { kind: "forked"; key: string; source: import("../world/wire").Address }
   /** A request the session waits on the user for, as its host made it. */
-  | { kind: "ask"; key: string; id: JsonValue; turn: string | null; request: string; params: JsonValue; state: AskState; version: number };
+  | { kind: "ask"; key: string; id: JsonValue; turn: string | null; request: string; params: JsonValue; state: AskState; version: number }
+  /** Questions the agent asked without stopping its work (Codex's
+   *  `request_user_input_async`): answered whenever the user likes, or not
+   *  at all. `answers` holds what was answered, by question. */
+  | { kind: "question"; key: string; item: string; turn: string; questions: AsyncQuestion[]; answers: (string | null)[]; version: number };
 
 /** One stretch of what a turn did between things it said: tools and
  *  thinking in a row, folded under one heading. */
@@ -90,6 +102,9 @@ export class Conversation {
   }
   /** The host replaced or removed turns: what is shown must be read again. */
   stale = false;
+  /** Each turn's stretches of activity, in order, by the key of their first
+   *  entry: a stretch keeps its place and key when its first entry goes. */
+  private stretches = new Map<string, string[]>();
   private serial = 0;
   /** Turns begun and not yet ended, as the World tells them. */
   private running = new Set<string>();
@@ -110,6 +125,7 @@ export class Conversation {
     // not part of the history it gives back.
     const waiting = this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting");
     this.entries = [];
+    this.stretches.clear();
     this.stale = false;
     this.running.clear();
     this.replaying = true;
@@ -149,6 +165,8 @@ export class Conversation {
         const known = this.entries.some(
           (entry) => entry.kind === "heard" && entry.text === heard.text && heard.turn !== null && entry.turn === heard.turn,
         );
+        const reply = heard.from?.kind === "user" ? readReply(heard.text) : null;
+        if (reply) this.answered(reply.item, reply.answers);
         if (!known) {
           for (const file of heard.message?.attachments ?? []) this.attachments.set(file.path.replaceAll("\\", "/"), file.name);
           // The files that came with the words, as the World kept them.
@@ -165,6 +183,8 @@ export class Conversation {
             text: heard.text,
             turn: heard.turn,
             ...(attached.length ? { attached, kept: heard.message?.attachments ?? [] } : {}),
+            ...(event.event === "heard" && event.notice ? { notice: event.notice } : {}),
+            ...(reply ? { reply: { item: reply.item, answers: reply.answers.map((one) => one.answer) } } : {}),
           });
         }
         return;
@@ -299,6 +319,15 @@ export class Conversation {
     const startedAt = native.started_at ? Date.parse(native.started_at) : at;
     const id = native.id;
     let fresh: Entry;
+    const questions = native.kind === "message" ? questionsOf(native.detail) : null;
+    if (questions) {
+      const shown = this.find(turn, id);
+      if (shown?.kind === "question") return;
+      const fresh: Entry = { kind: "question", key: this.key("question"), item: id, turn, questions, answers: questions.map(() => null), version: 0 };
+      if (shown) this.entries[this.entries.indexOf(shown)] = { ...fresh, key: shown.key };
+      else this.entries.push(fresh);
+      return;
+    }
     switch (native.kind) {
       case "message":
       case "thinking":
@@ -373,6 +402,27 @@ export class Conversation {
     this.entries[index] = { ...fresh, key: shown.key };
   }
 
+  /** Answers the user sent to the questions of `item`, by question. */
+  private answered(item: string, answers: { index: number; answer: string }[]): void {
+    const question = this.entries.find((entry): entry is Extract<Entry, { kind: "question" }> => entry.kind === "question" && entry.item === item);
+    if (!question) return;
+    for (const { index, answer } of answers) if (index >= 0 && index < question.answers.length) question.answers[index] = answer;
+    question.version += 1;
+  }
+
+  /** Answers about to be sent: shown answered at once. */
+  answering(item: string, answers: (string | null)[]): void {
+    this.answered(
+      item,
+      answers.flatMap((answer, index) => (answer === null ? [] : [{ index, answer }])),
+    );
+  }
+
+  /** Whether a turn has ended, as far as is shown. */
+  turnEnded(turn: string): boolean {
+    return this.entries.some((entry) => entry.kind === "ended" && entry.turn === turn);
+  }
+
   private find(turn: string, id: string): Keyed | undefined {
     return this.entries.find((entry): entry is Keyed => "item" in entry && entry.item === id && entry.turn === turn);
   }
@@ -388,6 +438,7 @@ export class Conversation {
       turn: null,
       sending: { state: "going" },
       ...(attached.length ? { attached } : {}),
+      ...replyOf(text),
     });
     return key;
   }
@@ -426,19 +477,30 @@ export class Conversation {
   }
 
   /** The entries as they are laid out: what a turn did between the things
-   *  it said, folded into activity groups. Thinking belongs to the group
-   *  it sits in; words in between are prose and divide groups. */
+   *  it said, folded into activity stretches. Thinking belongs to the
+   *  stretch it sits in; words in between are prose and divide stretches.
+   *  A stretch keeps its key while it lasts, whatever comes and goes in it;
+   *  it is laid out only while something in it can be seen, so its heading
+   *  never comes and goes with a placeholder. A message not yet begun, and
+   *  thinking not yet given, are nothing to show. */
   blocks(): Block[] {
     const blocks: Block[] = [];
     let group: Activity | null = null;
+    const ordinal = new Map<string, number>();
+    const keyFor = (turn: string, first: string): string => {
+      const known = this.stretches.get(turn) ?? [];
+      const at = ordinal.get(turn) ?? 0;
+      ordinal.set(turn, at + 1);
+      if (known[at] === undefined) known[at] = first;
+      this.stretches.set(turn, known);
+      return `group-${turn}-${known[at]}`;
+    };
     for (const entry of this.entries) {
-      const activity =
-        entry.kind === "tool" ||
-        entry.kind === "activity" ||
-        (entry.kind === "prose" && entry.prose === "thinking");
+      if (entry.kind === "prose" && entry.prose === "message" && entry.writing && !entry.text.trim()) continue;
+      const activity = entry.kind === "tool" || entry.kind === "activity" || (entry.kind === "prose" && entry.prose === "thinking");
       if (activity && "turn" in entry) {
         if (!group || group.turn !== entry.turn) {
-          group = { kind: "activity-group", key: `group-${entry.key}`, turn: entry.turn, members: [] };
+          group = { kind: "activity-group", key: keyFor(entry.turn, entry.key), turn: entry.turn, members: [] };
           blocks.push(group);
         }
         group.members.push(entry);
@@ -447,7 +509,7 @@ export class Conversation {
         blocks.push(entry);
       }
     }
-    return blocks;
+    return blocks.filter((block) => block.kind !== "activity-group" || block.members.some(visible));
   }
 }
 
@@ -491,4 +553,32 @@ export function changeHealth(change: SessionChange): Health | null {
 
 function property(value: JsonValue, key: string): JsonValue | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value[key] : undefined;
+}
+
+/** Answers to questions asked without waiting, as the words that carry
+ *  them are shown. */
+function replyOf(text: string): { reply?: { item: string; answers: string[] } } {
+  const reply = readReply(text);
+  return reply ? { reply: { item: reply.item, answers: reply.answers.map((one) => one.answer) } } : {};
+}
+
+/** Whether a member of a stretch has anything to show: thinking only once
+ *  it has words or is over. */
+export function visible(entry: Entry): boolean {
+  return entry.kind !== "prose" || entry.prose !== "thinking" || !!entry.text.trim() || !entry.writing;
+}
+
+/** The questions of an agent's message asked without waiting, where it is
+ *  one: Codex marks it with `questions` beside its words. */
+function questionsOf(detail: JsonValue | undefined): AsyncQuestion[] | null {
+  const raw = property(detail ?? null, "questions");
+  if (!Array.isArray(raw) || !raw.length) return null;
+  const questions: AsyncQuestion[] = [];
+  for (const one of raw) {
+    const title = property(one, "title");
+    if (typeof title !== "string" || !title.trim()) return null;
+    const options = property(one, "options");
+    questions.push({ title, options: Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : null });
+  }
+  return questions;
 }

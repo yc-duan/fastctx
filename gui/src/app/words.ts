@@ -16,6 +16,12 @@ export interface ShellWords {
   projects: string;
   outside: string;
   machines: string;
+  agents: string;
+  features: string;
+  /** The way to every conversation of a list. */
+  all: string;
+  /** The kind of device a conversation lives on, for a screen reader. */
+  device(form: "desktop" | "laptop" | "server"): string;
   settings: string;
   newTalk: string;
   newProject: string;
@@ -1051,6 +1057,8 @@ export interface ComposerWords {
   /** Rewinding to the user's words: what it drops and what it does not. */
   rewindAsk: string;
   rewindGo: string;
+  regenerateAsk: string;
+  regenerateGo: string;
   forkAsk: string;
   forkGo: string;
   never: string;
@@ -1212,6 +1220,8 @@ export const zhComposer: ComposerWords = {
   noModels: "没有可选的模型",
   rewindAsk: "从这条消息重新开始？之后的对话将被移除，文件改动不会撤销。",
   rewindGo: "重新开始",
+  regenerateAsk: "重新回答这一轮？这一轮及之后的对话将被移除，文件改动不会撤销。",
+  regenerateGo: "重新回答",
   forkAsk: "从这里分叉出新对话？新对话保留到此为止的内容。",
   forkGo: "分叉",
   never: "取消",
@@ -1378,6 +1388,8 @@ export const enComposer: ComposerWords = {
   noModels: "No models available",
   rewindAsk: "Restart from this message? Later messages will be removed; file changes stay.",
   rewindGo: "Restart",
+  regenerateAsk: "Answer this turn again? It and later messages will be removed; file changes stay.",
+  regenerateGo: "Answer again",
   forkAsk: "Fork a new conversation from here? It keeps everything up to this point.",
   forkGo: "Fork",
   never: "Cancel",
@@ -1433,6 +1445,10 @@ export const zhShell: ShellWords = {
   projects: "项目",
   outside: "对话",
   machines: "机器",
+  agents: "智能体",
+  features: "功能",
+  all: "全部",
+  device: (form) => ({ desktop: "台式机", laptop: "笔记本", server: "服务器" })[form],
   settings: "设置",
   newTalk: "新对话",
   newProject: "新建项目",
@@ -1468,6 +1484,10 @@ export const enShell: ShellWords = {
   projects: "Projects",
   outside: "Conversations",
   machines: "Machines",
+  agents: "Agents",
+  features: "Features",
+  all: "All",
+  device: (form) => form,
   settings: "Settings",
   newTalk: "New conversation",
   newProject: "New project",

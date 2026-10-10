@@ -4,6 +4,7 @@ import type { QueueWords } from "./conversation/queue";
 // produce is never translated.
 
 import type { FindWords } from "./conversation/find";
+import { enQuestions, zhQuestions, type QuestionWords } from "./conversation/question-card";
 
 export type Tense = "running" | "done" | "failed";
 
@@ -36,7 +37,10 @@ export interface Tally {
 }
 
 export interface Words {
+  english: boolean;
   queue: QueueWords;
+  /** A card of questions asked without waiting. */
+  questions: QuestionWords;
   act(act: Act, tense: Tense): string;
   failedTool(name: string): string;
   tally(tally: Tally): string;
@@ -88,8 +92,27 @@ export interface Words {
   lentBy(owner: string): string;
   /** Between the names in a short list. */
   listSeparator: string;
+  /** The button under the first lines of something long: "+ 28 行". */
   moreLines(n: number): string;
   unchangedLines(n: number): string;
+  /** Long text opened full screen. */
+  fullScreen: string;
+  /** How long something took: "1 分 12 秒". */
+  took(ms: number): string;
+  /** How many steps a stretch of work has taken. */
+  steps(n: number): string;
+  /** Under a turn's last message: copy all it said, ask the same again. */
+  copyAnswer: string;
+  regenerate: string;
+  /** A job's end, told to the session, as one line. */
+  jobDone(code: number | null): string;
+  jobStoppedByYou: string;
+  jobStopped: string;
+  jobInterrupted: string;
+  jobCouldNotRun: string;
+  /** A colleague handed back its answer: "GPT · laptop 交回 · 14 分钟". */
+  answered(label: string, took: string | null): string;
+  answerFailed(label: string): string;
   /** The watch on the session ended: the node ended it, or the connection
    *  to it broke. */
   watchEnded(why: string | null): string;
@@ -161,6 +184,8 @@ const enActs: Record<Act, [string, string, string]> = {
 const index = (tense: Tense) => (tense === "done" ? 0 : tense === "running" ? 1 : 2);
 
 export const zh: Words = {
+  english: false,
+  questions: zhQuestions,
   queue: {
     waiting: (count) => `${count} 条待发送，本轮结束后依次发出`,
     held: "本轮已停止，队列暂停",
@@ -197,8 +222,8 @@ export const zh: Words = {
   plan: "计划",
   copyMessage: "复制",
   copyCode: "复制代码",
-  rewind: "编辑并重发",
-  fork: "从此处分叉",
+  rewind: "改了重发",
+  fork: "从这里分叉",
   forkedFrom: (source) => `分叉自 ${source}`,
   find: {
     find: "查找",
@@ -224,7 +249,7 @@ export const zh: Words = {
   unknown: "结果未知",
   declined: "已拒绝",
   showMore: "展开全部",
-  showLess: "收起",
+  showLess: "− 收起",
   copy: "复制",
   copied: "已复制",
   sendPlaceholder: (agent) => `发消息给 ${agent}…`,
@@ -243,8 +268,26 @@ export const zh: Words = {
   worksOn: (machine) => `工作于 ${machine}`,
   lentBy: (owner) => `借自 ${owner}`,
   listSeparator: "、",
-  moreLines: (n) => `还有 ${n} 行`,
+  moreLines: (n) => `+ ${n.toLocaleString("zh-CN")} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
+  fullScreen: "整屏查看",
+  took: (ms) => {
+    const seconds = Math.max(0, Math.round(ms / 1000));
+    if (seconds < 60) return `${seconds} 秒`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return seconds % 60 ? `${minutes} 分 ${seconds % 60} 秒` : `${minutes} 分`;
+    return minutes % 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分` : `${Math.floor(minutes / 60)} 小时`;
+  },
+  steps: (n) => `${n} 步`,
+  copyAnswer: "复制回答",
+  regenerate: "重新回答",
+  jobDone: (code) => (code === null ? "后台命令已结束" : `后台命令已结束 · 退出 ${code}`),
+  jobStoppedByYou: "后台命令已被你停下",
+  jobStopped: "后台命令已停下",
+  jobInterrupted: "后台命令中断",
+  jobCouldNotRun: "后台命令没能运行",
+  answered: (label, took) => (took ? `${label} 交回 · ${took}` : `${label} 交回`),
+  answerFailed: (label) => `${label} 本轮失败`,
   watchEnded: () => "已停止同步",
   watchInterrupted: () => "连接中断，正在重连…",
   notSent: () => "发送失败",
@@ -282,6 +325,8 @@ export const zh: Words = {
 };
 
 export const en: Words = {
+  english: true,
+  questions: enQuestions,
   queue: {
     waiting: (count) => `${count} queued, sent in order after this turn`,
     held: "Turn stopped; queue paused",
@@ -347,7 +392,7 @@ export const en: Words = {
   unknown: "outcome unknown",
   declined: "denied",
   showMore: "Show more",
-  showLess: "Show less",
+  showLess: "− show less",
   copy: "Copy",
   copied: "Copied",
   sendPlaceholder: (agent) => `Message ${agent}…`,
@@ -366,8 +411,26 @@ export const en: Words = {
   worksOn: (machine) => `works on ${machine}`,
   lentBy: (owner) => `lent by ${owner}`,
   listSeparator: ", ",
-  moreLines: (n) => `${n} more lines`,
+  moreLines: (n) => `+ ${n.toLocaleString("en")} more line${n === 1 ? "" : "s"}`,
   unchangedLines: (n) => `${n} unchanged lines`,
+  fullScreen: "Full screen",
+  took: (ms) => {
+    const seconds = Math.max(0, Math.round(ms / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
+    return minutes % 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${Math.floor(minutes / 60)}h`;
+  },
+  steps: (n) => `${n} step${n === 1 ? "" : "s"}`,
+  copyAnswer: "Copy answer",
+  regenerate: "Answer again",
+  jobDone: (code) => (code === null ? "Background command finished" : `Background command finished · exit ${code}`),
+  jobStoppedByYou: "You stopped a background command",
+  jobStopped: "Background command stopped",
+  jobInterrupted: "Background command interrupted",
+  jobCouldNotRun: "Background command couldn't run",
+  answered: (label, took) => (took ? `${label} handed back · ${took}` : `${label} handed back`),
+  answerFailed: (label) => `${label}: turn failed`,
   watchEnded: () => "Sync stopped",
   watchInterrupted: () => "Disconnected, reconnecting…",
   notSent: () => "Couldn't send",

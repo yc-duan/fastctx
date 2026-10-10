@@ -341,7 +341,7 @@
 
 /* While something runs, the heading says what, and a light passes over
    the words. */
-.group-head.running .group-title {
+.group-head.going .group-title {
   background: linear-gradient(
       100deg,
       var(--text-2) 0%,
@@ -619,7 +619,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .group-head.running .group-title {
+  .group-head.going .group-title {
     animation: none;
     background: none;
     color: var(--text);

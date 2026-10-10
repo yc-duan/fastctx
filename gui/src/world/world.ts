@@ -55,6 +55,12 @@ export interface Now {
   /** The conversation's name, as its host last gave it. */
   title: string | null;
   last_tool_at?: Timestamp | null;
+  /** The start of the user's first words here: the conversation's name
+   *  where its host gave it none. */
+  first_words?: string;
+  /** The start of the last message of the latest turn that ended: what a
+   *  notification of that turn says. */
+  last_said?: string;
 }
 
 export interface Action {
@@ -138,6 +144,8 @@ export interface MachineFacts {
     windows_job: { kill_on_close: boolean; breakaway_allowed: boolean; silent_breakaway: boolean } | null;
   };
   shell: string;
+  /** What kind of device it is; older nodes do not say. */
+  form?: "desktop" | "laptop" | "server";
   name: MachineName;
   os: string;
   arch: string;

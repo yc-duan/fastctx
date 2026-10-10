@@ -12,11 +12,15 @@ import "./design/tokens.css";
 import "./design/base.css";
 import "./design/highlight.css";
 import "./conversation/conversation.css";
+import "./conversation/turns.css";
+import "./longview/longview.css";
 import "./app/shell.css";
 import "./app/sheet.css";
 import "./app/pages.css";
 import "./app/accounts.css";
 import "./app/machines.css";
+import "./app/agents.css";
+import "./app/features.css";
 import "./app/removal.css";
 import "./app.css";
 import "./home/home.css";
@@ -27,6 +31,11 @@ import { AccountPage } from "./app/account";
 import { AdminPage } from "./app/admin";
 import { LoginPage } from "./app/login";
 import { MachinesPage } from "./app/machines";
+import { AgentsPage } from "./app/agents";
+import { enAgents, zhAgents } from "./app/agents-words";
+import { TalksPage, enTalks, zhTalks } from "./app/talks";
+import { FeaturesPage } from "./app/features";
+import { enFeatures, zhFeatures } from "./app/features-words";
 import { accountOf, enHomes, homeChoice, homeLabel, homesOf, installed, loggedOut, zhHomes } from "./app/agent-homes";
 import { Tokens } from "./app/tokens";
 import { NewTalk } from "./app/new-talk";
@@ -71,6 +80,7 @@ import { HomePage } from "./home/page";
 import type { Away, Happening, WorldState } from "./home/model";
 import { happeningsOf } from "./home/since";
 import { enHome, zhHome } from "./home/words";
+import { installHints } from "./app/hint";
 import { installPens } from "./pen/filters";
 import { installRules } from "./pen/rules";
 import { JournalPage } from "./project/journal";
@@ -1004,9 +1014,7 @@ function projectPage(town: string): Page {
     edit: shellWords.edit,
     begin: (town) => newTalk.open(town),
     revise: (town, record) => projectForm.open({ town, record }),
-    startJournal: (town) => journalForm.open(town, null),
     link: talkLink,
-    journalLink: (town, journal) => link({ kind: "journal", town, journal }),
     pageWords,
     pageLink: (town, page) => link({ kind: "page", town, page, version: null }),
   });
@@ -1145,9 +1153,21 @@ function show(next: Place): void {
         head,
         focus: next.kind === "machine" ? next.name : null,
         when,
+        change,
+        invite: (login) => tokens.open(login),
+        confirm: accountConfirm,
+      });
+      break;
+    case "agents":
+      page = new AgentsPage({
+        store,
+        words: english ? enAgents : zhAgents,
+        access: english ? enAccess : zhAccess,
         homeWords: agentHomeWords,
+        head,
+        machine: next.machine,
+        when,
         agents: () => agentsOn(null),
-        talkWith: (key) => newTalk.open(null, key),
         applyHere: (agent, into, home) => (live ? applyHosts(agent === "codex", agent === "claude", false, into, home) : notLive()),
         consent: {
           allow: (machine, home) => consent.allow(machine, (english ? enConsent : zhConsent).allow, home),
@@ -1155,9 +1175,16 @@ function show(next: Place): void {
         },
         homes: (machine, change) => (live ? agentHomes(machine, change) : notLive()),
         change,
-        invite: (login) => tokens.open(login),
+        talkWith: (key) => newTalk.open(null, key),
         confirm: accountConfirm,
       });
+      break;
+    case "talks":
+      page = new TalksPage({ store, words: english ? enTalks : zhTalks, shell: shellWords, head, town: next.town, place: () => place });
+      break;
+    case "features":
+    case "feature":
+      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.kind === "feature" ? next.feature : null, agents: () => agentsOn(null) });
       break;
     case "login": {
       // The World's drawing, for the moment this computer is in it.
@@ -1193,7 +1220,6 @@ function show(next: Place): void {
         // A phone reads the token off the computer's screen; a specimen
         // shows the button when asked as a phone.
         scan: canScan() ? scanToken : !live && params.has("phone") ? async () => "FX5SPECIMEN" : undefined,
-        applyHosts: asDevice ? undefined : (codex, claude) => (live ? applyHosts(codex, claude, false, true) : notLive()),
         keep: asDevice ? undefined : () => (live ? keepHere() : notLive()),
         drawing: {
           element: loginMap.element,
@@ -1435,6 +1461,7 @@ if (live) {
 }
 
 installPens();
+installHints();
 installRules();
 installAccess();
 // A specimen shows the window's frame when asked, to be looked at.

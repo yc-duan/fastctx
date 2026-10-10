@@ -2,7 +2,7 @@
 // interface without a world behind it: every kind of thing a conversation
 // shows, from both hosts, in the shapes the node really produces.
 
-import type { Content, Does, Item, SessionEvent, Speaker, Tool } from "../world/events";
+import type { Content, Does, Item, Notice, SessionEvent, Speaker, Tool } from "../world/events";
 
 export interface Specimen {
   title: string;
@@ -34,8 +34,8 @@ class Script {
     return `item-${this.serial}`;
   }
 
-  heard(turn: string | null, from: Speaker | null, text: string, after = 4): void {
-    this.events.push({ at: this.at(after), event: "heard", delivery: null, turn, from, text });
+  heard(turn: string | null, from: Speaker | null, text: string, after = 4, notice?: Notice): void {
+    this.events.push({ at: this.at(after), event: "heard", delivery: null, turn, from, text, ...(notice ? { notice } : {}) });
   }
 
   started(turn: string): void {
@@ -248,6 +248,19 @@ let i = (self.ki.widen() * self.integral).narrow();
     { kind: "world" },
     "=== j-k3x9a2 on lab ended (exited 0) at 2026-10-04 13:09:12 UTC; its output is in /home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log ===",
     190,
+    {
+      kind: "job_ended",
+      job: "j-k3x9a2",
+      machine: "lab",
+      how: { kind: "finished" },
+      status: { code: 0 },
+      at: "2026-10-04T13:09:12Z",
+      output: "/home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log",
+      last: {
+        text: "test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.12s\n\n   Doc-tests ctrl\ntest result: ok. 3 passed; 0 failed; 0 ignored",
+        whole: false,
+      },
+    },
   );
   s.started("t2");
   s.say("t2", "thinking", "", 2);
@@ -287,6 +300,19 @@ let i = (self.ki.widen() * self.integral).narrow();
     { kind: "resident", address: { machine: "laptop", resident: "codex-91c0" } },
     "=== colleague codex-91c0 on laptop (turn completed, 14m) ===\nFound one. With `ki = 0x7FFF_0000` and a constant error of 32767 at `dt = 1`, the integral saturates after 65 538 steps as meant, but `narrow()` then **wraps** instead of saturating: the output jumps from 32767 to −32768.\n\nRepro: `cargo test -p ctrl overflow_repro` on branch `colleague/q16-edge` (laptop, `/home/me/wt/q16-edge`).\n=== what it did: fastctx w codex-91c0 ===",
     840,
+    {
+      kind: "answer",
+      colleague: { machine: "laptop", resident: "codex-91c0" },
+      label: "GPT-6.1-Sol · laptop",
+      turn: "c1",
+      end: {
+        how: "completed",
+        reason: null,
+        duration_ms: 14 * 60_000,
+        last_message:
+          "Found one. With `ki = 0x7FFF_0000` and a constant error of 32767 at `dt = 1`, the integral saturates after 65 538 steps as meant, but `narrow()` then **wraps** instead of saturating: the output jumps from 32767 to −32768.\n\nRepro: `cargo test -p ctrl overflow_repro` on branch `colleague/q16-edge` (laptop, `/home/me/wt/q16-edge`).",
+      },
+    },
   );
   s.started("t3");
   s.say("t3", "thinking", "", 2);

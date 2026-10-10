@@ -11,10 +11,32 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  a phone, logging out, trust and a relay. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
-  | "archive" | "reread" | "scan" | "grip" | "page" | "versions" | "person" | "key" | "phone" | "logout" | "shield" | "relay";
+  | "archive" | "reread" | "scan" | "grip" | "page" | "versions" | "person" | "key" | "phone" | "logout" | "shield" | "relay"
+  | Marks;
+
+/** Which agent and which kind of device, drawn small beside a conversation's
+ *  name; what is done to a turn; the places of the frame added since. None
+ *  is a maker's mark: the agents are told apart by shapes of our own. */
+type Marks =
+  | "claude" | "codex" | "desktop" | "laptop" | "server" | "features" | "agents" | "folder" | "fork" | "info" | "regenerate"
+  | "terminal" | "cross" | "fit";
 
 const paths: Record<Named, string> = {
   menu: '<path d="M4 7h12M4 13h8"/>',
+  claude: '<path d="M10 3.75v12.5M3.75 10h12.5M5.6 5.6l8.8 8.8M14.4 5.6l-8.8 8.8"/>',
+  codex: '<path d="M10 3.6l5.6 3.2v6.4L10 16.4l-5.6-3.2V6.8z"/><path d="M8.2 8.4L6.6 10l1.6 1.6M11.8 8.4l1.6 1.6-1.6 1.6"/>',
+  desktop: '<rect x="3.75" y="4.25" width="12.5" height="8.75" rx="1.25"/><path d="M7.5 15.75h5M10 13v2.75"/>',
+  laptop: '<path d="M5.25 5.75a1 1 0 0 1 1-1h7.5a1 1 0 0 1 1 1v6.25h-9.5z"/><path d="M3.25 14.75h13.5l-1.1-2.75H4.35z"/>',
+  server: '<rect x="4.25" y="3.75" width="11.5" height="5.25" rx="1"/><rect x="4.25" y="11" width="11.5" height="5.25" rx="1"/><circle cx="7" cy="6.4" r="0.6" fill="currentColor"/><circle cx="7" cy="13.6" r="0.6" fill="currentColor"/>',
+  features: '<rect x="4" y="4" width="5" height="5" rx="1.25"/><rect x="11" y="4" width="5" height="5" rx="1.25"/><rect x="4" y="11" width="5" height="5" rx="1.25"/><path d="M13.5 11v5M11 13.5h5"/>',
+  agents: '<rect x="3.75" y="4.75" width="12.5" height="10.5" rx="2"/><path d="M6.75 8.5l2 1.5-2 1.5M10.5 11.75h3"/>',
+  folder: '<path d="M3.75 6.25a1 1 0 0 1 1-1h3.2l1.5 1.5h5.8a1 1 0 0 1 1 1v6.75a1 1 0 0 1-1 1H4.75a1 1 0 0 1-1-1z"/>',
+  fork: '<circle cx="6" cy="5" r="1.6"/><circle cx="14" cy="5" r="1.6"/><circle cx="10" cy="15.2" r="1.6"/><path d="M6 6.6v.9a2.5 2.5 0 0 0 2.5 2.5h3a2.5 2.5 0 0 0 2.5-2.5v-.9M10 10v3.6"/>',
+  info: '<circle cx="10" cy="10" r="6.25"/><path d="M10 9.25v4"/><circle cx="10" cy="6.9" r="0.6" fill="currentColor"/>',
+  regenerate: '<path d="M15.25 10a5.25 5.25 0 1 1-1.54-3.71"/><path d="M14.25 3.75v2.75H11.5"/>',
+  terminal: '<rect x="3.25" y="4.25" width="13.5" height="11.5" rx="1.75"/><path d="M6.25 8l2.25 2-2.25 2M10.25 12.5h3.5"/>',
+  cross: '<path d="M6 6l8 8M14 6l-8 8"/>',
+  fit: '<path d="M4 7.5V4.75a.75.75 0 0 1 .75-.75H7.5M12.5 4h2.75a.75.75 0 0 1 .75.75V7.5M16 12.5v2.75a.75.75 0 0 1-.75.75H12.5M7.5 16H4.75a.75.75 0 0 1-.75-.75V12.5"/>',
   plus: '<path d="M10 4.5v11M4.5 10h11"/>',
   minus: '<path d="M4.5 10h11"/>',
   settings: '<circle cx="10" cy="10" r="2.4"/><path d="M10 3.5v1.6M10 14.9v1.6M16.5 10h-1.6M5.1 10H3.5M14.6 5.4l-1.1 1.1M6.5 13.5l-1.1 1.1M14.6 14.6l-1.1-1.1M6.5 6.5L5.4 5.4"/>',

@@ -1,27 +1,26 @@
-// The sidebar: the places of the World, always at hand, so who is here can
-// be seen from any page. The World and its machines first, each a line
-// with its mark; then each project, open to the conversations in it now,
-// and the conversations in no project, one line each with a dot for what
-// it is doing and the rest a hover away. Logged in to more than one
-// account, the projects and conversations come account by account, each
-// only what that account may use (`world-gui.md`, 账号、机器与授权). A
-// conversation is begun from here; the account and the settings are at
-// its foot.
+// The sidebar: the places of the World, always at hand, so who is working
+// can be seen from any page. The World, its machines, the agents on them
+// and the features first, each a line with its mark; then each project,
+// open to its conversations, and the conversations in no project, most
+// recent first. A conversation is listed as long as it is not removed,
+// whether its agent's process runs or not (`world-gui.md`, 界面的结构).
+// Logged in to more than one account, the projects and conversations come
+// account by account, each only what that account may use. A conversation
+// is begun from here; the account and the settings are at its foot.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
-import type { Address } from "../world/events";
 import { loginsOf, type Login } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
-import type { ResidentNow } from "../world/world";
+import type { MachineFacts, ResidentNow } from "../world/world";
 import type { Place } from "./places";
 import { link } from "./places";
 import { groupsOf, isComputer, loginLabel, machinesOf, residentIn } from "./reach";
 import { effect } from "./signals";
-import { residentsOf, type Store } from "./store";
+import type { Store } from "./store";
+import { conversationsOf, factsByMachine, talkRow } from "./talk-row";
 import type { ShellWords } from "./words";
-import { agentName, titleOf } from "../world/names";
 
 export interface SidebarOptions {
   store: Store;
@@ -38,6 +37,11 @@ export interface SidebarOptions {
 /** An answer usually comes within a second and is asked for every two;
  *  after this many seconds without one, the sidebar says so. */
 const SLOW = 5;
+
+/** How many conversations a project, or the conversations in none, show
+ *  before the rest are behind "all": enough for a day's work, few enough
+ *  that the projects below stay in sight. */
+const SHOWN = 6;
 
 /** Projects, and accounts' parts, folded shut by the reader, kept on this
  *  device. */
@@ -114,15 +118,21 @@ export class Sidebar {
     const world = store.world.peek();
     const place = this.options.place();
     const now = store.clock.peek();
-    const residents = residentsOf(world).filter((r) => r.here || r.now?.waiting_for_user);
-    const waiting = residents.filter((r) => r.now?.waiting_for_user).length;
+    const talks = conversationsOf(world);
+    const facts = factsByMachine(world);
+    const waiting = talks.filter((r) => r.now?.waiting_for_user).length;
 
-    const machinesHere = place.kind === "machines" || place.kind === "machine";
-    const home = `<a class="place home${place.kind === "home" ? " current" : ""}" href="${link({ kind: "home" })}">
-        <span class="place-mark">${knotMark()}</span><span class="place-name">${escape(words.world)}</span>
-        ${waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : ""}
-      </a>
-      ${world && machinesOf(world).length ? `<a class="place home${machinesHere ? " current" : ""}" href="${link({ kind: "machines" })}"><span class="place-mark">${glyph("machine", 18)}</span><span class="place-name">${escape(words.machines)}</span></a>` : ""}
+    const machines = !!world && machinesOf(world).length > 0;
+    const loggedIn = loginsOf(world?.accounts).length > 0;
+    const at = (kinds: Place["kind"][]) => (kinds.includes(place.kind) ? " current" : "");
+    const top = (href: string, current: string, mark: string, name: string, extra = "") =>
+      `<a class="place home${current}" href="${href}"${current ? ' aria-current="page"' : ""}><span class="place-mark">${mark}</span><span class="place-name">${escape(name)}</span>${extra}</a>`;
+    const places = `<div class="side-places">
+        ${top(link({ kind: "home" }), at(["home"]), knotMark(), words.world, waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : "")}
+        ${machines ? top(link({ kind: "machines" }), at(["machines", "machine"]), glyph("machine", 18), words.machines) : ""}
+        ${machines ? top(link({ kind: "agents", machine: null }), at(["agents"]), glyph("agents", 18), words.agents) : ""}
+        ${machines || loggedIn ? top(link({ kind: "features" }), at(["features", "feature"]), glyph("features", 18), words.features) : ""}
+      </div>
       ${store.trouble.peek() ? `<p class="sidebar-trouble">${escape(words.unreachable)}</p>` : ""}
       ${store.unanswered.peek() >= SLOW ? `<p class="sidebar-trouble" role="status">${escape(words.unanswered(store.unanswered.peek()))}</p>` : ""}`;
 
@@ -135,27 +145,27 @@ export class Sidebar {
         .map((group) => {
           const key = `${group.login.hub}/${group.login.account}`;
           const shut = folded.has(`group:${key}`);
-          const mine = residents.filter((r) => residentIn(world, group, r));
+          const mine = talks.filter((r) => residentIn(world, group, r));
           const asking = mine.some((r) => r.now?.waiting_for_user);
           return `<section class="sidebar-account${shut ? " shut" : ""}">
             <h2 class="side-account-title"><button class="side-account-fold" type="button" data-fold="group:${escape(key)}" aria-expanded="${!shut}" aria-label="${escape(words.groupOf(loginLabel(group.login)))}">${glyph("chevron", 14)}<span class="side-account-name">${escape(group.login.hubName)}<span class="side-account-sep">·</span>${escape(group.login.account)}</span>${shut && asking ? `<span class="mark mark-ask" aria-hidden="true"></span>` : ""}</button></h2>
-            ${shut ? "" : `<div class="side-account-body">${this.projects(group.towns, mine, place, now, key)}${this.loose(mine, place, now)}</div>`}
+            ${shut ? "" : `<div class="side-account-body">${this.projects(group.towns, mine, place, now, facts, key)}${this.loose(mine, place, now, facts)}</div>`}
           </section>`;
         })
         .join("");
     } else {
       const towns = groups[0]?.towns ?? (world?.towns ?? []).map((town) => town.town);
-      body = this.projects(towns, residents, place, now, null) + this.loose(residents, place, now);
+      body = this.projects(towns, talks, place, now, facts, null) + this.loose(talks, place, now, facts);
     }
 
     // On its own, this computer is a World of one; the way in is kept at
     // hand until it logs in.
     const alone =
       world && isComputer(world) && !groups.length
-        ? `<section class="sidebar-group"><a class="place home${place.kind === "login" ? " current" : ""}" href="${link({ kind: "login" })}"><span class="place-mark">${glyph("person", 18)}</span><span class="place-name">${escape(words.logIn)}</span></a></section>`
+        ? `<section class="sidebar-group">${top(link({ kind: "login" }), at(["login"]), glyph("person", 18), words.logIn)}</section>`
         : "";
     this.drawFoot(world, place);
-    const html = home + body + alone;
+    const html = places + body + alone;
     if (html === this.drawn) return;
     this.drawn = html;
     redrawKeepingFocus(this.list, () => {
@@ -175,31 +185,33 @@ export class Sidebar {
     if (html !== this.foot.innerHTML) this.foot.innerHTML = html;
   }
 
-  /** The projects, each open to the agents in it now. A resident may live
+  /** The projects, each open to its conversations. A conversation may live
    *  in a project this machine keeps no ledger of; it is listed under the
    *  project's short name all the same. */
-  private projects(towns: string[], residents: ResidentNow[], place: Place, now: Date, group: string | null): string {
+  private projects(towns: string[], talks: ResidentNow[], place: Place, now: Date, facts: Map<string, MachineFacts>, group: string | null): string {
     const { store, words } = this.options;
     const known = store.world.peek()?.towns ?? [];
     // Only a project this computer keeps no ledger of is named after its
-    // residents; one it knows belongs to the account it is in.
+    // conversations; one it knows belongs to the account it is in.
     const named = new Set([...towns, ...known.map((town) => town.town)]);
-    const unknown = [...new Set(residents.map((r) => r.town).filter((t): t is string => !!t && !named.has(t)))];
+    const unknown = [...new Set(talks.map((r) => r.town).filter((t): t is string => !!t && !named.has(t)))];
     const rows = [...towns, ...unknown]
       .map((town) => {
         const name = known.find((t) => t.town === town)?.record.name ?? town;
-        const inside = order(residents.filter((r) => r.town === town));
+        const inside = talks.filter((r) => r.town === town);
         const shut = folded.has(town);
         const asking = inside.some((r) => r.now?.waiting_for_user);
+        const working = inside.some((r) => r.now?.activity === "busy");
         const current = (place.kind === "project" || place.kind === "journal" || place.kind === "page") && place.town === town;
+        const shutMark = asking ? "mark-ask" : working ? "mark-busy" : "";
         return `<li class="project-place${shut ? " shut" : ""}">
           <div class="place-row">
             <a class="place${current ? " current" : ""}" href="${link({ kind: "project", town })}"><span class="place-name">${escape(name)}</span>
-              ${shut && asking ? `<span class="mark mark-ask" aria-hidden="true"></span>` : ""}
+              ${shut && shutMark ? `<span class="mark ${shutMark}" aria-hidden="true"></span>` : ""}
               ${shut && inside.length ? `<span class="count">${inside.length}</span>` : ""}</a>
             ${inside.length ? `<button class="place-fold" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}" aria-label="${escape(words.agentsIn(name))}">${glyph("chevron", 16)}</button>` : ""}
           </div>
-          ${shut || !inside.length ? "" : `<ul class="agents">${inside.map((r) => this.agent(r, place, now)).join("")}</ul>`}
+          ${shut || !inside.length ? "" : this.talks(inside, place, now, facts, town, "talks in-project")}
         </li>`;
       })
       .join("");
@@ -208,43 +220,27 @@ export class Sidebar {
     </section>`;
   }
 
-  /** The agents in no project. */
-  private loose(residents: ResidentNow[], place: Place, now: Date): string {
-    const outside = order(residents.filter((r) => !r.town));
+  /** The conversations in no project. */
+  private loose(talks: ResidentNow[], place: Place, now: Date, facts: Map<string, MachineFacts>): string {
+    const outside = talks.filter((r) => !r.town);
     return outside.length
-      ? `<section class="sidebar-group"><h2 class="side-group-title">${escape(this.options.words.outside)}</h2><ul class="agents loose">${outside.map((r) => this.agent(r, place, now)).join("")}</ul></section>`
+      ? `<section class="sidebar-group"><h2 class="side-group-title">${escape(this.options.words.outside)}</h2>${this.talks(outside, place, now, facts, null, "talks")}</section>`
       : "";
   }
 
-  private agent(r: ResidentNow, place: Place, now: Date): string {
+  /** The most recent conversations of a list, and a way to all of them.
+   *  One waiting on the reader is never left behind "all". */
+  private talks(talks: ResidentNow[], place: Place, now: Date, facts: Map<string, MachineFacts>, town: string | null, kind: string): string {
     const { words } = this.options;
-    const address: Address = { resident: r.about.id, machine: r.about.machine };
-    const current = place.kind === "talk" && place.address.resident === address.resident && place.address.machine === address.machine;
-    const name = words.someone(agentName(r.about.host.agent), r.about.machine);
-    const waiting = r.now?.waiting_for_user;
-    const busy = r.now?.activity === "busy";
-    const title = titleOf(r) ?? name;
-    const state = waiting
-      ? words.waiting
-      : busy
-        ? words.busy(words.span(now.getTime() - Date.parse(r.now!.since)))
-        : r.now?.activity === "asleep"
-          ? words.asleep
-          : words.idle;
-    const kind = waiting ? "mark-ask" : busy ? "mark-busy" : "mark-idle";
-    const hover = [title !== name ? name : "", state].filter(Boolean).join(" · ");
-    return `<li><a class="place agent-place ${kind}${current ? " current" : ""}" href="${link({ kind: "talk", address })}" title="${escape(hover)}">
-      <span class="mark ${kind}" aria-hidden="true"></span><span class="place-name">${escape(title)}</span><span class="spoken">${escape(state)}</span>
-    </a></li>`;
+    const shown = talks.filter((r, i) => i < SHOWN || r.now?.waiting_for_user || (place.kind === "talk" && place.address.resident === r.about.id && place.address.machine === r.about.machine));
+    const rest = talks.length - shown.length;
+    const all = place.kind === "talks" && place.town === town;
+    return `<ul class="${kind}">${shown.map((r) => talkRow(r, place, now, facts, words)).join("")}${
+      rest > 0
+        ? `<li><a class="talk-all${all ? " current" : ""}" href="${link({ kind: "talks", town })}"><span class="talk-host"></span><span class="talk-name">${escape(words.all)}</span><span class="count">${talks.length}</span></a></li>`
+        : ""
+    }</ul>`;
   }
-}
-
-/** Who waits on the reader first, then who works, then the rest; within
- *  each, the most recently stirred first. */
-function order(residents: ResidentNow[]): ResidentNow[] {
-  const rank = (r: ResidentNow) => (r.now?.waiting_for_user ? 0 : r.now?.activity === "busy" ? 1 : 2);
-  const stirred = (r: ResidentNow) => Date.parse(r.now?.since ?? r.about.born_at);
-  return [...residents].sort((a, b) => rank(a) - rank(b) || stirred(b) - stirred(a));
 }
 
 /** The World's mark: machines as rings round the knot where they meet. */

@@ -1,0 +1,372 @@
+/* What opens and closes in a conversation, the actions on a turn, the
+   World's notices and questions asked without waiting. Folds are moved by
+   script so the line pressed stays put (`view.ts`); here they are only
+   clipped boxes. */
+
+.fold-box {
+  overflow: hidden;
+  overflow-anchor: none;
+}
+
+.row > .fold-box {
+  grid-column: 2 / -1;
+  grid-row: 2;
+}
+
+.row > .fold-box > .fold-content > :first-child {
+  margin-top: var(--space-1);
+}
+
+.row > .fold-box > .fold-content > :last-child {
+  margin-bottom: var(--space-3);
+}
+
+.group-box > .rows {
+  padding-top: var(--space-1);
+}
+
+/* The stretch's heading: what it does, then how many steps and how long,
+   in figures that do not move as they count. */
+.group-head {
+  display: flex;
+  width: fit-content;
+}
+
+.group-time {
+  flex: none;
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.group-time:empty,
+.group-stats:empty {
+  display: none;
+}
+
+.group-stats {
+  flex: none;
+  margin-left: 6px;
+}
+
+.group-time::before {
+  content: "·";
+  margin: 0 var(--space-1) 0 2px;
+}
+
+/* Long text under a row: its first lines, the button for the rest, the
+   box it grows into. The button never breaks its line. */
+.long-text-box {
+  position: relative;
+  overflow: hidden;
+  overflow-anchor: none;
+  border-radius: var(--radius-s);
+}
+
+.long-text-box .lv-viewport {
+  background: transparent;
+  font-size: var(--size-code);
+}
+
+.long-text-full {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-s);
+  background: var(--surface-header);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--hover) ease, color var(--hover) ease;
+}
+
+.long-text-box:hover .long-text-full,
+.long-text-full:focus-visible {
+  opacity: 1;
+}
+
+.long-text-full:hover {
+  color: var(--text);
+}
+
+.io-more {
+  white-space: nowrap;
+}
+
+@media (hover: none) {
+  .long-text-full {
+    opacity: 1;
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* A turn's actions: small marks, no words; their names on hover. The
+   latest turn's are always there, earlier ones with the pointer. */
+.turn-acts {
+  display: flex;
+  gap: 2px;
+  margin-top: var(--space-1);
+  opacity: 0;
+  transition: opacity var(--hover) ease;
+}
+
+.turn-acts.latest,
+.block:hover > .turn-acts,
+.turn-acts:focus-within {
+  opacity: 1;
+}
+
+.user-acts {
+  justify-content: flex-end;
+}
+
+.answer-acts {
+  margin-left: -6px;
+}
+
+.turn-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.turn-icon:hover,
+.turn-icon:focus-visible {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.turn-icon.copied {
+  color: var(--alive);
+}
+
+.turn-info {
+  cursor: default;
+}
+
+/* What the conversation does not take is not offered. */
+.transcript:not(.can-rewind) [data-needs="rewind"],
+.transcript:not(.can-fork) [data-needs="fork"] {
+  display: none;
+}
+
+@media (hover: none) {
+  .turn-acts {
+    opacity: 1;
+  }
+
+  .turn-icon {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+/* A notice: what the World told the session, as a quiet line on the right,
+   a hand's mark before it; what it holds folded under it. */
+.block-heard.from-world {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.notice-line {
+  display: flex;
+  justify-content: flex-end;
+  max-width: min(100%, 520px);
+  font-family: var(--font-reading);
+  font-style: italic;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.notice-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  max-width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+  border-radius: var(--radius-s);
+  transition: color var(--hover) ease;
+}
+
+.notice-open:hover {
+  color: var(--text-2);
+}
+
+.notice-line:not(:has(.notice-open)) {
+  gap: 6px;
+  align-items: center;
+}
+
+.notice-said {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notice-mark {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.notice-mark.wrong,
+.notice-line.failed .notice-said {
+  color: var(--pen-clay);
+}
+
+.notice-open > .glyph:last-child {
+  color: var(--text-3);
+  transform: rotate(-90deg);
+  transition: transform var(--fold) var(--fold-easing);
+}
+
+.notice-open[aria-expanded="true"] > .glyph:last-child {
+  transform: none;
+}
+
+.notice-box {
+  align-self: stretch;
+}
+
+.notice-box > .fold-content {
+  padding: var(--space-2) 0 var(--space-1);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.notice-path {
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+/* Answers to questions asked without waiting: what was answered, on the
+   user's side, small. */
+.block-heard.from-reply {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.reply-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.reply-line .glyph {
+  color: var(--alive);
+}
+
+/* Questions asked without waiting: a card in the conversation. */
+.question-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.question-one {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.question-title {
+  padding: 0;
+  font-size: var(--size-ui);
+  line-height: var(--leading-prose);
+  color: var(--text);
+}
+
+.question-title p {
+  margin: 0;
+}
+
+.question-card .ask-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.question-card .ask-option[aria-pressed="true"] {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+.question-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.question-state {
+  flex: 1;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.question-state.wrong {
+  color: var(--wrong);
+}
+
+.question-card.answered {
+  gap: var(--space-2);
+}
+
+.question-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+.question-pair .question-title {
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.question-answer {
+  color: var(--text-strong);
+}
+
+.question-card.skipped .question-title {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-acts,
+  .notice-open > .glyph:last-child {
+    transition: none;
+  }
+}
+
+/* A block with nothing in it (a turn that ended as it should) takes no
+   room. */
+.block:empty {
+  display: none;
+}

@@ -155,11 +155,9 @@ export class ProjectForm {
       name: this.body.querySelector<HTMLInputElement>("[name=name]")?.value ?? record?.name ?? "",
       slug: this.body.querySelector<HTMLInputElement>("[name=slug]")?.value ?? "",
       what: this.body.querySelector<HTMLTextAreaElement>("[name=what]")?.value ?? record?.what ?? "",
-      canonMachine: this.body.querySelector<HTMLSelectElement>("[name=canon-machine]")?.value ?? record?.canon?.machine ?? "",
-      canonPath: this.body.querySelector<HTMLInputElement>("[name=canon-path]")?.value ?? record?.canon?.path ?? "",
     };
-    const options = (chosen: string, none?: string) =>
-      `${none !== undefined ? `<option value="">${escape(none)}</option>` : ""}${names
+    const options = (chosen: string) =>
+      `${names
         .map((name) => `<option value="${escape(name)}"${name === chosen ? " selected" : ""}>${escape(name)}</option>`)
         .join("")}`;
     this.body.innerHTML = `
@@ -210,9 +208,6 @@ export class ProjectForm {
             )
             .join("")}</div>
           <button class="text-button add-place" type="button">${glyph("plus", 16)}<span>${escape(words.addPlace)}</span></button></div>
-        <div class="field"><span class="field-label">${escape(words.canon)}</span>
-          <div class="canon-row"><select name="canon-machine" aria-label="${escape(words.canonMachine)}">${options(kept.canonMachine, words.noCanon)}</select>
-          <input name="canon-path" class="mono" spellcheck="false" placeholder="${escape(words.canonHint)}" aria-label="${escape(words.canonHint)}" value="${escape(kept.canonPath)}"></div></div>
       </div>
       <p class="sheet-note" role="alert" hidden></p>
       <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(this.editing ? words.save : words.open)}</button></footer>`;
@@ -223,8 +218,6 @@ export class ProjectForm {
     const { words } = this.options;
     this.read();
     const value = (name: string) => this.body.querySelector<HTMLInputElement>(`[name="${name}"]`)?.value.trim() ?? "";
-    const canonMachine = value("canon-machine");
-    const canonPath = value("canon-path");
     const fields: RecordFields = {
       name: value("name"),
       what: value("what"),
@@ -232,7 +225,9 @@ export class ProjectForm {
       places: this.places
         .map((place) => ({ what: place.what.trim(), machine: place.machine, path: place.path.trim() }))
         .filter((place) => place.what || place.path),
-      canon: canonMachine && canonPath ? { machine: canonMachine, path: canonPath } : null,
+      // Where decisions are kept is project memory, not asked for until it
+      // is finished (`world-journals.md`); a record that names it keeps it.
+      canon: this.editing?.record.canon ?? null,
     };
     const town = this.editing?.town ?? value("slug");
     const note = this.body.querySelector<HTMLElement>(".sheet-note")!;

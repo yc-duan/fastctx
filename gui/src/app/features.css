@@ -1,0 +1,459 @@
+/* The features: a card for each, and each its own page. The storyboard
+   draws itself stroke by stroke, a frame at a time; settings are solid
+   fields on the paper. */
+.features-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.features-body {
+  flex: 1;
+  width: min(100%, 920px);
+  margin: 0 auto;
+  padding: var(--space-3) var(--gutter) var(--space-12);
+}
+
+.feature-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: var(--space-3);
+}
+
+.feature-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-height: 150px;
+  padding: var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--bg-sunken);
+  color: var(--text-2);
+  text-decoration: none;
+  transition: background-color var(--hover) ease;
+}
+
+.feature-card:hover {
+  background: var(--fill-strong);
+}
+
+.feature-card-art {
+  display: flex;
+  gap: 6px;
+  margin-bottom: var(--space-2);
+  color: var(--text-3);
+}
+
+.feature-card-name {
+  font-family: var(--font-reading);
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+}
+
+.feature-card-line {
+  flex: 1;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.feature-card.coming .feature-card-name {
+  color: var(--text-2);
+}
+
+.feature-coming {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-8);
+  justify-content: center;
+  color: var(--text-3);
+}
+
+.feature-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  padding-top: var(--space-4);
+}
+
+.feature-note {
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+/* The storyboard. */
+.storyboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: var(--space-4);
+  width: 100%;
+}
+
+.sb-frame {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sb-frame svg {
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.sb-frame figcaption {
+  font-family: var(--font-reading);
+  font-size: var(--size-small);
+  line-height: 1.6;
+  color: var(--text-2);
+  animation: sb-caption 420ms ease-out both;
+}
+
+.sb-stroke {
+  animation: sb-draw 320ms ease-out both;
+}
+
+.sb-graphite {
+  fill: var(--pen-graphite);
+}
+
+.sb-ink {
+  fill: var(--text-2);
+}
+
+.sb-clay {
+  fill: var(--pen-clay);
+}
+
+.sb-mark {
+  color: var(--text-2);
+  animation: sb-caption 300ms ease-out both;
+}
+
+@keyframes sb-draw {
+  from {
+    clip-path: inset(0 100% 0 0);
+    opacity: 0.3;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+}
+
+@keyframes sb-caption {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+/* Turned on, the storyboard waits folded at the top: small, still. */
+.feature-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.storyboard-strip {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+
+.storyboard.folded {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.storyboard.folded figcaption {
+  display: none;
+}
+
+.storyboard.folded .sb-stroke,
+.storyboard.folded .sb-mark {
+  animation: none;
+}
+
+.feature-top-acts {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.feature-section {
+  margin-top: var(--space-8);
+}
+
+.feature-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-reading);
+  font-weight: 400;
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+}
+
+.feature-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.feature-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.feature-chip:hover {
+  background: var(--fill-strong);
+}
+
+.feature-chip.chosen {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+.feature-chip.chosen .glyph {
+  color: var(--accent);
+}
+
+.feature-quiet {
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.callee-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: var(--space-3);
+}
+
+.callee-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.callee-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.callee-row .callee-field {
+  flex: 1;
+}
+
+.callee-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.callee-field input,
+.callee-field select,
+.feature-text {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-s);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--size-ui);
+}
+
+.callee-name input {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+}
+
+.feature-text {
+  min-height: 0;
+  padding: var(--space-3);
+  resize: vertical;
+  line-height: var(--leading-prose);
+  font-size: var(--size-small);
+}
+
+.callee-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.callee-add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  min-height: 160px;
+  border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--bg-sunken) 55%, transparent);
+  color: var(--text-3);
+  font-size: var(--size-small);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.callee-add:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-sunken);
+}
+
+.feature-now {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.feature-now a {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  color: var(--text-2);
+  text-decoration: none;
+}
+
+.feature-now-for {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.feature-save-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  padding: var(--space-3) 0 calc(var(--space-3) + env(safe-area-inset-bottom));
+  background: var(--bg);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity var(--hover) ease, transform var(--hover) ease;
+}
+
+.feature-save-bar.shown {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+.feature-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.feature-problem {
+  font-size: var(--size-small);
+  color: var(--caution);
+}
+
+/* The effort slider, wherever it stands. */
+.effort-slider {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+  height: 46px;
+  padding-top: 6px;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+
+.effort-slider svg {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 40px;
+}
+
+.effort-line {
+  fill: var(--pen-graphite);
+}
+
+.effort-dots {
+  fill: var(--text-2);
+}
+
+.effort-marker {
+  fill: var(--pen-clay);
+  opacity: 0.55;
+}
+
+.effort-knob {
+  fill: var(--accent);
+}
+
+.effort-name {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: var(--size-small);
+  color: var(--text-strong);
+  white-space: nowrap;
+  transition: left var(--hover) ease-out;
+}
+
+.effort-slider:focus-visible .effort-name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (hover: none) {
+  .effort-slider {
+    height: 52px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-stroke,
+  .sb-mark,
+  .sb-frame figcaption {
+    animation: none;
+  }
+
+  .effort-name,
+  .feature-save-bar {
+    transition: none;
+  }
+}

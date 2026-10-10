@@ -42,8 +42,6 @@ function happening(event: SinceEvent): Happening[] {
       return event.origin.kind === "user" ? [{ kind: "arrived", at, who: event.resident, town, agent: event.host.agent }] : [];
     case "resident_moved":
       return [{ kind: "moved", at, who: event.resident, town, from: event.from, to: event.to }];
-    case "journal_entry":
-      return town ? [{ kind: "journal", at, town, journal: event.journal, entry: event.entry, by: event.by, first: null }] : [];
     case "project_version":
       return town ? [{ kind: "project", at, town, version: event.version, name: event.name, by: event.by }] : [];
     case "submission_uncertain":
@@ -56,7 +54,9 @@ function happening(event: SinceEvent): Happening[] {
     case "machine_offline":
       return [{ kind: "machine", at, machine: event.machine as MachineName, online: event.kind === "machine_connected" }];
     // Kept by the records but not something that happened to the reader's
-    // work: a new description, a session registering again.
+    // work: a session registering again. Journals are project memory, not
+    // shown until it is finished (`world-journals.md`).
+    case "journal_entry":
     case "journal_description":
     case "claude_registered":
       return [];

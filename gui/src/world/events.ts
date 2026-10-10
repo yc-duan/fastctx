@@ -4,6 +4,7 @@
 
 import type { Attachment } from "./attachments";
 import type { PageSource } from "./pages";
+import type { EndedHow, ExitStatus } from "./since";
 import type { Address, JsonValue, MachineName, NoticeId, Timestamp } from "./wire";
 export type { Address, MachineName, ResidentId } from "./wire";
 
@@ -135,9 +136,51 @@ export type SessionChange =
   | { kind: "resolved"; id: JsonValue; resolution: JsonValue }
   | { kind: "voice"; event: string; data: JsonValue };
 
+/** What the World tells a resident, as facts (`fastctx_types::residents::Notice`):
+ *  an interface shows these, never the words written for the model. */
+export type Notice =
+  | {
+      kind: "job_ended";
+      job: string;
+      machine: MachineName;
+      request?: NoticeId;
+      follower?: MachineName;
+      how: EndedHow;
+      status: ExitStatus | null;
+      at: Timestamp;
+      output: string;
+      stderr?: string;
+      last?: { text: string; whole: boolean };
+      /** Who stopped it, when someone did: `the user` when the user did. */
+      stop?: { by: string; reason: string };
+    }
+  | { kind: "answer"; colleague: Address; label: string; turn: string; end: TurnEnd }
+  | { kind: "health"; colleague: Address; label: string; health: Health }
+  | { kind: "words"; from: Speaker; text: string }
+  | { kind: "attached"; message: JsonValue; text: string }
+  | { kind: "world"; fact: WorldFact; text: string };
+
+export type WorldFact =
+  | { fact: "desk_taken"; by: Address }
+  | { fact: "desk_outside" }
+  | { fact: "desk_free"; by: Address }
+  | { fact: "moved"; to?: string };
+
+/** Who the World records as having stopped a job the user stopped. */
+export const STOPPED_BY_USER = "the user";
+
 export type Happened =
   | { event: "turn_started"; turn: string }
-  | { event: "heard"; delivery: NoticeId | null; turn: string | null; from: Speaker | null; text: string; message?: UserMessage }
+  | {
+      event: "heard";
+      delivery: NoticeId | null;
+      turn: string | null;
+      from: Speaker | null;
+      text: string;
+      message?: UserMessage;
+      /** The World's telling or a colleague's answer, as facts. */
+      notice?: Notice;
+    }
   | { event: "began"; turn: string; item: Item }
   | { event: "grew"; revision?: number; turn: string; item: string; part: Part; text: string }
   | { event: "finished"; turn: string; item: Item }

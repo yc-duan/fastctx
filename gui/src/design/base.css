@@ -10,6 +10,13 @@
   box-sizing: border-box;
 }
 
+/* Hidden is hidden, whatever display a class gives the element: a button
+   styled as a grid must not show as an empty box when it is not for this
+   device. */
+[hidden] {
+  display: none !important;
+}
+
 /* Glyphs drawn by CSS alone, as masks in the current colour; the same
    paths as `glyphs.ts`. */
 :root {

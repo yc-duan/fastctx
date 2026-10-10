@@ -1,6 +1,7 @@
 // A project's overview, on one screen: what it is, who is in it now, the
-// pages its residents wrote, its journals, its decisions and where its
-// things are, as its map has them.
+// pages its residents wrote and where its things are, as its record has
+// them. Journals and decisions are project memory, not shown until it is
+// finished (`world-journals.md`).
 // Side by side where there is room, each column scrolling on its own;
 // behind tabs on a narrow screen. Like the front page, every line is the
 // World's record, nothing summarised.
@@ -30,15 +31,12 @@ export interface ProjectOptions {
   begin(town: string): void;
   /** Opens the form for the next version of its record. */
   revise(town: string, record: ProjectRecord): void;
-  /** Opens the sheet that starts a journal. */
-  startJournal(town: string): void;
   link(address: Address): string;
-  journalLink(town: string, journal: string): string;
   pageWords: PageWords;
   pageLink(town: string, page: string): string;
 }
 
-type Tab = "here" | "pages" | "journals" | "decisions" | "places";
+type Tab = "here" | "pages" | "places";
 
 export class ProjectPage {
   readonly element: HTMLElement;
@@ -71,9 +69,6 @@ export class ProjectPage {
     this.element.querySelector(".begin-here")!.addEventListener("click", () => options.begin(options.town));
     this.element.querySelector(".revise")!.addEventListener("click", () => {
       if (this.record) options.revise(options.town, this.record);
-    });
-    this.board.addEventListener("click", (event) => {
-      if ((event.target as HTMLElement).closest(".start-journal")) options.startJournal(options.town);
     });
     this.tabs.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-tab]");
@@ -115,36 +110,10 @@ export class ProjectPage {
             : ""),
       ],
       ["pages", this.options.pageWords.pages, this.pages(map.town, map.pages, now)],
-      [
-        "journals",
-        words.journals,
-        map.journals.length
-          ? `<ul class="journals">${map.journals
-              .map(
-                (journal) => `<li><a class="journal" href="${escape(this.options.journalLink(map.town, journal.journal))}">
-                  <span class="journal-name">${escape(journal.journal)}</span>
-                  ${journal.description ? `<span class="journal-about">${escape(journal.description.text)}</span>` : ""}
-                  <span class="journal-facts">${[
-                    words.entries(journal.entries),
-                    words.writers(journal.writers),
-                    journal.latest
-                      ? words.latest(this.writer(journal.latest.by), this.options.home.ago(now.getTime() - Date.parse(journal.latest.at)))
-                      : "",
-                  ]
-                    .filter(Boolean)
-                    .map(escape)
-                    .join(`<span class="sep">·</span>`)}</span>
-                </a></li>`,
-              )
-              .join("")}</ul>`
-          : `<p class="quiet">${escape(words.noJournals)}</p>`,
-      ],
-      ["decisions", words.decisions, this.canon(map)],
       ["places", words.places, record.places.length ? this.places(map) : `<p class="quiet">${escape(words.noPlaces)}</p>`],
     ];
-    const startJournal = `<button class="text-button start-journal" type="button">${glyph("plus", 16)}<span>${escape(words.newJournal)}</span></button>`;
     const section = ([tab, title, body]: [Tab, string, string]) =>
-      `<section class="home-section" data-tab="${tab}"><h2 class="section-title">${escape(title)}</h2>${body}${tab === "journals" ? startJournal : ""}</section>`;
+      `<section class="home-section" data-tab="${tab}"><h2 class="section-title">${escape(title)}</h2>${body}</section>`;
     const board = `<div class="board-column scroller">${section(sections[0])}</div><div class="board-column scroller">${sections
       .slice(1)
       .map(section)
@@ -256,25 +225,6 @@ export class ProjectPage {
     const { home } = this.options;
     const whose = accountTag(worksFor(this.others, job.machine, job.job), home.forAccounts);
     return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(home.for(home.lasted(now.getTime() - Date.parse(job.started_at))))}${whose}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(by)}</span></li>`;
-  }
-
-  private canon(map: MapView): string {
-    const { words } = this.options;
-    if (!map.canon) return `<p class="quiet">${escape(words.noDecisions)}</p>`;
-    if ("Err" in map.canon && map.canon.Err !== undefined) {
-      return `<p class="quiet caution" title="${escape(map.canon.Err)}">${escape(words.decisionsUnreadable(map.canon.Err))}</p>`;
-    }
-    const heads = map.canon.Ok ?? [];
-    const canon = map.record.canon;
-    const where = canon ? `${canon.machine} · ${canon.path}` : "";
-    const docLink = (file: string) => (canon ? fileLink(canon.machine, `${canon.path.replace(/[\\/]+$/, "")}/${file}`) : null);
-    return `<ul class="canon">${heads
-      .map((head) => {
-        const inner = `<span class="canon-title">${escape(head.title)}</span><span class="canon-scope">${escape(head.scope)}</span>`;
-        const href = docLink(head.file);
-        return `<li class="canon-doc">${href ? `<a class="canon-open" href="${escape(href)}">${inner}</a>` : inner}</li>`;
-      })
-      .join("")}</ul>${where ? `<p class="canon-where">${escape(where)}</p>` : ""}`;
   }
 
   private places(map: MapView): string {

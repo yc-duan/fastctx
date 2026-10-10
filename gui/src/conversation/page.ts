@@ -228,6 +228,20 @@ export class ConversationPage {
     const controls = options.controls;
     this.view = new ConversationView(main, options.conversation, {
       words,
+      english: words.english,
+      scroller: this.scroller,
+      reading: () => {
+        this.following = false;
+      },
+      questions: {
+        words: words.questions,
+        // Answers go in at once, into the turn if one runs: they never wait
+        // in the queue.
+        answer: async (text) => {
+          const came = await this.options.send(text, { refs: [], shown: [] });
+          if (came === "failed") throw new Error(words.notSent(""));
+        },
+      },
       here: options.here,
       residentMachine: someone.machine,
       link: options.link,
@@ -772,13 +786,15 @@ export class ConversationPage {
 
   /** Starting again from the user's words, or forking from a turn: said
    *  plainly first, done once the user agrees. */
-  private turnAct(act: "rewind" | "fork", turn: string, words: string | null, kept: Attachment[]): void {
+  private turnAct(act: "rewind" | "regenerate" | "fork", turn: string, words: string | null, kept: Attachment[]): void {
     const controls = this.options.controls;
     if (!controls) return;
     const said = controls.words;
     const confirm = this.element.querySelector<HTMLElement>(".composer-confirm")!;
     confirm.hidden = false;
-    confirm.innerHTML = `<p>${escape(act === "rewind" ? said.rewindAsk : said.forkAsk)}</p><div class="composer-confirm-acts"><button type="button" class="ask-button ask-primary" data-go>${escape(act === "rewind" ? said.rewindGo : said.forkGo)}</button><button type="button" class="ask-button" data-never>${escape(said.never)}</button></div>`;
+    const ask = act === "rewind" ? said.rewindAsk : act === "regenerate" ? said.regenerateAsk : said.forkAsk;
+    const go = act === "rewind" ? said.rewindGo : act === "regenerate" ? said.regenerateGo : said.forkGo;
+    confirm.innerHTML = `<p>${escape(ask)}</p><div class="composer-confirm-acts"><button type="button" class="ask-button ask-primary" data-go>${escape(go)}</button><button type="button" class="ask-button" data-never>${escape(said.never)}</button></div>`;
     const close = () => {
       confirm.hidden = true;
       confirm.innerHTML = "";
@@ -796,8 +812,15 @@ export class ConversationPage {
       "click",
       () => {
         close();
-        if (act === "rewind") {
+        if (act === "rewind" || act === "regenerate") {
           void this.run({ name: "rewind", description: "", args: null, arguments: "none", control: "rewind", source: null }, "", { do: "rewind", from: turn }).then(() => {
+            // Asking again sends the same words, with what came with them,
+            // as soon as the conversation is back before that turn.
+            if (act === "regenerate" && words !== null) {
+              this.following = true;
+              void this.options.send(words, kept.length ? { refs: kept, shown: [] } : { refs: [], shown: [] });
+              return;
+            }
             if (words !== null && !this.input.value.trim()) {
               this.input.value = words;
               // What came with the words comes back with them.

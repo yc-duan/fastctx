@@ -3,6 +3,10 @@
 
 import type { Address } from "../world/events";
 
+/** The features a World can turn on (`world-gui.md`, 功能). */
+export type Feature = "collaboration" | "memory";
+const features: Feature[] = ["collaboration", "memory"];
+
 export type Place =
   | { kind: "home" }
   | { kind: "talk"; address: Address }
@@ -12,6 +16,14 @@ export type Place =
   | { kind: "page"; town: string; page: string; version: number | null }
   | { kind: "machines" }
   | { kind: "machine"; name: string }
+  /** The agents on every machine, or on one. */
+  | { kind: "agents"; machine: string | null }
+  /** The features, one card each, and a feature's own page. */
+  | { kind: "features" }
+  | { kind: "feature"; feature: Feature }
+  /** Every conversation, or every one in a project: the ones the sidebar
+   *  has no room for among them. */
+  | { kind: "talks"; town: string | null }
   | { kind: "settings" }
   /** Logging in, the first time or to one more account. */
   | { kind: "login" }
@@ -40,6 +52,14 @@ export function link(place: Place): string {
       return "#/machines";
     case "machine":
       return `#/machine/${part(place.name)}`;
+    case "agents":
+      return place.machine === null ? "#/agents" : `#/agents/${part(place.machine)}`;
+    case "features":
+      return "#/features";
+    case "feature":
+      return `#/feature/${place.feature}`;
+    case "talks":
+      return place.town === null ? "#/talks" : `#/talks/${part(place.town)}`;
     case "settings":
       return "#/settings";
     case "login":
@@ -80,6 +100,15 @@ export function placeOf(hash: string): Place {
     case "machine":
       if (parts[1]) return { kind: "machine", name: parts[1] };
       break;
+    case "agents":
+      return { kind: "agents", machine: parts[1] || null };
+    case "features":
+      return { kind: "features" };
+    case "feature":
+      if (features.includes(parts[1] as Feature)) return { kind: "feature", feature: parts[1] as Feature };
+      return { kind: "features" };
+    case "talks":
+      return { kind: "talks", town: parts[1] || null };
     case "settings":
       return { kind: "settings" };
     // An address from before accounts, kept so old links still open.

@@ -323,30 +323,95 @@ body {
   }
 }
 
-/* Conversations: one line each, a dot for what it is doing and its name;
-   who and where it is, and for how long, on hover. Waiting on the reader
-   is a filled clay dot; working, a clay ring that breathes; idle, a faint
-   grey dot. */
-.agents {
+/* Conversations: one line each, in fixed columns so a long name never moves
+   the marks: which agent, the name cut short, a dot for what it is doing,
+   the kind of device it lives on. Waiting on the reader is a filled clay
+   dot; working, a clay ring that breathes; idle, nothing, the place kept. */
+.side-places {
+  display: grid;
+  gap: 1px;
+}
+
+.talks {
   margin: 1px 0 var(--space-1);
 }
 
-.agent-place {
-  padding-top: 4px;
-  padding-bottom: 4px;
+.talk-row,
+.talk-all {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 10px 16px;
+  align-items: center;
+  column-gap: 9px;
+  min-height: 32px;
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  text-decoration: none;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.talks.in-project .talk-row,
+.talks.in-project .talk-all {
   padding-left: calc(var(--space-3) + 8px);
 }
 
-.agents.loose .agent-place {
-  padding-left: var(--space-3);
+.talk-row:hover,
+.talk-all:hover {
+  color: var(--text);
+  background: var(--hairline);
 }
 
-.agent-place .place-name {
-  flex: 1;
-}
-
-.agent-place.mark-ask .place-name {
+.talk-row.current,
+.talk-all.current {
   color: var(--text-strong);
+  background: var(--hairline);
+}
+
+.talk-host,
+.talk-device {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.talk-row.current .talk-host,
+.talk-row.current .talk-device {
+  color: var(--text-2);
+}
+
+.talk-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.talk-row.mark-ask .talk-name {
+  color: var(--text-strong);
+}
+
+.talk-state {
+  display: grid;
+  place-items: center;
+}
+
+.talk-all {
+  color: var(--text-3);
+  font-size: var(--size-small);
+}
+
+.talk-all .count {
+  grid-column: 3 / 5;
+  justify-self: end;
+}
+
+@media (hover: none) {
+  .talk-row,
+  .talk-all {
+    min-height: 44px;
+  }
 }
 
 .mark {
@@ -555,3 +620,73 @@ html.framed .page-head {
   padding-right: calc(3 * 46px + var(--space-2));
 }
 
+
+/* What a pointer shows on hover, raised by a long press on a touch screen. */
+.touch-hint {
+  position: fixed;
+  z-index: 60;
+  max-width: min(80vw, 320px);
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  background: var(--text-strong);
+  color: var(--bg);
+  font-size: var(--size-small);
+  line-height: 1.45;
+  white-space: pre-line;
+  pointer-events: none;
+  box-shadow: var(--shadow-pop);
+  animation: hint-rise var(--hover) ease-out;
+}
+
+@keyframes hint-rise {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .touch-hint {
+    animation: none;
+  }
+}
+
+/* Every conversation: the sidebar's lines, wider, with a search above. */
+.talks-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.talks-body {
+  flex: 1;
+  width: min(100%, 720px);
+  margin: 0 auto;
+  padding: var(--space-2) var(--gutter) var(--space-10);
+}
+
+.talks-search {
+  width: 100%;
+  height: 38px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--size-ui);
+}
+
+.talks-search:focus {
+  outline: none;
+}
+
+.talks-group {
+  margin-top: var(--space-5);
+}
+
+.talks-none {
+  margin-top: var(--space-6);
+  color: var(--text-3);
+  font-size: var(--size-small);
+}
