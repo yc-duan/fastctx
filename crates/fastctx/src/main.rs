@@ -27,8 +27,8 @@ mod server_install;
 mod service;
 mod stop;
 mod talk;
-mod update;
 mod uninstall;
+mod update;
 mod view;
 mod w;
 mod wait;
@@ -294,9 +294,19 @@ fn main() -> ExitCode {
             | Command::ClaudeElicitation { .. }
             | Command::ClaudeControlOwner { .. }
             | Command::ClaudeControlGuard
+            | Command::Uninstall(_)
     );
     #[cfg(windows)]
     let routes_world = routes_world && !matches!(&command, Command::ServiceHost { .. } | Command::ServiceCheck { .. });
+    if matches!(command, Command::Uninstall(_)) {
+        let routed =
+            fastctx_platform::fastctx_root().map_err(anyhow::Error::from).and_then(|root| program::removal(&root));
+        match routed {
+            Ok(Some(result)) => return finish(result.map(|()| ExitCode::SUCCESS)),
+            Err(error) => return finish(Err(error)),
+            Ok(None) => (),
+        }
+    }
     if routes_world {
         let routed =
             fastctx_platform::fastctx_root().map_err(anyhow::Error::from).and_then(|root| program::world(&root));
@@ -386,8 +396,28 @@ fn print_licenses() -> ExitCode {
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
 const PEOPLE_ONLY: [&str; 22] = [
-    "ui", "node", "renew", "service", "server", "serve", "talk", "attach", "login", "logout", "token", "accounts",
-    "share", "lend", "disallow", "remove", "relays", "relay", "hub", "apply", "unapply", "uninstall",
+    "ui",
+    "node",
+    "renew",
+    "service",
+    "server",
+    "serve",
+    "talk",
+    "attach",
+    "login",
+    "logout",
+    "token",
+    "accounts",
+    "share",
+    "lend",
+    "disallow",
+    "remove",
+    "relays",
+    "relay",
+    "hub",
+    "apply",
+    "unapply",
+    "uninstall",
 ];
 
 /// The command line; in a resident's shell its help lists what a resident
