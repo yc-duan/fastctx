@@ -32,7 +32,7 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
             also = accounts;
             (to, Purpose::Words)
         }
-        Letter::Notice { to, notice } => match notice {
+        Letter::Notice { to, notice } => match notice.as_ref() {
             Notice::Words { from: Speaker::Resident { address }, .. } if address.machine == *from => {
                 (to, Purpose::Words)
             }

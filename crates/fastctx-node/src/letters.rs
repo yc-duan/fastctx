@@ -19,7 +19,8 @@ static SENDING: Mutex<()> = Mutex::new(());
 /// (`admission::letters`, which checks the same on the other side).
 fn purpose(letter: &Letter) -> Purpose {
     match letter {
-        Letter::Speak { .. } | Letter::Notice { notice: Notice::Words { .. } | Notice::Attached { .. }, .. } => {
+        Letter::Speak { .. } => Purpose::Words,
+        Letter::Notice { notice, .. } if matches!(notice.as_ref(), Notice::Words { .. } | Notice::Attached { .. }) => {
             Purpose::Words
         }
         Letter::Left { .. } | Letter::Fragment { .. } | Letter::Notice { .. } => Purpose::Echo,

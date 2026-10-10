@@ -437,7 +437,7 @@ pub enum Letter {
     /// One durable part of a letter that exceeds the control-frame budget.
     Fragment { id: crate::NoticeId, index: usize, total: usize, text: String },
     /// Something the World tells the resident `to`.
-    Notice { to: ResidentId, notice: Notice },
+    Notice { to: ResidentId, notice: Box<Notice> },
     /// Words from the resident `from` of the sending machine to the resident
     /// `to`, who is owed nothing; `from` is owed the end of the turn they go
     /// into. `accounts` are the others of this hub `from` works for, any of
