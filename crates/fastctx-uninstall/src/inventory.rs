@@ -90,6 +90,15 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
         );
         for (identity, hubs) in identities {
             for hub in crate::entries(&hubs)? {
+                // A hub's directory is named for the hub's id; the node keeps
+                // its own files beside them, as the node's own reading skips.
+                let named = hub
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| fastctx_net::ids::HubId::try_from(name.to_string()).is_ok());
+                if !named {
+                    continue;
+                }
                 let directory = hub.path();
                 let Some(membership) =
                     crate::read::<fastctx_net::link::state::Membership>(&directory.join("membership.json"))?
