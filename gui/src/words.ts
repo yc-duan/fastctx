@@ -77,6 +77,8 @@ export interface Words {
   sending: string;
   context(percent: number): string;
   working: string;
+  /** The turn's line while the agent writes its answer. */
+  answering: string;
   idle: string;
   /** Not here: the World holds its session asleep; words wake it. */
   asleep: string;
@@ -124,6 +126,10 @@ export interface Words {
   openColleague: string;
   /** What it started that still runs. */
   stillRunning: string;
+  /** Before a job is stopped by the user, and when it could not be. */
+  stopJobAsk: string;
+  notStopped: string;
+  cancel: string;
   /** A job running on a machine for so long. */
   jobRunning(job: string, machine: string, lasted: string): string;
   minutes(n: number): string;
@@ -259,6 +265,7 @@ export const zh: Words = {
   sending: "发送中",
   context: (percent) => `上下文 ${percent}%`,
   working: "工作中",
+  answering: "书写回答",
   idle: "空闲",
   asleep: "休眠中，发消息即可唤醒",
   removed: "已移除",
@@ -292,7 +299,10 @@ export const zh: Words = {
   watchInterrupted: () => "连接中断，正在重连…",
   notSent: () => "发送失败",
   openColleague: "查看",
-  stillRunning: "运行中的作业",
+  stillRunning: "运行中的命令",
+  stopJobAsk: "停下这条命令？会告诉智能体是你停的。",
+  notStopped: "没能停下",
+  cancel: "取消",
   jobRunning: (job, machine, lasted) => `${job} · ${machine} · ${lasted}`,
   minutes: (n) => (n < 1 ? "不到 1 分钟" : `${n} 分钟`),
   hours: (hours, minutes) => (minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`),
@@ -402,6 +412,7 @@ export const en: Words = {
   sending: "Sending",
   context: (percent) => `Context ${percent}%`,
   working: "Working",
+  answering: "Writing",
   idle: "Idle",
   asleep: "Sleeping; send a message to wake it",
   removed: "Removed",
@@ -435,7 +446,10 @@ export const en: Words = {
   watchInterrupted: () => "Disconnected, reconnecting…",
   notSent: () => "Couldn't send",
   openColleague: "Open",
-  stillRunning: "Running jobs",
+  stillRunning: "Running commands",
+  stopJobAsk: "Stop this command? The agent will be told you stopped it.",
+  notStopped: "Couldn't stop it",
+  cancel: "Cancel",
   jobRunning: (job, machine, lasted) => `${job} · ${machine} · ${lasted}`,
   minutes: (n) => (n < 1 ? "under a minute" : `${n} min`),
   hours: (hours, minutes) => (minutes ? `${hours} h ${minutes} min` : `${hours} h`),

@@ -1,0 +1,335 @@
+/* The model panel: a solid card risen over the input, the model's name,
+   its list when asked for, the hand-drawn effort slider, the speed switch
+   and the way back to the default. On a phone it rises from the bottom. */
+.model-panel {
+  position: absolute;
+  left: var(--space-3);
+  bottom: calc(100% + var(--space-2));
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(320px, calc(100% - var(--space-6)));
+  padding: var(--space-3) var(--space-4) var(--space-3);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  animation: panel-rise var(--fold) var(--fold-easing) both;
+}
+
+.model-panel.busy {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.model-label {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.model-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  text-align: left;
+}
+
+.model-name:hover {
+  background: var(--hairline);
+}
+
+.model-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong);
+}
+
+.model-name .glyph {
+  color: var(--text-3);
+  transform: rotate(-90deg);
+  transition: transform var(--fold) var(--fold-easing);
+}
+
+.model-name[aria-expanded="true"] .glyph {
+  transform: rotate(0deg);
+}
+
+.model-list {
+  list-style: none;
+  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-2)) 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.model-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  text-align: left;
+}
+
+.model-list button:hover,
+.model-list button[aria-selected="true"] {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.model-list .glyph {
+  color: var(--accent);
+}
+
+.model-none {
+  padding: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.model-effort {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.model-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 30px;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.switch-track {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  transition: background-color var(--hover) ease;
+}
+
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: var(--radius-full);
+  background: var(--bg);
+  transition: transform var(--hover) var(--fold-easing);
+}
+
+.model-switch[aria-checked="true"] .switch-track {
+  background: var(--accent);
+}
+
+.model-switch[aria-checked="true"] .switch-knob {
+  transform: translateX(13px);
+}
+
+.model-default {
+  align-self: flex-start;
+  margin-left: calc(-1 * var(--space-2));
+}
+
+@keyframes panel-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (max-width: 760px) {
+  .model-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    padding: var(--space-4) var(--space-5) calc(var(--space-5) + env(safe-area-inset-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+    animation-name: sheet-rise;
+  }
+
+  .model-panel .effort-slider {
+    max-width: none;
+  }
+
+  .model-name,
+  .model-list button,
+  .model-switch {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-panel {
+    animation: none;
+  }
+}
+
+/* What the conversation started that still runs: a mark with how many in
+   the input's row, and a small panel of them above it. */
+.composer-jobs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.composer-jobs:hover,
+.composer-jobs[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.composer-jobs .glyph {
+  color: var(--accent);
+  animation: ink-breathe 2.6s ease-in-out infinite;
+}
+
+.jobs-pop {
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: calc(100% + var(--space-2));
+  z-index: 6;
+  max-width: 560px;
+  max-height: min(50dvh, 380px);
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  animation: panel-rise var(--fold) var(--fold-easing) both;
+}
+
+.jobs-title {
+  margin: 0 var(--space-1) var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.jobs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.job-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-s);
+}
+
+.job-row:hover {
+  background: var(--hairline);
+}
+
+.job-what {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  text-align: left;
+}
+
+.job-command {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  color: var(--text);
+  text-decoration: none;
+}
+
+a.job-command:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.job-where {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.job-stop {
+  color: var(--text-3);
+}
+
+.job-stop:hover {
+  color: var(--wrong);
+}
+
+.jobs-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.jobs-confirm > span {
+  flex: 1 1 200px;
+}
+
+@media (max-width: 760px) {
+  .jobs-pop {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-width: none;
+    max-height: 60dvh;
+    padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+    animation-name: sheet-rise;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-jobs .glyph,
+  .jobs-pop {
+    animation: none;
+  }
+}
+
+.job-row .pulse {
+  width: 6px;
+  height: 6px;
+}

@@ -158,14 +158,75 @@
   display: none;
 }
 
+/* On a touch screen the latest turn's actions stay; an earlier turn's come
+   up from the bottom when its words are held. */
 @media (hover: none) {
   .turn-acts {
     opacity: 1;
   }
 
+  .turn-acts:not(.latest) {
+    display: none;
+  }
+
   .turn-icon {
     width: 40px;
     height: 40px;
+  }
+}
+
+.act-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.36);
+  animation: sheet-scrim var(--fold) ease both;
+}
+
+.act-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-3) calc(var(--space-4) + env(safe-area-inset-bottom));
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  animation: sheet-rise var(--fold) var(--fold-easing) both;
+}
+
+.act-sheet button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 48px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-m);
+  color: var(--text);
+  font-size: var(--size-ui);
+  text-align: left;
+}
+
+.act-sheet button:active {
+  background: var(--hairline);
+}
+
+.act-sheet button .glyph {
+  color: var(--text-2);
+}
+
+@keyframes sheet-rise {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes sheet-scrim {
+  from {
+    opacity: 0;
   }
 }
 
@@ -213,6 +274,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Room for the italic's last stroke, which leans past its box. */
+  padding-right: 0.15em;
 }
 
 .notice-mark {
@@ -369,4 +432,108 @@
    room. */
 .block:empty {
   display: none;
+}
+
+/* The turn's line at the foot of a turn under way: ruled in pencil across
+   the column, a drop of clay ink that breathes, and what the agent is
+   doing, in italic, with how long the turn has run. It is a boundary:
+   above it what the session has taken in, below it words sent and not yet
+   read. Waiting on the user, the ink and the words turn to clay and keep
+   still. */
+.turn-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  margin-top: var(--space-5);
+  padding-top: 12px;
+  font-family: var(--font-reading);
+  font-style: italic;
+  font-size: var(--size-small);
+  color: var(--text-2);
+  animation: status-in var(--enter) var(--fold-easing) both;
+}
+
+.turn-status::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 8px;
+  background: var(--pen-graphite);
+  opacity: 0.55;
+  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+}
+
+.turn-status-mark {
+  flex: none;
+  width: 9px;
+  height: 8px;
+  border-radius: 52% 48% 55% 45% / 47% 55% 45% 53%;
+  background: var(--pen-clay);
+  animation: ink-breathe 2.6s ease-in-out infinite;
+}
+
+.turn-status-step {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 0.15em;
+}
+
+.turn-status-time {
+  flex: none;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.turn-status-time:not(:empty)::before {
+  content: "·";
+  margin-right: 6px;
+}
+
+.turn-status.waiting .turn-status-mark {
+  background: var(--accent);
+  animation: none;
+}
+
+.turn-status.waiting .turn-status-step {
+  color: var(--accent);
+}
+
+@keyframes ink-breathe {
+  0%,
+  100% {
+    opacity: 0.95;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.78);
+  }
+}
+
+@keyframes status-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-status,
+  .turn-status-mark {
+    animation: none;
+  }
+}
+
+.act-sheet-info {
+  margin: var(--space-2) var(--space-3) 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
 }

@@ -442,3 +442,9 @@ export async function scanToken(): Promise<string | null> {
   const read = await invoke<{ kind: "scanned"; code: string } | { kind: "cancelled" }>("plugin:android-world|scan");
   return read.kind === "scanned" ? read.code : null;
 }
+
+/** Stops a job the user chose on the machine it runs on; the agent that
+ *  started it is told the user stopped it. */
+export function stopJob(job: string, machine: string | null): Promise<void> {
+  return invoke("stop_job", { job, machineName: machine });
+}

@@ -4,12 +4,13 @@
 
 import type { ComposerWords } from "../app/words";
 import type { Words } from "../words";
-import type { Control, Controlled, ModelOffer, Offers } from "../world/control";
+import type { Control, Controlled, Offers } from "../world/control";
 import type { Attachment } from "../world/attachments";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { SendQueue, type Queued } from "./queue";
-import { Menu, commandFor, commandRow, commandsOf, modelRow, usageOf, type MenuCommand } from "./commands";
+import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
+import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import type { Details } from "./details";
 import { glyph } from "./glyphs";
@@ -97,6 +98,10 @@ export interface PageOptions {
    *  resolves with what came of them. */
   send(text: string, attached: { refs: unknown[]; shown: Attached[]; filesOn?: string | null }): Promise<Sent> | void;
   stop(): void;
+  /** Stops one job it started, on the machine it runs on. */
+  stopJob?(job: string, machine: string): Promise<void>;
+  /** Where a job's output is read as it grows. */
+  jobLink?(machine: string, path: string): string;
 }
 
 export class ConversationPage {
@@ -116,8 +121,7 @@ export class ConversationPage {
   private offered: Offers | null = null;
   private wasMoving = false;
   private commandMenu: Menu<MenuCommand> | null = null;
-  private modelMenu: Menu<ModelOffer> | null = null;
-  private effortMenu: Menu<string> | null = null;
+  private modelPanel: ModelPanel | null = null;
   private fileMenu: Menu<FoundFile> | null = null;
   /** The latest `@` question; an answer to an earlier one is not shown. */
   private mentionAsked = 0;
@@ -149,17 +153,16 @@ export class ConversationPage {
       )}
       <div class="talk-scroller scroller"><div class="conversation"></div></div>
       <footer class="composer-dock">
-        <ul class="running" hidden></ul>
         <p class="composer-gone" hidden></p>
         <form class="composer">
-          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div></div>
+          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-queue"></div>
           <div class="composer-tray"></div>
           <div class="composer-files-on" hidden></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
-            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <button class="composer-context" type="button" hidden></button>
             <button class="composer-action" type="submit" aria-label="${escape(words.send)}"></button>
@@ -209,7 +212,7 @@ export class ConversationPage {
     this.element.querySelector(".composer-queue")!.replaceWith(this.queue.element);
     this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
     this.input.value = this.draft() ?? "";
-    if (options.controls) this.menus(options.controls);
+    if (options.controls) this.menus();
     if (options.files) this.fileMenuOf();
     this.context.addEventListener("click", () => this.toggleUsage());
     this.element.addEventListener("keydown", (event) => {
@@ -273,7 +276,7 @@ export class ConversationPage {
       this.fileMenu?.hide();
     });
     this.input.addEventListener("keydown", (event) => {
-      for (const menu of [this.fileMenu, this.effortMenu, this.modelMenu, this.commandMenu]) {
+      for (const menu of [this.fileMenu, this.commandMenu]) {
         if (menu?.key(event)) {
           event.preventDefault();
           return;
@@ -507,9 +510,8 @@ export class ConversationPage {
     }
   }
 
-  private menus(controls: NonNullable<PageOptions["controls"]>): void {
+  private menus(): void {
     const holder = this.element.querySelector<HTMLElement>(".composer-menus")!;
-    const words = controls.words;
     this.commandMenu = new Menu<MenuCommand>("commands", (command) => commandRow(command), (command) => {
       this.commandMenu!.hide();
       if (command.arguments === "required" || (command.arguments === "optional" && !command.control)) {
@@ -522,37 +524,17 @@ export class ConversationPage {
         void this.run(command, "");
       }
     }, this.input);
-    this.modelMenu = new Menu<ModelOffer>(
-      "models",
-      (model) => modelRow(model, this.offered?.model ?? null, words.commands),
-      (model) => {
-        this.modelMenu!.hide();
-        if (model.efforts.length > 1) {
-          this.effortMenu!.show(model.efforts, "");
-          this.chosenModel = model.id;
-        } else void this.setModel(model.id, model.default_effort);
+    holder.append(this.commandMenu.element);
+    this.modelPanel = new ModelPanel(this.chip, this.options.words.english ? enModelPanel : zhModelPanel, this.options.words.english, {
+      model: (model, effort) => this.setModel(model, effort),
+      tier: async (id) => {
+        await this.run({ name: "tier", description: "", args: null, arguments: "optional", control: null, source: null }, id, { do: "command", name: "tier", args: id });
       },
-      this.input,
-    );
-    this.effortMenu = new Menu<string>(
-      "efforts",
-      (effort) => `<span class="menu-name">${escape(effort)}${effort === this.offered?.effort ? `<span class="menu-current"> · ${escape(words.commands.current)}</span>` : ""}</span>`,
-      (effort) => {
-        this.effortMenu!.hide();
-        void this.setModel(this.chosenModel, effort);
-      },
-      this.input,
-    );
-    holder.append(this.commandMenu.element, this.modelMenu.element, this.effortMenu.element);
-    this.chip.addEventListener("click", () => {
-      if (this.modelMenu!.open) return this.modelMenu!.hide();
-      this.modelMenu!.show(this.offered?.models ?? [], words.noModels);
-      this.input.focus();
     });
+    holder.append(this.modelPanel.element);
     void this.askOffers();
   }
 
-  private chosenModel: string | null = null;
   private renaming = false;
 
   /** Renames the conversation: its title becomes a field, Enter keeps the
@@ -840,13 +822,7 @@ export class ConversationPage {
   }
 
   private drawChip(): void {
-    const offered = this.offered;
-    const shown = !!offered && offered.controls.includes("model");
-    this.chip.hidden = !shown;
-    if (!shown) return;
-    const model = offered.models.find((m) => m.id === offered.model);
-    const tier = offered.service_tier ? (model?.service_tiers.find((t) => t.id === offered.service_tier)?.name ?? offered.service_tier) : null;
-    this.chip.innerHTML = `<span>${escape(model?.name ?? offered.model ?? this.options.controls!.words.modelChip)}</span>${offered.effort ? `<span class="chip-effort">${escape(offered.effort)}</span>` : ""}${tier ? `<span class="chip-effort chip-tier">${escape(tier)}</span>` : ""}${glyph("chevron", 14)}`;
+    this.modelPanel?.update(this.offered);
   }
 
   /** Opens the command menu while the words are a command being typed. */
@@ -916,7 +892,7 @@ export class ConversationPage {
       return true;
     }
     if (command.control === "model" && !given && !args) {
-      this.modelMenu!.show(this.offered?.models ?? [], words.noModels);
+      this.modelPanel?.show(true);
       return false;
     }
     // What the interface already holds is shown from here, not asked for.
@@ -953,7 +929,9 @@ export class ConversationPage {
       }
       if (done.kind === "model_menu") {
         this.say("");
-        this.modelMenu!.show(done.models, words.noModels);
+        if (this.offered) this.offered = { ...this.offered, models: done.models, model: done.model, effort: done.effort, service_tier: done.service_tier };
+        this.drawChip();
+        this.modelPanel?.show(true);
         return true;
       }
       if (done.kind === "refused") {
@@ -992,20 +970,90 @@ export class ConversationPage {
     this.input.style.overflowY = this.input.scrollHeight > this.input.clientHeight + 1 ? "auto" : "hidden";
   }
 
-  /** What the resident started that still runs, hung above the composer:
-   *  when one ends, the resident is told and the conversation goes on. */
-  running(jobs: { job: string; machine: string; started_at: string; command: string }[], now: Date): void {
+  private jobsWired = false;
+
+  /** What the resident started that still runs: a mark in the input's row
+   *  with how many, quietly moving, and under it a small panel of each, where
+   *  it runs, for how long, its output a press away, and a way to stop it.
+   *  When one ends, the resident is told and the conversation goes on. */
+  running(jobs: { job: string; machine: string; started_at: string; command: string; output: string }[], now: Date): void {
     const { words } = this.options;
-    const list = this.element.querySelector<HTMLElement>(".running")!;
-    list.hidden = jobs.length === 0;
-    list.innerHTML = jobs.length
-      ? `<li class="running-title">${escape(words.stillRunning)}</li>${jobs
-          .map(
-            (job) =>
-              `<li class="running-job"><span class="pulse" aria-hidden="true"></span><span class="running-what">${escape(words.jobRunning(job.job, job.machine, lasted(now.getTime() - Date.parse(job.started_at), words)))}</span><code class="running-command">${escape(job.command)}</code></li>`,
-          )
-          .join("")}`
-      : "";
+    const button = this.element.querySelector<HTMLButtonElement>(".composer-jobs")!;
+    const pop = this.element.querySelector<HTMLElement>(".jobs-pop")!;
+    if (!this.jobsWired) {
+      this.jobsWired = true;
+      button.addEventListener("click", () => {
+        pop.hidden = !pop.hidden;
+        button.setAttribute("aria-expanded", String(!pop.hidden));
+      });
+      document.addEventListener("pointerdown", (event) => {
+        if (!pop.hidden && !pop.contains(event.target as Node) && !button.contains(event.target as Node)) {
+          pop.hidden = true;
+          button.setAttribute("aria-expanded", "false");
+        }
+      });
+      pop.addEventListener("click", (event) => void this.jobAct(event));
+    }
+    button.hidden = jobs.length === 0;
+    if (!jobs.length) pop.hidden = true;
+    const label = words.stillRunning;
+    button.title = label;
+    button.setAttribute("aria-label", `${label} ${jobs.length}`);
+    const html = `${glyph("terminal", 16)}<span class="jobs-count">${jobs.length}</span>`;
+    if (button.innerHTML !== html) button.innerHTML = html;
+    const rows = jobs
+      .map((job) => {
+        const link = this.options.jobLink?.(job.machine, job.output);
+        const command = job.command.split("\n")[0] ?? "";
+        return `<li class="job-row" data-job="${escape(job.job)}" data-machine="${escape(job.machine)}">
+          <span class="pulse" aria-hidden="true"></span>
+          <span class="job-what">${link ? `<a class="job-command" href="${escape(link)}" title="${escape(job.command)}">${escape(command)}</a>` : `<code class="job-command" title="${escape(job.command)}">${escape(command)}</code>`}<span class="job-where">${escape(job.machine)} · ${escape(lasted(now.getTime() - Date.parse(job.started_at), words))}</span></span>
+          ${this.options.stopJob ? `<button class="icon-button job-stop" type="button" data-stop title="${escape(words.stop)}" aria-label="${escape(words.stop)}">${glyph("stop", 14)}</button>` : ""}
+        </li>`;
+      })
+      .join("");
+    const list = `<p class="jobs-title">${escape(label)}</p><ul class="jobs-list">${rows}</ul>`;
+    if (!pop.querySelector(".jobs-confirm") && pop.dataset.drawn !== list) {
+      pop.dataset.drawn = list;
+      pop.innerHTML = list;
+    }
+  }
+
+  /** Stopping a job asks first, in the panel: the agent is told the user
+   *  stopped it, so it does not take it for a failure. */
+  private async jobAct(event: Event): Promise<void> {
+    const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
+    const row = target?.closest<HTMLElement>(".job-row");
+    const pop = this.element.querySelector<HTMLElement>(".jobs-pop")!;
+    const { words } = this.options;
+    if (!target) return;
+    if (target.dataset.stop !== undefined && row) {
+      const job = row.dataset.job!;
+      const machine = row.dataset.machine!;
+      row.insertAdjacentHTML(
+        "afterend",
+        `<li class="jobs-confirm" data-job="${escape(job)}" data-machine="${escape(machine)}"><span>${escape(words.stopJobAsk)}</span><button class="ask-button" type="button" data-cancel>${escape(this.options.controls?.words.never ?? words.cancel)}</button><button class="ask-button ask-primary" type="button" data-confirm>${escape(words.stop)}</button></li>`,
+      );
+      return;
+    }
+    const confirm = target.closest<HTMLElement>(".jobs-confirm");
+    if (!confirm) return;
+    if (target.dataset.cancel !== undefined) {
+      confirm.remove();
+      return;
+    }
+    if (target.dataset.confirm !== undefined && this.options.stopJob) {
+      target.disabled = true;
+      try {
+        await this.options.stopJob(confirm.dataset.job!, confirm.dataset.machine!);
+        confirm.remove();
+      } catch (error) {
+        confirm.querySelector("span")!.textContent = words.notStopped;
+        confirm.title = detailOf(error);
+        target.disabled = false;
+      }
+      delete pop.dataset.drawn;
+    }
   }
 
   private away: "asleep" | "removed" | null = null;

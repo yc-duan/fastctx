@@ -106,8 +106,10 @@ export class Conversation {
    *  entry: a stretch keeps its place and key when its first entry goes. */
   private stretches = new Map<string, string[]>();
   private serial = 0;
-  /** Turns begun and not yet ended, as the World tells them. */
+  /** Turns begun and not yet ended, as the World tells them, with when
+  * each began. */
   private running = new Set<string>();
+  private began = new Map<string, number>();
   /** How many turns have ended while watched (history read again is not
    *  a turn ending), and how the last one did. */
   private endings = 0;
@@ -128,6 +130,7 @@ export class Conversation {
     this.stretches.clear();
     this.stale = false;
     this.running.clear();
+    this.began.clear();
     this.replaying = true;
     for (const event of events) this.event(event);
     this.replaying = false;
@@ -141,6 +144,7 @@ export class Conversation {
     switch (event.event) {
       case "turn_started":
         this.running.add(event.turn);
+        if (!this.began.has(event.turn)) this.began.set(event.turn, at);
         return;
       case "realtime":
       case "realtime_grew":
@@ -159,6 +163,10 @@ export class Conversation {
             delete sent.sending;
             sent.turn = heard.turn;
             sent.from = heard.from;
+            // Heard now: it stands where the session took it in, after what
+            // the turn did before it read them.
+            this.entries.splice(this.entries.indexOf(sent), 1);
+            this.entries.push(sent);
             return;
           }
         }
@@ -234,6 +242,7 @@ export class Conversation {
         return;
       case "turn_ended": {
         this.running.delete(event.turn);
+        this.began.delete(event.turn);
         if (this.entries.some((entry) => entry.kind === "ended" && entry.turn === event.turn)) return;
         if (!this.replaying) this.endings += 1;
         this.lastEnding = event.end;
@@ -454,6 +463,23 @@ export class Conversation {
    *  still happening. */
   busy(): boolean {
     return this.running.size > 0 || this.moving();
+  }
+
+  /** When the turn under way began, as the World told it; null when no
+   *  turn is known to run. */
+  turnBegan(): number | null {
+    const times = [...this.running].map((turn) => this.began.get(turn)).filter((at): at is number => at !== undefined);
+    return times.length ? Math.min(...times) : null;
+  }
+
+  /** What the turn under way is doing now, for the line under it: the last
+   *  thing still happening. */
+  doing(): Entry | null {
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      const entry = this.entries[index]!;
+      if ((entry.kind === "tool" && entry.ended === null) || (entry.kind === "prose" && entry.writing)) return entry;
+    }
+    return null;
   }
 
   /** How many turns have ended while watched. */

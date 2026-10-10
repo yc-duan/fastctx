@@ -101,6 +101,10 @@ export class ConversationView {
   private skipped = new Set<string>();
   private readonly layout: AnchorLayout;
   private ticking = 0;
+  /** The line at the foot of a turn under way: what it is doing and for how
+   *  long. Above it is what the session has taken in; below it, words sent
+   *  that it has not read yet. */
+  private readonly status: HTMLElement;
 
   constructor(
     private readonly root: HTMLElement,
@@ -109,12 +113,26 @@ export class ConversationView {
   ) {
     root.classList.add("transcript");
     this.layout = new AnchorLayout(context.scroller, root);
+    this.status = document.createElement("div");
+    this.status.className = "turn-status";
+    this.status.setAttribute("role", "status");
+    this.status.innerHTML = `<span class="turn-status-mark" aria-hidden="true"></span><span class="turn-status-step"></span><span class="turn-status-time"></span>`;
     root.addEventListener("click", (event) => this.click(event));
     root.addEventListener("input", (event) => {
       // Words of one's own answer a question instead of an option.
       const free = (event.target as HTMLElement).closest<HTMLInputElement>("[data-question-free]");
       if (!free?.value.trim()) return;
       for (const option of free.closest("fieldset")?.querySelectorAll<HTMLElement>("[data-question-pick]") ?? []) option.setAttribute("aria-pressed", "false");
+    });
+    // On a touch screen, holding an earlier turn's words brings its actions
+    // up from the bottom; the latest turn's are already there.
+    root.addEventListener("contextmenu", (event) => {
+      if (!matchMedia("(hover: none)").matches) return;
+      const block = (event.target as HTMLElement).closest<HTMLElement>(".block");
+      const acts = block?.querySelector<HTMLElement>(":scope > .turn-acts:not(.latest)");
+      if (!acts || (event.target as HTMLElement).closest("a, button, input, textarea, pre")) return;
+      event.preventDefault();
+      this.sheet(acts);
     });
     // Enter in an answer's field answers, as the card's first button would.
     root.addEventListener("keydown", (event) => {
@@ -127,10 +145,27 @@ export class ConversationView {
 
   /** Brings the page up to the conversation as it now stands. */
   update(): void {
-    const blocks = this.conversation.blocks();
+    // Words sent and not yet read stand below the turn's line, in order.
+    const all = this.conversation.blocks();
+    const pending = all.filter((block) => block.kind === "heard" && block.sending !== undefined);
+    const blocks = [...all.filter((block) => !pending.includes(block)), ...pending];
     const present = new Set<string>();
     let previous: HTMLElement | null = null;
+    const statusShown = this.drawStatus();
+    let statusPlaced = false;
+    const place = (element: HTMLElement) => {
+      const want: Element | null = previous ? previous.nextElementSibling : this.root.firstElementChild;
+      if (want !== element) {
+        if (previous) previous.after(element);
+        else this.root.prepend(element);
+      }
+      previous = element;
+    };
     for (const block of blocks) {
+      if (statusShown && !statusPlaced && pending.includes(block)) {
+        place(this.status);
+        statusPlaced = true;
+      }
       present.add(block.key);
       let element: HTMLElement;
       if (block.kind === "activity-group") element = this.stretch(block).element;
@@ -149,13 +184,10 @@ export class ConversationView {
         }
         element = drawn.element;
       }
-      const want: Element | null = previous ? previous.nextElementSibling : this.root.firstElementChild;
-      if (want !== element) {
-        if (previous) previous.after(element);
-        else this.root.prepend(element);
-      }
-      previous = element;
+      place(element);
     }
+    if (statusShown && !statusPlaced) place(this.status);
+    if (!statusShown) this.status.remove();
     for (const [key, drawn] of this.drawn) {
       if (!present.has(key)) {
         drawn.element.remove();
@@ -369,6 +401,36 @@ export class ConversationView {
       state.title = detailOf(error);
       state.classList.add("wrong");
     }
+  }
+
+  /** A turn's actions as a sheet risen from the bottom, each with its
+   *  name: a press does what the mark beside the turn would. */
+  private sheet(acts: HTMLElement): void {
+    const scrim = document.createElement("div");
+    scrim.className = "act-sheet-scrim";
+    const sheet = document.createElement("div");
+    sheet.className = "act-sheet";
+    sheet.setAttribute("role", "menu");
+    const close = () => {
+      scrim.remove();
+      sheet.remove();
+    };
+    for (const original of acts.querySelectorAll<HTMLElement>("button.turn-icon")) {
+      if (getComputedStyle(original).display === "none") continue;
+      const item = document.createElement("button");
+      item.type = "button";
+      item.setAttribute("role", "menuitem");
+      item.innerHTML = `${original.innerHTML}<span>${escape(original.getAttribute("aria-label") ?? "")}</span>`;
+      item.addEventListener("click", () => {
+        close();
+        original.click();
+      });
+      sheet.append(item);
+    }
+    const info = acts.querySelector<HTMLElement>(".turn-info");
+    if (info) sheet.insertAdjacentHTML("beforeend", `<p class="act-sheet-info">${escape(info.title)}</p>`);
+    scrim.addEventListener("click", close);
+    document.body.append(scrim, sheet);
   }
 
   /** The user chose in a card: an option is marked, an answer is sent. */
@@ -700,8 +762,8 @@ export class ConversationView {
     }
   }
 
-  /** Brings the running stretches' clocks up to date, once a second while
-   *  any runs. */
+  /** Brings the running stretches' clocks, and the turn's, up to date,
+   *  once a second while any runs. */
   private tick(): void {
     const clocks = [...this.root.querySelectorAll<HTMLElement>(".group-time[data-since]")];
     const { words } = this.context;
@@ -709,8 +771,43 @@ export class ConversationView {
       const said = [words.steps(Number(clock.dataset.steps)), words.took(Date.now() - Number(clock.dataset.since))].join(" · ");
       if (clock.textContent !== said) clock.textContent = said;
     }
+    const turn = this.status.isConnected ? this.status.querySelector<HTMLElement>(".turn-status-time[data-since]") : null;
+    if (turn) {
+      const said = words.took(Date.now() - Number(turn.dataset.since));
+      if (turn.textContent !== said) turn.textContent = said;
+    }
     clearTimeout(this.ticking);
-    if (clocks.length) this.ticking = window.setTimeout(() => this.tick(), 1000);
+    if (clocks.length || turn) this.ticking = window.setTimeout(() => this.tick(), 1000);
+  }
+
+  /** The turn's line: what it is doing now and since when, or that it
+   *  waits on the user; none when no turn runs. */
+  private drawStatus(): boolean {
+    const { words } = this.context;
+    const waiting = this.conversation.waiting();
+    const busy = this.conversation.busy();
+    if (!waiting && !busy) return false;
+    const doing = this.conversation.doing();
+    let step = words.working;
+    if (waiting) step = words.waitingForYou;
+    else if (doing?.kind === "tool") {
+      const line = headline(doing.tool, null, words, (path) => this.conversation.attachmentName(path));
+      step = [line.action, line.object].filter(Boolean).join(" ");
+    } else if (doing?.kind === "prose" && doing.prose === "thinking") {
+      const titles = [...doing.text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]);
+      step = titles.length ? `${words.thought}：${titles[titles.length - 1]}` : words.thinking;
+    } else if (doing?.kind === "prose") step = words.answering;
+    this.status.classList.toggle("waiting", waiting);
+    const stepElement = this.status.querySelector<HTMLElement>(".turn-status-step")!;
+    if (stepElement.textContent !== step) stepElement.textContent = step;
+    const time = this.status.querySelector<HTMLElement>(".turn-status-time")!;
+    const began = this.conversation.turnBegan();
+    if (began !== null && !waiting) time.dataset.since = String(began);
+    else {
+      delete time.dataset.since;
+      time.textContent = "";
+    }
+    return true;
   }
 
   private member(entry: Entry): string {

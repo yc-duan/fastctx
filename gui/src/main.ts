@@ -13,6 +13,7 @@ import "./design/base.css";
 import "./design/highlight.css";
 import "./conversation/conversation.css";
 import "./conversation/turns.css";
+import "./conversation/model-panel.css";
 import "./longview/longview.css";
 import "./app/shell.css";
 import "./app/sheet.css";
@@ -41,7 +42,7 @@ import { Tokens } from "./app/tokens";
 import { NewTalk } from "./app/new-talk";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
-import { link, placeOf, talkLink, type Place } from "./app/places";
+import { fileLink, link, placeOf, talkLink, type Place } from "./app/places";
 import { SettingsPage } from "./app/settings";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
@@ -140,6 +141,7 @@ import {
   since,
   project as readProject,
   stop,
+  stopJob,
   talk,
   unwatch,
   watch,
@@ -743,6 +745,19 @@ function specimenTalk(address: Address): Page {
       page.update();
     },
     stop() {},
+    stopJob: async () => {},
+    jobLink: (machine, path) => fileLink(machine, path, true),
+  });
+  // What it started that still runs, as the specimen World lists it.
+  const runningJobs = effect(() => {
+    const now = store.clock.get();
+    page.running(
+      jobsOf(specimen.world).filter((job) => {
+        const owner = ownerResident(job.owner);
+        return owner?.resident === address.resident && owner.machine === address.machine;
+      }),
+      now,
+    );
   });
   let left = false;
   if (params.has("live")) {
@@ -764,6 +779,7 @@ function specimenTalk(address: Address): Page {
     title: sample.title,
     leave() {
       left = true;
+      runningJobs();
       page.leave();
     },
   };
@@ -895,6 +911,8 @@ function liveTalk(address: Address): Page {
     stop() {
       void stop(address);
     },
+    stopJob: (job, machine) => stopJob(job, machine),
+    jobLink: (machine, path) => fileLink(machine, path, true),
   });
   let watchId: number | null = null;
   let left = false;

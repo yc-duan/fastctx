@@ -234,6 +234,15 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
           ],
           jobs: [
             {
+              job: "j-q5r6s7",
+              machine: "lab",
+              owner: address("laptop", "claude-2b1c"),
+              started_at: at("13:33:00"),
+              pid: 48977,
+              command: "cd /srv/mark50 && git fetch laptop colleague/q16-edge && cargo test -p ctrl overflow_repro",
+              output: "/home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-q5r6s7.log",
+            },
+            {
               job: "j-p0q1r2",
               machine: "lab",
               owner: address("lab", "codex-3c77"),
