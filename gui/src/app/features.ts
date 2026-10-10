@@ -431,4 +431,23 @@ function drawAsSeen(board: HTMLElement): void {
     { root: board, threshold: 0.6 },
   );
   for (const frame of frames) seen.observe(frame);
+  // It plays through by itself: each frame drawn, a moment to read it, the
+  // next slides in; a hand on the strip takes over from then on.
+  let held = false;
+  board.addEventListener("pointerdown", () => (held = true), { once: true });
+  for (const [index, frame] of frames.entries()) {
+    const next = frames[index + 1];
+    if (!next) break;
+    frame.querySelector("figcaption")?.addEventListener(
+      "animationend",
+      () =>
+        setTimeout(() => {
+          if (!held && board.isConnected) next.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+        }, READ_MS),
+      { once: true },
+    );
+  }
 }
+
+/** How long a drawn frame stays before the next slides in. */
+const READ_MS = 1400;
