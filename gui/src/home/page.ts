@@ -149,7 +149,7 @@ export class HomePage {
     this.day.textContent = words.dateline(now);
     this.facts.innerHTML = old
       ? `<span class="fact unreachable">${escape(words.oldWorld(old.node_version, old.client_version))}</span><a class="text-button set-up" href="#/settings">${escape(words.renewThere)}</a>`
-      : `<span class="fact unreachable">${escape(words.unreachable(why))}</span><a class="text-button set-up" href="#/login">${escape(words.setUp)}</a>`;
+      : `<span class="fact unreachable" title="${escape(why)}">${escape(words.unreachable(why))}</span><a class="text-button set-up" href="#/login">${escape(words.setUp)}</a>`;
     this.drawn = "";
   }
 
@@ -213,7 +213,7 @@ export class HomePage {
       .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
     // What could not be asked is said under what was.
     const missing = away.trouble
-      ? `<p class="away-missing wrong">${escape(words.awayTrouble(away.trouble))}</p>`
+      ? `<p class="away-missing wrong" title="${escape(away.trouble)}">${escape(words.awayTrouble(away.trouble))}</p>`
       : away.unasked.length
         ? `<p class="away-missing">${escape(words.unasked(away.unasked.map((u) => (u.offline ? words.unaskedOffline(u.machine) : words.unaskedWhy(u.machine, u.why ?? ""))).join(words.listSeparator)))}</p>`
         : "";
