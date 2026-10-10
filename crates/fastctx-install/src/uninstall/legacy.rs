@@ -12,21 +12,33 @@ pub struct Legacy {
 }
 
 pub fn legacy(installation: &Installation) -> anyhow::Result<Vec<Legacy>> {
+    let registered = registrations(installation)?;
+    #[cfg(windows)]
+    return windows::owned(registered, installation);
+    #[cfg(target_os = "linux")]
+    return Ok(linux::owned(registered, installation));
+    #[cfg(not(any(windows, target_os = "linux")))]
+    Ok(registered)
+}
+
+fn registrations(installation: &Installation) -> anyhow::Result<Vec<Legacy>> {
     if installation.root != installation.home.join(".fastctx") {
         return Ok(Vec::new());
     }
     #[cfg(windows)]
-    return windows::find(installation);
+    return windows::registered();
     #[cfg(target_os = "linux")]
-    return linux::find(installation);
+    return linux::registered(installation);
     #[cfg(not(any(windows, target_os = "linux")))]
     Ok(Vec::new())
 }
 
 impl Legacy {
     pub fn uninstall(&self, installation: &Installation) -> anyhow::Result<()> {
+        let registered = registrations(installation)?;
+        let Some(current) = registered.iter().find(|found| found.name == self.name) else { return Ok(()) };
         anyhow::ensure!(
-            legacy(installation)?.iter().any(|found| found.name == self.name && found.definition == self.definition),
+            current.definition == self.definition && current.path == self.path,
             "the legacy registration changed after preview; it was left untouched"
         );
         #[cfg(windows)]
@@ -55,8 +67,8 @@ mod windows {
     use anyhow::Context as _;
     use std::process::Command;
 
-    pub(super) fn find(installation: &Installation) -> anyhow::Result<Vec<Legacy>> {
-        let script = "$ErrorActionPreference='Stop'; $s=New-Object -ComObject Schedule.Service; $s.Connect(); @($s.GetFolder('\\').GetTasks(1) | Where-Object { $_.Name -eq 'FastCtx Node' -or $_.Name -match '^FastCtx Node [0-9a-f]{12}$' } | ForEach-Object { @{name=$_.Path; xml=$_.Xml} }) | ConvertTo-Json -Depth 4 -Compress";
+    pub(super) fn registered() -> anyhow::Result<Vec<Legacy>> {
+        let script = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $s=New-Object -ComObject Schedule.Service; $s.Connect(); ConvertTo-Json -InputObject @($s.GetFolder('\\').GetTasks(1) | Where-Object { $_.Name -eq 'FastCtx Node' -or $_.Name -match '^FastCtx Node [0-9a-f]{12}$' } | ForEach-Object { @{name=$_.Path; xml=$_.Xml} }) -Depth 4 -Compress";
         let text = super::super::super::service::checked(Command::new("powershell.exe").args([
             "-NoProfile",
             "-NonInteractive",
@@ -68,6 +80,16 @@ mod windows {
         for value in values {
             let name = value["name"].as_str().context("legacy task has no name")?;
             let xml = value["xml"].as_str().context("legacy task has no XML")?;
+            found.push(Legacy { name: name.into(), path: None, definition: xml.into() });
+        }
+        Ok(found)
+    }
+
+    pub(super) fn owned(registered: Vec<Legacy>, installation: &Installation) -> anyhow::Result<Vec<Legacy>> {
+        let mut found = Vec::new();
+        for task in registered {
+            let name = &task.name;
+            let xml = &task.definition;
             let document = roxmltree::Document::parse(xml)?;
             let text = |parent: &str, child: &str| {
                 document
@@ -82,7 +104,8 @@ mod windows {
             let Some(command) = text("Exec", "Command") else { continue };
             let Some(arguments) = text("Exec", "Arguments") else { continue };
             if name == "\\FastCtx Node" {
-                if arguments != "node run" || installation.root.join("bin/fastctx.exe") != std::path::Path::new(command) {
+                if arguments != "node run" || installation.root.join("bin/fastctx.exe") != std::path::Path::new(command)
+                {
                     continue;
                 }
             } else {
@@ -96,7 +119,7 @@ mod windows {
                     continue;
                 }
             }
-            found.push(Legacy { name: name.into(), path: None, definition: xml.into() });
+            found.push(task);
         }
         Ok(found)
     }
@@ -105,7 +128,7 @@ mod windows {
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
-    pub(super) fn find(installation: &Installation) -> anyhow::Result<Vec<Legacy>> {
+    pub(super) fn registered(installation: &Installation) -> anyhow::Result<Vec<Legacy>> {
         let mut found = Vec::new();
         let directory = installation.home.join(".config/systemd/user");
         let entries = match std::fs::read_dir(&directory) {
@@ -113,6 +136,20 @@ mod linux {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(found),
             Err(error) => return Err(error.into()),
         };
+        for entry in entries {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name != "fastctx-node.service" && !(name.starts_with("fastctx-node-") && name.ends_with(".service")) {
+                continue;
+            }
+            let text = std::fs::read_to_string(entry.path())?;
+            found.push(Legacy { name: name.into(), path: Some(entry.path()), definition: text });
+        }
+        Ok(found)
+    }
+
+    pub(super) fn owned(registered: Vec<Legacy>, installation: &Installation) -> Vec<Legacy> {
         let quote = |path: &std::path::Path| {
             format!(
                 "\"{}\"",
@@ -124,24 +161,16 @@ mod linux {
                     .replace('$', "$$")
             )
         };
-        for entry in entries {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name != "fastctx-node.service" && !(name.starts_with("fastctx-node-") && name.ends_with(".service")) {
-                continue;
-            }
-            let text = std::fs::read_to_string(entry.path())?;
-            let installed = installation.root.join("bin/fastctx");
-            let scoped = format!("ExecStart={} node run --home {}", quote(&installed), quote(&installation.home));
-            let plain = format!("ExecStart={} node run", installed.display());
-            if !text.contains("Description=FastCtx World node")
-                || !text.lines().any(|line| line == scoped || line == plain)
-            {
-                continue;
-            }
-            found.push(Legacy { name: name.into(), path: Some(entry.path()), definition: text });
-        }
-        Ok(found)
+        registered
+            .into_iter()
+            .filter(|registration| {
+                let text = &registration.definition;
+                let installed = installation.root.join("bin/fastctx");
+                let scoped = format!("ExecStart={} node run --home {}", quote(&installed), quote(&installation.home));
+                let plain = format!("ExecStart={} node run", installed.display());
+                text.contains("Description=FastCtx World node")
+                    && text.lines().any(|line| line == scoped || line == plain)
+            })
+            .collect()
     }
 }
