@@ -16,6 +16,7 @@ pub fn keep_hub(places: &Places, dir: &Path) -> anyhow::Result<Kept> {
         return Ok(Kept::Unsupported);
     }
     let (executable, _) = place_executable(places)?;
+    super::hub_registry::remember(&places.root, dir)?;
     if fastctx_platform::elevation::is_elevated()? {
         Service::new(Kind::Hub, &executable, dir).install()?;
         return Ok(Kept::Installed);

@@ -130,6 +130,10 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
 /// Stores and checks the new program before publishing either the intent or
 /// the installed name. Repeating an unfinished placement retains its state.
 pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Result<Plan> {
+    anyhow::ensure!(
+        !root.join("uninstalled.json").try_exists()?,
+        "this World was uninstalled; reinstall it before placing a program"
+    );
     ensure_private_dir(&directory(root))?;
     let _lock = FileLock::try_acquire(&directory(root).join("worker.lock"))?
         .ok_or_else(|| anyhow::anyhow!("the World program is already being replaced; its plan was left unchanged"))?;

@@ -18,6 +18,11 @@ export interface RemovalWords {
   groups: Record<RemovalGroup, string>;
   /** Taking one item away, in a few words, by its kind. */
   kinds: Record<string, string>;
+  /** Why an item of a kind was left on purpose; the kernel's reason is the
+   *  hover. */
+  leftWhy: Record<string, string>;
+  unfinished: string;
+  failedRun(why: string): string;
   hubWarn(world: string): string;
   typeName(world: string): string;
   other(path: string, version: string | null): string;
@@ -57,6 +62,7 @@ export function groupOf(kind: string): RemovalGroup {
       return "agents";
     case "data":
     case "legacy":
+    case "user-files":
       return "data";
     case "logout":
       return "hubs";
@@ -98,7 +104,23 @@ export const zhRemoval: RemovalWords = {
     data: "记录与登录",
     legacy: "旧版归档",
     logout: "退出服务器",
+    runtime: "运行中的进程",
+    "other-program": "其他 fastctx",
+    "user-files": "文件的原始版本",
+    "claude-permission": "Claude 自动运行授权",
+    "account-right": "「作为批处理作业登录」权限",
+    linger: "systemd linger",
   },
+  leftWhy: {
+    "user-files": "保留你文件的原始版本，避免丢失之后的写入",
+    "claude-permission": "这是你给的授权，原值未记录，保持不变",
+    "account-right": "安装前的状态未记录，保持不变",
+    linger: "安装前的状态未记录，保持不变",
+    program: "由 npm 或其他安装方式管理",
+    app: "World 退出后由安装包移除",
+  },
+  unfinished: "未完成",
+  failedRun: failure(zhProblems, "卸载未完成"),
   hubWarn: (world) => `这台电脑是「${world}」的服务器。彻底移除将删除这个世界的所有账号、机器和项目，其他电脑将无法再连接。`,
   typeName: (world) => `输入「${world}」以确认`,
   other: (path, version) => `PATH 中另有一个 fastctx${version ? ` ${version}` : ""}，不会被移除：${path}`,
@@ -152,7 +174,23 @@ export const enRemoval: RemovalWords = {
     data: "Records and logins",
     legacy: "Old version archives",
     logout: "Sign out of server",
+    runtime: "Running processes",
+    "other-program": "Other fastctx",
+    "user-files": "Original file versions",
+    "claude-permission": "Claude unattended permission",
+    "account-right": "“Log on as a batch job” right",
+    linger: "systemd linger",
   },
+  leftWhy: {
+    "user-files": "Kept so later writes to your files aren't lost",
+    "claude-permission": "Your own permission; its earlier value wasn't recorded, so it stays",
+    "account-right": "Its state before installation wasn't recorded, so it stays",
+    linger: "Its state before installation wasn't recorded, so it stays",
+    program: "Managed by npm or another installer",
+    app: "Removed by the package after World exits",
+  },
+  unfinished: "Not finished",
+  failedRun: failure(enProblems, "Uninstall didn't finish"),
   hubWarn: (world) => `This computer is the server for ${world}. Removing everything deletes all its accounts, machines and projects, and no other computer will be able to connect.`,
   typeName: (world) => `Type ${world} to confirm`,
   other: (path, version) => `Another fastctx${version ? ` ${version}` : ""} on PATH will stay: ${path}`,

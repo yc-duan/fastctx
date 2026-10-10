@@ -1,0 +1,27 @@
+[package]
+name = "fastctx-uninstall"
+description = "Previewing and executing the removal of one local World"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+fastctx-client = { path = "../fastctx-client" }
+fastctx-hands = { path = "../fastctx-hands" }
+fastctx-hosts = { path = "../fastctx-hosts" }
+fastctx-install = { path = "../fastctx-install" }
+fastctx-net = { path = "../fastctx-net" }
+fastctx-platform = { path = "../fastctx-platform" }
+fastctx-types = { path = "../fastctx-types" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "process", "time"] }
+tempfile = "3"
+notify = "8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+

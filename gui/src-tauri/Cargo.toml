@@ -49,6 +49,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 fastctx-hub = { path = "../../crates/fastctx-hub" }
 fastctx-install = { path = "../../crates/fastctx-install" }
+tempfile = "3"
 # The window opens where and as large as it was left.
 tauri-plugin-window-state = "2.5"
 # New versions of the app come from the project's GitHub releases, signed.

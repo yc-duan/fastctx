@@ -188,6 +188,14 @@ pub fn enter() -> Result<Option<Instance>, String> {
             }
             Ok(None)
         }
+        [command] if command == "--uninstall-world" => {
+            crate::removal::at_package_uninstall()?;
+            Ok(None)
+        }
+        [command] if command == "--uninstall-finish" => {
+            crate::removal::finish_checkpoint()?;
+            Ok(None)
+        }
         [] => instance::enter(Launch::Open(None)),
         [route] if route.starts_with("#/") => {
             notifications::route(route)?;

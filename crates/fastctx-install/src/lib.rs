@@ -35,6 +35,7 @@ pub mod service;
 mod source;
 pub mod transaction;
 pub mod upgrade;
+pub mod uninstall;
 
 mod disk;
 mod snapshot;

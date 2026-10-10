@@ -135,6 +135,10 @@ fn config_file(directory: &Path, name: &str) -> io::Result<PathBuf> {
     Ok(normalized)
 }
 
+pub fn uninstall_key(directory: &Path) -> io::Result<String> {
+    directory_key(directory)
+}
+
 pub(super) fn directory_key(directory: &Path) -> io::Result<String> {
     let physical = fs::canonicalize(directory)?;
     if !physical.is_dir() {
@@ -155,6 +159,64 @@ pub(super) fn directory_key(directory: &Path) -> io::Result<String> {
 
 fn unicode_path(path: &Path) -> io::Result<&str> {
     path.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Claude paths must be Unicode"))
+}
+
+/// Removes only the exact World project entry, preserving every other byte.
+/// The ordinary Claude lease and compare-before-publication apply here too.
+pub fn remove_world_trust(config_dir: Option<&std::ffi::OsStr>, key: &str) -> io::Result<bool> {
+    use jsonc_parser::ast::Value;
+    use jsonc_parser::common::Ranged;
+    let paths = StatePaths::resolve(config_dir)?;
+    let Some(before) = state_file::read(&paths.file)? else { return Ok(false) };
+    let remove = |bytes: &[u8]| -> io::Result<Option<Vec<u8>>> {
+        let text = std::str::from_utf8(bytes).map_err(|_| io::Error::other("Claude state is not UTF-8"))?;
+        let offset = if text.starts_with('\u{feff}') { 3 } else { 0 };
+        let source = &text[offset..];
+        let parsed = jsonc_parser::parse_to_ast(source, &Default::default(), &Default::default())
+            .map_err(|_| io::Error::other("Claude state is invalid JSON"))?;
+        let Some(Value::Object(root)) = parsed.value else { return Err(io::Error::other("Claude state is not an object")) };
+        let Some(projects) = root.properties.iter().find(|property| property.name.as_str() == "projects") else { return Ok(None) };
+        let Value::Object(projects) = &projects.value else { return Err(io::Error::other("Claude projects is not an object")) };
+        let found = projects.properties.iter().enumerate().filter(|(_, property)| property.name.as_str() == key).collect::<Vec<_>>();
+        let [(index, property)] = found.as_slice() else {
+            if found.is_empty() { return Ok(None) }
+            return Err(io::Error::other("Claude state contains duplicate World directory keys"));
+        };
+        let range = property.range();
+        let mut start = range.start;
+        let mut end = range.end;
+        if let Some(next) = projects.properties.get(index + 1) {
+            let comma = source[end..next.range().start].find(',').ok_or_else(|| io::Error::other("Claude project separator is absent"))?;
+            end += comma + 1;
+        } else if *index > 0 {
+            let previous = projects.properties[index - 1].range().end;
+            let comma = source[previous..start].rfind(',').ok_or_else(|| io::Error::other("Claude project separator is absent"))?;
+            start = previous + comma;
+        }
+        let mut after = bytes.to_vec();
+        after.drain(offset + start..offset + end);
+        let valid = std::str::from_utf8(&after).map_err(|_| io::Error::other("Claude state is not UTF-8"))?;
+        serde_json::from_str::<serde_json::Value>(valid.strip_prefix('\u{feff}').unwrap_or(valid))
+            .map_err(|_| io::Error::other("removing Claude trust would produce invalid JSON"))?;
+        Ok(Some(after))
+    };
+    if remove(&before)?.is_none() { return Ok(false) }
+    let lease = lease::Lease::acquire(&paths.file)?;
+    let result = (|| {
+        let before = state_file::read(&paths.file)?.ok_or_else(|| io::Error::other("Claude state disappeared before trust removal"))?;
+        let Some(after) = remove(&before)? else { return Ok(false) };
+        state_file::publish(&paths.file, Some(&before), &after, &lease)?;
+        if remove(&state_file::read(&paths.file)?.ok_or_else(|| io::Error::other("Claude state disappeared after trust removal"))?)?.is_some() {
+            return Err(io::Error::other("World trust is still present after publication"));
+        }
+        Ok(true)
+    })();
+    let released = lease.release();
+    match (result, released) {
+        (Ok(result), Ok(())) => Ok(result),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(release)) => Err(io::Error::other(format!("{error}; releasing Claude state lock: {release}"))),
+    }
 }
 
 fn object(text: &str, location: &str) -> io::Result<Object> {

@@ -117,12 +117,21 @@ impl OwnerOnly {
         Self::with_system(true, false)
     }
 
+    pub(crate) fn administrator_handoff() -> io::Result<Self> {
+        Self::with_groups(true, true, true)
+    }
+
     fn with_system(inherited: bool, system: bool) -> io::Result<Self> {
+        Self::with_groups(inherited, system, false)
+    }
+
+    fn with_groups(inherited: bool, system: bool, administrators: bool) -> io::Result<Self> {
         let sid = current_user_sid()?;
         let flags = if inherited { "OICI" } else { "" };
         let system = if system { format!("(A;{flags};FA;;;SY)") } else { String::new() };
+        let administrators = if administrators { format!("(A;{flags};FA;;;BA)") } else { String::new() };
         let sddl: Vec<u16> =
-            OsStr::new(&format!("O:{sid}D:P(A;{flags};FA;;;{sid}){system}")).encode_wide().chain([0]).collect();
+            OsStr::new(&format!("O:{sid}D:P(A;{flags};FA;;;{sid}){system}{administrators}")).encode_wide().chain([0]).collect();
         let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
         // SAFETY: a NUL-terminated SDDL string; the descriptor is freed on drop.
         if unsafe {

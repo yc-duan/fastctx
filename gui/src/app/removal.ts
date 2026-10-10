@@ -210,11 +210,11 @@ export class RemovalSection {
         const failed = state.left.length > 0 || state.error !== null || [...state.results.values()].some((r) => r.result === "failed");
         return `<div class="removal-plan">
           ${this.list(state.plan.steps, state.results)}
-          ${state.error ? `<p class="removal-said removal-wrong">${escape(state.error)}</p>` : ""}
+          ${state.error ? `<p class="removal-said removal-wrong" title="${escape(state.error)}">${escape(words.failedRun(state.error))}</p>` : ""}
           ${
             state.left.length
               ? `<h3 class="removal-head">${escape(words.left)}</h3><ul class="removal-left">${state.left
-                  .map((item) => `<li><span>${escape(this.words.kinds[item.kind] ?? item.what)}</span>${item.where ? `<code>${escape(item.where)}</code>` : ""}<span class="removal-why">${escape(item.why)}</span></li>`)
+                  .map((item) => `<li><span>${escape(this.words.kinds[item.kind] ?? item.what)}</span>${item.where ? `<code>${escape(item.where)}</code>` : ""}<span class="removal-why" title="${escape(item.why)}">${escape(this.words.leftWhy[item.kind] ?? this.words.unfinished)}</span></li>`)
                   .join("")}</ul>`
               : ""
           }

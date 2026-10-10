@@ -28,6 +28,7 @@ mod service;
 mod stop;
 mod talk;
 mod update;
+mod uninstall;
 mod view;
 mod w;
 mod wait;
@@ -100,6 +101,9 @@ enum Command {
     Renew(renew::RenewalArgs),
     /// Install, uninstall or inspect a node/hub service on this machine.
     Service(service::ServiceArgs),
+    /// Preview or execute removal of the World installed on this computer.
+    #[command(subcommand)]
+    Uninstall(uninstall::Uninstall),
     /// Install a verified release on a Linux server and join a World.
     #[command(subcommand)]
     Server(server_install::ServerCommand),
@@ -235,7 +239,8 @@ fn main() -> ExitCode {
     }
     // An old fastctx's upgrader may have started this version: it waits to
     // hear that it is healthy before anything else happens.
-    if let Err(error) = update::finalize() {
+    let readonly_uninstall = std::env::args_os().skip(1).take(2).eq(["uninstall", "plan"]);
+    if !readonly_uninstall && let Err(error) = update::finalize() {
         eprintln!("fastctx: {error:#}");
         return ExitCode::FAILURE;
     }
@@ -313,6 +318,7 @@ fn main() -> ExitCode {
         }
         Command::Renew(args) => renew::run(args),
         Command::Service(args) => service::run(args),
+        Command::Uninstall(command) => uninstall::run(command),
         Command::Server(command) => server_install::run(command),
         #[cfg(windows)]
         Command::ServiceHost { name } => fastctx_install::service::run_host(&name),
@@ -364,9 +370,9 @@ fn print_licenses() -> ExitCode {
 
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
-const PEOPLE_ONLY: [&str; 21] = [
+const PEOPLE_ONLY: [&str; 22] = [
     "ui", "node", "renew", "service", "server", "serve", "talk", "attach", "login", "logout", "token", "accounts",
-    "share", "lend", "disallow", "remove", "relays", "relay", "hub", "apply", "unapply",
+    "share", "lend", "disallow", "remove", "relays", "relay", "hub", "apply", "unapply", "uninstall",
 ];
 
 /// The command line; in a resident's shell its help lists what a resident
@@ -400,6 +406,10 @@ fn node(
         Some(root) => root,
         None => fastctx_platform::fastctx_root()?,
     };
+    anyhow::ensure!(
+        !root.join("uninstalled.json").try_exists()?,
+        "this World was uninstalled; reinstall it before starting its node"
+    );
     let coordinator =
         prepared_by.map(|text| serde_json::from_str::<fastctx_types::ProcessIdentity>(&text)).transpose()?;
     let startup_gate = if coordinator.is_none() {

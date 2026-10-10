@@ -14,6 +14,55 @@ use super::linux_watchdog::{self, Watchdog};
 use super::{Service, Status, checked, transaction};
 use serde::{Deserialize, Serialize};
 
+pub(super) fn registrations(installation: &crate::uninstall::Installation) -> anyhow::Result<Vec<super::Registration>> {
+    let mut found = Vec::new();
+    for entry in super::inventory::entries(std::path::Path::new("/etc/systemd/system"))? {
+        let name = entry.file_name();
+        let Some(name) = name.to_str().filter(|name| name.starts_with("fastctx-service-") && name.ends_with(".executable")) else { continue };
+        let executable = fs::read_link(entry.path())?;
+        if !executable.starts_with(installation.root.join("bin")) { continue; }
+        let stem = name.trim_end_matches(".executable");
+        let file = entry.path().with_extension("service");
+        let text = fs::read_to_string(&file)?;
+        let marker = format!("# fastctx service v1: {stem}\n");
+        if !text.starts_with(&marker) { bail!("{} is not an owned fastctx unit", file.display()); }
+        let uid: u32 = text.lines().find_map(|line| line.strip_prefix("User=")).context("unit has no account")?.parse()?;
+        let start = text.lines().find_map(|line| line.strip_prefix("ExecStart=:")).context("unit has no command")?;
+        let words = unquote(start)?;
+        let kind = if words.get(1).is_some_and(|word| word == "node") { super::Kind::Node }
+            else if words.get(1).is_some_and(|word| word == "hub") { super::Kind::Hub }
+            else { bail!("unit has an unrecognized fastctx role") };
+        let index = words.iter().position(|word| word == "--dir").context("unit has no directory")?;
+        let directory = PathBuf::from(words.get(index + 1).context("unit directory is absent")?);
+        if kind == super::Kind::Node && uid != installation.uid { continue; }
+        let mut service = Service::new(kind, &executable, &directory);
+        service.uid = uid;
+        if service.id(&uid.to_le_bytes()) != stem { bail!("unit directory and account do not match its name"); }
+        found.push(super::Registration { name: format!("{stem}.service"), kind, executable, directory,
+            artifacts: vec![PathBuf::from("/run/lock").join(format!("{stem}.service.lock"))] });
+    }
+    Ok(found)
+}
+
+fn unquote(text: &str) -> anyhow::Result<Vec<std::ffi::OsString>> {
+    let mut result = Vec::new();
+    for word in text.split(' ') {
+        let word = word.strip_prefix('"').and_then(|word| word.strip_suffix('"')).context("unit argument is not quoted")?;
+        let bytes = word.as_bytes();
+        let mut decoded = Vec::new();
+        let mut at = 0;
+        while at < bytes.len() {
+            if bytes[at..].starts_with(b"\\x") {
+                let hex = std::str::from_utf8(bytes.get(at + 2..at + 4).context("unit escape is incomplete")?)?;
+                decoded.push(u8::from_str_radix(hex, 16)?); at += 4;
+            } else if bytes[at..].starts_with(b"%%") { decoded.push(b'%'); at += 2; }
+            else { decoded.push(bytes[at]); at += 1; }
+        }
+        result.push(std::ffi::OsString::from_vec(decoded));
+    }
+    Ok(result)
+}
+
 #[derive(Deserialize, Serialize)]
 struct Before {
     unit: Option<Vec<u8>>,

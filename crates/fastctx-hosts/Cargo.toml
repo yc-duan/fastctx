@@ -17,6 +17,7 @@ jiff.workspace = true
 jsonschema = { version = "0.33", default-features = false }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
+jsonc-parser = "0.33.1"
 sha2 = "0.10"
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }

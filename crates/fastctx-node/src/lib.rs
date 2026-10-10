@@ -64,6 +64,7 @@ mod stop;
 mod talk;
 mod town;
 mod turns;
+mod uninstall;
 mod waiting;
 mod watch;
 mod watchdog;
@@ -241,6 +242,10 @@ pub async fn run_prepared(
     coordinator: Option<&fastctx_types::ProcessIdentity>,
     startup_gate: Option<FileLock>,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !fastctx_root.join("uninstalled.json").try_exists()?,
+        "this World was uninstalled; reinstall it before starting a node"
+    );
     if let Some(coordinator) = coordinator {
         replacement::validate(
             fastctx_root,

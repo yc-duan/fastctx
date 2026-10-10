@@ -200,6 +200,11 @@ def main():
         staged.replace(image)
         debdir = work/'deb'
         run('dpkg-deb', '-x', deb, debdir)
+        run('dpkg-deb', '-e', deb, debdir/'DEBIAN')
+        shutil.copyfile(ROOT/'gui/scripts/deb-prerm', debdir/'DEBIAN/prerm')
+        (debdir/'DEBIAN/prerm').chmod(0o755)
+        run('dpkg-deb', '--root-owner-group', '--build', debdir, work/'world.deb')
+        shutil.copyfile(work/'world.deb', deb)
         deb_expected = dict(expected)
         deb_expected['THIRD_PARTY_LICENSES.md'] = notices.read_bytes()
         verify_payload(debdir, deb_expected)

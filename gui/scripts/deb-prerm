@@ -1,0 +1,9 @@
+#!/bin/sh
+# dpkg calls prerm for an upgrade too. Only actual package removal withdraws
+# this computer; root-owned records identify each original user's World.
+set -eu
+case "$1" in
+  remove) /usr/bin/fastctx uninstall package ;;
+  upgrade|deconfigure|failed-upgrade) ;;
+  *) printf 'Unsupported World prerm action: %s\n' "$1" >&2; exit 1 ;;
+esac

@@ -116,6 +116,58 @@ struct Guard {
     anchor: (PathBuf, Identity),
 }
 
+/// Lists retained user-file archives, including cross-volume anchors. This
+/// reads manifests only; it does not recover a transaction or open targets.
+pub fn retained_archives(root: &Path) -> Result<Vec<PathBuf>, FileError> {
+    let history = root.join("apply-history");
+    let canonical_history = match fs::canonicalize(&history) {
+        Ok(path) => path,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(FileError::io(&history, "locate retained user versions", error)),
+    };
+    let entries = match fs::read_dir(&history) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(FileError::io(&history, "list retained user versions", error)),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let directory = entry.map_err(|error| FileError::io(&history, "list retained user versions", error))?.path();
+        paths.push(directory.clone());
+        let manifest = directory.join("manifest.json");
+        if !manifest.is_file() { continue; }
+        let journal = Journal::read(&manifest)?;
+        let mut object = |path: &Path| {
+            if !path.starts_with(&history) && !path.starts_with(&canonical_history) && let Some(parent) = path.parent() {
+                paths.push(parent.to_path_buf());
+            }
+        };
+        for entry in &journal.entries {
+            for version in [&entry.observed, &entry.after].into_iter().flatten() { object(&version.path); }
+            for revision in &entry.command_revisions { object(&revision.path); }
+            for restoration in &entry.restorations { object(&restoration.source.path); object(&restoration.displaced); }
+            object(&entry.displaced); object(&entry.withdrawn);
+        }
+    }
+    paths.sort(); paths.dedup(); Ok(paths)
+}
+
+/// The next ownership record of an interrupted host publication. A preview
+/// may use it to list homes without publishing or recovering anything.
+pub fn pending_record(root: &Path) -> Result<Option<Snapshot>, FileError> {
+    let active = Snapshot::read(root.join("applied-files-pending.json"))?;
+    let Some(bytes) = active.bytes() else { return Ok(None) };
+    let pointer: Active = serde_json::from_slice(bytes).map_err(|error| FileError::io(active.path(), "read pending host record", io::Error::other(error)))?;
+    let history = root.join("apply-history");
+    if pointer.version != 1 || !pointer.manifest.starts_with(&history) { return Err(invalid(active.path(), "pending record belongs to another installation")); }
+    let journal = Journal::read(&pointer.manifest)?;
+    let target = root.join("applied.json");
+    let object = journal.entries.iter().find(|entry| entry.target == target).and_then(|entry| entry.after.as_ref());
+    let Some(object) = object else { return Ok(None) };
+    if !object.path.starts_with(&history) { return Err(invalid(&object.path, "pending ownership record is outside this installation's archive")); }
+    Ok(Some(Snapshot::read(&object.path)?))
+}
+
 #[derive(Serialize, Deserialize)]
 struct Active {
     version: u32,
