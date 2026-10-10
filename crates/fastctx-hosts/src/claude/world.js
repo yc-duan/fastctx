@@ -31,9 +31,33 @@ import { presentation } from './presentation.js'
 const WORLD = __FASTCTX_WORLD__
 const FASTCTX = __FASTCTX_COMMAND__
 // Inbox polling cadence; a tool boundary can deliver words sooner.
-const LOOK_MS = 2000
+const LOOK_MS = __FASTCTX_LOOK_MS__
 // Claude Code limits each fs read/write to 4 MiB of UTF-8.
 const FILE_BYTES = 4 * 1024 * 1024
+// fastctx's root holds the World's directory and, from the moment a removal
+// starts, its `uninstalled.json`.
+const ROOT = WORLD.slice(0, WORLD.lastIndexOf('/'))
+const gone = { seen: false, checked: null }
+
+// Whether fastctx is being removed from this computer. From then on the mod
+// stands aside for the rest of this process: it writes nothing, starts no
+// helper and passes every event on untouched, so an open conversation neither
+// puts files back into the directory being removed nor holds a program the
+// removal must delete. A cached answer is at most LOOK_MS old; the removal
+// waits two looks after writing its marker before it takes any file. Only a
+// listing that shows the marker counts: a listing that fails proves nothing.
+async function removed($, fresh = false) {
+  if (gone.seen) return true
+  const now = Date.now()
+  if (!fresh && gone.checked !== null && Math.abs(now - gone.checked) < LOOK_MS) return false
+  gone.checked = now
+  try {
+    gone.seen = (await $.fs.list(ROOT)).some((entry) => entry.name === 'uninstalled.json')
+  } catch (error) {
+    return false
+  }
+  return gone.seen
+}
 
 __FASTCTX_CONTROLS__
 __FASTCTX_COMMANDS__
@@ -324,6 +348,13 @@ async function trouble($, context, name, text) {
 }
 
 async function look($, context) {
+  if (await removed($)) {
+    if (context.timer) {
+      context.timer.cancel()
+      context.timer = null
+    }
+    return
+  }
   const current = !context.closed && (await $.session.id()) === context.sessionId
   if (current) await stopping($, context)
   if (context.looking) return
@@ -662,23 +693,34 @@ async function route($, registry, name, e) {
 
 export function register(on) {
   const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set() }
+  // Every handler first steps aside once fastctx is being removed. Each keeps
+  // its literal on('…') call, the shape the official loader reads.
   on('session.start', async ($, e, next) => {
+    if (await removed($)) return next(e)
     await startControls($)
     await worldTools($, registry)
     await session($, registry, await $.session.id(), true)
     return next(e)
   })
   on('turn.start', async ($, e, next) => {
+    if (await removed($)) return next(e)
     return startTurn($, await route($, registry, 'turn.start', e), e, next)
   })
   on('turn.complete', async ($, e, next) => {
+    if (await removed($)) return next(e)
     return completeTurn($, await route($, registry, 'turn.complete', e), e, next)
   })
   on('turn.step', async function* ($, e, next) {
+    if (await removed($)) {
+      const stream = next(e)
+      for await (const chunk of stream) yield chunk
+      return await stream.result
+    }
     const context = registry.turns.get(e.turnId) || await session($, registry, await $.session.id())
     return yield* context.shown.step(reports($, context), e, next)
   })
   on('tool.call', async ($, e, next) => {
+    if (await removed($)) return next(e)
     const context = await route($, registry, 'tool.call', e)
     if (registry.worldTools.has(e.tool)) {
       try {
@@ -689,16 +731,22 @@ export function register(on) {
     }
     return context.shown.call(reports($, context), e, (input) => controlCall($, input, next))
   })
-  on('classic.PermissionRequest', async ($, e, next) => controlPermission($, e, next))
+  on('classic.PermissionRequest', async ($, e, next) => {
+    if (await removed($)) return next(e)
+    return controlPermission($, e, next)
+  })
   on('session.append', async ($, e, next) => {
+    if (await removed($)) return next(e)
     const context = await route($, registry, 'session.append', e)
     return context.shown.append(reports($, context), e, next)
   })
   on('session.compact', async ($, e, next) => {
+    if (await removed($)) return next(e)
     const context = await route($, registry, 'session.compact', e)
     return context.shown.compact(reports($, context), e, next)
   })
   on('session.measure', async ($, e, next) => {
+    if (await removed($)) return next(e)
     const context = await route($, registry, 'session.measure', e)
     if (Array.isArray(e.changed) && e.changed.includes('rateLimits')) {
       try {
@@ -710,16 +758,20 @@ export function register(on) {
     return context.shown.measure(reports($, context), e, next)
   })
   on('classic.PostToolUse', async ($, e, next) => {
+    if (await removed($)) return next(e)
     return boundary($, await route($, registry, 'classic.PostToolUse', e), e, next)
   })
   on('classic.PostToolUseFailure', async ($, e, next) => {
+    if (await removed($)) return next(e)
     return boundary($, await route($, registry, 'classic.PostToolUseFailure', e), e, next)
   })
   on('session.end', async ($, e, next) => {
+    if (await removed($)) return next(e)
     registry.cleared = e.reason === 'clear' ? e.sessionId : null
     return endSession($, await route($, registry, 'session.end', e), e, next)
   })
   on('classic.SessionStart', async ($, e, next) => {
+    if (await removed($)) return next(e)
     await startControls($)
     await worldTools($, registry)
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')

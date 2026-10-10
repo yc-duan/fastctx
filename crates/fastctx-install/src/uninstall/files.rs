@@ -61,22 +61,30 @@ pub fn delete_tree(path: &Path) -> io::Result<()> {
     fs::remove_dir(path)
 }
 
-/// Retires executable assets while leaving arbitrary additions to bin intact.
-pub fn remove_programs(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut left = Vec::new();
-    for bin in [root.join("bin"), root.join("world/bin")] {
-        retire_bin(&bin, &mut left)?;
-    }
-    let images = root.join("renewal/images");
-    retire_bin(&images, &mut left)?;
-    Ok(left)
+/// What retiring the program directories left: additions that are not
+/// fastctx's, and owned files that could not be removed, each with why.
+pub struct Programs {
+    pub left: Vec<PathBuf>,
+    pub failed: Vec<(PathBuf, io::Error)>,
 }
 
-fn retire_bin(bin: &Path, left: &mut Vec<PathBuf>) -> io::Result<()> {
+/// Retires executable assets while leaving arbitrary additions to bin intact.
+/// Every owned file is tried; one that cannot go does not keep the rest.
+pub fn remove_programs(root: &Path) -> Programs {
+    let mut programs = Programs { left: Vec::new(), failed: Vec::new() };
+    for bin in [root.join("bin"), root.join("world/bin"), root.join("renewal/images")] {
+        if let Err(error) = retire_bin(&bin, &mut programs) {
+            programs.failed.push((bin, error));
+        }
+    }
+    programs
+}
+
+fn retire_bin(bin: &Path, programs: &mut Programs) -> io::Result<()> {
     super::checked_path(bin)?;
     match fs::symlink_metadata(bin) {
         Ok(metadata) if crate::disk::is_link(&metadata) => {
-            left.push(bin.to_path_buf());
+            programs.left.push(bin.to_path_buf());
             return Ok(());
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -90,39 +98,44 @@ fn retire_bin(bin: &Path, left: &mut Vec<PathBuf>) -> io::Result<()> {
     };
     for entry in entries {
         let path = entry?.path();
-        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.is_dir()
-            && !crate::disk::is_link(&metadata)
-            && matches!(name.len(), 24 | 64)
-            && name.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
-            retire_bin(&path, left)?;
-        } else if name.starts_with(".fastctx-exe-retired-") {
-            if let Err(error) = crate::executable::delete_retired(&path) {
-                return Err(io::Error::other(error.to_string()));
-            }
-        } else if !metadata.is_dir()
-            && (matches!(
-                name,
-                "fastctx"
-                    | "fastctx.exe"
-                    | "rg"
-                    | "rg.exe"
-                    | "prelude.bash"
-                    | "LICENSE-APACHE"
-                    | "NOTICE"
-                    | "THIRD_PARTY_LICENSES.md"
-                    | "fastctx.renewal-files.json"
-            ))
-        {
-            delete_file(&path)?;
-        } else {
-            left.push(path);
+        if let Err(error) = retire_entry(&path, programs) {
+            programs.failed.push((path, error));
         }
     }
     if fs::read_dir(bin)?.next().is_none() {
         fs::remove_dir(bin)?;
     }
     Ok(())
+}
+
+fn retire_entry(path: &Path, programs: &mut Programs) -> io::Result<()> {
+    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.is_dir()
+        && !crate::disk::is_link(&metadata)
+        && matches!(name.len(), 24 | 64)
+        && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        retire_bin(path, programs)
+    } else if name.starts_with(".fastctx-exe-retired-") {
+        crate::executable::delete_retired(path).map_err(|error| io::Error::other(error.to_string()))
+    } else if !metadata.is_dir()
+        && matches!(
+            name,
+            "fastctx"
+                | "fastctx.exe"
+                | "rg"
+                | "rg.exe"
+                | "prelude.bash"
+                | "LICENSE-APACHE"
+                | "NOTICE"
+                | "THIRD_PARTY_LICENSES.md"
+                | "fastctx.renewal-files.json"
+        )
+    {
+        delete_file(path)
+    } else {
+        programs.left.push(path.to_path_buf());
+        Ok(())
+    }
 }

@@ -366,11 +366,23 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
             ));
         }
     }
+    // Named once, by the archive that holds them, as the removal reports them;
+    // one kept beside a file on another volume, by its own place.
+    let history = root.join("apply-history");
+    let mut archived = false;
     for archive in fastctx_install::transaction::retained_archives(root)? {
+        let location = if archive.starts_with(&history) {
+            if std::mem::replace(&mut archived, true) {
+                continue;
+            }
+            history.clone()
+        } else {
+            archive
+        };
         plan.keeps.push(keep(
             "user-files",
             "User file versions retained by host publication transactions",
-            &archive.display().to_string(),
+            &location.display().to_string(),
         ));
     }
     if root.join("claude-command-history").try_exists()? {

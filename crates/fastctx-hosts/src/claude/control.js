@@ -44,7 +44,10 @@ async function controlBegin($, sessions) {
   try { return await creating } finally { controlStarting.delete(sessionId) }
 }
 
+// Null once fastctx is being removed: no directory is made and no helper is
+// started, whose program the removal must delete.
 async function controlOpen($, sessions, sessionId) {
+  if (await removed($, true)) return null
   const directory = WORLD + '/claude/' + sessionId + '/control'
   await $.fs.write(directory + '/inbox/.created', '')
   await $.fs.write(directory + '/replies/.created', '')
@@ -110,6 +113,12 @@ async function controlWatchGuard($, state) {
 
 async function controlPoll($, state) {
   if (state.closed || state.looking) return
+  if (await removed($)) {
+    state.closed = true
+    state.timer.cancel()
+    await state.guard.return()
+    return
+  }
   state.looking = true
   try {
     if (await $.session.id() !== state.host.session) return
@@ -232,6 +241,7 @@ async function startControls($) { await controlBegin($, sessions) }
 
 async function startControlTurn($, e) {
     const state = await controlBegin($, sessions)
+    if (state === null) return
     state.busy = true
     state.turn = e.turnId
     turns.set(e.turnId, state)
@@ -266,6 +276,7 @@ async function endControls($, e) {
 
 async function controlCall($, e, next) {
     const state = await controlBegin($, sessions)
+    if (state === null) return next(e)
     const { tool, tool_use_id, agentId } = e
     const call = { tool, agentId, requests: [] }
     state.calls.set(tool_use_id, call)
@@ -288,6 +299,7 @@ async function controlCall($, e, next) {
 
 async function controlPermission($, e, next) {
     const state = await controlBegin($, sessions)
+    if (state === null) return next(e)
     // This event has no tool_use_id. Only a unique live match can be
     // invalidated when the native surface wins the permission race. An
     // ambiguous request stays with Claude Code's own permission UI.

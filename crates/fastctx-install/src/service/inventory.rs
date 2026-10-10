@@ -43,19 +43,27 @@ impl Registration {
                 Ok(metadata) if metadata.is_dir() => {
                     for entry in std::fs::read_dir(artifact)? {
                         let entry = entry?;
+                        let name = entry.file_name();
+                        let name = name.to_str().unwrap_or("");
                         if matches!(
-                            entry.file_name().to_str(),
-                            Some(
-                                "guardian.exe"
-                                    | "payload.exe"
-                                    | "config.json"
-                                    | "guardian.log"
-                                    | "running.json"
-                                    | "manager.lock"
-                                    | "transaction.json"
-                            )
+                            name,
+                            "guardian.exe"
+                                | "payload.exe"
+                                | "config.json"
+                                | "guardian.log"
+                                | "running.json"
+                                | "manager.lock"
+                                | "transaction.json"
+                                // A renewal of the protected guardian leaves its receipt
+                                // beside the image it replaced.
+                                | "guardian.renewal-files.json"
+                                | "payload.renewal-files.json"
                         ) {
                             crate::uninstall::delete_file(&entry.path())?;
+                        } else if crate::executable::is_retired(&entry.path()) {
+                            // The earlier image a renewal kept while it was mapped.
+                            crate::executable::delete_retired(&entry.path())
+                                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
                         } else {
                             left.push(entry.path());
                         }

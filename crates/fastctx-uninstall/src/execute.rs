@@ -336,6 +336,19 @@ fn remaining(request: &Request, progress: &Progress) -> Vec<Left> {
     left
 }
 
+/// Claude Code conversations left open hold the World's mod, which reads the
+/// removal's marker within one look and from then on writes nothing and starts
+/// no helper. Programs and data are taken once two looks have passed since the
+/// marker was written, so none of them puts a file back or holds a program.
+async fn mods_stood_aside(installation: &uninstall::Installation) -> anyhow::Result<()> {
+    let marked = std::fs::metadata(installation.marker())?.modified()?;
+    let ready = marked + 2 * fastctx_hosts::claude::MOD_LOOK;
+    if let Ok(wait) = ready.duration_since(std::time::SystemTime::now()) {
+        tokio::time::sleep(wait).await;
+    }
+    Ok(())
+}
+
 async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> anyhow::Result<()> {
     let installation = &request.installation;
     let places = installation.places(std::env::current_exe()?);
@@ -368,7 +381,9 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
             uninstall::remove_path(&installation.home, &installation.root.join("bin"))?;
         }
         Action::Programs => {
-            for path in uninstall::remove_programs(&installation.root)? {
+            mods_stood_aside(installation).await?;
+            let programs = uninstall::remove_programs(&installation.root);
+            for path in programs.left {
                 progress.retained.push(Left {
                     kind: "user-files".into(),
                     what: "Unrecognized addition to a program directory".into(),
@@ -376,12 +391,30 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
                     why: "It has no fastctx ownership record.".into(),
                 });
             }
+            anyhow::ensure!(
+                programs.failed.is_empty(),
+                "{}",
+                programs
+                    .failed
+                    .iter()
+                    .map(|(path, error)| format!("{}: {error}", path.display()))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
         }
         Action::WorldData => {
+            mods_stood_aside(installation).await?;
             let world = installation.root.join("world");
+            // Every owned entry is tried; one that cannot go does not keep the
+            // others, the identity among them, on this computer.
+            let mut failed = Vec::new();
             for entry in crate::entries(&world)? {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
+                if name == "bin" {
+                    // The program step owns it and reports what stayed there.
+                    continue;
+                }
                 if matches!(
                     name.as_ref(),
                     "outside"
@@ -415,7 +448,9 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
                 ) || name.starts_with("net-left-")
                     || (name.starts_with("job-") && name.ends_with(".sock"))
                 {
-                    uninstall::delete_tree(&entry.path())?;
+                    if let Err(error) = uninstall::delete_tree(&entry.path()) {
+                        failed.push(format!("{}: {error}", entry.path().display()));
+                    }
                 } else {
                     progress.retained.push(Left {
                         kind: "user-files".into(),
@@ -425,6 +460,7 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
                     });
                 }
             }
+            anyhow::ensure!(failed.is_empty(), "{}", failed.join("; "));
             if world.try_exists()? && crate::entries(&world)?.is_empty() {
                 std::fs::remove_dir(world)?;
             }

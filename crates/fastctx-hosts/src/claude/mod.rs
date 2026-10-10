@@ -46,6 +46,11 @@ pub const MAX_MCP_OUTPUT_TOKENS: u64 = 200_000;
 
 const MOD: &str = include_str!("world.js");
 
+/// How often the mod looks at what the World has for its session, and at
+/// whether fastctx is being removed. A removal waits two of these after it
+/// marks the World, so every mod that read the marker has stopped writing.
+pub const MOD_LOOK: std::time::Duration = std::time::Duration::from_millis(2000);
+
 /// How words the World says on its own account begin, as the model reads
 /// them; the mod frames them the same way (`world.js`).
 const FRAME: &str = "A message from fastctx, not typed by the user:";
@@ -135,6 +140,7 @@ pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
         .replace("__FASTCTX_COMMANDS__", include_str!("commands.js"));
     let module = module.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));
     let module = module.replace("__FASTCTX_COMMAND__", &serde_json::to_string(&command).expect("strings serialize"));
+    let module = module.replace("__FASTCTX_LOOK_MS__", &MOD_LOOK.as_millis().to_string());
     write(&plugin.join("hooks").join("presentation.js"), include_bytes!("presentation.js"))?;
     write(&plugin.join("hooks").join("steps.js"), include_bytes!("steps.js"))?;
     write(&plugin.join("hooks").join("world.js"), module.as_bytes())?;

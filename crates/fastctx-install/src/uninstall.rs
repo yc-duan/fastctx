@@ -4,7 +4,7 @@ mod files;
 mod legacy;
 mod path;
 
-pub use files::{delete_file, delete_tree, remove_programs};
+pub use files::{Programs, delete_file, delete_tree, remove_programs};
 pub use legacy::{Legacy, legacy};
 pub use path::{path_entry, remove_path};
 

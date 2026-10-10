@@ -63,6 +63,11 @@ pub fn cleanup_retired(installed: &Path) -> Vec<FileError> {
     errors
 }
 
+/// Whether the name is one this module gives a retained image.
+pub(crate) fn is_retired(path: &Path) -> bool {
+    retained_identity(path).is_some()
+}
+
 pub(crate) fn delete_retired(path: &Path) -> Result<(), FileError> {
     let expected = retained_identity(path).ok_or_else(|| FileError::changed(path))?;
     let metadata = match fs::symlink_metadata(path) {
