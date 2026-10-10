@@ -34,6 +34,7 @@ pub enum Action {
     Path,
     Delete(PathBuf),
     Application,
+    ApplicationData(PathBuf),
     Package,
 }
 
@@ -48,9 +49,25 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
             request.installation.root == installation.root && request.installation.home == installation.home,
             "the uninstall checkpoint belongs to a different user or installation"
         );
+        refresh_application_data(&mut request, &installation);
         request.installation.application_process = installation.application_process;
         request.installation.application_control = installation.application_control;
         request.installation.graphical = installation.graphical;
+        retain_legacy_archives(&mut request);
+        let marker = fastctx_types::layout::WorldDir::under(&request.installation.root).node_service();
+        if marker.try_exists()?
+            && !request.steps.iter().any(|step| matches!(&step.action, Action::Delete(path) if path == &marker))
+        {
+            let item = Item {
+                id: "node-service-marker".into(),
+                kind: "service".into(),
+                what: "Remove the node's boot-service marker".into(),
+                location: Some(marker.display().to_string()),
+                admin: false,
+            };
+            request.plan.steps.push(item.clone());
+            request.steps.push(Step { item, action: Action::Delete(marker) });
+        }
         return Ok(request);
     }
     let root = &installation.root;
@@ -205,6 +222,15 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
             Action::Legacy(legacy),
         );
     }
+    if world.node_service().try_exists()? {
+        add(
+            "service",
+            "Remove the node's boot-service marker",
+            world.node_service().display().to_string(),
+            false,
+            Action::Delete(world.node_service()),
+        );
+    }
     let path_location =
         if cfg!(target_os = "linux") { installation.home.join(".local/bin/fastctx") } else { root.join("bin") };
     add(
@@ -256,15 +282,11 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if name.starts_with("legacy-archive-") {
-            if everything {
-                add(
-                    "legacy",
-                    "Delete the separately listed old-version archive",
-                    entry.path().display().to_string(),
-                    false,
-                    Action::Delete(entry.path()),
-                );
-            }
+            plan.keeps.push(keep(
+                "user-files",
+                "Old-version files with unproven or user-modified contents",
+                &entry.path().display().to_string(),
+            ));
         } else if everything && name == "hub-third" && entry.path().join("hub.json").try_exists()? {
             add(
                 "hub-data",
@@ -317,7 +339,7 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
             );
         }
     }
-    if !installation.application_dirs.is_empty() {
+    if installation.application.is_some() {
         let deb = cfg!(target_os = "linux")
             && installation.application.as_deref() == Some(std::path::Path::new("/usr/bin/World"));
         add(
@@ -343,6 +365,16 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
                 );
             }
         }
+    } else if everything {
+        for directory in &installation.application_dirs {
+            add(
+                "app",
+                "Delete the former application's device identity, preferences and WebView data",
+                directory.display().to_string(),
+                false,
+                Action::ApplicationData(directory.clone()),
+            );
+        }
     }
     anyhow::ensure!(
         !(everything && installation.graphical && hubs.len() > 1),
@@ -361,11 +393,6 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
             "World identity, logins, projects, records and withdrawn-host recovery",
             &root.display().to_string(),
         ));
-        for entry in crate::entries(root)? {
-            if entry.file_name().to_string_lossy().starts_with("legacy-archive-") {
-                plan.keeps.push(keep("legacy", "Old-version archive", &entry.path().display().to_string()));
-            }
-        }
         for directory in &installation.application_dirs {
             plan.keeps.push(keep(
                 "app",
@@ -420,6 +447,82 @@ fn keep(kind: &str, what: &str, location: &str) -> Item {
         location: Some(location.into()),
         admin: false,
     }
+}
+
+fn refresh_application_data(request: &mut Request, installation: &Installation) {
+    request.installation.application_dirs.extend(installation.application_dirs.iter().cloned());
+    request.installation.application_dirs.sort();
+    request.installation.application_dirs.dedup();
+    if !request.plan.everything {
+        for directory in &request.installation.application_dirs {
+            let location = directory.display().to_string();
+            if !request.plan.keeps.iter().any(|item| item.location.as_deref() == Some(&location)) {
+                request.plan.keeps.push(keep("app", "World device identity and interface preferences", &location));
+            }
+        }
+        return;
+    }
+    let direct = installation.application.is_none() && !installation.graphical;
+    for directory in &request.installation.application_dirs {
+        let location = directory.display().to_string();
+        if let Some(step) = request.steps.iter_mut().find(|step| {
+            matches!(step.action, Action::Application | Action::ApplicationData(_))
+                && step.item.location.as_deref() == Some(&location)
+        }) {
+            if direct && matches!(step.action, Action::Application) {
+                let old = step.item.id.clone();
+                step.item.id = format!("application-data-{old}");
+                step.item.what = "Delete the former application's device identity, preferences and WebView data".into();
+                step.action = Action::ApplicationData(directory.clone());
+                if let Some(item) = request.plan.steps.iter_mut().find(|item| item.id == old) {
+                    *item = step.item.clone();
+                }
+            }
+            continue;
+        }
+        let mut index = request.steps.len() + 1;
+        while request.steps.iter().any(|step| step.item.id == format!("application-data-{index}")) {
+            index += 1;
+        }
+        let item = Item {
+            id: format!("application-data-{index}"),
+            kind: "app".into(),
+            what: "Delete the former application's device identity, preferences and WebView data".into(),
+            location: Some(location),
+            admin: false,
+        };
+        request.plan.steps.push(item.clone());
+        request.steps.push(Step {
+            item,
+            action: if direct { Action::ApplicationData(directory.clone()) } else { Action::Application },
+        });
+    }
+}
+
+pub(crate) fn is_legacy_archive(path: &std::path::Path, root: &std::path::Path) -> bool {
+    path.parent() == Some(root)
+        && path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("legacy-archive-"))
+}
+
+fn retain_legacy_archives(request: &mut Request) {
+    request.steps.retain(|step| {
+        if let Action::Delete(path) = &step.action
+            && is_legacy_archive(path, &request.installation.root)
+        {
+            request.plan.steps.retain(|item| item.id != step.item.id);
+            let location = path.display().to_string();
+            if !request.plan.keeps.iter().any(|item| item.location.as_deref() == Some(&location)) {
+                request.plan.keeps.push(keep(
+                    "user-files",
+                    "Old-version files with unproven or user-modified contents",
+                    &location,
+                ));
+            }
+            false
+        } else {
+            true
+        }
+    });
 }
 
 fn other_programs(places: &apply::Places, application: Option<&std::path::Path>) -> anyhow::Result<Vec<Other>> {

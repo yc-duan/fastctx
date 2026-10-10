@@ -1,9 +1,11 @@
 //! Read-only coordinates and file operations for uninstalling one local World.
 
+mod application;
 mod files;
 mod legacy;
 mod path;
 
+pub use application::{application_directories, remove_application_data};
 pub use files::{Programs, delete_file, delete_tree, remove_programs};
 pub use legacy::{Legacy, legacy};
 pub use path::{path_entry, remove_path};
@@ -39,13 +41,26 @@ pub struct Installation {
 impl Installation {
     pub fn here() -> std::io::Result<Self> {
         let places = crate::apply::Places::here()?;
+        let home = fastctx_platform::user_home()?;
+        let application_dirs = if places.root == home.join(".fastctx") {
+            application_directories(&home)?
+                .into_iter()
+                .filter_map(|path| match path.try_exists() {
+                    Ok(true) => Some(Ok(path)),
+                    Ok(false) => None,
+                    Err(error) => Some(Err(error)),
+                })
+                .collect::<std::io::Result<_>>()?
+        } else {
+            Vec::new()
+        };
         Ok(Self {
             root: places.root,
-            home: fastctx_platform::user_home()?,
+            home,
             codex_home: places.codex_home,
             claude_home: places.claude_home,
             claude_override: std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from),
-            application_dirs: Vec::new(),
+            application_dirs,
             application: None,
             application_image: None,
             application_process: None,
@@ -98,7 +113,7 @@ impl Installation {
         }
         for directory in &self.application_dirs {
             anyhow::ensure!(
-                directory.is_absolute() && directory.file_name().is_some_and(|name| name == "dev.fastctx.world"),
+                directory.is_absolute() && application::is_application_directory(directory),
                 "uninstall application data must name the World application directory"
             );
             checked_path(directory)?;

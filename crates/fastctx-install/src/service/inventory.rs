@@ -37,7 +37,10 @@ impl Registration {
         let mut left = Vec::new();
         for artifact in &self.artifacts {
             match std::fs::symlink_metadata(artifact) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    retire_services_dir(artifact)?;
+                    continue;
+                }
                 Err(error) => return Err(error.into()),
                 Ok(metadata) if crate::disk::is_link(&metadata) => left.push(artifact.clone()),
                 Ok(metadata) if metadata.is_dir() => {
@@ -89,8 +92,12 @@ fn retire_services_dir(service: &std::path::Path) -> anyhow::Result<()> {
     else {
         return Ok(());
     };
-    let names =
-        std::fs::read_dir(services)?.map(|entry| Ok(entry?.file_name())).collect::<std::io::Result<Vec<_>>>()?;
+    let entries = match std::fs::read_dir(services) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let names = entries.map(|entry| Ok(entry?.file_name())).collect::<std::io::Result<Vec<_>>>()?;
     if names.iter().all(|name| name == "policy.lock") {
         crate::uninstall::delete_file(&services.join("policy.lock"))?;
         std::fs::remove_dir(services)?;

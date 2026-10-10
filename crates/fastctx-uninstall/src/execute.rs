@@ -39,9 +39,7 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
     fastctx_platform::ensure_private_dir(root)?;
     let lock = fastctx_platform::uninstall_gate::Gate::try_acquire(root)?
         .context("another uninstall is executing for this World")?;
-    if !request.installation.marker().try_exists()? {
-        publish(&request.installation.marker(), &request)?;
-    }
+    publish(&request.installation.marker(), &request)?;
     let progress_file = root.join("uninstall-progress.json");
     let mut progress = crate::read::<Progress>(&progress_file)?.unwrap_or_default();
     if !request.plan.everything {
@@ -67,7 +65,9 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
             Ok(system) => Some(system),
             Err(error) => {
                 for step in &admin {
-                    record(step, Err(anyhow::anyhow!("{error:#}")), &mut progress, &progress_file, &mut events)?;
+                    if !done(step, &progress) {
+                        record(step, Err(anyhow::anyhow!("{error:#}")), &mut progress, &progress_file, &mut events)?;
+                    }
                 }
                 None
             }
@@ -75,6 +75,10 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
     };
     let mut node = None;
     let mut running_stopped = true;
+    for step in request.steps.iter().filter(|step| !step.item.admin && matches!(step.action, Action::Legacy(_))) {
+        let Action::Legacy(legacy) = &step.action else { unreachable!() };
+        record(step, legacy.uninstall(&request.installation), &mut progress, &progress_file, &mut events)?;
+    }
     for step in request.steps.iter().filter(|step| matches!(step.action, Action::Stop | Action::Logout { .. })) {
         if !matches!(step.action, Action::Stop)
             && progress.outcomes.get(&step.item.id).is_some_and(|(outcome, _)| *outcome == Outcome::Done)
@@ -113,26 +117,25 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
             }
         }
     }
-    let system_removed = admin
-        .iter()
-        .all(|step| progress.outcomes.get(&step.item.id).is_some_and(|(outcome, _)| *outcome == Outcome::Done));
-    if running_stopped && system_removed {
-        uninstall::delete_file(&world.node_service())?;
-        if let Err(error) = crate::runtime::finish(node.as_ref()).await {
-            running_stopped = false;
-            progress.retained.push(Left {
-                kind: "runtime".into(),
-                what: "World node".into(),
-                location: node.as_ref().map(|identity| identity.pid.to_string()),
-                why: format!("{error:#}"),
-            });
-        }
-    }
-    for step in request
-        .steps
-        .iter()
-        .filter(|step| !step.item.admin && !matches!(step.action, Action::Stop | Action::Logout { .. }))
+    let system_removed = request.steps.iter().filter(|step| boot_registration(step)).all(|step| done(step, &progress));
+    if running_stopped
+        && system_removed
+        && let Err(error) = crate::runtime::finish(node.as_ref()).await
     {
+        running_stopped = false;
+        if let Some(step) = request.steps.iter().find(|step| matches!(step.action, Action::Stop)) {
+            record(step, Err(anyhow::anyhow!("{error:#}")), &mut progress, &progress_file, &mut events)?;
+        }
+        progress.retained.push(Left {
+            kind: "runtime".into(),
+            what: "World node".into(),
+            location: node.as_ref().map(|identity| identity.pid.to_string()),
+            why: format!("{error:#}"),
+        });
+    }
+    for step in request.steps.iter().filter(|step| {
+        !step.item.admin && !matches!(step.action, Action::Stop | Action::Logout { .. } | Action::Legacy(_))
+    }) {
         if progress.outcomes.get(&step.item.id).is_some_and(|(outcome, _)| *outcome == Outcome::Done) {
             events(step_event(step, Ok(())));
             continue;
@@ -143,10 +146,13 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
             .filter(|step| matches!(step.action, Action::Host(_)))
             .all(|step| progress.outcomes.get(&step.item.id).is_some_and(|(outcome, _)| *outcome == Outcome::Done));
         let result = if !running_stopped || !system_removed {
-            Err(anyhow::anyhow!(
-                "the World still has running processes or boot registrations; dependent cleanup was not performed"
-            ))
-        } else if matches!(step.action, Action::Programs | Action::Delete(_) | Action::WorldData) && !hosts_withdrawn {
+            Err(anyhow::anyhow!("{}", blocked_by(&request, &progress)))
+        } else if matches!(
+            step.action,
+            Action::Programs | Action::Delete(_) | Action::WorldData | Action::ApplicationData(_)
+        ) && !hosts_withdrawn
+            && !matches!(&step.action, Action::Delete(path) if path == &world.node_service())
+        {
             Err(anyhow::anyhow!(
                 "a host integration could not be withdrawn; its restoration records and program assets must remain for retry"
             ))
@@ -155,6 +161,23 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
         };
         record(step, result, &mut progress, &progress_file, &mut events)?;
     }
+    if running_stopped {
+        progress.retained.retain(|left| left.kind != "runtime" || left.what != "World node");
+    }
+    let mut retained = Vec::new();
+    for left in std::mem::take(&mut progress.retained) {
+        if left.kind == "user-files"
+            && let Some(path) = left.location.as_deref().map(Path::new).filter(|path| path.is_absolute())
+        {
+            match std::fs::symlink_metadata(path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+                Ok(_) => {}
+            }
+        }
+        retained.push(left);
+    }
+    progress.retained = retained;
     progress.retained.sort_by(|left, right| {
         (&left.kind, &left.location, &left.why).cmp(&(&right.kind, &right.location, &right.why))
     });
@@ -194,7 +217,10 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
             left.push(entry);
         }
     }
-    let failures = progress.outcomes.values().any(|(outcome, _)| *outcome == Outcome::Failed);
+    let failures = request
+        .steps
+        .iter()
+        .any(|step| progress.outcomes.get(&step.item.id).is_some_and(|(outcome, _)| *outcome == Outcome::Failed));
     let local_failure = request
         .steps
         .iter()
@@ -220,7 +246,13 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
     drop(lock);
     if request.plan.everything {
         for entry in crate::entries(root)? {
-            if entry.file_name() == "apply-history" {
+            if entry.file_name() == "apply-history"
+                || request
+                    .plan
+                    .keeps
+                    .iter()
+                    .any(|item| item.location.as_deref() == Some(&entry.path().display().to_string()))
+            {
                 continue;
             }
             left.push(Left {
@@ -250,6 +282,40 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
     Ok(())
 }
 
+fn done(step: &Step, progress: &Progress) -> bool {
+    progress.outcomes.get(&step.item.id).is_some_and(|(outcome, _)| *outcome == Outcome::Done)
+}
+
+fn boot_registration(step: &Step) -> bool {
+    matches!(step.action, Action::Service(_) | Action::ServicePart(_) | Action::Legacy(_))
+}
+
+fn blocked_by(request: &Request, progress: &Progress) -> String {
+    let reasons = request
+        .steps
+        .iter()
+        .filter(|step| matches!(step.action, Action::Stop) || boot_registration(step))
+        .filter(|step| !done(step, progress))
+        .map(|step| {
+            let reason = progress
+                .outcomes
+                .get(&step.item.id)
+                .and_then(|(_, why)| why.as_deref())
+                .unwrap_or("No completion was recorded.");
+            format!(
+                "{}: {} ({}): {reason}",
+                step.item.id,
+                step.item.what,
+                step.item.location.as_deref().unwrap_or("location unavailable")
+            )
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "Dependent cleanup was not performed because these uninstall steps did not complete: {}",
+        reasons.join("; ")
+    )
+}
+
 /// The package calls this after the original application exited. Until then
 /// its client cannot start a new node in a just-erased World directory.
 pub fn finish_application(root: &Path) -> anyhow::Result<()> {
@@ -266,6 +332,10 @@ pub fn finish_application(root: &Path) -> anyhow::Result<()> {
             .all(|step| progress.outcomes.get(&step.item.id).is_some_and(|(outcome, _)| *outcome == Outcome::Done)),
         "the local kernel removal has not completed"
     );
+    let left = application_data(&request.installation.application_dirs)?;
+    if !left.is_empty() {
+        println!("{}", serde_json::to_string(&Event::Finished { left })?);
+    }
     uninstall::delete_file(&root.join("uninstall-progress.json"))?;
     uninstall::delete_file(&root.join("uninstalled.json"))?;
     if crate::entries(root)?.is_empty() {
@@ -274,11 +344,29 @@ pub fn finish_application(root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub(crate) fn application_data(directories: &[std::path::PathBuf]) -> anyhow::Result<Vec<Left>> {
+    let mut left = Vec::new();
+    let mut failed = Vec::new();
+    for directory in directories {
+        let data = uninstall::remove_application_data(directory);
+        left.extend(data.left.into_iter().map(|path| Left {
+            kind: "user-files".into(),
+            what: "Unrecognized addition to the application data directory".into(),
+            location: Some(path.display().to_string()),
+            why: "It is not an owned application data path.".into(),
+        }));
+        failed.extend(data.failed.into_iter().map(|(path, error)| format!("{}: {error}", path.display())));
+    }
+    anyhow::ensure!(failed.is_empty(), "{}", failed.join("; "));
+    Ok(left)
+}
+
 fn remaining(request: &Request, progress: &Progress) -> Vec<Left> {
     let mut left = progress.retained.clone();
     for item in &request.plan.keeps {
         left.push(Left { kind: item.kind.clone(), what: item.what.clone(), location: item.location.clone(),
-            why: if item.kind == "user-files" { "These are original user file objects retained across publication. A later write through an old handle must not be discarded.".into() }
+            why: if item.what == "Old-version files with unproven or user-modified contents" { "The old version did not prove these contents were unchanged; user additions and edits must be preserved.".into() }
+                else if item.kind == "user-files" { "These are original user file objects retained across publication. A later write through an old handle must not be discarded.".into() }
                 else if item.kind == "other-program" { "This copy is owned by npm or a separate installation.".into() } else { "Data-preserving uninstall was selected.".into() } });
     }
     for step in &request.steps {
@@ -465,7 +553,33 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
                 std::fs::remove_dir(world)?;
             }
         }
+        Action::Delete(path) if crate::inventory::is_legacy_archive(path, &installation.root) => {
+            progress.retained.push(Left { kind: "user-files".into(),
+                what: "Old-version files with unproven or user-modified contents".into(),
+                location: Some(path.display().to_string()),
+                why: "The old version did not prove these contents were unchanged; user additions and edits must be preserved.".into() });
+        }
         Action::Delete(path) => uninstall::delete_tree(path)?,
+        Action::ApplicationData(path) => {
+            let data = uninstall::remove_application_data(path);
+            for path in data.left {
+                progress.retained.push(Left {
+                    kind: "user-files".into(),
+                    what: "Unrecognized addition to the application data directory".into(),
+                    location: Some(path.display().to_string()),
+                    why: "It is not an owned application data path.".into(),
+                });
+            }
+            anyhow::ensure!(
+                data.failed.is_empty(),
+                "{}",
+                data.failed
+                    .iter()
+                    .map(|(path, error)| format!("{}: {error}", path.display()))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
         Action::Application => {}
         _ => anyhow::bail!("this operation belongs to another uninstall phase"),
     }
@@ -561,6 +675,8 @@ pub(crate) fn run_system_phase(request: &Request, early: bool, mut events: impl 
                     if !directory.try_exists()? {
                         return Ok(());
                     }
+                    let mut failed = Vec::new();
+                    let mut left = Vec::new();
                     for entry in crate::entries(directory)? {
                         let name = entry.file_name();
                         let name = name.to_string_lossy();
@@ -581,21 +697,51 @@ pub(crate) fn run_system_phase(request: &Request, early: bool, mut events: impl 
                                 // one-line server install.
                                 | "releases"
                         ) {
-                            uninstall::delete_tree(&entry.path())?;
+                            if let Err(error) = uninstall::delete_tree(&entry.path()) {
+                                failed.push(format!("{}: {error}", entry.path().display()));
+                            }
                         } else if name == "tls" {
                             for name in ["certificate.der", "key.der"] {
-                                uninstall::delete_file(&entry.path().join(name))?;
+                                let path = entry.path().join(name);
+                                if let Err(error) = uninstall::delete_file(&path) {
+                                    failed.push(format!("{}: {error}", path.display()));
+                                }
                             }
                             if crate::entries(&entry.path())?.is_empty() {
-                                std::fs::remove_dir(entry.path())?;
+                                if let Err(error) = std::fs::remove_dir(entry.path()) {
+                                    failed.push(format!("{}: {error}", entry.path().display()));
+                                }
+                            } else {
+                                left.extend(
+                                    crate::entries(&entry.path())?
+                                        .into_iter()
+                                        .filter(|entry| {
+                                            entry.file_name() != "certificate.der" && entry.file_name() != "key.der"
+                                        })
+                                        .map(|entry| entry.path()),
+                                );
                             }
+                        } else {
+                            left.push(entry.path());
                         }
                     }
-                    anyhow::ensure!(
-                        crate::entries(directory)?.is_empty(),
-                        "the hub directory also contains user-owned or externally maintained files; those were preserved"
-                    );
-                    std::fs::remove_dir(directory)?;
+                    if !left.is_empty() {
+                        events(Event::Finished {
+                            left: left
+                                .into_iter()
+                                .map(|path| Left {
+                                    kind: "user-files".into(),
+                                    what: "Unrecognized addition to the hub directory".into(),
+                                    location: Some(path.display().to_string()),
+                                    why: "It is not an owned hub data path.".into(),
+                                })
+                                .collect(),
+                        });
+                    }
+                    anyhow::ensure!(failed.is_empty(), "{}", failed.join("; "));
+                    if crate::entries(directory)?.is_empty() {
+                        std::fs::remove_dir(directory)?;
+                    }
                     Ok(())
                 }
                 _ => anyhow::bail!("this operation does not belong to the system phase"),

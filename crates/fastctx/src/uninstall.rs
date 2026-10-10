@@ -122,7 +122,9 @@ pub fn run(command: Uninstall) -> anyhow::Result<()> {
 
 fn request(options: &Options) -> anyhow::Result<fastctx_uninstall::Request> {
     let mut installation = Installation::here()?;
-    installation.application_dirs = options.application_dir.clone();
+    installation.application_dirs.extend(options.application_dir.clone());
+    installation.application_dirs.sort();
+    installation.application_dirs.dedup();
     installation.application = options.application.clone();
     installation.application_image = options.application_image.clone();
     installation.application_process = options.application_process.as_deref().map(serde_json::from_str).transpose()?;

@@ -58,8 +58,6 @@
     ${GetOptions} $R0 "/FASTCTXEVERYTHING" $R1
     ${IfNot} ${Errors}
       SetShellVarContext current
-      RMDir /r "$APPDATA\${BUNDLEID}"
-      RMDir /r "$LOCALAPPDATA\${BUNDLEID}"
       DeleteRegKey HKCU "Software\${MANUFACTURER}\${PRODUCTNAME}"
     ${EndIf}
   ${EndIf}
