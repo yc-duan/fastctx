@@ -538,6 +538,9 @@ fn active_caller(node: &Node, peer: &Peer) -> Result<(), Failure> {
 }
 
 pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
+    if node.root.join("uninstalled.json").exists() && !matches!(call, Call::UninstallPrepare | Call::HandOver) {
+        return Err(Failure::new("this World is being uninstalled"));
+    }
     active_caller(node, peer)?;
     match call {
         Call::Arrive { host, hints } => {
@@ -743,6 +746,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::HandOver => {
             users_voice(node, peer)?;
             crate::handoff::hand_over(node.clone());
+            Ok(Reply::Done)
+        }
+        Call::UninstallPrepare => {
+            users_voice(node, peer)?;
+            crate::uninstall::prepare(node).await?;
             Ok(Reply::Done)
         }
         Call::Copy { from, to } => {

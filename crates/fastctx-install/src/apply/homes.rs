@@ -57,6 +57,17 @@ pub(super) fn check_file(recorded: &Path, selected: &Path) -> Result<(), Error> 
 }
 
 impl Records {
+    pub(super) fn integrations(&self) -> Vec<Integration> {
+        self.homes.iter().filter(|entry| {
+            entry.host != Host::Codex || entry.receipt.codex.as_ref().is_some_and(codex::Receipt::has_work)
+        }).map(|entry| {
+            let approved_limit = entry.receipt.codex.as_ref().and_then(|receipt| receipt.limit.as_ref()).and_then(|limit| limit.before.as_ref())
+                .and_then(|token| std::str::from_utf8(token).ok()).and_then(|token| format!("limit = {token}").parse::<toml::Table>().ok())
+                .and_then(|table| table.get("limit").and_then(toml::Value::as_integer));
+            Integration { host: entry.host, home: entry.home.clone(), approved_limit }
+        }).collect()
+    }
+
     pub(super) fn read(snapshot: &Snapshot, places: &Places) -> Result<Self, Error> {
         #[derive(Deserialize)]
         struct Version {

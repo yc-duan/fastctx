@@ -229,9 +229,14 @@ pub async fn keep(world: &World) -> Result<KeptNow, String> {
 /// service again.
 pub fn keep_at_install() -> Result<String, String> {
     let places = places()?;
+    let _uninstall = fastctx_platform::uninstall_gate::Gate::try_acquire(&places.root).map_err(|error| error.to_string())?
+        .ok_or("this World is still being uninstalled")?;
+    fastctx_install::uninstall::delete_file(&places.root.join("uninstalled.json")).map_err(|error| error.to_string())?;
+    fastctx_install::uninstall::delete_file(&places.root.join("uninstall-progress.json")).map_err(|error| error.to_string())?;
     if !places.installed().is_file() {
         place()?;
     }
+    apply::restore_withdrawn(&places).map_err(|error| error.to_string())?;
     let (kept, _) = keep_connected(&places).map_err(|error| error.to_string())?;
     if kept == Kept::Installed {
         hand_over_running(&places)?;

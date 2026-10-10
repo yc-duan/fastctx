@@ -17,6 +17,16 @@ pub fn run(kind: Kind, action: &str, directory: &Path, executable: &Path) -> Res
     if kind == Kind::Node {
         command.arg("--uid").arg(std::fs::metadata(directory).map_err(|error| error.to_string())?.uid().to_string());
     }
+    if action == "install" {
+        let mut owner = fastctx_install::uninstall::Installation::here().map_err(|error| error.to_string())?;
+        owner.application = Some(std::env::current_exe().map_err(|error| error.to_string())?);
+        owner.application_dirs = [
+            ("XDG_DATA_HOME", ".local/share"),
+            ("XDG_CONFIG_HOME", ".config"),
+            ("XDG_CACHE_HOME", ".cache"),
+        ].into_iter().map(|(variable, fallback)| std::env::var_os(variable).filter(|value| !value.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| owner.home.join(fallback)).join("dev.fastctx.world")).collect();
+        command.arg("--package-owner").arg(serde_json::to_string(&owner).map_err(|error| error.to_string())?);
+    }
     let output =
         command.stdin(Stdio::null()).output().map_err(|error| format!("starting the administrator prompt: {error}"))?;
     match output.status.code() {

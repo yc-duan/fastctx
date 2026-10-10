@@ -34,6 +34,12 @@ pub mod registry;
 pub mod service_channel;
 #[cfg(any(target_os = "linux", windows))]
 pub mod tree;
+#[cfg(any(target_os = "linux", windows))]
+pub mod terminate;
+#[cfg(any(target_os = "linux", windows))]
+pub mod owned_images;
+#[cfg(any(target_os = "linux", windows))]
+pub mod uninstall_gate;
 #[cfg(unix)]
 mod unix_fds;
 pub mod unix_socket;

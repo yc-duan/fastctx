@@ -1,0 +1,199 @@
+use std::path::PathBuf;
+use anyhow::Context as _;
+use fastctx_install::{apply, service, uninstall::Installation};
+use fastctx_types::uninstall::{Hub, Item, Other, Plan};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Request {
+    pub installation: Installation,
+    pub plan: Plan,
+    pub steps: Vec<Step>,
+    #[serde(default)]
+    pub system_results: Vec<fastctx_types::uninstall::Event>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Step {
+    pub item: Item,
+    pub action: Action,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Action {
+    Stop,
+    Host(apply::Integration),
+    Service(service::Registration),
+    ServicePart(String),
+    Legacy(fastctx_install::uninstall::Legacy),
+    Trust { home: PathBuf, key: String },
+    Logout { identity: PathBuf, directory: PathBuf, account: Option<fastctx_types::AccountName> },
+    Programs,
+    WorldData,
+    HubData(PathBuf),
+    Path,
+    Delete(PathBuf),
+    Application,
+    Package,
+}
+
+pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<Request> {
+    installation.validate()?;
+    if let Some(mut request) = crate::read::<Request>(&installation.marker())? {
+        anyhow::ensure!(request.plan.everything == everything, "an interrupted uninstall has a different mode; finish that mode first");
+        anyhow::ensure!(request.installation.root == installation.root && request.installation.home == installation.home,
+            "the uninstall checkpoint belongs to a different user or installation");
+        request.installation.application_process = installation.application_process;
+        request.installation.application_control = installation.application_control;
+        request.installation.graphical = installation.graphical;
+        return Ok(request);
+    }
+    let root = &installation.root;
+    let world = fastctx_types::layout::WorldDir::under(root);
+    let places = installation.places(std::env::current_exe()?);
+    let homes = apply::integrations(&places)?;
+    let registrations = service::registrations(&installation)?;
+    let mut plan = Plan { everything, steps: Vec::new(), keeps: Vec::new(), hub: None, other: None };
+    let mut steps = Vec::new();
+    let mut add = |kind: &str, what: &str, location: String, admin: bool, action: Action| {
+        let item = Item { id: format!("step-{}", steps.len() + 1), kind: kind.into(), what: what.into(), location: Some(location), admin };
+        plan.steps.push(item.clone()); steps.push(Step { item, action });
+    };
+    if root.try_exists()? { add("runtime", "Stop this World's node, agent sessions and supervised jobs", world.path().display().to_string(), false, Action::Stop); }
+    if everything {
+        let mut identities = vec![(world.path().to_path_buf(), world.net())];
+        identities.extend(installation.application_dirs.iter().map(|directory| (directory.join("device"), directory.join("device/hubs"))));
+        for (identity, hubs) in identities {
+        for hub in crate::entries(&hubs)? {
+            let directory = hub.path();
+            let Some(membership) = crate::read::<fastctx_net::link::state::Membership>(&directory.join("membership.json"))? else { continue };
+            let view = crate::read::<fastctx_net::directory::View>(&directory.join("view.json"))?;
+            let accounts = view.as_ref().and_then(|view| view.me()).map(|me| me.logins.iter().cloned().collect::<Vec<_>>()).unwrap_or_default();
+            if accounts.is_empty() {
+                add("logout", "Ask this hub to end every login and machine registration", membership.hub_name.to_string(), false,
+                    Action::Logout { identity: identity.clone(), directory, account: None });
+            } else {
+                for account in accounts {
+                    add("logout", "End this login and its machine registration; the hub keeps historical records",
+                        format!("{} · {account}", membership.hub_name), false,
+                        Action::Logout { identity: identity.clone(), directory: directory.clone(), account: Some(account) });
+                }
+            }
+        }
+        }
+    }
+    for registration in &registrations {
+        add(if registration.kind == service::Kind::Node { "service" } else { "hub-service" }, "Stop and uninstall the boot service and its protected files",
+            registration.name.clone(), true, Action::Service(registration.clone()));
+        add("task", "Remove the service's independent recovery check", format!("{}-check", registration.name), true, Action::ServicePart(registration.name.clone()));
+        if cfg!(windows) && registration.kind == service::Kind::Hub {
+            add("firewall", "Remove the hub's inbound firewall rule", format!("fastctx-{}", registration.name), true, Action::ServicePart(registration.name.clone()));
+        }
+    }
+    for home in &homes {
+        add(if home.host == apply::Host::Codex { "codex" } else { "claude" }, "Withdraw the World's integration and restore recorded original values",
+            home.home.display().to_string(), false, Action::Host(home.clone()));
+    }
+    if everything && world.path().try_exists()? {
+        let key = fastctx_hosts::claude::trust::uninstall_key(world.path())?;
+        let mut claude_homes = vec![installation.claude_home.clone()];
+        claude_homes.extend(homes.iter().filter(|home| home.host == apply::Host::Claude).map(|home| home.home.clone()));
+        for parent in world.resident_parents()? {
+            for resident in crate::entries(&parent)? {
+                if let Some(about) = crate::read::<fastctx_types::residents::About>(&resident.path().join("about"))?
+                    && about.host.agent.as_str() == "claude" {
+                    claude_homes.push(about.home.unwrap_or_else(|| installation.claude_home.clone()));
+                }
+            }
+        }
+        claude_homes.sort(); claude_homes.dedup();
+        for home in claude_homes {
+            add("claude-trust", "Remove only the trust record whose key is this World's own directory", home.display().to_string(), false, Action::Trust { home, key: key.clone() });
+        }
+    }
+    for legacy in fastctx_install::uninstall::legacy(&installation)? {
+        add(if cfg!(windows) { "task" } else { "service" }, "Stop and remove the unpublished fastctx node registration", legacy.name.clone(), cfg!(windows), Action::Legacy(legacy));
+    }
+    let path_location = if cfg!(target_os = "linux") { installation.home.join(".local/bin/fastctx") } else { root.join("bin") };
+    add("path", "Remove only the terminal entry that names this World's program", path_location.display().to_string(), false, Action::Path);
+    add("program", "Remove this World's stable, pinned and staged program assets", root.join("bin").display().to_string(), false, Action::Programs);
+    let mut hub_dirs = registrations.iter().filter(|registration| registration.kind == service::Kind::Hub).map(|registration| registration.directory.clone()).collect::<Vec<_>>();
+    hub_dirs.extend(service::registered_hubs(root)?);
+    if root.join("hub/hub.json").try_exists()? { hub_dirs.push(root.join("hub")); }
+    hub_dirs.sort(); hub_dirs.dedup();
+    let mut hubs = Vec::new();
+    for directory in hub_dirs {
+        let metadata = crate::read::<serde_json::Value>(&directory.join("hub.json"))?;
+        let name = metadata.as_ref().and_then(|value| value.get("name")).and_then(serde_json::Value::as_str)
+            .context("a local hub has no readable world name")?.to_owned();
+        if everything { add("hub-data", &format!("Delete the hosted world {name}, its hub, accounts and records"), directory.display().to_string(), true, Action::HubData(directory.clone())); }
+        hubs.push(Hub { name, dir: directory.display().to_string() });
+    }
+    for entry in crate::entries(root)? {
+        let name = entry.file_name(); let name = name.to_string_lossy();
+        if name.starts_with("legacy-archive-") {
+            if everything { add("legacy", "Delete the separately listed old-version archive", entry.path().display().to_string(), false, Action::Delete(entry.path())); }
+        } else if everything && name == "world" {
+            add("data", "Delete this World's identity, logins, projects and records", entry.path().display().to_string(), false, Action::WorldData);
+        } else if everything && matches!(name.as_ref(), "renewal" | "licenses" | "applied.json" | "applied-files-pending.json" | "applied-operation.json" | "apply.lock" | "uninstalled-hosts.json" | "upgrade-clean.json" | "config.toml" | "service-node.log" | "server-install.lock" | "hub-services.json") {
+            add("data", "Delete this World's data or installation record", entry.path().display().to_string(), false, Action::Delete(entry.path()));
+        } else if everything && name.starts_with("applied-claude-plugin") && name.ends_with(".json") {
+            add("data", "Delete the World's Claude plugin receipt", entry.path().display().to_string(), false, Action::Delete(entry.path()));
+        }
+    }
+    if !installation.application_dirs.is_empty() {
+        let deb = cfg!(target_os = "linux") && installation.application.as_deref() == Some(std::path::Path::new("/usr/bin/World"));
+        add("app", "After the kernel finishes, exit World and run its package uninstaller", installation.application_image.as_ref().or(installation.application.as_ref()).map(|path| path.display().to_string()).unwrap_or_else(|| "World application".into()), deb, if deb { Action::Package } else { Action::Application });
+        if everything {
+            for directory in &installation.application_dirs { add("app", "The package uninstaller will remove this application's device identity, preferences and WebView data after World exits", directory.display().to_string(), false, Action::Application); }
+        }
+    }
+    drop(add);
+    anyhow::ensure!(!(everything && installation.graphical && hubs.len() > 1), "this computer hosts multiple local worlds ({}); the graphical confirmation currently represents only one. Each hub must be shown before removal", hubs.iter().map(|hub| hub.name.as_str()).collect::<Vec<_>>().join(", "));
+    plan.hub = hubs.first().cloned();
+    for hub in &hubs {
+        if !everything { plan.keeps.push(keep("hub-data", "The hosted world's hub data", &hub.dir)); }
+    }
+    if !everything {
+        plan.keeps.push(keep("data", "World identity, logins, projects, records and withdrawn-host recovery", &root.display().to_string()));
+        for entry in crate::entries(root)? {
+            if entry.file_name().to_string_lossy().starts_with("legacy-archive-") { plan.keeps.push(keep("legacy", "Old-version archive", &entry.path().display().to_string())); }
+        }
+        for directory in &installation.application_dirs { plan.keeps.push(keep("app", "World device identity and interface preferences", &directory.display().to_string())); }
+    }
+    for archive in fastctx_install::transaction::retained_archives(root)? {
+        plan.keeps.push(keep("user-files", "User file versions retained by host publication transactions", &archive.display().to_string()));
+    }
+    if root.join("claude-command-history").try_exists()? {
+        plan.keeps.push(keep("user-files", "Original user settings versions retained around public Claude commands", &root.join("claude-command-history").display().to_string()));
+    }
+    let programs = other_programs(&places, installation.application.as_deref())?;
+    for program in &programs { plan.keeps.push(keep("other-program", &program.version.clone().unwrap_or_else(|| "Version unavailable".into()), &program.path)); }
+    plan.other = programs.first().cloned();
+    Ok(Request { installation, plan, steps, system_results: Vec::new() })
+}
+
+fn keep(kind: &str, what: &str, location: &str) -> Item {
+    Item { id: format!("keep-{kind}-{location}"), kind: kind.into(), what: what.into(), location: Some(location.into()), admin: false }
+}
+
+fn other_programs(places: &apply::Places, application: Option<&std::path::Path>) -> anyhow::Result<Vec<Other>> {
+    let mut programs = Vec::new();
+    let Some(path) = std::env::var_os("PATH") else { return Ok(programs) };
+    for directory in std::env::split_paths(&path) {
+        for name in if cfg!(windows) { & ["fastctx.exe", "fastctx.cmd"][..] } else { &["fastctx"][..] } {
+            let program = directory.join(name);
+            let carried = application.map(|path| if path.is_dir() { path.to_path_buf() } else { path.parent().unwrap_or(path).to_path_buf() }).map(|directory| directory.join(name));
+            let installed = places.installed();
+            let same_installed = program.is_file() && installed.is_file() && std::fs::canonicalize(&program)? == std::fs::canonicalize(&installed)?;
+            if !program.is_file() || program.starts_with(&places.root) || same_installed || carried.as_ref() == Some(&program) { continue; }
+            if programs.iter().any(|other: &Other| other.path == program.display().to_string()) { continue; }
+            // Version queries have no World lifecycle. Removing the upgrade
+            // handoff variable also keeps an older launcher from finalizing it.
+            let output = std::process::Command::new(&program).arg("--version").env_remove("FASTCTX_UPDATE_FINALIZE").output()?;
+            let version = output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+            programs.push(Other { path: program.display().to_string(), version });
+        }
+    }
+    Ok(programs)
+}

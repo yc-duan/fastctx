@@ -19,6 +19,8 @@ mod renewal;
 #[cfg(desktop)]
 mod setup;
 #[cfg(desktop)]
+mod removal;
+#[cfg(desktop)]
 mod terminal;
 #[cfg(desktop)]
 mod user_path;
@@ -743,6 +745,8 @@ pub fn run() {
             let connection = tauri::async_runtime::block_on(async { connection::Connection::open(directory) })
                 .map_err(std::io::Error::other)?;
             app.manage(Shell { connection, watches: Arc::default(), next: AtomicU64::new(0), page: AtomicU64::new(0) });
+            #[cfg(desktop)]
+            app.manage(removal::State::default());
             Ok(())
         })
         .on_page_load(|webview, payload| {
@@ -754,6 +758,12 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(desktop)]
+            removal::removal_plan,
+            #[cfg(desktop)]
+            removal::removal_run,
+            #[cfg(desktop)]
+            removal::removal_finish,
             connection_state,
             select_connection,
             reconnect,

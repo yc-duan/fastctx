@@ -37,6 +37,7 @@ pub mod session;
 pub mod since;
 pub mod town;
 pub mod world;
+pub mod uninstall;
 pub mod write;
 
 pub use calls::{Attach, Call, JournalCall, ProjectCall, Reply};

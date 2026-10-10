@@ -137,6 +137,20 @@ impl Drop for Busy {
 }
 
 impl Handoff {
+    pub(crate) async fn pause_for_uninstall(&self) {
+        {
+            let mut state = self.state.lock().expect("never poisoned");
+            state.maintenance = true;
+            state.yielding = true;
+        }
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.state.lock().expect("never poisoned").starting == 0 { return; }
+            changed.await;
+        }
+    }
     pub fn yielding(&self) -> bool {
         self.state.lock().expect("never poisoned").yielding
     }

@@ -64,6 +64,7 @@ mod stop;
 mod talk;
 mod town;
 mod turns;
+mod uninstall;
 mod waiting;
 mod watch;
 mod watchdog;
@@ -230,6 +231,7 @@ pub async fn run_replacing(
     supervision: Option<handoff::Supervision>,
     successor: Option<&str>,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(!fastctx_root.join("uninstalled.json").try_exists()?, "this World was uninstalled; reinstall it before starting a node");
     let world = WorldDir::under(fastctx_root);
     let mut renewal = renewal::Startup::prepare(fastctx_root, successor).await?;
     let supervision = match supervision {

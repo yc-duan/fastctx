@@ -50,6 +50,11 @@ impl Drop for Session {
 }
 
 impl Device {
+    /// Ends this application's connections while retaining every login.
+    /// Uninstall uses this before a separate withdrawal connection or exit.
+    pub fn disconnect(&self) {
+        for session in self.sessions() { session.link.stop(); }
+    }
     /// Opens an identity and uses the platform's network/resume notifications.
     /// Must run inside a Tokio runtime.
     pub fn open(directory: PathBuf) -> io::Result<Arc<Self>> {

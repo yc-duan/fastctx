@@ -103,6 +103,7 @@ async fn status(root: &Path) -> anyhow::Result<Status> {
 }
 
 async fn worker(root: &Path, retry: bool) -> anyhow::Result<()> {
+    anyhow::ensure!(!root.join("uninstalled.json").try_exists()?, "this World is being uninstalled");
     let Some(_worker) = FileLock::try_acquire(&store::directory(root).join("worker.lock"))? else { return Ok(()) };
     let mut plan = store::read(root)?.context("no local replacement was staged")?;
     if plan.phase == Phase::Failed && !retry {

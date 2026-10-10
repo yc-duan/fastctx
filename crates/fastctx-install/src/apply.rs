@@ -36,6 +36,8 @@ use crate::{File, Notice, executable, guidance, legacy};
 mod homes;
 mod recovery;
 mod tools;
+mod withdrawn;
+pub use withdrawn::{Integration, integrations, read_withdrawn, remember_withdrawn, restore_withdrawn};
 pub use homes::Host;
 pub use tools::ToolCheck;
 
@@ -360,8 +362,14 @@ pub fn place_executable(places: &Places) -> Result<(PathBuf, Report), Error> {
 /// `approval` says whether Codex's shared output limit may be raised when
 /// the user set it lower than the World needs.
 pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report, Error> {
+    if places.root.join("uninstalled.json").try_exists().map_err(io("checking uninstall state"))? {
+        return Err(Error::Io("this World was uninstalled; reinstall it before reconnecting hosts".into()));
+    }
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
     let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
+    if places.root.join("uninstalled.json").try_exists().map_err(io("checking uninstall state"))? {
+        return Err(Error::Io("this World is being uninstalled".into()));
+    }
     let mut report = recovery::before(places)?;
     let operation = recovery::id()?;
     let record_file = Snapshot::read(places.record())?;

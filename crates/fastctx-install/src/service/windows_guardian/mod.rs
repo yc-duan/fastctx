@@ -14,6 +14,35 @@ mod scm;
 mod security;
 mod task;
 
+pub(super) fn registrations(installation: &crate::uninstall::Installation) -> anyhow::Result<Vec<super::Registration>> {
+    let mut found = Vec::new();
+    let executable = installation.root.join("bin/fastctx.exe");
+    let mut node = super::Service::new(super::Kind::Node, &executable, &installation.root);
+    node.user_sid = Some(installation.user_sid.clone());
+    let mut candidates = vec![node];
+    let mut hubs = super::registered_hubs(&installation.root)?;
+    if installation.root.join("hub/hub.json").try_exists()? { hubs.push(installation.root.join("hub")); }
+    hubs.sort(); hubs.dedup();
+    candidates.extend(hubs.into_iter().map(|directory| super::Service::new(super::Kind::Hub, &executable, directory)));
+    for service in candidates {
+        let account = service.user_sid.as_deref().unwrap_or("S-1-5-18");
+        let name = service.id(account.as_bytes());
+        let directory = security::directory(&name)?;
+        let installed = scm::capture(&name)?.is_some();
+        let protected = directory.try_exists()?;
+        if !installed && !protected { continue; }
+        if service.kind == super::Kind::Node {
+            if installed || directory.join("config.json").try_exists()? {
+                let config = Config::read(&name)?;
+                if config.executable() != executable || config.directory() != installation.root { bail!("the node registration has different ownership coordinates"); }
+            }
+        }
+        found.push(super::Registration { name, kind: service.kind, executable: service.executable,
+            directory: service.directory, artifacts: vec![directory] });
+    }
+    Ok(found)
+}
+
 use std::fs;
 use std::path::Path;
 

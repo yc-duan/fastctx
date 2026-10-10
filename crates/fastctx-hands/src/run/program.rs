@@ -24,6 +24,11 @@ pub struct ProgramUse {
 }
 
 impl ProgramUse {
+    /// The recorded reason the job's tree is still reserved or unproven.
+    pub fn reason(&self) -> String {
+        format!("{}: {}", self.record.display(), self.reason)
+    }
+
     /// Whether this use prevents deleting `directory`, and why.
     pub fn reason_for(&self, directory: &Path) -> io::Result<Option<String>> {
         if let Some(held) = &self.directory

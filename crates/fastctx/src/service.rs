@@ -35,6 +35,9 @@ pub struct ServiceArgs {
     #[cfg(target_os = "linux")]
     #[arg(long)]
     uid: Option<u32>,
+    #[cfg(target_os = "linux")]
+    #[arg(long, hide = true)]
+    package_owner: Option<String>,
     /// Windows: own the node as this user's SID. Install/uninstall as administrator.
     #[cfg(windows)]
     #[arg(long)]
@@ -67,6 +70,10 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
         Action::Uninstall => service.uninstall()?,
         Action::Status => service.status()?,
     };
+    #[cfg(target_os = "linux")]
+    if matches!(args.action, Action::Install) && let Some(owner) = args.package_owner {
+        fastctx_uninstall::package::remember(serde_json::from_str(&owner)?)?;
+    }
     println!("{}", serde_json::to_string_pretty(&status)?);
     Ok(())
 }

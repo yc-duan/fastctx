@@ -136,6 +136,9 @@ impl Client {
         peer: Peer,
         program: Option<&std::path::Path>,
     ) -> Result<Self, ConnectError> {
+        if world.path().parent().is_some_and(|root| root.join("uninstalled.json").exists()) {
+            return Err(ConnectError::Refused { reason: "this World was uninstalled; reinstall it before starting a node".into(), mismatch: None });
+        }
         match Self::connect(world, peer.clone()).await {
             Err(ConnectError::NoNode { endpoint }) if world.node_service().exists() => {
                 Err(ConnectError::KeptByService { endpoint })

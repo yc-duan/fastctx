@@ -17,6 +17,8 @@ use sha2::{Digest as _, Sha256};
 
 mod hub;
 mod keep;
+mod inventory;
+mod hub_registry;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -26,6 +28,8 @@ mod transaction;
 
 pub use keep::{Kept, Released, keep_connected, stop_keeping};
 pub use hub::keep_hub;
+pub use inventory::{Registration, registrations};
+pub use hub_registry::registered_hubs;
 #[cfg(windows)]
 #[path = "windows_guardian/mod.rs"]
 mod windows;
@@ -103,6 +107,9 @@ impl Service {
     /// is in place, its World says so to the World's clients.
     pub fn install(&self) -> anyhow::Result<Status> {
         self.validate()?;
+        let root = if self.kind == Kind::Node { Some(self.directory.as_path()) }
+            else { self.executable.parent().filter(|parent| parent.file_name().is_some_and(|name| name == "bin")).and_then(|parent| parent.parent()) };
+        if let Some(root) = root { anyhow::ensure!(!root.join("uninstalled.json").try_exists()?, "this World is being uninstalled"); }
         #[cfg(windows)]
         let status = windows::install(self)?;
         #[cfg(target_os = "linux")]
@@ -121,6 +128,19 @@ impl Service {
     /// Stops and deletes only this registration. A missing registration is
     /// already uninstalled. Data directories and logs are retained.
     pub fn uninstall(&self) -> anyhow::Result<Status> {
+        let status = self.uninstall_registration()?;
+        if self.kind == Kind::Node {
+            match std::fs::remove_file(keep::marker(&self.directory)) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+                _ => {}
+            }
+        }
+        Ok(status)
+    }
+
+    /// The elevated phase retires system objects only. The original user
+    /// retires the marker in their private World after this returns.
+    pub fn uninstall_registration(&self) -> anyhow::Result<Status> {
         self.validate()?;
         #[cfg(windows)]
         let status = windows::uninstall(self)?;
@@ -130,12 +150,6 @@ impl Service {
         bail!("fastctx services support Windows and Linux; this platform is not supported");
         #[cfg(any(windows, target_os = "linux"))]
         {
-            if self.kind == Kind::Node {
-                match std::fs::remove_file(keep::marker(&self.directory)) {
-                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
-                    _ => {}
-                }
-            }
             Ok(status)
         }
     }
@@ -272,7 +286,7 @@ pub fn check_guardian(name: &str) -> anyhow::Result<()> {
 }
 
 #[cfg(any(windows, target_os = "linux"))]
-fn checked(command: &mut Command) -> anyhow::Result<String> {
+pub(crate) fn checked(command: &mut Command) -> anyhow::Result<String> {
     command.stdin(Stdio::null());
     #[cfg(windows)]
     {

@@ -22,6 +22,15 @@ pub fn ensure_user_only_dir(path: &Path) -> io::Result<()> {
     imp::make_user_only(path)
 }
 
+/// Shares a new temporary handoff with the approving administrator only.
+pub fn ensure_administrator_handoff_dir(path: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(path)?;
+    #[cfg(windows)]
+    { imp::make_administrator_handoff(path) }
+    #[cfg(not(windows))]
+    { imp::make_private(path) }
+}
+
 #[cfg(unix)]
 mod imp {
     use std::fs;
@@ -57,6 +66,10 @@ mod imp {
     };
 
     use crate::windows_user::OwnerOnly;
+
+    pub fn make_administrator_handoff(path: &Path) -> io::Result<()> {
+        apply(path, &OwnerOnly::administrator_handoff()?, true)
+    }
 
     pub fn make_private(path: &Path) -> io::Result<()> {
         let access = OwnerOnly::new(true)?;
