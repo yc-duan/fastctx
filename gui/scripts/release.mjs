@@ -26,7 +26,10 @@ if (unsigned) {
   if (env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined) throw new Error("TAURI_SIGNING_PRIVATE_KEY_PASSWORD is required for signed updater artifacts");
 }
 const notes = notesFile[0] ? readFileSync(notesFile[0], "utf8").trim() : null;
-const run = (program, argv, cwd) => execFileSync(program, argv, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
+// The Tauri CLI's own script, started by this Node: through a shell, Windows' cmd strips the quotes
+// out of the JSON configuration argument.
+const tauri = join(gui, "node_modules", "@tauri-apps", "cli", "tauri.js");
+const run = (argv, cwd) => execFileSync(process.execPath, [tauri, ...argv], { cwd, env, stdio: "inherit" });
 const kernel = buildKernel(undefined, env);
 const { version } = JSON.parse(readFileSync(join(gui, "src-tauri", "tauri.conf.json"), "utf8"));
 if (kernel.version !== version) throw new Error(`the GUI is ${version}; its kernel is ${kernel.version}`);
@@ -48,7 +51,7 @@ if (linux) {
     "/usr/share/doc/world/THIRD_PARTY_LICENSES.md": "licenses/THIRD_PARTY_LICENSES.md",
   } } };
 }
-run("npx", ["tauri", "build", ...(unsigned ? ["--no-sign"] : []), "--config", JSON.stringify(config), "--", "--locked", "-j", env.CARGO_BUILD_JOBS ?? "4"], gui);
+run(["build", ...(unsigned ? ["--no-sign"] : []), "--config", JSON.stringify(config), "--", "--locked", "-j", env.CARGO_BUILD_JOBS ?? "4"], gui);
 const base = resolve(gui, "src-tauri", env.CARGO_TARGET_DIR ?? "target", "release", "bundle");
 const directory = join(base, linux ? "appimage" : "nsis");
 const extension = linux ? ".AppImage" : "-setup.exe";
