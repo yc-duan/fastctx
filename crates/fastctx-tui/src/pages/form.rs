@@ -1,7 +1,7 @@
 //! Asking the World for something that takes a few answers: a conversation
 //! with a new agent, a project opened or its record written anew, logging
-//! this computer in to an account or out of one, a token for another
-//! device, a member taken out of an account. Choices come from what the
+//! this computer in to an account or out of one, adding another device, a
+//! member taken out of an account. Choices come from what the
 //! World says now: the machines online, the agents lent to this computer's
 //! accounts, the projects that span the chosen machine, the accounts this
 //! computer is logged in to.
@@ -46,8 +46,7 @@ enum Kind {
     NewProject,
     EditProject { town: TownName, machines: Vec<MachineName> },
     Login,
-    TokenLogin,
-    Token,
+    Device,
     Logout,
     Remove { hub: HubName, account: AccountName, name: MachineName },
 }
@@ -182,29 +181,19 @@ impl FormPage {
         Self::new(Kind::Login, fields)
     }
 
-    pub fn token_login(first: bool) -> Self {
-        let mut fields = vec![Field::text(Key::Token, Editor::single())];
-        if first {
-            fields.push(Field::text(Key::LoginName, Editor::single()));
-        }
-        Self::new(Kind::TokenLogin, fields)
-    }
-
-    /// A token for another device, or the line for a server, for one of
-    /// `logins`, the accounts this computer is logged in to.
-    pub fn token(ctx: &Ctx, logins: &[(HubName, AccountName)], preset: Option<&(HubName, AccountName)>) -> Self {
+    /// Adds another device to one of `logins`, the accounts this computer
+    /// is logged in to: a computer is given the hub's address and the
+    /// account, a Linux server the line that installs it. A phone scans the
+    /// code the graphical interface shows.
+    pub fn device(ctx: &Ctx, logins: &[(HubName, AccountName)], preset: Option<&(HubName, AccountName)>) -> Self {
         let words = &ctx.words;
-        let purposes = vec![
-            (words.token_for_phone().to_string(), "phone".to_string()),
-            (words.token_for_computer().to_string(), "computer".to_string()),
-            (words.token_for_server().to_string(), "server".to_string()),
-        ];
-        let hours = ["1", "24", "72"].iter().map(|hours| (words.hours(hours), hours.to_string())).collect();
+        let mut kinds = vec![(words.device_computer().to_string(), "computer".to_string())];
+        kinds.extend([1u32, 24, 72].iter().map(|hours| (words.device_server(*hours), format!("server:{hours}"))));
         let mut accounts = Field::choice(Key::HubAccount, account_options(logins));
         if let (Some(preset), Value::Choice { index, .. }) = (preset, &mut accounts.value) {
             *index = logins.iter().position(|login| login == preset).unwrap_or(0);
         }
-        Self::new(Kind::Token, vec![accounts, Field::choice(Key::TokenFor, purposes), Field::choice(Key::Hours, hours)])
+        Self::new(Kind::Device, vec![accounts, Field::choice(Key::DeviceKind, kinds)])
     }
 
     /// Logs this computer out of one of `logins`.
@@ -381,20 +370,37 @@ impl FormPage {
                 Act::Replace(Page::Project(Box::new(project::ProjectPage::new(record.town))))
             }
             (Kind::EditProject { .. } | Kind::Logout | Kind::Remove { .. }, _) => Act::Back,
-            (Kind::Token, Done::Token { text, server, expires }) => {
+            (Kind::Device, Done::ServerLine { text, expires }) => {
                 let look = &ctx.look;
                 self.result = Some(vec![
+                    Line::from(Span::styled(words.server_how(), look.text(Role::Muted))),
+                    Line::default(),
                     Line::from(Span::styled(text, look.text(Role::Accent).add_modifier(Modifier::BOLD))),
                     Line::default(),
-                    Line::from(Span::styled(words.token_how(server), look.text(Role::Text))),
                     Line::from(Span::styled(
-                        words.token_until(&crate::words::clock(expires, ctx.now)),
+                        words.server_until(&crate::words::clock(expires, ctx.now)),
                         look.text(Role::Muted),
                     )),
                 ]);
                 Act::Stay
             }
-            (Kind::Login | Kind::TokenLogin, Done::LoggedIn { hub, name, account, kept }) => {
+            (Kind::Device, Done::Device { addresses, account }) => {
+                let look = &ctx.look;
+                let fact = |name: &str, value: String| {
+                    Line::from(vec![
+                        Span::styled(format!("{name}  "), look.text(Role::Muted)),
+                        Span::styled(value, look.text(Role::Accent).add_modifier(Modifier::BOLD)),
+                    ])
+                };
+                self.result = Some(vec![
+                    fact(words.field(Key::HubAddress), addresses.join("  ")),
+                    fact(words.field(Key::Account), account.to_string()),
+                    Line::default(),
+                    Line::from(Span::styled(words.computer_how(), look.text(Role::Muted))),
+                ]);
+                Act::Stay
+            }
+            (Kind::Login, Done::LoggedIn { hub, name, account, kept }) => {
                 let (said, role) = match &kept {
                     Ok(kept) => (words.kept(kept), Role::Muted),
                     Err(why) => (words.not_kept(why), Role::Caution),
@@ -419,8 +425,8 @@ impl FormPage {
             Kind::OpenAgent { .. } => Finish::Open,
             Kind::NewProject => Finish::Create,
             Kind::EditProject { .. } => Finish::Save,
-            Kind::Login | Kind::TokenLogin => Finish::Login,
-            Kind::Token => Finish::Token,
+            Kind::Login => Finish::Login,
+            Kind::Device => Finish::Device,
             Kind::Logout => Finish::Logout,
             Kind::Remove { .. } => Finish::Remove,
         }
@@ -580,22 +586,12 @@ impl FormPage {
                 let register = !self.value(Key::Register).is_empty();
                 Job::Login { hub, account, password, register, name: optional_machine(self.value(Key::LoginName))? }
             }
-            Kind::TokenLogin => {
-                let token = self.value(Key::Token);
-                if token.is_empty() {
-                    return Err(words.token_needed().to_string());
-                }
-                Job::LoginWithToken { token, name: optional_machine(self.value(Key::LoginName))? }
-            }
-            Kind::Token => {
+            Kind::Device => {
                 let (hub, account) = hub_account(&self.value(Key::HubAccount))?;
-                let hours = self.value(Key::Hours).parse().map_err(|_| words.hours_wrong().to_string())?;
-                let kind = match self.value(Key::TokenFor).as_str() {
-                    "phone" => Some(fastctx_types::accounts::MemberKind::Phone),
-                    "computer" => Some(fastctx_types::accounts::MemberKind::Computer),
-                    _ => None,
-                };
-                Job::Token { hub, account, kind, hours }
+                match self.value(Key::DeviceKind).strip_prefix("server:") {
+                    Some(hours) => Job::ServerLine { hub, account, hours: hours.parse().unwrap_or(24) },
+                    None => Job::Device { hub, account },
+                }
             }
             Kind::Logout => {
                 let (hub, account) = hub_account(&self.value(Key::HubAccount))?;
@@ -658,8 +654,7 @@ impl FormPage {
             Kind::NewProject => words.form_new_project().to_string(),
             Kind::EditProject { town, .. } => words.form_edit_project(town.as_str()),
             Kind::Login => words.form_login().to_string(),
-            Kind::TokenLogin => words.form_token_login().to_string(),
-            Kind::Token => words.form_token().to_string(),
+            Kind::Device => words.form_device().to_string(),
             Kind::Logout => words.form_logout().to_string(),
             Kind::Remove { name, account, .. } => words.form_remove(name.as_str(), account.as_str()),
         };

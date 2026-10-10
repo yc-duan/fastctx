@@ -95,19 +95,18 @@ pub enum Job {
         register: bool,
         name: Option<MachineName>,
     },
-    LoginWithToken {
-        token: String,
-        name: Option<MachineName>,
-    },
-    /// A one-time token for `account`: for a server, the line that installs
-    /// it and registers it as a machine; otherwise one that logs in only.
-    Token {
+    /// The line that installs a Linux server and registers it as a machine
+    /// of `account`, valid for `hours`.
+    ServerLine {
         hub: HubName,
         account: AccountName,
-        /// What logs in with it; `None` for a server, which the line
-        /// installs and registers as a machine.
-        kind: Option<fastctx_types::accounts::MemberKind>,
         hours: u32,
+    },
+    /// What another computer logs in with: the hub's addresses and the
+    /// account; it brings its own password.
+    Device {
+        hub: HubName,
+        account: AccountName,
     },
     Logout {
         hub: HubName,
@@ -155,11 +154,15 @@ pub enum Done {
     Opened(Said),
     Record(Box<TownRecord>),
     Journal(Box<JournalView>),
-    /// A token, or for a server the line that installs it.
-    Token {
+    /// The line that installs a server, and until when it works.
+    ServerLine {
         text: String,
-        server: bool,
         expires: Timestamp,
+    },
+    /// Where another computer logs in, and as which account.
+    Device {
+        addresses: Vec<String>,
+        account: AccountName,
     },
     LoggedIn {
         hub: HubName,

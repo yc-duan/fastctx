@@ -283,21 +283,19 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
             let (hub, name, account) = world.login(addresses, account, password, register, name).await?;
             Done::LoggedIn { hub, name, account, kept: keep_connected(world).await }
         }
-        Job::LoginWithToken { token, name } => {
-            let (hub, name, account) = world.login_with_token(token, name).await?;
-            Done::LoggedIn { hub, name, account, kept: keep_connected(world).await }
-        }
-        Job::Token { hub, account, kind, hours } => {
+        Job::ServerLine { hub, account, hours } => {
             let expires = Timestamp::now() + jiff::SignedDuration::from_hours(i64::from(hours));
-            let server = kind.is_none();
-            let text = match kind {
-                None => world.server_command(Some(hub), account, None, expires).await?,
-                Some(kind) => {
-                    let change = AccountChange::Token { register: false, name: None, kind, expires };
-                    world.account(Some(hub), account, change).await?.unwrap_or_default()
-                }
-            };
-            Done::Token { text, server, expires }
+            Done::ServerLine { text: world.server_command(Some(hub), account, None, expires).await?, expires }
+        }
+        Job::Device { hub, account } => {
+            let accounts = world.accounts().await?;
+            let addresses = accounts
+                .hubs
+                .iter()
+                .find(|seen| seen.name == hub)
+                .map(|seen| seen.addresses.iter().map(ToString::to_string).collect())
+                .unwrap_or_default();
+            Done::Device { addresses, account }
         }
         Job::Logout { hub, account } => {
             world.account(Some(hub), account, AccountChange::Logout).await?;

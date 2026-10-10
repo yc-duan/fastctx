@@ -191,10 +191,9 @@ impl MachinesPage {
         let logins = self.logins();
         match key.code {
             KeyCode::Char('l') => Act::Push(Page::Form(Box::new(form::FormPage::login(ctx, first)))),
-            KeyCode::Char('k') => Act::Push(Page::Form(Box::new(form::FormPage::token_login(first)))),
             KeyCode::Char('t') if !logins.is_empty() => {
                 let preset = self.selected_login();
-                Act::Push(Page::Form(Box::new(form::FormPage::token(ctx, &logins, preset.as_ref()))))
+                Act::Push(Page::Form(Box::new(form::FormPage::device(ctx, &logins, preset.as_ref()))))
             }
             KeyCode::Char('o') if !logins.is_empty() => {
                 let preset = self.selected_login();
@@ -422,9 +421,9 @@ impl MachinesPage {
             (None, None) => Some(quiet(ctx, words.asking())),
             (None, Some(_)) => None,
         };
-        let mut keys = vec![("l", words.key_login()), ("k", words.key_token_login())];
+        let mut keys = vec![("l", words.key_login())];
         if !self.logins().is_empty() {
-            keys.push(("t", words.key_token()));
+            keys.push(("t", words.key_device()));
             keys.push(("o", words.key_logout()));
         }
         if self.selected_arrival().is_some() {
