@@ -152,6 +152,58 @@ pub fn retained_archives(root: &Path) -> Result<Vec<PathBuf>, FileError> {
     paths.sort(); paths.dedup(); Ok(paths)
 }
 
+/// Takes out of finished host publications the retained objects of files
+/// inside `root` itself: earlier fastctx programs and the World's own
+/// records, which an uninstall removes anyway and which are most of the
+/// archive's size. Objects of the user's files stay, since a process
+/// holding an old handle may have written to them; a publication left with
+/// none of them goes whole. Returns the objects that could not be removed.
+pub fn prune_owned(root: &Path) -> Result<Vec<(PathBuf, io::Error)>, FileError> {
+    let history = root.join("apply-history");
+    let entries = match fs::read_dir(&history) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(FileError::io(&history, "list retained versions", error)),
+    };
+    let roots = [root.to_path_buf(), fs::canonicalize(root).map_err(|error| FileError::io(root, "locate the World", error))?];
+    let owned = |target: &Path| roots.iter().any(|root| target.starts_with(root));
+    let mut kept = Vec::new();
+    for entry in entries {
+        let directory = entry.map_err(|error| FileError::io(&history, "list retained versions", error))?.path();
+        let manifest = directory.join("manifest.json");
+        if !manifest.is_file() {
+            continue;
+        }
+        let journal = Journal::read(&manifest)?;
+        if !matches!(journal.phase, Phase::Committed | Phase::RolledBack) {
+            continue;
+        }
+        if journal.entries.iter().all(|entry| owned(&entry.target)) {
+            if let Err(error) = fs::remove_dir_all(&directory) {
+                kept.push((directory, error));
+            }
+            continue;
+        }
+        let homes = [directory.clone(), fs::canonicalize(&directory).unwrap_or_else(|_| directory.clone())];
+        for entry in journal.entries.iter().filter(|entry| owned(&entry.target)) {
+            let mut objects = vec![&entry.publication, &entry.displaced, &entry.withdrawn];
+            objects.extend([&entry.observed, &entry.after].into_iter().flatten().map(|object| &object.path));
+            objects.extend(entry.command_revisions.iter().map(|object| &object.path));
+            for restoration in &entry.restorations {
+                objects.extend([&restoration.source.path, &restoration.publication, &restoration.displaced]);
+            }
+            for object in objects.into_iter().filter(|object| homes.iter().any(|home| object.starts_with(home))) {
+                match fs::remove_file(object) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => kept.push((object.clone(), error)),
+                }
+            }
+        }
+    }
+    Ok(kept)
+}
+
 /// The next ownership record of an interrupted host publication. A preview
 /// may use it to list homes without publishing or recovering anything.
 pub fn pending_record(root: &Path) -> Result<Option<Snapshot>, FileError> {

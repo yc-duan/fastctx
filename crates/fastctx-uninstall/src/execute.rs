@@ -160,8 +160,36 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
     });
     progress.retained.dedup();
     let mut left = remaining(&request, &progress);
+    let hosts_withdrawn = request
+        .steps
+        .iter()
+        .filter(|step| matches!(step.action, Action::Host(_)))
+        .all(|step| progress.outcomes.get(&step.item.id).is_some_and(|(outcome, _)| *outcome == Outcome::Done));
+    if hosts_withdrawn {
+        for (object, error) in fastctx_install::transaction::prune_owned(root)? {
+            left.push(Left {
+                kind: "runtime".into(),
+                what: "An earlier fastctx program or record kept by a host publication".into(),
+                location: Some(object.display().to_string()),
+                why: format!("It could not be removed: {error}"),
+            });
+        }
+    }
+    // The versions of the user's files are named once, by the archive that
+    // holds them; one kept elsewhere, beside a file on another volume, by
+    // its own place.
+    let history = root.join("apply-history");
+    let mut archived = false;
     for archive in fastctx_install::transaction::retained_archives(root)? {
-        let entry = Left { kind: "user-files".into(), what: "User file versions retained by host publication transactions".into(), location: Some(archive.display().to_string()), why: "These original file objects can receive later user writes through old handles; they cannot be discarded as program caches.".into() };
+        let location = if archive.starts_with(&history) {
+            if std::mem::replace(&mut archived, true) {
+                continue;
+            }
+            history.clone()
+        } else {
+            archive
+        };
+        let entry = Left { kind: "user-files".into(), what: "User file versions retained by host publication transactions".into(), location: Some(location.display().to_string()), why: "These original file objects can receive later user writes through old handles; they cannot be discarded as program caches.".into() };
         if !left.iter().any(|left| left.location == entry.location && left.kind == entry.kind) {
             left.push(entry);
         }

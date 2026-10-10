@@ -39,7 +39,7 @@ use crate::snapshot::state_of_staged;
 mod durable;
 pub(crate) use durable::prepare_settings_command;
 pub use durable::recover;
-pub use durable::retained_archives;
+pub use durable::{prune_owned, retained_archives};
 pub use durable::pending_record;
 
 #[derive(Debug, thiserror::Error)]
