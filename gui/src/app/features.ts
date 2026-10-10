@@ -303,6 +303,8 @@ export class FeaturesPage implements Page {
           <button class="text-button quiet-button" type="button" data-act="turn" data-on="0">${escape(words.turnOff)}</button></div></div>`
       : `<div class="feature-intro">${board}${turn}</div>`;
     this.body.innerHTML = top + (on && collab ? this.settings(collab) : "");
+    const intro = this.body.querySelector<HTMLElement>(".feature-intro .storyboard");
+    if (intro) drawAsSeen(intro);
     this.mountSliders();
     this.drawNow();
     this.drawSave();
@@ -404,4 +406,29 @@ export class FeaturesPage implements Page {
     problem.textContent = this.problem?.text ?? "";
     problem.title = this.problem?.detail ?? "";
   }
+}
+
+/** Where the frames are a strip swiped one by one (a phone), each is drawn
+ *  when it comes into view rather than all at once off screen: its strokes
+ *  keep their order and pace, counted from its own first stroke. */
+function drawAsSeen(board: HTMLElement): void {
+  if (board.scrollWidth <= board.clientWidth + 1) return;
+  const frames = [...board.querySelectorAll<HTMLElement>(".sb-frame")];
+  for (const frame of frames) {
+    const timed = [...frame.querySelectorAll<HTMLElement | SVGElement>("[style*='animation-delay']")];
+    const delay = (element: HTMLElement | SVGElement) => parseFloat(element.style.animationDelay) || 0;
+    const first = Math.min(...timed.map(delay));
+    for (const element of timed) element.style.animationDelay = `${delay(element) - first}ms`;
+    frame.classList.add("waiting");
+  }
+  const seen = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries.filter((entry) => entry.isIntersecting)) {
+        entry.target.classList.remove("waiting");
+        seen.unobserve(entry.target);
+      }
+    },
+    { root: board, threshold: 0.6 },
+  );
+  for (const frame of frames) seen.observe(frame);
 }

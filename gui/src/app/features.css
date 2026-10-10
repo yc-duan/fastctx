@@ -102,6 +102,33 @@
   gap: var(--space-2);
 }
 
+/* On a phone the frames are a strip swiped one by one, so turning the
+   feature on is right under the pictures rather than four screens down. */
+@media (max-width: 760px) {
+  .feature-intro .storyboard {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: 84%;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    padding-bottom: var(--space-1);
+  }
+
+  .feature-intro .sb-frame {
+    scroll-snap-align: center;
+  }
+
+  .feature-intro .sb-frame.waiting * {
+    animation-play-state: paused;
+  }
+
+  .feature-intro .feature-turn {
+    min-height: 44px;
+    min-width: 50%;
+  }
+}
+
 .sb-frame svg {
   width: 100%;
   height: auto;
