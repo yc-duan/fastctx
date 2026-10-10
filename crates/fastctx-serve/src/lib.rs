@@ -30,6 +30,14 @@ const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", 
 /// calls in flight answer. Each call ends within the `run` wait, so this
 /// ends too.
 pub async fn serve(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
+    serve_starting(world, writes_off, None).await
+}
+
+pub async fn serve_starting(
+    world: WorldDir,
+    writes_off: bool,
+    startup: Option<fastctx_platform::FileLock>,
+) -> anyhow::Result<()> {
     let host = fastctx_platform::host_process::parent_identity();
     let gone = async {
         match host {
@@ -46,7 +54,7 @@ pub async fn serve(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
         std::future::pending::<()>().await;
     };
     tokio::select! {
-        result = serve_session(world, writes_off) => result,
+        result = serve_session(world, writes_off, startup) => result,
         () = gone => {
             eprintln!("fastctx serve: the process that started it exited; leaving");
             Ok(())
@@ -54,7 +62,11 @@ pub async fn serve(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
     }
 }
 
-async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> {
+async fn serve_session(
+    world: WorldDir,
+    writes_off: bool,
+    mut startup: Option<fastctx_platform::FileLock>,
+) -> anyhow::Result<()> {
     let session = Arc::new(Session::new(world, writes_off)?);
     let mut input = stdio::input();
     let (output, printing) = Output::start();
@@ -105,6 +117,7 @@ async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> 
         };
         match (method, id) {
             (Some("initialize"), Some(id)) => {
+                startup.take();
                 session.introduce(params.get("clientInfo").unwrap_or(&Value::Null));
                 let asked = params.get("protocolVersion").and_then(Value::as_str);
                 let version = asked.filter(|asked| PROTOCOL_VERSIONS.contains(asked)).unwrap_or(PROTOCOL_VERSIONS[0]);
@@ -118,6 +131,7 @@ async fn serve_session(world: WorldDir, writes_off: bool) -> anyhow::Result<()> 
                 ));
             }
             (Some("server/discover"), Some(id)) => {
+                startup.take();
                 output.send(&protocol.response(&id, protocol::discovery(), true));
             }
             (Some("ping"), Some(id)) => output.send(&protocol.response(&id, json!({}), false)),

@@ -4,10 +4,13 @@
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::path::Path;
-#[cfg(windows)]
 use std::path::PathBuf;
 
 pub(super) fn available(home: &Path) -> Result<bool, String> {
+    Ok(resolve(home)?.is_some())
+}
+
+pub(super) fn resolve(home: &Path) -> Result<Option<PathBuf>, String> {
     let path = std::env::var_os("PATH");
     #[cfg(windows)]
     {
@@ -34,12 +37,14 @@ pub(super) fn available(home: &Path) -> Result<bool, String> {
             Some(path) => path,
             None => default_unix_path()?,
         };
-        Ok(std::env::split_paths(&path).any(|directory| executable_unix(&directory.join(super::shared::COMMAND))))
+        Ok(std::env::split_paths(&path)
+            .map(|directory| directory.join(super::shared::COMMAND))
+            .find(|candidate| executable_unix(candidate)))
     }
 }
 
 #[cfg(windows)]
-fn native_windows(name: &Path, path: Option<&OsStr>, program: Option<&Path>) -> bool {
+fn native_windows(name: &Path, path: Option<&OsStr>, program: Option<&Path>) -> Option<PathBuf> {
     use windows_sys::Win32::System::SystemInformation::{GetSystemDirectoryW, GetWindowsDirectoryW};
 
     // Rust resolves a bare name with the child's PATH first, then the
@@ -60,23 +65,23 @@ fn native_windows(name: &Path, path: Option<&OsStr>, program: Option<&Path>) -> 
         }
         // An earlier existing candidate shadows later ones in native lookup.
         if std::fs::symlink_metadata(&candidate).is_ok() {
-            return candidate.is_file();
+            return candidate.is_file().then_some(candidate);
         }
     }
-    false
+    None
 }
 
 #[cfg(windows)]
-fn explicit_windows(path: &Path) -> bool {
+fn explicit_windows(path: &Path) -> Option<PathBuf> {
     if !path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("exe")) {
         let mut appended = path.as_os_str().to_owned();
         appended.push(".exe");
         let appended = PathBuf::from(appended);
         if std::fs::symlink_metadata(&appended).is_ok() {
-            return appended.is_file();
+            return appended.is_file().then_some(appended);
         }
     }
-    path.is_file()
+    path.is_file().then(|| path.to_path_buf())
 }
 
 #[cfg(windows)]

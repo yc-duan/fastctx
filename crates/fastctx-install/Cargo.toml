@@ -8,10 +8,15 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[test]]
+name = "apply_health"
+harness = false
+
 [dependencies]
 anyhow.workspace = true
 base64 = "0.22"
 fastctx-hands = { path = "../fastctx-hands" }
+fastctx-client = { path = "../fastctx-client" }
 fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
@@ -22,10 +27,12 @@ regex-lite = "0.1"
 ryu-js = "1"
 serde.workspace = true
 serde_json.workspace = true
+semver = "1"
 sha2 = "0.10"
 thiserror.workspace = true
 toml = "0.9"
 toml_edit = "0.25"
+tokio = { workspace = true, features = ["rt", "time"] }
 x509-parser = "0.18"
 
 [target.'cfg(unix)'.dependencies]

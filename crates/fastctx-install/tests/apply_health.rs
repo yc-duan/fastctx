@@ -6,7 +6,15 @@ use fastctx_install::apply::{self, Hosts, Places};
 use fastctx_install::codex::Approval;
 use sha2::{Digest, Sha256};
 
-#[test]
+fn main() {
+    if std::env::args().skip(1).eq(["renew", "identify"]) {
+        println!("{}", serde_json::to_string(&fastctx_install::renewal::build().unwrap()).unwrap());
+        return;
+    }
+    released_ownership_is_bound_and_retired_with_the_host_files();
+    println!("apply ownership, shared configuration and home lifecycle passed");
+}
+
 fn released_ownership_is_bound_and_retired_with_the_host_files() {
     // Apply ends by asking the machine's Codex about its tools, and a Codex
     // that starts writes into its home; this test's homes must stay its own.

@@ -33,6 +33,9 @@ pub struct UnapplyArgs {
 
 pub fn apply(args: ApplyArgs) -> anyhow::Result<()> {
     let places = Places::here()?;
+    if let Some(result) = crate::program::deliver(&places.root)? {
+        return result;
+    }
     let approval = if args.raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
     let mut errors = Vec::new();
     for (places, hosts) in args.homes.places(&places, true)? {
@@ -68,6 +71,12 @@ pub fn apply(args: ApplyArgs) -> anyhow::Result<()> {
 
 pub fn unapply(args: UnapplyArgs) -> anyhow::Result<()> {
     let places = Places::here()?;
+    if places.installed().is_file()
+        && fastctx_install::program::inspect(&places.installed())?.protocol != 0
+        && let Some(result) = crate::program::forward_if_other(&places.root, &places.installed())?
+    {
+        return result;
+    }
     let mut errors = Vec::new();
     let mut changed = false;
     for (places, hosts) in args.homes.places(&places, false)? {

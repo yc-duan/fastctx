@@ -28,7 +28,7 @@ pub struct ServiceArgs {
     /// The node's fastctx root or the hub's data directory.
     #[arg(long, value_parser = crate::paths::parser())]
     dir: Option<PathBuf>,
-    /// The stable installed fastctx executable; defaults to this executable.
+    /// The executable to register; defaults to the stable World program.
     #[arg(long, value_parser = crate::paths::parser())]
     executable: Option<PathBuf>,
     /// Linux: run the system service as this UID. Install/uninstall as root.
@@ -55,7 +55,18 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
     };
     let executable = match args.executable {
         Some(path) => std::path::absolute(path)?,
-        None => std::env::current_exe()?,
+        None => {
+            let root = if kind == Kind::Node { directory.clone() } else { fastctx_platform::fastctx_root()? };
+            match args.action {
+                Action::Install => {
+                    if let Some(result) = crate::program::deliver(&root)? {
+                        return result;
+                    }
+                    fastctx_install::executable::installed_path(&root)
+                }
+                Action::Uninstall | Action::Status => fastctx_install::executable::installed_path(&root),
+            }
+        }
     };
     let service = Service::new(kind, executable, directory);
     #[cfg(windows)]

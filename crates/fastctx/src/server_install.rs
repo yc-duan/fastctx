@@ -44,6 +44,9 @@ fn install(code: String, name: Option<MachineName>) -> anyhow::Result<()> {
     use fastctx_install::service::{Kind, Service};
 
     let root = fastctx_platform::fastctx_root()?;
+    if let Some(result) = crate::program::deliver(&root)? {
+        return result;
+    }
     fastctx_platform::ensure_private_dir(&root)?;
     let _lock = fastctx_platform::FileLock::acquire(&root.join("server-install.lock"))?;
     // Run again, the line says what was there already rather than what it did.
@@ -56,7 +59,9 @@ fn install(code: String, name: Option<MachineName>) -> anyhow::Result<()> {
     }
     // The same token again, from this computer, finds it logged in already.
     match crate::ask::call(Call::LoginWithToken { token: code, name })?.0 {
-        Reply::LoggedIn { hub, name, account } => println!("This machine is {name}, a machine of {account} on the hub {hub}"),
+        Reply::LoggedIn { hub, name, account } => {
+            println!("This machine is {name}, a machine of {account} on the hub {hub}")
+        }
         other => bail!("the node answered something else: {other:?}"),
     }
     let service = Service::new(Kind::Node, &installed, &root);

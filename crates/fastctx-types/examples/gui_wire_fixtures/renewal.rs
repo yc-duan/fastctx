@@ -1,6 +1,8 @@
 use fastctx_types::ProcessIdentity;
 use fastctx_types::ipc::Welcome;
-use fastctx_types::renewal::{Action, Build, MAINTENANCE, Mismatch, Phase, Request, Response, Running, Status};
+use fastctx_types::renewal::{
+    Action, Build, MAINTENANCE, Mismatch, PathCommand, PathLookup, Phase, Request, Response, Running, Status,
+};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -17,7 +19,7 @@ pub fn fixtures() -> Fixtures {
         Mismatch { node_version: "1.0.0".into(), node_protocol: 5, client_version: "1.0.0".into(), client_protocol: 6 };
     let node = Running {
         build: build.clone(),
-        executable: "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe".into(),
+        executable: "C:/Users/example/.fastctx/bin/fastctx.exe".into(),
         process: ProcessIdentity { pid: 123, token: "process-instance".into() },
         yielding: false,
         bridge: true,
@@ -47,6 +49,17 @@ pub fn fixtures() -> Fixtures {
         statuses: phases
             .into_iter()
             .map(|phase| Status {
+                client: Some(build.clone()),
+                installed: Some(build.clone()),
+                commands: vec![PathCommand {
+                    lookup: PathLookup::Windows,
+                    path: "C:/npm/fastctx.cmd".into(),
+                    executable: Some("C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe".into()),
+                    build: Some(Build { version: "0.2.6".into(), protocol: 0, digest: "ef".repeat(32) }),
+                    is_world: Some(false),
+                    legacy_unapply: true,
+                    error: None,
+                }],
                 node: (phase != Phase::AwaitingLegacyExit).then(|| node.clone()),
                 mismatch: (phase == Phase::AwaitingLegacyExit).then(|| mismatch.clone()),
                 pending: (phase != Phase::Complete).then(|| build.clone()),
@@ -54,6 +67,9 @@ pub fn fixtures() -> Fixtures {
                 phase: Some(phase),
             })
             .chain([Status {
+                client: Some(build.clone()),
+                installed: Some(build.clone()),
+                commands: Vec::new(),
                 node: None,
                 mismatch: Some(mismatch.clone()),
                 pending: Some(build.clone()),

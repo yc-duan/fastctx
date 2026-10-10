@@ -4,7 +4,6 @@
 use std::fs;
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use fastctx_platform::{FileLock, Permissions, ensure_private_dir, publish};
 use fastctx_types::renewal::{Build, Phase};
@@ -25,6 +24,8 @@ pub struct Plan {
     pub previous: Option<Program>,
     pub phase: Phase,
     pub error: Option<String>,
+    #[serde(default)]
+    pub keeper_restarted: bool,
 }
 
 pub fn directory(root: &Path) -> PathBuf {
@@ -43,11 +44,23 @@ pub fn digest(path: &Path) -> io::Result<String> {
 }
 
 pub fn build() -> io::Result<Build> {
-    Ok(Build {
-        version: env!("CARGO_PKG_VERSION").into(),
-        protocol: fastctx_types::ipc::PROTOCOL,
-        digest: digest(&std::env::current_exe()?)?,
-    })
+    static DIGEST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let digest = match DIGEST.get() {
+        Some(digest) => digest.clone(),
+        None => {
+            let digest = own_digest()?;
+            let _ = DIGEST.set(digest.clone());
+            digest
+        }
+    };
+    Ok(Build { version: env!("CARGO_PKG_VERSION").into(), protocol: fastctx_types::ipc::PROTOCOL, digest })
+}
+
+fn own_digest() -> io::Result<String> {
+    #[cfg(target_os = "linux")]
+    return digest(Path::new("/proc/self/exe"));
+    #[cfg(not(target_os = "linux"))]
+    digest(&std::env::current_exe()?)
 }
 
 pub fn read(root: &Path) -> io::Result<Option<Plan>> {
@@ -56,6 +69,45 @@ pub fn read(root: &Path) -> io::Result<Option<Plan>> {
 
 pub fn save(root: &Path, plan: &Plan) -> io::Result<()> {
     write_json(&directory(root).join("plan.json"), plan)
+}
+
+/// Local maintenance facts remain available independently of business IPC.
+pub async fn status(root: &Path) -> anyhow::Result<fastctx_types::renewal::Status> {
+    use fastctx_client::renewal::Probe;
+    let plan = read(root)?;
+    let (node, mismatch) = match fastctx_client::renewal::probe(&fastctx_types::layout::WorldDir::under(root)).await? {
+        Probe::Running(node) => (Some(node), None),
+        Probe::Legacy { mismatch, .. } => (None, Some(mismatch)),
+        Probe::Absent => (None, None),
+    };
+    let root_for_files = root.to_owned();
+    let (client, installed, commands) = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let client = Some(build()?);
+        let installed_path = self::installed(&root_for_files);
+        let installed =
+            if installed_path.try_exists()? { Some(crate::program::inspect(&installed_path)?) } else { None };
+        Ok((client, installed, crate::path_command::inspect(&root_for_files)))
+    })
+    .await??;
+    let phase = plan.as_ref().map(|plan| {
+        if plan.phase == Phase::Complete
+            && (mismatch.is_some() || node.as_ref().is_some_and(|node| node.build != plan.candidate.build))
+        {
+            Phase::Staged
+        } else {
+            plan.phase.clone()
+        }
+    });
+    Ok(fastctx_types::renewal::Status {
+        client,
+        installed,
+        commands,
+        node,
+        mismatch,
+        pending: plan.as_ref().filter(|_| phase != Some(Phase::Complete)).map(|plan| plan.candidate.build.clone()),
+        phase,
+        error: plan.and_then(|plan| plan.error),
+    })
 }
 
 pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
@@ -72,34 +124,106 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
 
 /// Stores and checks the new program before publishing either the intent or
 /// the installed name. Repeating an unfinished placement retains its state.
-pub fn stage(root: &Path, source: &Path, running: Option<&Path>) -> anyhow::Result<Plan> {
+pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Result<Plan> {
     ensure_private_dir(&directory(root))?;
-    let _lock = FileLock::acquire(&directory(root).join("worker.lock"))?;
-    let copied = copy_image(root, source)?;
-    let output = command(&copied).args(["renew", "identify"]).output()?;
-    anyhow::ensure!(output.status.success(), "candidate could not identify itself: {}", output.status);
-    let build: Build = serde_json::from_slice(&output.stdout)?;
-    anyhow::ensure!(build.digest == digest(&copied)?, "candidate image changed while being checked");
-    if let Some(plan) = read(root)?
-        && plan.candidate.build == build
-    {
-        install(root, &plan.candidate)?;
-        return Ok(plan);
+    let _lock = FileLock::try_acquire(&directory(root).join("worker.lock"))?
+        .ok_or_else(|| anyhow::anyhow!("the World program is already being replaced; its plan was left unchanged"))?;
+    let _node_entry = FileLock::try_acquire(&directory(root).join("node-entry.lock"))?
+        .ok_or_else(|| anyhow::anyhow!("the node is completing its program handover; its plan was left unchanged"))?;
+    let _activation = FileLock::try_acquire(&directory(root).join("activation.lock"))?.ok_or_else(|| {
+        anyhow::anyhow!("the World program is starting or being published; its plan was left unchanged")
+    })?;
+    let world = fastctx_types::layout::WorldDir::under(root);
+    ensure_private_dir(world.path())?;
+    let stable = installed(root);
+    let mut source = source;
+    if stable.is_file() {
+        let current = crate::program::inspect(&stable)?;
+        let offered = crate::program::inspect(source)?;
+        if current != offered && !crate::program::newer(&offered, &current)? {
+            source = &stable;
+        }
     }
-    let previous_path = running.map(Path::to_path_buf).or_else(|| installed(root).is_file().then(|| installed(root)));
+    let copied = copy_image(root, source)?;
+    let build = crate::program::inspect(&copied)?;
+    anyhow::ensure!(build.protocol != 0, "the offered program has no World kernel identity");
+    let old_plan = read(root)?;
+    if let Some(plan) = &old_plan {
+        if plan.candidate.build == build && plan.phase != Phase::Failed && plan.phase != Phase::Complete {
+            return Ok(plan.clone());
+        }
+        anyhow::ensure!(
+            plan.candidate.build == build || crate::program::newer(&build, &plan.candidate.build)?,
+            "the offered kernel {} is older than the recorded renewal {}; the plan was left unchanged",
+            build.version,
+            plan.candidate.build.version
+        );
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    let serving = runtime.block_on(fastctx_client::renewal::probe(&world))?;
+    let installed_build =
+        if installed(root).is_file() { Some(crate::program::inspect(&installed(root))?) } else { None };
+    if let Some(installed) = &installed_build {
+        anyhow::ensure!(
+            installed == &build || crate::program::newer(&build, installed)?,
+            "offered kernel {} is older than installed {}; the World program was left unchanged",
+            build.version,
+            installed.version
+        );
+    }
+    let previous_path = match &serving {
+        fastctx_client::renewal::Probe::Running(node) => Some(node.executable.clone().into()),
+        fastctx_client::renewal::Probe::Legacy { .. } => runtime.block_on(fastctx_client::renewal::image(&world))?,
+        fastctx_client::renewal::Probe::Absent => installed_build.as_ref().map(|_| installed(root)),
+    };
     let previous = if let Some(previous_path) = previous_path {
         let path = copy_image(root, &previous_path)?;
-        let output = command(&path).arg("--version").output()?;
-        anyhow::ensure!(output.status.success(), "previous program cannot report its version");
-        let version = String::from_utf8(output.stdout)?;
-        let version = version.trim().strip_prefix("fastctx ").ok_or_else(|| anyhow::anyhow!("not fastctx"))?;
-        Some(Program { build: Build { version: version.into(), protocol: 0, digest: digest(&path)? }, path })
+        let previous = crate::program::inspect(&path)?;
+        if let fastctx_client::renewal::Probe::Running(node) = &serving {
+            anyhow::ensure!(
+                previous == node.build,
+                "the serving node's image cannot be identified; its plan was left unchanged"
+            );
+        }
+        anyhow::ensure!(
+            previous == build || crate::program::newer(&build, &previous)?,
+            "offered kernel {} is older than installed {}; the World program was left unchanged",
+            build.version,
+            previous.version
+        );
+        Some(Program { build: previous, path })
     } else {
         None
     };
-    let plan = Plan { candidate: Program { path: copied, build }, previous, phase: Phase::Staged, error: None };
+    let mut plan = Plan {
+        candidate: Program { path: copied, build },
+        previous,
+        phase: Phase::Staged,
+        error: None,
+        keeper_restarted: false,
+    };
     save(root, &plan)?;
-    install(root, &plan.candidate)?;
+    if !world.node_service().exists()
+        && matches!(serving, fastctx_client::renewal::Probe::Absent)
+        && let Some(_world) = FileLock::try_acquire(&world.node_lock())?
+    {
+        install(root, &plan.candidate)?;
+        plan.phase = Phase::Complete;
+        save(root, &plan)?;
+    } else if installed_build.as_ref() == Some(&plan.candidate.build)
+        && plan.previous.as_ref().is_some_and(|previous| previous.build == plan.candidate.build)
+        && match &serving {
+            fastctx_client::renewal::Probe::Running(node) => {
+                std::fs::canonicalize(&node.executable)? == std::fs::canonicalize(installed(root))?
+            }
+            fastctx_client::renewal::Probe::Absent => true,
+            fastctx_client::renewal::Probe::Legacy { .. } => false,
+        }
+        && old_plan.as_ref().is_none_or(|old| old.phase == Phase::Complete)
+    {
+        plan.phase = Phase::Complete;
+        save(root, &plan)?;
+    }
     Ok(plan)
 }
 
@@ -114,7 +238,16 @@ pub fn install(root: &Path, program: &Program) -> io::Result<()> {
     verify(program)?;
     ensure_private_dir(&root.join("bin"))?;
     let _lock = FileLock::acquire(&root.join("apply.lock"))?;
-    publish_image(&program.path, &installed(root))
+    let installed = installed(root);
+    if installed.is_file() {
+        let current = crate::program::inspect(&installed).map_err(io::Error::other)?;
+        if current != program.build && !crate::program::newer(&program.build, &current).map_err(io::Error::other)? {
+            return Err(io::Error::other(
+                "the stable World program advanced after staging; no older image was installed",
+            ));
+        }
+    }
+    publish_image(&program.path, &installed)
 }
 
 /// Keeps a hard link to a mapped Windows image before replacing its name.
@@ -125,8 +258,8 @@ pub fn publish_image(source: &Path, target: &Path) -> io::Result<()> {
     let copy = FileChange::copy_executable(before, source).map_err(io::Error::other)?;
     let receipt = Transaction::new([copy]).commit().map_err(io::Error::other)?;
     // Mapped images are intentionally retained; the existing cleanup helper
-    // retries recognized links at the next placement. Immutable rollback
-    // images live separately in renewal/images.
+    // retries recognized links at the next placement. Immutable images
+    // retained as renewal provenance live separately in renewal/images.
     let retained = crate::executable::cleanup_retired(target);
     write_json(
         &target.with_extension("renewal-files.json"),
@@ -160,9 +293,14 @@ pub fn launch(
     let mut environment = fastctx_platform::world_process_environment()?;
     environment.retain(|(name, _)| !name.eq_ignore_ascii_case("FASTCTX_HOME"));
     environment.push(("FASTCTX_HOME".into(), root.into()));
-    if let Some(home) = std::env::var_os("CODEX_HOME") {
-        environment.retain(|(name, _)| !name.eq_ignore_ascii_case("CODEX_HOME"));
-        environment.push(("CODEX_HOME".into(), home));
+    // Maintenance preserves the selected host homes and executable search
+    // path. Credentials and other launcher variables still come only from
+    // the user's logon environment; jobs keep their own fresh environment.
+    for name in ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "PATH"] {
+        if let Some(value) = std::env::var_os(name) {
+            environment.retain(|(key, _)| !key.eq_ignore_ascii_case(name));
+            environment.push((name.into(), value));
+        }
     }
     fastctx_platform::spawn_detached(
         program,
@@ -201,15 +339,4 @@ fn copy_to(source: &Path, target: &Path) -> io::Result<()> {
         staged.write_all(&buffer[..count])?;
     }
     staged.commit()
-}
-
-fn command(program: &Path) -> Command {
-    let mut command = Command::new(program);
-    command.stdin(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        command.creation_flags(0x08000000);
-    }
-    command
 }

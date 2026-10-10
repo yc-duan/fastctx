@@ -53,7 +53,7 @@ pub enum Response {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Running {
     pub build: Build,
-    /// The immutable executable kept by this running node.
+    /// The stable World program this node runs from.
     pub executable: String,
     pub process: ProcessIdentity,
     pub yielding: bool,
@@ -80,9 +80,37 @@ pub enum Phase {
 /// What an interface can inspect even when its business protocol is refused.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Status {
+    #[serde(default)]
+    pub client: Option<Build>,
+    #[serde(default)]
+    pub installed: Option<Build>,
+    #[serde(default)]
+    pub commands: Vec<PathCommand>,
     pub node: Option<Running>,
     pub mismatch: Option<Mismatch>,
     pub pending: Option<Build>,
     pub phase: Option<Phase>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PathLookup {
+    Windows,
+    Bash,
+    Unix,
+    Codex,
+}
+
+/// A terminal's first PATH entry, its resolved executable when known, and
+/// the kernel identity. A wrapper that could not be resolved stays explicit.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PathCommand {
+    pub lookup: PathLookup,
+    pub path: String,
+    pub executable: Option<String>,
+    pub build: Option<Build>,
+    pub is_world: Option<bool>,
+    pub legacy_unapply: bool,
     pub error: Option<String>,
 }
