@@ -55,7 +55,10 @@ impl CodexHosts {
         let mut environment = self.environment.clone();
         environment.retain(|(name, _)| !name.eq_ignore_ascii_case("CODEX_HOME"));
         environment.push(("CODEX_HOME".into(), dir.as_os_str().to_owned()));
-        let workdir = self.workdir.join("homes").join(crate::homes::key(dir));
+        let workdir = super::directories::get(&self.workdir.join("homes"), dir).unwrap_or_else(|error| {
+            eprintln!("fastctx node: keeping the Codex home {} separate: {error}; stopping the node", dir.display());
+            std::process::exit(1)
+        });
         let program_home = Some(self.default.config_home().to_path_buf());
         let (host, reports) = CodexHost::new(dir.to_path_buf(), program_home, workdir, environment, self.log.clone());
         forward(reports, self.events.clone());
@@ -66,16 +69,6 @@ impl CodexHosts {
     /// The host a resident's threads are in: its home's.
     pub(crate) fn of(&self, about: &About) -> Arc<CodexHost> {
         self.home(about.home.as_deref())
-    }
-
-    /// The host that started or adopted `thread`; the default one when
-    /// none did.
-    pub(crate) fn thread(&self, thread: &str) -> Arc<CodexHost> {
-        if self.default.holds(thread) {
-            return self.default.clone();
-        }
-        let others = self.others.lock().expect("never poisoned");
-        others.iter().find(|host| host.holds(thread)).cloned().unwrap_or_else(|| self.default.clone())
     }
 
     pub(crate) fn all(&self) -> Vec<Arc<CodexHost>> {

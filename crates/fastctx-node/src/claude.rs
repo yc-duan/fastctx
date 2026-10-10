@@ -989,6 +989,8 @@ struct Command {
 fn command(node: &Node, home: Option<&Path>) -> Result<Command, Failure> {
     let mut env = environment()?;
     if let Some(home) = home {
+        let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
+        crate::homes::find(node, &env, &user_home, "claude", Some(home))?;
         env.retain(|(name, _)| !name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"));
         env.push(("CLAUDE_CONFIG_DIR".into(), home.as_os_str().to_owned()));
     }
@@ -1035,9 +1037,15 @@ pub async fn open_here(
         crate::colleagues::setting::keep(node, &id, lives_on, opened.colleagues_home.clone())?;
     }
     let Command { program, env, .. } = command(node, opened.home.as_deref())?;
-    let (words, heard) =
-        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting, opened.works_on.as_ref())
-            .await?;
+    let (words, heard) = crate::colleagues::instructions(
+        node,
+        &id,
+        town.as_ref(),
+        &Origin::User,
+        &opened.acting,
+        opened.works_on.as_ref(),
+    )
+    .await?;
     let born_at = Timestamp::now();
     let about = About {
         id: id.clone(),
@@ -1181,7 +1189,8 @@ fn check_plugin(node: &Node, plugin: &Path) {
 /// trusted in Claude Code, so it starts sessions there without asking
 /// (`world-projects.md`): by the home the session starts with in `env`.
 fn trust(world: &Path, env: &[(OsString, OsString)]) -> Result<(), String> {
-    let home = env.iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR")).map(|(_, value)| value.as_os_str());
+    let home =
+        env.iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR")).map(|(_, value)| value.as_os_str());
     claude::trust::ensure_trusted(world, home)
         .map(|_| ())
         .map_err(|error| format!("trusting {} in Claude Code: {error}", world.display()))

@@ -57,7 +57,11 @@ pub async fn talk(
         return Ok((Address { machine: here, resident: to }, landed));
     }
     let call = RemoteCall::Talk { to: to.clone(), text, attachments };
-    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
+    match node
+        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .await
+        .map_err(|failure| Failure::new(failure.to_string()))?
+    {
         Ok(RemoteReply::Said { landed }) => Ok((Address { machine, resident: to }, landed)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than a talk"))),
         Err(failure) => Err(failure),
@@ -188,6 +192,7 @@ pub async fn watch_here(
         |directory: &ResidentDir| crate::delivery::history(directory).map_err(|error| Failure::new(error.to_string()));
     let (recorded, hosted) = match &about.session {
         Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
+            crate::homes::available(node, &about)?;
             let codex = node.codex.of(&about);
             let history = codex.history(thread).await.map_err(Failure::new)?;
             codex.flush_events(thread).await.map_err(Failure::new)?;
@@ -437,7 +442,10 @@ pub async fn open(
     let acting = match &choices.account {
         Some(account) => {
             if !node.serves(&Acting::Here, &account.hub, &account.account) {
-                return Err(Failure::not_run(format!("this computer is not logged in to the account {}", account.account)));
+                return Err(Failure::not_run(format!(
+                    "this computer is not logged in to the account {}",
+                    account.account
+                )));
             }
             Acting::one(account.hub.clone(), account.account.clone())
         }
@@ -450,7 +458,9 @@ pub async fn open(
                 .flat_map(|link| {
                     let hub = link.membership().id.clone();
                     let logins = link.view().me().map(|me| me.logins.clone()).unwrap_or_default();
-                    logins.into_iter().map(move |account| fastctx_types::access::HubAccount { hub: hub.clone(), account })
+                    logins
+                        .into_iter()
+                        .map(move |account| fastctx_types::access::HubAccount { hub: hub.clone(), account })
                 })
                 .collect();
             match logins.as_slice() {
@@ -466,8 +476,7 @@ pub async fn open(
     };
     match target.filter(|target| *target != here) {
         None => {
-            let (id, landed) =
-                open_here(node, &here, acting, agent, town, text, options, attachments, choices).await?;
+            let (id, landed) = open_here(node, &here, acting, agent, town, text, options, attachments, choices).await?;
             Ok((Address { machine: here, resident: id }, landed))
         }
         Some(target) => {
@@ -511,14 +520,15 @@ pub async fn open_here(
     let works_on = choices.works_on.filter(|works_on| !node.is_here(works_on));
     match &works_on {
         Some(works_on) => {
-            node.speaking(&acting, works_on, Purpose::Hands).map_err(|failure| {
-                Failure::not_run(format!("it cannot work on {works_on}: {failure}"))
-            })?;
+            node.speaking(&acting, works_on, Purpose::Hands)
+                .map_err(|failure| Failure::not_run(format!("it cannot work on {works_on}: {failure}")))?;
         }
         // An account lent only the agents here has a conversation opened
         // here work elsewhere (`world-network.md`, 一台机器给几个账号用).
         None => node.works_here(&acting).map_err(|why| {
-            Failure::not_run(format!("{why}, so a conversation opened here for it works on another machine: choose one"))
+            Failure::not_run(format!(
+                "{why}, so a conversation opened here for it works on another machine: choose one"
+            ))
         })?,
     }
     // The home it is born in must be one this machine has; the default one
@@ -532,13 +542,8 @@ pub async fn open_here(
             (home.found != fastctx_types::agents::HomeFound::Default).then_some(home.dir)
         }
     };
-    let opened = Opened {
-        acting,
-        works_on,
-        colleagues: choices.colleagues,
-        home,
-        colleagues_home: choices.colleagues_home,
-    };
+    let opened =
+        Opened { acting, works_on, colleagues: choices.colleagues, home, colleagues_home: choices.colleagues_home };
     match agent.as_str() {
         "codex" => {}
         "claude" => return crate::claude::open_here(node, typed_on, opened, town, text, options, attachments).await,
@@ -559,7 +564,8 @@ pub async fn open_here(
         crate::colleagues::setting::keep(node, &id, lives_on, opened.colleagues_home.clone())?;
     }
     let (spec, heard) =
-        crate::colleagues::thread_spec(node, &id, &origin, town.as_ref(), &opened.acting, opened.works_on.as_ref()).await?;
+        crate::colleagues::thread_spec(node, &id, &origin, town.as_ref(), &opened.acting, opened.works_on.as_ref())
+            .await?;
     let (thread, model) = node.codex.home(opened.home.as_deref()).start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {

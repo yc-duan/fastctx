@@ -8,11 +8,11 @@ use std::time::Instant;
 use fastctx_hosts::agents::{elapsed, measured};
 use fastctx_install::apply::{self, Host, Places, Standing};
 use fastctx_net::link::CallFailure;
-use fastctx_types::{AgentName, MachineName};
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::agents::*;
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::{AgentName, MachineName};
 use jiff::Timestamp;
 
 use crate::Node;
@@ -25,25 +25,43 @@ pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
     let start = Instant::now();
     let checked_at = Timestamp::now();
     let env = crate::claude::environment()?;
-    let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(format!("finding the home directory: {error}")))?;
-    let homes = crate::homes::list(node, &env, &user_home)
+    let user_home =
+        fastctx_platform::user_home().map_err(|error| Failure::new(format!("finding the home directory: {error}")))?;
+    let homes = crate::homes::catalog(node, &env, &user_home)
         .map_err(|error| Failure::new(format!("listing the agents' homes: {error}")))?;
     let world = node.world.path().to_path_buf();
     let limits = tokio::task::spawn_blocking(move || fastctx_hosts::claude::exchange::limits(&world));
-    let limits = Arc::new(limits.await.map_err(|error| Failure::new(format!("reading Claude's limits: {error}")))?);
+    let limits = limits.await.map_err(|error| Failure::new(format!("reading Claude's limits: {error}")))?;
+    let claude_homes: Vec<_> =
+        homes.iter().filter(|(agent, _, _)| agent.as_str() == "claude").map(|(_, home, _)| home.clone()).collect();
+    let limits = Arc::new(
+        limits
+            .into_iter()
+            .filter_map(|(transcript, limits)| {
+                crate::homes::limits_home(&claude_homes, &transcript).map(|home| (home.dir.clone(), limits))
+            })
+            .collect::<Vec<_>>(),
+    );
     // Each home is asked at once: a slow account does not hold the others.
     let probes: Vec<_> = homes
         .into_iter()
+        .filter_map(|(agent, home, visible)| visible.then_some((agent, home)))
         .map(|(agent, home)| {
             let (node, env, user_home, limits) = (node.clone(), env.clone(), user_home.clone(), limits.clone());
             tokio::spawn(async move {
+                if home.found != HomeFound::Default && !home.dir.is_dir() {
+                    let mut facts = failed(
+                        agent,
+                        format!("{} is no longer a home directory on {}", home.dir.display(), node.machine()),
+                    );
+                    facts.home = Some(home);
+                    return facts;
+                }
                 match agent.as_str() {
                     "codex" => codex(&node, &env, &user_home, home).await,
-                    _ => {
-                        tokio::task::spawn_blocking(move || claude(&node, &env, &user_home, home, &limits))
-                            .await
-                            .unwrap_or_else(|error| failed(agent, format!("probing Claude Code: {error}")))
-                    }
+                    _ => tokio::task::spawn_blocking(move || claude(&node, &env, &user_home, home, &limits))
+                        .await
+                        .unwrap_or_else(|error| failed(agent, format!("probing Claude Code: {error}"))),
                 }
             })
         })
@@ -90,18 +108,17 @@ fn claude(
         _ => None,
     };
     let places = places(node, &env, user_home, program);
-    claude.integration = match measured(&mut claude.timings, "apply status", || {
-        apply::status_at(&places, Host::Claude, &home.dir)
-    }) {
-        Ok(standing) => Fact::known(integration(standing)),
-        Err(error) => Fact::failed(error.to_string()),
-    };
-    claude.unattended = match measured(&mut claude.timings, "consent", || apply::claude_consent_at(&places, &home.dir)) {
+    claude.integration =
+        match measured(&mut claude.timings, "apply status", || apply::status_at(&places, Host::Claude, &home.dir)) {
+            Ok(standing) => Fact::known(integration(standing)),
+            Err(error) => Fact::failed(error.to_string()),
+        };
+    claude.unattended = match measured(&mut claude.timings, "consent", || apply::claude_consent_at(&places, &home.dir))
+    {
         Ok(accepted) => Fact::known(accepted),
         Err(error) => Fact::failed(error.to_string()),
     };
-    let projects = home.dir.join("projects");
-    claude.limits = match limits.iter().find(|(transcript, _)| crate::homes::within(&projects, transcript)) {
+    claude.limits = match limits.iter().find(|(owner, _)| crate::homes::same_dir(&home.dir, owner)) {
         Some((_, limits)) => Fact::known(limits.clone()),
         None => Fact::unavailable("no session in this home has reported its limits yet"),
     };
@@ -129,12 +146,7 @@ fn failed(agent: AgentName, reason: String) -> AgentFacts {
 /// Where this user's hosts keep what an apply and the user's consent touch:
 /// the default homes, Claude Code's as `env` names it. A call about one
 /// other home selects it on these.
-pub(crate) fn places(
-    node: &Node,
-    env: &[(OsString, OsString)],
-    home: &Path,
-    claude: Option<PathBuf>,
-) -> Places {
+pub(crate) fn places(node: &Node, env: &[(OsString, OsString)], home: &Path, claude: Option<PathBuf>) -> Places {
     Places {
         root: node.root.clone(),
         world: node.world.path().into(),
@@ -166,7 +178,9 @@ pub async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<MachineNam
         });
     }
     let heard = match machine.filter(|machine| *machine != here) {
-        None => crate::around::ask_each(crate::around::reachable(node, acting, Purpose::Look), |_| RemoteCall::Agents).await,
+        None => {
+            crate::around::ask_each(crate::around::reachable(node, acting, Purpose::Look), |_| RemoteCall::Agents).await
+        }
         Some(name) => {
             let heard = match node.call(acting, &(&name).into(), Purpose::Look, RemoteCall::Agents).await {
                 Ok(Ok(reply)) => Heard::Answered(reply),
@@ -180,7 +194,9 @@ pub async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<MachineNam
     for (name, heard) in heard {
         machines.push(match heard {
             Heard::Answered(RemoteReply::Agents(reply)) if reply.machine == name => MachineAgents::Answered { reply },
-            Heard::Answered(_) => MachineAgents::NoAnswer { machine: name, reason: "it answered something else".into() },
+            Heard::Answered(_) => {
+                MachineAgents::NoAnswer { machine: name, reason: "it answered something else".into() }
+            }
             Heard::Offline(since) => MachineAgents::Offline { machine: name, since },
             Heard::NoAnswer(reason) => MachineAgents::NoAnswer { machine: name, reason },
         });
