@@ -20,11 +20,8 @@ pub fn run(kind: Kind, action: &str, directory: &Path, executable: &Path) -> Res
     if action == "install" {
         let mut owner = fastctx_install::uninstall::Installation::here().map_err(|error| error.to_string())?;
         owner.application = Some(std::env::current_exe().map_err(|error| error.to_string())?);
-        owner.application_dirs = [
-            ("XDG_DATA_HOME", ".local/share"),
-            ("XDG_CONFIG_HOME", ".config"),
-            ("XDG_CACHE_HOME", ".cache"),
-        ].into_iter().map(|(variable, fallback)| std::env::var_os(variable).filter(|value| !value.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| owner.home.join(fallback)).join("dev.fastctx.world")).collect();
+        owner.application_dirs =
+            fastctx_install::uninstall::application_directories(&owner.home).map_err(|error| error.to_string())?;
         command.arg("--package-owner").arg(serde_json::to_string(&owner).map_err(|error| error.to_string())?);
     }
     let output =

@@ -189,9 +189,6 @@ pub(crate) async fn finish(request: &crate::Request) -> anyhow::Result<()> {
     let status = std::process::Command::new("dpkg").args(["--remove", "world"]).status()?;
     anyhow::ensure!(status.success(), "the Debian package uninstaller exited {status}");
     if request.plan.everything {
-        for directory in &installation.application_dirs {
-            fastctx_install::uninstall::delete_tree(directory)?;
-        }
         crate::finish_application(&installation.root)?;
     }
     fastctx_install::uninstall::delete_tree(control.parent().context("the package handoff has no parent")?)?;
@@ -226,8 +223,9 @@ pub async fn remove_image(
         "the AppImage changed before retirement"
     );
     fastctx_install::uninstall::delete_file(image)?;
-    for directory in &installation.application_dirs {
-        fastctx_install::uninstall::delete_tree(directory)?;
+    let left = crate::execute::application_data(&installation.application_dirs)?;
+    if !left.is_empty() {
+        println!("{}", serde_json::to_string(&Event::Finished { left })?);
     }
     schedule_cleanup(temporary)?;
     Ok(())

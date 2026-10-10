@@ -271,7 +271,7 @@ pub(crate) fn at_package_uninstall() -> Result<(), String> {
     #[cfg(windows)]
     {
         let home = fastctx_platform::user_home().map_err(|error| error.to_string())?;
-        for path in [home.join("AppData/Roaming/dev.fastctx.world"), home.join("AppData/Local/dev.fastctx.world")] {
+        for path in fastctx_install::uninstall::application_directories(&home).map_err(|error| error.to_string())? {
             command.arg("--application-dir").arg(path);
         }
     }
