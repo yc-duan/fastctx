@@ -12,6 +12,11 @@ pub fn probe(cwd: &Path, env: &[(OsString, OsString)], path: Option<&OsString>) 
     let program = measured(&mut timings, "resolve", || super::background::find(path));
     let mut facts = AgentFacts {
         agent: "claude".parse().expect("agent name"),
+        home: None,
+        account: Fact::unavailable("no claude command on PATH"),
+        // Claude Code reads its limits only in a session at work; the
+        // node supplies what its sessions last reported.
+        limits: Fact::unavailable("the node supplies what its sessions report"),
         program: Fact::known(program.as_ref().map(|path| AgentProgram {
             path: path.clone(),
             source: ProgramSource::Path,
@@ -31,7 +36,7 @@ pub fn probe(cwd: &Path, env: &[(OsString, OsString)], path: Option<&OsString>) 
         // These official commands are independent and create no sessions.
         let (version, login, launch) = std::thread::scope(|scope| {
             let version = scope.spawn(|| timed("--version", || crate::agents::version(&program, cwd, env)));
-            let login = scope.spawn(|| timed("auth status --json", || crate::agents::login(&program, cwd, env, false)));
+            let login = scope.spawn(|| timed("auth status --json", || crate::agents::claude_login(&program, cwd, env)));
             let launch = scope.spawn(|| timed("--help", || launch(&program, cwd, env)));
             (
                 version.join().expect("version probe panicked"),
@@ -40,7 +45,7 @@ pub fn probe(cwd: &Path, env: &[(OsString, OsString)], path: Option<&OsString>) 
             )
         });
         facts.version = version.0;
-        facts.login = login.0;
+        (facts.login, facts.account) = login.0;
         facts.launch = launch.0;
         facts.timings.extend([version.1, login.1, launch.1]);
     }

@@ -2,24 +2,29 @@
 // computer first, with how it reaches each hub and whose machine it is
 // there; then, account by account, each machine its account may use: online
 // or not and through which relay, whose it is, what it was lent for, the
-// agents its own programs say it has (installed or not, which version,
-// logged in or not, and whether sessions the user opens there have the
-// World's tools), who is on it and what runs there. A machine of the
-// account's own is lent to other accounts, given its relays and removed
-// here; one lent by another account is trusted here. On this computer the
-// World's tools are put into its agents or taken out. A machine named in
-// the address is brought into view and marked.
+// agents its own programs say it has, once for each of their logins (which
+// version, who is logged in and on what plan, how much of each usage window
+// is spent and when that was read, and whether sessions the user opens
+// there have the World's tools), who is on it and what runs there. A
+// machine of the account's own is lent to other accounts, given its relays
+// and removed here; one lent by another account is trusted here. On this
+// computer the World's tools are put into each login of its agents or taken
+// out. On a machine of the user's own, a login the World did not find is
+// added by its directory, and one found is no longer listed. A machine named
+// in the address is brought into view and marked.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { osName } from "../home/frontispiece";
 import type { AccountChange, GrantSeen, HubAccounts, Login, Rights } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
-import type { AgentFacts, WorldAgents } from "../world/agents";
+import type { AgentFacts, HomeChange, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
 import type { LinkState } from "../world/world";
 import { agentName, titleOf } from "../world/names";
 import type { AccessWords, MachinesWords } from "./account-words";
+import { accountOf, dirName, homeChoice, homeLabel, homesOf, installed, isDefault, limitsHtml, loggedOut, versionOf, type HomeWords } from "./agent-homes";
+import type { ConsentHome } from "./claude-consent";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { GrantSheet, RelaysSheet } from "./machine-sheets";
@@ -40,12 +45,18 @@ export interface MachinesOptions {
   when(at: Date, now: Date): string;
   /** What every online machine's programs say of its agents. */
   agents(): Promise<WorldAgents>;
-  /** Puts the World's tools into an agent's program on this machine, or
-   *  takes them out; what it could not do, said. */
-  applyHere(agent: "codex" | "claude", into: boolean): Promise<string[]>;
+  homeWords: HomeWords;
+  /** Puts the World's tools into one login of an agent on this machine, its
+   *  home's directory or null for the default one, or takes them out; what
+   *  it could not do, said. */
+  applyHere(agent: "codex" | "claude", into: boolean, home: string | null): Promise<string[]>;
   /** Asks the user, and gives or withdraws Claude's consent to work
-   *  without asking on a machine; true once it is done. */
-  consent?: { allow(machine: string): Promise<boolean>; withdraw(machine: string): Promise<boolean> } | undefined;
+   *  without asking in one of its homes on a machine; true once it is
+   *  done. */
+  consent?: { allow(machine: string, home: ConsentHome): Promise<boolean>; withdraw(machine: string, home: ConsentHome): Promise<boolean> } | undefined;
+  /** Adds a login the World did not find on a machine, or stops listing
+   *  one; the user's own machines only. */
+  homes?: ((machine: string, change: HomeChange) => Promise<void>) | undefined;
   /** Makes a change as a login. */
   change(login: Login, change: AccountChange): Promise<void>;
   /** Opens the sheet that lets another device into `login`. */
@@ -55,6 +66,8 @@ export interface MachinesOptions {
 
 /** What is known of the agents on one machine. */
 type Asked = { state: "known"; facts: AgentFacts[] } | { state: "unknown"; why: string };
+
+
 
 export class MachinesPage implements Page {
   readonly element: HTMLElement;
@@ -67,6 +80,9 @@ export class MachinesPage implements Page {
   private asking = false;
   private shape = "";
   private note: { machine: string; text: string } | null = null;
+  /** The agent whose login is being added on a machine, and the directory
+   *  typed so far. */
+  private adding: { machine: string; agent: string; dir: string } | null = null;
   private readonly granting: GrantSheet;
   private readonly relaying: RelaysSheet;
 
@@ -94,6 +110,20 @@ export class MachinesPage implements Page {
       if (first) options.invite(first);
     });
     this.list.addEventListener("click", (event) => this.click(event));
+    this.list.addEventListener("input", (event) => {
+      const input = event.target as HTMLInputElement;
+      if (input.classList.contains("home-add-dir") && this.adding) this.adding.dir = input.value;
+    });
+    this.list.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void this.addHome();
+    });
+    this.list.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && (event.target as HTMLElement).classList.contains("home-add-dir")) {
+        this.adding = null;
+        this.redraw();
+      }
+    });
     this.stop = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
   }
 
@@ -110,10 +140,22 @@ export class MachinesPage implements Page {
     const machine = button.closest<HTMLElement>("[data-machine]")?.dataset.machine ?? "";
     switch (button.dataset.act) {
       case "apply":
-        void this.apply(button, machine, button.dataset.agent as "codex" | "claude", button.dataset.into === "1");
+        void this.apply(button, machine, button.dataset.agent as "codex" | "claude", button.dataset.into === "1", button.dataset.home || null);
         return;
       case "consent":
-        void this.consent(machine, button.dataset.allow === "1");
+        void this.consent(machine, button.dataset.allow === "1", { dir: button.dataset.home || null, label: button.dataset.label || null });
+        return;
+      case "add-home":
+        this.adding = { machine, agent: button.dataset.agent ?? "", dir: "" };
+        this.redraw();
+        this.list.querySelector<HTMLInputElement>(".home-add-dir")?.focus();
+        return;
+      case "add-cancel":
+        this.adding = null;
+        this.redraw();
+        return;
+      case "hide-home":
+        void this.hideHome(button, machine, button.dataset.agent ?? "", button.dataset.dir ?? "");
         return;
       case "grant":
         if (login) this.grant(login, machine);
@@ -221,23 +263,61 @@ export class MachinesPage implements Page {
 
   /** The sheet says what it means and writes it; the machine is asked
    *  again so the line says what Claude Code now records. */
-  private async consent(machine: string, allow: boolean): Promise<void> {
+  private async consent(machine: string, allow: boolean, home: ConsentHome): Promise<void> {
     const consent = this.options.consent;
     if (!consent || !machine) return;
-    const done = await (allow ? consent.allow(machine) : consent.withdraw(machine));
+    const done = await (allow ? consent.allow(machine, home) : consent.withdraw(machine, home));
     if (!done) return;
     this.asked.delete(machine);
     this.redraw();
     void this.ask();
   }
 
-  private async apply(button: HTMLButtonElement, machine: string, agent: "codex" | "claude", into: boolean): Promise<void> {
+  private async apply(button: HTMLButtonElement, machine: string, agent: "codex" | "claude", into: boolean, home: string | null): Promise<void> {
     button.disabled = true;
     try {
-      const left = await this.options.applyHere(agent, into);
+      const left = await this.options.applyHere(agent, into, home);
       this.note = { machine, text: left.length ? left.join("；") : this.options.words.applied };
     } catch (error) {
       this.note = { machine, text: this.options.words.notApplied(String(error)) };
+    }
+    this.asked.delete(machine);
+    this.redraw();
+    void this.ask();
+  }
+
+  /** Adds the directory typed as a login of the agent; the machine says
+   *  whether it is one, and is asked again so it is listed. */
+  private async addHome(): Promise<void> {
+    const adding = this.adding;
+    const homes = this.options.homes;
+    const dir = adding?.dir.trim();
+    if (!adding || !homes || !dir) return;
+    const go = this.list.querySelector<HTMLButtonElement>(".home-add-go");
+    if (go) go.disabled = true;
+    try {
+      await homes(adding.machine, { change: "add", agent: adding.agent, dir });
+      this.adding = null;
+      this.note = { machine: adding.machine, text: this.options.words.homeAdded(dir) };
+    } catch (error) {
+      this.note = { machine: adding.machine, text: this.options.words.homeNotChanged(error instanceof Error ? error.message : String(error)) };
+    }
+    this.asked.delete(adding.machine);
+    this.redraw();
+    void this.ask();
+  }
+
+  /** Stops listing a login the World found or the user added; written
+   *  again under "add", it comes back. */
+  private async hideHome(button: HTMLButtonElement, machine: string, agent: string, dir: string): Promise<void> {
+    const homes = this.options.homes;
+    if (!homes || !dir) return;
+    button.disabled = true;
+    try {
+      await homes(machine, { change: "hide", agent, dir });
+      this.note = { machine, text: this.options.words.homeHidden(dirName(dir)) };
+    } catch (error) {
+      this.note = { machine, text: this.options.words.homeNotChanged(error instanceof Error ? error.message : String(error)) };
     }
     this.asked.delete(machine);
     this.redraw();
@@ -352,7 +432,7 @@ export class MachinesPage implements Page {
       ${this.facts(machine)}
       ${hubs.length ? `<ul class="machine-hubs">${hubs.join("")}</ul>` : ""}
       ${this.present(machine, world, null)}
-      ${this.hosts(machine.name, true)}
+      ${this.hosts(machine.name, true, true, now)}
     </li>`;
   }
 
@@ -393,47 +473,84 @@ export class MachinesPage implements Page {
       ${this.facts(machine, [route])}
       ${standing ? `<p class="machine-standing">${escape(standing)}</p>` : ""}
       ${this.present(machine, world, group)}
-      ${machine.online === true ? this.hosts(machine.name, false) : ""}
+      ${machine.online === true ? this.hosts(machine.name, false, mine, now) : ""}
       <div class="machine-acts">${acts.join("")}</div>
       ${note}
     </li>`;
   }
 
-  /** The agents on a machine as its own programs say them. */
-  private hosts(machine: string, here: boolean): string {
+  /** The agents on a machine as its own programs say them, a block for
+   *  each and a line in it for each login. `here` is this computer, where
+   *  the World's tools are put in; `mine` a machine of the user's own,
+   *  where logins are added and hidden. */
+  private hosts(machine: string, here: boolean, mine: boolean, now: Date): string {
     const { words } = this.options;
     const asked = this.asked.get(machine);
-    const note = here && this.note?.machine === machine ? `<p class="machine-note">${escape(this.note.text)}</p>` : "";
+    // Elsewhere the entry itself says what was done.
+    const said = here && this.note?.machine === machine ? `<p class="machine-note">${escape(this.note.text)}</p>` : "";
     if (!asked) return `<p class="machine-hosts-asking">${escape(words.asking)}</p>`;
     if (asked.state === "unknown") return `<p class="machine-hosts-asking">${escape(words.notAsked(asked.why))}</p>`;
-    const lines = (["codex", "claude"] as const).map((agent) => {
-      const all = asked.facts.filter((f) => f.agent === agent);
-      const facts = all.find((f) => f.program.kind === "known" && f.program.value?.exists) ?? all[0];
-      const name = agent === "codex" ? "Codex" : "Claude Code";
-      if (!facts || (facts.program.kind === "known" && (!facts.program.value || !facts.program.value.exists))) {
-        return `<li class="host-line absent"><span class="host-name">${escape(name)}</span><span class="host-fact">${escape(words.notInstalled)}</span></li>`;
-      }
-      const version = facts.version.kind === "known" ? /\d+(?:\.\d+)+/.exec(facts.version.value)?.[0] ?? facts.version.value : null;
-      const login =
-        facts.login.kind === "known" ? (facts.login.value.kind === "logged_in" ? words.loggedIn : words.loggedOut) : words.loginUnknown;
-      const integration = facts.integration.kind === "known" ? facts.integration.value : null;
-      const tools =
-        integration === "in" ? words.toolsIn : integration === "out" ? words.toolsOut : integration === "old" ? words.toolsOld : null;
-      const act =
-        here && integration && integration !== "absent"
-          ? `<button class="text-button quiet-button" type="button" data-act="apply" data-agent="${agent}" data-into="${integration === "in" ? "0" : "1"}">${escape(integration === "in" ? words.takeOut : integration === "old" ? words.renew : words.putIn)}</button>`
-          : "";
-      const loggedOut = facts.login.kind === "known" && facts.login.value.kind === "logged_out";
-      // Claude works for the World only once the user let it skip
-      // approvals there; said, and changed, from any of the user's devices.
-      const unattended = agent === "claude" && facts.unattended?.kind === "known" ? facts.unattended.value : null;
-      const consent =
-        unattended === null || !this.options.consent
-          ? ""
-          : `<span class="host-use"><span class="${unattended ? "" : "caution"}">${escape(unattended ? words.unattendedYes : words.unattendedNo)}</span><button class="text-button quiet-button" type="button" data-act="consent" data-allow="${unattended ? "0" : "1"}">${escape(unattended ? words.withdraw : words.allow)}</button></span>`;
-      return `<li class="host-line"><span class="host-name">${escape(name)}${version ? `<span class="host-version">${escape(version)}</span>` : ""}</span><span class="host-fact${loggedOut ? " caution" : ""}">${escape(login)}</span>${tools || act ? `<span class="host-use">${tools ? `<span>${escape(tools)}</span>` : ""}${act}</span>` : ""}${consent}</li>`;
-    });
-    return `<ul class="machine-hosts" aria-label="${escape(words.hosts)}">${lines.join("")}</ul>${note}`;
+    const changeable = mine && !!this.options.homes;
+    const blocks = (["codex", "claude"] as const).map((agent) => this.agentBlock(machine, agent, asked.facts, here, changeable, now));
+    return `<ul class="machine-hosts" aria-label="${escape(words.hosts)}">${blocks.join("")}</ul>${said}`;
+  }
+
+  /** One agent on a machine: its program and version, then its logins. */
+  private agentBlock(machine: string, agent: "codex" | "claude", facts: AgentFacts[], here: boolean, changeable: boolean, now: Date): string {
+    const { words } = this.options;
+    const name = agent === "codex" ? "Codex" : "Claude Code";
+    const homes = homesOf(facts, agent);
+    const program = homes.find(installed);
+    if (!program) {
+      return `<li class="host-agent absent"><div class="host-line"><span class="host-name">${escape(name)}</span><span class="host-fact">${escape(words.notInstalled)}</span></div></li>`;
+    }
+    const version = versionOf(program);
+    const many = homes.length > 1;
+    const rows = homes.map((home) => this.homeLine(agent, home, many, here, changeable, now)).join("");
+    const adding = this.adding?.machine === machine && this.adding.agent === agent;
+    const add = !changeable
+      ? ""
+      : adding
+        ? `<form class="home-add" data-agent="${agent}"><input class="home-add-dir" type="text" value="${escape(this.adding!.dir)}" placeholder="${escape(words.addHomeWhere(agent))}" aria-label="${escape(words.addHomeWhere(agent))}" spellcheck="false" autocomplete="off" autocapitalize="off"><button class="text-button home-add-go" type="submit">${escape(words.addHomeGo)}</button><button class="text-button quiet-button" type="button" data-act="add-cancel">${escape(words.cancel)}</button></form>`
+        : `<button class="text-button quiet-button home-add-open" type="button" data-act="add-home" data-agent="${agent}">${glyph("plus", 14)}<span>${escape(words.addHome)}</span></button>`;
+    return `<li class="host-agent"><div class="host-line"><span class="host-name">${escape(name)}${version ? `<span class="host-version">${escape(version)}</span>` : ""}</span></div><ul class="host-homes">${rows}</ul>${add}</li>`;
+  }
+
+  /** One login of an agent: who and on what plan, where it keeps it when
+   *  there are several, how much of each window is spent, and what this
+   *  device can change of it. */
+  private homeLine(agent: "codex" | "claude", facts: AgentFacts, many: boolean, here: boolean, changeable: boolean, now: Date): string {
+    const { words, homeWords } = this.options;
+    const out = loggedOut(facts);
+    const { email, plan } = accountOf(facts);
+    const login = facts.login.kind === "known" ? words.loggedIn : words.loginUnknown;
+    const who = out
+      ? `<span class="home-who caution">${escape(words.loggedOut)}</span>`
+      : `<span class="home-who">${escape(email ?? login)}</span>${plan ? `<span class="home-plan">${escape(plan)}</span>` : ""}`;
+    const dir = facts.home?.dir ?? null;
+    const how = facts.home?.found === "found" ? homeWords.found : facts.home?.found === "added" ? homeWords.added : homeWords.defaultHome;
+    const where = dir && (many || !isDefault(facts)) ? `<span class="home-dir" title="${escape(dir)}"><code>${escape(dirName(dir))}</code><span>${escape(how)}</span></span>` : "";
+    const choice = homeChoice(facts) ?? "";
+    const hide =
+      changeable && !isDefault(facts) && dir
+        ? `<button class="text-button quiet-button home-hide" type="button" data-act="hide-home" data-agent="${agent}" data-dir="${escape(dir)}" title="${escape(words.hideHomeWhat)}">${escape(words.hideHome)}</button>`
+        : "";
+    const limits = limitsHtml(facts.limits, homeWords, now, this.options.when, { notRead: agent === "claude" && !out && facts.login.kind === "known" });
+    const integration = facts.integration.kind === "known" ? facts.integration.value : null;
+    const tools = integration === "in" ? words.toolsIn : integration === "out" ? words.toolsOut : integration === "old" ? words.toolsOld : null;
+    const act =
+      here && integration && integration !== "absent"
+        ? `<button class="text-button quiet-button" type="button" data-act="apply" data-agent="${agent}" data-home="${escape(choice)}" data-into="${integration === "in" ? "0" : "1"}">${escape(integration === "in" ? words.takeOut : integration === "old" ? words.renew : words.putIn)}</button>`
+        : "";
+    // Claude works for the World only once the user let it skip approvals
+    // in that login; said, and changed, from any of the user's devices.
+    const unattended = agent === "claude" && facts.unattended?.kind === "known" ? facts.unattended.value : null;
+    const label = many ? homeLabel(facts, homeWords) : "";
+    const consent =
+      unattended === null || !this.options.consent || out
+        ? ""
+        : `<span class="host-use"><span class="${unattended ? "" : "caution"}">${escape(unattended ? words.unattendedYes : words.unattendedNo)}</span><button class="text-button quiet-button" type="button" data-act="consent" data-home="${escape(choice)}" data-label="${escape(label)}" data-allow="${unattended ? "0" : "1"}">${escape(unattended ? words.withdraw : words.allow)}</button></span>`;
+    return `<li class="host-home${out ? " logged-out" : ""}"><div class="home-head">${who}${where}${hide}</div>${limits}${tools || act ? `<span class="host-use">${tools ? `<span>${escape(tools)}</span>` : ""}${act}</span>` : ""}${consent}</li>`;
   }
 }
 

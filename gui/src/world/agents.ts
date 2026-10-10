@@ -23,8 +23,16 @@ export interface AgentsReply {
   agents: AgentFacts[];
 }
 
+/** One agent in one of its homes on a machine: a home is one login, so a
+ *  machine with two Codex accounts answers twice for Codex. */
 export interface AgentFacts {
   agent: AgentName;
+  /** The home these facts are of; an older World knew only the default. */
+  home?: AgentHome;
+  /** Who is logged in there, as the agent itself says. */
+  account?: Fact<AgentAccount>;
+  /** Its usage limits, as the agent last read them on its own machine. */
+  limits?: Fact<AgentLimits>;
   program: Fact<AgentProgram | null>;
   version: Fact<string>;
   launch: Fact<LaunchCheck>;
@@ -35,6 +43,50 @@ export interface AgentFacts {
    *  the user's consent once on that machine. An older World does not say. */
   unattended?: Fact<boolean>;
   timings: { step: string; elapsed_ms: number }[];
+}
+
+/** Where an agent keeps one login: Codex's `CODEX_HOME`, Claude Code's
+ *  `CLAUDE_CONFIG_DIR`. The default one is what the agent uses when nothing
+ *  names another; others the World found in the user's home, or the user
+ *  added. */
+export interface AgentHome {
+  dir: string;
+  found: "default" | "found" | "added";
+}
+
+/** What the user changes of the homes the World knows on a machine. */
+export type HomeChange =
+  | { change: "add"; agent: AgentName; dir: string }
+  | { change: "hide"; agent: AgentName; dir: string }
+  | { change: "show"; agent: AgentName; dir: string };
+
+/** Who is logged in to a home, as far as the agent says: an API key or a
+ *  long-lived token names no one. */
+export interface AgentAccount {
+  email?: string;
+  organization?: string;
+  /** The subscription, as the agent names it: "pro", "max", …. */
+  plan?: string;
+}
+
+/** An account's usage limits and when they were read: no window is no
+ *  reading, never 0% used. */
+export interface AgentLimits {
+  observed_at: Timestamp;
+  windows: LimitWindow[];
+  /** What the account goes on with once a window is used up. */
+  credits?: { balance?: string; unlimited: boolean };
+}
+
+export interface LimitWindow {
+  /** The agent's own name: Claude Code's "five_hour", "seven_day",
+   *  "spend_limit"; Codex's limit's name. */
+  name: string;
+  /** How long the window is, when the agent says. */
+  minutes?: number;
+  /** Used, in tenths of a percent; it can pass 1000. */
+  used_tenths: number;
+  resets_at?: Timestamp;
 }
 
 export interface AgentProgram {

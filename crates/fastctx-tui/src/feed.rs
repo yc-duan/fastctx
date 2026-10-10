@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use fastctx_client::{Conversation, TownView, World};
 use fastctx_types::accounts::AccountChange;
-use fastctx_types::{Address, TownName};
+use fastctx_types::{Address, MachineName, TownName};
 use jiff::Timestamp;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
@@ -20,6 +20,8 @@ use crate::sessions::Refused;
 
 /// How long a page that shows who is where waits between asks.
 const EVERY: Duration = Duration::from_secs(2);
+/// How many rounds pass between asks of this computer's agents: a minute.
+const AGENTS_EVERY: u32 = 30;
 
 pub type Sender = UnboundedSender<(u64, Data)>;
 
@@ -67,8 +69,13 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
         );
         return;
     }
+    let mut round: u32 = 0;
     loop {
         let data = ask(&world, &feed).await;
+        let mut here = match &data {
+            Data::Nodes(Ok(nodes)) => Some(nodes.machine.clone()),
+            _ => None,
+        };
         if sender.send((page, data)).is_err() {
             return;
         }
@@ -79,6 +86,17 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
         if sessions && sender.send((page, Data::Sessions(crate::sessions::status().await))).is_err() {
             return;
         }
+        // And this computer's agents, at first and then once a minute: asking
+        // reads every login's usage from its agent's own servers.
+        if round.is_multiple_of(AGENTS_EVERY)
+            && let Some(machine) = here.take()
+        {
+            let agents = here_agents(&world, machine).await;
+            if sender.send((page, Data::Agents(agents))).is_err() {
+                return;
+            }
+        }
+        round += 1;
         // And who came into this computer's accounts.
         if matches!(feed, Feed::Nodes)
             && let Ok(accounts) = world.accounts().await
@@ -90,6 +108,19 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
         }
         tokio::time::sleep(EVERY).await;
     }
+}
+
+/// This computer's agents, as its node answers for it.
+async fn here_agents(world: &World, machine: MachineName) -> Result<fastctx_types::agents::AgentsReply, String> {
+    let agents = world.agents(Some(machine.clone())).await.map_err(|error| error.to_string())?;
+    agents
+        .machines
+        .into_iter()
+        .find_map(|answer| match answer {
+            fastctx_types::agents::MachineAgents::Answered { reply } if reply.machine == machine => Some(reply),
+            _ => None,
+        })
+        .ok_or_else(|| format!("{machine} did not answer for its agents"))
 }
 
 async fn ask(world: &World, feed: &Feed) -> Data {
@@ -198,6 +229,17 @@ pub fn run(world: World, sender: Sender, page: u64, job: Job) {
                 Err(Refused::Failed(why)) => Err(why),
             },
             Job::Unapply => crate::sessions::unapply().await.map(Done::Unapplied),
+            Job::ApplyHome { host, home, into, raise, machine } => {
+                let result = match crate::sessions::change_at(*host, home.clone(), *into, *raise).await {
+                    Ok(report) if *into => Ok(Done::Applied(report)),
+                    Ok(report) => Ok(Done::Unapplied(report)),
+                    Err(Refused::OutputLimit { current, requested }) => Ok(Done::NeedsRaise { current, requested }),
+                    Err(Refused::Failed(why)) => Err(why),
+                };
+                // The login's line says at once how it stands now.
+                let _ = sender.send((page, Data::Agents(here_agents(&world, machine.clone()).await)));
+                result
+            }
             _ => work(&world, job.clone()).await.map_err(|error| error.to_string()),
         };
         let _ = sender.send((page, Data::Done { job, result }));
@@ -251,6 +293,8 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
             world.account(Some(hub), account, AccountChange::Seen { name }).await?;
             Done::Changed
         }
-        Job::Apply { .. } | Job::Unapply => unreachable!("done on this machine, not asked of the World"),
+        Job::Apply { .. } | Job::Unapply | Job::ApplyHome { .. } => {
+            unreachable!("done on this machine, not asked of the World")
+        }
     })
 }

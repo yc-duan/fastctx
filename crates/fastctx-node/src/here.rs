@@ -375,7 +375,7 @@ pub(crate) async fn set(node: &Arc<Node>, resident: &ResidentId, works_on: Optio
         let (spec, _) =
             crate::colleagues::thread_spec(node, resident, &about.origin, town.as_ref(), &about.acting, works_on.as_ref())
                 .await?;
-        node.codex.adopt(thread, spec);
+        node.codex.of(&about)?.adopt(thread, spec);
     }
     node.tools_changed(Some(resident));
     Ok(())

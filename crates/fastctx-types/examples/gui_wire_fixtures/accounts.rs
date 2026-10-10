@@ -118,6 +118,8 @@ pub fn fixtures() -> Fixtures {
                 account: Some(HubAccount { hub: "w-0123456789abcdef".parse().unwrap(), account: account() }),
                 works_on: Some("lab.home".parse::<Written>().unwrap()),
                 colleagues: Some("gpu".parse::<Written>().unwrap()),
+                home: Some("C:/Users/ada/.claude-work".into()),
+                colleagues_home: Some("/home/ada/.codex-gpu".into()),
             },
         ],
     }

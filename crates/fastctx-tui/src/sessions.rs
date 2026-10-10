@@ -3,7 +3,7 @@
 //! These read and write this machine's files, not the World: no node is
 //! asked.
 
-pub use fastctx_install::apply::{Report, Standing, Status};
+pub use fastctx_install::apply::{Host, Report, Standing, Status};
 
 use fastctx_install::apply::{self, Hosts, Places};
 use fastctx_install::codex::Approval;
@@ -24,6 +24,24 @@ pub async fn status() -> Result<Status, String> {
     blocking(|| {
         let places = Places::here().map_err(|error| error.to_string())?;
         apply::status_checked(&places).map_err(|error| error.to_string())
+    })
+    .await
+}
+
+/// Applies or withdraws one home; directory selection is independent of PATH.
+pub async fn change_at(host: Host, home: std::path::PathBuf, into: bool, raise: bool) -> Result<Report, Refused> {
+    blocking(move || {
+        let places = Places::here().map_err(|error| Refused::Failed(error.to_string()))?;
+        let places = places.at_home(host, &home).map_err(|error| Refused::Failed(error.to_string()))?;
+        let hosts = Hosts { codex: host == Host::Codex, claude: host == Host::Claude };
+        let approval = if raise { Approval::RaiseOutputLimit } else { Approval::Require };
+        let result = if into { apply::apply(&places, hosts, approval) } else { apply::unapply(&places, hosts) };
+        result.map_err(|error| match error {
+            apply::Error::Edit(fastctx_install::Error::TokenLimitApproval { current, requested, .. }) => {
+                Refused::OutputLimit { current, requested }
+            }
+            error => Refused::Failed(error.to_string()),
+        })
     })
     .await
 }

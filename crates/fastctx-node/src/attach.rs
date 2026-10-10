@@ -29,8 +29,11 @@ pub async fn command(node: &Arc<Node>, resident: &ResidentId) -> Result<HostComm
             about.host.client
         )));
     }
-    let session =
-        about.session.ok_or_else(|| Failure::new(format!("{resident}'s session has not started on its host yet")))?;
+    let session = about
+        .session
+        .clone()
+        .ok_or_else(|| Failure::new(format!("{resident}'s session has not started on its host yet")))?;
+    crate::homes::available(node, &about)?;
     match about.host.agent.as_str() {
         // A background session is attached to by the short id `claude --bg`
         // printed, which is how Claude Code itself names it to the user.
@@ -39,12 +42,19 @@ pub async fn command(node: &Arc<Node>, resident: &ResidentId) -> Result<HostComm
             let program = background::find(path.as_ref())
                 .ok_or_else(|| Failure::new(format!("Claude Code is not installed on {here}: no claude command")))?;
             let short = session.get(..8).unwrap_or(&session).to_string();
-            Ok(HostCommand { program, args: vec!["attach".to_string(), short], env: Vec::new() })
+            // Each home has its own supervisor, which alone knows its
+            // sessions.
+            let environment = crate::claude::environment()?;
+            let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
+            let home = about.home.clone().unwrap_or_else(|| crate::homes::claude_default(&environment, &user_home));
+            let env = vec![("CLAUDE_CONFIG_DIR".to_string(), home.to_string_lossy().into_owned())];
+            Ok(HostCommand { program, args: vec!["attach".to_string(), short], env })
         }
         // The official Codex joins the World's own app-server on its socket,
         // with the thread loaded under the World's settings first.
         "codex" => {
-            let (program, address, codex_home) = node.codex.attachable(&session).await.map_err(Failure::new)?;
+            let codex = node.codex.of(&about)?;
+            let (program, address, codex_home) = codex.attachable(&session).await.map_err(Failure::new)?;
             Ok(HostCommand {
                 program,
                 args: vec!["--remote".to_string(), address, "resume".to_string(), session],

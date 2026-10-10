@@ -107,6 +107,7 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
                 model: first.model_name(),
                 acting: Default::default(),
                 works_on: None,
+                home: None,
             };
             node.residents.create(&node.world, about, None, crate::residents::idle(at))?;
             id

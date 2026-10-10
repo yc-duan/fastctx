@@ -257,6 +257,17 @@ export interface MachinesWords {
   unattendedNo: string;
   allow: string;
   withdraw: string;
+  /** A login of an agent the World did not find, added by its directory;
+   *  one it found, no longer listed. */
+  addHome: string;
+  addHomeWhere(agent: "codex" | "claude"): string;
+  addHomeGo: string;
+  cancel: string;
+  homeAdded(dir: string): string;
+  hideHome: string;
+  hideHomeWhat: string;
+  homeHidden(name: string): string;
+  homeNotChanged(why: string): string;
   grant: string;
   relays: string;
   remove: string;
@@ -303,7 +314,7 @@ export const zhMachines: MachinesWords = {
   nobody: "此刻没有智能体",
   jobs: (n) => `${n} 个作业在跑`,
   home: "家目录",
-  hosts: "上面的两家智能体",
+  hosts: "上面的智能体",
   asking: "正在问它上面的智能体…",
   notAsked: (why) => `问不到它上面的智能体：${why}`,
   notInstalled: "没装",
@@ -322,6 +333,16 @@ export const zhMachines: MachinesWords = {
   unattendedNo: "还没许可它不经审批干活，世界请不来它",
   allow: "许可…",
   withdraw: "撤回",
+  addHome: "添加一个登录…",
+  addHomeWhere: (agent) =>
+    agent === "codex" ? "这台机器上的目录，就是 CODEX_HOME 指的那个" : "这台机器上的目录，就是 CLAUDE_CONFIG_DIR 指的那个",
+  addHomeGo: "添加",
+  cancel: "算了",
+  homeAdded: (dir) => `加上了 ${dir}`,
+  hideHome: "不再列出",
+  hideHomeWhat: "世界不再列出、也不再用这个登录；在「添加一个登录」里写回它的目录，它就回来",
+  homeHidden: (name) => `不再列出 ${name}；在「添加一个登录」里写回它的目录，它就回来`,
+  homeNotChanged: (why) => `没改成：${why}`,
   grant: "授权…",
   relays: "转接站…",
   remove: "移除…",
@@ -385,6 +406,16 @@ export const enMachines: MachinesWords = {
   unattendedNo: "not yet allowed to work without asking; the World cannot bring it in",
   allow: "Allow…",
   withdraw: "Withdraw",
+  addHome: "Add a login…",
+  addHomeWhere: (agent) =>
+    agent === "codex" ? "A directory on this machine, the one CODEX_HOME names" : "A directory on this machine, the one CLAUDE_CONFIG_DIR names",
+  addHomeGo: "Add",
+  cancel: "Cancel",
+  homeAdded: (dir) => `Added ${dir}`,
+  hideHome: "Stop listing",
+  hideHomeWhat: "The World no longer lists or uses this login; write its directory under Add a login and it comes back",
+  homeHidden: (name) => `No longer listing ${name}; write its directory under Add a login and it comes back`,
+  homeNotChanged: (why) => `Not changed: ${why}`,
   grant: "Lend…",
   relays: "Relays…",
   remove: "Remove…",

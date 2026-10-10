@@ -1,9 +1,10 @@
 // Beginning a conversation (`world-gui.md`, 界面的结构): the machine it lives
 // on, the account it works for where more than one may open it there, which
-// agent, which model and how hard it thinks, which project, the machine it
-// works on (the one it lives on unless another is chosen, `world-run.md`,
-// 这里), whether it may ask for colleagues and where they would live, and the
-// first words. A sheet over the page, opened by the button in the sidebar or
+// agent, and which of the agent's logins there when it has several, which
+// model and how hard it thinks, which project, the machine it works on (the
+// one it lives on unless another is chosen, `world-run.md`, 这里), whether it
+// may ask for colleagues, where they would live and as which Codex login
+// there, and the first words. A sheet over the page, opened by the button in the sidebar or
 // Ctrl+N; on a phone it rises from the foot of the screen. Only machines
 // online now are offered to live on, only projects of the account that span
 // the machine chosen, only machines the account may work on or use agents
@@ -24,6 +25,8 @@ import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
 import type { HubAccount, Login } from "../world/accounts";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
+import { accountOf, homeChoice, homeLabel, homesOf, installed, loggedOut, versionOf, type HomeWords } from "./agent-homes";
+import type { ConsentHome } from "./claude-consent";
 import type { Attachment, UploadTarget } from "../world/attachments";
 import type { WorldNow } from "../world/bridge";
 import type { Address } from "../world/events";
@@ -47,18 +50,26 @@ export interface Begun {
   worksOn: string | null;
   /** Where its colleagues live; without it, it asks for none. */
   colleagues: string | null;
+  /** The agent's login on the machine it lives on, as its home's
+   *  directory; null for the default one. */
+  home: string | null;
+  /** The Codex login its colleagues use where they live; null for the
+   *  default one there. */
+  colleaguesHome: string | null;
 }
 
 export interface NewTalkOptions {
   store: Store;
   words: NewTalkWords;
+  homeWords: HomeWords;
   /** What the machine's own programs say of the agents on it. */
   agents(machine: string): Promise<WorldAgents>;
   begin(begun: Begun): Promise<Address>;
   opened(address: Address): void;
-  /** Asks the user to let Claude work without asking on a machine, where
-   *  it has not yet; true once Claude Code there records it. */
-  allowClaude?(machine: string, go: string): Promise<boolean>;
+  /** Asks the user to let Claude work without asking in one of its logins
+   *  on a machine, where it has not yet; true once Claude Code there
+   *  records it. */
+  allowClaude?(machine: string, go: string, home: ConsentHome): Promise<boolean>;
   /** Attaching files to the first words, where the World can carry them. */
   attach?: {
     words: AttachWords;
@@ -101,11 +112,18 @@ function remember(key: string, value: string): void {
   }
 }
 
-/** The program an agent would start as on a machine: of the ones found, one
- *  that is there. */
-function factsFor(facts: AgentFacts[], agent: string): AgentFacts | null {
-  const all = facts.filter((f) => f.agent === agent);
-  return all.find((f) => f.program.kind === "known" && f.program.value?.exists) ?? all[0] ?? null;
+/** A login an agent can start in: its program is there and it is not
+ *  known to be logged out. */
+function usable(facts: AgentFacts): boolean {
+  return installed(facts) && !loggedOut(facts);
+}
+
+/** The login of `agent` written `home`, or where none is chosen or it
+ *  cannot start, the default one, else the first that can. */
+function pick(facts: AgentFacts[], agent: string, home: string | null | undefined): AgentFacts | null {
+  const homes = homesOf(facts, agent);
+  const chosen = home === undefined ? undefined : homes.find((f) => homeChoice(f) === home && usable(f));
+  return chosen ?? homes.find(usable) ?? homes[0] ?? null;
 }
 
 export class NewTalk {
@@ -127,6 +145,12 @@ export class NewTalk {
   /** It cannot work where it lives, so where it works must be chosen. */
   private placeNeeded = false;
   private colleagues: string | null = null;
+  /** The agent's login chosen, as its home's directory or null for the
+   *  default one; undefined until one is, when the one used last on that
+   *  machine is taken. */
+  private home: string | null | undefined = undefined;
+  /** The same for its colleagues' Codex where they live. */
+  private colleaguesHome: string | null | undefined = undefined;
   private asked = new Map<string, Asked>();
   private busy = false;
   private tray: AttachTray | null = null;
@@ -176,6 +200,8 @@ export class NewTalk {
           this.machine = value;
           this.worksOn = null;
           this.colleagues = null;
+          this.home = undefined;
+          this.colleaguesHome = undefined;
           this.ask(value);
           break;
         case "account":
@@ -188,9 +214,20 @@ export class NewTalk {
           break;
         case "colleagues":
           this.colleagues = value || null;
+          this.colleaguesHome = undefined;
+          if (button.dataset.machine) this.ask(button.dataset.machine);
+          break;
+        case "colleagues-home":
+          this.colleaguesHome = value || null;
           break;
         case "agent":
           this.agent = value;
+          this.home = undefined;
+          this.model = null;
+          this.effort = null;
+          break;
+        case "home":
+          this.home = value || null;
           this.model = null;
           this.effort = null;
           break;
@@ -327,6 +364,18 @@ export class NewTalk {
     return JSON.stringify([this.machine, this.account, this.agent, this.town]);
   }
 
+  /** What the chosen machine said of its agents, once it has. */
+  private known(machine: string | null = this.machine): AgentFacts[] | null {
+    const asked = machine ? this.asked.get(machine) : undefined;
+    return asked?.state === "known" ? asked.facts : null;
+  }
+
+  /** The login the chosen agent would start in on the chosen machine. */
+  private login(): AgentFacts | null {
+    const facts = this.known();
+    return facts ? pick(facts, this.agent, this.home) : null;
+  }
+
   /** Opens the sheet; `town` is the project to begin in, when opened from
    *  one. */
   open(town: string | null = null): void {
@@ -341,6 +390,8 @@ export class NewTalk {
     this.effort = null;
     this.worksOn = null;
     this.colleagues = null;
+    this.home = undefined;
+    this.colleaguesHome = undefined;
     this.note.hidden = true;
     // What is on each machine is asked again each time: a program may have
     // been installed, logged in or updated since.
@@ -376,7 +427,8 @@ export class NewTalk {
       })
       .catch((error: unknown) => this.asked.set(machine, { state: "unknown", why: String(error) }))
       .finally(() => {
-        if (this.dialog.open && this.machine === machine) this.draw();
+        // The machine to live on, or the one colleagues would live on.
+        if (this.dialog.open) this.draw();
       });
   }
 
@@ -400,7 +452,7 @@ export class NewTalk {
 
   /** The logins that may open a conversation on the machine chosen, and
    *  the one chosen of them: the only one, or the one picked. */
-  private logins(world: WorldNow | null): { all: Login[]; chosen: Login | null } {
+  private openers(world: WorldNow | null): { all: Login[]; chosen: Login | null } {
     const lives = this.lives(world);
     const all = lives ? openersOn(world, lives) : [];
     const key = (login: Login) => `${login.hub}/${login.account}`;
@@ -416,15 +468,12 @@ export class NewTalk {
     return known.map((agent) => {
       if (!asked || asked.state === "asking") return { ...agent, note: words.asking };
       if (asked.state === "unknown") return { ...agent, note: words.unsure };
-      const facts = factsFor(asked.facts, agent.value);
-      if (!facts) return { ...agent, note: words.unsure };
-      if (facts.program.kind === "known" && (facts.program.value === null || !facts.program.value.exists)) {
-        return { ...agent, note: words.notInstalled, disabled: true };
-      }
-      if (facts.login.kind === "known" && facts.login.value.kind === "logged_out") {
-        return { ...agent, note: words.loggedOut, disabled: true };
-      }
-      const version = facts.version.kind === "known" ? /\d+(?:\.\d+)+/.exec(facts.version.value)?.[0] : undefined;
+      const homes = homesOf(asked.facts, agent.value);
+      if (!homes.length) return { ...agent, note: words.unsure };
+      if (!homes.some(installed)) return { ...agent, note: words.notInstalled, disabled: true };
+      if (!homes.some(usable)) return { ...agent, note: words.loggedOut, disabled: true };
+      const facts = pick(asked.facts, agent.value, agent.value === this.agent ? this.home : undefined)!;
+      const version = versionOf(facts) ?? undefined;
       if (facts.unattended?.kind === "known" && !facts.unattended.value) {
         return { ...agent, note: version ? `${version} · ${words.needsConsent}` : words.needsConsent };
       }
@@ -432,11 +481,28 @@ export class NewTalk {
     });
   }
 
-  /** The models the chosen agent's program lists on the chosen machine. */
+  /** The logins of `agent` on `machine` as choices, when it has more than
+   *  one: who is logged in to each and on what plan. */
+  private logins(machine: string | null, agent: string): Choice[] {
+    const { words, homeWords } = this.options;
+    const facts = this.known(machine);
+    const homes = facts ? homesOf(facts, agent).filter(installed) : [];
+    if (homes.length < 2) return [];
+    return homes.map((home) => {
+      const plan = accountOf(home).plan;
+      const consent = agent === "claude" && home.unattended?.kind === "known" && !home.unattended.value ? words.needsConsent : null;
+      return {
+        value: homeChoice(home) ?? "",
+        label: homeLabel(home, homeWords),
+        note: loggedOut(home) ? words.loggedOut : [plan, consent].filter(Boolean).join(" · ") || undefined,
+        disabled: loggedOut(home),
+      };
+    });
+  }
+
+  /** The models the chosen agent's program lists in the chosen login. */
   private models(): AgentModel[] {
-    const asked = this.machine ? this.asked.get(this.machine) : undefined;
-    if (asked?.state !== "known") return [];
-    const facts = factsFor(asked.facts, this.agent);
+    const facts = this.login();
     return facts?.models.kind === "known" ? facts.models.value : [];
   }
 
@@ -445,7 +511,7 @@ export class NewTalk {
     const world = store.world.peek();
     const machines = this.machines(world);
     const lives = this.lives(world);
-    const logins = this.logins(world);
+    const logins = this.openers(world);
     const login = logins.chosen;
     // The projects of the account it works for that span where it lives.
     const group = login ? groupsOf(world).find((group) => group.login.hub === login.hub && group.login.account === login.account) : null;
@@ -465,24 +531,37 @@ export class NewTalk {
     if (this.worksOn && !places.some((choice) => choice.value === this.worksOn)) this.worksOn = null;
     // An account lent only the agents where it lives has it work elsewhere.
     this.placeNeeded = !!lives && !places.some((choice) => choice.value === "");
-    const homes: Choice[] = lives
+    const colleagueMachines = lives ? colleagueHomes(world, lives, login) : [];
+    const homes: (Choice & { machine?: string })[] = lives
       ? [
           { value: "", label: words.noColleagues },
-          ...colleagueHomes(world, lives, login).map((machine) => ({
+          ...colleagueMachines.map((machine) => ({
             value: machine.written,
             label: machine.written,
+            machine: machine.name,
             note: machine.here ? words.here : machine.online === false ? words.offline : undefined,
           })),
         ]
       : [];
     if (this.colleagues && !homes.some((choice) => choice.value === this.colleagues)) this.colleagues = null;
+    // Where colleagues live, the Codex login they use there, when there
+    // are several.
+    const colleaguesOn = colleagueMachines.find((machine) => machine.written === this.colleagues)?.name ?? null;
+    if (colleaguesOn) this.ask(colleaguesOn);
+    const colleagueLogins = colleaguesOn ? this.logins(colleaguesOn, "codex") : [];
+    this.colleaguesHome = settle(colleagueLogins, this.colleaguesHome, `home:${colleaguesOn}:codex`);
     if (this.town && !towns.some((choice) => choice.value === this.town)) this.town = null;
     const agents = this.agents();
     // An agent that cannot start here gives way to one that can.
     if (agents.find((choice) => choice.value === this.agent)?.disabled) {
       const usable = agents.find((choice) => !choice.disabled);
-      if (usable) this.agent = usable.value;
+      if (usable) {
+        this.agent = usable.value;
+        this.home = undefined;
+      }
     }
+    const agentLogins = this.logins(this.machine, this.agent);
+    this.home = settle(agentLogins, this.home, `home:${this.machine}:${this.agent}`);
     const models = this.models();
     const model =
       models.find((m) => m.model === this.model) ??
@@ -495,7 +574,7 @@ export class NewTalk {
     const effort =
       [this.effort, remembered(`effort:${this.agent}`), model?.default_reasoning_effort].find((e) => e && efforts.includes(e)) ?? null;
     this.effort = effort;
-    const row = (kind: string, label: string, choices: Choice[], chosen: string | null, none = words.noMachine) =>
+    const row = (kind: string, label: string, choices: (Choice & { machine?: string })[], chosen: string | null, none = words.noMachine) =>
       `<div class="choice-row" role="radiogroup" aria-label="${escape(label)}">
         <span class="choice-label">${escape(label)}</span>
         <div class="choice-options">${
@@ -503,7 +582,7 @@ export class NewTalk {
             ? choices
                 .map(
                   (choice) =>
-                    `<button type="button" class="choice${choice.value === (chosen ?? "") ? " chosen" : ""}" role="radio" aria-checked="${choice.value === (chosen ?? "")}" data-choice="${kind}" data-value="${escape(choice.value)}"${choice.disabled ? " disabled" : ""}>${escape(choice.label)}${choice.note ? `<span class="choice-note">${escape(choice.note)}</span>` : ""}</button>`,
+                    `<button type="button" class="choice${choice.value === (chosen ?? "") ? " chosen" : ""}" role="radio" aria-checked="${choice.value === (chosen ?? "")}" data-choice="${kind}" data-value="${escape(choice.value)}"${choice.machine ? ` data-machine="${escape(choice.machine)}"` : ""}${choice.disabled ? " disabled" : ""}>${escape(choice.label)}${choice.note ? `<span class="choice-note">${escape(choice.note)}</span>` : ""}</button>`,
                 )
                 .join("")
             : `<span class="choice-none">${escape(none)}</span>`
@@ -520,6 +599,7 @@ export class NewTalk {
           )
         : "",
       row("agent", words.agent, agents, this.agent),
+      agentLogins.length ? row("home", words.login, agentLogins, this.home ?? "") : "",
       models.length
         ? row(
             "model",
@@ -533,6 +613,7 @@ export class NewTalk {
       places.length > 1 || this.placeNeeded ? row("works", words.worksOn, places, this.worksOn ?? "") : "",
       this.placeNeeded && lives ? `<p class="choice-said">${escape(words.lentOnly(lives.written))}</p>` : "",
       homes.length > 1 ? row("colleagues", words.colleagues, homes, this.colleagues ?? "") : "",
+      colleagueLogins.length ? row("colleagues-home", words.colleaguesLogin, colleagueLogins, this.colleaguesHome ?? "") : "",
       this.colleagues ? `<p class="choice-said">${escape(words.colleaguesWhat(this.colleagues))}</p>` : "",
     ].join("");
     // What was sent went for another machine, agent or project: it is sent
@@ -554,10 +635,11 @@ export class NewTalk {
    *  without asking there: asked now, when it is needed. Not knowing is
    *  not a no; Claude Code then says for itself. */
   private async allowed(machine: string): Promise<boolean> {
-    const asked = this.asked.get(machine);
-    const facts = asked?.state === "known" ? factsFor(asked.facts, "claude") : null;
+    const facts = this.login();
     if (facts?.unattended?.kind !== "known" || facts.unattended.value) return true;
-    if (!this.options.allowClaude || !(await this.options.allowClaude(machine, this.options.words.allowAndStart))) return false;
+    const several = this.logins(machine, "claude").length > 0;
+    const home: ConsentHome = { dir: homeChoice(facts), label: several ? homeLabel(facts, this.options.homeWords) : null };
+    if (!this.options.allowClaude || !(await this.options.allowClaude(machine, this.options.words.allowAndStart, home))) return false;
     facts.unattended = { kind: "known", value: true };
     this.draw();
     return true;
@@ -571,7 +653,10 @@ export class NewTalk {
     this.drawStart();
     this.note.hidden = true;
     remember("agent", this.agent);
-    const login = this.logins(this.options.store.world.peek()).chosen;
+    const home = this.home === undefined ? null : this.home;
+    const colleaguesHome = this.colleagues && this.colleaguesHome !== undefined ? this.colleaguesHome : null;
+    if (this.home !== undefined) remember(`home:${this.machine}:${this.agent}`, this.home ?? "");
+    const login = this.openers(this.options.store.world.peek()).chosen;
     if (login) remember("account", `${login.hub}/${login.account}`);
     if (this.model) remember(`model:${this.agent}`, this.model);
     if (this.effort) remember(`effort:${this.agent}`, this.effort);
@@ -597,6 +682,8 @@ export class NewTalk {
         account: login ? { hub: login.hub, account: login.account } : null,
         worksOn: this.worksOn,
         colleagues: this.colleagues,
+        home,
+        colleaguesHome,
       });
       this.input.value = "";
       this.tray?.take();
@@ -614,6 +701,21 @@ export class NewTalk {
       this.drawStart();
     }
   }
+}
+
+/** Which of several logins stays chosen: the one chosen, while it can
+ *  start; else the one used last there, else the default one, else the
+ *  first that can. Undefined where there is no choice to make. */
+function settle(choices: Choice[], chosen: string | null | undefined, key: string): string | null | undefined {
+  if (!choices.length) return undefined;
+  const can = (value: string | null | undefined) =>
+    value !== undefined && choices.some((choice) => choice.value === (value ?? "") && !choice.disabled);
+  if (can(chosen)) return chosen;
+  const kept = remembered(key);
+  if (kept !== null && can(kept || null)) return kept || null;
+  if (can(null)) return null;
+  const first = choices.find((choice) => !choice.disabled);
+  return first ? first.value || null : undefined;
 }
 
 /** A file attached to the first words did not reach the machine; the tray

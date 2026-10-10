@@ -64,7 +64,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     } else {
         Offers::default()
     };
-    if about.session.is_some() && super::command(node).is_ok() {
+    if about.session.is_some() && super::command(node, about.home.as_deref()).is_ok() {
         offers.controls.push(ControlKind::Fork);
     }
     if node.claude.bridge.requests.lock().expect("never poisoned").values().any(|request| &request.resident == resident)

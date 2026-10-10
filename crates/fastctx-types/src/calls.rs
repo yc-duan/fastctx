@@ -100,6 +100,9 @@ pub enum Call {
         resident: ResidentId,
         machine: Option<MachineName>,
         lives_on: Option<crate::access::Written>,
+        /// The Codex home there they use, when not the default one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<std::path::PathBuf>,
     },
     /// The user sets where a resident on any machine works: another
     /// machine, or the one it lives on with `None` (`world-run.md`, 这里).
@@ -156,6 +159,15 @@ pub enum Call {
     ClaudeConsent {
         machine: MachineName,
         accept: bool,
+        /// The Claude Code home there it is for, when not the default one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<std::path::PathBuf>,
+    },
+    /// The user adds an agent's home on `machine`, or hides one the World
+    /// found there or shows it again.
+    Homes {
+        machine: MachineName,
+        change: crate::agents::HomeChange,
     },
     /// One resident or job in detail, by its id, from every machine that
     /// has it (`fastctx w <id>`).

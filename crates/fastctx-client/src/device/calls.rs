@@ -67,7 +67,8 @@ impl Device {
                     machine.ok_or_else(|| failed("choose a machine for file search; a device has no local files"))?;
                 (machine, RemoteCall::FindFiles { request }, None)
             }
-            Call::ClaudeConsent { machine, accept } => (machine, RemoteCall::ClaudeConsent { accept }, None),
+            Call::ClaudeConsent { machine, accept, home } => (machine, RemoteCall::ClaudeConsent { accept, home }, None),
+            Call::Homes { machine, change } => (machine, RemoteCall::Homes { change }, None),
             Call::Talk { to, machine, text, attachments } => {
                 let machine = self.find(&to, machine).await?;
                 (machine, RemoteCall::Talk { to: to.clone(), text, attachments }, Some(to))
@@ -76,13 +77,23 @@ impl Device {
                 let machine =
                     node.ok_or_else(|| failed("choose a machine to open a conversation; no agents live on a device"))?;
                 chosen = choices.account;
-                let (works_on, colleagues) = (choices.works_on, choices.colleagues);
-                let open = RemoteCall::Open { agent, town, text, model, reasoning_effort, attachments, works_on, colleagues };
+                let open = RemoteCall::Open {
+                    agent,
+                    town,
+                    text,
+                    model,
+                    reasoning_effort,
+                    attachments,
+                    works_on: choices.works_on,
+                    colleagues: choices.colleagues,
+                    home: choices.home,
+                    colleagues_home: choices.colleagues_home,
+                };
                 (machine, open, None)
             }
-            Call::Colleagues { resident, machine, lives_on } => {
+            Call::Colleagues { resident, machine, lives_on, home } => {
                 let machine = self.find(&resident, machine).await?;
-                (machine, RemoteCall::Colleagues { resident: resident.clone(), lives_on }, Some(resident))
+                (machine, RemoteCall::Colleagues { resident: resident.clone(), lives_on, home }, Some(resident))
             }
             Call::WorksOn { resident, machine, works_on } => {
                 let machine = self.find(&resident, machine).await?;
@@ -145,6 +156,7 @@ impl Device {
         let reply = match (remote, answer) {
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
+            (RemoteCall::Homes { .. }, RemoteReply::Set) => Reply::Done,
             (RemoteCall::ClaudeConsent { .. }, RemoteReply::ClaudeConsent { accepted, changed }) => {
                 Reply::ClaudeConsent { machine: machine.clone(), accepted, changed }
             }

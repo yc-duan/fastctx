@@ -466,7 +466,7 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::StopJob { job, by } => crate::stop::here_(&node, &job, &format!("{by} on {from}, for {}", caller.account))
                     .await
                     .map(|record| RemoteReply::JobStopped { record: record.map(Box::new) }),
-                RemoteCall::Ask { asker: resident, town, label, prompt, accounts } => {
+                RemoteCall::Ask { asker: resident, town, label, prompt, accounts, home } => {
                     // The colleague works for each of the asker's accounts
                     // that may use the agents here, as this machine sees it.
                     let view = link.view();
@@ -479,7 +479,7 @@ impl fastctx_net::link::Node for Handler {
                     }
                     let acting = Acting::Accounts { accounts: working };
                     let asker = Address { machine: from, resident };
-                    let colleague = crate::colleagues::ask_here(&node, asker, acting, town, label, prompt).await?;
+                    let colleague = crate::colleagues::ask_here(&node, asker, acting, town, label, prompt, home).await?;
                     Ok(RemoteReply::Asked { colleague })
                 }
                 RemoteCall::Talk { to, text, attachments } => crate::talk::talk_here(&node, &from, &to, text, attachments)
@@ -493,11 +493,12 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Agents => {
                     crate::agents::here(&node).await.map(|reply| RemoteReply::Agents(crate::admission::seen::agents(reply)))
                 }
-                RemoteCall::ClaudeConsent { accept } => {
-                    crate::consent::here(&node, accept, format!("the account {} from {from}", caller.account))
+                RemoteCall::ClaudeConsent { accept, home } => {
+                    crate::consent::here(&node, accept, home, format!("the account {} from {from}", caller.account))
                         .await
                         .map(|(accepted, changed)| RemoteReply::ClaudeConsent { accepted, changed })
                 }
+                RemoteCall::Homes { change } => crate::homes::change(&node, change).map(|()| RemoteReply::Set),
                 RemoteCall::FindFiles { request } => {
                     if let fastctx_types::file_search::FileSearchRequest::Open { scope } = request {
                         let stream =
@@ -511,16 +512,28 @@ impl fastctx_net::link::Node for Handler {
                     let stream = stream.ok_or_else(|| Failure::new("a file read requires a data connection"))?;
                     crate::file_read::serve(&node, &link, request, read, stream).await
                 }
-                RemoteCall::Open { agent, town, text, model, reasoning_effort, attachments, works_on, colleagues } => {
+                RemoteCall::Open {
+                    agent,
+                    town,
+                    text,
+                    model,
+                    reasoning_effort,
+                    attachments,
+                    works_on,
+                    colleagues,
+                    home,
+                    colleagues_home,
+                } => {
                     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
-                    let choices = fastctx_types::agents::Choices { account: None, works_on, colleagues };
+                    let choices =
+                        fastctx_types::agents::Choices { account: None, works_on, colleagues, home, colleagues_home };
                     let (resident, landed) =
                         crate::talk::open_here(&node, &from, acting, agent, town, text, options, attachments, choices)
                             .await?;
                     Ok(RemoteReply::Opened { resident, landed })
                 }
-                RemoteCall::Colleagues { resident, lives_on } => {
-                    crate::colleagues::setting::set(&node, &resident, lives_on).map(|()| RemoteReply::Set)
+                RemoteCall::Colleagues { resident, lives_on, home } => {
+                    crate::colleagues::setting::set(&node, &resident, lives_on, home).map(|()| RemoteReply::Set)
                 }
                 RemoteCall::WorksOn { resident, works_on } => {
                     crate::here::set(&node, &resident, works_on).await.map(|()| RemoteReply::Set)

@@ -12,6 +12,7 @@
 //! explicitly hidden UI items do not become visible session activities.
 //! `environments: []` disables the thread's own shell and file editing.
 
+mod account;
 mod agents;
 mod answers;
 mod cache;
@@ -230,6 +231,9 @@ const HELPER_BUSY: &str = "Computer Use helper already has an active request";
 
 pub struct CodexHost {
     codex_home: PathBuf,
+    /// The home whose desktop app's program this host runs, when its own
+    /// records none (`launch::discover_for`).
+    program_home: Option<PathBuf>,
     workdir: PathBuf,
     env: Vec<(OsString, OsString)>,
     log: Log,
@@ -326,6 +330,7 @@ impl CodexHost {
     /// first call that needs it.
     pub fn new(
         codex_home: PathBuf,
+        program_home: Option<PathBuf>,
         workdir: PathBuf,
         env: Vec<(OsString, OsString)>,
         log: Log,
@@ -335,6 +340,7 @@ impl CodexHost {
         let finished = cache::Finished::new(&workdir);
         let host = Arc::new(Self {
             codex_home,
+            program_home,
             workdir,
             env,
             log,
@@ -594,6 +600,11 @@ impl CodexHost {
 
     /// No turn runs and every reported end has been retained or applied by
     /// the node. A host becoming idle alone does not make handoff safe.
+    /// Whether this host started or adopted `thread`.
+    pub fn holds(&self, thread: &str) -> bool {
+        self.lock().threads.keys().any(|held| held == thread)
+    }
+
     pub fn settled(&self) -> bool {
         self.lock().threads.values().all(|entry| entry.turn.is_none() && entry.unsettled.is_empty())
     }
@@ -695,7 +706,7 @@ impl CodexHost {
             }
         }
         let path = self.env.iter().find(|(name, _)| name.eq_ignore_ascii_case("PATH")).map(|(_, value)| value);
-        let launch = launch::resolve(&self.codex_home, path)?;
+        let launch = launch::resolve_for(&self.codex_home, self.program_home.as_deref(), path)?;
         let replaced = {
             let _generation = self.generation.lock().expect("never poisoned");
             let mut state = self.lock();

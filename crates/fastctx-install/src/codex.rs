@@ -1,6 +1,7 @@
 //! Pure installation planning for the caller's selected Codex profile.
 
 use std::ops::Range;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use toml_edit::Item;
@@ -272,6 +273,10 @@ pub fn unapply_legacy(config: File<'_>, agents: File<'_>, old: &legacy::Receipt)
 }
 
 impl Receipt {
+    pub(crate) fn config_path(&self) -> &Path {
+        Path::new(&self.config_path)
+    }
+
     fn check(&self, path: &str) -> Result<(), Error> {
         check_path(path, &self.config_path)?;
         if self.version != 1 {

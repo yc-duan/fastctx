@@ -41,6 +41,18 @@ impl CodexHost {
                     Err(error) => Fact::failed(error),
                 };
                 facts.timings.push(ProbeTime { step: "model/list".into(), elapsed_ms: elapsed(start) });
+                let start = Instant::now();
+                facts.account = super::account::account(&server).await;
+                facts.timings.push(ProbeTime { step: "account/read".into(), elapsed_ms: elapsed(start) });
+                facts.limits = match &facts.account {
+                    Fact::Unavailable { reason } => Fact::unavailable(reason.clone()),
+                    _ => {
+                        let start = Instant::now();
+                        let limits = super::account::limits(&server).await;
+                        facts.timings.push(ProbeTime { step: "account/rateLimits/read".into(), elapsed_ms: elapsed(start) });
+                        limits
+                    }
+                };
             }
             Err(error) => {
                 facts.launch = Fact::failed(error);
@@ -53,7 +65,7 @@ impl CodexHost {
     fn command_facts(&self) -> AgentFacts {
         let start = Instant::now();
         let path = self.env.iter().find(|(name, _)| name.eq_ignore_ascii_case("PATH")).map(|(_, value)| value);
-        let program = match launch::discover(&self.codex_home, path) {
+        let program = match launch::discover_for(&self.codex_home, self.program_home.as_deref(), path) {
             Ok(Some(launch)) => match launch.binary.try_exists() {
                 Ok(exists) => Fact::known(Some(AgentProgram { path: launch.binary, source: launch.source, exists })),
                 Err(error) => Fact::failed(format!("checking {}: {error}", launch.binary.display())),
@@ -68,7 +80,7 @@ impl CodexHost {
                 crate::agents::version(&program.path, self.workdir.parent().expect("World directory"), &self.env)
             });
             facts.login = measured(&mut facts.timings, "login status", || {
-                crate::agents::login(&program.path, self.workdir.parent().expect("World directory"), &self.env, true)
+                crate::agents::login(&program.path, self.workdir.parent().expect("World directory"), &self.env)
             });
         }
         facts
@@ -78,6 +90,9 @@ impl CodexHost {
 fn empty(program: Fact<Option<AgentProgram>>) -> AgentFacts {
     AgentFacts {
         agent: "codex".parse().expect("agent name"),
+        home: None,
+        account: Fact::unavailable("no selected Codex program"),
+        limits: Fact::unavailable("no selected Codex program"),
         program,
         version: Fact::unavailable("no selected Codex program"),
         launch: Fact::unavailable("no selected Codex program"),

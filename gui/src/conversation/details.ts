@@ -1,8 +1,9 @@
 // What the World knows of the agent in a conversation, opened from the
-// conversation's head: who it is and where it lives and works, whom it
-// works for, how it came, what it is doing, whether it may ask for
-// colleagues and where they live, the colleagues it asked, what it started
-// that still runs, its latest actions, and what can be done to it. The same
+// conversation's head: who it is and where it lives and works, which login
+// of its agent it uses there, whom it works for, how it came, what it is
+// doing, whether it may ask for colleagues, where they live and as which
+// Codex login, the colleagues it asked, what it started that still runs, its
+// latest actions, and what can be done to it. The same
 // facts as `fastctx w <id>`, asked of the machine it lives on while the card
 // is open. Asking for colleagues is turned on here by the user, choosing
 // where they live; a colleague's own card has no such choice
@@ -62,12 +63,25 @@ export interface DetailsOptions {
   /** The machines, as written, it may work on, and setting it: a machine,
    *  or with null the one it lives on. None for a colleague. */
   worksOn?: { places(): string[]; set(worksOn: string | null): Promise<void> } | undefined;
+  /** The logins of an agent on a machine (named or as written), as that
+   *  machine says them: each home's directory, "" for the default one,
+   *  with who is logged in there. */
+  logins?: ((machine: string, agent: string) => Promise<Login[]>) | undefined;
+}
+
+export interface Login {
+  value: string;
+  label: string;
+  note?: string | undefined;
+  disabled?: boolean | undefined;
 }
 
 export interface Colleagues {
   /** The machines, as written, its colleagues may live on. */
   homes(): string[];
-  set(livesOn: string | null): Promise<void>;
+  /** Where they live, and the Codex login they use there: its home's
+   *  directory, or null for the default one. */
+  set(livesOn: string | null, home: string | null): Promise<void>;
 }
 
 type Managing = "sleep" | "wake" | "move" | "colleagues" | "works";
@@ -91,6 +105,9 @@ export class Details {
   private placing = false;
   private worksNote = "";
   private confirm: Confirm | null = null;
+  /** What each machine said of an agent's logins, by `machine/agent`,
+   *  asked once while the card is about it. */
+  private logins = new Map<string, Login[] | "asking">();
   private shown: { detail: ResidentDetail; colleagues: ResidentNow[]; now: Date } | null = null;
 
   constructor(private readonly options: DetailsOptions) {
@@ -194,20 +211,28 @@ export class Details {
             });
           return;
         }
-        case "colleagues-on": {
+        case "colleagues-on":
+        case "colleagues-login": {
           const colleagues = options.colleagues;
           if (!colleagues || !this.shown) return;
-          const home = button.dataset.home || null;
+          const detail = this.shown.detail;
+          const login = button.dataset.act === "colleagues-login";
+          const home = login ? (detail.colleagues ?? null) : button.dataset.home || null;
+          const codex = login ? button.dataset.login || null : null;
           this.choosing = false;
           this.managing = "colleagues";
           this.colleaguesNote = "";
           this.redraw();
           colleagues
-            .set(home)
+            .set(home, codex)
             .then(() => {
-              if (this.shown && home) this.shown.detail.colleagues = home;
-              else if (this.shown) delete this.shown.detail.colleagues;
-              this.colleaguesNote = home ? words.colleaguesOn(home) : words.colleaguesOff;
+              if (home) detail.colleagues = home;
+              else delete detail.colleagues;
+              if (codex) detail.colleagues_home = codex;
+              else delete detail.colleagues_home;
+              const label = codex ? this.logins.get(`${home}/codex`) : null;
+              const named = Array.isArray(label) ? label.find((one) => one.value === codex)?.label : null;
+              this.colleaguesNote = login ? words.colleaguesAs(named ?? codex ?? words.defaultLogin) : home ? words.colleaguesOn(home) : words.colleaguesOff;
             })
             .catch((error: unknown) => {
               this.colleaguesNote = words.failed(error instanceof Error ? error.message : String(error));
@@ -303,8 +328,28 @@ export class Details {
   }
 
   show(detail: ResidentDetail, colleagues: ResidentNow[], now: Date): void {
+    if (this.shown?.detail.resident.about.id !== detail.resident.about.id) this.logins.clear();
     this.shown = { detail, colleagues, now };
     redrawKeepingFocus(this.body, () => this.draw(detail, colleagues, now));
+  }
+
+  /** The logins of `agent` on `machine`, once its answer is in; asked the
+   *  first time, and the card drawn again when it answers. */
+  private loginsOn(machine: string, agent: string): Login[] | null {
+    const key = `${machine}/${agent}`;
+    const known = this.logins.get(key);
+    if (known === "asking") return null;
+    if (known) return known;
+    if (!this.options.logins) return null;
+    this.logins.set(key, "asking");
+    this.options.logins(machine, agent).then(
+      (logins) => {
+        this.logins.set(key, logins);
+        this.redraw();
+      },
+      () => this.logins.set(key, []),
+    );
+    return null;
   }
 
   private draw(detail: ResidentDetail, colleagues: ResidentNow[], now: Date): void {
@@ -328,10 +373,16 @@ export class Details {
         ? words.askedBy(this.options.someone(about.origin.asked_by), about.origin.label)
         : words.openedByYou;
     const acting = this.options.actingFor(r);
+    // Which login it uses, where it is not its machine's default one: who
+    // is logged in there, as that machine says, else the directory.
+    const login = about.home
+      ? (this.loginsOn(about.machine, about.host.agent)?.find((one) => one.value === about.home)?.label ?? dirOf(about.home))
+      : "";
     const facts: [string, string][] = [
       [words.state, state],
       [words.model, about.model ? about.model : ""],
       [words.machine, about.machine],
+      [words.login, login],
       [words.actingFor, acting.join(words.separator)],
       [words.host, `${agentName(about.host.agent)} ${about.host.version}${about.world_started ? ` · ${words.startedByWorld}` : ""}`],
       [words.origin, origin],
@@ -441,7 +492,19 @@ export class Details {
           home ? `<button type="button" class="choice" data-act="colleagues-on" data-home="">${escape(words.colleaguesNone)}</button>` : "",
         ].join("")}</div></div>`
       : "";
-    return `${said}${choices}${this.colleaguesNote ? `<p class="details-note">${escape(this.colleaguesNote)}</p>` : ""}`;
+    // Where Codex there has more than one login, which of them they use.
+    const logins = home ? (this.loginsOn(home, "codex") ?? []) : [];
+    const as = detail.colleagues_home ?? "";
+    const loginRow =
+      logins.length > 1
+        ? `<div class="details-move" role="group" aria-label="${escape(words.colleaguesLogin)}"><span class="details-faint">${escape(words.colleaguesLogin)}</span><div class="choice-options">${logins
+            .map(
+              (one) =>
+                `<button type="button" class="choice${one.value === as ? " chosen" : ""}" data-act="colleagues-login" data-login="${escape(one.value)}"${one.value === as ? ` disabled aria-current="true"` : one.disabled || doing ? " disabled" : ""}>${escape(one.label)}${one.note ? `<span class="choice-note">${escape(one.note)}</span>` : ""}</button>`,
+            )
+            .join("")}</div></div>`
+        : "";
+    return `${said}${choices}${loginRow}${this.colleaguesNote ? `<p class="details-note">${escape(this.colleaguesNote)}</p>` : ""}`;
   }
 
   /** Sleep or wake, move to a project, remove: what the World can do to
@@ -489,4 +552,5 @@ export class Details {
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
+const dirOf = (dir: string) => dir.split(/[\\/]+/).filter(Boolean).pop() ?? dir;
 const clock = (at: Date) => `${pad(at.getHours())}:${pad(at.getMinutes())}`;

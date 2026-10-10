@@ -162,20 +162,32 @@ pub(crate) async fn works_on(
 }
 
 /// Turns asking for colleagues on for a conversation, with where they
-/// live, or off.
+/// live and the Codex home they use there, or off.
 #[tauri::command]
 pub(crate) async fn colleagues(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
     lives_on: Option<String>,
+    home: Option<std::path::PathBuf>,
 ) -> Result<(), String> {
     let lives_on = lives_on
         .map(|text| text.parse::<fastctx_types::access::Written>().map_err(|error| error.to_string()))
         .transpose()?;
     shell
         .world()
-        .colleagues(crate::resident(resident_id)?, crate::machine(machine_name)?, lives_on)
+        .colleagues(crate::resident(resident_id)?, crate::machine(machine_name)?, lives_on, home)
         .await
         .map_err(|error| error.to_string())
+}
+
+/// Adds an agent's home on a machine, or hides one or shows it again.
+#[tauri::command]
+pub(crate) async fn agent_homes(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    change: fastctx_types::agents::HomeChange,
+) -> Result<(), String> {
+    let machine = machine_name.parse().map_err(|error| format!("{error}"))?;
+    shell.world().homes(machine, change).await.map_err(|error| error.to_string())
 }

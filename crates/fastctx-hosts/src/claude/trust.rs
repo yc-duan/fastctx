@@ -8,7 +8,6 @@ mod lease;
 mod state_file;
 
 use std::collections::BTreeMap;
-use std::env;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -43,9 +42,9 @@ pub enum TrustStatus {
 /// those writers from overwriting a successful update later. An error during
 /// publication verification or lock release can occur after trust was written;
 /// the error says so. Callers must handle launch-time trust rejection separately.
-pub fn ensure_trusted(directory: &Path) -> io::Result<TrustStatus> {
+pub fn ensure_trusted(directory: &Path, config_dir: Option<&std::ffi::OsStr>) -> io::Result<TrustStatus> {
     let key = directory_key(directory)?;
-    let paths = StatePaths::resolve()?;
+    let paths = StatePaths::resolve(config_dir)?;
     let before = state_file::read(&paths.file)?;
     if update(before.as_deref(), &key)?.is_none() {
         return Ok(TrustStatus::AlreadyTrusted);
@@ -89,14 +88,16 @@ struct StatePaths {
 }
 
 impl StatePaths {
-    fn resolve() -> io::Result<Self> {
+    /// Claude Code's state for the home `configured` names, the value of
+    /// `CLAUDE_CONFIG_DIR` the session starts with; `None` is unset.
+    fn resolve(configured: Option<&std::ffi::OsStr>) -> io::Result<Self> {
         #[cfg(windows)]
-        let home = env::var_os("USERPROFILE")
+        let home = std::env::var_os("USERPROFILE")
             .filter(|value| !value.is_empty())
             .map_or_else(fastctx_platform::user_home, |value| Ok(PathBuf::from(value)))?;
         #[cfg(not(windows))]
         let home = fastctx_platform::user_home()?;
-        let configured = env::var_os("CLAUDE_CONFIG_DIR");
+        let configured = configured.map(std::ffi::OsStr::to_os_string);
         let config = configured.clone().map(PathBuf::from).unwrap_or_else(|| home.join(".claude"));
         // Claude normalizes its config directory to NFC, but its modern global
         // filename uses the raw, nonempty override. An empty override differs

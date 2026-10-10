@@ -2,6 +2,7 @@
 //! the machine it is about. Only the user gives it, on one of the user's own
 //! devices (`world-projects.md`); the machine records who and when.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use fastctx_install::apply;
@@ -12,13 +13,18 @@ use fastctx_types::remote::{RemoteCall, RemoteReply};
 
 use crate::Node;
 
-/// What Claude Code on `machine` records once the word is given, and
-/// whether it changed.
-pub async fn call(node: &Arc<Node>, machine: MachineName, accept: bool) -> Result<(bool, bool), Failure> {
+/// What Claude Code on `machine`, in its home `home` or its default one,
+/// records once the word is given, and whether it changed.
+pub async fn call(
+    node: &Arc<Node>,
+    machine: MachineName,
+    accept: bool,
+    home: Option<PathBuf>,
+) -> Result<(bool, bool), Failure> {
     if machine == node.machine() {
-        return here(node, accept, format!("the user on {machine}")).await;
+        return here(node, accept, home, format!("the user on {machine}")).await;
     }
-    let call = RemoteCall::ClaudeConsent { accept };
+    let call = RemoteCall::ClaudeConsent { accept, home };
     match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|error| Failure::new(error.to_string()))??
     {
         RemoteReply::ClaudeConsent { accepted, changed } => Ok((accepted, changed)),
@@ -26,22 +32,30 @@ pub async fn call(node: &Arc<Node>, machine: MachineName, accept: bool) -> Resul
     }
 }
 
-/// Writes the word into this user's Claude Code settings here. `by` names
-/// whose device it came from, for the node's log.
-pub async fn here(node: &Arc<Node>, accept: bool, by: String) -> Result<(bool, bool), Failure> {
+/// Writes the word into the settings of this user's Claude Code home here
+/// written `home`, or of its default one. `by` names whose device it came
+/// from, for the node's log.
+pub async fn here(node: &Arc<Node>, accept: bool, home: Option<PathBuf>, by: String) -> Result<(bool, bool), Failure> {
     let local = node.clone();
-    let changed = tokio::task::spawn_blocking(move || {
+    let (changed, dir) = tokio::task::spawn_blocking(move || {
         let env = crate::claude::environment().map_err(|failure| failure.message)?;
-        let home = fastctx_platform::user_home().map_err(|error| error.to_string())?;
-        let places = crate::agents::places(&local, &env, &home, None);
-        apply::consent_claude(&places, accept).map_err(|error| error.to_string())
+        let user_home = fastctx_platform::user_home().map_err(|error| error.to_string())?;
+        let dir = crate::homes::find(&local, &env, &user_home, "claude", home.as_deref())
+            .map_err(|failure| failure.message)?
+            .dir;
+        let places = crate::agents::places(&local, &env, &user_home, None);
+        let changed = apply::consent_claude_at(&places, &dir, accept).map_err(|error| error.to_string())?;
+        Ok::<_, String>((changed, dir))
     })
     .await
     .map_err(|error| Failure::new(format!("recording Claude Code's consent: {error}")))?
     .map_err(|error| Failure::new(format!("recording Claude Code's consent: {error}")))?;
     if changed {
         let word = if accept { "accepted" } else { "withdrew" };
-        node.log.line(format_args!("{by} {word} Claude Code's bypass permissions mode for this machine"));
+        node.log.line(format_args!(
+            "{by} {word} Claude Code's bypass permissions mode for its home {} on this machine",
+            dir.display()
+        ));
     }
     Ok((accept, changed))
 }

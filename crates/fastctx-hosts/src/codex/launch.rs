@@ -94,6 +94,37 @@ pub fn discover(codex_home: &Path, path: Option<&OsString>) -> Result<Option<Lau
     }))
 }
 
+/// The Codex to start for `codex_home`, as `discover` finds it, except that
+/// a home the desktop app does not use, which therefore records no program
+/// of the app's (the app writes it only into its own home), runs the app's
+/// program recorded in `program_home`. It does not get the app's Computer
+/// Use: that entry is the app's home's, and so is the desk it reaches.
+pub fn discover_for(
+    codex_home: &Path,
+    program_home: Option<&Path>,
+    path: Option<&OsString>,
+) -> Result<Option<Launch>, String> {
+    let own = discover(codex_home, path)?;
+    if own.as_ref().is_some_and(|launch| launch.source == ProgramSource::DesktopApp) {
+        return Ok(own);
+    }
+    let Some(program_home) = program_home.filter(|program_home| *program_home != codex_home) else { return Ok(own) };
+    match discover(program_home, path)? {
+        Some(app) if app.source == ProgramSource::DesktopApp => {
+            let computer_use = own.and_then(|own| own.computer_use);
+            Ok(Some(Launch { computer_use, ..app }))
+        }
+        _ => Ok(own),
+    }
+}
+
+/// `discover_for`, with nothing found an error.
+pub fn resolve_for(codex_home: &Path, program_home: Option<&Path>, path: Option<&OsString>) -> Result<Launch, String> {
+    discover_for(codex_home, program_home, path)?.ok_or_else(|| {
+        "Codex is not installed on this machine: neither the ChatGPT desktop app nor a codex command was found".into()
+    })
+}
+
 /// The `codex.exe` the desktop app recorded, including a path removed by an upgrade.
 fn app_binary(codex_home: &Path, computer_use: Option<&toml::Value>) -> Result<Option<PathBuf>, String> {
     let path = codex_home.join("config.toml");

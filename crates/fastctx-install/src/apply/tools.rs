@@ -18,11 +18,12 @@ pub(super) fn codex(places: &Places) -> ToolCheck {
     let scope = match &cwd {
         Ok(cwd) => {
             format!(
-                "effective Codex features in {}; without explicit --profile or session/CLI overrides",
+                "effective Codex features from {}, in {}; without explicit --profile or session/CLI overrides",
+                places.codex_home.display(),
                 cwd.display()
             )
         }
-        Err(_) => "effective Codex features".into(),
+        Err(_) => format!("effective Codex features from {}", places.codex_home.display()),
     };
     let result = cwd.map_err(|error| error.to_string()).and_then(|cwd| codex_in(&places.codex_home, &cwd));
     ToolCheck { host: "Codex", scope, result }
@@ -30,7 +31,7 @@ pub(super) fn codex(places: &Places) -> ToolCheck {
 
 /// What decides the answer of `codex features list` here, as far as files
 /// show it: the program, the user's configuration and this directory's.
-type Inputs = (std::path::PathBuf, Vec<Option<(std::time::SystemTime, u64)>>);
+type Inputs = (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf, Vec<Option<(std::time::SystemTime, u64)>>);
 
 /// The last answer, kept while its inputs stand: an interface asks every few
 /// seconds, and each answer starts a Codex.
@@ -42,6 +43,8 @@ fn codex_in(home: &Path, cwd: &Path) -> Result<(), String> {
         std::fs::metadata(path).ok().map(|meta| (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len()))
     };
     let inputs: Inputs = (
+        home.to_path_buf(),
+        launch.binary.clone(),
         cwd.to_path_buf(),
         vec![stamp(&launch.binary), stamp(&home.join("config.toml")), stamp(&cwd.join(".codex").join("config.toml"))],
     );

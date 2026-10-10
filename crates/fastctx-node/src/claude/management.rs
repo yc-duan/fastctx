@@ -4,10 +4,11 @@ use crate::Node;
 use fastctx_hosts::claude::{background, exchange};
 use fastctx_types::{ResidentId, ipc::Failure};
 use std::ffi::OsString;
+use std::path::Path;
 use std::sync::Arc;
 
-async fn run(node: &Arc<Node>, args: Vec<OsString>) -> Result<String, Failure> {
-    let super::Command { program, cwd, env } = super::command(node)?;
+async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Result<String, Failure> {
+    let super::Command { program, cwd, env } = super::command(node, home)?;
     tokio::task::spawn_blocking(move || background::claude(&program, &args, &cwd, &env))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
@@ -16,8 +17,12 @@ async fn run(node: &Arc<Node>, args: Vec<OsString>) -> Result<String, Failure> {
 
 /// Only supervisor records have a background management ID. The same CLI
 /// also lists interactive sessions and unmanaged background processes.
-pub async fn background_session(node: &Arc<Node>, session: &str) -> Result<Option<serde_json::Value>, Failure> {
-    let listed = run(node, vec!["agents".into(), "--json".into(), "--all".into()]).await?;
+pub async fn background_session(
+    node: &Arc<Node>,
+    home: Option<&Path>,
+    session: &str,
+) -> Result<Option<serde_json::Value>, Failure> {
+    let listed = run(node, home, vec!["agents".into(), "--json".into(), "--all".into()]).await?;
     let agents: Vec<serde_json::Value> =
         serde_json::from_str(&listed).map_err(|error| Failure::new(error.to_string()))?;
     let found: Vec<_> = agents
@@ -35,8 +40,14 @@ pub async fn background_session(node: &Arc<Node>, session: &str) -> Result<Optio
     }
 }
 
-pub async fn stop(node: &Arc<Node>, resident: &ResidentId, session: &str, idle_only: bool) -> Result<(), Failure> {
-    let agent = background_session(node, session).await?.ok_or_else(|| {
+pub async fn stop(
+    node: &Arc<Node>,
+    home: Option<&Path>,
+    resident: &ResidentId,
+    session: &str,
+    idle_only: bool,
+) -> Result<(), Failure> {
+    let agent = background_session(node, home, session).await?.ok_or_else(|| {
         Failure::new("Claude Code has no supervisor management ID for this session; its window was not closed")
     })?;
     if agent["pid"].as_u64() == Some(0) {
@@ -52,8 +63,8 @@ pub async fn stop(node: &Arc<Node>, resident: &ResidentId, session: &str, idle_o
         )));
     }
     let id = agent["id"].as_str().ok_or_else(|| Failure::new("Claude Code returned no background id"))?;
-    run(node, vec!["stop".into(), id.into()]).await?;
-    if super::running(node, session).await? {
+    run(node, home, vec!["stop".into(), id.into()]).await?;
+    if super::running(node, home, session).await? {
         return Err(Failure::new("Claude Code accepted stop, but still reports a running background process"));
     }
     settle_stopped(node, resident, session).await
@@ -90,17 +101,17 @@ async fn settle_stopped(node: &Arc<Node>, resident: &ResidentId, session: &str) 
         .map_err(|error| Failure::new(error.to_string()))
 }
 
-pub async fn wake(node: &Arc<Node>, session: &str) -> Result<(), Failure> {
-    let record = background_session(node, session)
+pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<(), Failure> {
+    let record = background_session(node, home, session)
         .await?
         .ok_or_else(|| Failure::new("Claude Code no longer identifies a background session for this resident"))?;
     let session = record["sessionId"]
         .as_str()
         .ok_or_else(|| Failure::new("Claude Code did not provide the background session's full conversation ID"))?;
-    if super::running(node, session).await? {
+    if super::running(node, home, session).await? {
         return Ok(());
     }
-    let output = run(node, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
+    let output = run(node, home, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
     let started = background::started(&output).ok_or_else(|| {
         Failure::new(format!("Claude Code did not identify the resumed background session: {output}"))
     })?;
@@ -109,7 +120,7 @@ pub async fn wake(node: &Arc<Node>, session: &str) -> Result<(), Failure> {
             "Claude Code started {started}, not the requested {session}; the resident was not rebound"
         )));
     }
-    if !super::running(node, session).await? {
+    if !super::running(node, home, session).await? {
         return Err(Failure::new("Claude Code accepted resume but does not report the original session running"));
     }
     Ok(())

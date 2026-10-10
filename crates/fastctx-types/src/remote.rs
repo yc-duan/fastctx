@@ -141,6 +141,14 @@ pub enum RemoteCall {
     /// The user's word on Claude Code's bypass-permissions consent there.
     ClaudeConsent {
         accept: bool,
+        /// The Claude Code home there it is for, when not the default one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<std::path::PathBuf>,
+    },
+    /// The user adds an agent's home there, or hides one the World found
+    /// or shows it again.
+    Homes {
+        change: crate::agents::HomeChange,
     },
     /// The documents of a canon there, for a town's map.
     Canon {
@@ -155,12 +163,18 @@ pub enum RemoteCall {
         prompt: String,
         #[serde(default)]
         accounts: Vec<crate::AccountName>,
+        /// The Codex home there the colleague uses, when not the default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<std::path::PathBuf>,
     },
     /// The user turns asking for colleagues on for a resident there, with
     /// where they live, or off.
     Colleagues {
         resident: ResidentId,
         lives_on: Option<crate::access::Written>,
+        /// The Codex home there they use, when not the default one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<std::path::PathBuf>,
     },
     /// The user sets where a resident there works: another machine, or
     /// the one it lives on.
@@ -222,6 +236,12 @@ pub enum RemoteCall {
         works_on: Option<crate::access::Written>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         colleagues: Option<crate::access::Written>,
+        /// The agent's home there it uses, when not the default one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<std::path::PathBuf>,
+        /// The Codex home its colleagues use, when not the default one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        colleagues_home: Option<std::path::PathBuf>,
     },
     /// Stop the turn a resident there is running, for the user.
     Stop {
@@ -304,6 +324,7 @@ impl RemoteCall {
             | RemoteCall::Talk { .. }
             | RemoteCall::Watch { .. }
             | RemoteCall::ClaudeConsent { .. }
+            | RemoteCall::Homes { .. }
             | RemoteCall::Open { .. }
             | RemoteCall::Colleagues { .. }
             | RemoteCall::WorksOn { .. }

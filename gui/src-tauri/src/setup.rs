@@ -186,8 +186,16 @@ pub fn release() -> Result<KeptNow, String> {
 
 /// Puts the World's tools into this computer's Codex and Claude Code, or
 /// takes them out. `raise` lets Codex's shared output limit be raised.
-pub fn hosts(codex: bool, claude: bool, raise: bool, into: bool) -> Result<Vec<String>, String> {
-    let places = places()?;
+pub fn hosts(codex: bool, claude: bool, raise: bool, into: bool, home: Option<PathBuf>) -> Result<Vec<String>, String> {
+    let mut places = places()?;
+    if let Some(home) = home {
+        let host = match (codex, claude) {
+            (true, false) => apply::Host::Codex,
+            (false, true) => apply::Host::Claude,
+            _ => return Err("a home directory requires exactly one host".into()),
+        };
+        places = places.at_home(host, &home).map_err(|error| error.to_string())?;
+    }
     let hosts = Hosts { codex, claude };
     let report = if into {
         apply::apply(&places, hosts, if raise { Approval::RaiseOutputLimit } else { Approval::Require })

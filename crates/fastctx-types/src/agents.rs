@@ -54,6 +54,16 @@ pub struct AgentsReply {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentFacts {
     pub agent: AgentName,
+    /// The home these facts are of; `None` from a machine that knew one
+    /// home per agent, which was its default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<AgentHome>,
+    /// Who is logged in there, as the agent itself says.
+    #[serde(default = "unreported")]
+    pub account: Fact<AgentAccount>,
+    /// Its usage limits, as the agent last read them on this machine.
+    #[serde(default = "unreported")]
+    pub limits: Fact<AgentLimits>,
     /// None means neither an app-configured program nor a PATH candidate
     /// was found. A stale app path remains visible with `exists: false`.
     pub program: Fact<Option<AgentProgram>>,
@@ -73,8 +83,95 @@ pub struct AgentFacts {
     pub timings: Vec<ProbeTime>,
 }
 
-fn unreported() -> Fact<bool> {
+fn unreported<T>() -> Fact<T> {
     Fact::unavailable("this machine's World does not report it")
+}
+
+/// Where an agent keeps one login and the settings, sessions and plugins
+/// that go with it: Codex's `CODEX_HOME`, Claude Code's `CLAUDE_CONFIG_DIR`.
+/// A machine may hold several of each, one account apiece; neither agent
+/// lists them, so the World finds them (`world-gui.md`, 账号、机器与授权).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentHome {
+    /// The directory, as this machine writes it.
+    pub dir: PathBuf,
+    pub found: HomeFound,
+}
+
+/// How the World knows of a home.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HomeFound {
+    /// The one the agent uses when nothing names another: `CODEX_HOME` or
+    /// `CLAUDE_CONFIG_DIR` in the user's environment, else `~/.codex` or
+    /// `~/.claude`.
+    Default,
+    /// A directory of the user's home that holds that agent's things.
+    Found,
+    /// One the user added.
+    Added,
+}
+
+/// What the user changes of the homes the World knows on a machine.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "change")]
+pub enum HomeChange {
+    /// A directory the World did not find, as that machine writes it.
+    Add { agent: AgentName, dir: PathBuf },
+    /// One the World found or the user added, no longer listed or used.
+    Hide { agent: AgentName, dir: PathBuf },
+    /// One hidden before, listed again.
+    Show { agent: AgentName, dir: PathBuf },
+}
+
+/// Who is logged in to a home, as far as the agent says without anyone
+/// reading its credentials: an API key or a long-lived token names no one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentAccount {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    /// The subscription, as the agent names it: `pro`, `max`, ….
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+}
+
+/// An account's usage limits, as its agent read them on its own machine, and
+/// when: neither agent says how fresh its numbers are, and Claude Code reads
+/// them only from the answers of a session at work.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentLimits {
+    pub observed_at: Timestamp,
+    /// No window is no reading, never 0% used.
+    pub windows: Vec<LimitWindow>,
+    /// What the account can spend once a window is used up, when it has
+    /// any: a spent window then does not stop it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credits: Option<AgentCredits>,
+}
+
+/// An account's credits, as its agent says them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentCredits {
+    /// The balance as the agent writes it; none when it does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balance: Option<String>,
+    pub unlimited: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LimitWindow {
+    /// The agent's own name for it: Claude Code's `five_hour`, `seven_day`,
+    /// `spend_limit`; Codex's limit's name or id.
+    pub name: String,
+    /// How long the window is, when the agent says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minutes: Option<u32>,
+    /// How much of it is used, in tenths of a percent; it can pass 1000.
+    pub used_tenths: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<Timestamp>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +256,14 @@ pub struct Choices {
     /// Where its colleagues live; without it, it asks for none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colleagues: Option<crate::access::Written>,
+    /// The agent's home it uses on the machine it lives on, when not the
+    /// default one there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<PathBuf>,
+    /// The Codex home its colleagues use where they live, when not the
+    /// default one there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colleagues_home: Option<PathBuf>,
 }
 
 /// Omitted fields keep the official program's configured defaults.

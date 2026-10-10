@@ -27,7 +27,10 @@ pub async fn manage(
         here(node, &resident, action).await?
     } else {
         let call = RemoteCall::Manage { resident: resident.clone(), action };
-        match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|error| Failure::new(error.to_string()))??
+        match node
+            .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+            .await
+            .map_err(|error| Failure::new(error.to_string()))??
         {
             RemoteReply::Managed(managed) => managed,
             _ => return Err(Failure::new(format!("{machine} answered something other than a management result"))),
@@ -49,6 +52,9 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
         node.residents.active(id)?;
     }
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new("unknown resident"))?;
+    if matches!(action, Management::Wake) {
+        crate::homes::available(node, &about)?;
+    }
     // A background birth can already be visible before its CLI returns the
     // session ID. Removing it then would let the later registration create
     // a different resident for the same session.
@@ -69,11 +75,16 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             let host = match (about.host.agent.as_str(), &about.session, about.world_started) {
                 ("codex", Some(thread), _) => {
                     crate::codex::claim(node, thread, id).await;
-                    node.codex.archive(thread).await.map_err(Failure::new)
+                    match node.codex.of(&about) {
+                        Ok(codex) => codex.archive(thread).await.map_err(Failure::new),
+                        Err(failure) => Err(failure),
+                    }
                 }
                 ("claude", Some(session), _) => {
-                    match crate::claude::management::background_session(node, session).await {
-                        Ok(Some(_)) => crate::claude::management::stop(node, id, session, false).await,
+                    match crate::claude::management::background_session(node, about.home.as_deref(), session).await {
+                        Ok(Some(_)) => {
+                            crate::claude::management::stop(node, about.home.as_deref(), id, session, false).await
+                        }
                         Ok(None) => {
                             step(&mut result, "host", Outcome::Unsupported, "Claude Code exposes no background management ID for this session; its window remains open.".into());
                             Ok(())
@@ -131,13 +142,16 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             }
             let manageable = if about.host.agent.as_str() == "claude" {
                 match &about.session {
-                    Some(session) => match crate::claude::management::background_session(node, session).await {
-                        Ok(session) => session.is_some(),
-                        Err(error) => {
-                            step(&mut result, "host", Outcome::Failed, error.message);
-                            return Ok(result);
+                    Some(session) => {
+                        match crate::claude::management::background_session(node, about.home.as_deref(), session).await
+                        {
+                            Ok(session) => session.is_some(),
+                            Err(error) => {
+                                step(&mut result, "host", Outcome::Failed, error.message);
+                                return Ok(result);
+                            }
                         }
-                    },
+                    }
                     None => false,
                 }
             } else {
@@ -153,8 +167,11 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 );
             } else if let Some(session) = &about.session {
                 let effect: Result<bool, Failure> = match (about.host.agent.as_str(), sleeping) {
-                    ("codex", true) => node.codex.sleep(session).await.map_err(Failure::new),
-                    ("codex", false) => match node.codex.prepare(session).await {
+                    ("codex", true) => match node.codex.of(&about) {
+                        Ok(codex) => codex.sleep(session).await.map_err(Failure::new),
+                        Err(failure) => Err(failure),
+                    },
+                    ("codex", false) => match node.codex.of(&about)?.prepare(session).await {
                         Ok(missing) => {
                             if let Some(why) = missing {
                                 step(&mut result, "tools", Outcome::Failed, why);
@@ -163,8 +180,12 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                         }
                         Err(error) => Err(Failure::new(error)),
                     },
-                    ("claude", true) => crate::claude::management::stop(node, id, session, true).await.map(|()| true),
-                    ("claude", false) => crate::claude::management::wake(node, session).await.map(|()| true),
+                    ("claude", true) => crate::claude::management::stop(node, about.home.as_deref(), id, session, true)
+                        .await
+                        .map(|()| true),
+                    ("claude", false) => {
+                        crate::claude::management::wake(node, about.home.as_deref(), session).await.map(|()| true)
+                    }
                     _ => {
                         step(
                             &mut result,
@@ -228,8 +249,20 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 && about.host.agent.as_str() == "codex"
                 && let Some(thread) = &about.session
             {
-                match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), &about.acting, about.works_on.as_ref()).await {
-                    Ok((spec, _)) => node.codex.adopt(thread, spec),
+                match crate::colleagues::thread_spec(
+                    node,
+                    id,
+                    &about.origin,
+                    town.as_ref(),
+                    &about.acting,
+                    about.works_on.as_ref(),
+                )
+                .await
+                {
+                    Ok((spec, _)) => match node.codex.of(&about) {
+                        Ok(codex) => codex.adopt(thread, spec),
+                        Err(failure) => step(&mut result, "host", Outcome::Failed, failure.message),
+                    },
                     Err(error) => step(
                         &mut result,
                         "host",

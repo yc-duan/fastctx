@@ -74,6 +74,9 @@ fn resident(
             session: None,
             world_started: true,
             model: Some(model.to_string()),
+            acting: Default::default(),
+            works_on: None,
+            home: None,
         },
         town: in_town.map(town),
         here: true,
@@ -195,6 +198,7 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
             command: "cargo test --workspace".into(),
             output: "~/.fastctx/world/towns/mark50/residents/codex-7f3a/out/j-k3x9a2.log".into(),
             stderr: None,
+            account: None,
         },
         RunningJob {
             town: Some(town("mark50")),
@@ -206,6 +210,7 @@ fn residents(now: Timestamp) -> (Vec<ResidentNow>, Vec<RunningJob>) {
             command: "python train.py --epochs 400".into(),
             output: "~/.fastctx/world/towns/mark50/residents/codex-0d1e/out/j-p0q1r2.log".into(),
             stderr: None,
+            account: None,
         },
     ];
     (vec![claude, codex, finder, outside], jobs)
@@ -247,6 +252,7 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
     let (desktop_jobs, laptop_jobs): (Vec<_>, Vec<_>) =
         jobs.into_iter().partition(|job| job.machine.as_str() == "desktop");
     WorldWho {
+        others: Vec::new(),
         history: None,
         you: None,
         machine: machine("desktop"),
@@ -263,6 +269,62 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
     }
 }
 
+/// This computer's agents: two Codex logins, the second nearly spent; a
+/// Claude Code login read a while ago, and one nobody is logged in to.
+fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
+    use fastctx_types::agents::*;
+    let window = |name: &str, minutes: u32, used_tenths: u32, hours: i64| LimitWindow {
+        name: name.into(),
+        minutes: Some(minutes),
+        used_tenths,
+        resets_at: Some(now + SignedDuration::from_hours(hours)),
+    };
+    let base = |agent: &str, dir: &str, found: HomeFound| AgentFacts {
+        agent: agent.parse().unwrap(),
+        home: Some(AgentHome { dir: dir.into(), found }),
+        account: Fact::unavailable("not logged in"),
+        limits: Fact::unavailable("not read"),
+        program: Fact::known(Some(AgentProgram { path: "C:/Users/me/bin/agent.exe".into(), source: ProgramSource::Path, exists: true })),
+        version: Fact::known("1.0.0".into()),
+        launch: Fact::unavailable("not checked"),
+        login: Fact::known(LoginStatus::LoggedIn { method: None }),
+        models: Fact::unavailable("not listed"),
+        integration: Fact::known(Integration::In),
+        unattended: Fact::known(true),
+        timings: Vec::new(),
+    };
+    let account = |email: &str, plan: &str| {
+        Fact::known(AgentAccount { email: Some(email.into()), organization: None, plan: Some(plan.into()) })
+    };
+    let mut codex = base("codex", "C:/Users/me/.codex", HomeFound::Default);
+    codex.account = account("me@example.com", "plus");
+    codex.limits = Fact::known(AgentLimits {
+        observed_at: now - SignedDuration::from_mins(2),
+        windows: vec![window("codex", 300, 423, 2), window("codex", 10_080, 182, 80)],
+        credits: None,
+    });
+    let mut work = base("codex", "C:/Users/me/.codex-work", HomeFound::Found);
+    work.account = account("me@acme.example", "team");
+    work.integration = Fact::known(Integration::Out);
+    work.limits = Fact::known(AgentLimits {
+        observed_at: now - SignedDuration::from_mins(1),
+        windows: vec![window("codex", 300, 1000, 1), window("codex", 10_080, 655, 50)],
+        credits: Some(AgentCredits { balance: Some("52230.1460550000".into()), unlimited: false }),
+    });
+    let mut claude = base("claude", "C:/Users/me/.claude", HomeFound::Default);
+    claude.account = account("me@example.com", "max");
+    claude.limits = Fact::known(AgentLimits {
+        observed_at: now - SignedDuration::from_mins(26),
+        windows: vec![window("five_hour", 300, 618, 3), window("seven_day", 10_080, 341, 100)],
+        credits: None,
+    });
+    let mut personal = base("claude", "D:/agents/claude-personal", HomeFound::Added);
+    personal.login = Fact::known(LoginStatus::LoggedOut);
+    personal.integration = Fact::known(Integration::Out);
+    personal.unattended = Fact::known(false);
+    AgentsReply { machine: "desktop".parse().unwrap(), checked_at: now, elapsed_ms: 900, agents: vec![codex, claude, work, personal] }
+}
+
 fn nodes(now: Timestamp) -> NodesReply {
     let facts = |name: &str, os: &str, home: &str| MachineFacts {
         name: machine(name),
@@ -276,48 +338,36 @@ fn nodes(now: Timestamp) -> NodesReply {
         shell: String::new(),
         node_lifetime: None,
     };
+    let node = |name: &str, online: bool, since: i64, facts: Result<MachineFacts, String>| Node {
+        name: machine(name),
+        written: name.to_string(),
+        online: Some(online),
+        since: Some(ago(now, since)),
+        through: None,
+        facts,
+        owner: Some("me".parse().expect("an account")),
+        rights: vec![("me".parse().expect("an account"), fastctx_types::access::Rights { hands: true, agents: true })],
+    };
     NodesReply {
         machine: machine("desktop"),
-        world: Some("w-4f1c".into()),
-        joined: Vec::new(),
-        link: LinkState::Online {
-            since: ago(now, 300),
-            hub: "203.0.113.10:7443".into(),
-            relay: None,
-            route: Route::Card { name: "Ethernet".into() },
-        },
-        machines: vec![
-            Node {
-                name: machine("desktop"),
-                device: false,
-                standing: None,
-                place: None,
-                online: Some(true),
-                since: Some(ago(now, 300)),
-                facts: Ok(facts("desktop", "windows", "C:/Users/me")),
-                revoked: None,
+        facts: Some(facts("desktop", "windows", "C:/Users/me")),
+        hubs: vec![fastctx_types::world::HubNodes {
+            hub: "w-0123456789abcdef".parse().expect("a hub id"),
+            name: "home".parse().expect("a hub name"),
+            link: LinkState::Online {
+                since: ago(now, 300),
+                hub: "203.0.113.10:7443".into(),
+                relay: None,
+                route: Route::Card { name: "Ethernet".into() },
             },
-            Node {
-                name: machine("laptop"),
-                device: false,
-                standing: None,
-                place: None,
-                online: Some(true),
-                since: Some(ago(now, 180)),
-                facts: Ok(facts("laptop", "windows", "C:/Users/me")),
-                revoked: None,
-            },
-            Node {
-                name: machine("server"),
-                device: false,
-                standing: None,
-                place: None,
-                online: Some(false),
-                since: Some(ago(now, 95)),
-                facts: Err("it is offline".into()),
-                revoked: None,
-            },
-        ],
+            logins: vec!["me".parse().expect("an account")],
+            home: Some("me".parse().expect("an account")),
+            machines: vec![
+                node("desktop", true, 300, Ok(facts("desktop", "windows", "C:/Users/me"))),
+                node("laptop", true, 180, Ok(facts("laptop", "windows", "C:/Users/me"))),
+                node("server", false, 95, Err("it is offline".into())),
+            ],
+        }],
     }
 }
 
@@ -754,6 +804,8 @@ pub fn scenes(ctx: &Ctx) -> Vec<(&'static str, Page)> {
             waiting: 1,
         }),
     })));
+
+    machines.data(Data::Agents(Ok(agents(now))));
 
     vec![
         ("world", Page::World(WorldPage::with(world_view, nodes(now)))),

@@ -65,6 +65,10 @@ export interface NewTalkWords {
   /** Why it must work on another machine than the one it lives on. */
   lentOnly(machine: string): string;
   agent: string;
+  /** Which of the agent's logins there, where it has several; and the
+   *  Codex login its colleagues use where they live. */
+  login: string;
+  colleaguesLogin: string;
   project: string;
   noProject: string;
   here: string;
@@ -106,6 +110,8 @@ export const zhNewTalk: NewTalkWords = {
   colleaguesWhat: (machine) => `它能请同事来分担活儿，同事是住在 ${machine} 上的 Codex；以后在对话的详情里也能改、能关掉。`,
   lentOnly: (machine) => `这个账号在 ${machine} 上只能用智能体、不能干活，所以对话要在另一台它能干活的机器上干活。`,
   agent: "用哪一位",
+  login: "用哪个登录",
+  colleaguesLogin: "同事用哪个登录",
   project: "进哪个项目",
   noProject: "不进项目",
   here: "这台",
@@ -142,6 +148,8 @@ export const enNewTalk: NewTalkWords = {
   colleaguesWhat: (machine) => `It can ask colleagues to share the work: Codex living on ${machine}. You can change or turn this off later in the conversation's details.`,
   lentOnly: (machine) => `This account may use the agents on ${machine} but not work on it, so the conversation works on another machine the account works on.`,
   agent: "With whom",
+  login: "Signed in as",
+  colleaguesLogin: "Colleagues as",
   project: "In which project",
   noProject: "No project",
   here: "this one",
@@ -572,6 +580,12 @@ export interface DetailsWords {
   colleaguesNone: string;
   colleaguesOn(machine: string): string;
   colleaguesOff: string;
+  /** Which Codex login they use where they live, where it has several. */
+  colleaguesLogin: string;
+  colleaguesAs(login: string): string;
+  defaultLogin: string;
+  /** Which login of its agent it uses, where not the default one. */
+  login: string;
   running: string;
   actions(shown: number, total: number): string;
   noActions: string;
@@ -655,6 +669,10 @@ export const zhDetails: DetailsWords = {
   colleaguesNone: "不再能请",
   colleaguesOn: (machine) => `它从下一次起能请住在 ${machine} 上的同事了`,
   colleaguesOff: "它不能再请同事了；已经请来的照旧",
+  colleaguesLogin: "同事用哪个登录",
+  colleaguesAs: (login) => `它从下一次起请来的同事用 ${login} 登录`,
+  defaultLogin: "默认的登录",
+  login: "用的登录",
   running: "它起的、还在跑的",
   actions: (shown, total) => (shown < total ? `最近的动作（${total} 个里的最后 ${shown} 个）` : "它的动作"),
   noActions: "还没有动作。",
@@ -734,6 +752,10 @@ export const enDetails: DetailsWords = {
   colleaguesNone: "No more colleagues",
   colleaguesOn: (machine) => `From its next call it can ask colleagues living on ${machine}`,
   colleaguesOff: "It can no longer ask colleagues; those it asked stay",
+  colleaguesLogin: "Colleagues as",
+  colleaguesAs: (login) => `From its next call its colleagues work as ${login}`,
+  defaultLogin: "the default login",
+  login: "Signed in as",
   running: "Still running, started by it",
   actions: (shown, total) => (shown < total ? `Latest actions (last ${shown} of ${total})` : "Its actions"),
   noActions: "No actions yet.",
@@ -864,12 +886,13 @@ export const enProjectForm: ProjectFormWords = {
   failed: (why) => `Could not write it: ${why}`,
 };
 
-/** The user's consent to Claude working without asking, on one machine. */
+/** The user's consent to Claude working without asking, on one machine,
+ *  in one of its logins there: `account` names it where there are several. */
 export interface ConsentWords {
-  title(machine: string): string;
-  what(machine: string): string;
+  title(machine: string, account: string | null): string;
+  what(machine: string, account: string | null): string;
   allow: string;
-  withdrawTitle(machine: string): string;
+  withdrawTitle(machine: string, account: string | null): string;
   withdrawWhat: string;
   withdrawGo: string;
   working: string;
@@ -878,11 +901,11 @@ export interface ConsentWords {
 }
 
 export const zhConsent: ConsentWords = {
-  title: (machine) => `许可 Claude 在 ${machine} 上不经审批地干活`,
-  what: (machine) =>
-    `世界在 ${machine} 上请来的 Claude 会直接跑命令、改文件、上网，不再一件件问你，后果由你负责。这和你在 Claude Code 里选「Bypass permissions」是同一回事：世界会在这台机器的 Claude Code 设置里写下 skipDangerousModePermissionPrompt: true。之后随时能在「机器」里撤回。`,
+  title: (machine, account) => `许可 Claude${account ? `（${account}）` : ""}在 ${machine} 上不经审批地干活`,
+  what: (machine, account) =>
+    `世界在 ${machine} 上${account ? `用 ${account} 这个登录` : ""}请来的 Claude 会直接跑命令、改文件、上网，不再一件件问你，后果由你负责。这和你在 Claude Code 里选「Bypass permissions」是同一回事：世界会在这台机器${account ? `上这个登录` : ""}的 Claude Code 设置里写下 skipDangerousModePermissionPrompt: true。之后随时能在「机器」里撤回。`,
   allow: "许可",
-  withdrawTitle: (machine) => `撤回 Claude 在 ${machine} 上的许可`,
+  withdrawTitle: (machine, account) => `撤回 Claude${account ? `（${account}）` : ""}在 ${machine} 上的许可`,
   withdrawWhat: "撤回之后，世界在这台机器上再请 Claude，Claude Code 会拒绝，直到你再次许可。",
   withdrawGo: "撤回",
   working: "正在写…",
@@ -891,11 +914,11 @@ export const zhConsent: ConsentWords = {
 };
 
 export const enConsent: ConsentWords = {
-  title: (machine) => `Let Claude work on ${machine} without asking`,
-  what: (machine) =>
-    `Claude brought in by the World on ${machine} will run commands, change files and go online without asking you each time, and you answer for what it does. It is the same as choosing "Bypass permissions" in Claude Code: the World writes skipDangerousModePermissionPrompt: true into Claude Code's settings on that machine. You can withdraw it under Machines at any time.`,
+  title: (machine, account) => `Let Claude${account ? ` (${account})` : ""} work on ${machine} without asking`,
+  what: (machine, account) =>
+    `Claude brought in by the World on ${machine}${account ? ` as ${account}` : ""} will run commands, change files and go online without asking you each time, and you answer for what it does. It is the same as choosing "Bypass permissions" in Claude Code: the World writes skipDangerousModePermissionPrompt: true into Claude Code's settings ${account ? "of that login " : ""}on that machine. You can withdraw it under Machines at any time.`,
   allow: "Allow",
-  withdrawTitle: (machine) => `Withdraw Claude's consent on ${machine}`,
+  withdrawTitle: (machine, account) => `Withdraw Claude's consent${account ? ` for ${account}` : ""} on ${machine}`,
   withdrawWhat: "Once withdrawn, Claude Code refuses when the World brings Claude in on this machine, until you allow it again.",
   withdrawGo: "Withdraw",
   working: "Writing…",

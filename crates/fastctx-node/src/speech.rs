@@ -166,6 +166,9 @@ async fn hand_over_locked(
     };
     node.ready().await;
     node.residents.active(to)?;
+    if let Err(error) = crate::homes::available(node, about) {
+        return Ok(Landed::Waiting { why: Some(error.message), answered: answered(node, to, about) });
+    }
     if let Some(landed) = crate::claude::deliver(node, to, about, directory, &pending).await {
         return landed;
     }
@@ -250,15 +253,19 @@ async fn submit_thread(
     single: bool,
     idle_only: bool,
 ) -> Result<Option<Landed>, Failure> {
+    // Its home's app-server holds its thread.
+    let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new(format!("{id} has no record here")))?;
+    crate::homes::available(node, &about)?;
+    let codex = node.codex.of(&about)?;
     // Its tools start before the words go in, outside the lock others' words
     // and its turns' ends wait on.
-    let missing = node.codex.prepare(thread).await.map_err(Failure::new)?;
+    let missing = codex.prepare(thread).await.map_err(Failure::new)?;
     let speaking = node.residents.speaking(id).ok_or_else(|| Failure::new(format!("{id} has no record here")))?;
     let _speaking = speaking.lock().await;
     if single
         && idle_only
         && (node.residents.now(id).is_some_and(|now| now.activity == fastctx_types::residents::Activity::Busy)
-            || node.codex.running_turn(thread).is_some())
+            || codex.running_turn(thread).is_some())
     {
         return Ok(None);
     }
@@ -351,7 +358,7 @@ async fn submit_thread(
     for kept in &batch {
         set_state(directory, &kept.delivery.id, PendingState::Sending).await?;
     }
-    let sent = match node.codex.send(thread, input).await {
+    let sent = match codex.send(thread, input).await {
         Ok(sent) => sent,
         Err(SendError::NotSent(why)) => {
             crate::delivery::refused(directory, &mut handover).map_err(|error| Failure::new(error.to_string()))?;

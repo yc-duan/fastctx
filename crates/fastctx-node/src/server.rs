@@ -411,7 +411,8 @@ async fn collect(
                     .or_else(|| {
                         node.residents.about(&resident).and_then(|(about, _)| {
                             if about.world_started && about.host.agent.as_str() == "codex" {
-                                about.session.and_then(|thread| node.codex.running_turn(&thread))
+                                let codex = node.codex.of(&about).ok()?;
+                                about.session.and_then(|thread| codex.running_turn(&thread))
                             } else {
                                 None
                             }
@@ -631,13 +632,15 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::agents::query(node, &acting, machine).await.map(Reply::Agents)
         }
-        Call::ClaudeConsent { machine, accept } => {
+        Call::ClaudeConsent { machine, accept, home } => {
             users_voice(node, peer)?;
-            crate::consent::call(node, machine.clone(), accept).await.map(|(accepted, changed)| Reply::ClaudeConsent {
-                machine,
-                accepted,
-                changed,
+            crate::consent::call(node, machine.clone(), accept, home).await.map(|(accepted, changed)| {
+                Reply::ClaudeConsent { machine, accepted, changed }
             })
+        }
+        Call::Homes { machine, change } => {
+            users_voice(node, peer)?;
+            crate::homes::call(node, machine, change).await.map(|()| Reply::Done)
         }
         Call::FindFiles { machine, request } => {
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
@@ -748,9 +751,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Nodes => nodes(node).await.map(Reply::Nodes),
         Call::Machines { resident } => machines(node, resident.as_ref()),
-        Call::Colleagues { resident, machine, lives_on } => {
+        Call::Colleagues { resident, machine, lives_on, home } => {
             users_voice(node, peer)?;
-            crate::colleagues::set(node, resident, machine, lives_on).await.map(|()| Reply::Done)
+            crate::colleagues::set(node, resident, machine, lives_on, home).await.map(|()| Reply::Done)
         }
         Call::WorksOn { resident, machine, works_on } => {
             users_voice(node, peer)?;

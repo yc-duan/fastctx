@@ -47,9 +47,30 @@ pub(super) fn before(places: &Places) -> Result<Report, Error> {
         return Err(files.err().map(Error::from).unwrap_or_else(|| Error::Io("file recovery is still pending".into())));
     }
     let mut report = Report::default();
-    if let Some(mut previous) = load_plugin_record(&places.plugin_record())?
-        && let Some(pending) = previous.operation.clone()
-    {
+    let mut records = Vec::new();
+    for entry in std::fs::read_dir(&places.root).map_err(io("reading plugin recovery records"))? {
+        let entry = entry.map_err(io("reading plugin recovery record"))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "applied-claude-plugin.json"
+            || name
+                .strip_prefix("applied-claude-plugin-")
+                .and_then(|name| name.strip_suffix(".json"))
+                .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            records.push(entry.path());
+        }
+    }
+    records.sort();
+    for record in records {
+        let Some(mut previous) = load_plugin_record(&record)? else { continue };
+        if previous.settings_path.is_none()
+            && record.file_name().is_some_and(|name| name == "applied-claude-plugin.json")
+        {
+            previous.settings_path = Some(homes::old_plugin_home(places)?.join("settings.json"));
+            write_plugin_record(&record, &previous).map_err(Error::Claude)?;
+        }
+        let Some(pending) = previous.operation.clone() else { continue };
         let settings = previous
             .settings_path
             .clone()
@@ -59,10 +80,10 @@ pub(super) fn before(places: &Places) -> Result<Report, Error> {
                 previous.settings_created = false;
             }
             previous.operation = None;
-            write_plugin_record(&places.plugin_record(), &previous).map_err(Error::Claude)?;
+            write_plugin_record(&record, &previous).map_err(Error::Claude)?;
         } else {
             let claude = places.claude.clone().ok_or(Error::NoClaude)?;
-            let mut host = Cli::new(claude, places.plugin_record(), settings, previous.settings_created);
+            let mut host = Cli::new(claude, record, settings, previous.settings_created);
             host.operation = previous.operation.clone();
             let receipt = pending.plan.rollback(&mut host, &previous.receipt)?;
             finish_rollback(places, &pending.plan, &receipt, &mut host, &mut report)?;
