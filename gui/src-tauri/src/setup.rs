@@ -152,17 +152,63 @@ pub fn place() -> Result<String, String> {
     Ok(installed.display().to_string())
 }
 
+/// First placement finishes before the interface makes its first World
+/// calls. The CLI stages an asynchronous handover even on a fresh root.
+#[cfg(target_os = "linux")]
+pub fn place_initial() -> Result<(), String> {
+    use fastctx_types::renewal::Phase;
+    place()?;
+    let root = places()?.root;
+    loop {
+        let plan = fastctx_install::renewal::read(&root)
+            .map_err(|error| error.to_string())?
+            .ok_or("the initial executable placement has no renewal record")?;
+        match plan.phase {
+            Phase::Complete => return Ok(()),
+            Phase::Failed => return Err(plan.error.unwrap_or("the initial executable placement failed".into())),
+            Phase::AwaitingLegacyExit => {
+                return Err("the initial executable placement is waiting for an old node to exit".into());
+            }
+            Phase::AwaitingAdministrator => {
+                return Err("the initial executable placement needs administrator approval".into());
+            }
+            _ => std::thread::sleep(std::time::Duration::from_millis(20)),
+        }
+    }
+}
+
 /// Has a system service keep this machine's node, asking once for
 /// administrator rights, and the node that served until now hand the World
 /// over to it.
 pub async fn keep(world: &World) -> Result<KeptNow, String> {
     let places = places()?;
-    let (kept, _) = tauri::async_runtime::spawn_blocking(move || keep_connected(&places))
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?;
+    let (kept, _) = tauri::async_runtime::spawn_blocking(move || {
+        let (kept, report) = keep_connected(&places).map_err(|error| error.to_string())?;
+        #[cfg(target_os = "linux")]
+        let kept = if matches!(kept, Kept::Command(_)) {
+            crate::linux_service::run(
+                fastctx_install::service::Kind::Node,
+                "install",
+                &places.root,
+                &places.installed(),
+            )?
+        } else {
+            kept
+        };
+        Ok::<_, String>((kept, report))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
     if kept == Kept::Installed {
         world.hand_over().await.map_err(|error| error.to_string())?;
+        #[cfg(target_os = "linux")]
+        tauri::async_runtime::spawn_blocking(|| {
+            let places = crate::setup::places()?;
+            crate::linux_service::wait_for_node(&places.root, &places.installed())
+        })
+        .await
+        .map_err(|error| error.to_string())??;
     }
     Ok(match kept {
         Kept::Already => KeptNow::Already,
@@ -176,7 +222,24 @@ pub async fn keep(world: &World) -> Result<KeptNow, String> {
 /// Removes the service that keeps this machine's node, with the same
 /// rights installing it took.
 pub fn release() -> Result<KeptNow, String> {
-    Ok(match stop_keeping(&places()?).map_err(|error| error.to_string())? {
+    let places = places()?;
+    let released = stop_keeping(&places).map_err(|error| error.to_string())?;
+    #[cfg(target_os = "linux")]
+    let released = if matches!(released, Released::Command(_)) {
+        match crate::linux_service::run(
+            fastctx_install::service::Kind::Node,
+            "uninstall",
+            &places.root,
+            &places.installed(),
+        )? {
+            Kept::Installed => Released::Removed,
+            Kept::Declined => Released::Declined,
+            other => return Err(format!("removing the node service came to {other:?}")),
+        }
+    } else {
+        released
+    };
+    Ok(match released {
         Released::NotKept => KeptNow::NotKept,
         Released::Removed => KeptNow::Removed,
         Released::Declined => KeptNow::Declined,

@@ -1,5 +1,6 @@
 # Shell scripts run on Linux and in WSL; keep them LF on every checkout.
 *.sh text eol=lf
+/gui/scripts/AppRun text eol=lf
 # The contract check compares serde's generated output byte for byte.
 gui/fixtures/wire.json text eol=lf
 # Embedded legal texts must have the same bytes in every release checkout.
@@ -7,3 +8,4 @@ gui/fixtures/wire.json text eol=lf
 /NOTICE text eol=lf
 /licenses/** text eol=lf
 /gui/licenses/** text eol=lf
+/gui/licenses/linux-runtime/*.gz binary

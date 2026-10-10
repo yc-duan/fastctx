@@ -29,10 +29,12 @@ pub(crate) fn here_addresses() -> Result<Vec<Address>, String> {
     Ok(interfaces
         .iter()
         .flat_map(|interface| {
-            interface.ipv4.iter().filter(|address| !address.is_loopback() && !address.is_link_local()).map(|address| Address {
-                interface: interface.name.clone(),
-                address: address.to_string(),
-                physical: interface.physical,
+            interface.ipv4.iter().filter(|address| !address.is_loopback() && !address.is_link_local()).map(|address| {
+                Address {
+                    interface: interface.name.clone(),
+                    address: address.to_string(),
+                    physical: interface.physical,
+                }
             })
         })
         .collect())
@@ -56,22 +58,39 @@ pub(crate) async fn create_world(
     shell.connection.local_program()?;
     let public = public
         .iter()
-        .map(|text| text.trim().parse::<SocketAddr>().map_err(|_| format!("{text} is not an address with a port, as 192.168.1.20:7443")))
+        .map(|text| {
+            text.trim()
+                .parse::<SocketAddr>()
+                .map_err(|_| format!("{text} is not an address with a port, as 192.168.1.20:7443"))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let first = *public.first().ok_or("give at least one address other computers reach this one at")?;
     let dir = {
         let (name, admin, password, public) = (name.clone(), admin.clone(), password.clone(), public.clone());
-        tauri::async_runtime::spawn_blocking(move || found(&name, &admin, &password, &public)).await.map_err(|error| error.to_string())??
+        tauri::async_runtime::spawn_blocking(move || found(&name, &admin, &password, &public))
+            .await
+            .map_err(|error| error.to_string())??
     };
     let places = crate::setup::places()?;
-    let kept = tauri::async_runtime::spawn_blocking(move || fastctx_install::service::keep_hub(&places, &dir))
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?;
+    let kept = tauri::async_runtime::spawn_blocking(move || {
+        let kept = fastctx_install::service::keep_hub(&places, &dir).map_err(|error| error.to_string())?;
+        #[cfg(target_os = "linux")]
+        let kept = if matches!(kept, fastctx_install::service::Kept::Command(_)) {
+            crate::linux_service::run(fastctx_install::service::Kind::Hub, "install", &dir, &places.installed())?
+        } else {
+            kept
+        };
+        Ok::<_, String>(kept)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
     use fastctx_install::service::Kept;
     match kept {
         Kept::Installed | Kept::Already => {}
-        Kept::Declined => return Err("the hub is made, but administrator rights were declined, so it is not running".into()),
+        Kept::Declined => {
+            return Err("the hub is made, but administrator rights were declined, so it is not running".into());
+        }
         Kept::Unsupported | Kept::Command(_) => return Err("this system cannot run the hub as a service".into()),
     }
     // This computer reaches its own hub without leaving itself.
@@ -110,7 +129,10 @@ fn found(name: &str, admin: &str, password: &str, public: &[SocketAddr]) -> Resu
     for address in public {
         command.arg("--public").arg(address.to_string());
     }
-    command.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
@@ -149,5 +171,10 @@ fn made_here(fastctx: &std::path::Path, dir: &std::path::Path) -> Result<Option<
     }
     // "hub NAME (ID)" on the first line.
     let text = String::from_utf8_lossy(&output.stdout);
-    Ok(text.lines().next().and_then(|line| line.strip_prefix("hub ")).and_then(|rest| rest.split_whitespace().next()).map(str::to_string))
+    Ok(text
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("hub "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .map(str::to_string))
 }

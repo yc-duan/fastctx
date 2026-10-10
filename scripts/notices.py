@@ -25,7 +25,8 @@ def main():
     staged = Path(name)
     try:
         generate(staged, args.syntax_notices)
-        staged.replace(args.output)
+        if not args.output.exists() or staged.read_bytes() != args.output.read_bytes():
+            staged.replace(args.output)
     finally:
         staged.unlink(missing_ok=True)
 

@@ -12,6 +12,8 @@ mod connection;
 
 #[cfg(desktop)]
 mod founding;
+#[cfg(target_os = "linux")]
+mod linux_service;
 #[cfg(desktop)]
 mod renewal;
 #[cfg(desktop)]
@@ -589,7 +591,8 @@ async fn project_new(
     account_name: Option<String>,
     hub_name: Option<String>,
 ) -> Result<TownRecord, String> {
-    let account = account_name.map(fastctx_types::AccountName::try_from).transpose().map_err(|error| error.to_string())?;
+    let account =
+        account_name.map(fastctx_types::AccountName::try_from).transpose().map_err(|error| error.to_string())?;
     let hub = hub_name.map(fastctx_types::HubName::try_from).transpose().map_err(|error| error.to_string())?;
     let made = shell.world().open_town(town(name)?, fields, account, hub).await.map_err(|error| error.to_string())?;
     Ok(TownRecord { town: made.town, record: made.record, opened: made.opened })

@@ -20,7 +20,7 @@
   --body-size: 15px;
   --font-reading: "Reading", "IBM Plex Serif", "Noto Sans SC", "Microsoft YaHei UI", serif;
   --font-emphasis: "Emphasis", var(--font-reading);
-  --font-code: "Rec Mono Linear", "Cascadia Mono", "Noto Sans SC", monospace;
+  --font-code: "Rec Mono Linear", "Cascadia Mono", "Reading", "Noto Sans SC", monospace;
   --code-axes: "MONO" 1, "CASL" 0, "slnt" 0;
 
   --size-small: calc(var(--body-size) - 2px);
