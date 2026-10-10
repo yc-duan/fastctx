@@ -35,6 +35,18 @@ pub fn open(path: &Path) -> io::Result<File> {
     options.open(path)
 }
 
+impl Snapshot {
+    /// The snapshot as one line, for keeping beside what was read from the
+    /// file: a replaced or rewritten file has another.
+    pub fn fingerprint(&self) -> String {
+        let modified = self.modified.duration_since(SystemTime::UNIX_EPOCH).map(|since| since.as_nanos()).unwrap_or(0);
+        format!(
+            "{}-{}-{}-{}-{}-{}",
+            self.size, modified, self.identity.0, self.identity.1, self.changed.0, self.changed.1
+        )
+    }
+}
+
 pub fn snapshot(file: &File, metadata: &Metadata) -> io::Result<Snapshot> {
     let (identity, changed) = indicators(file, metadata)?;
     Ok(Snapshot { size: metadata.len(), modified: metadata.modified()?, identity, changed })

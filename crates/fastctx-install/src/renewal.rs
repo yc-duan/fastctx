@@ -36,11 +36,48 @@ pub fn installed(root: &Path) -> PathBuf {
     root.join("bin").join(EXECUTABLE)
 }
 
+/// The SHA-256 of a file. Every command asks it of the World program and of
+/// itself, and hashing a program costs seconds in a debug build, so the
+/// answer is kept under fastctx's own directory beside the file's snapshot;
+/// a file replaced or written since has another snapshot and is hashed
+/// again. Keeping it is only a saving: where it cannot be kept, the digest
+/// is still exact.
 pub fn digest(path: &Path) -> io::Result<String> {
-    let mut file = fs::File::open(path)?;
+    let mut file = fastctx_platform::file_read::open(path)?;
+    let metadata = file.metadata()?;
+    let mark = fastctx_platform::file_read::snapshot(&file, &metadata)?.fingerprint();
+    let kept = kept_digest(path);
+    if let Some(kept) = &kept
+        && let Ok(text) = fs::read_to_string(kept)
+        && let Some((held, digest)) = text.trim().split_once(' ')
+        && held == mark
+        && digest.len() == 64
+        && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Ok(digest.to_string());
+    }
     let mut hash = Sha256::new();
     io::copy(&mut file, &mut hash)?;
-    Ok(format!("{:x}", hash.finalize()))
+    let digest = format!("{:x}", hash.finalize());
+    // Kept only when the file did not change while it was read.
+    let after = fastctx_platform::file_read::snapshot(&file, &file.metadata()?)?.fingerprint();
+    if let Some(kept) = kept
+        && after == mark
+        && let Some(parent) = kept.parent()
+        && fs::create_dir_all(parent).is_ok()
+    {
+        let _ = publish(&kept, format!("{mark} {digest}\n").as_bytes(), Permissions::Private);
+    }
+    Ok(digest)
+}
+
+/// Where the digest of `path` is kept: one small file per path, named by the
+/// hash of the path's canonical spelling.
+fn kept_digest(path: &Path) -> Option<PathBuf> {
+    let canonical = fs::canonicalize(path).ok()?;
+    let root = fastctx_platform::fastctx_root().ok()?;
+    let name = format!("{:x}", Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
+    Some(root.join("cache").join("digests").join(name))
 }
 
 pub fn build() -> io::Result<Build> {
