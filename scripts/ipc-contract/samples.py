@@ -21,6 +21,10 @@ def replies(fixtures):
     yield {"reply": "done"}
     yield {"reply": "arrived", "resident": ADDRESS["resident"], "town": "project"}
     yield {"reply": "machines", "here": "desktop", "others": ["laptop"]}
+    # Where its own program runs, and colleagues lent by another account:
+    # fields older readers ignore.
+    yield {"reply": "machines", "here": "desktop", "others": ["laptop"], "program": "server",
+           "colleagues": "gpu.acme", "colleagues_lent": True}
     yield {"reply": "asked", "colleague": ADDRESS}
     for landed in [{"kind": "uncertain", "why": "interrupted"}, {"kind": "new_turn", "turn": "a"},
                    {"kind": "joined_turn", "turn": "b"}, {"kind": "waiting", "why": "offline", "answered": True},
@@ -170,7 +174,7 @@ def page_identity(value):
 
 def samples(root):
     fixtures = json.loads((root / "gui/fixtures/wire.json").read_text(encoding="utf-8"))
-    for protocol in [5, 6, 7]:
+    for protocol in [5, 6, 7, 8]:
         for lifetime in [None, fixtures["world"]["nodes"][0]["facts"]["node_lifetime"]]:
             welcome = {"kind": "accepted", "machine": "desktop", "version": "1.0.0"}
             if lifetime is not None:
@@ -183,8 +187,8 @@ def samples(root):
             if reply["reply"] == "run":
                 case["encodings"] = [part["encoding"] for part in reply["output"]["legacy"]]
             case["attached"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "attached"
-            # Hub-by-hub nodes have no shape in these protocols and are said as text.
-            case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or reply["reply"] == "nodes"
+            # Hub-by-hub nodes have no shape before protocol 8 and are said as text.
+            case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8)
             yield case
         yield {"mode": "reply", "protocol": protocol, "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}
         for call, peer, admitted in calls(fixtures):

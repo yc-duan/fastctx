@@ -9,8 +9,8 @@
 //! connection. Asked to copy between two other machines, it has the source
 //! send, so the source's scope must reach the destination.
 //!
-//! A source the account does not trust may not act for it, and so cannot
-//! send to the destination itself (`world-network.md`, 一台机器给几个账号用):
+//! A source that may not act for the account cannot send to the
+//! destination itself (`world-network.md`, 别人机器上的智能体什么时候能访问你的机器):
 //! then the machine asked passes the copy on, fetching from the source as a
 //! destination would and sending on as a source would, each piece as it
 //! comes, keeping none of it.
@@ -87,7 +87,7 @@ pub async fn copy(node: &Arc<Node>, acting: &Acting, from: Place, to: Place) -> 
 /// why.
 fn trusted(node: &Node, acting: &Acting, machine: &Written) -> bool {
     match node.speakers(acting, machine, Purpose::Hands) {
-        Ok(speakers) => speakers.iter().any(|(link, account)| link.view().trusts(account, &machine.name)),
+        Ok(speakers) => speakers.iter().any(|(link, account)| link.view().may_act_for(account, &machine.name)),
         Err(_) => true,
     }
 }

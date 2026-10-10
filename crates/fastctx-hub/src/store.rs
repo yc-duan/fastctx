@@ -117,7 +117,7 @@ pub struct Store {
     pub letters: BTreeMap<MachineName, Letters>,
     /// Which machine was called to work for which resident: what it tells
     /// that resident of the work goes on after the account's right on the
-    /// machine is taken back (`world-network.md`, 一台机器给几个账号用).
+    /// machine is taken back (`world-network.md`, 收回立刻生效).
     pub worked: std::collections::BTreeSet<(MachineName, fastctx_types::Address)>,
 }
 

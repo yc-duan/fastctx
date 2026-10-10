@@ -90,7 +90,7 @@ impl Lend {
 /// A machine that acts for an account it is not logged in to: the account
 /// used an agent there, opening a session on it or asking it to be a
 /// colleague, which needs that machine to reach the account's machines
-/// (`world-network.md`, 一台机器什么时候替一个账号出手).
+/// (`world-network.md`, 别人机器上的智能体什么时候能访问你的机器).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ActsFor {
     pub machine: MachineName,
@@ -212,7 +212,7 @@ impl Directory {
 
     /// Whether `member` may act for `account`: the account is logged in on
     /// it, or used an agent there.
-    pub fn trusts(&self, account: &AccountName, member: &MachineName) -> bool {
+    pub fn may_act_for(&self, account: &AccountName, member: &MachineName) -> bool {
         self.logged_in(member, account)
             || self.acting.iter().any(|acting| acting.account == *account && acting.machine == *member)
     }
@@ -263,7 +263,7 @@ impl Directory {
             Some(_) => {}
         }
         if purpose.acts() {
-            if !self.trusts(account, from) {
+            if !self.may_act_for(account, from) {
                 return Err(format!("{from} may not act for the account {account}"));
             }
         } else if !(self.logged_in(from, account) || self.rights(account, from).any()) {

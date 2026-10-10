@@ -19,6 +19,7 @@ REVISIONS = {
     5: "5534ed866e19c931f469c51e0f434ac2e3b4ea2e",
     6: "f00f76c68d27d74204110c876860e4ab61a7f85f",
     7: "bd905f697fbf793f9f755561f36b0758fb08e383",
+    8: "52d3e985cace21aab0ec8b01f824f45fc187d60f",
 }
 
 
@@ -87,7 +88,8 @@ def verify(reader):
         if case["mode"] == "request":
             assert answer["admitted"] == case["admitted"], (case, answer)
         elif case["mode"] == "welcome":
-            expected = {key: value for key, value in case["value"].items() if key != "node_lifetime"}
+            # The node's lifetime is read from protocol 8 on; older readers drop it.
+            expected = {key: value for key, value in case["value"].items() if key != "node_lifetime" or case["protocol"] >= 8}
             assert answer["read"] == expected, (case, answer)
         else:
             wire = answer["wire"]
@@ -98,12 +100,12 @@ def verify(reader):
             if case.get("encodings"):
                 for encoding in case["encodings"]:
                     assert encoding in json.dumps(answer["read"]), (case, answer)
-            # Protocol 7 reads today's replies as they are, but for those said as text.
-            if case["protocol"] == 7 and not case.get("text_result"):
+            # Protocols 7 and 8 read today's replies as they are, but for those said as text.
+            if case["protocol"] >= 7 and not case.get("text_result"):
                 assert wire == answer["current"], (case, answer)
             if case.get("attached") and case["protocol"] >= 6:
                 assert wire["reply"]["Ok"]["notices"] == case["value"]["reply"]["Ok"]["notices"]
-    print(f"PASS: {len(corpus)} historical request/reply checks against protocols 5, 6 and 7")
+    print(f"PASS: {len(corpus)} historical request/reply checks against protocols {', '.join(map(str, REVISIONS))}")
 
 
 if __name__ == "__main__":

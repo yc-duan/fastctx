@@ -192,7 +192,8 @@ pub enum Purpose {
 
 impl Purpose {
     /// Whether the sender acts for the account in saying it, and so must be
-    /// a machine the account trusts (`world-network.md`, 什么算出手).
+    /// a machine that may act for the account (`world-network.md`,
+    /// 别人机器上的智能体什么时候能访问你的机器).
     pub fn acts(self) -> bool {
         self != Purpose::Echo
     }

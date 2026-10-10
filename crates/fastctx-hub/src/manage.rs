@@ -32,7 +32,7 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
             return Err(format!("the account {account} is locked"));
         }
         let allowed = match &change {
-            Change::OpenProject { .. } => directory.trusts(account, asker),
+            Change::OpenProject { .. } => directory.may_act_for(account, asker),
             _ => directory.logged_in(asker, account),
         };
         if !allowed {

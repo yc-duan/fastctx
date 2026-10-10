@@ -160,7 +160,7 @@ pub struct HubAccounts {
     pub shares: Vec<ShareSeen>,
     pub lends: Vec<LendSeen>,
     /// Machines of others that act for an account, because it used an
-    /// agent there (`world-network.md`, 一台机器什么时候替一个账号出手).
+    /// agent there (`world-network.md`, 别人机器上的智能体什么时候能访问你的机器).
     pub acting: Vec<ActingSeen>,
     pub projects: Vec<ProjectSeen>,
     /// Who came into the accounts this computer is logged in to there,

@@ -55,7 +55,7 @@ fn cut(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Direc
         .filter(|member| {
             member.name == *me
                 || mine.iter().any(|account| all.rights(account, &member.name).any() || member.logins.contains(account))
-                || users.iter().any(|account| all.trusts(account, &member.name))
+                || users.iter().any(|account| all.may_act_for(account, &member.name))
         })
         .cloned()
         .collect();

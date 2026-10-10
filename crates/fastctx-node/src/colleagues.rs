@@ -366,7 +366,7 @@ fn words(
     };
     // Where it lives and where its shell is, when they differ (`world-run.md`,
     // 这里), or that it has none where it lives (`world-network.md`,
-    // 一台机器给几个账号用).
+    // 共享机器与借出智能体).
     let on = "`on MACHINE` in the script runs a part of it on another machine";
     let (who, runs, elsewhere) = match (works_on, lent) {
         (Some(works_on), _) => (

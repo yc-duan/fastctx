@@ -367,7 +367,7 @@ fn straight(
         && *to != here
         && view.member(to).is_some()
         && view.rights(account, to).hands
-        && view.trusts(account, to)
+        && view.may_act_for(account, to)
 }
 
 /// Follows a job that started on `machine` until its end is taken, it is

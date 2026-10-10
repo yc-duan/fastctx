@@ -464,7 +464,7 @@ fn use_agent(hub: &Hub, message: &Envelope, standing: &Standing) -> Result<(), S
             let login = home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
             return Err(format!("the account {account} may not use the {agent} login {login} on {to}"));
         }
-        if directory.trusts(account, to) {
+        if directory.may_act_for(account, to) {
             false
         } else {
             store.book.directory.acting.push(fastctx_net::directory::ActsFor {

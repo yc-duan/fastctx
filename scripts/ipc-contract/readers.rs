@@ -1,4 +1,4 @@
-//! Compiled against unchanged type sources from three pinned git revisions.
+//! Compiled against unchanged type sources from pinned git revisions, one for each protocol.
 
 use serde_json::{Value, json};
 use std::io::{self, BufRead};
@@ -20,6 +20,7 @@ fn decode(protocol: u64, value: Value, request: bool) -> Value {
         5 => read!(v5),
         6 => read!(v6),
         7 => read!(v7),
+        8 => read!(v8),
         _ => panic!("no frozen reader for {protocol}"),
     }
 }
@@ -42,6 +43,7 @@ fn main() {
                     5 => welcome!(v5),
                     6 => welcome!(v6),
                     7 => welcome!(v7),
+                    8 => welcome!(v8),
                     _ => panic!("no frozen reader for {protocol}"),
                 };
                 json!({"read": read})

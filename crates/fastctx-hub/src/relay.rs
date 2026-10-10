@@ -1,5 +1,5 @@
 //! `fastctx relay`: forwards one port to the hub, byte for byte
-//! (`world-network.md`, 转接站只转字节).
+//! (`world-network.md`, 转接站：只转字节).
 //!
 //! A machine with a poor line to the hub dials a relay instead; the relay
 //! passes the connection to the hub as it is, so the TLS between the machine

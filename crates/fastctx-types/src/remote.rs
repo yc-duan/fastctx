@@ -305,7 +305,7 @@ pub enum RemoteCall {
 
 impl RemoteCall {
     /// What the call asks of the machine it is made of (`world-network.md`,
-    /// 一台机器给几个账号用): the caller names it, the hub and the machine
+    /// 共享机器与借出智能体): the caller names it, the hub and the machine
     /// check it.
     pub fn purpose(&self) -> Purpose {
         match self {

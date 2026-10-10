@@ -131,8 +131,8 @@ impl Node {
 
     /// Whether scripts may start on this computer for `acting`: for a
     /// session the user opened here, or for an account logged in here or
-    /// that may work here. An account lent only the agents here works
-    /// elsewhere (`world-network.md`, 一台机器给几个账号用); when not, why.
+    /// that may work here. An account lent only an agent's login here works
+    /// elsewhere (`world-network.md`, 共享机器与借出智能体); when not, why.
     pub(crate) fn works_here(&self, acting: &Acting) -> Result<(), String> {
         let Acting::Accounts { accounts } = acting else { return Ok(()) };
         let here = self.machine();

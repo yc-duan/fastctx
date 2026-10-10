@@ -275,7 +275,7 @@ fn actors(session: &Session) -> Vec<(MachineName, fastctx_types::AccountName)> {
         .filter_map(|machine| {
             logins
                 .iter()
-                .find(|account| view.trusts(account, &machine.name) && view.rights(account, &machine.name).any())
+                .find(|account| view.may_act_for(account, &machine.name) && view.rights(account, &machine.name).any())
                 .map(|account| (machine.name.clone(), account.clone()))
         })
         .collect()

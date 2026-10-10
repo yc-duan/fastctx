@@ -94,9 +94,9 @@ pub struct WorldWho {
 }
 
 /// A resident or a job on `machine`, by its id, that works for other
-/// accounts than the asker's: a machine lent to several accounts shows them
-/// all to those that may work on it, each marked with whom it works for
-/// (`world-network.md`, 一台机器给几个账号用).
+/// accounts than the asker's: a machine shared with several accounts shows
+/// them all to those that may work on it, each marked with whom it works
+/// for (`world-network.md`, 共享机器与借出智能体).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WhoFor {
     pub machine: MachineName,
@@ -177,7 +177,7 @@ pub struct LookedUp {
 impl WorldWho {
     /// Marks the residents and jobs the machines answered with that work
     /// for none of the reader's accounts, each with whom it works for
-    /// (`world-network.md`, 一台机器给几个账号用). `mine` says whether the
+    /// (`world-network.md`, 共享机器与借出智能体). `mine` says whether the
     /// reader works for an account; `logged_in` names the accounts logged in
     /// on a machine, for whom a session the user opened there works.
     pub fn mark_others(
