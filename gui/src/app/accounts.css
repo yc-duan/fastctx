@@ -95,10 +95,6 @@ a.text-button {
   margin-left: auto;
 }
 
-.token-form .scan-code {
-  margin-top: var(--space-4);
-}
-
 .login-alone {
   position: relative;
   display: flex;

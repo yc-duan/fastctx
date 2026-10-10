@@ -174,16 +174,6 @@
   padding-bottom: var(--space-10);
 }
 
-.welcome-facts {
-  margin: 0;
-  font-size: var(--size-ui);
-  color: var(--text-2);
-}
-
-.welcome-facts .place-now {
-  margin-left: var(--space-2);
-}
-
 .welcome-body {
   margin-top: var(--space-8);
 }
@@ -204,16 +194,6 @@
   margin-top: var(--space-5);
 }
 
-.welcome-kept {
-  margin-top: var(--space-3);
-  font-size: var(--size-ui);
-  line-height: var(--leading-prose);
-}
-
-.welcome-kept p {
-  margin: 0;
-}
-
 .welcome-command {
   margin: var(--space-2) 0 0;
   padding: var(--space-3);
@@ -224,38 +204,8 @@
   word-break: break-all;
 }
 
-.welcome-hosts {
-  margin-top: var(--space-6);
-}
-
-.welcome-hosts h3 {
-  margin: 0 0 var(--space-1);
-  font-weight: 400;
-}
-
-.host-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 34px;
-  font-size: var(--size-ui);
-}
-
-.host-row input {
-  accent-color: var(--accent);
-}
-
 .host-name {
   color: var(--text);
-}
-
-.host-state {
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.welcome-hosts .apply-now {
-  margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
 }
 
 /* The two ways in, each a slip of fill with its own small drawing: joining
@@ -389,51 +339,12 @@
   width: 6.5em;
 }
 
-.welcome-go {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.welcome-go-note {
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-/* On a World just made: where the next computer reaches it, and the token
-   that lets it in, on a slip of its own. */
-.welcome-next {
-  margin-top: var(--space-5);
-  padding: var(--space-4);
-  border-radius: var(--radius-l);
-  background: var(--fill);
-}
-
 .welcome-next-title {
   margin: 0 0 var(--space-3);
   font-family: var(--font-emphasis);
   font-weight: 400;
   font-size: var(--size-h3);
   color: var(--text-strong);
-}
-
-.welcome-next .invite-next {
-  margin: var(--space-3) 0 0 calc(-1 * var(--space-3));
-  color: var(--accent);
-}
-
-/* This computer, quietly, at the foot of the page. */
-.welcome-here .welcome-facts {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 0;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.welcome-here .welcome-facts .glyph {
-  margin-right: var(--space-2);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -944,18 +855,60 @@ a.details-job {
   border-radius: var(--radius-m);
 }
 
+/* Under a new password: three short bars filling as it grows stronger,
+   and one word for what it lacks or how strong it is. */
+.password-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 18px;
+  margin: calc(-1 * var(--space-1)) 0 var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.password-bars {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.password-bars i {
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--fill-strong);
+  transition: background-color var(--hover) ease;
+}
+
+.password-meter[data-strength="1"] i:nth-child(-n + 1),
+.password-meter[data-strength="2"] i:nth-child(-n + 2),
+.password-meter[data-strength="3"] i {
+  background: var(--alive);
+}
+
+.password-meter[data-strength="1"] i:nth-child(1) {
+  background: var(--caution);
+}
+
+.password-meter.wanting {
+  color: var(--wrong);
+}
+
 /* On a phone, scanning the computer's QR code is the way in: one wide
-   button above the code that can be pasted instead. */
+   button with the drawing of a code's frame. */
+.scan-form {
+  padding-top: var(--space-4);
+}
+
 .scan-code {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
   width: 100%;
-  min-height: 48px;
+  min-height: 56px;
   margin: var(--space-2) 0 var(--space-4);
-  border-radius: var(--radius-m);
-  background: var(--accent-wash);
+  border-radius: var(--radius-l);
   background: var(--accent-wash);
   color: var(--text-strong);
   font-size: var(--size-ui);
@@ -966,8 +919,9 @@ a.details-job {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-.scan-code .glyph {
-  color: var(--accent);
+.scan-code .welcome-way-mark {
+  width: 32px;
+  margin: 0;
 }
 
 /* Who came into an account lately: each a line saying who and when, with
@@ -1009,3 +963,76 @@ a.details-job {
   color: var(--wrong);
 }
 
+
+/* In: the hero gives way to the World's drawing with this computer on
+   it, a short title under it, and only what is left to decide. */
+.login-page.in .welcome-hero {
+  display: none;
+}
+
+.welcome-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: removal-rise 0.4s cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+.welcome-drawing {
+  position: relative;
+  width: 100%;
+  height: clamp(220px, 36dvh, 340px);
+  margin-top: var(--space-6);
+}
+
+.welcome-drawing > .network-map {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+}
+
+.welcome-done-title {
+  margin: var(--space-4) 0 var(--space-1);
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h2);
+  font-weight: 400;
+  color: var(--text-strong);
+}
+
+.welcome-done-who {
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.welcome-slips {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  margin-top: var(--space-5);
+  text-align: left;
+}
+
+.welcome-slip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  font-size: var(--size-small);
+  color: var(--text);
+}
+
+.welcome-slip .welcome-command {
+  flex-basis: 100%;
+  margin: 0 0 var(--space-2);
+}
+
+.welcome-done .welcome-foot {
+  width: 100%;
+  margin-top: var(--space-6);
+}

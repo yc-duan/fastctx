@@ -118,6 +118,7 @@ pub fn reset_password(dir: &Path, account: &AccountName, password: &str) -> anyh
 /// password is set as any is, both halves of OPAQUE here, and the hub keeps
 /// only what it leaves.
 fn password_record(secrets: &HubSecrets, account: &AccountName, password: &str) -> anyhow::Result<Vec<u8>> {
+    fastctx_types::password::check(account.as_str(), password).map_err(anyhow::Error::msg)?;
     let (state, request) = fastctx_net::login::password_start(password).map_err(anyhow::Error::msg)?;
     let response = secrets.register_start(account, &request).map_err(anyhow::Error::msg)?;
     let upload = fastctx_net::login::password_finish(state, password, &response).map_err(anyhow::Error::msg)?;

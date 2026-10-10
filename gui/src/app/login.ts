@@ -1,20 +1,19 @@
 // Coming into a World (`world-gui.md`, 账号、机器、共享与借出). A computer
-// that is in none yet is offered two ways: join one, with the server, the
-// account and its password as MeshCentral Router asks them or with a
-// one-time token another device made; or create one, with this computer
-// as its hub and the person its super administrator. A phone only joins,
-// and reads a token's code with its camera. A computer registers as one of
-// the account's machines unless told not to, and is kept connected by a
-// startup service afterwards. Once in, the World's tools can be put into
-// this computer's agents, and on a World just made another computer can
-// be let in at once.
+// that is in none yet is offered two ways: join one with the server's
+// address, an account and its password, or create one with this computer
+// as its server and the person its administrator. A phone scans the code a
+// computer shows, or logs in with an account and password. A computer
+// registers as one of the account's machines unless told not to. Once in,
+// the World's tools can be put into this computer's agents, and on a World
+// just made another device can be added at once.
 
-import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import type { LoggedIn, Legacy, Setup } from "../world/bridge";
+import type { KeptNow, LoggedIn, Setup } from "../world/bridge";
 import type { Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { LoginWords } from "./account-words";
+import { passwordProblem, passwordStrength } from "./password";
+import { plainly } from "./problem";
 import { loginLabel } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
@@ -37,33 +36,36 @@ export interface LoginOptions {
   /** Where this computer stands, where the shell can say. */
   setup?: (() => Promise<Setup>) | undefined;
   place?: (() => Promise<string>) | undefined;
-  /** What was done with what an old fastctx left, in a sentence. */
-  legacy(legacy: Legacy | null): string;
   login(hub: string, account: string, password: string, register: boolean, name: string | null): Promise<LoggedIn>;
+  /** Logs a phone in with the code it scanned. */
   loginToken(token: string, name: string | null): Promise<LoggedIn>;
   /** Opening an account, where this interface can: a computer can, a
    *  phone logs in only. */
   openAccount?: ((hub: string, account: string, password: string, register: boolean, name: string | null) => Promise<LoggedIn>) | undefined;
-  /** Creating a World with this computer its hub, where it can: this
+  /** Creating a World with this computer its server, where it can: this
    *  computer's addresses, and the World made and logged in to. */
   addresses?: (() => Promise<HereAddress[]>) | undefined;
   create?: ((world: string, admin: string, password: string, public_: string[], register: boolean, name: string | null) => Promise<LoggedIn>) | undefined;
-  /** Opens the sheet that lets another computer into `login`. */
+  /** Opens the sheet that adds another device to `login`. */
   invite?: ((login: Login) => void) | undefined;
-  /** Reads a token's QR code with the camera, where the shell can; null
-   *  when the person turned back. */
+  /** Reads a QR code with the camera, where the shell can; null when the
+   *  person turned back. */
   scan?: (() => Promise<string | null>) | undefined;
   applyHosts?: ((codex: boolean, claude: boolean) => Promise<string[]>) | undefined;
+  /** Installs the startup service where it is missing. */
+  keep?: (() => Promise<KeptNow>) | undefined;
+  /** The World's drawing, with this computer marked on it once it is in. */
+  drawing?: { element: HTMLElement; mark(machine: string | null): void; stop(): void } | undefined;
   /** Done here: on to the World. */
   enter(): void;
 }
 
-type Step = "choose" | "password" | "open" | "token" | "create" | "done";
+type Step = "choose" | "password" | "open" | "scan" | "create" | "done";
 
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 const machineRule = "[a-z][a-z0-9\\-]{0,31}";
 const hubRule = "[a-z][a-z0-9\\-]{0,31}";
-/** The port a hub made here listens on unless told otherwise. */
+/** The port a server made here listens on unless told otherwise. */
 const hubPort = 7443;
 
 export class LoginPage implements Page {
@@ -87,7 +89,7 @@ export class LoginPage implements Page {
   constructor(private readonly options: LoginOptions) {
     const { words } = options;
     this.title = words.title;
-    this.step = options.device ? "token" : this.loggedIn() ? "password" : "choose";
+    this.step = options.device ? (options.scan ? "scan" : "password") : this.loggedIn() ? "password" : "choose";
     this.element = document.createElement("div");
     this.element.className = "welcome-page login-page";
     this.element.innerHTML = `
@@ -107,13 +109,17 @@ export class LoginPage implements Page {
     this.element.addEventListener("change", (event) => {
       if ((event.target as HTMLInputElement).name === "register") this.drawName();
     });
+    this.element.addEventListener("input", (event) => {
+      const input = event.target as HTMLInputElement;
+      if (input.name === "password" || input.name === "account") this.drawStrength();
+    });
     this.element.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.submit();
     });
     this.draw();
     void this.refreshSetup();
-    // Who this computer is, and the logins it has, as the World answers.
+    // The logins this computer has, as the World answers.
     let shown = "";
     this.stop = effect(() => {
       const world = options.store.world.get();
@@ -127,6 +133,7 @@ export class LoginPage implements Page {
 
   leave(): void {
     this.stop();
+    this.options.drawing?.stop();
   }
 
   private async refreshSetup(): Promise<void> {
@@ -140,26 +147,15 @@ export class LoginPage implements Page {
     if (this.step === "done") this.draw();
   }
 
-  /** This computer, at the foot: its name, whether fastctx is in place and
-   *  kept running, and the logins it has. */
+  /** At the foot: the logins this computer has, and the one thing that
+   *  may be missing for it to take part at all. */
   private drawHere(): void {
     const { words, store } = this.options;
-    const world = store.world.peek();
-    const name = world?.here ?? "";
-    const setup = this.setup;
-    const facts = [
-      name ? words.facts(name) : "",
-      ...(setup
-        ? [setup.installed ? words.placed : setup.carried ? words.notPlaced : words.noCarried, setup.service ? words.serviceOn : words.serviceOff]
-        : []),
-    ].filter(Boolean);
-    const logins = loginsOf(world?.accounts).map(loginLabel);
-    const legacy = setup ? this.options.legacy(setup.legacy) : "";
+    const logins = loginsOf(store.world.peek()?.accounts).map(loginLabel);
+    const missing = this.setup && !this.setup.installed && this.setup.carried;
     this.here.innerHTML = `
-      <p class="welcome-facts">${glyph(this.options.device ? "phone" : "machine", 14)}${facts.map((fact) => `<span class="fact">${escape(fact)}</span>`).join(`<span class="sep">·</span>`)}
-        ${setup && !setup.installed && setup.carried ? `<button class="text-button place-now" type="button">${escape(words.place)}</button>` : ""}</p>
       ${logins.length && this.step !== "done" ? `<p class="welcome-legacy">${escape(words.already(logins.join(words.separator)))}</p>` : ""}
-      ${legacy ? `<p class="welcome-legacy">${escape(legacy)}</p>` : ""}`;
+      ${missing ? `<p class="welcome-legacy">${escape(words.placeMissing)}<button class="text-button place-now" type="button">${escape(words.place)}</button></p>` : ""}`;
   }
 
   /** Moves to another step; its first field, or its first button, takes
@@ -169,7 +165,7 @@ export class LoginPage implements Page {
     this.step = step;
     this.draw();
     this.drawHere();
-    this.body.querySelector<HTMLElement>("input:not([type=hidden]):not([type=checkbox]), textarea, .sheet-go, .welcome-way")?.focus({ preventScroll: true });
+    this.body.querySelector<HTMLElement>("input:not([type=hidden]):not([type=checkbox]), .scan-code, .sheet-go, .welcome-way")?.focus({ preventScroll: true });
   }
 
   /** Keeps what was typed across the ways in. */
@@ -190,13 +186,21 @@ export class LoginPage implements Page {
 
   private draw(): void {
     const { words } = this.options;
-    const foot = (ways: string, go: string, note = "") =>
+    const foot = (ways: string, go: string, title = "") =>
       `<p class="sheet-note" role="alert" hidden></p>
-      <footer class="welcome-foot"><span class="login-ways">${ways}</span><span class="welcome-go">${note ? `<span class="welcome-go-note">${escape(note)}</span>` : ""}<button class="sheet-go" type="submit">${escape(go)}</button></span></footer>`;
+      <footer class="welcome-foot"><span class="login-ways">${ways}</span><button class="sheet-go" type="submit"${title ? ` title="${escape(title)}"` : ""}>${escape(go)}</button></footer>`;
     const way = (to: Step, label: string) => `<button class="text-button login-way" type="button" data-way="${to}">${escape(label)}</button>`;
     const register = this.options.device
       ? ""
       : `<label class="check-row" title="${escape(words.registerWhat)}"><input type="checkbox" name="register"${this.typed.register ? " checked" : ""}><span class="check-title">${escape(words.register)}</span></label>`;
+    const newPassword = (pair: boolean) => {
+      const fields = `<label class="field"><span class="field-label">${escape(words.password)}</span>
+        <input name="password" type="password" required autocomplete="new-password"></label>
+      <label class="field"><span class="field-label">${escape(words.passwordAgain)}</span>
+        <input name="again" type="password" required autocomplete="new-password"></label>`;
+      return `${pair ? `<div class="field-pair">${fields}</div>` : fields}
+      <p class="password-meter" aria-live="polite"><span class="password-bars"><i></i><i></i><i></i></span><span class="password-said"></span></p>`;
+    };
     switch (this.step) {
       case "choose":
         this.body.innerHTML = `
@@ -214,43 +218,35 @@ export class LoginPage implements Page {
       case "open": {
         const opening = this.step === "open";
         const ways = opening
-          ? way("password", words.withPassword)
-          : [way("token", words.withToken), this.options.openAccount ? way("open", words.openOne) : "", this.backWay()].join("");
+          ? way("password", words.back)
+          : [this.options.device && this.options.scan ? way("scan", words.scan) : "", this.options.openAccount ? way("open", words.signUp) : "", this.backWay()].join("");
         this.body.innerHTML = `
           <form class="login-form welcome-form" autocomplete="on">
-            <h2 class="welcome-form-title">${escape(opening ? words.openTitle : this.loggedIn() ? words.another : words.join)}</h2>
-            ${opening ? `<p class="field-hint login-what">${escape(words.openWhat)}</p>` : ""}
+            <h2 class="welcome-form-title">${escape(opening ? words.signUp : this.loggedIn() ? words.another : words.join)}</h2>
             <label class="field"><span class="field-label">${escape(words.hub)}</span>
-              <input name="hub" class="mono" required autocomplete="url" spellcheck="false" autocapitalize="off" placeholder="203.0.113.10:7443" value="${escape(this.typed.hub)}"></label>
+              <input name="hub" class="mono" required autocomplete="url" spellcheck="false" autocapitalize="off" placeholder="192.168.1.10:7443" value="${escape(this.typed.hub)}"></label>
             <label class="field"><span class="field-label">${escape(words.account)}</span>
               <input name="account" required autocomplete="username" spellcheck="false" autocapitalize="off" pattern="${accountRule}" value="${escape(this.typed.account)}"></label>
-            <label class="field"><span class="field-label">${escape(words.password)}</span>
-              <input name="password" type="password" required autocomplete="${opening ? "new-password" : "current-password"}"></label>
             ${
               opening
-                ? `<label class="field"><span class="field-label">${escape(words.passwordAgain)}</span>
-              <input name="again" type="password" required autocomplete="new-password"></label>`
-                : ""
+                ? newPassword(false)
+                : `<label class="field"><span class="field-label">${escape(words.password)}</span>
+              <input name="password" type="password" required autocomplete="current-password"></label>`
             }
             ${register}
             <div class="login-name"></div>
-            ${foot(ways, opening ? words.openGo : words.go)}
+            ${foot(ways, opening ? words.signUpGo : words.go)}
           </form>`;
         this.drawName();
         break;
       }
-      case "token":
+      case "scan":
         this.body.innerHTML = `
-          <form class="token-form welcome-form">
-            <h2 class="welcome-form-title">${escape(words.withToken)}</h2>
-            ${this.options.scan ? `<button class="scan-code" type="button">${glyph("scan", 20)}<span>${escape(words.scan)}</span></button>` : ""}
-            <label class="field"><span class="field-label">${escape(this.options.scan ? words.tokenOr : words.token)}</span>
-              <textarea name="token" rows="3" class="mono" required spellcheck="false" autocapitalize="off" placeholder="FX5…"></textarea>
-              <span class="field-hint">${escape(words.tokenHint)}</span></label>
-            <div class="login-name"></div>
-            ${foot([way("password", words.withPassword), this.backWay()].join(""), words.go)}
-          </form>`;
-        this.drawName();
+          <div class="welcome-form scan-form">
+            <button class="scan-code" type="button">${scanMark()}<span>${escape(words.scan)}</span></button>
+            <p class="sheet-note" role="alert" hidden></p>
+            <footer class="welcome-foot"><span class="login-ways">${way("password", words.withPassword)}</span><span></span></footer>
+          </div>`;
         break;
       case "create":
         this.body.innerHTML = `
@@ -262,22 +258,17 @@ export class LoginPage implements Page {
               <label class="field"><span class="field-label">${escape(words.admin)}</span>
                 <input name="account" class="mono" required spellcheck="false" autocapitalize="off" pattern="${accountRule}" placeholder="me" value="${escape(this.typed.account)}"></label>
             </div>
-            <div class="field-pair">
-              <label class="field"><span class="field-label">${escape(words.password)}</span>
-                <input name="password" type="password" required autocomplete="new-password"></label>
-              <label class="field"><span class="field-label">${escape(words.passwordAgain)}</span>
-                <input name="again" type="password" required autocomplete="new-password"></label>
-            </div>
+            ${newPassword(true)}
             <div class="field reach-field"><span class="field-label" title="${escape(words.reachWhat)}">${escape(words.reach)}</span>
               <div class="reach-chips"></div>
               <div class="reach-more">
-                <input name="extra" class="mono" spellcheck="false" autocapitalize="off" placeholder="${escape(words.extraHint)}" aria-label="${escape(words.extraHint)}" value="${escape(this.typed.extra)}">
+                <input name="extra" class="mono" spellcheck="false" autocapitalize="off" placeholder="${escape(words.extraHint)}" aria-label="${escape(words.extra)}" value="${escape(this.typed.extra)}">
                 <label class="reach-port"><span>${escape(words.port)}</span><input name="port" class="mono" inputmode="numeric" pattern="[0-9]{2,5}" required value="${escape(this.typed.port)}"></label>
               </div>
             </div>
             ${register}
             <div class="login-name"></div>
-            ${foot(this.backWay(), words.createGo, words.createNote)}
+            ${foot(this.backWay(), words.createGo, words.createAsks)}
           </form>`;
         this.drawName();
         void this.drawAddresses();
@@ -286,6 +277,21 @@ export class LoginPage implements Page {
         this.drawDone();
         break;
     }
+    this.drawStrength();
+  }
+
+  /** Under a new password: what it still lacks, or how strong it is. */
+  private drawStrength(): void {
+    const meter = this.body.querySelector<HTMLElement>(".password-meter");
+    if (!meter) return;
+    const { words } = this.options;
+    const account = this.body.querySelector<HTMLInputElement>("[name=account]")?.value.trim() ?? "";
+    const password = this.body.querySelector<HTMLInputElement>("[name=password]")?.value ?? "";
+    const problem = password ? passwordProblem(account, password) : null;
+    const strength = passwordStrength(account, password);
+    meter.dataset.strength = String(strength);
+    meter.classList.toggle("wanting", problem !== null);
+    meter.querySelector(".password-said")!.textContent = problem ? words.passwordRule[problem] : strength ? words.strength[strength - 1]! : "";
   }
 
   /** Back to the two ways, for a computer that has none yet. */
@@ -329,15 +335,15 @@ export class LoginPage implements Page {
   }
 
   /** A name is asked where one is chosen now: a phone's first login, or a
-   *  computer registering on its first hub. A device keeps one name on
-   *  every hub after that. */
+   *  computer registering on its first server. A device keeps one name on
+   *  every server after that. */
   private drawName(): void {
     const slot = this.body.querySelector<HTMLElement>(".login-name");
     if (!slot) return;
     const { words, store } = this.options;
     const world = store.world.peek();
     const first = !loginsOf(world?.accounts).length;
-    const registering = this.step === "token" || (this.body.querySelector<HTMLInputElement>("[name=register]")?.checked ?? false);
+    const registering = this.body.querySelector<HTMLInputElement>("[name=register]")?.checked ?? false;
     const typed = slot.querySelector<HTMLInputElement>("[name=name]")?.value ?? "";
     const asked = first && (this.options.device || registering);
     if (!asked) {
@@ -346,58 +352,81 @@ export class LoginPage implements Page {
     }
     // A phone has no name until it first logs in; a computer has its own.
     const phone = this.options.device;
-    slot.innerHTML = `<label class="field"><span class="field-label" title="${escape(words.nameHint)}">${escape(phone ? words.phoneName : words.name)}</span>
+    slot.innerHTML = `<label class="field"><span class="field-label">${escape(phone ? words.phoneName : words.name)}</span>
       <input name="name" class="mono" autocomplete="off" spellcheck="false" autocapitalize="off" pattern="${machineRule}"${phone ? " required" : ""} placeholder="${escape(phone ? "phone" : (world?.here ?? ""))}" value="${escape(typed)}"></label>`;
   }
 
+  /** What is left for the person once in: a startup service that did not
+   *  install, and the agents on this computer not yet given the World's
+   *  tools. Nothing when all is well. */
+  private wanting(): { kept: string; hosts: ("codex" | "claude")[] } {
+    const { words } = this.options;
+    const kept = this.done?.kept;
+    const said =
+      !kept || this.options.device
+        ? ""
+        : kept.kind === "command"
+          ? "command"
+          : kept.kind === "declined" || kept.kind === "unsupported"
+            ? words.kept[kept.kind]
+            : "";
+    const hosts =
+      this.options.device || !this.options.applyHosts || !this.setup
+        ? []
+        : (["codex", "claude"] as const).filter((key) => this.setup![key] === "out" || this.setup![key] === "old");
+    return { kept: said, hosts: [...hosts] };
+  }
+
+  /** In: the World's drawing with this computer on it, a short title, and
+   *  only what needs the person. */
   private drawDone(): void {
     const { words } = this.options;
     const done = this.done!;
-    const login = `${done.hub} · ${done.account}`;
-    const kept = !done.kept
-      ? ""
-      : done.kept.kind === "command"
-        ? `<p>${escape(words.keptCommand)}</p><pre class="welcome-command mono">${escape(done.kept.command)}</pre>`
-        : done.kept.kind in words.kept
-          ? `<p>${escape(words.kept[done.kept.kind as keyof LoginWords["kept"]])}</p>`
-          : "";
-    const setup = this.setup;
-    const world = this.options.store.world.peek();
-    const registered = world?.accounts.hubs.some((hub) => hub.name === done.hub && hub.home === done.account) ?? false;
-    const host = (key: "codex" | "claude", label: string) => {
-      const state = setup ? setup[key] : "absent";
-      return `<label class="host-row"><input type="checkbox" name="${key}" ${state === "out" || state === "old" ? "checked" : ""} ${state === "absent" || state === "in" ? "disabled" : ""}><span class="host-name">${escape(label)}</span><span class="host-state">${escape(words.hostState[state])}</span></label>`;
-    };
-    // On a World just made, the way to let the next computer in comes first.
-    const reached = this.created ? [...this.chosen, ...this.extraAddresses()].map((address) => `${address}:${this.typed.port}`) : [];
-    const invite =
-      this.created && this.options.invite
-        ? `<section class="welcome-next">
-          <h3 class="welcome-next-title">${escape(words.nextTitle)}</h3>
-          <dl class="facts welcome-reached"><dt>${escape(words.hub)}</dt><dd class="mono">${escape(reached.join("  ") || "—")}</dd><dt>${escape(words.account)}</dt><dd class="mono">${escape(done.account)}</dd></dl>
-          <button class="text-button invite-next" type="button">${glyph("plus", 16)}<span>${escape(words.inviteNext)}</span></button>
-        </section>`
-        : "";
+    const wanting = this.wanting();
+    const kept = this.done?.kept;
+    const slips = [
+      wanting.kept === "command" && kept?.kind === "command"
+        ? `<div class="welcome-slip"><span>${escape(words.keptCommand)}</span><pre class="welcome-command mono">${escape(kept.command)}</pre></div>`
+        : wanting.kept
+          ? `<div class="welcome-slip"><span>${escape(wanting.kept)}</span>${this.options.keep && kept?.kind === "declined" ? `<button class="text-button keep-now" type="button">${escape(words.keepGo)}</button>` : ""}</div>`
+          : "",
+      ...wanting.hosts.map(
+        (key) =>
+          `<div class="welcome-slip" title="${escape(words.hostsWhat)}"><span>${escape(words[key])}</span><button class="text-button apply-host" type="button" data-host="${key}">${escape(words.applyGo)}</button></div>`,
+      ),
+    ].join("");
+    const who = [done.account, this.options.device ? "" : done.name].filter(Boolean).join(" · ");
     this.body.innerHTML = `
-      <div class="welcome-form">
-        <h2 class="welcome-form-title">${escape(this.created ? words.created(done.hub) : words.done(login, done.name))}</h2>
-        <div class="welcome-kept">
-          <p>${escape(this.options.device ? words.phoneDone : this.created ? words.createdSaid(done.account, done.name) : registered ? words.registered : words.onlyLoggedIn)}</p>
-          ${kept}
-        </div>
-        ${invite}
-        ${
-          this.options.device || !this.options.applyHosts
-            ? ""
-            : `<section class="welcome-hosts">
-          <h3 class="field-label" title="${escape(words.hostsWhat)}">${escape(words.hosts)}</h3>
-          ${host("codex", words.codex)}${host("claude", words.claude)}
-          <button class="text-button apply-now" type="button">${escape(words.applyGo)}</button>
-          <p class="sheet-note" role="alert" hidden></p>
-        </section>`
-        }
-        <footer class="welcome-foot"><span></span><button class="sheet-go enter" type="button">${escape(words.enter)}</button></footer>
+      <div class="welcome-done">
+        <div class="welcome-drawing"></div>
+        <h2 class="welcome-done-title">${escape(this.created ? words.created(done.hub) : words.joined(done.hub))}</h2>
+        <p class="welcome-done-who mono">${escape(who)}</p>
+        ${slips ? `<div class="welcome-slips">${slips}</div>` : ""}
+        <p class="sheet-note" role="alert" hidden></p>
+        <footer class="welcome-foot"><span class="login-ways">${this.created && this.options.invite ? `<button class="text-button invite-next" type="button">${escape(words.addDevice)}</button>` : ""}</span><button class="sheet-go enter" type="button">${escape(words.enter)}</button></footer>
       </div>`;
+    const drawing = this.options.drawing;
+    if (drawing) {
+      this.body.querySelector(".welcome-drawing")!.append(drawing.element);
+      drawing.mark(this.options.device ? null : done.name);
+    }
+  }
+
+  /** In and nothing left to decide: straight on to the World, whose
+   *  drawing shows this computer arriving. A World made here stops to
+   *  offer the next device. */
+  private async arrived(): Promise<void> {
+    await this.refreshSetup();
+    const wanting = this.wanting();
+    if (!this.created && !wanting.kept && !wanting.hosts.length) {
+      this.options.enter();
+      return;
+    }
+    this.element.classList.add("in");
+    this.step = "done";
+    this.draw();
+    this.drawHere();
+    this.body.querySelector<HTMLElement>(".invite-next, .enter")?.focus({ preventScroll: true });
   }
 
   /** The address typed beside the pills, as an IP without its port. */
@@ -407,11 +436,19 @@ export class LoginPage implements Page {
     return [extra.replace(/:\d+$/, "")];
   }
 
-  private note(text: string): void {
+  /** Says what went wrong under the form; the original words of a problem
+   *  stay a hover away. */
+  private note(text: string, detail = ""): void {
     const note = this.body.querySelector<HTMLElement>(".sheet-note");
     if (!note) return;
     note.textContent = text;
+    note.title = detail;
     note.hidden = !text;
+  }
+
+  private problem(error: unknown): void {
+    const { text, detail } = plainly(error, this.options.words.problems);
+    this.note(text, detail);
   }
 
   private async click(event: Event): Promise<void> {
@@ -430,28 +467,45 @@ export class LoginPage implements Page {
       if (login) this.options.invite(login);
       return;
     }
-    if (target.closest(".scan-code") && this.options.scan) {
-      // What the camera read goes where a pasted token would.
+    if (target.closest(".scan-code") && this.options.scan && !this.busy) {
+      // A phone logs in with the code the camera read, under its own name.
       try {
         const token = await this.options.scan();
         if (!token) return;
-        const field = this.body.querySelector<HTMLTextAreaElement>("[name=token]");
-        if (field) field.value = token;
-        this.body.querySelector<HTMLElement>(".token-form .sheet-go")?.focus();
+        this.busy = true;
+        this.done = await this.options.loginToken(token, null);
+        this.created = false;
+        await this.options.store.refresh();
+        await this.arrived();
       } catch (error) {
-        this.note(this.options.words.scanFailed(error instanceof Error ? error.message : String(error)));
+        this.problem(error);
+      } finally {
+        this.busy = false;
       }
       return;
     }
     if (target.closest(".place-now") && this.options.place) {
-      await this.options.place().catch((error: unknown) => this.note(this.options.words.failed(String(error))));
+      await this.options.place().catch((error: unknown) => this.problem(error));
       return this.refreshSetup();
     }
-    if (target.closest(".apply-now") && !this.busy && this.options.applyHosts) {
-      const codex = this.body.querySelector<HTMLInputElement>("[name=codex]")?.checked ?? false;
-      const claude = this.body.querySelector<HTMLInputElement>("[name=claude]")?.checked ?? false;
-      if (!codex && !claude) return;
-      const button = target.closest<HTMLButtonElement>(".apply-now")!;
+    if (target.closest(".keep-now") && !this.busy && this.options.keep && this.done) {
+      this.busy = true;
+      try {
+        const kept = await this.options.keep();
+        this.done = { ...this.done, kept };
+        this.draw();
+      } catch (error) {
+        this.problem(error);
+      } finally {
+        this.busy = false;
+      }
+      return;
+    }
+    const applying = target.closest<HTMLButtonElement>(".apply-host");
+    if (applying && !this.busy && this.options.applyHosts) {
+      const codex = applying.dataset.host === "codex";
+      const claude = applying.dataset.host === "claude";
+      const button = applying;
       this.busy = true;
       button.disabled = true;
       button.textContent = this.options.words.applying;
@@ -459,9 +513,9 @@ export class LoginPage implements Page {
         const notes = await this.options.applyHosts(codex, claude);
         await this.refreshSetup();
         this.draw();
-        if (notes.length) this.note(notes.join("\n"));
+        if (notes.length) this.note("", notes.join("\n"));
       } catch (error) {
-        this.note(this.options.words.failed(String(error)));
+        this.problem(error);
         button.disabled = false;
         button.textContent = this.options.words.applyGo;
       } finally {
@@ -471,7 +525,7 @@ export class LoginPage implements Page {
   }
 
   private async submit(): Promise<void> {
-    if (this.busy || this.step === "done" || this.step === "choose") return;
+    if (this.busy || this.step === "done" || this.step === "choose" || this.step === "scan") return;
     const { words } = this.options;
     const field = (name: string) => this.body.querySelector<HTMLInputElement>(`[name="${name}"]`);
     const name = field("name")?.value.trim() || null;
@@ -479,17 +533,25 @@ export class LoginPage implements Page {
     const label = go.textContent ?? "";
     let act: () => Promise<LoggedIn>;
     this.keep();
-    if (this.step === "token") {
-      const token = this.body.querySelector<HTMLTextAreaElement>("[name=token]")?.value.trim() ?? "";
-      if (!token) return;
-      act = () => this.options.loginToken(token, name);
-    } else if (this.step === "create") {
+    // A new password must pass before anything is sent.
+    const fresh = (account: string, password: string): boolean => {
+      const problem = passwordProblem(account, password);
+      if (problem) {
+        this.note(words.passwordRule[problem]);
+        return false;
+      }
+      if (password !== field("again")?.value) {
+        this.note(words.passwordsDiffer);
+        return false;
+      }
+      return true;
+    };
+    if (this.step === "create") {
       const create = this.options.create;
       const world = field("world")?.value.trim() ?? "";
       const account = field("account")?.value.trim() ?? "";
       const password = field("password")?.value ?? "";
-      if (!create || !world || !account || !password) return;
-      if (password !== field("again")?.value) return this.note(words.passwordsDiffer);
+      if (!create || !world || !account || !password || !fresh(account, password)) return;
       const reach = [...this.chosen, ...this.extraAddresses()].map((address) => `${address}:${this.typed.port.trim()}`);
       if (!reach.length) return this.note(words.noReach);
       const register = field("register")?.checked ?? false;
@@ -501,9 +563,8 @@ export class LoginPage implements Page {
       const register = !this.options.device && (field("register")?.checked ?? false);
       if (!hub || !account || !password) return;
       if (this.step === "open") {
-        if (password !== field("again")?.value) return this.note(words.passwordsDiffer);
         const open = this.options.openAccount;
-        if (!open) return;
+        if (!open || !fresh(account, password)) return;
         act = () => open(hub, account, password, register, name);
       } else act = () => this.options.login(hub, account, password, register, name);
     }
@@ -517,16 +578,12 @@ export class LoginPage implements Page {
       this.created = creating;
       this.busy = false;
       await this.options.store.refresh();
-      this.step = "done";
-      this.draw();
-      this.drawHere();
-      void this.refreshSetup();
-      this.body.querySelector<HTMLElement>(".invite-next, .sheet-go")?.focus({ preventScroll: true });
+      await this.arrived();
     } catch (error) {
       this.busy = false;
       go.disabled = false;
       go.textContent = label;
-      this.note(words.failed(error instanceof Error ? error.message : String(error)));
+      this.problem(error);
     }
   }
 }
@@ -544,4 +601,9 @@ function joinMark(): string {
 /** Creating: a knot with its first ring round it, the second being drawn. */
 function createMark(): string {
   return `<svg class="welcome-way-mark" viewBox="0 0 96 64" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke-linecap="round"><g class="ink-graphite" stroke-width="3"><circle cx="48" cy="34" r="6"/><circle cx="20" cy="18" r="10"/><path d="M28 23 L43 31"/></g><g class="ink-clay" stroke-width="3"><path d="M70 36 A11 11 0 1 1 82 50"/><path d="M54 37 L62 40"/></g></g></svg>`;
+}
+
+/** Scanning: the four corners of a code's frame, drawn with the marker. */
+function scanMark(): string {
+  return `<svg class="welcome-way-mark" viewBox="0 0 64 64" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke-linecap="round" stroke-width="3"><g class="ink-graphite"><path d="M10 22 V10 H22M42 10 H54 V22M54 42 V54 H42M22 54 H10 V42"/></g><g class="ink-clay"><path d="M20 32 H44"/></g></g></svg>`;
 }

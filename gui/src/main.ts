@@ -33,7 +33,7 @@ import { NewTalk } from "./app/new-talk";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
-import { SettingsPage, legacySaid } from "./app/settings";
+import { SettingsPage } from "./app/settings";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { effect, signal } from "./app/signals";
@@ -1156,7 +1156,20 @@ function show(next: Place): void {
         confirm: accountConfirm,
       });
       break;
-    case "login":
+    case "login": {
+      // The World's drawing, for the moment this computer is in it.
+      const loginMap = new NetworkMap(() => {});
+      let marked: string | null = null;
+      const drawLoginMap = () => {
+        const world = store.world.peek();
+        if (!world) return;
+        const map = mapOf(world, english ? enMachines : zhMachines);
+        loginMap.update(map.hubs, map.nodes, marked ? `m:${marked}` : null, map.hubLabels);
+      };
+      const stopLoginMap = effect(() => {
+        store.world.get();
+        drawLoginMap();
+      });
       page = new LoginPage({
         store,
         words: english ? enLogin : zhLogin,
@@ -1164,7 +1177,6 @@ function show(next: Place): void {
         device: asDevice,
         setup: asDevice ? undefined : () => (live ? setupState() : Promise.reject(new Error("specimen"))),
         place: asDevice ? undefined : () => (live ? placeFastctx() : notLive()),
-        legacy: (legacy) => legacySaid(legacy, english ? enSettings : zhSettings),
         login: (hub, account, password, register, name) => (live ? login(hub, account, password, register, name) : notLive()),
         loginToken: (token, name) => (live ? loginToken(token, name) : notLive()),
         openAccount: asDevice ? undefined : (hub, account, password, register, name) => (live ? openAccount(hub, account, password, register, name) : notLive()),
@@ -1179,12 +1191,22 @@ function show(next: Place): void {
         // shows the button when asked as a phone.
         scan: canScan() ? scanToken : !live && params.has("phone") ? async () => "FX5SPECIMEN" : undefined,
         applyHosts: asDevice ? undefined : (codex, claude) => (live ? applyHosts(codex, claude, false, true) : notLive()),
+        keep: asDevice ? undefined : () => (live ? keepHere() : notLive()),
+        drawing: {
+          element: loginMap.element,
+          mark: (machine) => {
+            marked = machine;
+            drawLoginMap();
+          },
+          stop: stopLoginMap,
+        },
         enter() {
           welcomed.now();
           location.hash = link({ kind: "home" });
         },
       });
       break;
+    }
     case "account":
       page = new AccountPage({
         store,

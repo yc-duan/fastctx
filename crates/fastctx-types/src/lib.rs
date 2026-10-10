@@ -26,6 +26,7 @@ pub mod names;
 pub mod node_lifetime;
 pub mod on;
 pub mod pages;
+pub mod password;
 pub mod process;
 pub mod project;
 pub mod remote;

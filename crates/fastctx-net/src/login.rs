@@ -141,6 +141,7 @@ pub async fn with_token(token: &Token, device: Device<'_>) -> Result<Joined, Str
 /// Opens `account` with `password` on a hub that lets anyone, reached at
 /// `hub`. The device then logs in to it like any other.
 pub async fn open_account(hub: &[SocketAddr], account: &AccountName, password: &str) -> Result<(), String> {
+    fastctx_types::password::check(account.as_str(), password)?;
     let dialed = dial::dial(hub, None, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME).await?;
     let mut socket = dialed.socket;
     let (state, request) = password_start(password)?;

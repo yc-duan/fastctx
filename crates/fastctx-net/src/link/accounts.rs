@@ -68,6 +68,7 @@ impl Link {
     }
 
     async fn set_password(&self, account: &AccountName, target: &AccountName, password: &str) -> Result<(), String> {
+        fastctx_types::password::check(target.as_str(), password)?;
         let (state, request) = crate::login::password_start(password)?;
         let response = match self.manage(account, Change::PasswordStart { target: target.clone(), request }).await? {
             Told::RegisterResponse { response } => response,

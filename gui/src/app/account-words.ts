@@ -7,34 +7,46 @@
 // (`world-gui.md`, 用词).
 
 import type { MemberKind } from "../world/accounts";
+import type { PasswordProblem } from "./password";
+import type { ProblemWords } from "./problem";
 
 export interface LoginWords {
   lede: string;
-  thisComputer: string;
-  thisPhone: string;
-  facts(name: string): string;
-  placed: string;
-  notPlaced: string;
-  place: string;
-  noCarried: string;
-  serviceOn: string;
-  serviceOff: string;
-  /** The logins this computer or device has already. */
-  already(logins: string): string;
-  /** Between the items of a list. */
-  separator: string;
   title: string;
-  another: string;
   /** The two ways in for a computer in no World yet. */
   join: string;
   joinWhat: string;
   create: string;
   createWhat: string;
-  /** Creating a World with this computer its hub. */
+  another: string;
+  hub: string;
+  account: string;
+  password: string;
+  passwordAgain: string;
+  passwordsDiffer: string;
+  passwordRule: Record<PasswordProblem, string>;
+  /** How strong a password that passes is, from enough to strong. */
+  strength: [string, string, string];
+  register: string;
+  registerWhat: string;
+  name: string;
+  phoneName: string;
+  go: string;
+  going: string;
+  signUp: string;
+  signUpGo: string;
+  /** On a phone: read the code a computer shows with the camera. */
+  scan: string;
+  withPassword: string;
+  scanFailed: string;
+  alone: string;
+  aloneWhat: string;
+  /** Creating a World with this computer as its server. */
   worldName: string;
   admin: string;
   reach: string;
   reachWhat: string;
+  extra: string;
   extraHint: string;
   port: string;
   /** An address on a TUN, VPN or virtual switch. */
@@ -42,221 +54,180 @@ export interface LoginWords {
   noAddresses: string;
   noReach: string;
   createGo: string;
-  createNote: string;
+  createAsks: string;
   creating: string;
+  joined(hub: string): string;
   created(world: string): string;
-  createdSaid(account: string, name: string): string;
-  nextTitle: string;
-  inviteNext: string;
-  hub: string;
-  account: string;
-  password: string;
-  passwordAgain: string;
-  passwordsDiffer: string;
-  register: string;
-  registerWhat: string;
-  name: string;
-  phoneName: string;
-  nameHint: string;
-  go: string;
-  going: string;
-  withToken: string;
-  withPassword: string;
-  openOne: string;
-  openTitle: string;
-  openWhat: string;
-  openGo: string;
-  token: string;
-  tokenHint: string;
-  /** On a phone: read a token's QR code with the camera. */
-  scan: string;
-  scanFailed(why: string): string;
-  tokenOr: string;
-  alone: string;
-  aloneWhat: string;
-  /** Logged in: `hub · account`, and this computer's name. */
-  done(login: string, name: string): string;
-  registered: string;
-  onlyLoggedIn: string;
-  phoneDone: string;
-  kept: Record<"already" | "installed" | "declined" | "unsupported", string>;
+  kept: Record<"declined" | "unsupported", string>;
+  keepGo: string;
   keptCommand: string;
-  hosts: string;
   hostsWhat: string;
   codex: string;
   claude: string;
-  hostState: Record<"absent" | "out" | "in" | "old", string>;
   applyGo: string;
   applying: string;
+  addDevice: string;
   enter: string;
   back: string;
-  failed(why: string): string;
+  /** The logins this computer or device has already. */
+  already(logins: string): string;
+  /** Between the items of a list. */
+  separator: string;
+  placeMissing: string;
+  place: string;
+  problems: ProblemWords;
 }
 
+export const zhProblems: ProblemWords = {
+  wrongPassword: "账号或密码不正确",
+  tooManyTries: "尝试次数过多，请稍后再试",
+  locked: "该账号已被锁定，请联系管理员",
+  unreachable: "无法连接服务器，请检查地址和网络",
+  nameTaken: "这个名称已被使用",
+  accountTaken: "这个账号已存在",
+  noSelfRegistration: "该服务器不开放注册，请联系管理员",
+  codeUsed: "二维码已使用过",
+  codeExpired: "二维码已过期",
+  codeWrong: "二维码无效",
+  weakPassword: "密码不符合要求",
+  somethingElse: "操作未完成",
+};
+
+export const enProblems: ProblemWords = {
+  wrongPassword: "Wrong account or password",
+  tooManyTries: "Too many attempts. Try again later",
+  locked: "This account is locked. Contact the administrator",
+  unreachable: "Can't reach the server. Check the address and network",
+  nameTaken: "That name is already in use",
+  accountTaken: "That account already exists",
+  noSelfRegistration: "This server doesn't allow sign-up. Contact the administrator",
+  codeUsed: "This code has already been used",
+  codeExpired: "This code has expired",
+  codeWrong: "This code isn't valid",
+  weakPassword: "The password doesn't meet the requirements",
+  somethingElse: "Something went wrong",
+};
+
 export const zhLogin: LoginWords = {
-  lede: "让你的几台电脑，和住在上面的 Codex、Claude，在同一个世界里。",
-  thisComputer: "这台电脑",
-  thisPhone: "这部手机",
-  facts: (name) => `叫 ${name}`,
-  placed: "fastctx 已就位",
-  notPlaced: "fastctx 还没放好",
-  place: "放好它",
-  noCarried: "这一份 World 没有随身带 fastctx",
-  serviceOn: "开机自启的服务在",
-  serviceOff: "还没有开机自启的服务",
-  already: (logins) => `已经登录着 ${logins}。可以再登录一个，别的中枢的、同一个中枢里别的账号的都行。`,
-  separator: "、",
+  lede: "你的几台电脑，和电脑上的 Codex、Claude，同在一个世界。",
   title: "登录",
-  another: "再登录一个账号",
-  join: "加入一个世界",
-  joinWhat: "有地址和账号，或一张令牌",
-  create: "新建一个世界",
-  createWhat: "这台电脑当它的中枢",
-  worldName: "世界的名字",
-  admin: "你的账号",
-  reach: "别的电脑从哪里连它",
-  reachWhat: "别的电脑连到这台电脑用的地址：同一个局域网里选它的局域网地址；有公网地址或在路由器上转发了端口，就写在旁边。",
-  extraHint: "另一个地址，比如公网 IP",
-  port: "端口",
-  virtual: "虚拟网卡",
-  noAddresses: "没找到这台电脑的地址，在旁边写一个。",
-  noReach: "至少要有一个别的电脑连得到的地址。",
-  createGo: "新建",
-  createNote: "会请你确认一次管理员权限",
-  creating: "正在新建…",
-  created: (world) => `世界 ${world} 建好了`,
-  createdSaid: (account, name) => `这台电脑（${name}）是它的中枢，${account} 是超级管理员。`,
-  nextTitle: "让另一台电脑加入",
-  inviteNext: "给它一张一次性令牌…",
-  hub: "服务器",
+  join: "加入世界",
+  joinWhat: "用服务器地址和账号登录",
+  create: "新建世界",
+  createWhat: "以这台电脑作为服务器",
+  another: "登录其他账号",
+  hub: "服务器地址",
   account: "账号",
-  password: "口令",
-  passwordAgain: "再输一遍口令",
-  passwordsDiffer: "两遍口令不一样。",
-  register: "这台电脑也当这个账号的机器",
-  registerWhat: "登记以后，这个账号的智能体能住在这台电脑上、在上面干活；不勾就只登录，从这里看、和智能体说话。",
-  name: "这台电脑叫什么",
-  phoneName: "这部手机叫什么",
-  nameHint: "小写字母、数字与连字符；一台设备在每个中枢上都叫同一个名字",
+  password: "密码",
+  passwordAgain: "确认密码",
+  passwordsDiffer: "两次输入的密码不一致",
+  passwordRule: { short: "至少 8 位", "one-kind": "需包含字母、数字、符号中的两种", name: "不能包含账号名", common: "这个密码太常见" },
+  strength: ["强度一般", "强度较高", "强度高"],
+  register: "将这台电脑添加为我的机器",
+  registerWhat: "智能体可以在这台电脑上运行和工作；不勾选则只登录",
+  name: "电脑名称",
+  phoneName: "手机名称",
   go: "登录",
   going: "正在登录…",
-  withToken: "用一次性令牌登录",
-  withPassword: "用口令登录",
-  openOne: "没有账号？在这个中枢上开一个",
-  openTitle: "开一个账号",
-  openWhat: "只有中枢允许自己注册时才开得成；不允许的话，请它的管理员替你开。",
-  openGo: "开账号并登录",
-  token: "令牌",
-  tokenHint: "另一台登录着的设备给你的、以 FX5 开头的一长串",
-  scan: "扫电脑上的二维码",
-  scanFailed: (why) => `没扫成：${why}`,
-  tokenOr: "或者粘贴令牌",
-  alone: "先不登录，只用这台电脑",
-  aloneWhat: "这台电脑本身就是一个世界，以后随时可以加入或新建。",
-  done: (login, name) => `登录好了：${login}，这台叫 ${name}。`,
-  registered: "它登记成了这个账号的机器。",
-  onlyLoggedIn: "它只登录着，没有登记成这个账号的机器。",
-  phoneDone: "这部手机现在带着自己的钥匙，以这个账号的身份看世界、和智能体说话；上面什么都不跑。",
-  kept: {
-    already: "开机自启的服务早就在了。",
-    installed: "开机自启的服务装好了：从此开机就连着，不管有没有人登录。",
-    declined: "没有拿到管理员确认，所以没装开机服务：只有你登录着系统时它才连着。以后可以在设置里再装。",
-    unsupported: "这个系统没有开机服务：只有你登录着系统时它才连着。",
-  },
-  keptCommand: "要它开机就连着，在终端里运行：",
-  hosts: "接进这台电脑上的智能体",
-  hostsWhat: "你在这台电脑上自己开的 Codex 与 Claude Code 也用上世界的工具；随时可以拿出来。",
-  codex: "Codex",
-  claude: "Claude Code",
-  hostState: { absent: "没装", out: "没接入", in: "已接入", old: "里面是旧版 fastctx" },
+  signUp: "注册账号",
+  signUpGo: "注册并登录",
+  scan: "扫码登录",
+  withPassword: "使用账号密码登录",
+  scanFailed: "无法扫描",
+  alone: "暂不加入",
+  aloneWhat: "这台电脑可以单独使用，之后随时加入或新建世界",
+  worldName: "世界名称",
+  admin: "管理员账号",
+  reach: "连接地址",
+  reachWhat: "其他电脑通过这些地址连接这台电脑",
+  extra: "其他地址",
+  extraHint: "例如公网 IP",
+  port: "端口",
+  virtual: "虚拟",
+  noAddresses: "未找到网络地址，请手动填写",
+  noReach: "请至少选择或填写一个地址",
+  createGo: "新建",
+  createAsks: "需要管理员权限",
+  creating: "正在新建…",
+  joined: (hub) => `已加入 ${hub}`,
+  created: (world) => `${world} 已建好`,
+  kept: { declined: "开机自启未设置", unsupported: "此系统不支持开机自启" },
+  keepGo: "设置",
+  keptCommand: "开机自启需在终端运行",
+  hostsWhat: "让你在这台电脑上打开的 Codex 和 Claude Code 使用世界的工具",
+  codex: "Codex 尚未接入",
+  claude: "Claude Code 尚未接入",
   applyGo: "接入",
   applying: "正在接入…",
-  enter: "进入世界",
+  addDevice: "添加设备",
+  enter: "进入",
   back: "返回",
-  failed: (why) => `没办成：${why}`,
+  already: (logins) => `已登录：${logins}`,
+  separator: "、",
+  placeMissing: "World 组件未安装",
+  place: "安装",
+  problems: zhProblems,
 };
 
 export const enLogin: LoginWords = {
-  lede: "Your computers, and the Codex and Claude that live on them, in one World.",
-  thisComputer: "This computer",
-  thisPhone: "This phone",
-  facts: (name) => `named ${name}`,
-  placed: "fastctx is in place",
-  notPlaced: "fastctx is not in place yet",
-  place: "Put it in place",
-  noCarried: "this World app carries no fastctx",
-  serviceOn: "the startup service is on",
-  serviceOff: "no startup service yet",
-  already: (logins) => `Logged in to ${logins}. You can log in to another one too, on another hub or on the same.`,
-  separator: ", ",
+  lede: "Your computers, and the Codex and Claude on them, in one World.",
   title: "Log in",
-  another: "Log in to another account",
   join: "Join a World",
-  joinWhat: "With an address and an account, or a token",
+  joinWhat: "Log in with a server address and account",
   create: "Create a World",
-  createWhat: "This computer as its hub",
-  worldName: "The World's name",
-  admin: "Your account",
-  reach: "Where other computers reach it",
-  reachWhat: "The address other computers reach this one at: on the same network, its local address; with a public address, or a port forwarded on the router, write that beside.",
-  extraHint: "Another address, such as a public IP",
-  port: "Port",
-  virtual: "virtual",
-  noAddresses: "No address of this computer was found; write one beside.",
-  noReach: "Give at least one address other computers can reach.",
-  createGo: "Create",
-  createNote: "Asks once for administrator rights",
-  creating: "Creating…",
-  created: (world) => `The World ${world} is made`,
-  createdSaid: (account, name) => `This computer (${name}) is its hub, and ${account} its super administrator.`,
-  nextTitle: "Let another computer in",
-  inviteNext: "Give it a one-time token…",
-  hub: "Server",
+  createWhat: "Use this computer as the server",
+  another: "Log in to another account",
+  hub: "Server address",
   account: "Account",
   password: "Password",
-  passwordAgain: "Password again",
-  passwordsDiffer: "The two passwords differ.",
-  register: "This computer is one of the account's machines too",
-  registerWhat: "Registered, the account's agents can live and work on this computer; unticked, it only logs in, to look and talk from here.",
-  name: "This computer's name",
-  phoneName: "This phone's name",
-  nameHint: "lowercase letters, digits and hyphens; a device has the same name on every hub",
+  passwordAgain: "Confirm password",
+  passwordsDiffer: "Passwords don't match",
+  passwordRule: { short: "At least 8 characters", "one-kind": "Use two of letters, digits and symbols", name: "Can't contain the account name", common: "This password is too common" },
+  strength: ["Fair", "Good", "Strong"],
+  register: "Add this computer as my machine",
+  registerWhat: "Agents can run and work on this computer; leave unchecked to only log in",
+  name: "Computer name",
+  phoneName: "Phone name",
   go: "Log in",
   going: "Logging in…",
-  withToken: "Log in with a one-time token",
-  withPassword: "Log in with a password",
-  openOne: "No account? Open one on this hub",
-  openTitle: "Open an account",
-  openWhat: "Only a hub that lets anyone open an account will; otherwise ask its administrator to open one for you.",
-  openGo: "Open it and log in",
-  token: "Token",
-  tokenHint: "The long string beginning FX5 that another logged-in device gave you",
-  scan: "Scan the code on the computer",
-  scanFailed: (why) => `Could not scan it: ${why}`,
-  tokenOr: "or paste the token",
-  alone: "Not now: use this computer on its own",
-  aloneWhat: "This computer is a World by itself; join or create one whenever you like.",
-  done: (login, name) => `Logged in to ${login}; this one is ${name}.`,
-  registered: "It is registered as one of the account's machines.",
-  onlyLoggedIn: "It is logged in only, not registered as one of the account's machines.",
-  phoneDone: "This phone now carries its own key: it looks at the World and talks to agents as this account. Nothing runs on it.",
-  kept: {
-    already: "The startup service was already there.",
-    installed: "The startup service is in: from now on it is connected from boot, whether or not anyone is signed in.",
-    declined: "No administrator approval, so no startup service: it is connected only while you are signed in. You can add it later in the settings.",
-    unsupported: "This system has no startup service: it is connected only while you are signed in.",
-  },
-  keptCommand: "To keep it connected from boot, run in a terminal:",
-  hosts: "Into this computer's agents",
-  hostsWhat: "The Codex and Claude Code you open on this computer yourself get the World's tools too; you can take them out any time.",
-  codex: "Codex",
-  claude: "Claude Code",
-  hostState: { absent: "not installed", out: "not in", in: "in", old: "has the old fastctx" },
-  applyGo: "Put them in",
-  applying: "Putting them in…",
-  enter: "Enter the World",
+  signUp: "Sign up",
+  signUpGo: "Sign up and log in",
+  scan: "Scan to log in",
+  withPassword: "Use account and password",
+  scanFailed: "Couldn't scan",
+  alone: "Not now",
+  aloneWhat: "Use this computer on its own and join or create a World any time",
+  worldName: "World name",
+  admin: "Administrator account",
+  reach: "Connection addresses",
+  reachWhat: "Other computers connect to this one at these addresses",
+  extra: "Other address",
+  extraHint: "e.g. a public IP",
+  port: "Port",
+  virtual: "virtual",
+  noAddresses: "No network address found. Enter one",
+  noReach: "Choose or enter at least one address",
+  createGo: "Create",
+  createAsks: "Requires administrator rights",
+  creating: "Creating…",
+  joined: (hub) => `Joined ${hub}`,
+  created: (world) => `${world} is ready`,
+  kept: { declined: "Start at boot isn't set up", unsupported: "This system doesn't support start at boot" },
+  keepGo: "Set up",
+  keptCommand: "To start at boot, run in a terminal",
+  hostsWhat: "Give the Codex and Claude Code you open on this computer the World's tools",
+  codex: "Codex isn't connected",
+  claude: "Claude Code isn't connected",
+  applyGo: "Connect",
+  applying: "Connecting…",
+  addDevice: "Add a device",
+  enter: "Enter",
   back: "Back",
-  failed: (why) => `Not done: ${why}`,
+  already: (logins) => `Logged in: ${logins}`,
+  separator: ", ",
+  placeMissing: "World components aren't installed",
+  place: "Install",
+  problems: enProblems,
 };
 
 export interface MachinesWords {
