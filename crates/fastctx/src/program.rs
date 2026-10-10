@@ -35,10 +35,17 @@ pub fn forward_if_other(root: &Path, installed: &Path) -> anyhow::Result<Option<
     forward(root, installed).map(Some)
 }
 
+/// Names the entry a forwarded command came through, for the command to end
+/// with it (`fastctx_platform::parent::follow_forwarder`).
+#[cfg(windows)]
+pub const FORWARDER: &str = "FASTCTX_FORWARDED_BY";
+
 pub fn forward(root: &Path, installed: &Path) -> anyhow::Result<anyhow::Result<()>> {
     let mut command = std::process::Command::new(installed);
     command.args(std::env::args_os().skip(1));
     command.env("FASTCTX_HOME", root);
+    #[cfg(windows)]
+    command.env(FORWARDER, std::process::id().to_string());
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;

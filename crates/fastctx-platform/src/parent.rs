@@ -26,10 +26,20 @@ pub fn follow_shell(parent: u32) -> io::Result<()> {
         }
     }
     #[cfg(windows)]
-    windows::follow(parent)?;
+    windows::follow(parent, "the on shell stopped before its follower started")?;
     #[cfg(not(any(target_os = "linux", windows)))]
     let _ = parent;
     Ok(())
+}
+
+/// Ends this process when the entry that forwarded it to the World program
+/// ends. Windows has no exec, so a forwarded command runs as that entry's
+/// child; following it makes the pair end together, as a program that had
+/// replaced the entry would, and a caller that kills what it started leaves
+/// nothing behind.
+#[cfg(windows)]
+pub fn follow_forwarder(forwarder: u32) -> io::Result<()> {
+    windows::follow(forwarder, "the entry that forwarded this command ended before it started")
 }
 
 #[cfg(windows)]
@@ -47,8 +57,8 @@ mod windows {
     // SAFETY: a process handle may be waited on from any thread.
     unsafe impl Send for Shell {}
 
-    pub fn follow(pid: u32) -> io::Result<()> {
-        let gone = || io::Error::other("the on shell stopped before its follower started");
+    pub fn follow(pid: u32, gone: &'static str) -> io::Result<()> {
+        let gone = || io::Error::other(gone);
         // SAFETY: the handle is owned here; it is closed on every early
         // return and otherwise kept open by the waiting thread.
         unsafe {
