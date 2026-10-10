@@ -390,9 +390,42 @@ async fn guardian_apply(root: &Path, user_sid: Option<String>, uid: Option<u32>)
     // never opens the user's private World, locks, or IPC; it only stages
     // its own approved image in the existing protected registration.
     #[cfg(windows)]
-    return service.renew_guardian(&own.digest);
+    {
+        service.renew_guardian(&own.digest)?;
+        // A hub this computer keeps runs the same World program and would
+        // otherwise go on speaking the old network protocol. It has no
+        // bridge to stand in for it, so it takes the new image and restarts
+        // now; its machines reconnect by themselves.
+        for directory in fastctx_install::service::registered_hubs(root)? {
+            let hub = fastctx_install::service::Service::new(
+                fastctx_install::service::Kind::Hub,
+                store::installed(root),
+                &directory,
+            );
+            if hub.status()?.installed && !hub.guardian_current(&own.digest)? {
+                hub.renew_guardian(&own.digest)?;
+                hub.restart_guardian(&own.digest)?;
+            }
+        }
+        Ok(())
+    }
     #[cfg(target_os = "linux")]
-    return service.restart_guardian(&own.digest);
+    {
+        service.restart_guardian(&own.digest)?;
+        // systemd runs a kept hub straight from the World program, so a
+        // restart is all it takes to run the new one.
+        for directory in fastctx_install::service::registered_hubs(root)? {
+            let hub = fastctx_install::service::Service::new(
+                fastctx_install::service::Kind::Hub,
+                store::installed(root),
+                &directory,
+            );
+            if hub.status()?.installed {
+                hub.restart_guardian(&own.digest)?;
+            }
+        }
+        Ok(())
+    }
     #[cfg(not(any(windows, target_os = "linux")))]
     bail!("this platform has no boot-service handover")
 }

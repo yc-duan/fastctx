@@ -9,7 +9,7 @@ use windows_service::service::{ServiceAccess, ServiceState};
 
 use super::{config::Config, owner, scm};
 use crate::renewal as images;
-use crate::service::{Kind, Service};
+use crate::service::Service;
 
 #[derive(Serialize, Deserialize)]
 struct Running {
@@ -42,8 +42,10 @@ pub(crate) fn staged(service: &Service, digest: &str) -> anyhow::Result<bool> {
     Ok(images::digest(&config.root()?.join("guardian.exe"))? == digest)
 }
 
+/// Stages the approved image in a node's or a hub's protected registration.
+/// A node's is restarted later behind its replacement bridge; a hub's has no
+/// bridge, and its caller restarts it at once.
 pub(crate) fn replace(service: &Service, digest: &str) -> anyhow::Result<()> {
-    ensure!(service.kind == Kind::Node, "only a node guardian has a user-owned replacement bridge");
     let expected = Config::new(service)?;
     let config = Config::read(&expected.name)?;
     ensure!(
