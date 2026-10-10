@@ -28,7 +28,10 @@ pub fn who(
             continue;
         }
         let mut last = last_action(world, &resident.id, resident.town.as_ref())?;
+        // A conversation the World started is listed from its first words on;
+        // a session the user opened elsewhere once it has done something here.
         let mut participated = last.is_some()
+            || resident.about.world_started
             || matches!(resident.about.origin, fastctx_types::residents::Origin::Colleague { .. })
             || resident.now.as_ref().is_some_and(|now| now.last_tool_at.is_some() || now.desk || !now.owed.is_empty());
         for parent in world.resident_parents()? {

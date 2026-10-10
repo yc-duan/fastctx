@@ -14,6 +14,7 @@ pub mod detach;
 pub mod elevation;
 pub mod environment;
 pub mod file_read;
+pub mod form;
 pub mod home;
 pub mod host_process;
 pub mod hostname;
@@ -25,6 +26,8 @@ pub mod local_path;
 pub mod lock;
 #[cfg(any(target_os = "linux", windows))]
 pub mod output_pipe;
+#[cfg(any(target_os = "linux", windows))]
+pub mod owned_images;
 pub mod parent;
 pub mod private;
 #[cfg(target_os = "linux")]
@@ -33,11 +36,9 @@ pub mod procfs;
 pub mod registry;
 pub mod service_channel;
 #[cfg(any(target_os = "linux", windows))]
-pub mod tree;
-#[cfg(any(target_os = "linux", windows))]
 pub mod terminate;
 #[cfg(any(target_os = "linux", windows))]
-pub mod owned_images;
+pub mod tree;
 #[cfg(any(target_os = "linux", windows))]
 pub mod uninstall_gate;
 #[cfg(unix)]

@@ -6,7 +6,7 @@
 //! colleague's answer is its last message verbatim, between a head note
 //! saying how the turn ended and a last line pointing at what it did.
 
-use fastctx_types::residents::Notice;
+use fastctx_types::residents::{Notice, STOPPED_BY_USER};
 use fastctx_types::run::EndedHow;
 use fastctx_types::session::{Speaker, TurnEnd, TurnHow};
 
@@ -15,10 +15,14 @@ use crate::run::present::{display_path, status_text};
 /// A notice as one block of text.
 pub fn told(notice: &Notice) -> String {
     match notice {
-        Notice::JobEnded { job, machine, how, status, at, output, stderr, last, .. } => {
+        Notice::JobEnded { job, machine, how, status, at, output, stderr, last, stop, .. } => {
             let how = match (how, status) {
                 (EndedHow::Finished, Some(status)) => status_text(*status),
                 (EndedHow::Finished, None) => "finished".to_string(),
+                // Said so the model does not take it for a failure to retry.
+                (EndedHow::Stopped, _) if stop.as_ref().is_some_and(|stop| stop.by == STOPPED_BY_USER) => {
+                    "stopped by the user".to_string()
+                }
                 (EndedHow::Stopped, _) => "stopped".to_string(),
                 (EndedHow::Interrupted { reason }, _) => format!("interrupted: {reason}"),
                 (EndedHow::Failed { error }, _) => format!("failed: {error}"),
@@ -53,6 +57,7 @@ pub fn told(notice: &Notice) -> String {
         ),
         Notice::Words { from, text } => words(from, text),
         Notice::Attached { message, text } => message.render(text),
+        Notice::World { text, .. } => words(&Speaker::World, text),
     }
 }
 

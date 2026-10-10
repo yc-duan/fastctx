@@ -2,6 +2,7 @@
 //! Local calls use independent IPC connections; device calls share one
 //! persistent link and are addressed to their machine or a relay.
 
+use fastctx_types::accounts::{AccountChange, AccountsReply};
 use fastctx_types::copy::{CopyReport, Place};
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
@@ -10,9 +11,8 @@ use fastctx_types::residents::Landed;
 use fastctx_types::session::control::{Control, Controlled, Offers};
 use fastctx_types::town::{LookedUp, WorldWho};
 use fastctx_types::world::NodesReply;
-use fastctx_types::accounts::{AccountChange, AccountsReply};
 use fastctx_types::{
-    AccountName, Address, AgentName, Attach, Call, EntryId, HubName, JournalCall, JournalName, MachineName,
+    AccountName, Address, AgentName, Attach, Call, EntryId, HubName, JobId, JournalCall, JournalName, MachineName,
     ProjectCall, Reply, ResidentId, TownName,
 };
 use jiff::Timestamp;
@@ -320,6 +320,16 @@ impl World {
     pub async fn stop(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<(Address, bool), Error> {
         match self.ask(Call::Stop { resident, machine }).await? {
             Reply::Stopped { resident, stopped } => Ok((resident, stopped)),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Stops a job and everything it started, as the user: its resident is
+    /// told the user stopped it. `machine` is where it runs, this one when
+    /// absent.
+    pub async fn stop_job(&self, job: JobId, machine: Option<MachineName>) -> Result<(), Error> {
+        match self.ask(Call::StopJob { job, machine, hub: None }).await? {
+            Reply::JobStopped { .. } => Ok(()),
             other => Err(unexpected(other)),
         }
     }

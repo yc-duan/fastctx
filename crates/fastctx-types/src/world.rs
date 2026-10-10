@@ -5,6 +5,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::MachineName;
 
+/// What kind of device a machine is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Form {
+    Desktop,
+    Laptop,
+    Server,
+}
+
 /// What a machine is like, which a resident needs to know before acting on
 /// it (`world-run.md`, 路径与各个系统的不同).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +36,10 @@ pub struct MachineFacts {
     /// machine runs an older fastctx that does not say.
     #[serde(default)]
     pub shell: String,
+    /// What kind of device it is, as an interface draws it; older nodes do
+    /// not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<Form>,
     /// The running node's own observation; older nodes do not report it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_lifetime: Option<Box<crate::node_lifetime::NodeLifetime>>,

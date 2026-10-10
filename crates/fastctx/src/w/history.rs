@@ -43,8 +43,11 @@ pub(super) fn render(history: &WorldSince, previous: bool, full: bool, now: Time
         }
         // Registration refreshes and delivery receipts are not new work.
         // A turn end already says who was answered; it is not repeated here.
-        if matches!(event.what, SinceKind::ClaudeRegistered { .. })
-            || matches!(&event.what, SinceKind::AnswerDelivery { outcome, .. }
+        // Journals are project memory, not wired in until it is finished.
+        if matches!(
+            event.what,
+            SinceKind::ClaudeRegistered { .. } | SinceKind::JournalEntry { .. } | SinceKind::JournalDescription { .. }
+        ) || matches!(&event.what, SinceKind::AnswerDelivery { outcome, .. }
                 if !matches!(outcome, fastctx_types::residents::Outcome::Failed { .. }
                     | fastctx_types::residents::Outcome::Waiting { why: Some(_) }))
         {
@@ -143,8 +146,9 @@ fn fact(event: &SinceEvent) -> String {
         SinceKind::SubmissionUncertain { resident, why, .. } => {
             format!("{}: submission unconfirmed ({why})", who(resident))
         }
-        SinceKind::JournalEntry { journal, entry, .. } => format!("journal {journal} added {entry}"),
-        SinceKind::JournalDescription { journal, version, .. } => format!("journal {journal} description v{version}"),
+        SinceKind::JournalEntry { .. } | SinceKind::JournalDescription { .. } | SinceKind::ClaudeRegistered { .. } => {
+            unreachable!()
+        }
         SinceKind::ProjectVersion { version, name, .. } => format!("project \"{name}\" v{version}"),
         SinceKind::MachineConnected => "came online".into(),
         SinceKind::MachineOffline => "went offline".into(),
@@ -156,6 +160,5 @@ fn fact(event: &SinceEvent) -> String {
             };
             format!("{} could not deliver its answer to {}: {reason}", who(colleague), who(to))
         }
-        SinceKind::ClaudeRegistered { .. } => unreachable!(),
     }
 }

@@ -81,6 +81,8 @@ def replies(fixtures):
     for speaker in [{"kind": "user", "machine": "desktop"}, {"kind": "resident", "address": ADDRESS},
                     {"kind": "world"}, fixtures["pages"]["speaker"]]:
         notices.append({"kind": "words", "from": speaker, "text": "verbatim words"})
+    for fact in [{"fact": "desk_taken", "by": ADDRESS}, {"fact": "desk_outside"}, {"fact": "desk_free", "by": ADDRESS}, {"fact": "moved", "to": "project"}]:
+        notices.append({"kind": "world", "fact": fact, "text": "the World's words"})
     for i, notice in enumerate(notices):
         yield {"reply": "notices", "notices": [{"id": f"notice-{i}", "at": AT, "notice": notice}], "notes": ["town note"]}
     yield next(r for r in fixtures["attachments"]["replies"] if r["reply"] == "notices")
@@ -178,7 +180,7 @@ def page_identity(value):
 
 def samples(root):
     fixtures = json.loads((root / "gui/fixtures/wire.json").read_text(encoding="utf-8"))
-    for protocol in [5, 6, 7, 8, 9]:
+    for protocol in [5, 6, 7, 8, 9, 10]:
         for lifetime in [None, fixtures["world"]["nodes"][0]["facts"]["node_lifetime"]]:
             welcome = {"kind": "accepted", "machine": "desktop", "version": "1.0.0"}
             if lifetime is not None:
@@ -191,6 +193,8 @@ def samples(root):
             if reply["reply"] == "run":
                 case["encodings"] = [part["encoding"] for part in reply["output"]["legacy"]]
             case["attached"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "attached"
+            # The World's facts are its words before protocol 11.
+            case["world"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "world"
             # Hub-by-hub nodes have no shape before protocol 8 and are said as text.
             case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and reply["controlled"]["kind"] in ["reported", "refused", "model_menu"])
             yield case

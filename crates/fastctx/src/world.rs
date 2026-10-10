@@ -20,10 +20,6 @@ pub struct LoginArgs {
     /// Log in with a one-time token another device made instead.
     #[arg(long, conflicts_with_all = ["hub", "account", "open"])]
     token: Option<String>,
-    /// Register this computer as one of the account's machines, so other
-    /// devices of the account can use it.
-    #[arg(long)]
-    register: bool,
     /// Open the account first, on a hub that lets anyone.
     #[arg(long)]
     open: bool,
@@ -208,6 +204,8 @@ pub enum HubCommand {
     },
 }
 
+/// A computer that logs in joins as one of the account's machines
+/// (`world-network.md`, 一台电脑和中枢): there is no logging in without it.
 pub fn login(args: LoginArgs) -> anyhow::Result<()> {
     let reply = match args.token {
         Some(token) => call(Call::LoginWithToken { token, name: args.name })?,
@@ -216,10 +214,10 @@ pub fn login(args: LoginArgs) -> anyhow::Result<()> {
             let addresses = runtime()?.block_on(fastctx_client::hub_addresses(&hub)).map_err(anyhow::Error::msg)?;
             if args.open {
                 let password = crate::secret::new_password(&format!("A password for {account}: "))?;
-                call(Call::OpenAccount { hub: addresses, account, password, register: args.register, name: args.name })?
+                call(Call::OpenAccount { hub: addresses, account, password, register: true, name: args.name })?
             } else {
                 let password = crate::secret::read_password(&format!("{account}'s password: "))?;
-                call(Call::Login { hub: addresses, account, password, register: args.register, name: args.name })?
+                call(Call::Login { hub: addresses, account, password, register: true, name: args.name })?
             }
         }
     };
@@ -254,8 +252,12 @@ pub fn token(args: TokenArgs) -> anyhow::Result<()> {
         return Ok(());
     }
     let kind = if args.used_by == "phone" { MemberKind::Phone } else { MemberKind::Computer };
-    let token = change(args.hub, args.account, AccountChange::Token { register: false, name: None, kind, expires })?
-        .ok_or_else(|| anyhow::anyhow!("the hub made no token"))?;
+    let token = change(
+        args.hub,
+        args.account,
+        AccountChange::Token { register: kind == MemberKind::Computer, name: None, kind, expires },
+    )?
+    .ok_or_else(|| anyhow::anyhow!("the hub made no token"))?;
     println!("{token}");
     eprintln!(
         "On the other device, run `fastctx login --token <token>`, or scan it in the World app. It works once, until {until}."

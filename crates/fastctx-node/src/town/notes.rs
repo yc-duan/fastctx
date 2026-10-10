@@ -1,14 +1,13 @@
 //! What a resident is told of where it lives, in the head of the answers of
 //! the World's tools (`world-projects.md`, `world-map.md`): who and where it
 //! is, the first time; and what its town gained since it last heard,
-//! without sending the map again.
+//! without sending its record again.
 
-use std::collections::BTreeMap;
 use std::io;
 
 use fastctx_types::layout::WorldDir;
-use fastctx_types::project::{EntryStamp, Record, Writer};
-use fastctx_types::{Address, JournalName, MachineName, ResidentId, TownName};
+use fastctx_types::project::{Record, Writer};
+use fastctx_types::{Address, MachineName, ResidentId, TownName};
 
 use crate::Node;
 use crate::residents::Heard;
@@ -24,7 +23,7 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
     let now = Heard { town: town.clone(), ledger };
     let notes = match node.residents.heard(id) {
         None => vec![introduction(id, &here, town.as_ref())],
-        // It moved: entering gave it the new town's map.
+        // It moved: entering gave it the new town's record.
         Some(heard) if heard.town != town => Vec::new(),
         Some(heard) if heard.ledger >= ledger => return Ok((Vec::new(), None)),
         Some(heard) => {
@@ -41,76 +40,35 @@ pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<He
 fn introduction(id: &ResidentId, here: &MachineName, town: Option<&TownName>) -> String {
     match town {
         Some(town) => {
-            format!("=== you are {id} on {here}, working in the project {town}; its map: `fastctx project map` ===")
+            format!("=== you are {id} on {here}, working in the project {town}; its record: `fastctx project show` ===")
         }
         // When to enter a project is said once, in the session's guidance.
         None => format!("=== you are {id} on {here}, in no project ==="),
     }
 }
 
-/// One line saying what the town's ledger gained after `after`, leaving
-/// out what `me` wrote; `None` when nothing else came.
+/// One line saying the town's record changed after `after`, leaving out
+/// what `me` wrote; `None` when it did not. Journals are project memory,
+/// which is not wired in until it is finished (`world-journals.md`), so
+/// their news is not told.
 fn news(world: &WorldDir, town: &TownName, after: u64, me: &Address) -> io::Result<Option<String>> {
     let mine = |by: &Writer| matches!(by, Writer::Resident { address } if address == me);
     let ledger = world.town(town).ledger();
-    let mut entries: BTreeMap<JournalName, usize> = BTreeMap::new();
-    let mut started: Vec<JournalName> = Vec::new();
-    let mut described: Vec<JournalName> = Vec::new();
     let mut record: Option<u32> = None;
     for (_, entry) in crate::ledger::entries_after(world, town, after)? {
         for file in &entry.files {
             let parts: Vec<&str> = file.path.split('/').collect();
-            match parts.as_slice() {
-                ["project", _] => {
-                    let version: Record = parse(&file.bytes.0, &ledger.join(&file.path))?;
-                    if !mine(&version.by) {
-                        record = record.max(Some(version.version));
-                    }
+            if let ["project", _] = parts.as_slice() {
+                let version: Record = parse(&file.bytes.0, &ledger.join(&file.path))?;
+                if !mine(&version.by) {
+                    record = record.max(Some(version.version));
                 }
-                ["journals", journal, "entries", _, "entry.json"] => {
-                    let stamp: EntryStamp = parse(&file.bytes.0, &ledger.join(&file.path))?;
-                    if let Ok(journal) = JournalName::try_from(*journal)
-                        && !mine(&stamp.by)
-                    {
-                        *entries.entry(journal).or_default() += 1;
-                    }
-                }
-                ["journals", journal, "description", version] => {
-                    let description: fastctx_types::project::Description =
-                        parse(&file.bytes.0, &ledger.join(&file.path))?;
-                    if let Ok(journal) = JournalName::try_from(*journal)
-                        && !mine(&description.by)
-                    {
-                        if *version == "v000001.json" { started.push(journal) } else { described.push(journal) }
-                    }
-                }
-                _ => {}
             }
         }
     }
-    let mut said = Vec::new();
-    for journal in &started {
-        said.push(format!("a journal {journal} was started"));
-    }
-    for (journal, count) in &entries {
-        said.push(match count {
-            1 => format!("{journal} has a new entry"),
-            count => format!("{journal} has {count} new entries"),
-        });
-    }
-    for journal in &described {
-        said.push(format!("{journal} has a new description"));
-    }
-    if let Some(version) = record {
-        said.push(format!("its record is at version {version}"));
-    }
-    if said.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(format!(
-        "=== the project {town} changed since you last heard: {}; its map: `fastctx project map` ===",
-        said.join("; ")
-    )))
+    Ok(record.map(|version| {
+        format!("=== the project {town} changed since you last heard: its record is at version {version}; read it with `fastctx project show` ===")
+    }))
 }
 
 fn parse<T: serde::de::DeserializeOwned>(bytes: &[u8], path: &std::path::Path) -> io::Result<T> {

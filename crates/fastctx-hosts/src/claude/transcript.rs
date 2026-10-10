@@ -283,6 +283,7 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
                                 from: None,
                                 text,
                                 message: Some(Box::new(row.user_message())),
+                                notice: None,
                             },
                         });
                     }

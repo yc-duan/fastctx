@@ -77,7 +77,6 @@ pub enum FieldName {
     HubAddress,
     Account,
     Password,
-    Register,
     LoginName,
     HubAccount,
     DeviceKind,
@@ -607,7 +606,10 @@ impl Words {
 
     /// On the World page, while an old fastctx's tools are still in Codex.
     pub fn old_tools(&self) -> &'static str {
-        self.pick("Codex 中的 fastctx 版本过旧 · m 机器页，u 更新", "Codex has an outdated fastctx · m machines, u update")
+        self.pick(
+            "Codex 中的 fastctx 版本过旧 · m 机器页，u 更新",
+            "Codex has an outdated fastctx · m machines, u update",
+        )
     }
 
     pub fn applying(&self) -> &'static str {
@@ -624,7 +626,9 @@ impl Words {
             (Lang::En, 0) => "Already connected; nothing changed".to_string(),
             (Lang::Zh, _) if commands == 0 => format!("已接入：修改 {files} 个文件，新会话生效"),
             (Lang::Zh, _) => format!("已接入：修改 {files} 个文件，运行 {commands} 条 claude 命令，新会话生效"),
-            (Lang::En, _) => format!("Connected: {files} files changed, {commands} claude commands run; applies to new sessions"),
+            (Lang::En, _) => {
+                format!("Connected: {files} files changed, {commands} claude commands run; applies to new sessions")
+            }
         }
     }
 
@@ -639,8 +643,12 @@ impl Words {
 
     pub fn needs_raise(&self, current: i64, requested: u64) -> String {
         match self.lang {
-            Lang::Zh => format!("Codex 输出上限 {current} 低于所需的 {requested}，未改动 · U 调高并接入（影响 Codex 所有工具）"),
-            Lang::En => format!("Codex's output limit {current} is below the {requested} needed; nothing changed · U to raise it and connect (affects all Codex tools)"),
+            Lang::Zh => {
+                format!("Codex 输出上限 {current} 低于所需的 {requested}，未改动 · U 调高并接入（影响 Codex 所有工具）")
+            }
+            Lang::En => format!(
+                "Codex's output limit {current} is below the {requested} needed; nothing changed · U to raise it and connect (affects all Codex tools)"
+            ),
         }
     }
 
@@ -701,8 +709,11 @@ impl Words {
     }
 
     pub fn link_alone(&self) -> String {
-        self.pick("未加入世界 · l 用服务器地址、账号和密码登录", "Not in a World · l to sign in with the server address, account and password")
-            .to_string()
+        self.pick(
+            "未加入世界 · l 用服务器地址、账号和密码登录",
+            "Not in a World · l to sign in with the server address, account and password",
+        )
+        .to_string()
     }
 
     pub fn link_connecting(&self, since: &str, error: Option<&str>) -> String {
@@ -714,13 +725,7 @@ impl Words {
         }
     }
 
-    pub fn link_online(
-        &self,
-        hub: &str,
-        relay: Option<&str>,
-        route: &Route,
-        since: &str,
-    ) -> String {
+    pub fn link_online(&self, hub: &str, relay: Option<&str>, route: &Route, since: &str) -> String {
         if let Some(relay) = relay {
             return match (self.lang, route) {
                 (Lang::Zh, Route::Local) => format!("经本机中转 {relay} · {since} 起"),
@@ -955,18 +960,10 @@ impl Words {
     pub fn health(&self, kind: HealthKind) -> &'static str {
         match kind {
             HealthKind::Reconnecting => self.pick("正在重连模型", "reconnecting to the model"),
-            HealthKind::Safety => {
-                self.pick("服务商安全检查中", "provider safety check")
-            }
-            HealthKind::Rerouted => {
-                self.pick("服务商已切换模型", "provider switched model")
-            }
-            HealthKind::ToolsMissing => {
-                self.pick("会话未接入 fastctx", "fastctx not connected in this session")
-            }
-            HealthKind::ToolServer => {
-                self.pick("其他工具服务启动失败", "another tool server failed to start")
-            }
+            HealthKind::Safety => self.pick("服务商安全检查中", "provider safety check"),
+            HealthKind::Rerouted => self.pick("服务商已切换模型", "provider switched model"),
+            HealthKind::ToolsMissing => self.pick("会话未接入 fastctx", "fastctx not connected in this session"),
+            HealthKind::ToolServer => self.pick("其他工具服务启动失败", "another tool server failed to start"),
             HealthKind::Warning => self.pick("宿主警告", "host warning"),
             HealthKind::Error => self.pick("宿主错误", "host error"),
         }
@@ -1146,7 +1143,9 @@ impl Words {
     pub fn remove_warning(&self, name: &str, account: &str) -> String {
         match self.lang {
             Lang::Zh => format!("{name} 将退出 {account}；若是它的机器，还会断开服务器，需重新登录才能回来。"),
-            Lang::En => format!("{name} will be signed out of {account}; a machine of the account also disconnects from the server until it signs in again."),
+            Lang::En => format!(
+                "{name} will be signed out of {account}; a machine of the account also disconnects from the server until it signs in again."
+            ),
         }
     }
 
@@ -1155,14 +1154,6 @@ impl Words {
             "这台电脑将看不到该账号的机器、对话与项目；若它是该账号的机器，还会断开服务器。",
             "This computer will no longer see the account's machines, conversations and projects; if it is the account's machine, it also disconnects from the server.",
         )
-    }
-
-    pub fn register_no(&self) -> &'static str {
-        self.pick("仅登录", "sign in only")
-    }
-
-    pub fn register_yes(&self) -> &'static str {
-        self.pick("登录并添加为我的机器", "sign in and add as my machine")
     }
 
     pub fn device_computer(&self) -> &'static str {
@@ -1245,7 +1236,13 @@ impl Words {
     /// A choice of an agent lent to this computer's accounts: the machine it
     /// lives on, whose that is, and which agent.
     pub fn lent_choice(&self, machine: &str, owner: Option<&str>, agent: &str) -> String {
-        let agent = if agent == "claude" { "Claude" } else if agent == "codex" { "Codex" } else { agent };
+        let agent = if agent == "claude" {
+            "Claude"
+        } else if agent == "codex" {
+            "Codex"
+        } else {
+            agent
+        };
         match (self.lang, owner) {
             (Lang::Zh, Some(owner)) => format!("{agent} · {machine}（借自 {owner}）"),
             (Lang::Zh, None) => format!("{agent} · {machine}（借来的）"),
@@ -1313,7 +1310,9 @@ impl Words {
             (Lang::Zh, Kept::Already | Kept::Installed) => "开机自启已开启，断网后自动重连".to_string(),
             (Lang::En, Kept::Already | Kept::Installed) => "Starts at boot and reconnects automatically".to_string(),
             (Lang::Zh, Kept::Declined) => "开机自启未开启 · 以管理员运行 fastctx service node install".to_string(),
-            (Lang::En, Kept::Declined) => "Not starting at boot · run fastctx service node install as administrator".to_string(),
+            (Lang::En, Kept::Declined) => {
+                "Not starting at boot · run fastctx service node install as administrator".to_string()
+            }
             (Lang::Zh, Kept::Unsupported) => "此系统不支持开机自启".to_string(),
             (Lang::En, Kept::Unsupported) => "Starting at boot isn't supported on this system".to_string(),
             (Lang::Zh, Kept::Command(command)) => format!("开机自启需运行：{command}"),
@@ -1369,7 +1368,6 @@ impl Words {
             FieldName::HubAddress => self.pick("服务器地址", "Server address"),
             FieldName::Account => self.pick("账号", "Account"),
             FieldName::Password => self.pick("密码", "Password"),
-            FieldName::Register => self.pick("本机", "This computer"),
             FieldName::LoginName => self.pick("本机名称", "Computer name"),
             FieldName::HubAccount => self.pick("账号", "Account"),
             FieldName::DeviceKind => self.pick("设备", "Device"),
@@ -1385,7 +1383,7 @@ impl Words {
             FieldName::Places => self.pick("名称 | 机器 | 路径，每行一项", "name | machine | path, one per line"),
             FieldName::Canon => self.pick("机器 | 路径", "machine | path"),
             FieldName::HubAddress => self.pick("例如 hub.example.com:7443", "e.g. hub.example.com:7443"),
-            FieldName::Register | FieldName::DeviceKind => self.pick("← → 选择", "← → choose"),
+            FieldName::DeviceKind => self.pick("← → 选择", "← → choose"),
             FieldName::LoginName => self.pick("留空则用主机名", "empty uses the host name"),
             _ => return None,
         })

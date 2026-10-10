@@ -102,6 +102,8 @@ fn state(now: Timestamp, activity: Activity, since: i64) -> Now {
         waiting_since: None,
         title: None,
         last_tool_at: None,
+        first_words: None,
+        last_said: None,
     }
 }
 
@@ -284,7 +286,11 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
         home: Some(AgentHome { dir: dir.into(), found }),
         account: Fact::unavailable("not logged in"),
         limits: Fact::unavailable("not read"),
-        program: Fact::known(Some(AgentProgram { path: "C:/Users/me/bin/agent.exe".into(), source: ProgramSource::Path, exists: true })),
+        program: Fact::known(Some(AgentProgram {
+            path: "C:/Users/me/bin/agent.exe".into(),
+            source: ProgramSource::Path,
+            exists: true,
+        })),
         version: Fact::known("1.0.0".into()),
         launch: Fact::unavailable("not checked"),
         login: Fact::known(LoginStatus::LoggedIn { method: None }),
@@ -322,7 +328,12 @@ fn agents(now: Timestamp) -> fastctx_types::agents::AgentsReply {
     personal.login = Fact::known(LoginStatus::LoggedOut);
     personal.integration = Fact::known(Integration::Out);
     personal.unattended = Fact::known(false);
-    AgentsReply { machine: "desktop".parse().unwrap(), checked_at: now, elapsed_ms: 900, agents: vec![codex, claude, work, personal] }
+    AgentsReply {
+        machine: "desktop".parse().unwrap(),
+        checked_at: now,
+        elapsed_ms: 900,
+        agents: vec![codex, claude, work, personal],
+    }
 }
 
 fn nodes(now: Timestamp) -> NodesReply {
@@ -336,6 +347,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         case_sensitive: false,
         version: "1.0.0".into(),
         shell: String::new(),
+        form: None,
         node_lifetime: None,
     };
     let node = |name: &str, online: bool, since: i64, facts: Result<MachineFacts, String>| Node {
@@ -683,6 +695,7 @@ fn answered(now: Timestamp, answer: &str) -> Vec<SessionEvent> {
                 turn: Some(turn.clone()),
                 from: Some(Speaker::User { machine: machine("desktop") }),
                 text: "限幅的问题修好了吗？把结果列一下。".into(),
+                notice: None,
             },
         ),
         event(390, Happened::Began { turn: turn.clone(), item: tested.clone() }),

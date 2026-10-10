@@ -45,9 +45,9 @@ them: test them, and add what you see. When your entry answers an earlier
 one, cite that entry's id. Never change an entry, yours included; add a new
 one. Journal files are read-only copies; write only through `fastctx journal`.";
 
-/// The town's map: its record, then each journal and each document of its
-/// canon in a line.
-pub fn map(view: &MapView) -> String {
+/// The town's record as a resident reads it: what it is, its machines,
+/// where things are, and who opened and last changed it.
+pub fn record(view: &MapView) -> String {
     let record = &view.record;
     let mut text =
         format!("=== project {} ({}), version {} of its record ===\n", view.town, record.name, record.version);
@@ -72,8 +72,16 @@ pub fn map(view: &MapView) -> String {
             day(record.at)
         ));
     }
-    text.push_str(".\n\n");
+    text.push_str(".\n");
+    text
+}
 
+/// The town's map: its record, then each journal and each document of its
+/// canon in a line.
+pub fn map(view: &MapView) -> String {
+    let record = &view.record;
+    let mut text = self::record(view);
+    text.push('\n');
     if view.journals.is_empty() {
         text.push_str(&format!(
             "Journals: none yet. They are files in {}/journals; start one with `fastctx journal add`.\n",
@@ -122,10 +130,11 @@ pub fn map(view: &MapView) -> String {
     text
 }
 
-/// What a resident living in a town is given of it: the map, and how
-/// journals are kept.
+/// What a resident living in a town is given of it. Journals, decisions
+/// and the map are project memory, which is not wired in until it is
+/// finished (`world-journals.md`): a resident is given the record alone.
 pub fn brief(view: &MapView) -> String {
-    format!("{}\n{JOURNALS}", map(view))
+    record(view)
 }
 
 /// One journal in a line: its name, what it covers, and who last wrote.

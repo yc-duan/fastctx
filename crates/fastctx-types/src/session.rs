@@ -52,6 +52,11 @@ pub enum Happened {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<Box<UserMessage>>,
+        /// What the World told, as facts, when these words are its telling:
+        /// an interface shows these instead of reading `text`, which is
+        /// written for the model.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        notice: Option<Box<crate::residents::Notice>>,
     },
     /// The agent began an item, as far as it was known then.
     Began {

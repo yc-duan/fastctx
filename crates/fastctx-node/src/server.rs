@@ -618,7 +618,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller);
             let by = match caller {
                 Caller::Resident(address) => address.tag(),
-                Caller::User => "the user".to_string(),
+                Caller::User => fastctx_types::residents::STOPPED_BY_USER.to_string(),
                 Caller::Session(agent) => format!("a {agent} session"),
                 Caller::Page(page) => format!("the page {}", page.page),
             };

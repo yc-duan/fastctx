@@ -14,8 +14,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use fastctx_hosts::codex::Desk as Use;
-use fastctx_types::residents::Notice;
-use fastctx_types::session::Speaker;
+use fastctx_types::residents::{Notice, WorldFact};
 use fastctx_types::{Address, ResidentId};
 
 use crate::Node;
@@ -68,16 +67,17 @@ pub fn used(node: &Arc<Node>, resident: &ResidentId, turn: &str, used: Use) {
                     .map(|(holder, _)| holder.clone())
                     .filter(|holder| holder != resident)
                     .or_else(|| state.calling.keys().find(|calling| *calling != resident).cloned());
-                let text = match other {
+                let fact = match other {
                     Some(other) => {
                         state.waiting.insert(resident.clone());
-                        format!(
+                        let text = format!(
                             "{other} is using this machine's Computer Use in its turn; you will be told when that turn ends and the desk is free."
-                        )
+                        );
+                        (WorldFact::DeskTaken { by: Address { machine: node.machine(), resident: other } }, text)
                     }
-                    None => "This machine's Computer Use is held by a session fastctx does not know, such as the user's own; when it will be free cannot be known.".to_string(),
+                    None => (WorldFact::DeskOutside, "This machine's Computer Use is held by a session fastctx does not know, such as the user's own; when it will be free cannot be known.".to_string()),
                 };
-                tell.push((resident.clone(), text));
+                tell.push((resident.clone(), fact));
             }
         }
     }
@@ -104,7 +104,8 @@ pub fn turn_ended(node: &Arc<Node>, resident: &ResidentId, turn: &str) {
             return;
         }
         let text = format!("{resident}'s turn ended: this machine's Computer Use is free.");
-        std::mem::take(&mut state.waiting).into_iter().map(|waiting| (waiting, text.clone())).collect()
+        let fact = WorldFact::DeskFree { by: Address { machine: node.machine(), resident: resident.clone() } };
+        std::mem::take(&mut state.waiting).into_iter().map(|waiting| (waiting, (fact.clone(), text.clone()))).collect()
     };
     send(node, tell, &format!("ended:{resident}:{turn}"));
 }
@@ -123,13 +124,13 @@ fn sit(node: &Node, resident: &ResidentId, sits: bool) {
     }
 }
 
-fn send(node: &Arc<Node>, tell: Vec<(ResidentId, String)>, event: &str) {
-    for (resident, text) in tell {
+fn send(node: &Arc<Node>, tell: Vec<(ResidentId, (WorldFact, String))>, event: &str) {
+    for (resident, (fact, text)) in tell {
         let node = node.clone();
         let id = speech::fixed_id("desk", &[event, resident.as_str(), &text]);
         tokio::spawn(async move {
             let to = Address { machine: node.machine(), resident: resident.clone() };
-            let notice = Notice::Words { from: Speaker::World, text };
+            let notice = Notice::World { fact, text };
             if let Err(failure) = speech::tell(&node, &Default::default(), &to, id, notice, Owed::Working).await {
                 node.log.line(format_args!("telling {resident} about the desk: {failure}"));
             }

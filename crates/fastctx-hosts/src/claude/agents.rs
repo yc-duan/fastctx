@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use fastctx_types::agents::{AgentFacts, AgentProgram, Fact, LaunchCheck, ProgramSource};
+use fastctx_types::agents::{AgentFacts, AgentModel, AgentProgram, Fact, LaunchCheck, ProgramSource, ReasoningEffort};
 
 use crate::agents::{measured, output, timed};
 
@@ -25,9 +25,7 @@ pub fn probe(cwd: &Path, env: &[(OsString, OsString)], path: Option<&OsString>) 
         version: Fact::unavailable("no claude command on PATH"),
         launch: Fact::unavailable("no claude command on PATH"),
         login: Fact::unavailable("no claude command on PATH"),
-        models: Fact::unavailable(
-            "Claude Code has no public non-session CLI model catalog; the World does not use Agent SDK or -p",
-        ),
+        models: Fact::known(aliases()),
         integration: Fact::unavailable("the node supplies its apply status"),
         unattended: Fact::unavailable("the node supplies the user's consent"),
         timings,
@@ -50,6 +48,38 @@ pub fn probe(cwd: &Path, env: &[(OsString, OsString)], path: Option<&OsString>) 
         facts.timings.extend([version.1, login.1, launch.1]);
     }
     facts
+}
+
+/// The models a new Claude conversation can start on. Claude Code lists its
+/// models only inside a session, so before one has run in a login these are
+/// the aliases its documentation publishes (`--model opus` and the like);
+/// each resolves to that family's newest model for the account. All of them
+/// take the five effort levels; Fable defaults to `high`, the others to
+/// `medium` (model-config, "Adjust effort level"). The first is chosen when
+/// the user has chosen none (`world-gui.md`, 对话).
+fn aliases() -> Vec<AgentModel> {
+    const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+    [
+        ("opus", "Opus", "medium"),
+        ("fable", "Fable", "high"),
+        ("sonnet", "Sonnet", "medium"),
+        ("haiku", "Haiku", "medium"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(at, (model, name, effort))| AgentModel {
+        id: model.to_string(),
+        model: model.to_string(),
+        display_name: name.to_string(),
+        description: String::new(),
+        is_default: at == 0,
+        default_reasoning_effort: effort.to_string(),
+        reasoning_efforts: EFFORTS
+            .iter()
+            .map(|effort| ReasoningEffort { effort: (*effort).to_string(), description: String::new() })
+            .collect(),
+    })
+    .collect()
 }
 
 fn launch(program: &Path, cwd: &Path, env: &[(OsString, OsString)]) -> Fact<LaunchCheck> {

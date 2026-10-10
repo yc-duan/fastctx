@@ -187,6 +187,8 @@ pub async fn ask_here(
         waiting_since: None,
         title: None,
         last_tool_at: None,
+        first_words: None,
+        last_said: None,
     };
     node.residents
         .create(&node.world, about.clone(), town.clone(), now)
@@ -315,8 +317,8 @@ pub(crate) fn standing(node: &Node, town: Option<&TownName>) -> Result<PathBuf, 
 
 /// What a resident the World starts is told of itself, as Codex's developer
 /// instructions or Claude's system prompt, which outlive compaction: who it
-/// is, its hands, and its town's map. Also what it is told of its town by
-/// that: how far into the ledger, read before the map so nothing written
+/// is, its hands, and its town's record. Also what it is told of its town by
+/// that: how far into the ledger, read before the record so nothing written
 /// meanwhile goes unsaid.
 pub(crate) async fn instructions(
     node: &Arc<Node>,
@@ -352,7 +354,7 @@ fn words(
 ) -> String {
     let place = match (town, origin) {
         (Some(town), _) => format!(
-            " You work in the user's project {town}: a fastctx project, which is not a folder or a repository but a named piece of work that can span several machines. Its map follows: what it is for, its machines, where its code and data are on each, and its journals."
+            " You work in the user's project {town}: a fastctx project, which is not a folder or a repository but a named piece of work that can span several machines. Its record follows: what it is for, its machines, and where its code and data are on each."
         ),
         (None, Origin::User) => " When the user names the project to work on, enter it with `fastctx project enter NAME` (`fastctx project list` lists them).".to_string(),
         (None, Origin::Colleague { .. }) => String::new(),

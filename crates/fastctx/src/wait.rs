@@ -65,6 +65,7 @@ fn ended(record: &JobRecord) -> Notice {
             record.stderr.as_deref().map(Path::new),
         )
         .unwrap_or(None),
+        stop: record.stop.as_ref().map(|stop| stop.request.clone()),
     }
 }
 

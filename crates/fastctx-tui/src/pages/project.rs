@@ -1,6 +1,7 @@
 //! One project (`world-gui.md`: a town is a project; its home is the
-//! overview): what it is for, the agents in it and what each is doing, its
-//! journals, its decisions, and where things are.
+//! overview): what it is for, the agents in it and what each is doing, and
+//! where things are. Journals and decisions are project memory, not shown
+//! until it is finished (`world-journals.md`).
 
 use crossterm::event::{KeyCode, KeyEvent};
 use fastctx_client::TownView;
@@ -11,10 +12,10 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 
-use super::{List, Page, Sheet, quiet, sheet, title, wrong};
+use super::{List, Page, Sheet, quiet, sheet, wrong};
 use crate::app::{Act, Ctx, Data, Feed};
 use crate::design::Role;
-use crate::pages::{form, journal, talk, world};
+use crate::pages::{form, talk, world};
 use crate::paint::{self, Row};
 use crate::{text, who};
 
@@ -30,7 +31,6 @@ pub struct ProjectPage {
 
 enum Item {
     Resident(usize),
-    Journal(usize),
 }
 
 impl ProjectPage {
@@ -53,8 +53,7 @@ impl ProjectPage {
 
     fn items(&self) -> Vec<Item> {
         let residents = self.view.as_ref().map_or(0, |view| view.residents.len());
-        let journals = self.map.as_ref().map_or(0, |map| map.journals.len());
-        (0..residents).map(Item::Resident).chain((0..journals).map(Item::Journal)).collect()
+        (0..residents).map(Item::Resident).collect()
     }
 
     /// The project's name, as its record gives it.
@@ -100,12 +99,6 @@ impl ProjectPage {
                         Some(view.machine.clone()),
                     );
                     Act::Push(Page::Talk(Box::new(page)))
-                }
-                Some(Item::Journal(index)) => {
-                    let map = self.map.as_ref().expect("items come from the map");
-                    let journal = map.journals[*index].journal.clone();
-                    let page = journal::JournalPage::new(self.town.clone(), self.name(), journal);
-                    Act::Push(Page::Journal(Box::new(page)))
                 }
                 None => Act::Stay,
             },
@@ -173,54 +166,6 @@ impl ProjectPage {
         }
 
         if let Some(map) = &self.map {
-            paint::open_section(
-                &mut rows,
-                paint::section(words.journals(), look).right(quiet(ctx, words.journal_count(map.journals.len()))),
-            );
-            if map.journals.is_empty() {
-                rows.push(Row::new(quiet(ctx, words.nothing_yet())));
-            }
-            for journal in &map.journals {
-                let right = quiet(ctx, words.entries(journal.entries, journal.writers));
-                rows.push(Row::new(title(ctx, journal.journal.to_string())).right(right).item(item));
-                if let Some(description) = &journal.description {
-                    let lines = text::wrap_plain(&description.text, look.text(Role::Muted), width - 4);
-                    rows.extend(paint::indented(lines.into_iter().take(2).collect(), 2, Some(item)));
-                }
-                if let Some(latest) = &journal.latest {
-                    let by = writer_name(ctx, &latest.by);
-                    let line = quiet(ctx, words.last_entry(&by, &crate::words::clock(latest.at, ctx.now)));
-                    rows.extend(paint::indented(vec![line], 2, Some(item)));
-                }
-                rows.push(Row::blank());
-                item += 1;
-            }
-
-            paint::open_section(&mut rows, paint::section(words.decisions(), look));
-            match (&map.record.canon, &map.canon) {
-                (None, _) => rows.push(Row::new(quiet(ctx, words.no_decisions()))),
-                (Some(location), canon) => {
-                    rows.push(Row::new(quiet(ctx, format!("{}  {}", location.machine, location.path))));
-                    match canon {
-                        Some(Ok(heads)) => {
-                            for head in heads {
-                                let line = Line::from(vec![
-                                    Span::styled(head.title.clone(), look.text(Role::Text)),
-                                    Span::styled(format!("   {}", head.scope), look.text(Role::Muted)),
-                                ]);
-                                rows.push(Row::new(line));
-                            }
-                        }
-                        Some(Err(why)) => rows.push(Row::new(Span::styled(
-                            words.decisions_unread(location.machine.as_str(), &text::first_line(why)),
-                            look.text(Role::Caution),
-                        ))),
-                        None => {}
-                    }
-                }
-            }
-            rows.push(Row::blank());
-
             if !map.record.places.is_empty() {
                 paint::open_section(&mut rows, paint::section(words.places(), look));
                 let what_width = map.record.places.iter().map(|place| text::width(&place.what)).max().unwrap_or(0);
@@ -282,13 +227,12 @@ impl ProjectPage {
             (None, None) => Some(quiet(ctx, words.asking())),
             (None, Some(_)) => None,
         };
-        let selected_journal = matches!(self.items().get(self.list.selected), Some(Item::Journal(_)));
         let page = Sheet {
             crumbs: vec![words.world().to_string(), self.name()],
             right: Line::default(),
             rows,
             keys: vec![
-                ("Enter", if selected_journal { words.key_read() } else { words.key_talk() }),
+                ("Enter", words.key_talk()),
                 ("n", words.key_new_agent_here()),
                 ("e", words.key_edit_project()),
                 ("a", if self.all { words.key_present_only() } else { words.key_all() }),

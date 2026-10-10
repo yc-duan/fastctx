@@ -213,6 +213,12 @@ pub fn fixtures() -> Fixtures {
             from: Some(from),
             text: "hello 世界".into(),
             message,
+            notice: (i == 2).then(|| {
+                Box::new(fastctx_types::residents::Notice::World {
+                    fact: fastctx_types::residents::WorldFact::Moved { to: Some("mark50".parse().unwrap()) },
+                    text: "=== the user moved you to the project mark50 ===".into(),
+                })
+            }),
         }));
     }
     let mut items = vec![

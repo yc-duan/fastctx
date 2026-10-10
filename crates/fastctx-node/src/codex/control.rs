@@ -218,6 +218,8 @@ async fn fork(
         waiting_since: None,
         title: None,
         last_tool_at: None,
+        first_words: None,
+        last_said: None,
     };
     node.residents.create(&node.world, about, town, now).map_err(|error| {
         Failure::new(format!("Codex created thread {fork}, but recording its resident {id} failed: {error}"))

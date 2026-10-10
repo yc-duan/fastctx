@@ -1110,7 +1110,15 @@
         "from": {
           "kind": "world"
         },
-        "text": "hello 世界"
+        "text": "hello 世界",
+        "notice": {
+          "kind": "world",
+          "fact": {
+            "fact": "moved",
+            "to": "mark50"
+          },
+          "text": "=== the user moved you to the project mark50 ==="
+        }
       },
       {
         "at": "2026-10-04T12:06:07.123456789Z",

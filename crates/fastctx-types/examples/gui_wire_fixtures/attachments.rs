@@ -115,6 +115,7 @@ pub fn fixtures() -> Fixtures {
                 from: Some(Speaker::User { machine: envelope.from.clone() }),
                 text: text.clone(),
                 message: Some(Box::new(envelope.message(&text))),
+                notice: None,
             },
         }],
         host_text: envelope.render(&text),

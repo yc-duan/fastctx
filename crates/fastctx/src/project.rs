@@ -8,7 +8,7 @@ use fastctx_types::{Call, MachineName, ProjectCall, Reply, TownName};
 
 use crate::ask;
 
-/// The user's projects: list, show, map and enter them; open one or write
+/// The user's projects: list, show and enter them; open one or write
 /// the next version of its record.
 #[derive(Subcommand)]
 pub enum ProjectCommand {
@@ -22,12 +22,13 @@ pub enum ProjectCommand {
     },
     /// A project's map: its record, then each journal, page and decision
     /// document in a line.
+    #[command(hide = true)]
     Map {
         /// The project; without it, the one you work in.
         #[arg(value_name = "NAME")]
         town: Option<String>,
     },
-    /// Work in a project from now on, and get its map. Only when the user
+    /// Work in a project from now on, and get its record. Only when the user
     /// says which project to work on; do not change projects on your own.
     Enter {
         /// The project's short name, as `fastctx project list` shows it.
@@ -78,7 +79,7 @@ pub struct Fields {
     place: Vec<String>,
     /// Where the documents of decisions settled with the user are: the
     /// machine and its directory.
-    #[arg(long, num_args = 2, value_names = ["MACHINE", "PATH"])]
+    #[arg(long, num_args = 2, value_names = ["MACHINE", "PATH"], hide = true)]
     canon: Vec<String>,
 }
 
@@ -166,11 +167,7 @@ fn list(here: &MachineName, towns: &[TownSummary]) -> String {
     for town in towns {
         let record = &town.record;
         let machines: Vec<&str> = record.machines.iter().map(|machine| machine.as_str()).collect();
-        let journals = match town.journals {
-            1 => "1 journal".to_string(),
-            count => format!("{count} journals"),
-        };
-        text.push_str(&format!("{}  {} · {} · {journals}\n", town.town, record.name, machines.join(", ")));
+        text.push_str(&format!("{}  {} · {}\n", town.town, record.name, machines.join(", ")));
         text.push_str(&format!("    {}\n", record.what));
     }
     text
@@ -189,10 +186,6 @@ fn show(title: &str, record: &Record, opened: &Stamp) -> String {
         for place in &record.places {
             text.push_str(&format!("  {}: {} {}\n", place.what, place.location.machine, place.location.path));
         }
-    }
-    match &record.canon {
-        Some(canon) => text.push_str(&format!("Canon: {} {}\n", canon.machine, canon.path)),
-        None => text.push_str("Canon: none listed\n"),
     }
     text.push_str(&format!("Opened by {}\n", stamped(opened)));
     if record.version > 1 {

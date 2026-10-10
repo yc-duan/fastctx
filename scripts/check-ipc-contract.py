@@ -21,6 +21,7 @@ REVISIONS = {
     7: "bd905f697fbf793f9f755561f36b0758fb08e383",
     8: "52d3e985cace21aab0ec8b01f824f45fc187d60f",
     9: "287bacbb4e59cf755eb0d2fdf4840705e1ebff61",
+    10: "11b480d9efbaf949b3dad14e0fc9a80b1cbb22d2",
 }
 
 
@@ -123,7 +124,10 @@ def verify(reader):
                 for encoding in case["encodings"]:
                     assert encoding in json.dumps(answer["read"]), (case, answer)
             # Protocols 7 and 8 read today's replies as they are, but for those said as text.
-            if case["protocol"] >= 7 and not case.get("text_result"):
+            if case.get("world"):
+                told = wire["reply"]["Ok"]["notices"][0]["notice"]
+                assert told == {"kind": "words", "from": {"kind": "world"}, "text": "the World's words"}, (case, answer)
+            elif case["protocol"] >= 7 and not case.get("text_result"):
                 assert wire == answer["current"], (case, answer)
             if case.get("attached") and case["protocol"] >= 6:
                 assert wire["reply"]["Ok"]["notices"] == case["value"]["reply"]["Ok"]["notices"]

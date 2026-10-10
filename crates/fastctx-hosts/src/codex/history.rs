@@ -208,6 +208,7 @@ fn completed(turn: &str, raw: &Value, messages: &mut HashMap<String, String>) ->
             from: None,
             text,
             message: Some(Box::new(message)),
+            notice: None,
         }),
         items::Read::Item(item) => {
             if let What::Message { text } = &item.what {
@@ -237,6 +238,7 @@ pub(super) fn project(answer: &Value, running: Option<&str>) -> Vec<SessionEvent
                         from: None,
                         text,
                         message: Some(Box::new(message)),
+                        notice: None,
                     },
                 ),
                 items::Read::Item(item) => {

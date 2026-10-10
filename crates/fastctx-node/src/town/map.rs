@@ -47,8 +47,8 @@ pub async fn view(node: &Arc<Node>, town: &TownName) -> Result<MapView, Failure>
     })
 }
 
-/// What a resident living in `town` is told of it: its map, and how the
-/// town's journals are kept.
+/// What a resident living in `town` is told of it: its record, while
+/// project memory is not wired in.
 pub async fn brief(node: &Arc<Node>, town: &TownName) -> Result<String, Failure> {
     Ok(fastctx_hands::town::brief(&view(node, town).await?))
 }
@@ -60,7 +60,9 @@ pub async fn brief(node: &Arc<Node>, town: &TownName) -> Result<String, Failure>
 /// The hub that keeps the project `town`, and its id there, as this
 /// computer's accounts see them: one of a name, or none.
 fn find(node: &Node, town: &TownName) -> Result<(HubId, TownId), Failure> {
-    if let Some(place) = crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))? {
+    if let Some(place) =
+        crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?
+    {
         return Ok((place.hub, place.town));
     }
     let mut found = Vec::new();

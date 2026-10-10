@@ -168,20 +168,20 @@ enum Command {
     /// Open a resident of this machine in its agent's own interface, in
     /// this terminal.
     Attach(attach::AttachArgs),
-    /// The user's projects: list, show, map and enter them; open one or
-    /// write the next version of its record.
+    /// The user's projects: list, show and enter them; open one or write
+    /// the next version of its record.
     ///
     /// A fastctx project is not a folder or a repository: it is a named
     /// piece of the user's work that can span several machines. Its record
     /// says what it is for, which machines it spans, and where its code and
-    /// data are on each; its journals hold the history of the work, and its
-    /// pages show live facts to the user. Its map puts all of that in one
-    /// answer.
+    /// data are on each; its pages show live facts to the user.
     #[command(subcommand)]
     Project(project::ProjectCommand),
     /// A project's journals: history, not verdicts. Add an entry, describe
     /// a journal, read or list them.
-    #[command(subcommand, after_long_help = fastctx_hands::town::JOURNALS)]
+    ///
+    /// Hidden while project memory is not wired in (`world-journals.md`).
+    #[command(subcommand, hide = true, after_long_help = fastctx_hands::town::JOURNALS)]
     Journal(journal::JournalCommand),
     /// A project's pages: HTML the user opens in the World app, showing
     /// live facts of the machines and sessions. Publish, read or list them.

@@ -157,9 +157,7 @@ impl WorldPage {
                             rows.extend(paint::indented(what.into_iter().take(2).collect(), 2, Some(item)));
                             let machines: Vec<&str> =
                                 summary.record.machines.iter().map(|machine| machine.as_str()).collect();
-                            let facts =
-                                format!("{}  ·  {}", machines.join(" · "), words.journal_count(summary.journals));
-                            rows.extend(paint::indented(vec![quiet(ctx, facts)], 2, Some(item)));
+                            rows.extend(paint::indented(vec![quiet(ctx, machines.join(" · "))], 2, Some(item)));
                         }
                         None => rows.extend(paint::indented(
                             vec![quiet(ctx, words.no_ledger_here(view.machine.as_str()))],

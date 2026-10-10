@@ -17,7 +17,9 @@
 use std::sync::Arc;
 
 use fastctx_types::layout::ResidentDir;
-use fastctx_types::residents::{Delivery, MessageKind, MessageLine, Notice, Origin, Owing, Pending, Trouble};
+use fastctx_types::residents::{
+    Delivery, LAST_SAID_CHARS, MessageKind, MessageLine, Notice, Origin, Owing, Pending, Trouble,
+};
 use fastctx_types::session::{Happened, Health, SessionChange, SessionEvent, TurnEnd, TurnHow};
 use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
@@ -73,6 +75,11 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
     }
     match event.happened {
         Happened::TurnEnded { turn, end } => {
+            if let Some(said) = end.last_message.as_deref().map(|said| opening(said, LAST_SAID_CHARS))
+                && !said.is_empty()
+            {
+                node.residents.change_now(&node.world, id, |now| now.last_said = Some(said))?;
+            }
             let speaking = node.residents.speaking(id).expect("known resident");
             let _speaking = speaking.lock().await;
             finish_at(node, id, &turn, end, &[], Some(event.at)).await
@@ -112,6 +119,16 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
 /// back, Claude Code in its own session file (`crate::claude::history`).
 /// What the World itself saw, such as who said words and how a turn ended,
 /// is always kept.
+/// The start of `text` on one line, at most `chars` characters: what a list
+/// or a notification shows of it.
+pub fn opening(text: &str, chars: usize) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    match line.char_indices().nth(chars) {
+        Some((cut, _)) => format!("{}…", &line[..cut]),
+        None => line,
+    }
+}
+
 fn recorded(agent: &str, happened: &Happened) -> bool {
     match happened {
         happened if !happened.kept() => false,

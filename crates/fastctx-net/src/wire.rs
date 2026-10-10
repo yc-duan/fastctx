@@ -25,7 +25,7 @@ use crate::ids::HubId;
 use crate::sign::{Bytes, Digest, PublicKey, Signature, Signed};
 
 /// Raised whenever a change would make one side misread the other.
-pub const PROTOCOL: u32 = 11;
+pub const PROTOCOL: u32 = 12;
 
 pub const CONTROL_PATH: &str = "/fastctx/world/4";
 pub const DATA_PATH: &str = "/fastctx/world/4/data";

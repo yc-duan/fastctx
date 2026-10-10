@@ -33,11 +33,13 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
             (to, Purpose::Words)
         }
         Letter::Notice { to, notice } => match notice {
-            Notice::Words { from: Speaker::Resident { address }, .. } if address.machine == *from => (to, Purpose::Words),
+            Notice::Words { from: Speaker::Resident { address }, .. } if address.machine == *from => {
+                (to, Purpose::Words)
+            }
             Notice::Words { from: Speaker::Resident { address }, .. } => {
                 return Err(format!("{from} sent words of {address}, a resident of another machine"));
             }
-            Notice::Words { .. } | Notice::Attached { .. } => {
+            Notice::Words { .. } | Notice::Attached { .. } | Notice::World { .. } => {
                 return Err(format!("{from} sent words as the user, a page or the World, which no letter carries"));
             }
             Notice::Answer { colleague, .. } | Notice::Health { colleague, .. } if colleague.machine == *from => {
@@ -54,11 +56,7 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
 }
 
 fn expect(declared: Purpose, carries: Purpose) -> Result<(), String> {
-    if declared == carries {
-        Ok(())
-    } else {
-        Err(format!("it was sent as {declared:?} and carries {carries:?}"))
-    }
+    if declared == carries { Ok(()) } else { Err(format!("it was sent as {declared:?} and carries {carries:?}")) }
 }
 
 /// Whether `to` lives here and works for the account the letter was sent

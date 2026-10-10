@@ -23,7 +23,8 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::layout::ResidentDir;
 use fastctx_types::remote::Letter;
 use fastctx_types::residents::{
-    About, Delivery, Landed, MessageKind, MessageLine, Notice, Origin, Outcome, Pending, PendingState,
+    About, Delivery, FIRST_WORDS_CHARS, Landed, MessageKind, MessageLine, Notice, Origin, Outcome, Pending,
+    PendingState,
 };
 use fastctx_types::session::{Happened, Health, HealthKind, SessionEvent, Speaker, TurnHow};
 use fastctx_types::{Address, NoticeId, ResidentId};
@@ -441,6 +442,15 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
             (Speaker::Resident { address: colleague.clone() }, told::told(&delivery.notice))
         }
         Notice::JobEnded { .. } | Notice::Health { .. } => (Speaker::World, told::told(&delivery.notice)),
+        Notice::World { text, .. } => (Speaker::World, text.clone()),
+    };
+    // What an interface shows of the World's telling and a colleague's
+    // answer is the notice itself, not the words written for the model.
+    let notice = match &delivery.notice {
+        Notice::Words { .. } | Notice::Attached { .. } => None,
+        Notice::JobEnded { .. } | Notice::Answer { .. } | Notice::Health { .. } | Notice::World { .. } => {
+            Some(Box::new(delivery.notice.clone()))
+        }
     };
     let event = SessionEvent {
         at: Timestamp::now(),
@@ -453,6 +463,7 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
             turn: Some(turn.to_string()),
             from: Some(from.clone()),
             text: text.clone(),
+            notice,
         },
     };
     let Some((_, town)) = node.residents.about(id) else { return };
@@ -463,6 +474,17 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
         Err(error) => {
             node.log.line(format_args!("recording what {id} heard: {error}"));
             return;
+        }
+    }
+    // The user's first words name the conversation where its host does not.
+    if matches!(from, Speaker::User { .. }) {
+        let words = crate::turns::opening(&text, FIRST_WORDS_CHARS);
+        if !words.is_empty()
+            && let Err(error) = node.residents.change_now(&node.world, id, |now| {
+                now.first_words.get_or_insert(words);
+            })
+        {
+            node.log.line(format_args!("recording {id}'s first words: {error}"));
         }
     }
     if let Some((about, town)) = node.residents.about(id)

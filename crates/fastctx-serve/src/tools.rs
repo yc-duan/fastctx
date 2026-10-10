@@ -265,8 +265,8 @@ More commands (`--help` on each gives all its options):
 - `fastctx nodes` lists the machines, which are online, and what each runs.
 - `fastctx w` shows what runs and who works now, and what happened since your last turn; `fastctx w ID...` shows those sessions or jobs.
 - `fastctx wait JOB...` waits until jobs end and shows how each ended; `fastctx stop JOB...` stops them and everything they started.
-- `fastctx project` lists the user's projects and shows their maps. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its map says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
-- `fastctx journal` reads and adds to the project's journals, the history of its work. `fastctx page` publishes an HTML page the user opens in the World app.";
+- `fastctx project` lists the user's projects and shows their records. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its record says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
+- `fastctx page` publishes an HTML page the user opens in the World app.";
 
 fn ask_colleague_definition(woken: bool, lives_on: &str, lent: bool) -> Value {
     let delivered = if woken { "" } else { " with the answer of your next call to a fastctx tool" };

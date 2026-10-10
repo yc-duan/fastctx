@@ -229,6 +229,10 @@ pub enum Desk {
 const COMPUTER_USE: &str = "node_repl";
 /// What the app's helper answers while another request is in flight.
 const HELPER_BUSY: &str = "Computer Use helper already has an active request";
+/// The line that opens the user's answers to questions asked without
+/// waiting, as Codex's own clients write them: the tag keeps its historical
+/// name.
+pub const ASYNC_REPLY_TAG: &str = "<send_user_message_question_reply>";
 
 pub struct CodexHost {
     codex_home: PathBuf,
@@ -487,7 +491,16 @@ impl CodexHost {
             "environments": [],
         });
         match input {
-            Input::Text(text) => params["input"] = json!([{ "type": "text", "text": text }]),
+            Input::Text(text) => {
+                // An answer to a question the model asked without waiting
+                // (`request_user_input_async`) goes in as the user's words in
+                // the envelope Codex's own clients write, marked as such; the
+                // World's head note naming the speaker comes before it.
+                if text.lines().any(|line| line == ASYNC_REPLY_TAG) {
+                    params["turnTrigger"] = json!("send_user_message_async_question");
+                }
+                params["input"] = json!([{ "type": "text", "text": text }]);
+            }
             Input::Skill { name, path, text } => {
                 params["input"] = json!([
                     {"type": "text", "text": text},
@@ -947,6 +960,7 @@ impl CodexHost {
                                     from: None,
                                     text,
                                     message: Some(Box::new(message)),
+                                    notice: None,
                                 },
                             );
                         }

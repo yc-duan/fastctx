@@ -136,7 +136,6 @@ impl FormPage {
                 Field::text(Key::What, Editor::multi()),
                 Field::ticks(Key::Machines),
                 Field::text(Key::Places, Editor::multi()),
-                Field::text(Key::Canon, Editor::single()),
             ],
         )
     }
@@ -147,8 +146,6 @@ impl FormPage {
             .iter()
             .map(|place| format!("{} | {} | {}", place.what, place.location.machine, place.location.path))
             .collect();
-        let canon =
-            record.canon.as_ref().map(|canon| format!("{} | {}", canon.machine, canon.path)).unwrap_or_default();
         Self::new(
             Kind::EditProject { town, machines: record.machines.clone() },
             vec![
@@ -156,24 +153,18 @@ impl FormPage {
                 Field::text(Key::What, Editor::multi().with(&record.what)),
                 Field::ticks(Key::Machines),
                 Field::text(Key::Places, Editor::multi().with(&places.join("\n"))),
-                Field::text(Key::Canon, Editor::single().with(&canon)),
             ],
         )
     }
 
     /// Logs this computer in with the hub's address and an account's
-    /// password; `first` asks what it is called, as it is on no hub yet.
-    pub fn login(ctx: &Ctx, first: bool) -> Self {
-        let words = &ctx.words;
-        let register = vec![
-            (words.register_no().to_string(), String::new()),
-            (words.register_yes().to_string(), "register".to_string()),
-        ];
+    /// password, which joins it as one of the account's machines; `first`
+    /// asks what it is called, as it is on no hub yet.
+    pub fn login(_ctx: &Ctx, first: bool) -> Self {
         let mut fields = vec![
             Field::text(Key::HubAddress, Editor::single()),
             Field::text(Key::Account, Editor::single()),
             Field::secret(Key::Password),
-            Field::choice(Key::Register, register),
         ];
         if first {
             fields.push(Field::text(Key::LoginName, Editor::single()));
@@ -317,7 +308,14 @@ impl FormPage {
             // An agent lent to one of this computer's accounts lives on a
             // machine of another's, which it works for them from.
             options.extend(self_lent.iter().enumerate().map(|(at, lent)| {
-                (words.lent_choice(lent.machine.as_str(), lent.owner.as_ref().map(|owner| owner.as_str()), lent.agent.as_str()), format!("{LENT}{at}"))
+                (
+                    words.lent_choice(
+                        lent.machine.as_str(),
+                        lent.owner.as_ref().map(|owner| owner.as_str()),
+                        lent.agent.as_str(),
+                    ),
+                    format!("{LENT}{at}"),
+                )
             }));
             *index = options.iter().position(|(_, value)| *value == chosen).unwrap_or(0);
         }
@@ -558,13 +556,21 @@ impl FormPage {
                 let machine = self.value(Key::Machine);
                 // A lent agent is the agent lent, in the login lent, for the
                 // account it is lent to.
-                if let Some(lent) = machine.strip_prefix(LENT).and_then(|at| at.parse::<usize>().ok()).and_then(|at| self.lent.get(at)) {
+                if let Some(lent) =
+                    machine.strip_prefix(LENT).and_then(|at| at.parse::<usize>().ok()).and_then(|at| self.lent.get(at))
+                {
                     let choices = fastctx_types::agents::Choices {
                         account: Some(lent.to.clone()),
                         home: lent.home.clone(),
                         ..Default::default()
                     };
-                    return Ok(Job::Open { agent: lent.agent.clone(), town, node: Some(lent.machine.clone()), text, choices });
+                    return Ok(Job::Open {
+                        agent: lent.agent.clone(),
+                        town,
+                        node: Some(lent.machine.clone()),
+                        text,
+                        choices,
+                    });
                 }
                 let agent = AgentName::try_from(self.value(Key::Agent)).map_err(|error| error.to_string())?;
                 let node = optional_machine(machine)?;
@@ -583,8 +589,13 @@ impl FormPage {
                     return Err(words.login_needs().to_string());
                 }
                 let account = AccountName::try_from(account).map_err(|error| error.to_string())?;
-                let register = !self.value(Key::Register).is_empty();
-                Job::Login { hub, account, password, register, name: optional_machine(self.value(Key::LoginName))? }
+                Job::Login {
+                    hub,
+                    account,
+                    password,
+                    register: true,
+                    name: optional_machine(self.value(Key::LoginName))?,
+                }
             }
             Kind::Device => {
                 let (hub, account) = hub_account(&self.value(Key::HubAccount))?;

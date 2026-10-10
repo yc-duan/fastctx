@@ -850,6 +850,8 @@ pub fn idle(since: Timestamp) -> Now {
         waiting_since: None,
         title: None,
         last_tool_at: None,
+        first_words: None,
+        last_said: None,
     }
 }
 

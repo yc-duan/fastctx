@@ -62,6 +62,7 @@ pub fn restore(event: SessionEvent) -> Vec<SessionEvent> {
                     from: Some(metadata.speaker()),
                     text,
                     message: Some(Box::new(restored)),
+                    notice: None,
                 },
             }
         })

@@ -334,8 +334,16 @@ pub fn facts(node: &Node) -> MachineFacts {
         case_sensitive: !cfg!(any(windows, target_os = "macos")),
         version: env!("CARGO_PKG_VERSION").to_string(),
         shell: shell().clone(),
+        form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
     }
+}
+
+/// What kind of device this is, asked once: it does not change while the
+/// node runs.
+fn form() -> fastctx_types::world::Form {
+    static FORM: std::sync::OnceLock<fastctx_types::world::Form> = std::sync::OnceLock::new();
+    *FORM.get_or_init(fastctx_platform::form::form)
 }
 
 /// The bash `run` starts here and its version, asked once: the answer only

@@ -32,8 +32,9 @@ pub enum PageCommand {
         /// Speak to this session on this machine; repeat for each session.
         #[arg(long, num_args = 2, value_names = ["MACHINE", "SESSION"], action = ArgAction::Append)]
         say: Vec<String>,
-        /// Write to this journal; repeat for each journal.
-        #[arg(long, value_name = "JOURNAL", action = ArgAction::Append)]
+        /// Write to this journal; repeat for each journal. Hidden while
+        /// project memory is not wired in (`world-journals.md`).
+        #[arg(long, value_name = "JOURNAL", action = ArgAction::Append, hide = true)]
         write: Vec<String>,
         /// The version you started from, when changing a page.
         #[arg(long)]

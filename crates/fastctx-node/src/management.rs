@@ -6,8 +6,7 @@ use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::management::{Managed, Management, ManagementOutcome as Outcome, ManagementStep};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use fastctx_types::residents::{Activity, Delivery, Notice};
-use fastctx_types::session::Speaker;
+use fastctx_types::residents::{Activity, Delivery, Notice, WorldFact};
 use fastctx_types::{Address, MachineName, ResidentId};
 use jiff::Timestamp;
 use std::sync::Arc;
@@ -284,7 +283,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             let delivery = Delivery {
                 id: speech::new_id("project"),
                 at: Timestamp::now(),
-                notice: Notice::Words { from: Speaker::World, text },
+                notice: Notice::World { fact: WorldFact::Moved { to: town.clone() }, text },
             };
             match speech::tell_here_locked(node, id, delivery, speech::Owed::Nobody).await {
                 Ok(landed) => {

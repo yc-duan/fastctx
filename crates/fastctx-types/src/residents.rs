@@ -123,6 +123,9 @@ pub enum Notice {
         /// knows how it went without reading the log.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         last: Option<LastLines>,
+        /// Who stopped it and why, when someone did.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop: Option<crate::run::StopRequest>,
     },
     /// A turn of a colleague ended, which the resident's words went into or
     /// which it asked for: its last message, verbatim.
@@ -134,7 +137,31 @@ pub enum Notice {
     Words { from: Speaker, text: String },
     /// The user's words and files; the accompanying facts are the World's.
     Attached { message: crate::session::attachments::AttachedMessage, text: String },
+    /// A fact of the World's own, with the words the resident reads for it.
+    World { fact: WorldFact, text: String },
 }
+
+/// What the World tells a resident of its surroundings, as facts an
+/// interface can show without reading the words given to the model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "fact")]
+pub enum WorldFact {
+    /// Another session holds this machine's Computer Use in its turn.
+    DeskTaken { by: Address },
+    /// A session the World does not know holds this machine's Computer Use.
+    DeskOutside,
+    /// The turn holding this machine's Computer Use ended.
+    DeskFree { by: Address },
+    /// The user moved the resident into a project, or out of its project.
+    Moved {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<crate::TownName>,
+    },
+}
+
+/// Who stops a job when the user does, from an interface: the job's end is
+/// told to its resident as stopped by the user.
+pub const STOPPED_BY_USER: &str = "the user";
 
 /// How words for a resident landed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,7 +231,22 @@ pub struct Now {
     /// Latest tool start observed from the host, even when it is not a World tool.
     #[serde(default)]
     pub last_tool_at: Option<Timestamp>,
+    /// The start of the first words the user said here, which name the
+    /// conversation where its host gave it no name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_words: Option<String>,
+    /// The start of the last message of the latest turn that ended: what a
+    /// notification of that turn says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_said: Option<String>,
 }
+
+/// How much of the user's first words `Now::first_words` keeps, in
+/// characters: a name in a list shows fewer.
+pub const FIRST_WORDS_CHARS: usize = 80;
+/// How much of a turn's last message `Now::last_said` keeps, in characters:
+/// a notification's body shows a few lines of it.
+pub const LAST_SAID_CHARS: usize = 500;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

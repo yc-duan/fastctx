@@ -1,4 +1,4 @@
-A page is an HTML file you write and publish into the project, for the user to open in the World app on their computers and phone: the state of a training run, a table comparing results, a small panel with a few buttons. It shows live facts of the user's machines and sessions, and it can do the few things the user agreed to. Write one when the user would otherwise keep asking how something stands, or when a table or a chart says it better than prose. A page is not where work is recorded: what you found still goes in a journal.
+A page is an HTML file you write and publish into the project, for the user to open in the World app on their computers and phone: the state of a training run, a table comparing results, a small panel with a few buttons. It shows live facts of the user's machines and sessions, and it can do the few things the user agreed to. Write one when the user would otherwise keep asking how something stands, or when a table or a chart says it better than prose.
 
 WRITING ONE
   Write it as an ordinary HTML file with your writing tool, wherever you like, and change it as often as you need before you publish. Everything is in that one file: inline <style> and <script> only. Nothing from outside loads: no CDN, no web fonts, no fetch, no outside images (a picture goes in as a data: URL). Do not use React or a build step.
@@ -27,7 +27,6 @@ ELEMENTS
   Live facts (each reads by itself; add every="10s" to keep it fresh)
     <w-machine name="lab"></w-machine>                                   online or not, and who is on it
     <w-agent resident="codex-7f3a" machine="lab"></w-agent>              what it is doing; pressing it opens its conversation
-    <w-journal journal="tuning" limit="3"></w-journal>                   the latest entries of a journal of this project
     <w-file machine="lab" path="/runs/7/train.log" tail="4000" height="200"></w-file>    a text file, or its last bytes
     <w-job machine="lab" job="j-k3x9a2"></w-job>                          a job, running or ended, and the end of its output
   Doing (each must be declared when you publish; see ACTS)
@@ -40,8 +39,7 @@ YOUR OWN SCRIPT
     world.now     {}                     -> {machines: [{name, online, system, device}],
                                              agents: [{resident, machine, agent, project, title, state, since, last}]}
                                             state is working, waiting (for the user), idle or asleep
-    project.map   {}                     -> {project, name, what, machines, journals: [{journal, description, entries, latest}], pages}
-    journal.read  {journal, before?}     -> {entries: [{id, at, by, text}], more}, the newest first
+    project.map   {}                     -> {project, name, what, machines, pages}
     file.read     {machine, path, tail?} -> {text, size, modified, offset}; text is null when the file is not text
     job.read      {machine, job}         -> {job, command, state, exit, signal, started, output}
                                             state is running, exited, stopped, interrupted or failed
@@ -49,7 +47,6 @@ YOUR OWN SCRIPT
   Doing, only as declared and agreed:
     run           {machine, command}     -> {exit, output}
     say           {resident, machine, text} -> {delivered}
-    journal.add   {journal, text}        -> {id}
   world.context is {theme, locale}; world.onContext(listener) hears it change.
   A page written for MCP Apps with the official SDK works too: the app is its host, and these are its tools.
 
@@ -57,12 +54,11 @@ ACTS
   A page reads freely, but does something only where its version declares it and the user agreed. Declare each when you publish:
     --run MACHINE COMMAND    that whole command on that machine, exactly as the page runs it; a page cannot vary it
     --say MACHINE SESSION    speaking to that session; what is said is the page's to choose
-    --write JOURNAL          adding entries to that journal of this project
   The first time the user opens a version that wants something they have not agreed to, the app asks them. Whatever a page
   does is recorded as the page's doing, not the user's and not yours: a session it speaks to sees the words came from it.
 
 PUBLISHING
-  fastctx page publish NAME --file PATH --title TITLE --description SENTENCE [--run ...] [--say ...] [--write ...]
+  fastctx page publish NAME --file PATH --title TITLE --description SENTENCE [--run ...] [--say ...]
   NAME is lowercase words joined by hyphens. Each publish is a new version of the page, kept on every machine of the
   project and on the server that connects them, so it opens on the phone and while a machine is off. The whole file
   must fit in 256 KiB; the runtime the app adds is not counted.

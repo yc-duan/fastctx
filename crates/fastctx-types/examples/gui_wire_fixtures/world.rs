@@ -112,6 +112,8 @@ fn residents() -> Vec<ResidentNow> {
                 waiting_since: Some(at()),
                 title: (i == 0).then(|| "端口对拍".to_string()),
                 last_tool_at: Some(at()),
+                first_words: None,
+                last_said: None,
             }),
             last_action: (i == 0).then(|| Action {
                 at: at(),
@@ -242,6 +244,7 @@ fn nodes() -> Vec<NodesReply> {
         case_sensitive: os != "windows",
         version: "fixture-version".into(),
         shell: String::new(),
+        form: None,
         node_lifetime: lifetime.then(|| {
             Box::new(fastctx_types::node_lifetime::NodeLifetime {
                 process: fastctx_types::ProcessIdentity { pid: 123, token: "node-created".into() },
