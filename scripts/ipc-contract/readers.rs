@@ -18,6 +18,7 @@ fn decode(protocol: u64, value: Value, request: bool) -> Value {
         7 => read!(v7),
         8 => read!(v8),
         9 => read!(v9),
+        10 => read!(v10),
         _ => panic!("no frozen reader for {protocol}"),
     }
 }
@@ -42,6 +43,7 @@ fn main() {
                     7 => welcome!(v7),
                     8 => welcome!(v8),
                     9 => welcome!(v9),
+                    10 => welcome!(v10),
                     _ => panic!("no frozen reader for {protocol}"),
                 };
                 json!({"read": read})

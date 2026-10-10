@@ -196,7 +196,7 @@ def samples(root):
             # The World's facts are its words before protocol 11.
             case["world"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "world"
             # Hub-by-hub nodes have no shape before protocol 8 and are said as text.
-            case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and reply["controlled"]["kind"] in ["reported", "refused", "model_menu"])
+            case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and reply["controlled"]["kind"] in ["reported", "refused", "model_menu"] and protocol < 10)
             yield case
         yield {"mode": "reply", "protocol": protocol, "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}
         for call, peer, admitted in calls(fixtures):
