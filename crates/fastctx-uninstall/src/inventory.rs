@@ -23,6 +23,7 @@ pub struct Step {
 pub enum Action {
     Stop,
     Host(apply::Integration),
+    ClaudeCache(PathBuf),
     Service(service::Registration),
     ServicePart(String),
     Legacy(fastctx_install::uninstall::Legacy),
@@ -54,6 +55,7 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
         request.installation.application_control = installation.application_control;
         request.installation.graphical = installation.graphical;
         retain_legacy_archives(&mut request);
+        crate::claude_cache::include_steps(&mut request);
         let marker = fastctx_types::layout::WorldDir::under(&request.installation.root).node_service();
         if marker.try_exists()?
             && !request.steps.iter().any(|step| matches!(&step.action, Action::Delete(path) if path == &marker))
@@ -436,7 +438,9 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
         ));
     }
     plan.other = programs.first().cloned();
-    Ok(Request { installation, plan, steps, system_results: Vec::new() })
+    let mut request = Request { installation, plan, steps, system_results: Vec::new() };
+    crate::claude_cache::include_steps(&mut request);
+    Ok(request)
 }
 
 fn keep(kind: &str, what: &str, location: &str) -> Item {

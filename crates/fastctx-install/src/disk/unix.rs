@@ -124,6 +124,11 @@ pub(crate) fn delete(_file: &File, path: &Path) -> io::Result<()> {
     fs::remove_file(path)
 }
 
+/// Unlinking does not need or change the file object's permissions.
+pub(crate) fn delete_owned(file: &File, path: &Path) -> io::Result<()> {
+    delete(file, path)
+}
+
 pub(crate) fn restore_modified(file: &File, modified: SystemTime) -> io::Result<()> {
     file.set_modified(modified)
 }
