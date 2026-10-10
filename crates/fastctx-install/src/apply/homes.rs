@@ -187,7 +187,10 @@ impl Records {
         for directory in self.created.directories.drain(..) {
             let path = resolve(&directory.path)?;
             let was_used = targets.iter().any(|(_, home, _)| home.starts_with(&path));
-            let still_used = self.homes.iter().any(|entry| entry.home.starts_with(&path));
+            let still_used = self.homes.iter().any(|entry| {
+                entry.home.starts_with(&path)
+                    && (entry.host != Host::Codex || entry.receipt.codex.as_ref().is_some_and(codex::Receipt::has_work))
+            });
             if was_used && !still_used && !path.starts_with(&root) && !root.starts_with(&path) {
                 cleanup.push(directory);
             } else {

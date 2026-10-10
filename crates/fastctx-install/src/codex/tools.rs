@@ -25,6 +25,7 @@ pub(crate) fn apply(
     original: &[u8],
     location: &str,
     previous: Option<&Receipt>,
+    reinstall: bool,
 ) -> Result<(Vec<u8>, Receipt, Vec<Notice>), Error> {
     let mut bytes = original.to_vec();
     let mut receipt = previous.cloned().unwrap_or_default();
@@ -32,7 +33,7 @@ pub(crate) fn apply(
     for (index, key) in FEATURES.iter().enumerate() {
         let source = Source::parse(&bytes, location)?;
         let path = ["features", key];
-        if previous.is_some() {
+        if previous.is_some() && !reinstall {
             // What is owned is the value written. A configuration manager
             // that rewrites the whole file keeps the `false` and changes
             // the bytes around it; only the user turning it back on, or

@@ -12,6 +12,7 @@ use crate::plan::CodexPlan;
 use crate::source::{Source, comma_in, edit, newline, same_value, splice};
 use crate::{Error, File, Notice, check_path, finish};
 
+mod shared;
 pub(crate) mod tools;
 
 const SERVER: &[&str] = &["mcp_servers", "fastctx"];
@@ -48,6 +49,9 @@ pub struct Receipt {
     guidance: Option<guidance::Receipt>,
     #[serde(default)]
     tools: Option<tools::Receipt>,
+    /// Remember the user's shared command per login, including after withdrawal.
+    #[serde(default, skip_serializing_if = "is_false")]
+    portable: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,6 +78,7 @@ pub struct Applied {
     pub agents: Vec<u8>,
     pub receipt: Receipt,
     pub notices: Vec<Notice>,
+    pub messages: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -82,6 +87,7 @@ pub struct Unapplied {
     pub agents: Option<Vec<u8>>,
     pub receipt: Option<Receipt>,
     pub retained: Vec<Notice>,
+    pub messages: Vec<String>,
 }
 
 /// Plans both files atomically in memory. Unowned or edited server/guidance
@@ -100,7 +106,9 @@ pub fn apply(
     let mut bytes = config.bytes.unwrap_or_default().to_vec();
     let mut agents_bytes = agents.bytes.map(<[u8]>::to_vec);
     let mut notices = vec![];
+    let mut messages = vec![];
     let mut legacy_agents_existed = None;
+    let mut reinstall = false;
     let mut receipt = Receipt {
         version: 1,
         config_path: config.path.into(),
@@ -109,6 +117,7 @@ pub fn apply(
         limit: None,
         guidance: None,
         tools: None,
+        portable: false,
     };
     match ownership {
         Ownership::None => {}
@@ -121,6 +130,7 @@ pub fn apply(
                     // Something rewrote the configuration without it, such
                     // as a configuration manager; applying puts it back.
                     receipt.server = None;
+                    reinstall = true;
                     notices.push(Notice {
                         location: format!("{}: mcp_servers.fastctx", config.path),
                         reason: "was gone from the configuration; put back".into(),
@@ -142,6 +152,10 @@ pub fn apply(
         }
     }
     let source = Source::parse(&bytes, config.path)?;
+    let portable = shared::portable(&source);
+    if portable {
+        receipt.portable = true;
+    }
     if let Some(old) = &receipt.limit
         && !owns_limit(&source, old)?
     {
@@ -151,17 +165,23 @@ pub fn apply(
         });
     }
     if receipt.server.is_none() && source.item(SERVER).is_some() {
-        return Err(Error::at(
-            format!("{}: mcp_servers.fastctx", config.path),
-            "same-name server has no ownership receipt",
-        ));
+        if portable {
+            receipt.server = Some(shared::adopt(&source, plan)?);
+            messages.push("The shared fastctx server is now owned by this login. Existing global limits and native tool settings stay in place on unapply where this computer has no earlier record of changing them.".into());
+        } else {
+            return Err(Error::at(
+                format!("{}: mcp_servers.fastctx", config.path),
+                shared::conflict("same-name server has no ownership receipt"),
+            ));
+        }
     }
     let (next, limit) = apply_limit(&bytes, config.path, plan.output_token_limit, receipt.limit.as_ref(), approval)?;
     bytes = next;
     receipt.limit = limit;
     let source = Source::parse(&bytes, config.path)?;
     if let Some(server) = &receipt.server {
-        let replacement = server_body(plan, server.inline, newline(&bytes));
+        let command = if portable { shared::COMMAND } else { plan.command.to_str().expect("validated path") };
+        let replacement = server_body(plan, command, server.inline, newline(&bytes));
         let next = Server { body: replacement, ..server.clone() };
         let expected = server_document(&next);
         let expected = Source::parse(&expected, "server receipt")?;
@@ -171,10 +191,15 @@ pub fn apply(
                 Ok(range) => splice(&bytes, vec![(range, next.body.clone())])?,
                 Err(_) => edit::synchronize(&bytes, config.path, SERVER, desired)?,
             };
+        }
+        // A command-only adoption can leave all file bytes untouched. The
+        // receipt must still describe the portable value now owned.
+        if portable || next.body != server.body {
             receipt.server = Some(next);
         }
     } else {
-        let (next, server) = insert_server(&source, plan)?;
+        let command = if receipt.portable { shared::COMMAND } else { plan.command.to_str().expect("validated path") };
+        let (next, server) = insert_server(&source, plan, command)?;
         bytes = next;
         receipt.server = Some(server);
     }
@@ -185,11 +210,11 @@ pub fn apply(
         applied.receipt.original_existed = existed;
     }
     receipt.guidance = Some(applied.receipt);
-    let (config, tools, tool_notices) = tools::apply(&bytes, config.path, receipt.tools.as_ref())?;
+    let (config, tools, tool_notices) = tools::apply(&bytes, config.path, receipt.tools.as_ref(), reinstall)?;
     bytes = config;
     receipt.tools = Some(tools);
     notices.extend(tool_notices);
-    Ok(Applied { config: bytes, agents: applied.bytes, receipt, notices })
+    Ok(Applied { config: bytes, agents: applied.bytes, receipt, notices, messages })
 }
 
 /// Reverses independent owned changes. Edited portions are retained and
@@ -201,11 +226,13 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
             agents: agents.bytes.map(<[u8]>::to_vec),
             receipt: None,
             retained: vec![],
+            messages: vec![],
         });
     };
     receipt.check(config.path)?;
     let mut remaining = receipt.clone();
     let mut retained = vec![];
+    let mut messages = vec![];
     let mut bytes = config.bytes.map(<[u8]>::to_vec);
     if let Some(current) = &mut bytes {
         if let Some(tools) = remaining.tools.take() {
@@ -216,6 +243,10 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
         if let Some(server) = &receipt.server {
             match remove_server(current, config.path, server) {
                 Ok(next) => {
+                    if shared::portable(&Source::parse(current, config.path)?) {
+                        remaining.portable = true;
+                        messages.push(shared::withdrawal(config.path));
+                    }
                     *current = next;
                     remaining.server = None;
                 }
@@ -246,8 +277,8 @@ pub fn unapply(config: File<'_>, agents: File<'_>, receipt: Option<&Receipt>) ->
     remaining.guidance = guidance.receipt;
     retained.extend(guidance.retained);
     let bytes = bytes.and_then(|bytes| finish(bytes, receipt.config_existed));
-    let still_owned = remaining.server.is_some() || remaining.limit.is_some() || remaining.guidance.is_some();
-    Ok(Unapplied { config: bytes, agents: guidance.bytes, receipt: still_owned.then_some(remaining), retained })
+    let keep = remaining.has_work() || remaining.portable;
+    Ok(Unapplied { config: bytes, agents: guidance.bytes, receipt: keep.then_some(remaining), retained, messages })
 }
 
 /// Withdraws a released install using the same ownership checks as migration,
@@ -262,6 +293,7 @@ pub fn unapply_legacy(config: File<'_>, agents: File<'_>, old: &legacy::Receipt)
         limit: migrated.limit,
         guidance: migrated.guidance,
         tools: None,
+        portable: false,
     };
     let mut result = unapply(
         File { path: config.path, bytes: Some(&migrated.config) },
@@ -273,6 +305,14 @@ pub fn unapply_legacy(config: File<'_>, agents: File<'_>, old: &legacy::Receipt)
 }
 
 impl Receipt {
+    /// Active ownership is separate from the remembered shared command.
+    pub(crate) fn has_work(&self) -> bool {
+        self.server.is_some() || self.limit.is_some() || self.guidance.is_some()
+    }
+
+    pub(crate) fn portable(&self) -> bool {
+        self.portable
+    }
     pub(crate) fn config_path(&self) -> &Path {
         Path::new(&self.config_path)
     }
@@ -284,6 +324,10 @@ impl Receipt {
         }
         Ok(())
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 fn validate_plan(plan: &CodexPlan) -> Result<(), Error> {
@@ -305,8 +349,8 @@ fn validate_plan(plan: &CodexPlan) -> Result<(), Error> {
 /// The server entry. Its tools are never deferred: a model whose tools are
 /// deferred sees only their names, and `run` takes the place of a shell whose
 /// description it always saw. In Code Mode they stay callable from scripts.
-fn server_body(plan: &CodexPlan, inline: bool, nl: &str) -> Vec<u8> {
-    let command = toml_edit::Value::from(plan.command.to_str().expect("validated path")).to_string();
+fn server_body(plan: &CodexPlan, command: &str, inline: bool, nl: &str) -> Vec<u8> {
+    let command = toml_edit::Value::from(command).to_string();
     let args = toml_edit::Array::from_iter(plan.args.iter().cloned()).to_string();
     let tools = ["run", "apply_patch", "ask_colleague", "message_colleague"];
     let omit = r#"omit_tools_from = ["deferred"]"#;
@@ -331,7 +375,7 @@ fn server_body(plan: &CodexPlan, inline: bool, nl: &str) -> Vec<u8> {
     }
 }
 
-fn insert_server(source: &Source<'_>, plan: &CodexPlan) -> Result<(Vec<u8>, Server), Error> {
+fn insert_server(source: &Source<'_>, plan: &CodexPlan, command: &str) -> Result<(Vec<u8>, Server), Error> {
     let (at, prefix, inline) = match source.item(&["mcp_servers"]) {
         Some(Item::Value(toml_edit::Value::InlineTable(table))) => {
             let range = source.span(table.span())?;
@@ -348,7 +392,7 @@ fn insert_server(source: &Source<'_>, plan: &CodexPlan) -> Result<(Vec<u8>, Serv
         Some(item) if !item.is_table() => return Err(Error::at("mcp_servers", "expected a table")),
         _ => (source.bytes.len(), guidance::separator(source.bytes), false),
     };
-    let body = server_body(plan, inline, newline(source.bytes));
+    let body = server_body(plan, command, inline, newline(source.bytes));
     let mut inserted = prefix.clone();
     inserted.extend_from_slice(&body);
     let bytes = splice(source.bytes, vec![(at..at, inserted)])?;
@@ -385,14 +429,18 @@ fn check_server(source: &Source<'_>, server: &Server) -> Result<(), Error> {
     let recorded = server_document(server);
     let recorded = Source::parse(&recorded, "server receipt")?;
     let expected = recorded.item(SERVER).ok_or_else(|| Error::at("receipt", "missing recorded server"))?;
-    if source.item(SERVER).is_some_and(|current| same_value(current, expected)) {
+    if source.item(SERVER).is_some_and(|current| shared::matches(current, expected)) {
         Ok(())
     } else {
         Err(Error::at(
             "mcp_servers.fastctx",
-            "the server's keys or values differ from the recorded values; left it in place",
+            shared::conflict("the server's keys or values differ from the recorded values; left it in place"),
         ))
     }
+}
+
+pub(crate) fn portable_on_path() -> bool {
+    shared::on_path()
 }
 
 fn remove_server(bytes: &[u8], location: &str, server: &Server) -> Result<Vec<u8>, Error> {

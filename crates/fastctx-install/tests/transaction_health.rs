@@ -40,6 +40,43 @@ fn host_files_and_record_share_a_transaction() {
     assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
 }
 
+#[test]
+fn unchanged_inputs_guard_receipt_publication_and_recovery() {
+    use fastctx_install::transaction::recover;
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join("config.toml");
+    let record = home.path().join("applied.json");
+    let active = home.path().join("pending.json");
+    fs::write(&config, b"observed").unwrap();
+    let receipt = Transaction::new([FileChange::write(Snapshot::read(&config).unwrap(), b"observed".as_slice())])
+        .commit_with_record_durable(&active, Snapshot::read(&record).unwrap(), |_| Ok(b"receipt".to_vec()))
+        .unwrap();
+    assert_eq!(receipt.changed.len(), 1);
+    assert_eq!(fs::read(&config).unwrap(), b"observed");
+    let manifest = &receipt.preserved[0];
+    let mut journal: serde_json::Value = serde_json::from_slice(&fs::read(manifest).unwrap()).unwrap();
+    assert_eq!(journal["guards"][0]["target"].as_str(), Some(fs::canonicalize(&config).unwrap().to_str().unwrap()));
+    journal["phase"] = "Forward".into();
+    fs::write(manifest, serde_json::to_vec(&journal).unwrap()).unwrap();
+    fs::write(&active, serde_json::to_vec(&serde_json::json!({"version": 1, "manifest": manifest})).unwrap()).unwrap();
+    fs::write(&config, b"concurrent user's words").unwrap();
+    assert!(recover(&active).unwrap_err().to_string().contains("changed since"));
+    assert_eq!(fs::read(&config).unwrap(), b"concurrent user's words");
+    assert!(!record.exists());
+    assert!(!active.exists());
+
+    let before = Snapshot::read(&config).unwrap();
+    let failure = Transaction::new([FileChange::write(before, b"concurrent user's words".as_slice())])
+        .commit_with_record_durable(&active, Snapshot::read(&record).unwrap(), |_| {
+            fs::write(&config, b"changed while planning")?;
+            Ok(b"must not commit".to_vec())
+        })
+        .unwrap_err();
+    assert!(failure.to_string().contains("changed since"));
+    assert_eq!(fs::read(&config).unwrap(), b"changed while planning");
+    assert!(!record.exists());
+}
+
 #[cfg(windows)]
 #[test]
 fn denied_publication_restores_writes_deletions_and_owned_directories() {

@@ -102,9 +102,18 @@ struct Journal {
     parents: Vec<(PathBuf, Identity)>,
     directories: Vec<Directory>,
     entries: Vec<Entry>,
+    #[serde(default)]
+    guards: Vec<Guard>,
     created: Created,
     conflicts: Vec<String>,
     cleanup_on_commit: Vec<CreatedDirectory>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Guard {
+    target: PathBuf,
+    before: Option<Version>,
+    anchor: (PathBuf, Identity),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -260,7 +269,16 @@ pub(super) fn commit(
             change.preflight()?;
             if change.changes() {
                 journal.prepare(change)?;
+            } else {
+                journal.guards.push(Guard {
+                    target: change.before.path.clone(),
+                    before: Version::of(&change.before)?,
+                    anchor: change.before.anchor.clone(),
+                });
             }
+        }
+        if !journal.guards.is_empty() {
+            journal.version = 2;
         }
         journal.phase = Phase::Forward;
         journal.save()?;
@@ -375,6 +393,7 @@ impl Journal {
             parents: vec![],
             directories: vec![],
             entries: vec![],
+            guards: vec![],
             created: Created::default(),
             conflicts: vec![],
             cleanup_on_commit,
@@ -394,7 +413,7 @@ impl Journal {
         let bytes = snapshot.bytes().ok_or_else(|| invalid(path, "recovery manifest is missing"))?;
         let journal: Self = serde_json::from_slice(bytes)
             .map_err(|e| FileError::io(path, "read recovery manifest", io::Error::other(e)))?;
-        if journal.version != 1 || journal.manifest != snapshot.path() && journal.manifest != path {
+        if !matches!(journal.version, 1 | 2) || journal.manifest != snapshot.path() && journal.manifest != path {
             return Err(invalid(path, "unsupported or misplaced recovery manifest"));
         }
         Ok(journal)
@@ -510,7 +529,9 @@ impl Journal {
     }
 
     fn forward(&mut self) -> Result<(), FileError> {
+        self.verify_guards()?;
         for entry in &self.entries {
+            self.verify_guards()?;
             self.verify_parents(&entry.target)?;
             let current = version_at(&entry.target)?;
             let displaced = displaced_at(entry)?;
@@ -544,8 +565,24 @@ impl Journal {
                 return Err(self.conflict(&entry.target, &[&entry.displaced, &entry.publication]));
             }
         }
+        self.verify_guards()?;
         self.phase = Phase::Committed;
         self.save()
+    }
+
+    fn verify_guards(&self) -> Result<(), FileError> {
+        // Adopting existing values may only write a receipt. These unchanged
+        // inputs must remain the same through publication and crash recovery.
+        for guard in &self.guards {
+            if directory_identity(&guard.anchor.0)? != guard.anchor.1 {
+                return Err(FileError::changed(&guard.anchor.0));
+            }
+            self.verify_parents(&guard.target)?;
+            if version_at(&guard.target)? != guard.before {
+                return Err(FileError::changed(&guard.target));
+            }
+        }
+        Ok(())
     }
 
     fn rollback(&mut self) -> Vec<FileError> {

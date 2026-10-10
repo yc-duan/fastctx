@@ -274,3 +274,104 @@ fn claude_native_deny_ownership_is_per_rule() {
     assert_eq!(value["permissions"]["deny"], serde_json::json!(["Bash", "Grep(project)"]));
     assert_eq!(value["permissions"]["allow"], serde_json::json!(["Edit", "Write"]));
 }
+
+#[test]
+fn portable_server_ownership_survives_machine_changes_and_withdrawal() {
+    let original = b"# user words\r\nmodel = 'user'\r\n";
+    let config = File { path: "config.toml", bytes: Some(original) };
+    let agents = File { path: "AGENTS.md", bytes: None };
+    let first_plan = plan();
+    let second_plan = CodexPlan::new(&std::env::current_dir().unwrap().join("other-machine/fastctx.exe"));
+    let installed = codex::apply(config, agents, &first_plan, "body", Ownership::None, Approval::Require).unwrap();
+    let mut doc = std::str::from_utf8(&installed.config).unwrap().parse::<toml_edit::DocumentMut>().unwrap();
+    assert_eq!(doc["mcp_servers"]["fastctx"]["command"].as_str(), first_plan.command.to_str());
+    doc["mcp_servers"]["fastctx"]["command"] = toml_edit::value("fastctx");
+    let command = toml_edit::Value::from(first_plan.command.to_str().unwrap()).to_string();
+    let shared = std::str::from_utf8(&installed.config).unwrap().replacen(
+        &format!("command = {command}"),
+        "command = \"fastctx\"",
+        1,
+    );
+    let first = codex::apply(
+        File { bytes: Some(shared.as_bytes()), ..config },
+        File { bytes: Some(&installed.agents), ..agents },
+        &first_plan,
+        "body",
+        Ownership::Current(&installed.receipt),
+        Approval::Require,
+    )
+    .unwrap();
+    assert_eq!(first.config, shared.as_bytes());
+    let second = codex::apply(
+        File { bytes: Some(shared.as_bytes()), ..config },
+        agents,
+        &second_plan,
+        "body",
+        Ownership::None,
+        Approval::Require,
+    )
+    .unwrap();
+    assert_eq!(second.config, shared.as_bytes());
+    let recorded = serde_json::to_value(&second.receipt).unwrap();
+    let body: Vec<u8> = serde_json::from_value(recorded["server"]["body"].clone()).unwrap();
+    let recorded: toml::Value = toml::from_str(std::str::from_utf8(&body).unwrap()).unwrap();
+    assert_eq!(recorded["mcp_servers"]["fastctx"]["command"].as_str(), Some("fastctx"));
+
+    // Withdrawal on either machine must accept the portable command even
+    // before that machine has updated its original absolute-path receipt.
+    for receipt in [&installed.receipt, &first.receipt, &second.receipt] {
+        let taken = codex::unapply(File { bytes: Some(shared.as_bytes()), ..config }, agents, Some(receipt)).unwrap();
+        let text = std::str::from_utf8(taken.config.as_ref().unwrap()).unwrap();
+        assert!(text.contains(std::str::from_utf8(original).unwrap()));
+        let parsed: toml::Value = toml::from_str(text).unwrap();
+        assert!(parsed.get("mcp_servers").and_then(|servers| servers.get("fastctx")).is_none());
+        assert_eq!(taken.messages.len(), 1);
+        let again = codex::apply(
+            File { bytes: taken.config.as_deref(), ..config },
+            agents,
+            &second_plan,
+            "body",
+            Ownership::Current(taken.receipt.as_ref().unwrap()),
+            Approval::Require,
+        )
+        .unwrap();
+        let parsed: toml::Value = toml::from_str(std::str::from_utf8(&again.config).unwrap()).unwrap();
+        assert_eq!(parsed["mcp_servers"]["fastctx"]["command"].as_str(), Some("fastctx"));
+        assert_eq!(parsed["features"]["shell_tool"].as_bool(), Some(false));
+    }
+
+    for command in ["fastctx.exe", "FASTCTX", "./fastctx", "other-server", second_plan.command.to_str().unwrap()] {
+        let mut wrong = doc.clone();
+        wrong["mcp_servers"]["fastctx"]["command"] = toml_edit::value(command);
+        let wrong = wrong.to_string();
+        assert!(
+            codex::apply(
+                File { bytes: Some(wrong.as_bytes()), ..config },
+                agents,
+                &second_plan,
+                "body",
+                Ownership::None,
+                Approval::Require
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("command = \"fastctx\"")
+        );
+    }
+    for ownership in [Ownership::None, Ownership::Current(&first.receipt)] {
+        let mut wrong = doc.clone();
+        wrong["mcp_servers"]["fastctx"]["args"] = toml_edit::value(toml_edit::Array::from_iter(["serve", "user"]));
+        let wrong = wrong.to_string();
+        assert!(
+            codex::apply(
+                File { bytes: Some(wrong.as_bytes()), ..config },
+                agents,
+                &second_plan,
+                "body",
+                ownership,
+                Approval::Require
+            )
+            .is_err()
+        );
+    }
+}

@@ -329,6 +329,11 @@ impl MachinesPage {
             rows.push(Row::new(line));
         }
         if let Some(Outcome::Applied(report) | Outcome::Unapplied(report)) = &self.outcome {
+            for message in &report.messages {
+                for line in text::wrap_plain(message, look.text(Role::Caution), width) {
+                    rows.push(Row::new(line));
+                }
+            }
             for check in &report.tools {
                 let (said, role) = match &check.result {
                     Ok(()) => (format!("{}: {}", check.host, check.scope), Role::Faint),

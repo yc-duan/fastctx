@@ -207,6 +207,7 @@ pub fn hosts(codex: bool, claude: bool, raise: bool, into: bool, home: Option<Pa
         .notices
         .iter()
         .map(|notice| format!("{}: {}", notice.location, notice.reason))
+        .chain(report.messages)
         .chain(report.leftovers)
         .collect())
 }
