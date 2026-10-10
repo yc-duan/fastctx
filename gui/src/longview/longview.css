@@ -1,0 +1,41 @@
+.lv-anchor-space { flex: none; overflow-anchor: none; pointer-events: none; }
+.lv-fold { min-width: 0; }
+.lv-fold-heading { display: block; min-height: 44px; width: 100%; }
+.lv-fold-heading::before { content: "›"; display: inline-block; width: 1.3em; }
+.lv-fold-heading[aria-expanded="true"]::before { content: "⌄"; }
+.lv-fold-box { overflow: hidden; overflow-anchor: none; }
+.lv-fold-content { position: relative; min-width: 0; }
+.lv-corner { position: absolute; z-index: 1; right: 0; top: 0; width: 44px; height: 44px; text-align: center; background: var(--surface-header); border-radius: var(--radius-s); }
+.lv-more { min-height: 44px; white-space: nowrap; color: var(--text-2); }
+.lv-viewport { position: relative; min-width: 0; overflow: auto; overscroll-behavior: auto; overflow-anchor: none; touch-action: pan-x pinch-zoom; font-family: var(--font-code); font-variation-settings: var(--code-axes); font-size: var(--size-code); line-height: var(--leading-code); background: var(--surface-code); border-radius: var(--radius-s); scrollbar-gutter: stable; }
+.lv-track { position: relative; min-width: 100%; }
+.lv-line { position: absolute; left: 0; min-width: 100%; width: max-content; display: flex; align-items: baseline; white-space: pre; padding-right: var(--space-4); }
+.lv-fold .lv-line { padding-right: calc(44px + var(--space-4)); }
+.lv-number { flex: none; width: 8ch; padding-right: 1ch; text-align: right; color: var(--text-3); user-select: none; }
+.lv-text { white-space: pre; tab-size: 4; unicode-bidi: plaintext; }
+.lv-text mark { background: var(--selection); color: inherit; }
+.lv-status { position: absolute; left: 0; top: 0; width: fit-content; color: var(--text-2); background: var(--surface-code); }
+.lv-status:empty { display: none; }
+.lv-viewer { position: fixed; inset: 0; margin: 0; width: 100%; height: 100%; max-width: none; max-height: none; padding: var(--space-4); border: 0; background: var(--bg); color: var(--text); }
+.lv-viewer[open] { display: flex; flex-direction: column; gap: var(--space-2); }
+.lv-viewer::backdrop { background: var(--bg); }
+.lv-viewer-head, .lv-viewer-tools, .lv-search-form, .lv-jump-form { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.lv-viewer-head strong { flex: 1; font-family: var(--font-emphasis); font-weight: 400; }
+.lv-viewer-head span { color: var(--text-3); }
+.lv-viewer button { min-height: 44px; padding: 0 var(--space-3); white-space: nowrap; background: var(--fill); border-radius: var(--radius-s); }
+.lv-viewer input, .lv-viewer select { font: inherit; color: inherit; background: var(--field); border: 0; border-radius: var(--radius-s); padding: var(--space-3); min-height: 44px; min-width: 0; }
+.lv-search-form { flex: 1; }
+.lv-search-form input { width: 0; flex: 1; }
+.lv-jump-form input { width: 10ch; }
+.lv-viewer-message { color: var(--text-2); font-size: var(--size-small); }
+.lv-viewer-message:empty { display: none; }
+.lv-viewer-body { flex: 1; min-height: 0; min-width: 0; }
+.lv-viewer-body > .lv-viewport { height: 100%; }
+.lv-fold [hidden] { display: none !important; }
+@media (max-width: 600px) {
+  .lv-viewer-head { flex-wrap: wrap; }
+  .lv-viewer-tools { flex-wrap: wrap; }
+  .lv-search-form { flex-basis: 100%; }
+  .lv-jump-form { width: 100%; }
+  .lv-jump-form input { flex: 1; }
+}
