@@ -27,6 +27,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 base64 = "0.22"
 fastctx-client = { path = "../../crates/fastctx-client" }
+# Async commands with their bodies on the heap: see the crate.
+fastctx-gui-command = { path = "command" }
 fastctx-net = { path = "../../crates/fastctx-net" }
 fastctx-platform = { path = "../../crates/fastctx-platform" }
 fastctx-types = { path = "../../crates/fastctx-types" }
