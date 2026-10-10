@@ -46,11 +46,11 @@ mod management;
 mod on;
 mod on_delivery;
 mod on_stop;
-mod own;
 mod pages;
 mod reach;
 mod renewal;
 mod renewal_legacy;
+pub mod replacement;
 mod resident_storage;
 mod residents;
 mod server;
@@ -70,6 +70,7 @@ mod watchdog;
 mod who;
 mod words;
 mod world;
+mod world_program;
 mod write;
 mod write_command;
 
@@ -230,8 +231,25 @@ pub async fn run_replacing(
     supervision: Option<handoff::Supervision>,
     successor: Option<&str>,
 ) -> anyhow::Result<()> {
+    run_prepared(fastctx_root, supervision, successor, None, None).await
+}
+
+pub async fn run_prepared(
+    fastctx_root: &Path,
+    supervision: Option<handoff::Supervision>,
+    successor: Option<&str>,
+    coordinator: Option<&fastctx_types::ProcessIdentity>,
+    startup_gate: Option<FileLock>,
+) -> anyhow::Result<()> {
+    if let Some(coordinator) = coordinator {
+        replacement::validate(
+            fastctx_root,
+            successor.ok_or_else(|| anyhow!("prepared node has no successor digest"))?,
+            coordinator,
+        )?;
+    }
     let world = WorldDir::under(fastctx_root);
-    let mut renewal = renewal::Startup::prepare(fastctx_root, successor).await?;
+    let mut renewal = renewal::Startup::prepare(fastctx_root, successor, coordinator.is_some()).await?;
     let supervision = match supervision {
         Some(supervision) => {
             Some(tokio::task::block_in_place(|| supervision.prepare()).context("talking to the guardian")?)
@@ -269,10 +287,7 @@ pub async fn run_replacing(
         log.line(&warning);
         eprintln!("fastctx: {warning}");
     }
-    let (fastctx, kept) = own::pin(&world).context("copying fastctx under the World")?;
-    for (path, error) in &kept {
-        log.line(format_args!("kept an older copy of fastctx, {}: {error}", path.display()));
-    }
+    let fastctx = world_program::prepare(fastctx_root).context("preparing the stable World program")?;
 
     let reconciled = jobs::reconcile(&world)?;
     for path in &reconciled.interrupted {
@@ -292,6 +307,7 @@ pub async fn run_replacing(
     let endpoint = Endpoint::for_world(world.path())?;
     let mut listener = Listener::bind(&endpoint)?;
     log.line(format_args!("listening at {endpoint}"));
+    drop(startup_gate);
 
     // The app-server runs with the user's own environment, as every program
     // the node starts does, never with whatever started the node. The one

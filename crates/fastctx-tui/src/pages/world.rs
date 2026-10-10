@@ -29,6 +29,7 @@ pub struct WorldPage {
     list: List,
     /// Whether an old fastctx's tools are still in this machine's Codex.
     old_tools: bool,
+    program: Option<Result<fastctx_types::renewal::Status, String>>,
 }
 
 /// What an item of the page is.
@@ -65,6 +66,10 @@ impl WorldPage {
     }
 
     pub fn data(&mut self, data: Data) -> Act {
+        if let Data::Program(status) = data {
+            self.program = Some(status);
+            return Act::Stay;
+        }
         if let Data::Sessions(Ok(status)) = &data {
             self.old_tools = status.codex == Standing::Old;
         }
@@ -122,6 +127,9 @@ impl WorldPage {
         let words = &ctx.words;
         let width = paint::column(area).width as usize;
         let mut rows = Vec::new();
+        if let Some(program) = &self.program {
+            rows.extend(super::program::rows(ctx, program, width));
+        }
         let mut item = 0;
         if let Some(view) = &self.view {
             if let Scope::World { towns } = &view.scope {

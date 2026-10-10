@@ -1007,7 +1007,7 @@ fn machines(node: &Arc<Node>, resident: Option<&ResidentId>) -> Result<Reply, Fa
     // an agent lent to them, and goes unnamed as one too.
     let colleagues_lent = colleagues.as_ref().is_some_and(|lives_on| {
         let (_, workable) = crate::world::machines(node, &acting);
-        !workable.contains(&lives_on.to_string()) && (!node.is_here(lives_on) || lent)
+        !(workable.contains(&lives_on.to_string()) || node.is_here(lives_on) && !lent)
     });
     Ok(Reply::Machines { here, others, program, colleagues, colleagues_lent })
 }

@@ -12,12 +12,14 @@ mod apply;
 mod ask;
 mod attach;
 mod copy;
+mod host_change;
 mod journal;
 mod keep;
 mod on;
 mod output;
 mod page;
 mod paths;
+mod program;
 mod project;
 mod renew;
 mod secret;
@@ -48,6 +50,8 @@ enum Command {
     /// Open the World in this terminal: projects, agents, machines, and a
     /// conversation with any agent on any machine.
     Ui,
+    #[command(hide = true)]
+    HostChange(host_change::HostChangeArgs),
     /// Identifies the process invoking the World mod helper.
     #[command(hide = true)]
     ParentProcess,
@@ -89,6 +93,8 @@ enum Command {
         service_identity: Option<String>,
         #[arg(long, hide = true)]
         successor: Option<String>,
+        #[arg(long, hide = true, requires = "successor")]
+        prepared_by: Option<String>,
     },
     /// Replace this machine's node and guardian using a local executable.
     Renew(renew::RenewalArgs),
@@ -245,13 +251,44 @@ fn main() -> ExitCode {
         // help, as a command without arguments does.
         use std::io::IsTerminal as _;
         if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-            return finish(fastctx_tui::run().map(|()| ExitCode::SUCCESS));
+            return finish(ui().map(|()| ExitCode::SUCCESS));
         }
         let _ = command_line().print_help();
         return ExitCode::from(2);
     };
+    let routes_world = !matches!(
+        &command,
+        Command::Ui
+            | Command::HostChange(_)
+            | Command::Node { .. }
+            | Command::Renew(_)
+            | Command::Service(_)
+            | Command::Server(_)
+            | Command::Hub(world::HubCommand::Serve { .. })
+            | Command::Serve { .. }
+            | Command::Apply(_)
+            | Command::Unapply(_)
+            | Command::Supervise { .. }
+            | Command::ParentProcess
+            | Command::ClaudeRequest { .. }
+            | Command::ClaudeElicitation { .. }
+            | Command::ClaudeControlOwner { .. }
+            | Command::ClaudeControlGuard
+    );
+    #[cfg(windows)]
+    let routes_world = routes_world && !matches!(&command, Command::ServiceHost { .. } | Command::ServiceCheck { .. });
+    if routes_world {
+        let routed =
+            fastctx_platform::fastctx_root().map_err(anyhow::Error::from).and_then(|root| program::world(&root));
+        match routed {
+            Ok(Some(result)) => return finish(result.map(|()| ExitCode::SUCCESS)),
+            Err(error) => return finish(Err(error)),
+            Ok(None) => (),
+        }
+    }
     let result = match command {
-        Command::Ui => fastctx_tui::run(),
+        Command::Ui => ui(),
+        Command::HostChange(args) => host_change::run(args),
         Command::ParentProcess => parent_process(),
         Command::ClaudeRequest { directory } => {
             fastctx_node::claude_request::run(&directory, false).map_err(Into::into)
@@ -259,12 +296,20 @@ fn main() -> ExitCode {
         Command::ClaudeElicitation { world } => fastctx_node::claude_request::run(&world, true).map_err(Into::into),
         Command::ClaudeControlOwner { world } => fastctx_node::claude_request::owner(&world).map_err(Into::into),
         Command::ClaudeControlGuard => fastctx_node::claude_request::guard().map_err(Into::into),
-        Command::Node { dir, supervised, supervisor_control, supervisor_events, service_identity, successor } => {
+        Command::Node {
+            dir,
+            supervised,
+            supervisor_control,
+            supervisor_events,
+            service_identity,
+            successor,
+            prepared_by,
+        } => {
             let supervision = match (supervised, supervisor_control, supervisor_events) {
                 (true, Some(control), Some(events)) => Some((control, events, service_identity)),
                 _ => None,
             };
-            node(dir, supervision, successor)
+            node(dir, supervision, successor, prepared_by)
         }
         Command::Renew(args) => renew::run(args),
         Command::Service(args) => service::run(args),
@@ -349,10 +394,22 @@ fn node(
     dir: Option<PathBuf>,
     supervision: Option<(u64, u64, Option<String>)>,
     successor: Option<String>,
+    prepared_by: Option<String>,
 ) -> anyhow::Result<()> {
     let root = match dir {
         Some(root) => root,
         None => fastctx_platform::fastctx_root()?,
+    };
+    let coordinator =
+        prepared_by.map(|text| serde_json::from_str::<fastctx_types::ProcessIdentity>(&text)).transpose()?;
+    let startup_gate = if coordinator.is_none() {
+        let (forwarded, gate) = world_entry(&root, true)?;
+        if let Some(result) = forwarded {
+            return result;
+        }
+        gate
+    } else {
+        None
     };
     // Recovery must also start when a newly installed node fails before it
     // can serve. A prepared successor is already watched by that worker.
@@ -383,22 +440,79 @@ fn node(
         }
         None => None,
     };
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run_replacing(
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run_prepared(
         &root,
         supervision,
         successor.as_deref(),
+        coordinator.as_ref(),
+        startup_gate,
     ))
+}
+
+fn ui() -> anyhow::Result<()> {
+    let root = fastctx_platform::fastctx_root()?;
+    if let Some(result) = program::world(&root)? {
+        return result;
+    }
+    fastctx_tui::run()
 }
 
 /// One per session and mostly waiting on the node, so one thread: a
 /// machine with many sessions open should not hold a pool of threads per
 /// core for each.
 fn serve(writes_off: bool) -> anyhow::Result<()> {
-    let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
+    let root = fastctx_platform::fastctx_root()?;
+    let (forwarded, gate) = world_entry(&root, false)?;
+    if let Some(result) = forwarded {
+        return result;
+    }
+    let world = fastctx_types::layout::WorldDir::under(&root);
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(fastctx_serve::serve(world, writes_off))
+        .block_on(fastctx_serve::serve_starting(world, writes_off, gate))
+}
+
+/// Delivery executables forward to the World program. The startup lock also
+/// makes a process mapped just before publication re-check the installed build.
+type Entry = (Option<anyhow::Result<()>>, Option<fastctx_platform::FileLock>);
+
+fn world_entry(root: &std::path::Path, node: bool) -> anyhow::Result<Entry> {
+    let source = std::env::current_exe()?;
+    let installed = fastctx_install::executable::installed_path(root);
+    let source_is_installed = installed.is_file() && stable_name(&source, &installed)?;
+    if !installed.is_file() || fastctx_install::program::inspect(&installed)?.protocol == 0 {
+        fastctx_install::placement::ensure(root, &source)?;
+    }
+    let gate = if node {
+        fastctx_install::placement::node_activation(root)?
+    } else {
+        fastctx_install::placement::activation(root)?
+    };
+    let installed_build = fastctx_install::program::inspect(&installed)?;
+    let own = fastctx_install::renewal::build()?;
+    if source_is_installed && own == installed_build {
+        return Ok((None, Some(gate)));
+    }
+    drop(gate);
+    Ok((Some(program::forward(root, &installed)?), None))
+}
+
+fn stable_name(source: &std::path::Path, installed: &std::path::Path) -> std::io::Result<bool> {
+    let installed = std::fs::canonicalize(installed)?;
+    match std::fs::canonicalize(source) {
+        Ok(source) => Ok(source == installed),
+        Err(error) => {
+            #[cfg(target_os = "linux")]
+            if error.kind() == std::io::ErrorKind::NotFound {
+                use std::os::unix::ffi::OsStrExt as _;
+                if let Some(previous) = source.as_os_str().as_bytes().strip_suffix(b" (deleted)") {
+                    return Ok(std::path::Path::new(std::ffi::OsStr::from_bytes(previous)) == installed);
+                }
+            }
+            Err(error)
+        }
+    }
 }
 
 /// A supervisor has no terminal: what it would print about its own failure

@@ -12344,7 +12344,7 @@
             "protocol": 6,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
-          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
             "pid": 123,
             "token": "process-instance"
@@ -12364,13 +12364,38 @@
     ],
     "statuses": [
       {
+        "client": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "installed": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "commands": [
+          {
+            "lookup": "windows",
+            "path": "C:/npm/fastctx.cmd",
+            "executable": "C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe",
+            "build": {
+              "version": "0.2.6",
+              "protocol": 0,
+              "digest": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+            },
+            "is_world": false,
+            "legacy_unapply": true,
+            "error": null
+          }
+        ],
         "node": {
           "build": {
             "version": "1.0.0",
             "protocol": 6,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
-          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
             "pid": 123,
             "token": "process-instance"
@@ -12389,13 +12414,38 @@
         "error": null
       },
       {
+        "client": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "installed": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "commands": [
+          {
+            "lookup": "windows",
+            "path": "C:/npm/fastctx.cmd",
+            "executable": "C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe",
+            "build": {
+              "version": "0.2.6",
+              "protocol": 0,
+              "digest": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+            },
+            "is_world": false,
+            "legacy_unapply": true,
+            "error": null
+          }
+        ],
         "node": {
           "build": {
             "version": "1.0.0",
             "protocol": 6,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
-          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
             "pid": 123,
             "token": "process-instance"
@@ -12414,13 +12464,38 @@
         "error": null
       },
       {
+        "client": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "installed": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "commands": [
+          {
+            "lookup": "windows",
+            "path": "C:/npm/fastctx.cmd",
+            "executable": "C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe",
+            "build": {
+              "version": "0.2.6",
+              "protocol": 0,
+              "digest": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+            },
+            "is_world": false,
+            "legacy_unapply": true,
+            "error": null
+          }
+        ],
         "node": {
           "build": {
             "version": "1.0.0",
             "protocol": 6,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
-          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
             "pid": 123,
             "token": "process-instance"
@@ -12439,6 +12514,31 @@
         "error": null
       },
       {
+        "client": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "installed": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "commands": [
+          {
+            "lookup": "windows",
+            "path": "C:/npm/fastctx.cmd",
+            "executable": "C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe",
+            "build": {
+              "version": "0.2.6",
+              "protocol": 0,
+              "digest": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+            },
+            "is_world": false,
+            "legacy_unapply": true,
+            "error": null
+          }
+        ],
         "node": null,
         "mismatch": {
           "node_version": "1.0.0",
@@ -12455,13 +12555,38 @@
         "error": null
       },
       {
+        "client": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "installed": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "commands": [
+          {
+            "lookup": "windows",
+            "path": "C:/npm/fastctx.cmd",
+            "executable": "C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe",
+            "build": {
+              "version": "0.2.6",
+              "protocol": 0,
+              "digest": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+            },
+            "is_world": false,
+            "legacy_unapply": true,
+            "error": null
+          }
+        ],
         "node": {
           "build": {
             "version": "1.0.0",
             "protocol": 6,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
-          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
             "pid": 123,
             "token": "process-instance"
@@ -12480,13 +12605,38 @@
         "error": null
       },
       {
+        "client": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "installed": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "commands": [
+          {
+            "lookup": "windows",
+            "path": "C:/npm/fastctx.cmd",
+            "executable": "C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe",
+            "build": {
+              "version": "0.2.6",
+              "protocol": 0,
+              "digest": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+            },
+            "is_world": false,
+            "legacy_unapply": true,
+            "error": null
+          }
+        ],
         "node": {
           "build": {
             "version": "1.0.0",
             "protocol": 6,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
-          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
             "pid": 123,
             "token": "process-instance"
@@ -12505,13 +12655,38 @@
         "error": null
       },
       {
+        "client": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "installed": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "commands": [
+          {
+            "lookup": "windows",
+            "path": "C:/npm/fastctx.cmd",
+            "executable": "C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe",
+            "build": {
+              "version": "0.2.6",
+              "protocol": 0,
+              "digest": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+            },
+            "is_world": false,
+            "legacy_unapply": true,
+            "error": null
+          }
+        ],
         "node": {
           "build": {
             "version": "1.0.0",
             "protocol": 6,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
-          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
             "pid": 123,
             "token": "process-instance"
@@ -12530,13 +12705,38 @@
         "error": null
       },
       {
+        "client": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "installed": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "commands": [
+          {
+            "lookup": "windows",
+            "path": "C:/npm/fastctx.cmd",
+            "executable": "C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe",
+            "build": {
+              "version": "0.2.6",
+              "protocol": 0,
+              "digest": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+            },
+            "is_world": false,
+            "legacy_unapply": true,
+            "error": null
+          }
+        ],
         "node": {
           "build": {
             "version": "1.0.0",
             "protocol": 6,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
-          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
             "pid": 123,
             "token": "process-instance"
@@ -12551,13 +12751,38 @@
         "error": null
       },
       {
+        "client": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "installed": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "commands": [
+          {
+            "lookup": "windows",
+            "path": "C:/npm/fastctx.cmd",
+            "executable": "C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe",
+            "build": {
+              "version": "0.2.6",
+              "protocol": 0,
+              "digest": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+            },
+            "is_world": false,
+            "legacy_unapply": true,
+            "error": null
+          }
+        ],
         "node": {
           "build": {
             "version": "1.0.0",
             "protocol": 6,
             "digest": "abababababababababababababababababababababababababababababababab"
           },
-          "executable": "C:/Users/example/.fastctx/world/bin/abab/fastctx.exe",
+          "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
             "pid": 123,
             "token": "process-instance"
@@ -12576,6 +12801,17 @@
         "error": "a staged file is locked"
       },
       {
+        "client": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "installed": {
+          "version": "1.0.0",
+          "protocol": 6,
+          "digest": "abababababababababababababababababababababababababababababababab"
+        },
+        "commands": [],
         "node": null,
         "mismatch": {
           "node_version": "1.0.0",

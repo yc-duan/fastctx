@@ -5,12 +5,30 @@ use std::path::Path;
 use super::Places;
 use crate::transaction::Snapshot;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ToolCheck {
     pub host: &'static str,
     /// The observation's scope, not a promise about already-open sessions.
     pub scope: String,
     pub result: Result<(), String>,
+}
+
+impl<'de> serde::Deserialize<'de> for ToolCheck {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            host: String,
+            scope: String,
+            result: Result<(), String>,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        let host = match wire.host.as_str() {
+            "Codex" => "Codex",
+            "Claude Code" => "Claude Code",
+            _ => return Err(serde::de::Error::custom("unknown host in the kernel's tool check")),
+        };
+        Ok(Self { host, scope: wire.scope, result: wire.result })
+    }
 }
 
 pub(super) fn codex(places: &Places) -> ToolCheck {

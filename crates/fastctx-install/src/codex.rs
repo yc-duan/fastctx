@@ -19,6 +19,12 @@ pub(crate) mod tools;
 const SERVER: &[&str] = &["mcp_servers", "fastctx"];
 const LIMIT: &[&str] = &["tool_output_token_limit"];
 
+/// Resolve the shared command with the same lookup used to report its availability.
+/// The result describes this process's PATH and the selected Codex login.
+pub fn portable_command(home: &Path) -> Result<Option<std::path::PathBuf>, String> {
+    command::resolve(home)
+}
+
 /// Caller authorization for increasing an existing, unowned shared limit.
 #[derive(Clone, Copy, Debug, Default)]
 pub enum Approval {

@@ -34,6 +34,7 @@ use crate::transaction::{Created, FileChange, FileError, Snapshot, Transaction};
 use crate::{File, Notice, executable, guidance, legacy};
 
 mod homes;
+pub mod kernel;
 mod recovery;
 mod tools;
 pub use homes::Host;
@@ -254,7 +255,7 @@ pub fn consent_claude(places: &Places, accept: bool) -> Result<bool, Error> {
 }
 
 /// What an apply or unapply did, for the person who asked.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Report {
     /// Facts about the resulting configuration and effects of synchronization.
     pub messages: Vec<String>,
@@ -340,19 +341,12 @@ impl Record {
 /// Places this fastctx where the hosts and the node's service start it
 /// from, as an apply does; returns that path, and what was changed or left.
 pub fn place_executable(places: &Places) -> Result<(PathBuf, Report), Error> {
+    let installed = crate::placement::ensure(&places.root, &places.fastctx)
+        .map_err(|error| Error::Io(format!("placing the World program: {error:#}")))?;
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
     let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
     let mut report = recovery::before(places)?;
-    let installed = places.installed();
-    let copy = Snapshot::read(&installed)?;
-    if !same_executable(&places.fastctx, &copy)? {
-        let receipt = Transaction::new([FileChange::copy_executable(copy, &places.fastctx)?])
-            .commit()
-            .map_err(|error| Error::Files(error.to_string()))?;
-        report.changed.extend(receipt.changed);
-        report.preserved.extend(receipt.preserved);
-        report.leftovers.extend(receipt.cleanup.iter().map(ToString::to_string));
-    }
+    report.messages.push(format!("World program: {}", installed.display()));
     Ok((installed, report))
 }
 
@@ -360,6 +354,11 @@ pub fn place_executable(places: &Places) -> Result<(PathBuf, Report), Error> {
 /// `approval` says whether Codex's shared output limit may be raised when
 /// the user set it lower than the World needs.
 pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report, Error> {
+    crate::placement::ensure(&places.root, &places.fastctx)
+        .map_err(|error| Error::Io(format!("placing the World program: {error:#}")))?;
+    if let Some(report) = kernel::delegate(places, hosts, approval, true)? {
+        return Ok(report);
+    }
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
     let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
     let mut report = recovery::before(places)?;
@@ -369,11 +368,6 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
     let mut record = records.selected(places, hosts)?;
     let installed = places.installed();
     let mut changes = Vec::new();
-
-    let copy = Snapshot::read(&installed)?;
-    if !same_executable(&places.fastctx, &copy)? {
-        changes.push(FileChange::copy_executable(copy, &places.fastctx)?);
-    }
 
     if hosts.codex {
         let config = Snapshot::read(places.codex_home.join("config.toml"))?;
@@ -406,6 +400,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         {
             report.messages.push(format!("{}: command = \"fastctx\" is preserved, but fastctx was not found on this process's PATH; Codex cannot start the World's tools unless fastctx is on the PATH Codex inherits", config_path));
         }
+
         report.notices.extend(applied.notices);
         report.messages.extend(applied.messages);
         if old.is_some() {
@@ -426,7 +421,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
             record.claude_md.as_ref(),
         )?;
         let previous = read_plugin_record(&plugin_record, initial_settings.path(), &record)?;
-        fastctx_hosts::claude::write_plugin(&places.world, &installed).map_err(io("writing the World's plugin"))?;
+        fastctx_hosts::claude::write_plugin(&places.world).map_err(io("writing the World's plugin"))?;
         let plan = ClaudePlan::new(&places.world);
         settings::apply(initial_settings.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
         let settings_path = text(initial_settings.path());
@@ -539,6 +534,9 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
 /// Takes out of `hosts` what an apply put in, leaving what the user changed
 /// since.
 pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
+    if let Some(report) = kernel::delegate(places, hosts, Approval::Require, false)? {
+        return Ok(report);
+    }
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
     let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
     let mut report = recovery::before(places)?;
@@ -860,17 +858,6 @@ fn change(changes: &mut Vec<FileChange>, file: Snapshot, after: Option<Vec<u8>>)
         Some(bytes) => changes.push(FileChange::write(file, bytes)),
         None => changes.push(FileChange::delete(file)),
     }
-}
-
-/// Whether the copy at `installed` is already the fastctx at `running`.
-fn same_executable(running: &Path, installed: &Snapshot) -> Result<bool, Error> {
-    let Some(placed) = installed.bytes() else { return Ok(false) };
-    if std::fs::canonicalize(running).ok() == std::fs::canonicalize(installed.path()).ok() {
-        return Ok(true);
-    }
-    let running_bytes =
-        std::fs::read(running).map_err(|error| Error::Io(format!("reading {}: {error}", running.display())))?;
-    Ok(running_bytes == placed)
 }
 
 /// Whether two paths name the same place, however each is spelled.

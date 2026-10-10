@@ -9,6 +9,10 @@ fn run(action: &str) -> Result<Vec<u8>, String> {
     let root = fastctx_platform::fastctx_root().map_err(|error| error.to_string())?;
     let mut command = std::process::Command::new(program);
     command.args(["renew", action, "--dir"]).arg(root);
+    #[cfg(target_os = "linux")]
+    if action == "guardian" {
+        command.arg("--graphical");
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;

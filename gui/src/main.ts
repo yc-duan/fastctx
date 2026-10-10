@@ -84,6 +84,7 @@ import { specimenAgents, specimenNow } from "./specimen/world";
 import { specimenComputer, specimenFiles, specimenOffers, specimenPhone, specimenRead, specimenUpload } from "./specimen/seams";
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
+import { showPathNotice } from "./app/path-notice";
 import { PageScreen } from "./pages/view";
 import { manage as manageResident, type Management } from "./world/management";
 import { FileSearch } from "./world/file-search";
@@ -190,11 +191,12 @@ const head = (title: string, actions?: string) => pageHead(shellWords, title, ac
 
 let place: Place = { kind: "home" };
 
-/** The World on this computer, where it is older than the interface: the
+/** A local protocol mismatch reported independently by the carried CLI: the
  *  node refuses an interface of another protocol, and the reason is asked
  *  of the program that can still read it. */
 const oldWorld = signal<VersionMismatch | null>(null);
 if (live && onComputer()) {
+  void renewalState().then(status => showPathNotice(status, english ? enSettings : zhSettings, pageWords.close));
   effect(() => {
     if (!store.trouble.get()) {
       oldWorld.set(null);

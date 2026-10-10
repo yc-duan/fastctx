@@ -19,11 +19,40 @@ export interface RunningNode {
 export type RenewalPhase = "staged" | "preparing" | "waiting_for_idle" | "awaiting_administrator"
   | "awaiting_legacy_exit" | "updating_guardian" | "returning_to_service" | "complete" | "failed";
 export interface RenewalStatus {
+  client?: NodeBuild | null;
+  installed?: NodeBuild | null;
+  commands?: PathCommand[];
   node: RunningNode | null;
   mismatch: VersionMismatch | null;
   pending: NodeBuild | null;
   phase: RenewalPhase | null;
   error: string | null;
+}
+export interface PathCommand {
+  lookup: "windows" | "bash" | "unix" | "codex";
+  path: string;
+  executable: string | null;
+  build: NodeBuild | null;
+  is_world: boolean | null;
+  legacy_unapply: boolean;
+  error: string | null;
+}
+
+export function sameBuild(left: NodeBuild | null | undefined, right: NodeBuild | null | undefined): boolean {
+  return Boolean(left && right && left.version === right.version && left.protocol === right.protocol && left.digest === right.digest);
+}
+
+export function buildLabel(build: NodeBuild | null | undefined): string {
+  return build ? `${build.version} / IPC ${build.protocol} / ${build.digest}` : "?";
+}
+
+export function buildOrder(carried: NodeBuild | null | undefined, node: NodeBuild): "older" | "newer" | "different" {
+  if (carried && /^\d+\.\d+\.\d+$/.test(carried.version) && /^\d+\.\d+\.\d+$/.test(node.version)) {
+    const left = carried.version.split(".").map(BigInt);
+    const right = node.version.split(".").map(BigInt);
+    for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] < right[i] ? "newer" : "older";
+  }
+  return "different";
 }
 export type MaintenanceRequest = { maintenance: 1; action: "status" | "yield" | "cancel" };
 export type MaintenanceResponse = { kind: "status"; node: RunningNode } | { kind: "done" }

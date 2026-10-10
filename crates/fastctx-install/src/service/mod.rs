@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(any(windows, target_os = "linux"))]
 use sha2::{Digest as _, Sha256};
 
+#[cfg(windows)]
+mod delegate;
 mod hub;
 mod keep;
 #[cfg(target_os = "linux")]
@@ -24,8 +26,8 @@ mod linux_watchdog;
 #[cfg(any(windows, target_os = "linux"))]
 mod transaction;
 
-pub use keep::{Kept, Released, keep_connected, stop_keeping};
 pub use hub::keep_hub;
+pub use keep::{Kept, Released, keep_connected, stop_keeping};
 #[cfg(windows)]
 #[path = "windows_guardian/mod.rs"]
 mod windows;
@@ -103,10 +105,15 @@ impl Service {
     /// is in place, its World says so to the World's clients.
     pub fn install(&self) -> anyhow::Result<Status> {
         self.validate()?;
+        let normalized = self.normalized()?;
         #[cfg(windows)]
-        let status = windows::install(self)?;
+        if let Some(status) = delegate::install(&normalized)? {
+            return Ok(status);
+        }
+        #[cfg(windows)]
+        let status = windows::install(&normalized)?;
         #[cfg(target_os = "linux")]
-        let status = linux::install(self)?;
+        let status = linux::install(&normalized)?;
         #[cfg(not(any(windows, target_os = "linux")))]
         bail!("fastctx services support Windows and Linux; this platform is not supported");
         #[cfg(any(windows, target_os = "linux"))]
@@ -122,10 +129,11 @@ impl Service {
     /// already uninstalled. Data directories and logs are retained.
     pub fn uninstall(&self) -> anyhow::Result<Status> {
         self.validate()?;
+        let normalized = self.normalized()?;
         #[cfg(windows)]
-        let status = windows::uninstall(self)?;
+        let status = windows::uninstall(&normalized)?;
         #[cfg(target_os = "linux")]
-        let status = linux::uninstall(self)?;
+        let status = linux::uninstall(&normalized)?;
         #[cfg(not(any(windows, target_os = "linux")))]
         bail!("fastctx services support Windows and Linux; this platform is not supported");
         #[cfg(any(windows, target_os = "linux"))]
@@ -142,10 +150,11 @@ impl Service {
 
     pub fn status(&self) -> anyhow::Result<Status> {
         self.validate()?;
+        let normalized = self.normalized()?;
         #[cfg(windows)]
-        return windows::status(self);
+        return windows::status(&normalized);
         #[cfg(target_os = "linux")]
-        return linux::status(self);
+        return linux::status(&normalized);
         #[cfg(not(any(windows, target_os = "linux")))]
         bail!("fastctx services support Windows and Linux; this platform is not supported")
     }
@@ -154,11 +163,12 @@ impl Service {
     /// guardian is systemd itself, so a node image needs no privileged update.
     pub fn guardian_current(&self, digest: &str) -> anyhow::Result<bool> {
         self.validate()?;
+        let normalized = self.normalized()?;
         #[cfg(windows)]
-        return windows::guardian_current(self, digest);
+        return windows::guardian_current(&normalized, digest);
         #[cfg(not(windows))]
         {
-            let _ = digest;
+            let _ = (digest, normalized);
             Ok(true)
         }
     }
@@ -167,22 +177,24 @@ impl Service {
     /// registration. It does not stop anything or open the user's World.
     pub fn renew_guardian(&self, digest: &str) -> anyhow::Result<()> {
         self.validate()?;
+        let normalized = self.normalized()?;
         #[cfg(windows)]
-        return windows::renew_guardian(self, digest);
+        return windows::renew_guardian(&normalized, digest);
         #[cfg(not(windows))]
         {
-            let _ = digest;
+            let _ = (digest, normalized);
             bail!("this platform has no bundled guardian")
         }
     }
 
     pub fn guardian_staged(&self, digest: &str) -> anyhow::Result<bool> {
         self.validate()?;
+        let normalized = self.normalized()?;
         #[cfg(windows)]
-        return windows::guardian_staged(self, digest);
+        return windows::guardian_staged(&normalized, digest);
         #[cfg(not(windows))]
         {
-            let _ = digest;
+            let _ = (digest, normalized);
             Ok(true)
         }
     }
@@ -192,13 +204,36 @@ impl Service {
     /// The caller holds the startup gate and verifies a serving bridge first.
     pub fn restart_guardian(&self, digest: &str) -> anyhow::Result<()> {
         self.validate()?;
+        let normalized = self.normalized()?;
         #[cfg(windows)]
-        return windows::restart_guardian(self, digest);
-        #[cfg(not(windows))]
+        return windows::restart_guardian(&normalized, digest);
+        #[cfg(target_os = "linux")]
+        {
+            let _ = digest;
+            anyhow::ensure!(fastctx_platform::elevation::is_elevated()?, "restarting the system service needs sudo");
+            checked(Command::new("systemctl").args([
+                "--system",
+                "restart",
+                &format!("{}.service", normalized.id(&normalized.uid.to_le_bytes())),
+            ]))?;
+            Ok(())
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
             let _ = digest;
             Ok(())
         }
+    }
+
+    /// Physical directory spelling is fixed before deriving a registration.
+    /// Windows' verbatim prefix is transport syntax, not part of its identity.
+    fn normalized(&self) -> anyhow::Result<Self> {
+        let directory = physical_path(&self.directory)?;
+        // Inspection and removal must remain possible after a delivery image
+        // disappears. An existing image also has one registration spelling.
+        let executable =
+            if self.executable.try_exists()? { physical_path(&self.executable)? } else { self.executable.clone() };
+        Ok(Self { directory, executable, ..self.clone() })
     }
 
     fn validate(&self) -> anyhow::Result<()> {
@@ -259,6 +294,24 @@ impl Service {
         hash.update(account);
         format!("fastctx-service-{}-{:x}", self.role(), hash.finalize())
     }
+}
+
+fn physical_path(path: &std::path::Path) -> anyhow::Result<PathBuf> {
+    let directory = std::fs::canonicalize(path)?;
+    #[cfg(windows)]
+    let directory = {
+        use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+        let wide: Vec<u16> = directory.as_os_str().encode_wide().collect();
+        let normalized = if wide.starts_with(&[92, 92, 63, 92, 85, 78, 67, 92]) {
+            [vec![92, 92], wide[8..].to_vec()].concat()
+        } else if wide.starts_with(&[92, 92, 63, 92]) {
+            wide[4..].to_vec()
+        } else {
+            wide
+        };
+        PathBuf::from(std::ffi::OsString::from_wide(&normalized))
+    };
+    Ok(directory)
 }
 
 #[cfg(windows)]

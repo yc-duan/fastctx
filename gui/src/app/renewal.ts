@@ -1,5 +1,5 @@
-// Which World this computer runs, beside the interface's: the same, or an
-// older one the interface cannot speak with. Putting the new one in place
+// Which World this computer runs, beside the interface's carried program.
+// Putting a newer program in place
 // is the user's to start; the program the interface carries does it and
 // keeps its own record, and this row says where it stands, step by step,
 // asked again every two seconds while a step is under way, as the World
@@ -8,6 +8,7 @@
 
 import { escape } from "../conversation/prose";
 import type { RenewalPhase, RenewalStatus } from "../world/renewal";
+import { buildLabel, buildOrder, sameBuild } from "../world/renewal";
 import type { SettingsWords } from "./words";
 
 export interface Renewing {
@@ -88,15 +89,22 @@ export class RenewalRow {
     const node = status?.node?.build ?? null;
     const mismatch = status?.mismatch ?? null;
     let state = "";
-    if (mismatch) state = words.versionOld(mismatch.node_version, mismatch.node_protocol, mismatch.client_version, mismatch.client_protocol);
-    else if (node) state = words.versionHere(node.version);
+    if (mismatch) {
+      const legacy = { version: mismatch.node_version, protocol: mismatch.node_protocol, digest: "?" };
+      state = words.versionDifferent(buildLabel(status?.client), buildLabel(legacy), buildOrder(status?.client, legacy));
+    }
+    else if (node) state = sameBuild(status?.client, node)
+      ? words.versionHere(node.version)
+      : words.versionDifferent(buildLabel(status?.client), buildLabel(node), buildOrder(status?.client, node));
     else if (status) state = words.versionNone;
     const phase = status?.phase ?? null;
     const step = phase ? words.renewPhase[phase] : "";
     const failed = phase === "failed" && status?.error ? words.renewFailed(status.error) : "";
-    // Offered where there is a newer one to put in place and nothing is
-    // already doing it.
-    const offer = (mismatch || status?.pending) && (!phase || phase === "staged" || phase === "failed");
+    // Every difference is visible; the installer determines whether the
+    // carried program can advance the World or is already older than it.
+    const differs = node ? !sameBuild(status?.client, node) : Boolean(status?.client && !sameBuild(status.client, status.installed));
+    const pending = status?.pending && !sameBuild(status.pending, node ?? status.installed);
+    const offer = (mismatch || pending || differs) && (!phase || phase === "staged" || phase === "failed" || phase === "complete");
     const buttons = [
       offer ? `<button class="text-button quiet-button" type="button" data-renew="renew"${this.busy ? " disabled" : ""}>${escape(words.renew)}</button>` : "",
       phase === "awaiting_administrator"
@@ -104,7 +112,14 @@ export class RenewalRow {
         : "",
     ].join("");
     const why = [phase === "failed" ? (status?.error ?? "") : "", this.why].filter(Boolean).join("\n");
-    const notes = [step, failed, this.said].filter(Boolean);
+    const installation = status?.client && status.installed && !sameBuild(status.client, status.installed)
+      ? words.versionInstalled(buildLabel(status.client), buildLabel(status.installed)) : "";
+    const commands = (status?.commands ?? []).filter(command => !command.is_world).flatMap(command => [
+      command.is_world === null ? words.pathUnknown(command.lookup, command.path, command.error ?? "?")
+        : words.pathDifferent(command.lookup, command.path, command.build?.version ?? "?", command.executable ?? command.error ?? "?"),
+      command.legacy_unapply ? words.pathLegacy : "",
+    ]);
+    const notes = [installation, ...commands, step, failed, this.said].filter(Boolean);
     this.element.hidden = !state && !notes.length;
     this.element.innerHTML = `<dt>${escape(words.worldVersion)}</dt><dd><span>${escape(state)}</span>${buttons}${notes
       .map((note) => `<p class="settings-said" role="status"${why ? ` title="${escape(why)}"` : ""}>${escape(note)}</p>`)

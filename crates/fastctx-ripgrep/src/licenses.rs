@@ -36,6 +36,6 @@ pub(crate) fn place(directory: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn files() -> [(&'static str, &'static str); 3] {
+pub fn files() -> [(&'static str, &'static str); 3] {
     [("LICENSE-APACHE", APACHE), ("NOTICE", NOTICE), ("THIRD_PARTY_LICENSES.md", THIRD_PARTY)]
 }

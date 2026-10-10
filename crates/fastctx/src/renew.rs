@@ -21,6 +21,15 @@ pub struct RenewalArgs {
 enum RenewalAction {
     /// Identify this executable without opening any World or host state.
     Identify,
+    #[command(hide = true)]
+    Notices,
+    #[command(hide = true)]
+    Prepare {
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: PathBuf,
+        #[arg(long)]
+        digest: String,
+    },
     /// Put a local executable in place and request an idle handover.
     Stage {
         #[arg(long, value_parser = crate::paths::parser())]
@@ -49,6 +58,8 @@ enum RenewalAction {
     Guardian {
         #[arg(long, value_parser = crate::paths::parser())]
         dir: PathBuf,
+        #[arg(long, hide = true)]
+        graphical: bool,
     },
     #[command(hide = true)]
     GuardianApply {
@@ -56,6 +67,8 @@ enum RenewalAction {
         dir: PathBuf,
         #[arg(long)]
         user_sid: Option<String>,
+        #[arg(long)]
+        uid: Option<u32>,
     },
 }
 
@@ -63,43 +76,32 @@ pub fn run(args: RenewalArgs) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     match args.action {
         RenewalAction::Identify => println!("{}", serde_json::to_string(&store::build()?)?),
+        RenewalAction::Notices => println!(
+            "{}",
+            serde_json::to_string(
+                &fastctx_ripgrep::licenses::files().into_iter().collect::<std::collections::BTreeMap<_, _>>()
+            )?
+        ),
+        RenewalAction::Prepare { dir, digest } => {
+            runtime.block_on(fastctx_node::replacement::prepare(&dir, &digest))?
+        }
         RenewalAction::Stage { dir, source } => {
-            let running = runtime.block_on(renewal::image(&WorldDir::under(&dir)))?;
-            store::stage(&dir, &source, running.as_deref())?;
-            store::request(&dir, true)?;
+            let plan = store::stage(&dir, &source, None)?;
+            if plan.phase != Phase::Complete {
+                store::request(&dir, true)?;
+            }
         }
         RenewalAction::Status { dir } => println!("{}", serde_json::to_string(&runtime.block_on(status(&dir))?)?),
         RenewalAction::Now { dir } => store::request(&dir, true)?,
         RenewalAction::Run { dir, retry } => runtime.block_on(worker(&dir, retry))?,
-        RenewalAction::Guardian { dir } => runtime.block_on(guardian(&dir))?,
-        RenewalAction::GuardianApply { dir, user_sid } => runtime.block_on(guardian_apply(&dir, user_sid))?,
+        RenewalAction::Guardian { dir, graphical } => runtime.block_on(guardian(&dir, graphical))?,
+        RenewalAction::GuardianApply { dir, user_sid, uid } => runtime.block_on(guardian_apply(&dir, user_sid, uid))?,
     }
     Ok(())
 }
 
 async fn status(root: &Path) -> anyhow::Result<Status> {
-    let plan = store::read(root)?;
-    let (node, mismatch) = match observing(&WorldDir::under(root)).await? {
-        Probe::Running(node) => (Some(node), None),
-        Probe::Legacy { mismatch, .. } => (None, Some(mismatch)),
-        Probe::Absent => (None, None),
-    };
-    let phase = plan.as_ref().map(|plan| {
-        if plan.phase == Phase::Complete
-            && (mismatch.is_some() || node.as_ref().is_some_and(|node| node.build != plan.candidate.build))
-        {
-            Phase::Staged
-        } else {
-            plan.phase.clone()
-        }
-    });
-    Ok(Status {
-        node,
-        mismatch,
-        pending: plan.as_ref().filter(|_| phase != Some(Phase::Complete)).map(|plan| plan.candidate.build.clone()),
-        phase,
-        error: plan.and_then(|plan| plan.error),
-    })
+    store::status(root).await
 }
 
 async fn worker(root: &Path, retry: bool) -> anyhow::Result<()> {
@@ -108,14 +110,7 @@ async fn worker(root: &Path, retry: bool) -> anyhow::Result<()> {
     if plan.phase == Phase::Failed && !retry {
         return Ok(());
     }
-    let mut result = advance(root, &mut plan).await;
-    if result.is_err()
-        && plan.phase == Phase::Preparing
-        && let Some(previous) = &plan.previous
-        && let Err(error) = store::install(root, previous)
-    {
-        result = Err(anyhow::anyhow!("{}; restoring the previous image also failed: {error}", result.unwrap_err()));
-    }
+    let result = advance(root, &mut plan).await;
     if let Err(error) = &result {
         plan.error = Some(format!("{error:#}"));
         plan.phase = Phase::Failed;
@@ -132,7 +127,6 @@ fn phase(root: &Path, plan: &mut Plan, phase: Phase) -> anyhow::Result<()> {
 }
 
 async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
-    store::install(root, &plan.candidate)?;
     let world = WorldDir::under(root);
     let kept = world.node_service().exists();
     let service =
@@ -140,12 +134,13 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     let needs_guardian = kept && !service.guardian_current(&plan.candidate.build.digest)?;
     let current = renewal::probe(&world).await?;
     if let Probe::Running(node) = &current
-        && node.build.digest == plan.candidate.build.digest
+        && node.build == plan.candidate.build
+        && std::fs::canonicalize(&node.executable)? == std::fs::canonicalize(store::installed(root))?
     {
         if node.bridge {
             return finish_bridge(root, plan, needs_guardian).await;
         }
-        if !needs_guardian {
+        if !needs_guardian && (!kept || node.supervised || cfg!(target_os = "linux")) {
             return phase(root, plan, Phase::Complete);
         }
     }
@@ -158,10 +153,11 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
             root,
             &plan.candidate.path,
             &[
-                "node".into(),
+                "renew".into(),
+                "prepare".into(),
                 "--dir".into(),
                 root.into(),
-                "--successor".into(),
+                "--digest".into(),
                 plan.candidate.build.digest.clone().into(),
             ],
         )?
@@ -170,9 +166,6 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     };
     loop {
         if !fastctx_platform::is_alive(&candidate)? {
-            if let Some(previous) = &plan.previous {
-                store::install(root, previous)?;
-            }
             bail!("replacement exited before preparing; current node was left running");
         }
         if store::read_json::<fastctx_types::ProcessIdentity>(&prepared)?.as_ref() == Some(&candidate) {
@@ -197,7 +190,9 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     loop {
         let observed = observing(&world).await?;
         if let Probe::Running(node) = &observed
-            && node.process == candidate
+            && node.build == plan.candidate.build
+            && std::fs::canonicalize(&node.executable)? == std::fs::canonicalize(store::installed(root))?
+            && asked.as_ref() != Some(&node.process)
         {
             return if node.bridge {
                 finish_bridge(root, plan, needs_guardian).await
@@ -215,7 +210,7 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
                 bail!("the prepared process stopped; the new node serves, but its guardian still needs renewal");
             }
             recover(root, plan, kept).await?;
-            bail!("replacement failed before serving; the previous image was restored when available");
+            bail!("replacement failed before publication; the previous World program was retained");
         }
         if matches!(observed, Probe::Legacy { .. }) {
             return phase(root, plan, Phase::AwaitingLegacyExit);
@@ -230,10 +225,12 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
 }
 
 async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> anyhow::Result<()> {
-    if needs_guardian {
+    if !plan.keeper_restarted {
         let service =
             fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
-        if !service.guardian_staged(&plan.candidate.build.digest)? {
+        if (needs_guardian && !service.guardian_staged(&plan.candidate.build.digest)?)
+            || (cfg!(target_os = "linux") && !fastctx_platform::elevation::is_elevated()?)
+        {
             return phase(root, plan, Phase::AwaitingAdministrator);
         }
         let _gate = FileLock::acquire(&store::directory(root).join("manager-gate.lock"))?;
@@ -243,6 +240,8 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
         ensure!(node.bridge && node.build == plan.candidate.build, "the replacement bridge is not serving");
         phase(root, plan, Phase::UpdatingGuardian)?;
         service.restart_guardian(&plan.candidate.build.digest)?;
+        plan.keeper_restarted = true;
+        store::save(root, plan)?;
     }
     phase(root, plan, Phase::ReturningToService)?;
     let world = WorldDir::under(root);
@@ -260,9 +259,11 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
 
 async fn recover(root: &Path, plan: &Plan, kept: bool) -> anyhow::Result<()> {
     let world = WorldDir::under(root);
-    if let Some(previous) = &plan.previous {
-        store::install(root, previous)?;
-    }
+    let previous = plan.previous.as_ref().context("the first World program failed to start")?;
+    ensure!(
+        fastctx_install::program::inspect(&store::installed(root))? == previous.build,
+        "replacement failed after publication; the newer stable World program is retained, and no older image is installed"
+    );
     loop {
         if let Probe::Running(node) = observing(&world).await? {
             if !node.yielding {
@@ -279,8 +280,8 @@ async fn recover(root: &Path, plan: &Plan, kept: bool) -> anyhow::Result<()> {
         }
         if FileLock::try_acquire(&world.node_lock())?.is_some() {
             if !kept {
-                let previous = plan.previous.as_ref().context("no previous executable is available for recovery")?;
-                store::launch(root, &previous.path, &["node".into(), "--dir".into(), root.into()])?;
+                ensure!(plan.previous.is_some(), "no previous executable is available for recovery");
+                store::launch(root, &store::installed(root), &["node".into(), "--dir".into(), root.into()])?;
                 loop {
                     if !matches!(observing(&world).await?, Probe::Absent) {
                         return Ok(());
@@ -312,7 +313,9 @@ fn transient(error: &std::io::Error) -> bool {
     )
 }
 
-async fn guardian(root: &Path) -> anyhow::Result<()> {
+async fn guardian(root: &Path, graphical: bool) -> anyhow::Result<()> {
+    #[cfg(not(target_os = "linux"))]
+    let _ = graphical;
     let plan = store::read(root)?.context("no local replacement was staged")?;
     ensure!(
         plan.phase == Phase::AwaitingAdministrator || plan.phase == Phase::Failed,
@@ -325,7 +328,7 @@ async fn guardian(root: &Path) -> anyhow::Result<()> {
     ensure!(node.bridge && node.build == plan.candidate.build, "the replacement bridge is not serving yet");
     let service =
         fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
-    if service.guardian_staged(&plan.candidate.build.digest)? {
+    if cfg!(windows) && service.guardian_staged(&plan.candidate.build.digest)? {
         return store::request(root, true);
     }
     #[cfg(windows)]
@@ -338,11 +341,30 @@ async fn guardian(root: &Path) -> anyhow::Result<()> {
         store::request(root, true)?;
         Ok(())
     }
-    #[cfg(not(windows))]
-    bail!("this platform has no bundled SYSTEM guardian to replace")
+    #[cfg(target_os = "linux")]
+    {
+        let mut plan = plan;
+        let uid = std::fs::metadata(root).map(|metadata| {
+            use std::os::unix::fs::MetadataExt as _;
+            metadata.uid()
+        })?;
+        let status = std::process::Command::new(if graphical { "pkexec" } else { "sudo" })
+            .arg(store::installed(root))
+            .args(["renew", "guardian-apply", "--dir"])
+            .arg(root)
+            .arg("--uid")
+            .arg(uid.to_string())
+            .status()?;
+        ensure!(status.success(), "system-service handover failed: {status}");
+        plan.keeper_restarted = true;
+        store::save(root, &plan)?;
+        store::request(root, true)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    bail!("this platform has no boot-service handover")
 }
 
-async fn guardian_apply(root: &Path, user_sid: Option<String>) -> anyhow::Result<()> {
+async fn guardian_apply(root: &Path, user_sid: Option<String>, uid: Option<u32>) -> anyhow::Result<()> {
     ensure!(fastctx_platform::elevation::is_elevated()?, "guardian replacement requires administrator rights");
     let own = store::build()?;
     let service = {
@@ -355,12 +377,23 @@ async fn guardian_apply(root: &Path, user_sid: Option<String>) -> anyhow::Result
         }
         #[cfg(not(windows))]
         let _ = user_sid;
+        #[cfg(target_os = "linux")]
+        {
+            service.uid = uid.context("system-service handover needs its user UID")?;
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = uid;
         service
     };
     // This process may belong to a different approving administrator. It
     // never opens the user's private World, locks, or IPC; it only stages
     // its own approved image in the existing protected registration.
-    service.renew_guardian(&own.digest)
+    #[cfg(windows)]
+    return service.renew_guardian(&own.digest);
+    #[cfg(target_os = "linux")]
+    return service.restart_guardian(&own.digest);
+    #[cfg(not(any(windows, target_os = "linux")))]
+    bail!("this platform has no boot-service handover")
 }
 
 async fn tick() {

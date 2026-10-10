@@ -39,6 +39,7 @@ pub struct MachinesPage {
     agents: Option<Result<AgentsReply, String>>,
     /// What the latest apply or unapply came to, or that one is under way.
     outcome: Option<Outcome>,
+    program: Option<Result<fastctx_types::renewal::Status, String>>,
 }
 
 /// What a row the keys can be on stands for.
@@ -68,6 +69,7 @@ impl MachinesPage {
 
     pub fn data(&mut self, data: Data) -> Act {
         match data {
+            Data::Program(status) => self.program = Some(status),
             Data::Nodes(Ok(nodes)) => {
                 self.nodes = Some(nodes);
                 self.list.clamp(self.entries().len());
@@ -142,11 +144,7 @@ impl MachinesPage {
     /// The accounts this computer is logged in to, hub by hub.
     fn logins(&self) -> Vec<(HubName, AccountName)> {
         let Some(nodes) = &self.nodes else { return Vec::new() };
-        nodes
-            .hubs
-            .iter()
-            .flat_map(|hub| hub.logins.iter().map(|account| (hub.name.clone(), account.clone())))
-            .collect()
+        nodes.hubs.iter().flat_map(|hub| hub.logins.iter().map(|account| (hub.name.clone(), account.clone()))).collect()
     }
 
     /// The hub of the row the keys are on, and the first account this
@@ -157,7 +155,10 @@ impl MachinesPage {
             Entry::Machine { hub, .. } => nodes.hubs.get(*hub)?,
             Entry::Arrival(index) => {
                 let arrival = self.arrivals.get(*index)?;
-                return Some((nodes.hubs.iter().find(|hub| hub.hub == arrival.hub)?.name.clone(), arrival.account.clone()));
+                return Some((
+                    nodes.hubs.iter().find(|hub| hub.hub == arrival.hub)?.name.clone(),
+                    arrival.account.clone(),
+                ));
             }
             Entry::Login(_) => nodes.hubs.first()?,
         };
@@ -203,7 +204,9 @@ impl MachinesPage {
                 Act::Push(Page::Form(Box::new(form::FormPage::logout(&logins, preset.as_ref()))))
             }
             KeyCode::Char('r') => match self.removable() {
-                Some((hub, account, name)) => Act::Push(Page::Form(Box::new(form::FormPage::remove(hub, account, name)))),
+                Some((hub, account, name)) => {
+                    Act::Push(Page::Form(Box::new(form::FormPage::remove(hub, account, name))))
+                }
                 None => Act::Stay,
             },
             KeyCode::Char('y') => match self.selected_arrival() {
@@ -368,6 +371,9 @@ impl MachinesPage {
         let look = &ctx.look;
         let width = paint::column(area).width as usize;
         let mut rows = Vec::new();
+        if let Some(program) = &self.program {
+            rows.extend(super::program::rows(ctx, program, width));
+        }
         let mut item = 0;
         if let Some(nodes) = &self.nodes {
             paint::open_section(&mut rows, paint::section(words.this_machine_link(), look));
@@ -493,10 +499,9 @@ fn hub_rows(
             ),
             Role::Caution,
         ),
-        LinkState::Online { since, hub, relay, route } => (
-            words.link_online(hub, relay.as_deref(), route, &crate::words::clock(*since, ctx.now)),
-            Role::Muted,
-        ),
+        LinkState::Online { since, hub, relay, route } => {
+            (words.link_online(hub, relay.as_deref(), route, &crate::words::clock(*since, ctx.now)), Role::Muted)
+        }
         LinkState::Stopped { reason } => (words.link_stopped(&text::first_line(reason)), Role::Wrong),
     };
     for line in text::wrap_plain(&line, look.text(role), width) {
@@ -552,7 +557,9 @@ fn hub_rows(
             .collect::<Vec<_>>()
             .join("; ");
         let standing = words.owner_and_rights(node.owner.as_ref().map(|owner| owner.as_str()), &rights);
-        rows.push(Row::new(Line::from(vec![Span::raw("   "), Span::styled(standing, look.text(Role::Muted))])).item(*item));
+        rows.push(
+            Row::new(Line::from(vec![Span::raw("   "), Span::styled(standing, look.text(Role::Muted))])).item(*item),
+        );
         let second = match &node.facts {
             Ok(facts) => Some(Span::styled(
                 format!("{} {}  ·  home {}  ·  fastctx {}", facts.os, facts.arch, facts.home, facts.version),

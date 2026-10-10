@@ -71,6 +71,14 @@ async fn feed_page(world: World, sender: Sender, page: u64, feed: Feed) {
     }
     let mut round: u32 = 0;
     loop {
+        if matches!(feed, Feed::Nodes | Feed::World { .. }) {
+            let status = fastctx_install::renewal::status(world.dir().path().parent().expect("local World root"))
+                .await
+                .map_err(|error| format!("{error:#}"));
+            if sender.send((page, Data::Program(status))).is_err() {
+                return;
+            }
+        }
         let data = ask(&world, &feed).await;
         let mut here = match &data {
             Data::Nodes(Ok(nodes)) => Some(nodes.machine.clone()),
@@ -146,12 +154,21 @@ async fn ask(world: &World, feed: &Feed) -> Data {
                         .hubs
                         .iter()
                         .flat_map(|hub| {
-                            hub.lends.iter().filter(|lend| hub.logins.contains(&lend.account)).map(|lend| crate::app::Lent {
-                                machine: lend.machine.clone(),
-                                agent: lend.agent.clone(),
-                                home: lend.home.clone(),
-                                owner: hub.members.iter().find(|member| member.name == lend.machine).and_then(|member| member.home.clone()),
-                                to: fastctx_types::access::HubAccount { hub: hub.hub.clone(), account: lend.account.clone() },
+                            hub.lends.iter().filter(|lend| hub.logins.contains(&lend.account)).map(|lend| {
+                                crate::app::Lent {
+                                    machine: lend.machine.clone(),
+                                    agent: lend.agent.clone(),
+                                    home: lend.home.clone(),
+                                    owner: hub
+                                        .members
+                                        .iter()
+                                        .find(|member| member.name == lend.machine)
+                                        .and_then(|member| member.home.clone()),
+                                    to: fastctx_types::access::HubAccount {
+                                        hub: hub.hub.clone(),
+                                        account: lend.account.clone(),
+                                    },
+                                }
                             })
                         })
                         .collect()
@@ -300,7 +317,9 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
             Done::Changed
         }
         Job::Remove { hub, account, name, reason, seen } => {
-            world.account(Some(hub.clone()), account.clone(), AccountChange::Remove { name: name.clone(), reason }).await?;
+            world
+                .account(Some(hub.clone()), account.clone(), AccountChange::Remove { name: name.clone(), reason })
+                .await?;
             if seen {
                 world.account(Some(hub), account, AccountChange::Seen { name }).await?;
             }

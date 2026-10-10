@@ -91,7 +91,7 @@ impl Claude {
 pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     claude::control::write(&node.world.path().join("claude-controller.json"), &fastctx_platform::current_identity()?)?;
     calls::sweep(node);
-    let plugin = claude::write_plugin(node.world.path(), &node.fastctx)?;
+    let plugin = claude::write_plugin(node.world.path())?;
     let checking = node.clone();
     tokio::task::spawn_blocking(move || check_plugin(&checking, &plugin));
     let sessions = exchange::sessions(node.world.path());

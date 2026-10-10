@@ -249,6 +249,7 @@ pub enum Data {
     Around(Result<Around, String>),
     /// Whether the user's own sessions here have the World's tools.
     Sessions(Result<Status, String>),
+    Program(Result<fastctx_types::renewal::Status, String>),
     /// This computer's agents, a line for each of their logins.
     Agents(Result<fastctx_types::agents::AgentsReply, String>),
     /// What the World answered a job the page asked for.

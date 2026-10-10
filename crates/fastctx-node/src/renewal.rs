@@ -21,7 +21,7 @@ pub(crate) struct Startup {
 }
 
 impl Startup {
-    pub async fn prepare(root: &Path, successor: Option<&str>) -> anyhow::Result<Self> {
+    pub async fn prepare(root: &Path, successor: Option<&str>, coordinated: bool) -> anyhow::Result<Self> {
         let root = root.to_owned();
         let successor = successor.map(str::to_owned);
         tokio::task::spawn_blocking(move || {
@@ -30,13 +30,19 @@ impl Startup {
             fastctx_platform::ensure_private_dir(&directory)?;
             if let Some(digest) = &successor {
                 anyhow::ensure!(*digest == build.digest, "replacement is not the requested executable");
-                store::write_json(
-                    &directory.join(format!("prepared-{digest}.json")),
-                    &fastctx_platform::current_identity()?,
-                )?;
+                if !coordinated {
+                    store::write_json(
+                        &directory.join(format!("prepared-{digest}.json")),
+                        &fastctx_platform::current_identity()?,
+                    )?;
+                }
             }
             let kept = WorldDir::under(&root).node_service().exists();
-            let service_gate = if kept { Some(FileLock::acquire(&directory.join("service-gate.lock"))?) } else { None };
+            let service_gate = if kept && !coordinated {
+                Some(FileLock::acquire(&directory.join("service-gate.lock"))?)
+            } else {
+                None
+            };
             let bridge = kept && successor.is_some();
             let manager_gate =
                 if kept && !bridge { Some(FileLock::acquire(&directory.join("manager-gate.lock"))?) } else { None };

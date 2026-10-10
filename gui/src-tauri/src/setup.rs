@@ -10,10 +10,11 @@ use std::path::PathBuf;
 
 use fastctx_client::World;
 use fastctx_install::apply::{self, Hosts, Places, Standing};
-use fastctx_install::codex::Approval;
 use fastctx_install::service::{Kept, Released, keep_connected, stop_keeping};
 use fastctx_types::layout::WorldDir;
 use serde::Serialize;
+
+mod hosts;
 
 /// Where this computer stands.
 #[derive(Serialize)]
@@ -201,7 +202,7 @@ pub async fn keep(world: &World) -> Result<KeptNow, String> {
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
     if kept == Kept::Installed {
-        world.hand_over().await.map_err(|error| error.to_string())?;
+        yield_running(world.dir()).await?;
         #[cfg(target_os = "linux")]
         tauri::async_runtime::spawn_blocking(|| {
             let places = crate::setup::places()?;
@@ -243,13 +244,21 @@ pub fn keep_at_install() -> Result<String, String> {
 /// to the service's; none is started for the asking.
 fn hand_over_running(places: &Places) -> Result<(), String> {
     let world = WorldDir::under(&places.root);
-    tauri::async_runtime::block_on(async {
-        match fastctx_client::Client::connect(&world, fastctx_client::command_peer()).await {
-            Ok(mut client) => client.call(fastctx_types::Call::HandOver).await.map(drop).map_err(|error| error.to_string()),
-            Err(fastctx_client::ConnectError::NoNode { .. }) => Ok(()),
-            Err(error) => Err(error.to_string()),
+    tauri::async_runtime::block_on(yield_running(&world))
+}
+
+async fn yield_running(world: &WorldDir) -> Result<(), String> {
+    match fastctx_client::renewal::probe(world).await.map_err(|error| error.to_string())? {
+        fastctx_client::renewal::Probe::Absent => Ok(()),
+        fastctx_client::renewal::Probe::Running(_) => {
+            fastctx_client::renewal::request(world, fastctx_types::renewal::Action::Yield)
+                .await
+                .map_err(|error| error.to_string())
         }
-    })
+        fastctx_client::renewal::Probe::Legacy { .. } => {
+            Err("the legacy node must exit before the service can take over".into())
+        }
+    }
 }
 
 /// Removes the service that keeps this machine's node, with the same
@@ -284,21 +293,19 @@ pub fn release() -> Result<KeptNow, String> {
 /// takes them out. `raise` lets Codex's shared output limit be raised.
 pub fn hosts(codex: bool, claude: bool, raise: bool, into: bool, home: Option<PathBuf>) -> Result<Vec<String>, String> {
     let mut places = places()?;
-    if let Some(home) = home {
+    if let Some(home) = &home {
         let host = match (codex, claude) {
             (true, false) => apply::Host::Codex,
             (false, true) => apply::Host::Claude,
             _ => return Err("a home directory requires exactly one host".into()),
         };
-        places = places.at_home(host, &home).map_err(|error| error.to_string())?;
+        places = places.at_home(host, home).map_err(|error| error.to_string())?;
+    }
+    if into || places.installed().is_file() {
+        return hosts::run(&places, codex, claude, raise, into, home.as_deref());
     }
     let hosts = Hosts { codex, claude };
-    let report = if into {
-        apply::apply(&places, hosts, if raise { Approval::RaiseOutputLimit } else { Approval::Require })
-    } else {
-        apply::unapply(&places, hosts)
-    }
-    .map_err(|error| error.to_string())?;
+    let report = apply::unapply(&places, hosts).map_err(|error| error.to_string())?;
     Ok(report
         .notices
         .iter()

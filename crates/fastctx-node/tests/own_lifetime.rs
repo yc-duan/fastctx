@@ -1,4 +1,4 @@
-//! Exercises the production copy cleanup and job supervisor with native
+//! Exercises stable program publication and job supervision with native
 //! processes. The caller supplies bash and the fixture supplies its login profile.
 
 use std::ffi::OsString;
@@ -17,8 +17,8 @@ use fastctx_types::run::{EndedHow, RunRequest};
 use fastctx_types::{Address, MachineName, ResidentId};
 use sha2::{Digest as _, Sha256};
 
-#[path = "../src/own.rs"]
-mod own;
+#[path = "../src/world_program.rs"]
+mod world_program;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -26,11 +26,18 @@ fn main() -> anyhow::Result<()> {
         Some("--version") => println!("program {}", hash(&std::env::current_exe()?)?),
         Some("pin") => {
             let world = WorldDir::at(Path::new(&args[1]));
-            ensure_private_dir(world.path())?;
-            let _lock = FileLock::acquire(&world.node_lock())?;
-            let (copy, kept) = own::pin(&world)?;
-            let kept: Vec<_> = kept.into_iter().map(|(path, error)| (path, error.to_string())).collect();
-            println!("{}", serde_json::json!({"copy": copy, "kept": kept}));
+            let root = world.path().parent().expect("World root");
+            let copy = fastctx_install::renewal::installed(root);
+            ensure_private_dir(copy.parent().expect("bin directory"))?;
+            fastctx_install::renewal::publish_image(&std::env::current_exe()?, &copy)?;
+            let output = Command::new(&copy).arg("resources").arg(world.path()).output()?;
+            anyhow::ensure!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            print!("{}", String::from_utf8(output.stdout)?);
+        }
+        Some("resources") => {
+            let root = Path::new(&args[1]).parent().expect("World root");
+            let copy = world_program::prepare(root)?;
+            println!("{}", serde_json::json!({"copy": copy}));
         }
         Some("supervise") => {
             let fastctx = std::env::current_exe()?;
@@ -96,18 +103,12 @@ fn exercise() -> anyhow::Result<()> {
     fs::remove_file(&cached)?;
     fs::remove_dir(&cache)?;
     let old_program = PathBuf::from(old["copy"].as_str().expect("old copy"));
-    let old_hash = hash(&old_program)?;
     let new_program = root.join(if cfg!(windows) { "successor.exe" } else { "successor" });
     fs::copy(&executable, &new_program)?;
     // Both PE and ELF permit a trailing overlay. It gives the successor a
     // different content identity without substituting the lifecycle code.
     fs::OpenOptions::new().append(true).open(&new_program)?.write_all(b"successor")?;
-    let unused = root.join(if cfg!(windows) { "unused.exe" } else { "unused" });
-    fs::copy(&executable, &unused)?;
-    fs::OpenOptions::new().append(true).open(&unused)?.write_all(b"unused")?;
-    let unused_directory = world.path().join("bin").join(&hash(&unused)?[..24]);
-    ensure_private_dir(&unused_directory)?;
-    fs::copy(&unused, unused_directory.join(old_program.file_name().expect("program name")))?;
+    let new_hash = hash(&new_program)?;
 
     let gate = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     let address = gate.local_addr()?;
@@ -178,9 +179,8 @@ fn exercise() -> anyhow::Result<()> {
         thread::sleep(Duration::from_millis(10));
     };
     let next = pin(&new_program, &world, &root, &bash)?;
-    anyhow::ensure!(old_program.is_file() && hash(&old_program)? == old_hash);
-    anyhow::ensure!(!unused_directory.exists());
-    anyhow::ensure!(next["kept"].as_array().expect("kept copies").len() == 1);
+    anyhow::ensure!(old_program == PathBuf::from(next["copy"].as_str().expect("stable copy")));
+    anyhow::ensure!(hash(&old_program)? == new_hash);
     connection.write_all(&[1])?;
     let ended = loop {
         let job = record::read(&launched.record)?;
@@ -195,11 +195,10 @@ fn exercise() -> anyhow::Result<()> {
         thread::sleep(Duration::from_millis(10));
     }
     let text = fs::read_to_string(&output)?;
-    anyhow::ensure!(text.replace('\r', "") == format!("program {old_hash}\nbundled-ripgrep\n"), "{text}");
+    anyhow::ensure!(text.replace('\r', "") == format!("program {new_hash}\nbundled-ripgrep\n"), "{text}");
     anyhow::ensure!(fs::read_to_string(status)?.trim() == "0");
     let cleaned = pin(&new_program, &world, &root, &bash)?;
-    anyhow::ensure!(!old_program.parent().expect("old directory").exists());
-    anyhow::ensure!(cleaned["kept"].as_array().expect("kept copies").is_empty());
+    anyhow::ensure!(old_program.is_file());
     println!(
         "{}",
         serde_json::json!({

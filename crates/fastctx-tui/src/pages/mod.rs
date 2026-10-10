@@ -4,6 +4,7 @@ pub mod form;
 pub mod journal;
 mod logins;
 pub mod machines;
+mod program;
 pub mod project;
 pub mod talk;
 pub mod world;

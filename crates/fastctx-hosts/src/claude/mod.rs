@@ -74,9 +74,12 @@ pub fn plugin_dir(world: &Path) -> PathBuf {
     marketplace(world).join(PLUGIN)
 }
 
-/// Writes the marketplace and the plugin for the World in `world`, whose
-/// tools `fastctx` serves. Each file is replaced whole.
-pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
+/// Writes the marketplace and plugin using this World's stable program.
+/// Each file is replaced whole; the caller cannot select a delivery image.
+pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
+    let root =
+        trust::directory_key(world.parent().ok_or_else(|| io::Error::other("the World's directory has no parent"))?)?;
+    let command = format!("{root}/bin/fastctx{}", if cfg!(windows) { ".exe" } else { "" });
     let market = marketplace(world);
     let plugin = plugin_dir(world);
     let version = env!("CARGO_PKG_VERSION");
@@ -84,7 +87,6 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
     // The plugin belongs to this World, and its server says so itself: a
     // background session's environment is the Claude Code daemon's, set by
     // whoever started the daemon, so it cannot be trusted to name the World.
-    let root = world.parent().ok_or_else(|| io::Error::other("the World's directory has no parent"))?;
     let files = [
         (
             market.join(".claude-plugin").join("marketplace.json"),
@@ -102,7 +104,7 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
                 "description": description,
                 "author": { "name": "FastCtx" },
                 "mcpServers": {
-                    "fastctx": { "command": fastctx, "args": ["serve"], "env": { "FASTCTX_HOME": root } },
+                    "fastctx": { "command": command, "args": ["serve"], "env": { "FASTCTX_HOME": root } },
                 },
             }),
         ),
@@ -112,7 +114,7 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
                 "modules": ["./world.js"],
                 "hooks": { "Elicitation": [{ "hooks": [{
                     "type": "command",
-                    "command": fastctx,
+                    "command": command,
                     "args": ["claude-elicitation", world],
                 }] }] },
             }),
@@ -132,8 +134,7 @@ pub fn write_plugin(world: &Path, fastctx: &Path) -> io::Result<PathBuf> {
         .replace("__FASTCTX_CONTROLS__", include_str!("control.js"))
         .replace("__FASTCTX_COMMANDS__", include_str!("commands.js"));
     let module = module.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));
-    let module = module
-        .replace("__FASTCTX_COMMAND__", &serde_json::to_string(&fastctx.to_string_lossy()).expect("strings serialize"));
+    let module = module.replace("__FASTCTX_COMMAND__", &serde_json::to_string(&command).expect("strings serialize"));
     write(&plugin.join("hooks").join("presentation.js"), include_bytes!("presentation.js"))?;
     write(&plugin.join("hooks").join("steps.js"), include_bytes!("steps.js"))?;
     write(&plugin.join("hooks").join("world.js"), module.as_bytes())?;
