@@ -27,7 +27,10 @@ pub async fn manage(
         here(node, &resident, action).await?
     } else {
         let call = RemoteCall::Manage { resident: resident.clone(), action };
-        match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|error| Failure::new(error.to_string()))??
+        match node
+            .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+            .await
+            .map_err(|error| Failure::new(error.to_string()))??
         {
             RemoteReply::Managed(managed) => managed,
             _ => return Err(Failure::new(format!("{machine} answered something other than a management result"))),
@@ -49,6 +52,9 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
         node.residents.active(id)?;
     }
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new("unknown resident"))?;
+    if matches!(action, Management::Wake) {
+        crate::homes::available(node, &about)?;
+    }
     // A background birth can already be visible before its CLI returns the
     // session ID. Removing it then would let the later registration create
     // a different resident for the same session.
@@ -133,13 +139,16 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             }
             let manageable = if about.host.agent.as_str() == "claude" {
                 match &about.session {
-                    Some(session) => match crate::claude::management::background_session(node, about.home.as_deref(), session).await {
-                        Ok(session) => session.is_some(),
-                        Err(error) => {
-                            step(&mut result, "host", Outcome::Failed, error.message);
-                            return Ok(result);
+                    Some(session) => {
+                        match crate::claude::management::background_session(node, about.home.as_deref(), session).await
+                        {
+                            Ok(session) => session.is_some(),
+                            Err(error) => {
+                                step(&mut result, "host", Outcome::Failed, error.message);
+                                return Ok(result);
+                            }
                         }
-                    },
+                    }
                     None => false,
                 }
             } else {
@@ -165,9 +174,9 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                         }
                         Err(error) => Err(Failure::new(error)),
                     },
-                    ("claude", true) => {
-                        crate::claude::management::stop(node, about.home.as_deref(), id, session, true).await.map(|()| true)
-                    }
+                    ("claude", true) => crate::claude::management::stop(node, about.home.as_deref(), id, session, true)
+                        .await
+                        .map(|()| true),
                     ("claude", false) => {
                         crate::claude::management::wake(node, about.home.as_deref(), session).await.map(|()| true)
                     }
@@ -234,7 +243,16 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 && about.host.agent.as_str() == "codex"
                 && let Some(thread) = &about.session
             {
-                match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), &about.acting, about.works_on.as_ref()).await {
+                match crate::colleagues::thread_spec(
+                    node,
+                    id,
+                    &about.origin,
+                    town.as_ref(),
+                    &about.acting,
+                    about.works_on.as_ref(),
+                )
+                .await
+                {
                     Ok((spec, _)) => node.codex.of(&about).adopt(thread, spec),
                     Err(error) => step(
                         &mut result,

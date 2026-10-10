@@ -17,6 +17,7 @@ use crate::Node;
 /// The resident's thread, and the app-server of its home that holds it.
 fn thread(node: &Node, resident: &ResidentId) -> Result<(Arc<CodexHost>, String), Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new(format!("{resident} is not here")))?;
+    crate::homes::available(node, &about)?;
     let host = node.codex.of(&about);
     about.session.map(|thread| (host, thread)).ok_or_else(|| Failure::new(format!("{resident} has no Codex thread")))
 }
@@ -135,9 +136,15 @@ async fn fork(
 ) -> Result<Controlled, Failure> {
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
     let id = node.residents.new_id(&source.host.agent)?;
-    let (spec, heard) =
-        crate::colleagues::thread_spec(node, &id, &Origin::User, town.as_ref(), &source.acting, source.works_on.as_ref())
-            .await?;
+    let (spec, heard) = crate::colleagues::thread_spec(
+        node,
+        &id,
+        &Origin::User,
+        town.as_ref(),
+        &source.acting,
+        source.works_on.as_ref(),
+    )
+    .await?;
     let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(Failure::new)?;
     let at = Timestamp::now();
     let about = About {

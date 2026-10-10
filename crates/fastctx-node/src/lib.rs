@@ -103,6 +103,7 @@ pub(crate) struct Node {
     /// This machine's Codex app-server, holding the Codex residents the
     /// World started.
     codex: codex::hosts::CodexHosts,
+    home_changes: std::sync::Mutex<()>,
     unclaimed: codex::Unclaimed,
     /// Claude sessions, as the World's plugin reports them.
     claude: claude::Claude,
@@ -320,6 +321,7 @@ pub async fn run_replacing(
         job_watches: Default::default(),
         residents,
         codex,
+        home_changes: Default::default(),
         unclaimed: codex::Unclaimed::default(),
         claude,
         desk: desk::Desk::default(),
@@ -351,7 +353,8 @@ pub async fn run_replacing(
     });
     // The third version's projects are kept as this computer's own, to be
     // carried into its account at its hub.
-    let (kept, problems) = ledger::third::migrate(&node.world, &node.machine()).context("keeping the third version's projects")?;
+    let (kept, problems) =
+        ledger::third::migrate(&node.world, &node.machine()).context("keeping the third version's projects")?;
     for town in kept {
         node.log.line(format_args!("kept {town}, a project of the network's third version, to carry into the hub"));
     }
