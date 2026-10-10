@@ -46,6 +46,7 @@ pub async fn adopt(node: &Arc<Node>) {
             resident.town.as_ref(),
             &about.acting,
             about.works_on.as_ref(),
+            about.home.as_deref(),
         )
         .await
         {
@@ -244,9 +245,11 @@ async fn drain(node: &Arc<Node>, thread: &str) {
         let result = match event {
             HostEvent::Synchronized { .. } => unreachable!("barriers do not enter the durable queue"),
             HostEvent::Unloaded { .. } => {
-                if node.residents.about(&id).is_some_and(|(about, _)| {
-                    !node.codex.of(&about).is_ok_and(|codex| codex.loaded(thread))
-                }) {
+                if node
+                    .residents
+                    .about(&id)
+                    .is_some_and(|(about, _)| !node.codex.of(&about).is_ok_and(|codex| codex.loaded(thread)))
+                {
                     node.residents.change_now(&node.world, &id, |now| {
                         now.activity = Activity::Asleep;
                         now.since = jiff::Timestamp::now();
@@ -417,8 +420,16 @@ pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
         return;
     }
     let Some(thread) = &about.session else { return };
-    match crate::colleagues::thread_spec(node, id, &about.origin, town.as_ref(), &about.acting, about.works_on.as_ref())
-        .await
+    match crate::colleagues::thread_spec(
+        node,
+        id,
+        &about.origin,
+        town.as_ref(),
+        &about.acting,
+        about.works_on.as_ref(),
+        about.home.as_deref(),
+    )
+    .await
     {
         Ok((spec, _)) => match node.codex.of(&about) {
             Ok(codex) => codex.adopt(thread, spec),

@@ -36,11 +36,9 @@ pub struct Start<'a> {
     pub model: Option<&'a str>,
     pub reasoning_effort: Option<&'a str>,
     /// The login is lent to another account (`world-network.md`, 共享机器与
-    /// 借出智能体): none of its owner's user, project or local settings come
-    /// along, so neither do the owner's hooks, MCP servers, plugins, memory
-    /// files or status line, which act on the owner's machine. The World's
-    /// plugin comes by its own flag, and the owner's consent to the bypass
-    /// mode is read by Claude Code apart from these (2.1.294).
+    /// 借出智能体): it goes without Claude in Chrome, which works the browser
+    /// of the machine it runs on. Everything else of the login comes along as
+    /// its owner set it up; a lent agent is a whole one.
     pub lent: bool,
 }
 
@@ -77,7 +75,7 @@ fn settings_args(start: &Start) -> Vec<OsString> {
         start.instructions.into(),
     ];
     if start.lent {
-        args.extend(["--setting-sources".into(), "".into()]);
+        args.push("--no-chrome".into());
     }
     if let Some(model) = start.model {
         args.extend(["--model".into(), model.into()]);

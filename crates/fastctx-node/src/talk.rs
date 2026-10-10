@@ -565,9 +565,16 @@ pub async fn open_here(
     if let Some(lives_on) = &opened.colleagues {
         crate::colleagues::setting::keep(node, &id, lives_on, opened.colleagues_home.clone())?;
     }
-    let (spec, heard) =
-        crate::colleagues::thread_spec(node, &id, &origin, town.as_ref(), &opened.acting, opened.works_on.as_ref())
-            .await?;
+    let (spec, heard) = crate::colleagues::thread_spec(
+        node,
+        &id,
+        &origin,
+        town.as_ref(),
+        &opened.acting,
+        opened.works_on.as_ref(),
+        opened.home.as_deref(),
+    )
+    .await?;
     let (thread, model) = node.codex.home(opened.home.as_deref())?.start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {

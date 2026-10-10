@@ -143,6 +143,7 @@ async fn fork(
         town.as_ref(),
         &source.acting,
         source.works_on.as_ref(),
+        source.home.as_deref(),
     )
     .await?;
     let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(Failure::new)?;

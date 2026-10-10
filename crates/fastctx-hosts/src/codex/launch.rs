@@ -41,7 +41,7 @@ pub fn codex_home(home: &Path, env: &[(OsString, OsString)]) -> PathBuf {
     }
 }
 
-fn read_config(codex_home: &Path) -> Result<toml::Table, String> {
+pub(crate) fn read_config(codex_home: &Path) -> Result<toml::Table, String> {
     let path = codex_home.join("config.toml");
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,

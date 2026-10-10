@@ -1318,6 +1318,57 @@ fn millis(value: Option<&Value>) -> Timestamp {
         .unwrap_or_else(Timestamp::now)
 }
 
+/// The plugins whose tools work the screen and the browser of the machine
+/// Codex runs on, by the name before their marketplace.
+const DESKTOP_PLUGINS: [&str; 4] = ["computer-use", "unified-computer-use", "chrome", "browser"];
+
+/// The MCP server the desktop app's Computer Use runs in, the browser's
+/// tools included.
+const DESKTOP_SERVER: &str = "node_repl";
+
+/// The hands of a login's own configuration that work the screen and the
+/// browser of the machine it runs on: its Computer Use server, if it has
+/// one, and the plugins of `DESKTOP_PLUGINS`, as that configuration names
+/// them.
+pub fn desktop_hands(codex_home: &Path) -> Result<(Vec<String>, Vec<String>), String> {
+    let config = launch::read_config(codex_home)?;
+    let servers = config
+        .get("mcp_servers")
+        .and_then(toml::Value::as_table)
+        .filter(|servers| servers.contains_key(DESKTOP_SERVER))
+        .map(|_| vec![DESKTOP_SERVER.to_string()])
+        .unwrap_or_default();
+    let plugins = config
+        .get("plugins")
+        .and_then(toml::Value::as_table)
+        .map(|plugins| {
+            plugins
+                .keys()
+                .filter(|name| DESKTOP_PLUGINS.contains(&name.split('@').next().unwrap_or_default()))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((servers, plugins))
+}
+
+/// What a thread of a login lent to another account goes without, added to
+/// `config` (`world-network.md`, 共享机器与借出智能体): the hands that work
+/// the screen and the browser of the machine it runs on, `desktop_hands`,
+/// which the account lent may not touch. Everything else of the login comes
+/// along as its owner set it up: its other MCP servers, plugins, skills,
+/// hooks, memories and AGENTS.md, and the account's apps; a lent agent is a
+/// whole one. Codex's own shell and image viewer are off for every thread
+/// the World starts, `run` doing their work.
+pub fn lend(config: &mut Value, servers: &[String], plugins: &[String]) {
+    for name in servers {
+        config["mcp_servers"][name] = json!({ "enabled": false });
+    }
+    for name in plugins {
+        config["plugins"][name] = json!({ "enabled": false });
+    }
+}
+
 /// The settings that give a thread the World's tools, `tools`, in place of
 /// any fastctx the user registered: `binary` serving them with the
 /// environment `env`, and the limits above. Codex's own shell and image

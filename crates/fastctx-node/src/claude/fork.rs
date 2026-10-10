@@ -41,7 +41,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let settings = directory.path().join("claude-settings.json");
     let instructions = directory.path().join("claude-instructions.md");
     let lent = node.works_here(&source.acting).is_err();
-    std::fs::write(&settings, super::settings_json(lent))
+    std::fs::write(&settings, super::settings_json())
         .and_then(|()| std::fs::write(&instructions, words))
         .map_err(failure)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;

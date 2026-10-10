@@ -392,6 +392,7 @@ pub(crate) async fn set(node: &Arc<Node>, resident: &ResidentId, works_on: Optio
             town.as_ref(),
             &about.acting,
             works_on.as_ref(),
+            about.home.as_deref(),
         )
         .await?;
         node.codex.of(&about)?.adopt(thread, spec);

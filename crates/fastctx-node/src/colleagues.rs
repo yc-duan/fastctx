@@ -156,7 +156,7 @@ pub async fn ask_here(
     let id = node.residents.new_id(&agent)?;
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
     let _birth = crate::here::born(node, &id, acting.clone(), None);
-    let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, None).await?;
+    let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, None, home.as_deref()).await?;
     let (thread, model) = node.codex.home(home.as_deref())?.start_thread(spec).await.map_err(|error| {
         Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
     })?;
@@ -249,7 +249,10 @@ pub async fn ask_here(
 
 /// What a thread the World holds is started and resumed with: where it is,
 /// with its town's map, and whom it works for, and the World's tools under
-/// its own name. Also what it is told of its town by that.
+/// its own name. Also what it is told of its town by that. `home` is the
+/// Codex login it is of, none for the default one here; a login lent to
+/// another account goes without the hands that work this machine's screen
+/// and browser (`codex::lend`).
 pub async fn thread_spec(
     node: &Arc<Node>,
     id: &ResidentId,
@@ -257,6 +260,7 @@ pub async fn thread_spec(
     town: Option<&TownName>,
     acting: &Acting,
     works_on: Option<&Written>,
+    home: Option<&std::path::Path>,
 ) -> Result<(ThreadSpec, Heard), Failure> {
     let here = node.machine();
     let cwd = standing(node, town)?;
@@ -277,6 +281,11 @@ pub async fn thread_spec(
         }
     };
     let mut config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
+    if works_on.filter(|works_on| !node.is_here(works_on)).is_none() && node.works_here(acting).is_err() {
+        let config_home = home.unwrap_or_else(|| node.codex.default().config_home());
+        let (servers, plugins) = codex::desktop_hands(config_home).map_err(Failure::new)?;
+        codex::lend(&mut config, &servers, &plugins);
+    }
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
     let (developer_instructions, heard) = instructions(node, id, town, origin, acting, works_on).await?;
     Ok((ThreadSpec { cwd, developer_instructions, config, name }, heard))

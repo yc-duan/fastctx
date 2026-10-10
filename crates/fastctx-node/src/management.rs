@@ -256,6 +256,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                     town.as_ref(),
                     &about.acting,
                     about.works_on.as_ref(),
+                    about.home.as_deref(),
                 )
                 .await
                 {

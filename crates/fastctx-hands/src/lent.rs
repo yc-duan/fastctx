@@ -17,7 +17,7 @@ pub fn opening(machines: &[String]) -> String {
         )
     };
     format!(
-        "You have no access to the computer this program runs on: the user may use this agent, not that computer. The working directory, platform and paths your host reports are that computer's; nothing you do may touch it.\n{reach}"
+        "You have no access to the computer this program runs on: the user may use this agent, not that computer. The working directory, platform and paths your host reports are that computer's, and your shell never runs there. Guidance that calls that computer one of your machines, or says `run` starts on it, was written for its owner's own sessions and does not apply to you.\n{reach}"
     )
 }
 
