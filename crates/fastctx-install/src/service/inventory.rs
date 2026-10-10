@@ -70,6 +70,7 @@ impl Registration {
                     }
                     if std::fs::read_dir(artifact)?.next().is_none() {
                         std::fs::remove_dir(artifact)?;
+                        retire_services_dir(artifact)?;
                     }
                 }
                 Ok(_) => crate::uninstall::delete_file(artifact)?,
@@ -77,6 +78,24 @@ impl Registration {
         }
         Ok(left)
     }
+}
+
+/// The protected directory every Windows service of fastctx lives under goes
+/// with the last of them; while it holds anything but the lock they share, it
+/// stays.
+fn retire_services_dir(service: &std::path::Path) -> anyhow::Result<()> {
+    let Some(services) =
+        service.parent().filter(|parent| parent.file_name().is_some_and(|name| name == "fastctx-services"))
+    else {
+        return Ok(());
+    };
+    let names =
+        std::fs::read_dir(services)?.map(|entry| Ok(entry?.file_name())).collect::<std::io::Result<Vec<_>>>()?;
+    if names.iter().all(|name| name == "policy.lock") {
+        crate::uninstall::delete_file(&services.join("policy.lock"))?;
+        std::fs::remove_dir(services)?;
+    }
+    Ok(())
 }
 
 pub fn registrations(installation: &crate::uninstall::Installation) -> anyhow::Result<Vec<Registration>> {
