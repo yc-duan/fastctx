@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod withdrawal;
+
 pub(super) const COMMAND: &str = "fastctx";
 
 pub(super) fn portable(source: &Source<'_>) -> bool {
@@ -41,40 +43,6 @@ pub(super) fn conflict(reason: &str) -> String {
     )
 }
 
-pub(super) fn withdrawal(location: &str) -> String {
-    format!(
-        "{location}: unapply removes the fastctx server from this shared configuration file; after synchronization, the other machines also lose that server"
-    )
-}
-
-pub(super) fn on_path() -> bool {
-    let Some(path) = std::env::var_os("PATH") else { return false };
-    let mut names = vec![COMMAND.to_owned()];
-    if cfg!(windows) {
-        let extensions = std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
-        names.extend(
-            extensions
-                .to_string_lossy()
-                .split(';')
-                .filter(|extension| !extension.is_empty())
-                .map(|extension| format!("{COMMAND}{extension}")),
-        );
-    }
-    std::env::split_paths(&path).any(|directory| {
-        names.iter().any(|name| {
-            let file = directory.join(name);
-            if !file.is_file() {
-                return false;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                file.metadata().is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            }
-            #[cfg(not(unix))]
-            {
-                true
-            }
-        })
-    })
+pub(super) fn withdrawal(before: &[u8], after: &[u8], location: &str) -> Result<Option<String>, Error> {
+    withdrawal::describe(before, after, location)
 }

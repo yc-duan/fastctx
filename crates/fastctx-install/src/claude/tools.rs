@@ -20,6 +20,10 @@ pub struct Receipt {
 }
 
 impl Receipt {
+    pub(crate) fn bind_home(&mut self, home: &std::path::Path) {
+        self.path = home.join("settings.json").to_string_lossy().into_owned();
+    }
+
     pub(crate) fn settings_path(&self) -> &std::path::Path {
         std::path::Path::new(&self.path)
     }

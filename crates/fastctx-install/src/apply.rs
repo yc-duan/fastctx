@@ -401,7 +401,9 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         change(&mut changes, config, Some(applied.config));
         change(&mut changes, agents, Some(applied.agents));
         record.codex = Some(applied.receipt);
-        if record.codex.as_ref().is_some_and(codex::Receipt::portable) && !codex::portable_on_path() {
+        if record.codex.as_ref().is_some_and(codex::Receipt::portable)
+            && !codex::portable_on_path(&places.codex_home).map_err(Error::Io)?
+        {
             report.messages.push(format!("{}: command = \"fastctx\" is preserved, but fastctx was not found on this process's PATH; Codex cannot start the World's tools unless fastctx is on the PATH Codex inherits", config_path));
         }
         report.notices.extend(applied.notices);
@@ -772,7 +774,7 @@ fn read_plugin_record(path: &Path, settings: &Path, record: &Record) -> Result<O
         .clone()
         .or_else(|| record.claude_md.as_ref().map(|receipt| Path::new(&receipt.path).with_file_name("settings.json")));
     if let Some(previous) = previous {
-        crate::check_path(&text(settings), &text(&previous))?;
+        homes::check_file(&previous, settings)?;
     }
     Ok(Some(plugin))
 }

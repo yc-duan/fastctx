@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, File, Notice, check_path, finish};
 
+mod shared;
+
 pub const BEGIN: &[u8] = b"<!-- fastctx:begin -->";
 pub const END: &[u8] = b"<!-- fastctx:end -->";
 pub(crate) const OLD_BEGIN: &[u8] = b"<!-- fastread:begin -->";
@@ -42,19 +44,8 @@ pub struct Unapplied {
 /// need a matching receipt and identical bytes. The body may not contain a
 /// marker. The surrounding file need not be UTF-8.
 pub fn apply(file: File<'_>, body: &str, previous: Option<&Receipt>) -> Result<Applied, Error> {
-    for marker in [BEGIN, END, OLD_BEGIN, OLD_END] {
-        if contains(body.as_bytes(), marker) {
-            return Err(Error::at(file.path, "the supplied guidance body contains a reserved marker"));
-        }
-    }
+    let block = block(body, file.path)?;
     let original = file.bytes.unwrap_or_default();
-    let mut block = BEGIN.to_vec();
-    block.push(b'\n');
-    block.extend_from_slice(body.as_bytes());
-    if !body.ends_with('\n') {
-        block.push(b'\n');
-    }
-    block.extend_from_slice(END);
     let range = marker_range(original, BEGIN, END, file.path)?;
     if let Some(receipt) = previous
         && let Some(range) = range
@@ -72,9 +63,8 @@ pub fn apply(file: File<'_>, body: &str, previous: Option<&Receipt>) -> Result<A
     if range.is_some() {
         return Err(Error::at(file.path, "the fastctx block has no ownership receipt"));
     }
-    // A recorded block that is gone, as when something rewrote the file
-    // without it, goes back in; whether the file existed before the first
-    // apply is still what that apply found.
+    // A recorded block that is gone goes back in; original file existence
+    // still comes from the first apply, rather than a later synchronization.
     if let Some(receipt) = previous {
         check_path(file.path, &receipt.path)?;
     }
@@ -86,6 +76,26 @@ pub fn apply(file: File<'_>, body: &str, previous: Option<&Receipt>) -> Result<A
     bytes.extend_from_slice(&suffix);
     let original_existed = previous.map_or(file.bytes.is_some(), |receipt| receipt.original_existed);
     Ok(Applied { bytes, receipt: Receipt { path: file.path.into(), original_existed, block, prefix, suffix } })
+}
+
+pub(crate) fn apply_shared(file: File<'_>, body: &str, previous: Option<&Receipt>) -> Result<(Applied, bool), Error> {
+    shared::apply(file, body, previous)
+}
+
+fn block(body: &str, location: &str) -> Result<Vec<u8>, Error> {
+    for marker in [BEGIN, END, OLD_BEGIN, OLD_END] {
+        if contains(body.as_bytes(), marker) {
+            return Err(Error::at(location, "the supplied guidance body contains a reserved marker"));
+        }
+    }
+    let mut block = BEGIN.to_vec();
+    block.push(b'\n');
+    block.extend_from_slice(body.as_bytes());
+    if !body.ends_with('\n') {
+        block.push(b'\n');
+    }
+    block.extend_from_slice(END);
+    Ok(block)
 }
 
 /// Removes only a block whose bytes still match. Drift is returned as a
