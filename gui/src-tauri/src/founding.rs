@@ -44,7 +44,7 @@ pub(crate) fn here_addresses() -> Result<Vec<Address>, String> {
 /// its super administrator, reached at `public` (each IP:PORT); runs the hub
 /// as a service; and logs in to it as `admin`, registering this computer as
 /// one of its machines when `register`.
-#[tauri::command]
+#[fastctx_gui_command::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_world(
     shell: tauri::State<'_, Shell>,

@@ -17,7 +17,7 @@ fn page(name: String) -> Result<PageName, String> {
     PageName::try_from(name).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn page_read(
     shell: tauri::State<'_, Shell>,
     town: String,
@@ -27,7 +27,7 @@ pub async fn page_read(
     shell.world().page(self::town(town)?, self::page(page)?, version).await.map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn page_history(
     shell: tauri::State<'_, Shell>,
     town: String,
@@ -36,7 +36,7 @@ pub async fn page_history(
     shell.world().page_history(self::town(town)?, self::page(page)?).await.map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn page_consent(
     shell: tauri::State<'_, Shell>,
     town: String,
@@ -52,7 +52,7 @@ pub async fn page_consent(
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn page_act(
     shell: tauri::State<'_, Shell>,
     town: String,
@@ -67,7 +67,7 @@ pub async fn page_act(
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn page_withdraw(
     shell: tauri::State<'_, Shell>,
     town: String,
@@ -77,7 +77,7 @@ pub async fn page_withdraw(
     shell.world().withdraw_page(self::town(town)?, self::page(page)?, base).await.map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn page_restore(
     shell: tauri::State<'_, Shell>,
     town: String,

@@ -25,7 +25,7 @@ pub enum Piece {
     Ended { error: Option<String> },
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn composer_read(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
@@ -38,7 +38,7 @@ pub async fn composer_read(
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn composer_update(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
@@ -52,7 +52,7 @@ pub async fn composer_update(
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn composer_send(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
@@ -69,7 +69,7 @@ pub async fn composer_send(
     .await
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn composer_watch(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
@@ -221,7 +221,7 @@ pub struct AttachmentAdded {
     updated: Result<Updated, String>,
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn composer_attach_path(
     shell: tauri::State<'_, Shell>,
@@ -253,7 +253,7 @@ pub async fn composer_attach_path(
     })
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn composer_attach_bytes(
     shell: tauri::State<'_, Shell>,
     request: tauri::ipc::Request<'_>,

@@ -68,7 +68,7 @@ fn command(app: &AppHandle, action: &str, everything: bool) -> Result<Command, S
     Ok(command)
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn removal_plan(app: AppHandle, everything: bool) -> Result<Plan, String> {
     let mut command = command(&app, "plan", everything)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -82,7 +82,7 @@ pub async fn removal_plan(app: AppHandle, everything: bool) -> Result<Plan, Stri
     .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn removal_run(
     app: AppHandle,
     shell: tauri::State<'_, crate::Shell>,
@@ -181,7 +181,7 @@ pub async fn removal_run(
     .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub async fn removal_finish(app: AppHandle, everything: bool) -> Result<(), String> {
     if !app.state::<State>().0.lock().expect("removal state").ready {
         return Err("the local kernel steps must finish before removing the application".into());

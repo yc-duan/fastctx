@@ -47,7 +47,7 @@ pub(crate) async fn logged_in(shell: &Shell, (hub, name, account): (HubName, Mac
 /// Logs in to `account` at the hub written `hub` with its password, and
 /// on a computer registers it as one of the account's machines when
 /// `register`.
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn login(
     shell: tauri::State<'_, Shell>,
     hub: String,
@@ -70,7 +70,7 @@ pub(crate) async fn login(
 }
 
 /// Logs in with a one-time token another device made.
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn login_token(
     shell: tauri::State<'_, Shell>,
     token: String,
@@ -86,7 +86,7 @@ pub(crate) async fn login_token(
 }
 
 /// Opens `account` on a hub that lets anyone, and logs in to it.
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn open_account(
     shell: tauri::State<'_, Shell>,
     hub: String,
@@ -105,14 +105,14 @@ pub(crate) async fn open_account(
 }
 
 /// Every hub this computer or device is on, with what it sees of each.
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn accounts(shell: tauri::State<'_, Shell>) -> Result<AccountsReply, String> {
     shell.world().accounts().await.map_err(|error| error.to_string())
 }
 
 /// Makes `change` as `account` at the hub named `hub`, or the one hub;
 /// returns a token when it made one.
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn account_change(
     shell: tauri::State<'_, Shell>,
     hub_name: Option<String>,
@@ -124,7 +124,7 @@ pub(crate) async fn account_change(
 
 /// The line that installs fastctx on a Linux server and registers it as a
 /// machine of `account`, valid for `hours`.
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn server_command(
     shell: tauri::State<'_, Shell>,
     hub_name: Option<String>,
@@ -144,7 +144,7 @@ pub(crate) async fn server_command(
 
 /// Sets where a conversation works: a machine as written, or the one it
 /// lives on.
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn works_on(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
@@ -163,7 +163,7 @@ pub(crate) async fn works_on(
 
 /// Turns asking for colleagues on for a conversation, with where they
 /// live and the Codex home they use there, or off.
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn colleagues(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
@@ -182,7 +182,7 @@ pub(crate) async fn colleagues(
 }
 
 /// Adds an agent's home on a machine, or hides one or shows it again.
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn agent_homes(
     shell: tauri::State<'_, Shell>,
     machine_name: String,

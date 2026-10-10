@@ -105,20 +105,20 @@ struct Native(PluginHandle<tauri::Wry>);
 
 macro_rules! command {
     ($name:ident, $native:literal) => {
-        #[tauri::command]
+        #[fastctx_gui_command::command]
         async fn $name(state: tauri::State<'_, Native>) -> Result<Value, String> {
             state.0.run_mobile_plugin_async($native, ()).await.map_err(|error| error.to_string())
         }
     };
     ($name:ident, $native:literal, $argument:ident) => {
-        #[tauri::command]
+        #[fastctx_gui_command::command]
         async fn $name(state: tauri::State<'_, Native>, $argument: Value) -> Result<Value, String> {
             state.0.run_mobile_plugin_async($native, serde_json::json!({stringify!($argument): $argument}))
                 .await.map_err(|error| error.to_string())
         }
     };
 }
-#[tauri::command]
+#[fastctx_gui_command::command]
 async fn status(state: tauri::State<'_, Native>) -> Result<Value, String> {
     let mut status: Value = state.0.run_mobile_plugin_async("status", ()).await.map_err(|error| error.to_string())?;
     status["connection"] =

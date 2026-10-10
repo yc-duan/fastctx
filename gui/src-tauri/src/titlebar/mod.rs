@@ -83,18 +83,18 @@ async fn on_window<T: Send + 'static>(
 /// Rectangles are viewport CSS pixels; scale is the page's devicePixelRatio.
 /// The page registers after mounting its buttons. The native input region
 /// follows the rendered layout without changing any page styles.
-#[tauri::command]
+#[fastctx_gui_command::command]
 async fn update(window: tauri::WebviewWindow, regions: Regions) -> Result<State, String> {
     regions.validate()?;
     on_window(window, move |window| native::update(window, regions)).await
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 async fn action(window: tauri::WebviewWindow, action: Action) -> Result<(), String> {
     on_window(window, move |window| native::action(&window, action)).await
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 async fn detach(window: tauri::WebviewWindow) -> Result<(), String> {
     on_window(window, |window| native::detach(&window)).await
 }
