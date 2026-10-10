@@ -178,6 +178,16 @@ pub fn enter() -> Result<Option<Instance>, String> {
             result?;
             Ok(None)
         }
+        // The installer's last step: this computer kept in the World from
+        // boot. What came of it is said and the installation goes on either
+        // way; the settings offer what is missing.
+        [command] if command == "--keep-connected" => {
+            match crate::setup::keep_at_install() {
+                Ok(kept) => println!("{kept}"),
+                Err(error) => eprintln!("keeping this computer in the World: {error}"),
+            }
+            Ok(None)
+        }
         [] => instance::enter(Launch::Open(None)),
         [route] if route.starts_with("#/") => {
             notifications::route(route)?;

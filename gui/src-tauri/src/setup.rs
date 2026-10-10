@@ -173,6 +173,39 @@ pub async fn keep(world: &World) -> Result<KeptNow, String> {
     })
 }
 
+/// What installing World does for this computer besides the application
+/// (`world-network.md`, 登记了，就一直连着): the fastctx it carries put in
+/// place when there is none yet, and the service that keeps the node from
+/// boot, administrator rights asked for once; a node already running hands
+/// the World over to the service's. An update finds both there and changes
+/// neither: a newer World is put in place by the user, from the settings.
+/// Declined rights leave the installation standing; the settings offer the
+/// service again.
+pub fn keep_at_install() -> Result<String, String> {
+    let places = places()?;
+    if !places.installed().is_file() {
+        place()?;
+    }
+    let (kept, _) = keep_connected(&places).map_err(|error| error.to_string())?;
+    if kept == Kept::Installed {
+        hand_over_running(&places)?;
+    }
+    Ok(format!("{kept:?}"))
+}
+
+/// Asks the node running for this World, if one is, to hand the World over
+/// to the service's; none is started for the asking.
+fn hand_over_running(places: &Places) -> Result<(), String> {
+    let world = WorldDir::under(&places.root);
+    tauri::async_runtime::block_on(async {
+        match fastctx_client::Client::connect(&world, fastctx_client::command_peer()).await {
+            Ok(mut client) => client.call(fastctx_types::Call::HandOver).await.map(drop).map_err(|error| error.to_string()),
+            Err(fastctx_client::ConnectError::NoNode { .. }) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    })
+}
+
 /// Removes the service that keeps this machine's node, with the same
 /// rights installing it took.
 pub fn release() -> Result<KeptNow, String> {
