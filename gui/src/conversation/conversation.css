@@ -1114,17 +1114,11 @@
   border: 0;
   border-radius: var(--radius-s);
   outline: 0;
-  background: var(--bg);
-  background: var(--fill);
+  background: var(--field);
   color: var(--text);
   font: inherit;
   font-size: var(--size-ui);
-  transition: box-shadow var(--hover) ease;
   color-scheme: inherit;
-}
-
-.ask-input:focus {
-  background: var(--field);
 }
 
 .ask-input::placeholder {
@@ -1271,10 +1265,6 @@
 
 .find-bar[hidden] {
   display: none;
-}
-
-.find-bar:focus-within {
-  box-shadow: var(--shadow-pop), 0 0 0 1px color-mix(in srgb, var(--focus) 55%, var(--rule));
 }
 
 .find-glyph {

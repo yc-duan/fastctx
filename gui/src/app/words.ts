@@ -74,6 +74,7 @@ export interface NewTalkWords {
   sameMachine: string;
   /** Why a lent agent is asked no machine to work on. */
   lentWorks(owner: string): string;
+  lentWorksShort: string;
   /** The first use of an agent on another's machine: what it lets that
    *  machine do; `everything` for the super administrator. */
   reaches(owner: string, machine: string, everything: boolean): string;
@@ -137,8 +138,9 @@ export const zhNewTalk: NewTalkWords = {
     `这个智能体借自 ${owner}，跑在 ${owner} 的机器上，却碰不到那台电脑：它的每条命令都会写明去你的哪台机器，所以这里不用替它选在哪台干活。`,
   reaches: (owner, machine, everything) =>
     everything
-      ? `这是你第一次用 ${machine} 上的智能体。你是超级管理员：用了它，${machine} 上的智能体就能访问这个中枢上的每一台机器，而 ${machine} 归 ${owner}，等于 ${owner} 也能。以后可以在账号页上拿掉。`
-      : `这是你第一次用 ${machine} 上的智能体。用了它，${machine} 上的智能体就能访问你的机器，而 ${machine} 归 ${owner}，等于 ${owner} 也能。只用信得过的人的智能体；以后可以在账号页上拿掉。`,
+      ? `第一次用 ${machine} 上的智能体：你是超级管理员，用了它，它就能访问这个中枢的每一台机器，${machine} 归 ${owner}，${owner} 因此也能。以后可在账号页拿掉。`
+      : `第一次用 ${machine} 上的智能体：用了它，它就能访问你的机器，${machine} 归 ${owner}，${owner} 因此也能。以后可在账号页拿掉。`,
+  lentWorksShort: "每条命令都写明去你的哪台机器",
   colleagues: "同事住哪台",
   noColleagues: "不请同事",
   lentBy: (owner) => `借自 ${owner}`,
@@ -190,8 +192,9 @@ export const enNewTalk: NewTalkWords = {
     `This agent is lent by ${owner} and runs on ${owner}'s machine, which it cannot touch: each of its commands names one of your machines, so there is no machine to choose for it here.`,
   reaches: (owner, machine, everything) =>
     everything
-      ? `This is the first time you use an agent on ${machine}. You are the super administrator: once you do, the agents on ${machine} can reach every machine on this hub, and ${machine} is ${owner}'s, so ${owner} can too. You can take that back on the account page.`
-      : `This is the first time you use an agent on ${machine}. Once you do, the agents on ${machine} can reach your machines, and ${machine} is ${owner}'s, so ${owner} can too. Use only agents of people you trust; you can take that back on the account page.`,
+      ? `First use of an agent on ${machine}: you are the super administrator, so once you use it, it can reach every machine on this hub, and ${machine} is ${owner}'s, so ${owner} can too. You can take that back on the account page.`
+      : `First use of an agent on ${machine}: once you use it, it can reach your machines, and ${machine} is ${owner}'s, so ${owner} can too. You can take that back on the account page.`,
+  lentWorksShort: "Each command names one of your machines",
   colleagues: "Colleagues on",
   noColleagues: "no colleagues",
   lentBy: (owner) => `lent by ${owner}`,

@@ -785,7 +785,7 @@ export class NewTalk {
             : `<span class="choice-none">${escape(none)}</span>`
         }</div>
       </div>`;
-    const said = (text: string, kind = "") => `<p class="choice-said${kind}">${escape(text)}</p>`;
+    const said = (text: string, kind = "", whole = "") => `<p class="choice-said${kind}"${whole ? ` title="${escape(whole)}"` : ""}>${escape(text)}</p>`;
     // Using an agent on another's machine lets that machine reach the
     // account's machines, from the first time on: said before it begins.
     const owner = option ? (lent ? lent.owner : lives && login && !owns(lives, login) ? ownerOf(lives, login) : null) : null;
@@ -814,7 +814,7 @@ export class NewTalk {
         : "",
       efforts.length > 1 ? row("effort", words.effort, efforts.map((e) => ({ value: e, label: e })), this.effort) : "",
       towns.length > 1 ? row("town", words.project, towns, this.town) : "",
-      lent ? said(words.lentWorks(lent.owner ?? ""), " choice-margin") : places.length > 1 ? row("works", words.worksOn, places, this.worksOn ?? "") : "",
+      lent ? said(words.lentWorksShort, " choice-margin", words.lentWorks(lent.owner ?? "")) : places.length > 1 ? row("works", words.worksOn, places, this.worksOn ?? "") : "",
       homes.length > 1 ? row("colleagues", words.colleagues, homes, this.colleagues ?? "") : "",
       colleagueLogins.length > 1 ? row("colleagues-home", words.colleaguesLogin, colleagueLogins, this.colleaguesHome ?? "") : "",
       this.colleagues ? said(words.colleaguesWhat(this.colleagues)) : "",
