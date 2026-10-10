@@ -3,6 +3,8 @@
 # cargo-zigbuild 0.23.0, Zig 0.14.1, qemu-user for ARM64 checks, and Tauri's
 # Ubuntu build prerequisites. cargo-about requires --features cli.
 # The caller supplies its resource-bounded filesystem and process scope.
+# A tree without git passes the commit's time as SOURCE_DATE_EPOCH: it orders
+# builds of the same version (crates/fastctx-install/build.rs).
 set -euo pipefail
 if [ "$(uname -m)" != x86_64 ]; then
   printf 'This release script builds the x86_64 GUI and both Linux CLI architectures; run it on x86_64 Linux.\n' >&2

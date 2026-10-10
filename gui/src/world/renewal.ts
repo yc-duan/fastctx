@@ -3,7 +3,9 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-export interface NodeBuild { version: string; protocol: number; digest: string }
+/** A build of fastctx: its package version, protocol, content digest, and
+ *  when its source was made, which orders builds of the same version. */
+export interface NodeBuild { version: string; protocol: number; digest: string; built?: number | null }
 export interface VersionMismatch {
   node_version: string; node_protocol: number;
   client_version: string; client_protocol: number;
@@ -46,11 +48,16 @@ export function buildLabel(build: NodeBuild | null | undefined): string {
   return build ? `${build.version} / IPC ${build.protocol} / ${build.digest}` : "?";
 }
 
+/** Where the node stands against the carried build: newer, older, or of an
+ *  order not known. The same version is ordered by when its source was made;
+ *  a build that records it is later than one that does not. */
 export function buildOrder(carried: NodeBuild | null | undefined, node: NodeBuild): "older" | "newer" | "different" {
   if (carried && /^\d+\.\d+\.\d+$/.test(carried.version) && /^\d+\.\d+\.\d+$/.test(node.version)) {
     const left = carried.version.split(".").map(BigInt);
     const right = node.version.split(".").map(BigInt);
     for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] < right[i] ? "newer" : "older";
+    const [mine, theirs] = [carried.built ?? null, node.built ?? null];
+    if (mine !== theirs) return mine === null ? "newer" : theirs === null || theirs < mine ? "older" : "newer";
   }
   return "different";
 }

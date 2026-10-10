@@ -17,6 +17,11 @@ pub struct Build {
     /// SHA-256 of the executable, distinguishing development builds that
     /// have the same package version and protocol.
     pub digest: String,
+    /// When its source was made, in Unix seconds: what orders two builds of
+    /// the same package version. Builds made before this was recorded, and
+    /// builds from a source with no time, have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub built: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

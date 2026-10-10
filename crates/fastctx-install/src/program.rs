@@ -58,25 +58,35 @@ fn identify(path: &Path) -> anyhow::Result<Build> {
         path.display(),
         identified.status
     );
-    Ok(Build { version: version.into(), protocol: 0, digest })
+    Ok(Build { version: version.into(), protocol: 0, digest, built: None })
 }
 
 /// Identical images are reusable. A different image needs a strictly newer
-/// package version: neither a digest nor a protocol number orders releases.
+/// package version, or the same version with a later source time; a build
+/// with a source time is later than one without. Neither a digest nor a
+/// protocol number orders releases.
 pub fn newer(candidate: &Build, previous: &Build) -> anyhow::Result<bool> {
+    use std::cmp::Ordering;
     if candidate == previous {
         return Ok(false);
     }
     let offered = semver::Version::parse(&candidate.version)?;
     let current = semver::Version::parse(&previous.version)?;
+    let by_time = match (candidate.built, previous.built) {
+        (Some(offered), Some(current)) => offered.cmp(&current),
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+        (None, None) => Ordering::Equal,
+    };
+    let order = offered.cmp_precedence(&current).then(by_time);
     ensure!(
-        offered.cmp_precedence(&current) != std::cmp::Ordering::Equal,
-        "different kernels both report {}; their order is unknown (installed IPC {}, offered IPC {}); use a newer package version",
+        order != Ordering::Equal,
+        "different kernels both report {} from the same source time; their order is unknown (installed IPC {}, offered IPC {}); use a newer package version",
         candidate.version,
         previous.protocol,
         candidate.protocol
     );
-    Ok(offered.cmp_precedence(&current) == std::cmp::Ordering::Greater)
+    Ok(order == Ordering::Greater)
 }
 
 pub fn notices(path: &Path) -> anyhow::Result<std::collections::BTreeMap<String, String>> {

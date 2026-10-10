@@ -14,7 +14,7 @@ pub struct Fixtures {
 }
 
 pub fn fixtures() -> Fixtures {
-    let build = Build { version: "1.0.0".into(), protocol: 6, digest: "ab".repeat(32) };
+    let build = Build { version: "1.0.0".into(), protocol: 6, digest: "ab".repeat(32), built: Some(1_791_600_000) };
     let mismatch =
         Mismatch { node_version: "1.0.0".into(), node_protocol: 5, client_version: "1.0.0".into(), client_protocol: 6 };
     let node = Running {
@@ -55,7 +55,7 @@ pub fn fixtures() -> Fixtures {
                     lookup: PathLookup::Windows,
                     path: "C:/npm/fastctx.cmd".into(),
                     executable: Some("C:/npm/node_modules/@fastctx/win32-x64/bin/fastctx.exe".into()),
-                    build: Some(Build { version: "0.2.6".into(), protocol: 0, digest: "ef".repeat(32) }),
+                    build: Some(Build { version: "0.2.6".into(), protocol: 0, digest: "ef".repeat(32), built: None }),
                     is_world: Some(false),
                     legacy_unapply: true,
                     error: None,

@@ -12342,7 +12342,8 @@
           "build": {
             "version": "1.0.0",
             "protocol": 6,
-            "digest": "abababababababababababababababababababababababababababababababab"
+            "digest": "abababababababababababababababababababababababababababababababab",
+            "built": 1791600000
           },
           "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
@@ -12367,12 +12368,14 @@
         "client": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "installed": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "commands": [
           {
@@ -12393,7 +12396,8 @@
           "build": {
             "version": "1.0.0",
             "protocol": 6,
-            "digest": "abababababababababababababababababababababababababababababababab"
+            "digest": "abababababababababababababababababababababababababababababababab",
+            "built": 1791600000
           },
           "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
@@ -12408,7 +12412,8 @@
         "pending": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "phase": "staged",
         "error": null
@@ -12417,12 +12422,14 @@
         "client": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "installed": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "commands": [
           {
@@ -12443,7 +12450,8 @@
           "build": {
             "version": "1.0.0",
             "protocol": 6,
-            "digest": "abababababababababababababababababababababababababababababababab"
+            "digest": "abababababababababababababababababababababababababababababababab",
+            "built": 1791600000
           },
           "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
@@ -12458,7 +12466,8 @@
         "pending": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "phase": "preparing",
         "error": null
@@ -12467,12 +12476,14 @@
         "client": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "installed": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "commands": [
           {
@@ -12493,7 +12504,8 @@
           "build": {
             "version": "1.0.0",
             "protocol": 6,
-            "digest": "abababababababababababababababababababababababababababababababab"
+            "digest": "abababababababababababababababababababababababababababababababab",
+            "built": 1791600000
           },
           "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
@@ -12508,7 +12520,8 @@
         "pending": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "phase": "waiting_for_idle",
         "error": null
@@ -12517,12 +12530,14 @@
         "client": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "installed": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "commands": [
           {
@@ -12549,7 +12564,8 @@
         "pending": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "phase": "awaiting_legacy_exit",
         "error": null
@@ -12558,12 +12574,14 @@
         "client": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "installed": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "commands": [
           {
@@ -12584,7 +12602,8 @@
           "build": {
             "version": "1.0.0",
             "protocol": 6,
-            "digest": "abababababababababababababababababababababababababababababababab"
+            "digest": "abababababababababababababababababababababababababababababababab",
+            "built": 1791600000
           },
           "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
@@ -12599,7 +12618,8 @@
         "pending": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "phase": "awaiting_administrator",
         "error": null
@@ -12608,12 +12628,14 @@
         "client": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "installed": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "commands": [
           {
@@ -12634,7 +12656,8 @@
           "build": {
             "version": "1.0.0",
             "protocol": 6,
-            "digest": "abababababababababababababababababababababababababababababababab"
+            "digest": "abababababababababababababababababababababababababababababababab",
+            "built": 1791600000
           },
           "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
@@ -12649,7 +12672,8 @@
         "pending": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "phase": "updating_guardian",
         "error": null
@@ -12658,12 +12682,14 @@
         "client": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "installed": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "commands": [
           {
@@ -12684,7 +12710,8 @@
           "build": {
             "version": "1.0.0",
             "protocol": 6,
-            "digest": "abababababababababababababababababababababababababababababababab"
+            "digest": "abababababababababababababababababababababababababababababababab",
+            "built": 1791600000
           },
           "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
@@ -12699,7 +12726,8 @@
         "pending": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "phase": "returning_to_service",
         "error": null
@@ -12708,12 +12736,14 @@
         "client": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "installed": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "commands": [
           {
@@ -12734,7 +12764,8 @@
           "build": {
             "version": "1.0.0",
             "protocol": 6,
-            "digest": "abababababababababababababababababababababababababababababababab"
+            "digest": "abababababababababababababababababababababababababababababababab",
+            "built": 1791600000
           },
           "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
@@ -12754,12 +12785,14 @@
         "client": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "installed": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "commands": [
           {
@@ -12780,7 +12813,8 @@
           "build": {
             "version": "1.0.0",
             "protocol": 6,
-            "digest": "abababababababababababababababababababababababababababababababab"
+            "digest": "abababababababababababababababababababababababababababababababab",
+            "built": 1791600000
           },
           "executable": "C:/Users/example/.fastctx/bin/fastctx.exe",
           "process": {
@@ -12795,7 +12829,8 @@
         "pending": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "phase": "failed",
         "error": "a staged file is locked"
@@ -12804,12 +12839,14 @@
         "client": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "installed": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "commands": [],
         "node": null,
@@ -12822,7 +12859,8 @@
         "pending": {
           "version": "1.0.0",
           "protocol": 6,
-          "digest": "abababababababababababababababababababababababababababababababab"
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "built": 1791600000
         },
         "phase": "staged",
         "error": null

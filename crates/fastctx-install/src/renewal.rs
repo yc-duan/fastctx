@@ -53,7 +53,12 @@ pub fn build() -> io::Result<Build> {
             digest
         }
     };
-    Ok(Build { version: env!("CARGO_PKG_VERSION").into(), protocol: fastctx_types::ipc::PROTOCOL, digest })
+    Ok(Build {
+        version: env!("CARGO_PKG_VERSION").into(),
+        protocol: fastctx_types::ipc::PROTOCOL,
+        digest,
+        built: option_env!("FASTCTX_BUILT").and_then(|built| built.parse().ok()),
+    })
 }
 
 fn own_digest() -> io::Result<String> {
