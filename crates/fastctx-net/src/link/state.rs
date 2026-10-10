@@ -152,6 +152,25 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }
 
+/// Whether the view at `path` was given by a hub from before accounts had
+/// two levels and machines were shared and their agents lent: it kept
+/// `grants` and `trust`, and accounts without a level. Its words meant
+/// other things then, and the cut a member holds cannot be read into
+/// today's shape the way the hub reads its whole directory, so it is
+/// dropped and the hub gives the view again.
+pub fn older_view(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else { return false };
+    let Ok(serde_json::Value::Object(view)) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    view.contains_key("grants")
+        || view.contains_key("trust")
+        || view
+            .get("accounts")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|accounts| accounts.iter().any(|account| account.get("level").is_none()))
+}
+
 /// Replaces the file at `path`, in a directory that exists.
 pub fn write(path: &Path, value: &impl Serialize) -> io::Result<()> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;

@@ -307,10 +307,12 @@ impl Directory {
     /// there run to their end, and their end still reaches the session that
     /// started them; the hub passes such a letter only for work it called
     /// `from` to do for that resident (`world-network.md`, 收回立刻生效).
+    /// `from` need not be in a member's view by then: a machine the account
+    /// may no longer use is cut from it, and the hub vouches for the sender.
     pub fn admits_echo(&self, from: &MachineName, account: &AccountName, to: &MachineName) -> Result<(), String> {
         self.admits(from, account, to, Purpose::Echo).or_else(|refused| {
             let stands = self.account(account).is_some_and(|found| !found.locked);
-            if stands && self.member(from).is_some() && self.hosts(account, to) { Ok(()) } else { Err(refused) }
+            if stands && self.hosts(account, to) { Ok(()) } else { Err(refused) }
         })
     }
 

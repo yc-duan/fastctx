@@ -119,6 +119,9 @@ pub struct Store {
     /// that resident of the work goes on after the account's right on the
     /// machine is taken back (`world-network.md`, 收回立刻生效).
     pub worked: std::collections::BTreeSet<(MachineName, fastctx_types::Address)>,
+    /// What reading a directory kept in an earlier shape into today's
+    /// changed, when this opening did it (`crate::upgrade`).
+    pub upgraded: Vec<String>,
 }
 
 impl Store {
@@ -162,7 +165,7 @@ impl Store {
 
     pub fn open(dir: &Path) -> io::Result<Self> {
         let hub: HubFile = read(&Self::hub_file(dir))?;
-        let book = Self::read_book(dir)?;
+        let (book, upgraded) = Self::read_book(dir)?;
         let mut letters: BTreeMap<MachineName, Letters> = read_or_default(&dir.join("letters.json"))?;
         let mut changed = false;
         for (name, entry) in &mut letters {
@@ -181,7 +184,7 @@ impl Store {
             }
         }
         let worked = read_or_default(&dir.join("worked.json"))?;
-        let store = Self { dir: dir.to_path_buf(), hub, book, letters, worked };
+        let store = Self { dir: dir.to_path_buf(), hub, book, letters, worked, upgraded };
         if changed {
             store.save_letters()?;
         }
@@ -191,8 +194,8 @@ impl Store {
     /// The directory as kept; one kept in the shape before sharing and
     /// lending (`crate::upgrade`) is kept again in today's, after a copy of
     /// it as it was is left beside it, which going back to the earlier
-    /// fastctx needs.
-    fn read_book(dir: &Path) -> io::Result<Book> {
+    /// fastctx needs. What changed is said too, and kept beside it.
+    fn read_book(dir: &Path) -> io::Result<(Book, Vec<String>)> {
         let path = Self::directory_file(dir);
         let raw: serde_json::Value = read(&path)?;
         let (upgraded, said) = crate::upgrade::upgrade(raw);
@@ -208,7 +211,7 @@ impl Store {
             notes.push('\n');
             publish(&dir.join("directory.upgraded.txt"), notes.as_bytes(), Permissions::Private)?;
         }
-        Ok(book)
+        Ok((book, said))
     }
 
     pub fn save_hub(&self) -> io::Result<()> {

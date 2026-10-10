@@ -248,6 +248,9 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION"),
         certificate.pin()
     ));
+    for line in &store.upgraded {
+        log.line(format_args!("took up the directory of an earlier fastctx: {line}"));
+    }
     let hub = Arc::new(Hub {
         releases: Arc::new(releases::Releases::new(dir, certificate.certificate.clone())?),
         store: Mutex::new(store),

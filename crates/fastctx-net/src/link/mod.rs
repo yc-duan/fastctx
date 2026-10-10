@@ -257,6 +257,13 @@ impl Link {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 View::empty(membership.id.clone(), membership.hub_name.clone(), membership.name.clone())
             }
+            Err(error) if error.kind() == io::ErrorKind::InvalidData && state::older_view(&dir.view()) => {
+                node.log(format!(
+                    "the view of the hub {} kept here was given by an older hub; the hub gives it again",
+                    membership.hub_name
+                ));
+                View::empty(membership.id.clone(), membership.hub_name.clone(), membership.name.clone())
+            }
             Err(error) => return Err(error),
         };
         let (status, _) = watch::channel(Status::Connecting { since: Timestamp::now(), last_error: None });
