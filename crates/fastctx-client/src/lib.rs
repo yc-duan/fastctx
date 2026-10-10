@@ -137,7 +137,10 @@ impl Client {
         program: Option<&std::path::Path>,
     ) -> Result<Self, ConnectError> {
         if world.path().parent().is_some_and(|root| root.join("uninstalled.json").exists()) {
-            return Err(ConnectError::Refused { reason: "this World was uninstalled; reinstall it before starting a node".into(), mismatch: None });
+            return Err(ConnectError::Refused {
+                reason: "this World was uninstalled; reinstall it before starting a node".into(),
+                mismatch: None,
+            });
         }
         match Self::connect(world, peer.clone()).await {
             Err(ConnectError::NoNode { endpoint }) if world.node_service().exists() => {
@@ -226,6 +229,26 @@ impl Client {
         let id = self.next;
         self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
         Ok(OnStream { client: self, id })
+    }
+
+    /// Acknowledge a wait result only after its command has rendered and flushed it.
+    pub async fn take_wait(&mut self) -> Result<(), CallError> {
+        self.connection.send(&to_json(&fastctx_types::on::TAKEN)).await.map_err(CallError::Broken)?;
+        let frame = self
+            .connection
+            .recv()
+            .await
+            .map_err(CallError::Broken)?
+            .ok_or_else(|| CallError::Broken(std::io::ErrorKind::UnexpectedEof.into()))?;
+        match serde_json::from_slice::<NodeFrame>(&frame)
+            .map_err(|error| CallError::Broken(std::io::Error::other(error)))?
+        {
+            NodeFrame::Reply { id, reply } if id == self.next => match reply.map_err(CallError::Failed)? {
+                Reply::Done => Ok(()),
+                _ => Err(CallError::Broken(std::io::Error::other("the node did not confirm the wait receipt"))),
+            },
+            _ => Err(CallError::Broken(std::io::Error::other("the node did not answer the wait receipt"))),
+        }
     }
 
     /// Sends a `Watch` call; the connection carries the watch from then on.

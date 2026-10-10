@@ -16,8 +16,9 @@ fn relative_view_prevents_stale_absolute_overwrite() {
     let writer = Writer::new(&WorldDir::under(&directory.path().join("world")), "test-machine").unwrap();
     for lines in [None, Some((1, 1))] {
         fs::write(&file, "original\nsecond\n").unwrap();
-        let observed =
-            view(std::slice::from_ref(&relative), &Options { lines, ..Options::default() }, &mut Vec::new()).unwrap();
+        let observed = view(std::slice::from_ref(&relative), &Options { lines, ..Options::default() }, &mut Vec::new())
+            .unwrap()
+            .seen;
         assert_eq!(observed.len(), 1);
         let observed = &observed[0];
         let key = PathBuf::from(&observed.path);
@@ -29,8 +30,9 @@ fn relative_view_prevents_stale_absolute_overwrite() {
         assert!(observed.sha256.is_some());
         let seen = SeenFiles::from([(key, SeenFile { version, encoding: observed.encoding_selection.clone() })]);
         fs::write(&file, "someone else's new contents\n").unwrap();
-        let error =
-            writer.write(WriteRequest { file_path: file.clone(), content: "overwrite\n".into() }, &seen).unwrap_err();
+        let error = writer
+            .write(WriteRequest { encoding: None, file_path: file.clone(), content: "overwrite\n".into() }, &seen)
+            .unwrap_err();
         assert!(error.message.contains("Whole-file overwrite refused"), "{}", error.message);
         assert_eq!(fs::read_to_string(&file).unwrap(), "someone else's new contents\n");
     }

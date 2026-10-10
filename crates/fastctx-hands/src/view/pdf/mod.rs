@@ -19,13 +19,13 @@ pub(super) fn look(
 ) -> io::Result<(Section, Option<Seen>)> {
     if options.lines.is_some() || options.chars.is_some() || options.encoding.is_some() {
         return Ok((
-            Section::note(path, options, "a PDF; --lines, --chars and --encoding apply to text files; use --pages"),
+            Section::error(path, options, "a PDF; --lines, --chars and --encoding apply to text files; use --pages"),
             None,
         ));
     }
     let section = match Document::open(path) {
         Ok(document) => read(path, options, budget, &document),
-        Err(reason) => Section::note(path, options, &reason),
+        Err(reason) => Section::error(path, options, &reason),
     };
     let seen = section.shown.then(|| Seen {
         path: path.to_string_lossy().into_owned(),
@@ -44,7 +44,7 @@ fn read(path: &Path, options: &Options, budget: usize, document: &Document) -> S
     let pages = super::plural(total, "page", "pages");
     let (first, asked_last) = options.pages.unwrap_or((1, total));
     if first == 0 || asked_last < first || first > total {
-        return Section::note(path, options, &format!("PDF, {pages}; no pages in the range asked"));
+        return Section::error(path, options, &format!("PDF, {pages}; no pages in the range asked"));
     }
     let last = asked_last.min(total);
     let mut section = Section::note(path, options, &format!("PDF, {pages}"));
@@ -80,6 +80,7 @@ fn read(path: &Path, options: &Options, budget: usize, document: &Document) -> S
         section.cost += part.cost;
         left -= part.cost;
         section.shown |= part.shown;
+        section.failed |= part.failed;
         if part.partial {
             if number < last {
                 section.append_note(&format!("=== pages {}-{last} (not shown) ===\n", number + 1));
@@ -103,11 +104,12 @@ struct PageOutput {
     cost: usize,
     shown: bool,
     partial: bool,
+    failed: bool,
 }
 impl PageOutput {
     fn note(number: u64, reason: &str) -> Self {
         let text = format!("=== page {number} ({}) ===\n", super::text::visible(reason));
-        Self { cost: text.len(), text, shown: false, partial: false }
+        Self { cost: text.len(), text, shown: false, partial: false, failed: true }
     }
 }
 
@@ -122,7 +124,7 @@ fn image(page: ImagePage, number: u64) -> PageOutput {
     // their raw pixels remain below the image transport's 400 MiB allowance.
     let cost = note.len() + bytes(IMAGE_COST) + 1;
     let text = format!("{note}\x1b]1337;File=inline=1;size={}:{}\x07\n", page.png.len(), STANDARD.encode(page.png));
-    PageOutput { text, cost, shown: true, partial: false }
+    PageOutput { text, cost, shown: true, partial: false, failed: false }
 }
 
 fn text(page: TextPage, number: u64, budget: usize) -> PageOutput {
@@ -164,7 +166,7 @@ fn text(page: TextPage, number: u64, budget: usize) -> PageOutput {
     if shown == 0 && !lines.is_empty() {
         // Not even the start of the page fits: it is named among the pages
         // not shown.
-        return PageOutput { text: String::new(), cost: 0, shown: false, partial: true };
+        return PageOutput { text: String::new(), cost: 0, shown: false, partial: true, failed: false };
     }
     let mut facts = format!("lines 1-{shown} of {}", lines.len());
     if let Some((line, take, length)) = cut {
@@ -175,5 +177,5 @@ fn text(page: TextPage, number: u64, budget: usize) -> PageOutput {
     }
     facts.push_str(&warning);
     let text = format!("=== page {number} ({facts}) ===\n{body}");
-    PageOutput { cost: text.len(), text, shown: shown > 0, partial }
+    PageOutput { cost: text.len(), text, shown: shown > 0, partial, failed: false }
 }

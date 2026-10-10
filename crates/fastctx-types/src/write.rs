@@ -10,6 +10,8 @@ pub struct EditRequest {
     pub new_string: String,
     #[serde(default)]
     pub replace_all: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<String>,
 }
 
 /// Ordered SEARCH/REPLACE blocks, committed together to one file.
@@ -19,12 +21,16 @@ pub struct EditBlocksRequest {
     pub input: String,
     #[serde(default)]
     pub replace_all: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct WriteRequest {
     pub file_path: PathBuf,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]

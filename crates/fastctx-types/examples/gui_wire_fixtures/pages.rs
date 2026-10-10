@@ -107,6 +107,7 @@ pub fn fixtures() -> Fixtures {
         .collect();
     let results = vec![
         PageResult::Run(RunReply {
+            consumed: None,
             machine: machine.clone(),
             job: "j-abc123".parse().unwrap(),
             state: RunState::Ended { status: ExitStatus::Code(0) },

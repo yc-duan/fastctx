@@ -137,6 +137,7 @@ fn retire_entry(path: &Path, programs: &mut Programs) -> io::Result<()> {
                 | "rg"
                 | "rg.exe"
                 | "prelude.bash"
+                | "state.bash"
                 | "LICENSE-APACHE"
                 | "NOTICE"
                 | "THIRD_PARTY_LICENSES.md"

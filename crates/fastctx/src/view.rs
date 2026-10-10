@@ -48,7 +48,7 @@ pub struct ViewArgs {
     paths: Vec<PathBuf>,
 }
 
-pub fn run(args: ViewArgs) -> anyhow::Result<()> {
+pub fn run(args: ViewArgs) -> anyhow::Result<std::process::ExitCode> {
     let mut paths = args.paths;
     if let Some(list) = &args.files0_from {
         let mut bytes = Vec::new();
@@ -86,10 +86,11 @@ pub fn run(args: ViewArgs) -> anyhow::Result<()> {
         in_run,
     };
     let mut out = crate::output::out();
-    let seen = view(&paths, &options, &mut out)?;
+    let viewed = view(&paths, &options, &mut out)?;
     out.flush()?;
     drop(out);
-    record(&world, seen)
+    record(&world, viewed.seen)?;
+    Ok(if viewed.failed { std::process::ExitCode::FAILURE } else { std::process::ExitCode::SUCCESS })
 }
 
 /// `FIRST-LAST` or `LINE`, counting from 1.

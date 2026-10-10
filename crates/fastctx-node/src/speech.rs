@@ -91,6 +91,11 @@ pub(crate) async fn tell_here_locked(
     delivery: Delivery,
     owed: Owed,
 ) -> Result<Landed, Failure> {
+    if crate::on_delivery::park(node, to, &delivery)
+        .map_err(|error| Failure::new(format!("keeping the completion: {error}")))?
+    {
+        return Ok(Landed::Waiting { why: None, answered: false });
+    }
     let removed = node.residents.removed(to).is_some();
     if !removed || matches!(delivery.notice, Notice::Words { .. } | Notice::Attached { .. }) {
         node.residents.active(to)?;

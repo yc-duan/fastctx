@@ -185,9 +185,21 @@ fn held(state: &State, to: &Address, machine: &MachineName, job: &JobId, request
 /// Called after admission, before ordinary inbox delivery. A successful
 /// return may be acknowledged to the sender, even if the node now stops.
 pub(crate) fn park(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> io::Result<bool> {
-    let Notice::JobEnded { job, machine, request, follower, .. } = &delivery.notice else { return Ok(false) };
+    let Notice::JobEnded { job, machine, request, follower, taken, .. } = &delivery.notice else { return Ok(false) };
     let state = node.on_deliveries.state.lock().expect("never poisoned");
     let path = receipt(node, &node.machine(), to, machine, job, request.as_ref());
+    if *taken {
+        ensure_private_dir(path.parent().expect("receipt directory"))?;
+        publish(&path, b"", Permissions::Private)?;
+        let owner = Address { machine: node.machine(), resident: to.clone() };
+        let (_, town) = node.residents.about(to).ok_or_else(|| io::Error::other("the completion owner is unknown"))?;
+        let directory = node.world.resident(town.as_ref(), to);
+        let id = crate::inbox::end_id(&owner, machine, job, request.as_ref());
+        crate::inbox::consume(&directory, &id)?;
+        let letter = crate::speech::fixed_id("letter", &[machine.as_str(), id.as_str()]);
+        crate::inbox::consume(&directory, &letter)?;
+        return Ok(true);
+    }
     if path.try_exists()? || stopped(node, to, machine, request.as_ref())? {
         return Ok(true);
     }
@@ -271,7 +283,7 @@ async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> io::Result<()> {
     if !taken && let Some(follower) = follower.as_ref().filter(|follower| *follower != &node.machine()) {
         let acting = node.residents.about(&parked.to).map(|(about, _)| about.acting).unwrap_or_default();
         let call = fastctx_types::remote::RemoteCall::OnReceipt {
-            owner,
+            owner: owner.clone(),
             machine: machine.clone(),
             job: job.clone(),
             request: request.clone(),
@@ -291,9 +303,13 @@ async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> io::Result<()> {
     }
     if !taken {
         // The inbox takes custody before the parked copy is removed.
-        crate::speech::tell_here(node, &parked.to, parked.delivery, crate::speech::Owed::Working)
+        crate::speech::tell_here(node, &parked.to, parked.delivery.clone(), crate::speech::Owed::Working)
             .await
             .map_err(|failure| io::Error::other(failure.message))?;
+    }
+    let state = node.on_deliveries.state.lock().expect("never poisoned");
+    if held(&state, &owner, machine, job, request.as_ref()) {
+        return Ok(());
     }
     std::fs::remove_file(path)?;
     Ok(())

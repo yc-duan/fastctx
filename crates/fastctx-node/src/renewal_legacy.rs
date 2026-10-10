@@ -67,6 +67,12 @@ pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
             }
         }
     }
+    // Ends a run took away came with protocol 11.
+    if protocol <= 10
+        && let Reply::Run(run) = reply
+    {
+        run.consumed = None;
+    }
     if protocol == 5
         && let Reply::Notices { notices, .. } = reply
     {

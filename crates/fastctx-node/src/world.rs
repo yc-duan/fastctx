@@ -610,11 +610,8 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
                 RemoteCall::CopySend { from: path, to } => {
-                    let to_machine =
-                        to.written().ok_or_else(|| Failure::new("the copy names no machine to send to"))?;
-                    // This machine sends for the caller's account: the
-                    // hub lets it only where that account may work.
-                    crate::copy::send(&node, &acting, &path, &to_machine, &to.path).await.map(RemoteReply::Copied)
+                    let from = fastctx_types::copy::Place { machine: None, hub: None, path };
+                    Box::pin(crate::copy::copy(&node, &acting, from, to)).await.map(RemoteReply::Copied)
                 }
                 RemoteCall::CopyFetch { from: path } => {
                     let stream = stream

@@ -27,6 +27,7 @@ fn publication_and_observation_lifecycle() {
     let result = writer
         .edit(
             EditRequest {
+                encoding: None,
                 file_path: path.clone(),
                 old_string: "before".into(),
                 new_string: "after".into(),
@@ -41,13 +42,18 @@ fn publication_and_observation_lifecycle() {
     let mut held = Vec::new();
     reader.read_to_end(&mut held).unwrap();
     assert_eq!(held, b"before\r\n");
-    assert!(writer.write(WriteRequest { file_path: path.clone(), content: "stale".into() }, &seen).is_err());
+    assert!(
+        writer.write(WriteRequest { encoding: None, file_path: path.clone(), content: "stale".into() }, &seen).is_err()
+    );
     seen.get_mut(&canonical_path(&path).unwrap()).unwrap().version =
         SeenVersion::Partial { size: 0, modified: fs::metadata(&path).unwrap().modified().unwrap() };
-    assert!(writer.write(WriteRequest { file_path: path.clone(), content: "stale".into() }, &seen).is_err());
+    assert!(
+        writer.write(WriteRequest { encoding: None, file_path: path.clone(), content: "stale".into() }, &seen).is_err()
+    );
     let result = writer
         .edit(
             EditRequest {
+                encoding: None,
                 file_path: path.clone(),
                 old_string: "after".into(),
                 new_string: "current".into(),
@@ -58,7 +64,11 @@ fn publication_and_observation_lifecycle() {
         .unwrap();
     assert_eq!(result.changed_since_seen, vec![path]);
     let journal = world.path().join("towns/test/ledger/journals/note/text.md");
-    assert!(writer.write(WriteRequest { file_path: journal.clone(), content: "not allowed".into() }, &seen).is_err());
+    assert!(
+        writer
+            .write(WriteRequest { encoding: None, file_path: journal.clone(), content: "not allowed".into() }, &seen)
+            .is_err()
+    );
     assert!(!journal.exists());
     let path = dir.path().join("partial.txt");
     let error = writer.apply_patch(ApplyPatchRequest { input: format!("*** Begin Patch\n*** Add File: {}\n+committed\n*** Update File: {}\n@@\n-missing\n+no\n*** End Patch", path.display(), dir.path().join("missing").display()) }, &seen).unwrap_err();
@@ -80,7 +90,12 @@ fn edit_blocks_publish_only_complete_batches() {
     ] {
         let error = writer
             .edit_blocks(
-                EditBlocksRequest { file_path: path.clone(), input: format!("{first}{second}"), replace_all: false },
+                EditBlocksRequest {
+                    encoding: None,
+                    file_path: path.clone(),
+                    input: format!("{first}{second}"),
+                    replace_all: false,
+                },
                 &SeenFiles::new(),
             )
             .unwrap_err();
@@ -92,6 +107,7 @@ fn edit_blocks_publish_only_complete_batches() {
     let result = writer
         .edit_blocks(
             EditBlocksRequest {
+                encoding: None,
                 file_path: path.clone(),
                 input: format!("{first}<<<<<<< SEARCH\nchanged\n=======\nfinal\nline\n>>>>>>> REPLACE\n"),
                 replace_all: false,
@@ -125,6 +141,7 @@ fn concurrent_writers_preserve_every_successful_edit() {
                     writer
                         .edit(
                             EditRequest {
+                                encoding: None,
                                 file_path: path.clone(),
                                 old_string: "anchor\n".into(),
                                 new_string: format!("anchor\n{id}:{index}\n"),

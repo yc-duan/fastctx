@@ -142,7 +142,9 @@ impl Jobs {
             Some(address) if address.machine == *machine => {
                 node.residents.about(&address.resident).map(|(about, _)| about.acting)
             }
-            Some(_) => account.as_ref().map(|account| fastctx_types::access::Acting::one(account.hub.clone(), account.account.clone())),
+            Some(_) => account
+                .as_ref()
+                .map(|account| fastctx_types::access::Acting::one(account.hub.clone(), account.account.clone())),
             None => None,
         };
         if let Some(acting) = &acting {
@@ -206,7 +208,18 @@ impl Jobs {
         let state = state(&record);
         // Why it answered says something only of a job that still runs.
         let answered = answered.filter(|_| state == RunState::Running);
-        let reply = RunReply { machine: machine.clone(), job: launched.job, state, output, visited, answered };
+        let consumed = if record.owner.resident().is_some_and(|owner| &owner.machine != machine) {
+            let (world, machine, owner) = (node.world.clone(), machine.clone(), record.owner.clone());
+            let consumed = tokio::task::spawn_blocking(move || crate::waiting::consumed(&world, &machine, &owner))
+                .await
+                .map_err(|error| Failure::new(format!("reading completion receipts: {error}")))?
+                .map_err(|error| failure("reading completion receipts", error))?;
+            (!consumed.is_empty()).then(|| Box::new(consumed))
+        } else {
+            None
+        };
+        let reply =
+            RunReply { machine: machine.clone(), job: launched.job, state, output, visited, answered, consumed };
         Ok((reply, record))
     }
 }
@@ -251,7 +264,12 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         fastctx_platform::host_process::wait_for_exit(supervisor)?;
     }
     // The record goes last: a log without one would be found by nobody.
-    let mut files = vec![PathBuf::from(&record.output), path.with_extension("sh"), record::lock_path(path)];
+    let mut files = vec![
+        PathBuf::from(&record.output),
+        path.with_extension("sh"),
+        path.with_extension("wait-taken"),
+        record::lock_path(path),
+    ];
     files.extend(record.stderr.as_deref().map(PathBuf::from));
     if let Some(on) = &record.on {
         files.push(PathBuf::from(&on.state));

@@ -19,6 +19,9 @@ pub struct EditArgs {
     /// Replace every occurrence of each SEARCH text.
     #[arg(long)]
     all: bool,
+    /// Use this text encoding or ordered per-line list, as in view --encoding.
+    #[arg(long, value_name = "NAME")]
+    encoding: Option<String>,
 }
 
 #[derive(Args)]
@@ -28,12 +31,20 @@ pub struct WriteArgs {
     /// Leave out the final newline the here-doc adds.
     #[arg(short = 'n')]
     no_newline: bool,
+    /// Use this text encoding, as in view --encoding.
+    #[arg(long, value_name = "NAME")]
+    encoding: Option<String>,
 }
 
 pub fn edit(args: EditArgs) -> anyhow::Result<ExitCode> {
     enabled()?;
     let file_path = absolute_path(&args.path).map_err(anyhow::Error::msg)?;
-    execute(WriteOp::EditBlocks(EditBlocksRequest { file_path, input: input()?, replace_all: args.all }))
+    execute(WriteOp::EditBlocks(EditBlocksRequest {
+        file_path,
+        input: input()?,
+        replace_all: args.all,
+        encoding: args.encoding,
+    }))
 }
 
 pub fn write(args: WriteArgs) -> anyhow::Result<ExitCode> {
@@ -43,7 +54,7 @@ pub fn write(args: WriteArgs) -> anyhow::Result<ExitCode> {
     if args.no_newline && content.ends_with('\n') {
         content.pop();
     }
-    execute(WriteOp::Write(WriteRequest { file_path, content }))
+    execute(WriteOp::Write(WriteRequest { file_path, content, encoding: args.encoding }))
 }
 
 pub fn apply_patch() -> anyhow::Result<ExitCode> {

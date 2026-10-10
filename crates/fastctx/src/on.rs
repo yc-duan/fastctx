@@ -107,6 +107,7 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let ended = runtime.block_on(async {
         let client = Client::connect(&world, Peer::Command { resident: Some(resident), session: None }).await?;
+        let here = client.machine.clone();
         let mut stream = client.on(call).await?;
         let (mut out, mut err) = (std::io::stdout().lock(), std::io::stderr().lock());
         let mut started = None;
@@ -116,7 +117,7 @@ fn on(args: OnArgs) -> anyhow::Result<ExitCode> {
                     started = Some(job);
                     // What went to another machine is there now; what stays
                     // here is the job's own input.
-                    if std::env::var("FASTCTX_MACHINE").ok().as_deref() != Some(there.as_str()) {
+                    if here != there {
                         forget(&package);
                     }
                 }

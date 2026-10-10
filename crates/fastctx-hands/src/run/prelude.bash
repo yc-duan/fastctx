@@ -1,9 +1,10 @@
 # The World's prelude. `run` names this file in BASH_ENV, so bash reads it
 # after the login profile and before the script (world-run.md). It leaves
-# the script's line numbers as they are, and nothing of it reaches the
-# programs the script starts except the exported functions below.
+# the script's line numbers as they are. Child shells inherit its helpers
+# and provenance names; login values are never packed into an on state.
 
 unset BASH_ENV
+__fastctx_state_helper="${BASH_SOURCE[0]%/*}/state.bash"
 
 # A profile may have rewritten PATH (Git's and Debian's both do): the
 # World's programs come first again.
@@ -14,6 +15,9 @@ unset FASTCTX_BIN
 
 # What the login environment already holds, so that `on` carries only what
 # the script itself makes (world-run.md, 心智随行).
+__fastctx_carried_vars=
+__fastctx_carried_funcs=
+__fastctx_carried_opts=
 __fastctx_flags=$-
 __fastctx_login=$(
     compgen -v; printf '\036'; compgen -A function; printf '\036'; shopt -p
@@ -23,123 +27,59 @@ __fastctx_login=$(
     set +o
 )
 
-# Writes the script's own variables, functions and changed options, as bash
-# reads them back.
-__fastctx_state() {
-    local IFS=$'\n' __fastctx_n __fastctx_attrs __fastctx_flags=$-
-    local __fastctx_vars=${__fastctx_login%%$'\036'*}
-    local __fastctx_rest=${__fastctx_login#*$'\036'}
-    local __fastctx_funcs=${__fastctx_rest%%$'\036'*}
-    local __fastctx_opts=${__fastctx_rest#*$'\036'}
-    local __fastctx_vars_sent= __fastctx_funcs_sent= __fastctx_opts_sent= __fastctx_changes=
-    # Function definitions may contain extended patterns. They must be
-    # parsed with extglob enabled even when the script turned it off again.
-    printf 'shopt -s extglob || return 255\n'
-    for __fastctx_n in $(compgen -v); do
-        # A name brought by a previous hop belongs to the script even if
-        # this machine's login environment happened to have the same name.
-        case $'\n'"${__fastctx_carried_vars-}"$'\n' in
-            *$'\n'"$__fastctx_n"$'\n'*) ;;
-            *) case $'\n'"$__fastctx_vars"$'\n' in *$'\n'"$__fastctx_n"$'\n'*) continue ;; esac ;;
-        esac
-        case $__fastctx_n in
-            __fastctx_* | BASH | BASH_* | BASHOPTS | BASHPID | COLUMNS | COMP_* | DIRSTACK | EPOCHREALTIME | \
-            EPOCHSECONDS | EUID | FUNCNAME | GROUPS | HISTCMD | HOSTNAME | HOSTTYPE | IFS | LINENO | LINES | \
-            MACHTYPE | OLDPWD | OPTARG | OPTERR | OPTIND | OSTYPE | PIPESTATUS | PPID | PWD | RANDOM | \
-            READLINE_* | REPLY | SECONDS | SHELLOPTS | SHLVL | SRANDOM | UID | _ | FASTCTX_*)
-                continue ;;
-        esac
-        __fastctx_vars_sent+="$__fastctx_n"$'\n'
-        # Discard target-side attributes as well as the old value. Removing
-        # a nameref must not unset the variable it points to.
-        printf 'if [[ $(declare -p -- %q 2>/dev/null) == "declare -n"* ]]; then unset -n -- %q || return 255; fi\n' "$__fastctx_n" "$__fastctx_n"
-        printf 'unset -v -- %q || return 255\n' "$__fastctx_n"
-        printf '%s || return 255\n' "$(declare -p -- "$__fastctx_n")"
-    done
-    for __fastctx_n in $(compgen -A function); do
-        case $'\n'"${__fastctx_carried_funcs-}"$'\n' in
-            *$'\n'"$__fastctx_n"$'\n'*) ;;
-            *) case $'\n'"$__fastctx_funcs"$'\n' in *$'\n'"$__fastctx_n"$'\n'*) continue ;; esac ;;
-        esac
-        case $__fastctx_n in __fastctx_* | on | edit | write | apply_patch) continue ;; esac
-        __fastctx_funcs_sent+="$__fastctx_n"$'\n'
-        printf 'unset -f -- %q || return 255\n' "$__fastctx_n"
-        declare -f -- "$__fastctx_n"
-        __fastctx_attrs=$(declare -F -p -- "$__fastctx_n" 2>/dev/null)
-        __fastctx_attrs=${__fastctx_attrs#declare -}
-        __fastctx_attrs=${__fastctx_attrs%% *}
-        if [ "$__fastctx_attrs" != f ]; then
-            printf 'declare -%s -- %q || return 255\n' "$__fastctx_attrs" "$__fastctx_n"
-        fi
-    done
-    for __fastctx_n in $(shopt -p; case $__fastctx_flags in *e*) set -e ;; esac; set +o); do
-        case $'\n'"${__fastctx_carried_opts-}"$'\n' in
-            *$'\n'"${__fastctx_n##* }"$'\n'*) ;;
-            *) case $'\n'"$__fastctx_opts"$'\n' in
-                *$'\n'"$__fastctx_n"$'\n'*)
-                    # Undo the parser setting above even when it was not
-                    # a script change. It must not become a carried option.
-                    case $__fastctx_n in 'shopt -u extglob') __fastctx_changes+="$__fastctx_n || return 255"$'\n' ;; esac
-                    continue ;;
-            esac ;;
-        esac
-        __fastctx_opts_sent+="${__fastctx_n##* }"$'\n'
-        __fastctx_changes+="$__fastctx_n || return 255"$'\n'
-    done
-    printf '__fastctx_carried_vars=%q\n__fastctx_carried_funcs=%q\n__fastctx_carried_opts=%q\n' \
-        "$__fastctx_vars_sent" "$__fastctx_funcs_sent" "$__fastctx_opts_sent"
-    printf '%s' "$__fastctx_changes"
-    printf 'return 0\n'
+# Only names are sent to the selector. Login values never enter a packet.
+__fastctx_select() {
+    {
+        builtin printf '%s\0' "$__fastctx_login" "$__fastctx_carried_vars" "$__fastctx_carried_funcs" "$__fastctx_carried_opts" "$-"
+        if [ "$1" = variables ]; then builtin compgen -v; else builtin compgen -A function; fi
+    } | /usr/bin/env -i /bin/bash --noprofile --norc "$__fastctx_state_helper" names "$1"
 }
 
-# on MACHINE [COMMAND [ARGUMENT...]]: this part of the script, run on
-# another machine (world-run.md, 去别的机器). With a command, its words are
-# sent as they are; without one, standard input is the script.
-on() {
-    case $#:${1-} in
-        0:) fastctx on; return ;;
-        1:-h | 1:--help) fastctx on --help; return ;;
+# Positional parameters keep the collector out of the script's variable
+# namespace, including names the script made readonly.
+__fastctx_state() {
+    builtin set -- "${1-$-}" "$(__fastctx_select variables)" "$(__fastctx_select functions)"
+    {
+        builtin printf '%s\0' "$__fastctx_login" "$__fastctx_carried_vars" "$__fastctx_carried_funcs" "$__fastctx_carried_opts" "$1"
+        if [ -n "$2" ]; then builtin eval "builtin declare -p -- $2" || builtin return 255; fi
+        builtin printf '\0'
+        if [ -n "$3" ]; then builtin eval "builtin declare -f -- $3" || builtin return 255; fi
+        builtin printf '\0'
+        if [ -n "$3" ]; then builtin eval "builtin declare -F -p -- $3" || builtin return 255; fi
+        builtin printf '\0'
+        builtin shopt -p
+        builtin set +o
+    } | /usr/bin/env -i /bin/bash --noprofile --norc "$__fastctx_state_helper" state
+    builtin set -- "${PIPESTATUS[@]}"
+    [ "$1" = 0 ] && [ "$2" = 0 ] || builtin return 255
+}
+
+on() { __fastctx_on 0 - "$@"; }
+
+# The first two arguments describe an on-to-on pipe; the remainder are the
+# script's words. No collector local can shadow one of its variables.
+__fastctx_on() {
+    case $#:${3-} in
+        2:) builtin command fastctx on; builtin return ;;
+        3:-h | 3:--help) builtin command fastctx on --help; builtin return ;;
     esac
-    # A whole script as one word is how ssh is written; here one word is the
-    # name of a program to run, so it is refused before anything is sent.
-    if [ $# -eq 2 ] && [[ $2 == *[[:space:]\;\|\&\<\>\$\`\(\)]* ]]; then
-        printf '%s\n' "on: '$2' is one word, the name of a program to run on $1. For a script, give it on standard input: on $1 <<'EOF' ... EOF" >&2
-        return 255
+    if [ $# -eq 4 ] && [[ $4 == *[[:space:]\;\|\&\<\>\$\`\(\)]* ]]; then
+        builtin printf '%s\n' "on: '$4' is one word, the name of a program to run on $3. For a script, give it on standard input: on $3 <<'EOF' ... EOF" >&2
+        builtin return 255
     fi
-    local __fastctx_file="${FASTCTX_SCRATCH:?on works only inside a script run by the run tool}/on-$BASHPID-$RANDOM$RANDOM"
-    # The follower ends with this shell. Git Bash names the shell's native
-    # Windows process, which a native follower can wait on, in /proc.
-    local __fastctx_shell=$BASHPID
-    if [ -r "/proc/$BASHPID/winpid" ]; then
-        read -r __fastctx_shell <"/proc/$BASHPID/winpid" || return 255
+    builtin set -- "${FASTCTX_SCRATCH:?on works only inside a script run by the run tool}/on-$BASHPID-$RANDOM$RANDOM" "$BASHPID" "$@"
+    __fastctx_state "$-" >"$1.state" || builtin return 255
+    if [ -r "/proc/$2/winpid" ]; then
+        builtin set -- "$1" "$(/usr/bin/cat "/proc/$2/winpid")" "${@:3}"
     fi
-    # A bash the script started has no prelude, and so no record of the
-    # login environment: there it carries nothing rather than too much.
-    if declare -F __fastctx_state >/dev/null; then
-        __fastctx_state >"$__fastctx_file.state" || return 255
-    else
-        : >"$__fastctx_file.state" || return 255
+    if [ $# -gt 5 ]; then
+        builtin printf '%q ' "${@:6}" >"$1.command" || builtin return 255
+        builtin set -- "${@:1:5}" --command "$1.command"
     fi
-    # The script pipes this `on` from or into another (`__fastctx_on_pipe`);
-    # the ends as they stand now decide.
-    local -a __fastctx_piping=()
-    if [ "${__fastctx_pipe_in-0}" = 1 ] && [ -p /dev/stdin ]; then
-        __fastctx_piping+=(--pipe-in)
-    fi
-    if [ "${__fastctx_pipe_to--}" != - ] && [ -p /dev/stdout ]; then
-        __fastctx_piping+=(--pipe-to "$__fastctx_pipe_to")
-    fi
-    if [ $# -gt 1 ]; then
-        # The words, quoted by bash itself, become the command line bash
-        # reads there: it reads back exactly these words.
-        printf '%q ' "${@:2}" >"$__fastctx_file.command" || return 255
-        fastctx on "${__fastctx_piping[@]}" --shell-parent "$__fastctx_shell" --state "$__fastctx_file.state" --command "$__fastctx_file.command" -- "$1"
-    else
-        fastctx on "${__fastctx_piping[@]}" --shell-parent "$__fastctx_shell" --state "$__fastctx_file.state" -- "$1"
-    fi
-    # Keep the shell alive as the follower's parent, even when this is the
-    # script's last command. On Linux the follower dies with this shell.
-    return $?
+    if [ "$3" = 1 ] && [ -p /dev/stdin ]; then builtin set -- "$@" --pipe-in; fi
+    if [ "$4" != - ] && [ -p /dev/stdout ]; then builtin set -- "$@" --pipe-to "$4"; fi
+    builtin command fastctx on "${@:6}" --shell-parent "$2" --state "$1.state" -- "$5"
+    builtin return $?
 }
 
 # An `on` the script pipes straight from or into another, as the run tool
@@ -147,19 +87,18 @@ on() {
 # first word is 1 when its input comes from an `on`, the second the machine
 # of the `on` its output goes to, or -.
 __fastctx_on_pipe() {
-    local __fastctx_pipe_in=$1 __fastctx_pipe_to=$2
-    shift 2
-    on "$@"
+    __fastctx_on "$@"
 }
 
 # The World's ways of writing files (world-write.md). Functions, because
 # these names belong elsewhere too: Windows has an editor called `edit`,
 # Linux a `write` that messages other users.
-edit() { fastctx edit "$@"; }
-write() { fastctx write "$@"; }
-apply_patch() { fastctx apply-patch "$@"; }
+edit() { builtin command fastctx edit "$@"; }
+write() { builtin command fastctx write "$@"; }
+apply_patch() { builtin command fastctx apply-patch "$@"; }
 
-export -f on __fastctx_on_pipe edit write apply_patch
+export -f on __fastctx_on __fastctx_on_pipe __fastctx_state __fastctx_select edit write apply_patch
+export __fastctx_state_helper __fastctx_login __fastctx_flags __fastctx_carried_vars __fastctx_carried_funcs __fastctx_carried_opts
 
 # Restore last: options such as verbose and nounset govern the requested
 # script, not the implementation of the World's prelude. A failed restore

@@ -128,7 +128,10 @@ def verify(reader):
                 told = wire["reply"]["Ok"]["notices"][0]["notice"]
                 assert told == {"kind": "words", "from": {"kind": "world"}, "text": "the World's words"}, (case, answer)
             elif case["protocol"] >= 7 and not case.get("text_result"):
-                assert wire == answer["current"], (case, answer)
+                expected = json.loads(json.dumps(answer["current"]))
+                if case.get("receipts"):
+                    expected["reply"]["Ok"].pop("consumed")
+                assert wire == expected, (case, answer)
             if case.get("attached") and case["protocol"] >= 6:
                 assert wire["reply"]["Ok"]["notices"] == case["value"]["reply"]["Ok"]["notices"]
     print(f"PASS: {len(corpus)} historical request/reply checks against protocols {', '.join(map(str, REVISIONS))}")
