@@ -1,6 +1,7 @@
 //! `fastctx wait`: wait until jobs end, as bash's `wait` does for a shell's
 //! own children (`world-run.md`).
 
+use std::io::Write as _;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -32,7 +33,7 @@ pub fn run(args: WaitArgs) -> anyhow::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let mut client =
         runtime.block_on(Client::connect(&world, command_peer())).context("reaching this machine's node")?;
-    let records = match runtime.block_on(client.call(Call::Wait { jobs })) {
+    let records = match runtime.block_on(client.call(Call::Wait { jobs, receipt: true })) {
         Ok(Reply::Waited { records }) => records,
         Ok(other) => anyhow::bail!("the node answered something else: {other:?}"),
         Err(CallError::Failed(failure)) => anyhow::bail!("{}", failure.message),
@@ -41,9 +42,13 @@ pub fn run(args: WaitArgs) -> anyhow::Result<ExitCode> {
                 .context("the node stopped answering before the jobs ended; their ends reach you as usual"));
         }
     };
+    let mut out = std::io::stdout().lock();
     for record in &records {
-        println!("{}", fastctx_hands::told::told(&ended(record)));
+        writeln!(out, "{}", fastctx_hands::told::told(&ended(record)))?;
     }
+    out.flush()?;
+    drop(out);
+    runtime.block_on(client.take_wait()).context("acknowledging the jobs' ends")?;
     Ok(records.last().map_or(ExitCode::SUCCESS, status))
 }
 
@@ -51,6 +56,7 @@ pub fn run(args: WaitArgs) -> anyhow::Result<ExitCode> {
 fn ended(record: &JobRecord) -> Notice {
     let end = record.end.as_ref().expect("a wait answers with ended jobs");
     Notice::JobEnded {
+        taken: false,
         job: record.id.clone(),
         machine: record.machine.clone(),
         request: record.on.as_ref().and_then(|on| on.request.clone()),

@@ -58,8 +58,14 @@ pub struct Options {
     pub in_run: bool,
 }
 
-/// Shows `paths` on `out` and returns what was seen of each file shown.
-pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::Result<Vec<Seen>> {
+/// The observations retained even when another requested file fails.
+pub struct Viewed {
+    pub seen: Vec<Seen>,
+    pub failed: bool,
+}
+
+/// Shows every requested path and records whether any could not be read.
+pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::Result<Viewed> {
     // The summary and the note each file gets when it is not shown are paid
     // for first: whatever happens, every path is named.
     let files = plural(paths.len() as u64, "file", "files");
@@ -76,7 +82,10 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
             note
         } else {
             // This file's own note is no longer needed if it is shown.
-            let (section, observed) = look(path, options, left + note.cost)?;
+            let (section, observed) = match look(path, options, left + note.cost) {
+                Ok(result) => result,
+                Err(error) => (Section::error(path, options, &describe_error(&error)), None),
+            };
             if section.partial {
                 stopped = true;
             }
@@ -87,6 +96,7 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
         sections.push(section);
     }
     let shown = sections.iter().filter(|section| section.shown).count();
+    let failed = sections.iter().any(|section| section.failed);
     if options.in_run {
         out.write_all(VIEW_MARK.as_bytes())?;
     }
@@ -99,7 +109,7 @@ pub fn view(paths: &[PathBuf], options: &Options, out: &mut impl Write) -> io::R
     if options.in_run {
         out.write_all(VIEW_END.as_bytes())?;
     }
-    Ok(seen)
+    Ok(Viewed { seen, failed })
 }
 
 /// One path's part of the answer.
@@ -112,12 +122,17 @@ struct Section {
     shown: bool,
     /// Whether the budget ran out in it, so later files are not shown.
     partial: bool,
+    failed: bool,
 }
 
 impl Section {
     fn note(path: &Path, options: &Options, facts: &str) -> Self {
         let text = format!("{}\n", head(path, options, facts));
-        Self { cost: text.len(), text, shown: false, partial: false }
+        Self { cost: text.len(), text, shown: false, partial: false, failed: false }
+    }
+
+    fn error(path: &Path, options: &Options, facts: &str) -> Self {
+        Self { failed: true, ..Self::note(path, options, facts) }
     }
 }
 
@@ -132,23 +147,22 @@ fn head(path: &Path, options: &Options, facts: &str) -> String {
 fn not_shown(path: &Path, options: &Options) -> Section {
     let native = match fastctx_platform::local_path(path) {
         Ok(path) => path,
-        Err(error) => return Section::note(path, options, &describe_error(&error)),
+        Err(error) => return Section::error(path, options, &describe_error(&error)),
     };
-    let facts = match std::fs::metadata(&native) {
-        Ok(metadata) => format!("not shown: {}", size(metadata.len())),
-        Err(error) => describe_error(&error),
-    };
-    Section::note(&native, options, &facts)
+    match std::fs::metadata(&native) {
+        Ok(metadata) => Section::note(&native, options, &format!("not shown: {}", size(metadata.len()))),
+        Err(error) => Section::error(&native, options, &describe_error(&error)),
+    }
 }
 
 fn look(path: &Path, options: &Options, budget: usize) -> io::Result<(Section, Option<Seen>)> {
     let native = match fastctx_platform::local_path(path) {
         Ok(path) => path,
-        Err(error) => return Ok((Section::note(path, options, &describe_error(&error)), None)),
+        Err(error) => return Ok((Section::error(path, options, &describe_error(&error)), None)),
     };
     let resolved = match std::path::absolute(&native).and_then(|path| crate::files::canonical_path(&path)) {
         Ok(path) => path,
-        Err(error) => return Ok((Section::note(&native, options, &describe_error(&error)), None)),
+        Err(error) => return Ok((Section::error(&native, options, &describe_error(&error)), None)),
     };
     let (section, mut seen) = look_file(&native, &resolved, options, budget)?;
     if let Some(seen) = &mut seen {
@@ -160,18 +174,18 @@ fn look(path: &Path, options: &Options, budget: usize) -> io::Result<(Section, O
 fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> io::Result<(Section, Option<Seen>)> {
     let metadata = match std::fs::metadata(resolved) {
         Ok(metadata) => metadata,
-        Err(error) => return Ok((Section::note(path, options, &describe_error(&error)), None)),
+        Err(error) => return Ok((Section::error(path, options, &describe_error(&error)), None)),
     };
     if metadata.is_dir() {
-        return Ok((Section::note(path, options, "a directory; list it with ls or find"), None));
+        return Ok((Section::error(path, options, "a directory; list it with ls or find"), None));
     }
     if !metadata.is_file() {
         // A device, a FIFO or a socket could make looking wait forever.
-        return Ok((Section::note(path, options, "a special file, not shown"), None));
+        return Ok((Section::error(path, options, "a special file, not shown"), None));
     }
     let mut file = match File::open(resolved) {
         Ok(file) => file,
-        Err(error) => return Ok((Section::note(path, options, &describe_error(&error)), None)),
+        Err(error) => return Ok((Section::error(path, options, &describe_error(&error)), None)),
     };
     let mut start = vec![0u8; 512];
     let read = read_up_to(&mut file, &mut start)?;
@@ -187,10 +201,10 @@ fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> 
         return Ok(result);
     }
     if options.master {
-        return Ok((Section::note(path, options, "--master applies to PowerPoint presentations"), None));
+        return Ok((Section::error(path, options, "--master applies to PowerPoint presentations"), None));
     }
     if options.sheet.is_some() || options.sheet_index.is_some() || options.range.is_some() {
-        return Ok((Section::note(path, options, "--sheet and --range apply to Excel workbooks"), None));
+        return Ok((Section::error(path, options, "--sheet and --range apply to Excel workbooks"), None));
     }
     if start.starts_with(b"%PDF-")
         || (detected_image.is_none() && path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("pdf")))
@@ -205,7 +219,7 @@ fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> 
     }
     if options.pages.is_some() || options.image {
         return Ok((
-            Section::note(path, options, "--pages selects PDF pages or PowerPoint slides; --image renders PDF pages"),
+            Section::error(path, options, "--pages selects PDF pages or PowerPoint slides; --image renders PDF pages"),
             None,
         ));
     }
@@ -254,7 +268,7 @@ fn image(
         encoding_selection: None,
     };
     let text = format!("{note}\x1b]1337;File=inline=1;size={}:{}\x07\n", bytes.len(), STANDARD.encode(&bytes));
-    Ok((Section { text, cost, shown: true, partial: false }, Some(seen)))
+    Ok((Section { text, cost, shown: true, partial: false, failed: false }, Some(seen)))
 }
 
 fn read_up_to(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {

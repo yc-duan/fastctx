@@ -66,6 +66,9 @@ def replies(fixtures):
         yield {"reply": "run", "machine": "desktop", "job": "j-abc123", "state": {"kind": "running"},
                "output": {"log": "C:/job.log", "bytes": 0, "lines": 0, "pieces": [], "legacy": [],
                           "escaped_lines": 0}, "answered": answered}
+    yield {"reply": "run", "machine": "desktop", "job": "j-abc123", "state": {"kind": "ended", "status": {"code": 0}},
+           "output": {"log": "C:/job.log", "bytes": 0, "lines": 0, "pieces": [], "legacy": [], "escaped_lines": 0},
+           "consumed": ["desktop-j-def456"]}
     notices = []
     for how in [{"kind": "finished"}, {"kind": "stopped"}, {"kind": "interrupted", "reason": "restart"},
                 {"kind": "failed", "error": "disk full"}]:
@@ -190,6 +193,7 @@ def samples(root):
             case = {"mode": "reply", "protocol": protocol, "value": frame(reply)}
             if reply["reply"] == "run":
                 case["encodings"] = [part["encoding"] for part in reply["output"]["legacy"]]
+                case["receipts"] = bool(reply.get("consumed"))
             case["attached"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "attached"
             # Hub-by-hub nodes have no shape before protocol 8 and are said as text.
             case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and reply["controlled"]["kind"] in ["reported", "refused", "model_menu"])

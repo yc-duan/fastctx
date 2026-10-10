@@ -56,6 +56,11 @@ pub(crate) fn call(protocol: u32, peer: &Peer, call: &Call) -> bool {
 }
 
 pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
+    if protocol < 10
+        && let Reply::Run(run) = reply
+    {
+        run.consumed = None;
+    }
     if protocol == 5
         && let Reply::Notices { notices, .. } = reply
     {

@@ -124,7 +124,10 @@ def verify(reader):
                     assert encoding in json.dumps(answer["read"]), (case, answer)
             # Protocols 7 and 8 read today's replies as they are, but for those said as text.
             if case["protocol"] >= 7 and not case.get("text_result"):
-                assert wire == answer["current"], (case, answer)
+                expected = json.loads(json.dumps(answer["current"]))
+                if case.get("receipts"):
+                    expected["reply"]["Ok"].pop("consumed")
+                assert wire == expected, (case, answer)
             if case.get("attached") and case["protocol"] >= 6:
                 assert wire["reply"]["Ok"]["notices"] == case["value"]["reply"]["Ok"]["notices"]
     print(f"PASS: {len(corpus)} historical request/reply checks against protocols {', '.join(map(str, REVISIONS))}")

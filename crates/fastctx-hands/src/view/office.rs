@@ -19,7 +19,7 @@ pub(super) fn look(
 ) -> io::Result<(Section, Option<Seen>)> {
     if options.image || options.encoding.is_some() || options.chars.is_some() {
         return Ok((
-            Section::note(
+            Section::error(
                 path,
                 options,
                 "Office content is decoded directly; --image, --encoding and --chars are not supported",
@@ -45,7 +45,7 @@ pub(super) fn look(
         Ok(content) => content,
         Err(error) => {
             return Ok((
-                Section::note(
+                Section::error(
                     path,
                     options,
                     &format!("Office content could not be read: {}", super::text::visible(&format!("{error:#}"))),

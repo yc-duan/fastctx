@@ -571,6 +571,7 @@ fn write_op(tool: &str, arguments: &Value) -> Result<WriteOp, String> {
     };
     Ok(match tool {
         "edit" => WriteOp::Edit(EditRequest {
+            encoding: None,
             file_path: text("file_path")?.into(),
             old_string: text("old_string")?,
             new_string: text("new_string")?,
@@ -580,7 +581,11 @@ fn write_op(tool: &str, arguments: &Value) -> Result<WriteOp, String> {
                 Some(_) => return Err("`replace_all` must be true or false".to_string()),
             },
         }),
-        "write" => WriteOp::Write(WriteRequest { file_path: text("file_path")?.into(), content: text("content")? }),
+        "write" => WriteOp::Write(WriteRequest {
+            file_path: text("file_path")?.into(),
+            content: text("content")?,
+            encoding: None,
+        }),
         "apply_patch" => WriteOp::ApplyPatch(ApplyPatchRequest { input: text("input")? }),
         other => return Err(format!("{other} is not a writing tool")),
     })

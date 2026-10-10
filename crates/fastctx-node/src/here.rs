@@ -240,6 +240,7 @@ pub(crate) async fn run(
 ) -> Result<RunReply, Failure> {
     let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
     let here = Address { machine: node.machine(), resident: resident.clone() };
+    let directory = node.world.resident(node.residents.town_of(resident).flatten().as_ref(), resident);
     // Listening before the call goes, so words that come meanwhile are not
     // missed here.
     let mut words = node.words.watch(&here);
@@ -280,6 +281,13 @@ pub(crate) async fn run(
         }
         Err(failure) => return Err(Failure::new(format!("the script starts on {}: {failure}", works_on.name))),
     };
+    if let Some(consumed) = &reply.consumed {
+        for consumed in consumed.iter() {
+            crate::inbox::consume(&directory, consumed).map_err(|error| Failure::new(error.to_string()))?;
+            let letter = crate::speech::fixed_id("letter", &[reply.machine.as_str(), consumed.as_str()]);
+            crate::inbox::consume(&directory, &letter).map_err(|error| Failure::new(error.to_string()))?;
+        }
+    }
     if reply.state != RunState::Running {
         node.dispatched
             .jobs

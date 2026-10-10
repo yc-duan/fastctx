@@ -57,10 +57,28 @@ pub async fn copy(node: &Arc<Node>, acting: &Acting, from: Place, to: Place) -> 
     let here = node.machine();
     let at = |place: &Place| place.written().unwrap_or_else(|| (&here).into());
     let (from_machine, to_machine) = (at(&from), at(&to));
-    if from_machine == to_machine || (node.is_here(&from_machine) && node.is_here(&to_machine)) {
-        return Err(Failure::new(format!(
-            "both ends are on {from_machine}; copy within one machine with cp, in a run on it"
-        )));
+    if node.is_here(&from_machine) && node.is_here(&to_machine) {
+        let root = fastctx_platform::local_path(&from.path).map_err(|error| Failure::new(error.to_string()))?;
+        let target = to.path;
+        return tokio::task::spawn_blocking(move || fastctx_hands::copy::local::copy(&root, &target, &here))
+            .await
+            .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)))?
+            .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)));
+    }
+    if same_machine(node, &from_machine, &to_machine)? {
+        let call = RemoteCall::CopySend {
+            from: from.path,
+            to: Place { machine: Some(to_machine.name.clone()), hub: to_machine.hub.clone(), path: to.path },
+        };
+        return match node
+            .call(acting, &from_machine, Purpose::Hands, call)
+            .await
+            .map_err(|failure| Failure::new(failure.to_string()))?
+        {
+            Ok(RemoteReply::Copied(report)) => Ok(report),
+            Ok(_) => Err(Failure::new(format!("{from_machine} answered something other than a copy"))),
+            Err(error) => Err(error),
+        };
     }
     if node.is_here(&from_machine) {
         return send(node, acting, &from.path, &to_machine, &to.path).await;
@@ -79,6 +97,20 @@ pub async fn copy(node: &Arc<Node>, acting: &Acting, from: Place, to: Place) -> 
         Ok(_) => Err(Failure::new(format!("{from_machine} answered something other than a copy"))),
         Err(failure) => Err(failure),
     }
+}
+
+fn same_machine(node: &Node, from: &Written, to: &Written) -> Result<bool, Failure> {
+    if from == to {
+        return Ok(true);
+    }
+    if from.name != to.name {
+        return Ok(false);
+    }
+    let sources = node.locate(from)?;
+    let destinations = node.locate(to)?;
+    Ok(sources
+        .iter()
+        .any(|source| destinations.iter().any(|destination| source.membership().id == destination.membership().id)))
 }
 
 /// Whether `machine` may act toward other machines for an account `acting`

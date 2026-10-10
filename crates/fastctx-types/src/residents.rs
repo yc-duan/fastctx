@@ -104,6 +104,9 @@ pub struct LastLines {
 pub enum Notice {
     /// A job the resident started, which went on in the background, ended.
     JobEnded {
+        /// A wait took this end; this is a receipt, never a session notification.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        taken: bool,
         job: JobId,
         machine: MachineName,
         #[serde(default, skip_serializing_if = "Option::is_none")]

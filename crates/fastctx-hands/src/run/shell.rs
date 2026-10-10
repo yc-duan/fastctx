@@ -119,6 +119,7 @@ pub fn environment_from(mut env: Vec<(OsString, OsString)>, context: &Context<'_
 
 /// The World's prelude, which bash reads through `BASH_ENV` (`world-run.md`).
 pub const PRELUDE: &str = include_str!("prelude.bash");
+const STATE: &str = include_str!("state.bash");
 
 /// Where the prelude for the World's programs in `fastctx_dir` lives.
 pub fn prelude_path(fastctx_dir: &Path) -> PathBuf {
@@ -128,11 +129,12 @@ pub fn prelude_path(fastctx_dir: &Path) -> PathBuf {
 /// Writes the prelude beside the World's programs unless it is there as this
 /// version has it.
 pub fn ensure_prelude(fastctx_dir: &Path) -> io::Result<()> {
-    let path = prelude_path(fastctx_dir);
-    if std::fs::read(&path).ok().as_deref() == Some(PRELUDE.as_bytes()) {
-        return Ok(());
+    for (path, text) in [(prelude_path(fastctx_dir), PRELUDE), (fastctx_dir.join("state.bash"), STATE)] {
+        if std::fs::read(&path).ok().as_deref() != Some(text.as_bytes()) {
+            fastctx_platform::publish(&path, text.as_bytes(), fastctx_platform::Permissions::Private)?;
+        }
     }
-    fastctx_platform::publish(&path, PRELUDE.as_bytes(), fastctx_platform::Permissions::Private)
+    Ok(())
 }
 
 /// A path as bash's own PATH holds it: unchanged on Unix; on Windows in

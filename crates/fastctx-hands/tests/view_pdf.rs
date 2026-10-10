@@ -48,7 +48,7 @@ fn pdf_view_contract() {
     std::fs::write(&path, pdf(3, b"BT /F1 12 Tf 72 680 Td (Second line) Tj 0 20 Td (First line) Tj ET")).unwrap();
     let options = Options { pages: Some((2, 2)), in_run: true, ..Default::default() };
     let mut output = Vec::new();
-    let seen = view(std::slice::from_ref(&path), &options, &mut output).unwrap();
+    let seen = view(std::slice::from_ref(&path), &options, &mut output).unwrap().seen;
     let text = String::from_utf8(output).unwrap();
     assert!(text.contains("PDF, 3 pages"), "{text}");
     assert!(text.contains("=== page 2 ("), "{text}");

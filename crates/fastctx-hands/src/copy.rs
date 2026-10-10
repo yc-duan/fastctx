@@ -15,6 +15,8 @@ use std::fs::File;
 use std::io::{self, Read as _};
 use std::path::{Component, Path, PathBuf};
 
+pub mod local;
+
 use fastctx_platform::Staged;
 use fastctx_types::copy::{Entry, EntryKind, Manifest};
 use jiff::Timestamp;

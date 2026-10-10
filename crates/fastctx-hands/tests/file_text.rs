@@ -17,7 +17,8 @@ fn observe(path: &Path, encoding: Option<&str>) -> SeenFiles {
         &Options { encoding: encoding.map(str::to_owned), ..Options::default() },
         &mut Vec::new(),
     )
-    .unwrap();
+    .unwrap()
+    .seen;
     assert_eq!(observed.len(), 1);
     let observed = &observed[0];
     SeenFiles::from([(
@@ -52,6 +53,7 @@ fn view_selection_and_local_bytes_agree() {
         let result = writer
             .edit(
                 EditRequest {
+                    encoding: None,
                     file_path: path.clone(),
                     old_string: old.into(),
                     new_string: new.into(),
@@ -76,6 +78,7 @@ fn mixed_segments_and_batches_preserve_untouched_bytes() {
     writer
         .edit(
             EditRequest {
+                encoding: None,
                 file_path: path.clone(),
                 old_string: "你好".into(),
                 new_string: "您好".into(),
@@ -86,7 +89,7 @@ fn mixed_segments_and_batches_preserve_untouched_bytes() {
         .unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"UTF8 \xc3\xa9\nGBK \xc4\xfa\xba\xc3\r\n");
     fs::write(&path, before).unwrap();
-    let failure = writer.edit_blocks(EditBlocksRequest {
+    let failure = writer.edit_blocks(EditBlocksRequest { encoding: None,
         file_path: path.clone(), replace_all: false,
         input: "<<<<<<< SEARCH\n你好\n=======\n您好\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nmissing\n=======\nX\n>>>>>>> REPLACE\n".into(),
     }, &seen).unwrap_err();
@@ -95,6 +98,7 @@ fn mixed_segments_and_batches_preserve_untouched_bytes() {
     let unchanged = writer
         .edit(
             EditRequest {
+                encoding: None,
                 file_path: path.clone(),
                 old_string: "你好\r\n".into(),
                 new_string: "你好\n".into(),
@@ -105,7 +109,11 @@ fn mixed_segments_and_batches_preserve_untouched_bytes() {
         .unwrap();
     assert!(unchanged.changes.is_empty());
     assert_eq!(fs::read(&path).unwrap(), before);
-    assert!(writer.write(WriteRequest { file_path: path.clone(), content: "replacement".into() }, &seen).is_err());
+    assert!(
+        writer
+            .write(WriteRequest { encoding: None, file_path: path.clone(), content: "replacement".into() }, &seen)
+            .is_err()
+    );
     assert_eq!(fs::read(&path).unwrap(), before);
 }
 
@@ -129,7 +137,7 @@ fn automatic_legacy_text_can_be_copied_and_edited() {
     for &(before, visible, old, new, expected) in cases {
         fs::write(&path, before).unwrap();
         let mut output = Vec::new();
-        let observations = view(std::slice::from_ref(&path), &Options::default(), &mut output).unwrap();
+        let observations = view(std::slice::from_ref(&path), &Options::default(), &mut output).unwrap().seen;
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains(visible), "{output}");
         assert!(!output.contains("read-only"), "{output}");
@@ -138,6 +146,7 @@ fn automatic_legacy_text_can_be_copied_and_edited() {
         writer
             .edit(
                 EditRequest {
+                    encoding: None,
                     file_path: path.clone(),
                     old_string: old.into(),
                     new_string: new.into(),

@@ -35,7 +35,9 @@ pub fn look(
             Ok(plan) => plan,
             Err(facts) => {
                 let kind = kind(&start).map(|kind| format!("; {kind}")).unwrap_or_default();
-                return Ok((Section::note(path, options, &format!("not shown: {facts}{kind}")), None));
+                let mut section = Section::note(path, options, &format!("not shown: {facts}{kind}"));
+                section.failed = kind.is_empty() || options.encoding.is_some();
+                return Ok((section, None));
             }
         };
         std::io::copy(&mut scan, &mut std::io::sink())?;
@@ -98,12 +100,12 @@ pub fn look(
         }
         Ok(())
     }) {
-        return Ok((Section::note(path, options, &format!("not shown: {facts}")), None));
+        return Ok((Section::error(path, options, &format!("not shown: {facts}")), None));
     }
     let read_hash = stream.hash.finalize();
     if read_hash != evidence_hash {
         return Ok((
-            Section::note(
+            Section::error(
                 path,
                 options,
                 "not shown: file bytes changed between encoding selection and decoding; view the file again",
@@ -169,7 +171,10 @@ pub fn look(
         encoding_selection: options.encoding.clone(),
     };
     let shown = read.shown_lines > 0 || read.cut.is_some() || read.total_lines == 0;
-    Ok((Section { text, cost, shown, partial: read.cut.is_some() || read.out_of_budget }, shown.then_some(seen)))
+    Ok((
+        Section { text, cost, shown, partial: read.cut.is_some() || read.out_of_budget, failed: false },
+        shown.then_some(seen),
+    ))
 }
 
 /// Which characters of a line too long to show were shown.

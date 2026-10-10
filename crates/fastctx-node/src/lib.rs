@@ -33,6 +33,7 @@ pub mod handoff;
 mod here;
 mod homes;
 mod inbox;
+mod job_ends;
 mod job_watch;
 mod jobs;
 mod leases;
@@ -127,6 +128,7 @@ pub(crate) struct Node {
     /// The `on` jobs here whose sender is following them now: their end
     /// goes to it, not in a letter, unless it leaves first (`on`).
     following: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
+    job_ends: job_ends::Ends,
     /// Words coming for residents here, and for residents elsewhere that
     /// work here, for the `run` calls waiting.
     words: words::Words,
@@ -355,6 +357,7 @@ pub async fn run_prepared(
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),
         following: Default::default(),
+        job_ends: Default::default(),
         words: Default::default(),
         dispatched: Default::default(),
         births: Default::default(),

@@ -128,19 +128,42 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             }
         }
-        if let Call::Wait { jobs } = call {
+        if let Call::Wait { jobs, receipt } = call {
             // A wait keeps the connection until the jobs end; its leaving
             // hands back the ends the wait held (`waiting`).
-            let caller = match &hello.peer {
-                Peer::Command { resident, .. } => resident.clone(),
-                _ => None,
+            let caller = match caller::of(node, &hello.peer) {
+                Ok(Caller::Resident(resident)) => Some(resident),
+                Ok(_) => None,
+                Err(error) => {
+                    writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
+                    continue;
+                }
             };
             let waited = tokio::select! {
                 waited = crate::waiting::wait(node, caller, jobs) => waited,
                 // The client says nothing more on a wait.
                 _ = reader.recv() => return Ok(()),
             };
-            writer.send(&json(&NodeFrame::Reply { id, reply: waited })).await?;
+            match waited {
+                Err(error) => writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?,
+                Ok(ready) => {
+                    writer.send(&json(&NodeFrame::Reply { id, reply: Ok(ready.reply.clone()) })).await?;
+                    writer.drain().await?;
+                    if receipt {
+                        let Some(frame) = reader.recv().await? else { return Ok(()) };
+                        let word: String = parse(&frame)?;
+                        if word != fastctx_types::on::TAKEN {
+                            return Err(std::io::Error::other("the wait client did not acknowledge its end"));
+                        }
+                    }
+                    let taken = ready.take().await.map(|()| Reply::Done);
+                    if receipt {
+                        writer.send(&json(&NodeFrame::Reply { id, reply: taken })).await?;
+                    } else if let Err(error) = taken {
+                        return Err(std::io::Error::other(error.message));
+                    }
+                }
+            }
             continue;
         }
         if let Call::FindFiles { machine, request: fastctx_types::file_search::FileSearchRequest::Open { scope } } =
@@ -378,6 +401,8 @@ async fn collect(
     collected: &mut Vec<(ResidentId, NoticeId, Option<String>)>,
     collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
+    let gate = node.residents.management(&resident)?;
+    let _collecting = gate.read().await;
     if native_delivery(node, &resident) {
         return collect_notes(node, resident, answering, Vec::new(), collected_notes).await;
     }

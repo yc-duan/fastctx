@@ -67,6 +67,9 @@ pub enum Call {
     /// job the caller started is taken by the wait: it is not told again.
     Wait {
         jobs: Vec<JobId>,
+        /// The command acknowledges the rendered result before taking its ends.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        receipt: bool,
     },
     /// Copies files or a directory from one machine to another.
     Copy {

@@ -350,7 +350,7 @@ fn main() -> ExitCode {
         #[cfg(windows)]
         Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
         Command::Serve { writer: _, writes } => serve(writes == "off"),
-        Command::View(args) => view::run(args),
+        Command::View(args) => return finish(view::run(args)),
         Command::Edit(args) => return finish(writers::edit(args)),
         Command::Write(args) => return finish(writers::write(args)),
         Command::ApplyPatch => return finish(writers::apply_patch()),

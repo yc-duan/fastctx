@@ -164,6 +164,21 @@ fn delivered_here(directory: &ResidentDir, id: &NoticeId) -> io::Result<bool> {
     Ok(false)
 }
 
+/// A wait took this completion, including a copy already queued in the inbox.
+pub(crate) fn consume(directory: &ResidentDir, id: &NoticeId) -> io::Result<()> {
+    let (_transaction, directory) = crate::resident_storage::current(directory)?;
+    let receipts = directory.path().join("delivery-receipts");
+    ensure_private_dir(&receipts)?;
+    publish(&receipts.join(id.as_str()), b"", Permissions::Private)?;
+    if directory.path().file_name().is_some_and(|name| name == "archive") {
+        return Ok(());
+    }
+    match std::fs::remove_file(path(&directory, id)) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
 fn read_here(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pending>> {
     let path = path(directory, id);
     match std::fs::read(&path) {
@@ -276,6 +291,13 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
     };
     let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(&record.id);
     let record_path = owed.with_extension("json");
+    let _delivery = node.job_ends.lock(&record_path).await;
+    if record_path.with_extension("wait-taken").try_exists()? {
+        match std::fs::remove_file(&owed) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => return Ok(()),
+        }
+    }
     // An `on` job's follower takes its end; a letter goes only when nobody
     // follows it then (`on`).
     if !owed.try_exists()? || !crate::on::unfollowed(node, &record_path) {
@@ -325,6 +347,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
             None => end.how.clone(),
         };
         let notice = Notice::JobEnded {
+            taken: false,
             job: record.id.clone(),
             machine: record.machine.clone(),
             request: record.on.as_ref().and_then(|on| on.request.clone()),
@@ -347,23 +370,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
         // content, including its tail, under the stable letter id.
         parse(&notice_path, &std::fs::read(&notice_path)?)?
     };
-    let id = if let Some(request) = record.on.as_ref().and_then(|on| on.request.as_ref()) {
-        // Short job ids are reserved within one owner's town directory.
-        // The request distinguishes jobs even after that owner changes towns.
-        crate::speech::fixed_id(
-            "on-end",
-            &[
-                record.machine.as_str(),
-                owner.machine.as_str(),
-                owner.resident.as_str(),
-                record.id.as_str(),
-                request.as_str(),
-            ],
-        )
-    } else {
-        // An older job may already have posted this id before an upgrade.
-        NoticeId::try_from(format!("{}-{}", record.machine, record.id)).expect("a machine and a job make an id")
-    };
+    let id = job_notice_id(record);
     // The end is news for the account the job was sent for, or run for.
     let acting = record
         .on
@@ -376,6 +383,30 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
     match std::fs::remove_file(&owed) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
+    }
+}
+
+pub(crate) fn job_notice_id(record: &JobRecord) -> NoticeId {
+    let owner = record.owner.resident().expect("a completion has a resident owner");
+    end_id(owner, &record.machine, &record.id, record.on.as_ref().and_then(|on| on.request.as_ref()))
+}
+
+pub(crate) fn end_id(
+    owner: &fastctx_types::Address,
+    machine: &MachineName,
+    job: &JobId,
+    request: Option<&NoticeId>,
+) -> NoticeId {
+    if let Some(request) = request {
+        // Short job ids are reserved within one owner's town directory.
+        // The request distinguishes jobs even after that owner changes towns.
+        crate::speech::fixed_id(
+            "on-end",
+            &[machine.as_str(), owner.machine.as_str(), owner.resident.as_str(), job.as_str(), request.as_str()],
+        )
+    } else {
+        // An older job may already have posted this id before an upgrade.
+        NoticeId::try_from(format!("{machine}-{job}")).expect("a machine and a job make an id")
     }
 }
 

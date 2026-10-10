@@ -14,6 +14,7 @@ pub(super) fn edit(writer: &Writer, request: EditRequest, seen: &SeenFiles) -> R
         &[Block { old: &request.old_string, new: &request.new_string }],
         request.replace_all,
         false,
+        request.encoding.as_deref(),
         seen,
     )
 }
@@ -24,21 +25,26 @@ pub(super) fn edit_blocks(
     seen: &SeenFiles,
 ) -> Result<WriteResult, WriteError> {
     let blocks = blocks::parse(&request.input)?;
-    edit_file(writer, &request.file_path, &blocks, request.replace_all, true, seen)
+    edit_file(writer, &request.file_path, &blocks, request.replace_all, true, request.encoding.as_deref(), seen)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn edit_file(
     writer: &Writer,
     path: &Path,
     blocks: &[Block<'_>],
     replace_all: bool,
     numbered: bool,
+    encoding: Option<&str>,
     seen: &SeenFiles,
 ) -> Result<WriteResult, WriteError> {
     let target = Target::new(path, writer)?;
     let before = target.required()?;
     let stale = target.stale(&before, seen)?;
-    let selection = target.encoding(&before, seen)?;
+    let selection = match encoding {
+        Some(encoding) => Some(encoding),
+        None => target.encoding(&before, seen)?,
+    };
     let mut document = Source::decode(before.bytes.clone(), selection)?;
     // Literal markers can form a syntactically valid second block. Parsing the
     // input alone cannot distinguish that collision from an intended batch.
@@ -207,14 +213,21 @@ fn relocated(offset: usize, edits: &[(Range<usize>, Range<usize>)], right: bool)
 pub(super) fn write(writer: &Writer, request: WriteRequest, seen: &SeenFiles) -> Result<WriteResult, WriteError> {
     let target = Target::new(&request.file_path, writer)?;
     let before = target.read()?;
-    let selection = before.as_ref().map(|before| target.encoding(before, seen)).transpose()?.flatten();
+    let selection = match request.encoding.as_deref() {
+        Some(encoding) => Some(encoding),
+        None => before.as_ref().map(|before| target.encoding(before, seen)).transpose()?.flatten(),
+    };
     let (after, encoding) = match &before {
         Some(before) => {
             target.whole_overwrite(before, seen)?;
-            let document = Source::decode(before.bytes.clone(), target.encoding(before, seen)?)?;
+            let document = Source::decode(before.bytes.clone(), selection)?;
             (document.whole(&request.content)?, document.label())
         }
-        None => (request.content.into_bytes(), Some("UTF-8")),
+        None => {
+            let encoding =
+                crate::encoding::explicit(selection.unwrap_or("utf-8"), &[]).map_err(|error| error.to_string())?;
+            (encoding.encode(&request.content).map_err(|error| error.to_string())?, Some(encoding.label()))
+        }
     };
     target.create_parent(writer)?;
     let mut changes = Vec::new();

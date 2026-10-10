@@ -69,6 +69,9 @@ pub struct StopRequested {
 /// and a window onto its output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunReply {
+    /// Completion notices taken by waits of this owner on the executing node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumed: Option<Box<Vec<crate::NoticeId>>>,
     pub machine: MachineName,
     pub job: JobId,
     pub state: RunState,
