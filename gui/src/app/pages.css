@@ -680,6 +680,33 @@
   color: var(--text-3);
 }
 
+/* What must not be run, in clay. */
+.settings-said.settings-warn {
+  color: var(--accent);
+}
+
+/* The notice of another fastctx first on a PATH: a line each, its path
+   under it in the code face. */
+.path-rows {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.path-row {
+  display: grid;
+  gap: 2px;
+}
+
+.path-row code {
+  font-family: var(--font-code);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
 /* What a release says of itself, under the version it offers. */
 .settings-notes {
   flex: 1 1 100%;

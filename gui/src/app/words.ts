@@ -282,11 +282,17 @@ export interface SettingsWords {
   /** Which World this computer runs, and putting the new one in place. */
   worldVersion: string;
   versionHere(version: string): string;
-  versionDifferent(carried: string, node: string, relation: "older" | "newer" | "different"): string;
-  versionInstalled(carried: string, installed: string): string;
-  pathDifferent(lookup: string, path: string, version: string, program: string): string;
-  pathUnknown(lookup: string, path: string, reason: string): string;
+  /** The node against the program the interface carries; the builds are
+   *  the hover. */
+  versionDifferent(relation: "older" | "newer" | "different"): string;
+  versionInstalled: string;
+  /** A terminal or Codex that finds another fastctx first on its PATH. */
+  pathLookup: Record<"windows" | "bash" | "unix" | "codex", string>;
+  pathDifferent(where: string, version: string): string;
+  pathUnknown(where: string): string;
   pathLegacy: string;
+  pathTitle: string;
+  pathOk: string;
   versionOld(node: string, nodeProtocol: number, client: string, clientProtocol: number): string;
   versionNone: string;
   renew: string;
@@ -368,11 +374,14 @@ export const zhSettings: SettingsWords = {
   service: "开机自启",
   worldVersion: "本机服务",
   versionHere: (version) => version,
-  versionDifferent: (carried, node, relation) => `[文案占位] 界面内核 ${carried}；运行节点 ${node}；节点${relation === "newer" ? "更新" : relation === "older" ? "更旧" : "不同"}`,
-  versionInstalled: (carried, installed) => `[文案占位] 界面内核 ${carried}；已安置程序 ${installed}；两份不同`,
-  pathDifferent: (lookup, path, version, program) => `[文案占位] ${lookup} 在当前继承的 PATH 中首先启动 ${path}，版本 ${version}，实际程序 ${program}；入口不是世界的稳定副本。终端与 Codex 的共享 command = fastctx 各按自己的查找规则启动它；新版入口会转交稳定副本，旧版不会`,
-  pathUnknown: (lookup, path, reason) => `[文案占位] ${lookup} 首先找到 ${path}；不能确定它实际启动哪一份内核：${reason}`,
-  pathLegacy: "[文案占位] 这份旧程序的 unapply 会删除整个 .fastctx；不要用它撤销新版世界的接入",
+  versionDifferent: (relation) => (relation === "newer" ? "本机服务比应用新" : relation === "older" ? "本机服务较旧" : "本机服务与应用不一致"),
+  versionInstalled: "已安装的程序与应用不一致",
+  pathLookup: { windows: "命令提示符", bash: "Git Bash", unix: "终端", codex: "Codex" },
+  pathDifferent: (where, version) => `${where} 使用的是另一份 fastctx（${version}）`,
+  pathUnknown: (where) => `无法确认 ${where} 使用的 fastctx`,
+  pathLegacy: "请勿运行旧版的 fastctx unapply：它会删除整个 .fastctx，包括世界的数据",
+  pathTitle: "终端中的 fastctx",
+  pathOk: "知道了",
   versionOld: (node, _nodeProtocol, client) => `本机服务 ${node} 与界面 ${client} 不兼容`,
   versionNone: "本机服务未运行",
   renew: "更新",
@@ -478,11 +487,14 @@ export const enSettings: SettingsWords = {
   service: "Start at boot",
   worldVersion: "Local service",
   versionHere: (version) => version,
-  versionDifferent: (carried, node, relation) => `[Copy placeholder] Carried kernel ${carried}; running node ${node}; node ${relation}`,
-  versionInstalled: (carried, installed) => `[Copy placeholder] Carried kernel ${carried}; installed kernel ${installed}; they differ`,
-  pathDifferent: (lookup, path, version, program) => `[Copy placeholder] ${lookup} first starts ${path} in the currently inherited PATH, version ${version}, executable ${program}; this entry is not the stable World program. Terminals and Codex's shared command = fastctx use their respective lookups; new deliveries forward to the stable program, legacy versions do not`,
-  pathUnknown: (lookup, path, reason) => `[Copy placeholder] ${lookup} finds ${path}; its actual kernel could not be determined: ${reason}`,
-  pathLegacy: "[Copy placeholder] This legacy program's unapply deletes the entire .fastctx directory; do not use it to withdraw the new World integration",
+  versionDifferent: (relation) => (relation === "newer" ? "Local service is newer than the app" : relation === "older" ? "Local service is outdated" : "Local service doesn't match the app"),
+  versionInstalled: "The installed program doesn't match the app",
+  pathLookup: { windows: "Command Prompt", bash: "Git Bash", unix: "Terminal", codex: "Codex" },
+  pathDifferent: (where, version) => `${where} uses another fastctx (${version})`,
+  pathUnknown: (where) => `Can't tell which fastctx ${where} uses`,
+  pathLegacy: "Don't run the old fastctx unapply: it deletes the whole .fastctx, World data included",
+  pathTitle: "fastctx in your terminal",
+  pathOk: "Got it",
   versionOld: (node, _nodeProtocol, client) => `Local service ${node} isn't compatible with this app (${client})`,
   versionNone: "Local service not running",
   renew: "Update",

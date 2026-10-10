@@ -9,6 +9,7 @@
 import { escape } from "../conversation/prose";
 import type { RenewalPhase, RenewalStatus } from "../world/renewal";
 import { buildLabel, buildOrder, sameBuild } from "../world/renewal";
+import { pathFacts } from "./path-facts";
 import type { SettingsWords } from "./words";
 
 export interface Renewing {
@@ -89,14 +90,16 @@ export class RenewalRow {
     const node = status?.node?.build ?? null;
     const mismatch = status?.mismatch ?? null;
     let state = "";
+    let builds = "";
     if (mismatch) {
       const legacy = { version: mismatch.node_version, protocol: mismatch.node_protocol, digest: "?" };
-      state = words.versionDifferent(buildLabel(status?.client), buildLabel(legacy), buildOrder(status?.client, legacy));
-    }
-    else if (node) state = sameBuild(status?.client, node)
-      ? words.versionHere(node.version)
-      : words.versionDifferent(buildLabel(status?.client), buildLabel(node), buildOrder(status?.client, node));
-    else if (status) state = words.versionNone;
+      state = words.versionDifferent(buildOrder(status?.client, legacy));
+      builds = `${buildLabel(status?.client)}\n${buildLabel(legacy)}`;
+    } else if (node && sameBuild(status?.client, node)) state = words.versionHere(node.version);
+    else if (node) {
+      state = words.versionDifferent(buildOrder(status?.client, node));
+      builds = `${buildLabel(status?.client)}\n${buildLabel(node)}`;
+    } else if (status) state = words.versionNone;
     const phase = status?.phase ?? null;
     const step = phase ? words.renewPhase[phase] : "";
     const failed = phase === "failed" && status?.error ? words.renewFailed(status.error) : "";
@@ -112,17 +115,17 @@ export class RenewalRow {
         : "",
     ].join("");
     const why = [phase === "failed" ? (status?.error ?? "") : "", this.why].filter(Boolean).join("\n");
-    const installation = status?.client && status.installed && !sameBuild(status.client, status.installed)
-      ? words.versionInstalled(buildLabel(status.client), buildLabel(status.installed)) : "";
-    const commands = (status?.commands ?? []).filter(command => !command.is_world).flatMap(command => [
-      command.is_world === null ? words.pathUnknown(command.lookup, command.path, command.error ?? "?")
-        : words.pathDifferent(command.lookup, command.path, command.build?.version ?? "?", command.executable ?? command.error ?? "?"),
-      command.legacy_unapply ? words.pathLegacy : "",
-    ]);
-    const notes = [installation, ...commands, step, failed, this.said].filter(Boolean);
+    const installed = status?.client && status.installed && !sameBuild(status.client, status.installed);
+    const paths = pathFacts(status?.commands, words);
+    const notes: { text: string; title: string; warn?: boolean }[] = [
+      ...(installed ? [{ text: words.versionInstalled, title: `${buildLabel(status!.client)}\n${buildLabel(status!.installed)}` }] : []),
+      ...paths.map((fact) => ({ text: fact.text, title: fact.detail })),
+      ...(paths.some((fact) => fact.legacy) ? [{ text: words.pathLegacy, title: "", warn: true }] : []),
+      ...[step, failed, this.said].filter(Boolean).map((text) => ({ text, title: why })),
+    ];
     this.element.hidden = !state && !notes.length;
-    this.element.innerHTML = `<dt>${escape(words.worldVersion)}</dt><dd><span>${escape(state)}</span>${buttons}${notes
-      .map((note) => `<p class="settings-said" role="status"${why ? ` title="${escape(why)}"` : ""}>${escape(note)}</p>`)
+    this.element.innerHTML = `<dt>${escape(words.worldVersion)}</dt><dd><span${builds ? ` title="${escape(builds)}"` : ""}>${escape(state)}</span>${buttons}${notes
+      .map((note) => `<p class="settings-said${note.warn ? " settings-warn" : ""}" role="status"${note.title ? ` title="${escape(note.title)}"` : ""}>${escape(note.text)}</p>`)
       .join("")}</dd>`;
   }
 }
