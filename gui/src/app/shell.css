@@ -334,6 +334,15 @@ body {
 
 .talks {
   margin: 1px 0 var(--space-1);
+  padding: 0;
+  list-style: none;
+}
+
+@media (pointer: coarse) {
+  .talk-row,
+  .talk-all {
+    min-height: 44px;
+  }
 }
 
 .talk-row,
