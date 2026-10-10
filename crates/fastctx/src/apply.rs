@@ -38,7 +38,10 @@ pub fn apply(args: ApplyArgs) -> anyhow::Result<()> {
     }
     let approval = if args.raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
     let mut errors = Vec::new();
+    let mut applied = Hosts { codex: false, claude: false };
     for (places, hosts) in args.homes.places(&places, true)? {
+        applied.codex |= hosts.codex;
+        applied.claude |= hosts.claude;
         let report = match apply::apply(&places, hosts, approval) {
             Ok(report) => report,
             Err(apply::Error::Edit(fastctx_install::Error::TokenLimitApproval { location, current, requested })) => {
@@ -65,7 +68,19 @@ pub fn apply(args: ApplyArgs) -> anyhow::Result<()> {
     if !errors.is_empty() {
         bail!("{}", errors.join("\n"));
     }
-    println!("Sessions opened from now on have the World's tools; sessions open now keep what they started with.");
+    // Codex reads its configuration when a session starts. Claude Code
+    // rereads its permissions at once, but loads plugins only at the start.
+    if applied.codex {
+        println!(
+            "Codex sessions opened from now on have the World's tools; those open now keep what they started with."
+        );
+    }
+    if applied.claude {
+        println!(
+            "Claude Code sessions open now lose Bash, Grep and Glob at once and get the World's tools only when \
+             opened again; sessions opened from now on have them from the start."
+        );
+    }
     Ok(())
 }
 
@@ -97,7 +112,10 @@ pub fn unapply(args: UnapplyArgs) -> anyhow::Result<()> {
     if !changed {
         println!("Nothing of the World's was in place.");
     } else {
-        println!("New sessions use the resulting host configuration; sessions open now keep what they started with.");
+        println!(
+            "New sessions use the resulting host configuration; Claude Code sessions open now get Bash, Grep and \
+             Glob back at once."
+        );
     }
     Ok(())
 }

@@ -321,7 +321,10 @@ impl MachinesPage {
             Some(Outcome::Applied(report)) if report.tools.iter().any(|check| check.result.is_err()) => {
                 (words.tools_unverified().into(), Role::Caution)
             }
-            Some(Outcome::Applied(report)) => (words.applied(report.changed.len(), report.commands.len()), Role::Muted),
+            Some(Outcome::Applied(report)) => {
+                let claude = report.tools.iter().any(|check| check.host == "Claude Code");
+                (words.applied(report.changed.len(), report.commands.len(), claude), Role::Muted)
+            }
             Some(Outcome::Unapplied(report)) => {
                 (words.unapplied(report.changed.len(), report.commands.len()), Role::Muted)
             }

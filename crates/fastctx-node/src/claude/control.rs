@@ -401,7 +401,8 @@ fn resolved(node: &Node, key: &str, answer: Answer) -> std::io::Result<()> {
 /// requests still open.
 fn waiting_state(node: &Node, resident: &ResidentId) -> std::io::Result<()> {
     let requests = node.claude.bridge.requests.lock().expect("never poisoned");
-    let latest = requests.values().filter(|request| &request.resident == resident).max_by_key(|request| request.waiting.at);
+    let latest =
+        requests.values().filter(|request| &request.resident == resident).max_by_key(|request| request.waiting.at);
     let waiting = latest.is_some();
     let asked = latest.and_then(|request| {
         let question = &request.waiting.question;

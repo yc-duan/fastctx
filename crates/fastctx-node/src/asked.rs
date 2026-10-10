@@ -38,7 +38,8 @@ pub fn of_request(id: &Value, request: &str, params: &Value, at: Timestamp) -> O
         }
         "item/fileChange/requestApproval" => (AskedFor::Change, text(&params["reason"]), vec![]),
         "applyPatchApproval" => {
-            let paths: Vec<_> = params["fileChanges"].as_object().into_iter().flat_map(|files| files.keys()).cloned().collect();
+            let paths: Vec<_> =
+                params["fileChanges"].as_object().into_iter().flat_map(|files| files.keys()).cloned().collect();
             (AskedFor::Change, paths.join("\n"), vec![])
         }
         "classic.PermissionRequest" => {

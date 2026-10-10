@@ -51,9 +51,8 @@ impl Title {
         match self {
             Self::Text(text) => Some(text),
             Self::Kinds(kinds) => {
-                let kind = asked.map_or(Value::from("waiting"), |asked| {
-                    serde_json::to_value(asked.what).expect("kinds serialize")
-                });
+                let kind = asked
+                    .map_or(Value::from("waiting"), |asked| serde_json::to_value(asked.what).expect("kinds serialize"));
                 kinds.get(kind.as_str()?).map(String::as_str)
             }
         }

@@ -620,14 +620,28 @@ impl Words {
         self.pick("移除中…", "Removing…")
     }
 
-    pub fn applied(&self, files: usize, commands: usize) -> String {
-        match (self.lang, files + commands) {
+    /// What an apply did; with `claude`, that Claude Code's open sessions
+    /// lose their own shell at once, as it rereads its permissions, while the
+    /// World's tools come only with a session opened again.
+    pub fn applied(&self, files: usize, commands: usize, claude: bool) -> String {
+        let done = match (self.lang, files + commands) {
             (Lang::Zh, 0) => "已接入，无需改动".to_string(),
             (Lang::En, 0) => "Already connected; nothing changed".to_string(),
             (Lang::Zh, _) if commands == 0 => format!("已接入：修改 {files} 个文件，新会话生效"),
             (Lang::Zh, _) => format!("已接入：修改 {files} 个文件，运行 {commands} 条 claude 命令，新会话生效"),
             (Lang::En, _) => {
                 format!("Connected: {files} files changed, {commands} claude commands run; applies to new sessions")
+            }
+        };
+        match (self.lang, claude && files + commands > 0) {
+            (_, false) => done,
+            (Lang::Zh, true) => {
+                format!("{done}；已开着的 Claude Code 会话马上用不了自带的命令行，重新打开后才有世界的工具")
+            }
+            (Lang::En, true) => {
+                format!(
+                    "{done}; Claude Code sessions already open lose their own shell at once and get the World's tools when opened again"
+                )
             }
         }
     }
