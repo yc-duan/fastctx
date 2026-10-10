@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(any(windows, target_os = "linux"))]
 use sha2::{Digest as _, Sha256};
 
+mod hub;
 mod keep;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -24,6 +25,7 @@ mod linux_watchdog;
 mod transaction;
 
 pub use keep::{Kept, Released, keep_connected, stop_keeping};
+pub use hub::keep_hub;
 #[cfg(windows)]
 #[path = "windows_guardian/mod.rs"]
 mod windows;

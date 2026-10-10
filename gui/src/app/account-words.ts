@@ -25,8 +25,30 @@ export interface LoginWords {
   separator: string;
   title: string;
   another: string;
+  /** The two ways in for a computer in no World yet. */
+  join: string;
+  joinWhat: string;
+  create: string;
+  createWhat: string;
+  /** Creating a World with this computer its hub. */
+  worldName: string;
+  admin: string;
+  reach: string;
+  reachWhat: string;
+  extraHint: string;
+  port: string;
+  /** An address on a TUN, VPN or virtual switch. */
+  virtual: string;
+  noAddresses: string;
+  noReach: string;
+  createGo: string;
+  createNote: string;
+  creating: string;
+  created(world: string): string;
+  createdSaid(account: string, name: string): string;
+  nextTitle: string;
+  inviteNext: string;
   hub: string;
-  hubHint: string;
   account: string;
   password: string;
   passwordAgain: string;
@@ -86,14 +108,33 @@ export const zhLogin: LoginWords = {
   separator: "、",
   title: "登录",
   another: "再登录一个账号",
+  join: "加入一个世界",
+  joinWhat: "有地址和账号，或一张令牌",
+  create: "新建一个世界",
+  createWhat: "这台电脑当它的中枢",
+  worldName: "世界的名字",
+  admin: "你的账号",
+  reach: "别的电脑从哪里连它",
+  reachWhat: "别的电脑连到这台电脑用的地址：同一个局域网里选它的局域网地址；有公网地址或在路由器上转发了端口，就写在旁边。",
+  extraHint: "另一个地址，比如公网 IP",
+  port: "端口",
+  virtual: "虚拟网卡",
+  noAddresses: "没找到这台电脑的地址，在旁边写一个。",
+  noReach: "至少要有一个别的电脑连得到的地址。",
+  createGo: "新建",
+  createNote: "会请你确认一次管理员权限",
+  creating: "正在新建…",
+  created: (world) => `世界 ${world} 建好了`,
+  createdSaid: (account, name) => `这台电脑（${name}）是它的中枢，${account} 是超级管理员。`,
+  nextTitle: "让另一台电脑加入",
+  inviteNext: "给它一张一次性令牌…",
   hub: "服务器",
-  hubHint: "中枢的地址加端口，比如 hub.example.com:7443",
   account: "账号",
   password: "口令",
   passwordAgain: "再输一遍口令",
   passwordsDiffer: "两遍口令不一样。",
-  register: "把这台电脑登记成这个账号的机器",
-  registerWhat: "登记以后，这个账号的智能体能住在这台电脑上、在上面干活。不勾就只登录：从这里看、和智能体说话，这台电脑不归这个账号用。",
+  register: "这台电脑也当这个账号的机器",
+  registerWhat: "登记以后，这个账号的智能体能住在这台电脑上、在上面干活；不勾就只登录，从这里看、和智能体说话。",
   name: "这台电脑叫什么",
   phoneName: "这部手机叫什么",
   nameHint: "小写字母、数字与连字符；一台设备在每个中枢上都叫同一个名字",
@@ -111,7 +152,7 @@ export const zhLogin: LoginWords = {
   scanFailed: (why) => `没扫成：${why}`,
   tokenOr: "或者粘贴令牌",
   alone: "先不登录，只用这台电脑",
-  aloneWhat: "这台电脑本身就是一个世界，它自己的智能体、项目都照常。以后随时可以登录。",
+  aloneWhat: "这台电脑本身就是一个世界，以后随时可以加入或新建。",
   done: (login, name) => `登录好了：${login}，这台叫 ${name}。`,
   registered: "它登记成了这个账号的机器。",
   onlyLoggedIn: "它只登录着，没有登记成这个账号的机器。",
@@ -123,8 +164,8 @@ export const zhLogin: LoginWords = {
     unsupported: "这个系统没有开机服务：只有你登录着系统时它才连着。",
   },
   keptCommand: "要它开机就连着，在终端里运行：",
-  hosts: "把世界的工具接进这台电脑上的智能体",
-  hostsWhat: "接进去之后，你在这台电脑上自己开的 Codex 与 Claude Code 也能用世界的手、看见世界。随时可以拿出来。",
+  hosts: "接进这台电脑上的智能体",
+  hostsWhat: "你在这台电脑上自己开的 Codex 与 Claude Code 也用上世界的工具；随时可以拿出来。",
   codex: "Codex",
   claude: "Claude Code",
   hostState: { absent: "没装", out: "没接入", in: "已接入", old: "里面是旧版 fastctx" },
@@ -150,14 +191,33 @@ export const enLogin: LoginWords = {
   separator: ", ",
   title: "Log in",
   another: "Log in to another account",
+  join: "Join a World",
+  joinWhat: "With an address and an account, or a token",
+  create: "Create a World",
+  createWhat: "This computer as its hub",
+  worldName: "The World's name",
+  admin: "Your account",
+  reach: "Where other computers reach it",
+  reachWhat: "The address other computers reach this one at: on the same network, its local address; with a public address, or a port forwarded on the router, write that beside.",
+  extraHint: "Another address, such as a public IP",
+  port: "Port",
+  virtual: "virtual",
+  noAddresses: "No address of this computer was found; write one beside.",
+  noReach: "Give at least one address other computers can reach.",
+  createGo: "Create",
+  createNote: "Asks once for administrator rights",
+  creating: "Creating…",
+  created: (world) => `The World ${world} is made`,
+  createdSaid: (account, name) => `This computer (${name}) is its hub, and ${account} its super administrator.`,
+  nextTitle: "Let another computer in",
+  inviteNext: "Give it a one-time token…",
   hub: "Server",
-  hubHint: "The hub's address and port, such as hub.example.com:7443",
   account: "Account",
   password: "Password",
   passwordAgain: "Password again",
   passwordsDiffer: "The two passwords differ.",
-  register: "Register this computer as one of the account's machines",
-  registerWhat: "Registered, the account's agents can live on this computer and work on it. Unticked, it only logs in: you look and talk from here, and the account does not use this computer.",
+  register: "This computer is one of the account's machines too",
+  registerWhat: "Registered, the account's agents can live and work on this computer; unticked, it only logs in, to look and talk from here.",
   name: "This computer's name",
   phoneName: "This phone's name",
   nameHint: "lowercase letters, digits and hyphens; a device has the same name on every hub",
@@ -175,7 +235,7 @@ export const enLogin: LoginWords = {
   scanFailed: (why) => `Could not scan it: ${why}`,
   tokenOr: "or paste the token",
   alone: "Not now: use this computer on its own",
-  aloneWhat: "This computer is a World by itself: its agents and projects work as ever. Log in whenever you like.",
+  aloneWhat: "This computer is a World by itself; join or create one whenever you like.",
   done: (login, name) => `Logged in to ${login}; this one is ${name}.`,
   registered: "It is registered as one of the account's machines.",
   onlyLoggedIn: "It is logged in only, not registered as one of the account's machines.",
@@ -187,8 +247,8 @@ export const enLogin: LoginWords = {
     unsupported: "This system has no startup service: it is connected only while you are signed in.",
   },
   keptCommand: "To keep it connected from boot, run in a terminal:",
-  hosts: "Put the World's tools into this computer's agents",
-  hostsWhat: "Then the Codex and Claude Code you open on this computer yourself can use the World's hands and see the World too. You can take them out any time.",
+  hosts: "Into this computer's agents",
+  hostsWhat: "The Codex and Claude Code you open on this computer yourself get the World's tools too; you can take them out any time.",
   codex: "Codex",
   claude: "Claude Code",
   hostState: { absent: "not installed", out: "not in", in: "in", old: "has the old fastctx" },
@@ -990,7 +1050,7 @@ export const zhAdmin: AdminWords = {
   title: "管理中枢",
   hub: (name) => `中枢 ${name}`,
   superPart: "超级管理员",
-  superWhat: "你是这个中枢的超级管理员：每一台机器你都能用，账号与中枢的设置都归你管。一个中枢只有一个超级管理员，可以交给另一个账号。",
+  superWhat: "每一台机器你都能用；这个身份只有一个，可以交给别的账号。",
   transfer: "交给另一个账号…",
   transferTitle: "把超级管理员交给另一个账号",
   transferWhat: "交出去之后你就是成员：只能用自己的机器，和别人共享、借给你的东西，这一页也不再归你。对方从此能用这个中枢上的每一台机器。",
@@ -1045,7 +1105,7 @@ export const enAdmin: AdminWords = {
   title: "Manage the hub",
   hub: (name) => `Hub ${name}`,
   superPart: "Super administrator",
-  superWhat: "You are this hub's super administrator: you may use every machine on it, and its accounts and settings are yours to manage. A hub has one, and you can hand it to another account.",
+  superWhat: "You may use every machine on it; there is one, and you can hand it on.",
   transfer: "Hand it to another account…",
   transferTitle: "Hand being super administrator to another account",
   transferWhat: "Once handed on, you are a member: you use your own machines and what others share and lend you, and this page is no longer yours. The other account may use every machine on this hub from then on.",

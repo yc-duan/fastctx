@@ -275,6 +275,17 @@ export function openAccount(hub: string, account: string, password: string, regi
   return invoke("open_account", { hub, accountName: account, password, register, name });
 }
 
+/** This computer's addresses another might reach it at. */
+export function hereAddresses(): Promise<{ interface: string; address: string; physical: boolean }[]> {
+  return invoke("here_addresses");
+}
+
+/** Makes this computer the hub of a new World, runs it as a service and
+ *  logs in to it as its super administrator. */
+export function createWorld(name: string, admin: string, password: string, reach: string[], register: boolean, machine: string | null): Promise<LoggedIn> {
+  return invoke("create_world", { name, admin, password, public: reach, register, machine });
+}
+
 export function accounts(): Promise<AccountsReply> {
   return invoke("accounts");
 }

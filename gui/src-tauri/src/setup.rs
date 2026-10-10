@@ -88,7 +88,7 @@ pub(super) fn carried() -> Option<PathBuf> {
 
 /// This user's places, with the program to place being the one this
 /// application carries.
-fn places() -> Result<Places, String> {
+pub(crate) fn places() -> Result<Places, String> {
     let mut places = Places::here().map_err(|error| error.to_string())?;
     if let Some(carried) = carried() {
         places.fastctx = carried;

@@ -16,20 +16,20 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import { osName } from "../home/frontispiece";
 import type { AccountChange, HubAccounts, Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { AgentFacts, HomeChange, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
 import type { LinkState } from "../world/world";
-import { agentName, titleOf } from "../world/names";
+import { agentName, osName, titleOf } from "../world/names";
 import type { AccessWords, MachinesWords } from "./account-words";
 import { accountOf, dirName, homeChoice, homeLabel, homesOf, installed, isDefault, limitsHtml, loggedOut, usableHome, versionOf, type HomeWords } from "./agent-homes";
 import type { ConsentHome } from "./claude-consent";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { GiveSheet, RelaysSheet } from "./machine-sheets";
-import { NetworkMap, type MapHub, type MapNode } from "./network-map";
+import { mapOf } from "./map-of";
+import { NetworkMap } from "./network-map";
 import { link, talkLink } from "./places";
 import { borrowedOf, groupsOf, isComputer, isSuper, loginKey, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameHome, sameLogin, superOf, type Borrowed, type Machine } from "./reach";
 import type { Page } from "./shell";
@@ -399,11 +399,13 @@ export class MachinesPage implements Page {
       this.shape = shape;
       void this.ask();
     }
+    // A machine named in the address may be one an agent is lent on.
+    if (this.selected?.startsWith("m:") && !spots.has(this.selected) && spots.has(`lent:${this.selected.slice(2)}`)) this.selected = `lent:${this.selected.slice(2)}`;
     if (!this.selected || !spots.has(this.selected)) {
       const here = machinesOf(world).find((machine) => machine.here);
       this.selected = here ? `m:${here.written}` : ([...spots.keys()].find((key) => key.startsWith("m:")) ?? [...spots.keys()][0] ?? null);
     }
-    this.drawMap(world, spots);
+    this.drawMap(world);
     const spot = this.selected ? spots.get(this.selected) : undefined;
     const alone =
       !loginsOf(world.accounts).length && isComputer(world)
@@ -422,52 +424,8 @@ export class MachinesPage implements Page {
 
   /** The drawing: each hub the account is on, each machine it may work
    *  on, and each machine of another an agent is lent on. */
-  private drawMap(world: WorldNow, spots: Map<string, Spot>): void {
-    const { words } = this.options;
-    const residents = residentsOf(world).filter((r) => r.here || r.now?.waiting_for_user);
-    const marks = (machine: string) =>
-      residents
-        .filter((r) => r.about.machine === machine && r.now?.activity !== "asleep")
-        .map((r) => (r.now?.waiting_for_user ? "waiting" : r.now?.activity === "busy" ? "busy" : "idle") as MapNode["marks"][number]);
-    const logins = loginsOf(world.accounts);
-    const hubs: MapHub[] = world.accounts.hubs.filter((hub) => hub.logins.length).map((hub) => ({ id: hub.hub, name: hub.name, online: hub.link.kind === "online" }));
-    const hubLabels = new Map(world.accounts.hubs.map((hub) => [hub.hub, hub.link.kind === "online" ? words.hubOnline : hub.link.kind === "connecting" ? words.hubConnecting : words.hubOff]));
-    const nodes: MapNode[] = [];
-    for (const [key, spot] of spots) {
-      if (spot.kind === "machine") {
-        const machine = spot.machine;
-        const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
-        const mine = machine.here || logins.some((login) => owns(machine, login));
-        const owner = mine ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null);
-        const reaching = !mine && logins.some((login) => machineActsFor(world, machine.name, login));
-        nodes.push({
-          key,
-          name: machine.written,
-          sub: owner ? words.ownedBy(owner) : facts ? osName(facts.os) : "",
-          hubs: machine.on.map((on) => on.hub).filter((hub) => hubs.some((one) => one.id === hub)),
-          here: machine.here,
-          online: machine.here ? true : machine.online,
-          hold: mine ? "mine" : "others",
-          reaching,
-          marks: marks(machine.name),
-          title: [machine.written, owner ? words.ownedBy(owner) : "", reaching ? words.reachingWhat : ""].filter(Boolean).join(" · "),
-        });
-      } else if (spot.kind === "lent") {
-        const first = spot.lent[0]!;
-        nodes.push({
-          key,
-          name: first.written,
-          sub: words.lentShort(first.owner ?? ""),
-          hubs: [first.login.hub],
-          here: false,
-          online: first.online,
-          hold: "lent",
-          reaching: machineActsFor(world, first.machine, first.login),
-          marks: marks(first.machine),
-          title: words.borrowedSaid(first.owner ?? ""),
-        });
-      }
-    }
+  private drawMap(world: WorldNow): void {
+    const { hubs, nodes, hubLabels } = mapOf(world, this.options.words);
     this.map.update(hubs, nodes, this.selected, hubLabels);
   }
 

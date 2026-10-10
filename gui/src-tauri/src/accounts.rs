@@ -27,7 +27,7 @@ fn hub(name: Option<String>) -> Result<Option<HubName>, String> {
     name.map(|name| HubName::try_from(name).map_err(|error| error.to_string())).transpose()
 }
 
-async fn logged_in(shell: &Shell, (hub, name, account): (HubName, MachineName, AccountName)) -> Result<LoggedIn, String> {
+pub(crate) async fn logged_in(shell: &Shell, (hub, name, account): (HubName, MachineName, AccountName)) -> Result<LoggedIn, String> {
     #[cfg(desktop)]
     let kept = match shell.connection.local_world() {
         Ok(world) => Some(crate::setup::keep(&world).await?),

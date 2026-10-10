@@ -11,6 +11,8 @@ mod composer;
 mod connection;
 
 #[cfg(desktop)]
+mod founding;
+#[cfg(desktop)]
 mod renewal;
 #[cfg(desktop)]
 mod setup;
@@ -815,7 +817,11 @@ pub fn run() {
             #[cfg(desktop)]
             keep_here,
             #[cfg(desktop)]
-            release_here
+            release_here,
+            #[cfg(desktop)]
+            founding::here_addresses,
+            #[cfg(desktop)]
+            founding::create_world
         ]);
     #[cfg(desktop)]
     let builder = builder

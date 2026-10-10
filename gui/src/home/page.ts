@@ -1,5 +1,6 @@
 // The World's front page: what the reader finds on coming back, on one
-// screen. A drawing of the World as it is; the day and how long they were
+// screen. A drawing of the World as it is, each machine on it a way to the
+// machines page; the day and how long they were
 // away; then, side by side where there is room, who is waiting on them and
 // who is at work, and what happened meanwhile. Each of those scrolls on its
 // own; the drawing and the day stay. Every line is a fact the World holds;
@@ -13,7 +14,6 @@ import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
 import { ownerResident, type JobOwner, type ResidentNow, type RunningJob, type Writer } from "../world/world";
-import { Frontispiece } from "./frontispiece";
 import { worksFor } from "../app/store";
 import type { Away, Happening, WorldState } from "./model";
 import type { HomeWords } from "./words";
@@ -31,6 +31,8 @@ export interface HomeOptions {
   head: string;
   /** Begins a conversation. */
   newTalk(): void;
+  /** The drawing of the World, kept up by whoever made it. */
+  drawing: HTMLElement;
 }
 
 export class HomePage {
@@ -38,7 +40,6 @@ export class HomePage {
   private world: WorldState | null = null;
   private now = new Date();
   private drawn = "";
-  private frontispiece: Frontispiece;
   private day: HTMLElement;
   private facts: HTMLElement;
   private present: HTMLElement;
@@ -49,16 +50,16 @@ export class HomePage {
     this.element.className = "home-page";
     this.element.innerHTML = `
       ${options.head}
-      <figure class="frontispiece" aria-hidden="true"></figure>
+      <div class="frontispiece"></div>
       <header class="dateline">
         <h1 class="dateline-day"></h1>
         <p class="dateline-facts"></p>
       </header>
-      <div class="board">
+      <div class="board arriving">
         <div class="board-column present scroller"></div>
         <div class="board-column away scroller"></div>
       </div>`;
-    this.frontispiece = new Frontispiece(this.element.querySelector<HTMLElement>(".frontispiece")!);
+    this.element.querySelector<HTMLElement>(".frontispiece")!.append(options.drawing);
     this.day = this.element.querySelector<HTMLElement>(".dateline-day")!;
     this.facts = this.element.querySelector<HTMLElement>(".dateline-facts")!;
     this.present = this.element.querySelector<HTMLElement>(".present")!;
@@ -66,6 +67,9 @@ export class HomePage {
     this.element.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest(".begin")) options.newTalk();
     });
+    // What is on the board rises into place when the page opens, and only
+    // then: later changes appear where they are.
+    setTimeout(() => this.element.querySelector(".board")?.classList.remove("arriving"), 1600);
   }
 
   /** Shows the World as it now stands; when nothing shown has changed, the
@@ -134,7 +138,6 @@ export class HomePage {
         this.away.hidden = !awayHtml;
       });
     }
-    this.frontispiece.update(world, residents);
   }
 
   /** The World could not be asked: said where the facts would be, with

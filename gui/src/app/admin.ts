@@ -285,7 +285,7 @@ export class AdminPage implements Page {
       <h3 class="account-part">${escape(words.superPart)}</h3>
       <p class="admin-super">${glyph("shield", 15)}<span>${escape(words.superWhat)}</span></p>
       <div class="account-acts"><button class="text-button" type="button" data-act="transfer">${glyph("move", 16)}<span>${escape(words.transfer)}</span></button></div>
-      <label class="check-row"><input type="checkbox" name="self-registration"${hub.self_registration ? " checked" : ""}><span><span class="check-title">${escape(words.selfRegistration)}</span><span class="field-hint">${escape(words.selfRegistrationWhat)}</span></span></label>
+      <label class="check-row" title="${escape(words.selfRegistrationWhat)}"><input type="checkbox" name="self-registration"${hub.self_registration ? " checked" : ""}><span class="check-title">${escape(words.selfRegistration)}</span></label>
       <h3 class="account-part">${escape(words.accounts)}</h3>
       <ul class="admin-accounts">${accounts}</ul>
       <div class="account-acts"><button class="text-button" type="button" data-act="open">${glyph("plus", 16)}<span>${escape(words.openAccount)}</span></button></div>

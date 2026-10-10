@@ -279,11 +279,9 @@ export class AccountPage implements Page {
       ${superNote}
       ${said}
       ${arrivals.length ? `<ul class="joined-lines" aria-live="polite">${arrivals.map((arrival) => this.arrival(arrival, now)).join("")}</ul>` : ""}
-      <h3 class="account-part">${escape(words.devices)}</h3>
-      <p class="field-hint">${escape(words.devicesWhat)}</p>
+      <h3 class="account-part" title="${escape(words.devicesWhat)}">${escape(words.devices)}</h3>
       <ul class="account-devices">${devices.map((device) => this.device(device, login, world, when)).join("")}</ul>
-      <h3 class="account-part">${escape(words.reaching)}</h3>
-      <p class="field-hint">${escape(words.reachingWhat)}</p>
+      <h3 class="account-part" title="${escape(words.reachingWhat)}">${escape(words.reaching)}</h3>
       ${
         reaching.length
           ? `<ul class="account-reaching">${reaching
@@ -298,8 +296,7 @@ export class AccountPage implements Page {
               .join("")}</ul>`
           : `<p class="account-empty">${escape(words.reachingNone)}</p>`
       }
-      <h3 class="account-part">${escape(words.invite)}</h3>
-      <p class="field-hint">${escape(words.inviteWhat)}</p>
+      <h3 class="account-part" title="${escape(words.inviteWhat)}">${escape(words.invite)}</h3>
       <div class="account-acts">${kinds
         .map((kind) => `<button class="text-button" type="button" data-act="invite" data-kind="${kind}">${inviteGlyph(kind)}<span>${escape(inviteLabel(kind))}</span></button>`)
         .join("")}</div>

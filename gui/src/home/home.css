@@ -30,130 +30,15 @@
   flex: none;
   position: relative;
   width: min(100% - 2 * var(--gutter), 1080px);
-  height: clamp(200px, 31dvh, 330px);
+  height: clamp(220px, 35dvh, 360px);
   margin: var(--space-2) auto 0;
 }
 
-.frontispiece-drawing,
-.frontispiece-drawing svg {
+/* The drawing is the machines page's, to be pointed at here too. */
+.frontispiece > .network-map {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-/* The paper: hand-ruled, faint, every fourth line firmer. */
-.frontispiece .paper path {
-  fill: var(--pen-graphite);
-}
-
-.frontispiece .paper .minor {
-  opacity: 0.16;
-}
-
-.frontispiece .paper .major {
-  opacity: 0.28;
-}
-
-/* The inks lie on the paper as ink does: darkening light paper, lightening
-   dark. */
-.frontispiece .ink {
-  mix-blend-mode: var(--pen-blend);
-}
-
-.frontispiece .graphite {
-  fill: var(--pen-graphite);
-  opacity: 0.9;
-}
-
-.frontispiece .graphite .second {
-  opacity: 0.45;
-}
-
-.frontispiece .dry {
-  fill: var(--pen-graphite);
-  opacity: 0.55;
-}
-
-.frontispiece .clay {
-  fill: var(--pen-clay);
-}
-
-.frontispiece .flow {
-  fill: none;
-  stroke: var(--pen-clay);
-  stroke-width: 2.4;
-  stroke-linecap: round;
-  stroke-dasharray: 3 14 6 11;
-  animation: pen-flow 2.8s linear infinite;
-}
-
-@keyframes pen-flow {
-  to {
-    stroke-dashoffset: -34;
-  }
-}
-
-/* The first drawing is drawn in: the paper, then the ink. */
-.frontispiece-drawing.arriving .paper {
-  animation: paper-in 0.6s cubic-bezier(0.33, 1, 0.68, 1) both;
-}
-
-.frontispiece-drawing.arriving .ink,
-.frontispiece-drawing.arriving .flows {
-  animation: paper-in 0.9s cubic-bezier(0.33, 1, 0.68, 1) 0.25s both;
-}
-
-@keyframes paper-in {
-  from {
-    opacity: 0;
-  }
-}
-
-/* Names are text on the page, set where the drawing puts each machine. */
-.frontispiece-labels {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.frontispiece .label {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-  white-space: nowrap;
-  transform: translate(-50%, -50%);
-}
-
-.frontispiece .label.start {
-  align-items: flex-start;
-  transform: translate(0, -50%);
-}
-
-.frontispiece .label.middle {
-  align-items: center;
-}
-
-.frontispiece .label.end {
-  align-items: flex-end;
-  transform: translate(-100%, -50%);
-}
-
-.frontispiece .name {
-  font-family: var(--font-emphasis);
-  font-size: var(--size-ui);
-  color: var(--text);
-}
-
-.frontispiece .lost .name {
-  color: var(--text-3);
-}
-
-.frontispiece .os {
-  font-size: var(--size-small);
-  color: var(--text-3);
+  min-height: 0;
 }
 
 /* The day. Its title comes into focus once, when the page opens. */
@@ -241,6 +126,13 @@
   padding: var(--space-3) var(--space-3) var(--space-10);
 }
 
+/* In one column the board scrolls as a whole; a column scrolling inside it
+   would be squeezed to a share of the height. */
+.board > .board-column {
+  overflow: visible;
+  min-height: auto;
+}
+
 .board-column.away {
   padding-top: 0;
 }
@@ -256,7 +148,8 @@
     overflow: hidden;
   }
 
-  .board-column {
+  .board > .board-column {
+    min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
@@ -264,6 +157,41 @@
 
   .board-column.away {
     padding-top: var(--space-3);
+  }
+}
+
+/* Opening the page, each line on the board rises into place a moment
+   after the one above it. */
+.board.arriving .people > li,
+.board.arriving .chronicle > li,
+.board.arriving .section-title {
+  animation: rise 0.6s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.board.arriving li:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+.board.arriving li:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+.board.arriving li:nth-child(4) {
+  animation-delay: 180ms;
+}
+
+.board.arriving li:nth-child(5) {
+  animation-delay: 240ms;
+}
+
+.board.arriving li:nth-child(n + 6) {
+  animation-delay: 300ms;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
   }
 }
 
@@ -644,10 +572,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .frontispiece .flow,
-  .frontispiece-drawing.arriving .paper,
-  .frontispiece-drawing.arriving .ink,
-  .frontispiece-drawing.arriving .flows,
+  .board.arriving .people > li,
+  .board.arriving .chronicle > li,
+  .board.arriving .section-title,
   .ask,
   .dateline-day {
     animation: none;

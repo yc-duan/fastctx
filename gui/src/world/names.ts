@@ -1,6 +1,9 @@
-// What the interface calls the agents and conversations of the World.
+// What the interface calls the agents, conversations and systems of the World.
 
 import type { ResidentNow } from "./world";
+
+/** A system's own name, as its makers write it. */
+export const osName = (os: string): string => ({ windows: "Windows", linux: "Linux", macos: "macOS" } as Record<string, string>)[os] ?? os;
 
 /** An agent's own name, as its makers write it. */
 export const agentName = (agent: string): string => (agent === "claude" ? "Claude" : agent === "codex" ? "Codex" : agent);

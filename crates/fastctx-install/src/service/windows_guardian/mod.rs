@@ -4,6 +4,7 @@
 mod account;
 mod child;
 mod config;
+mod firewall;
 mod host;
 mod owner;
 mod policy;
@@ -37,6 +38,9 @@ struct Before {
     image: Option<Vec<u8>>,
     payload: Option<Vec<u8>>,
     batch_right: Option<bool>,
+    /// A hub's inbound firewall rule was there.
+    #[serde(default)]
+    firewall: bool,
 }
 
 pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
@@ -76,6 +80,9 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
                 }
                 publish(&root.join("config.json"), &bytes, Permissions::KeepExisting)?;
             }
+            if config.kind == super::Kind::Hub {
+                firewall::allow(&config.name, &root.join("payload.exe"))?;
+            }
             if before.registration.is_none() {
                 scm::create(&config.name, config.target.as_ref().map(|target| target.sid.as_str()))?;
             }
@@ -110,6 +117,9 @@ pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
             scm::stop(&config.name)?;
             checker.delete()?;
             scm::delete(&config.name)?;
+            if config.kind == super::Kind::Hub {
+                firewall::remove(&config.name)?;
+            }
             delete(&root.join("guardian.exe"))?;
             delete(&root.join("payload.exe"))?;
             delete(&root.join("config.json"))?;
@@ -171,6 +181,7 @@ fn capture(config: &Config, checker: &task::Task) -> anyhow::Result<Before> {
         image: read(&root.join("guardian.exe"))?,
         payload: read(&root.join("payload.exe"))?,
         batch_right: config.target.as_ref().map(|target| policy::batch_granted(&target.sid)).transpose()?,
+        firewall: config.kind == super::Kind::Hub && firewall::present(&config.name)?,
     })
 }
 
@@ -200,6 +211,13 @@ fn restore(config: &Config, checker: &task::Task, before: &Before) -> anyhow::Re
     record(checker.restore(&before.task));
     if let (Some(target), Some(granted)) = (&config.target, before.batch_right) {
         record(policy::set_batch(&target.sid, granted));
+    }
+    if config.kind == super::Kind::Hub {
+        record(if before.firewall {
+            firewall::allow(&config.name, &root.join("payload.exe"))
+        } else {
+            firewall::remove(&config.name)
+        });
     }
     if !errors.is_empty() {
         bail!("{}", errors.join("; "));

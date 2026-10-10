@@ -171,6 +171,7 @@
 
 .welcome-here {
   margin-top: var(--space-8);
+  padding-bottom: var(--space-10);
 }
 
 .welcome-facts {
@@ -184,8 +185,7 @@
 }
 
 .welcome-body {
-  margin-top: var(--space-6);
-  padding-bottom: var(--space-12);
+  margin-top: var(--space-8);
 }
 
 .welcome-form-title {
@@ -256,6 +256,197 @@
 
 .welcome-hosts .apply-now {
   margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
+}
+
+/* The two ways in, each a slip of fill with its own small drawing: joining
+   draws a ring towards a knot already there, creating draws the first
+   rings round a new knot. They lift a little under the pointer. */
+.welcome-ways {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+}
+
+.welcome-way {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+  text-align: left;
+  transition: background-color var(--hover) ease, transform var(--hover) ease, box-shadow var(--hover) ease;
+}
+
+.welcome-way:hover,
+.welcome-way:focus-visible {
+  outline: 0;
+  background: var(--fill-strong);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+  transform: translateY(-2px);
+}
+
+.welcome-way:active {
+  transform: translateY(0);
+}
+
+.welcome-way-mark {
+  width: 84px;
+  height: auto;
+  margin: 0 0 var(--space-3) -6px;
+  mix-blend-mode: var(--pen-blend);
+}
+
+.welcome-way-mark .ink-graphite {
+  color: var(--pen-graphite);
+  stroke: var(--pen-graphite);
+}
+
+.welcome-way-mark .ink-clay {
+  stroke: var(--pen-clay);
+}
+
+/* The stroke of each drawing is drawn in when the page opens. */
+.welcome-way-mark path,
+.welcome-way-mark circle {
+  stroke-dasharray: 200;
+  stroke-dashoffset: 200;
+  animation: way-draw 1.1s cubic-bezier(0.33, 1, 0.68, 1) 0.2s forwards;
+}
+
+.welcome-way-mark .ink-clay path,
+.welcome-way-mark .ink-clay circle {
+  animation-delay: 0.55s;
+}
+
+@keyframes way-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.welcome-way-title {
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+}
+
+.welcome-way-what {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.welcome-ways + .login-alone {
+  margin-top: var(--space-4);
+  text-align: center;
+}
+
+/* Two short fields side by side where there is room. */
+.field-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  column-gap: var(--space-3);
+}
+
+/* This computer's addresses as pills to choose, then another typed in,
+   and the port. */
+.reach-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.reach-chip {
+  gap: 6px;
+}
+
+.reach-virtual {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.reach-more {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.reach-more > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.reach-port {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.reach-port input {
+  width: 6.5em;
+}
+
+.welcome-go {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.welcome-go-note {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+/* On a World just made: where the next computer reaches it, and the token
+   that lets it in, on a slip of its own. */
+.welcome-next {
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.welcome-next-title {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h3);
+  color: var(--text-strong);
+}
+
+.welcome-next .invite-next {
+  margin: var(--space-3) 0 0 calc(-1 * var(--space-3));
+  color: var(--accent);
+}
+
+/* This computer, quietly, at the foot of the page. */
+.welcome-here .welcome-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.welcome-here .welcome-facts .glyph {
+  margin-right: var(--space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-way,
+  .welcome-way:hover {
+    transform: none;
+  }
+
+  .welcome-way-mark path,
+  .welcome-way-mark circle {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
 }
 
 /* The agents on a machine, as its own programs say: one line each, its

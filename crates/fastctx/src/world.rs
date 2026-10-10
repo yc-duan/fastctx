@@ -168,6 +168,11 @@ pub enum HubCommand {
         /// Where the hub keeps its files.
         #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
+        /// Run it as a system service from now on, asking for administrator
+        /// rights where they are needed; on Windows other computers are let
+        /// through the firewall to it.
+        #[arg(long)]
+        service: bool,
     },
     /// Run the hub in the foreground.
     Serve {
@@ -361,7 +366,7 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
     let root = fastctx_platform::fastctx_root()?;
     let dir = |dir: Option<std::path::PathBuf>| dir.unwrap_or_else(|| fastctx_hub::default_dir(&root));
     match command {
-        HubCommand::Init { name, admin, public, listen, dir: chosen } => {
+        HubCommand::Init { name, admin, public, listen, dir: chosen, service } => {
             let dir = dir(chosen);
             let listen = listen.unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], public[0].port())));
             let password = crate::secret::new_password(&format!("A password for {admin}: "))?;
@@ -370,10 +375,16 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             fastctx_hub::init(&dir, new)?;
             let at = public.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
             println!("the hub {name} is in {}; its super administrator is {admin}", dir.display());
-            eprintln!(
-                "Start it with `fastctx hub serve` (or install its service); then log in from a computer with `fastctx login {} {admin}`. It is reached at {at}.",
-                public[0]
-            );
+            let started = if service { keep_hub(&dir)? } else { false };
+            if started {
+                println!("it runs as a system service, reached at {at}");
+                eprintln!("Log in from a computer with `fastctx login {} {admin}`.", public[0]);
+            } else {
+                eprintln!(
+                    "Start it with `fastctx hub serve` (or install its service); then log in from a computer with `fastctx login {} {admin}`. It is reached at {at}.",
+                    public[0]
+                );
+            }
         }
         HubCommand::Serve { dir: chosen } => {
             let dir = dir(chosen);
@@ -430,6 +441,24 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Runs the hub in `dir` as a system service; whether it runs now.
+fn keep_hub(dir: &std::path::Path) -> anyhow::Result<bool> {
+    use fastctx_install::service::Kept;
+    let places = fastctx_install::apply::Places::here()?;
+    match fastctx_install::service::keep_hub(&places, dir)? {
+        Kept::Installed | Kept::Already => Ok(true),
+        Kept::Declined => anyhow::bail!("administrator rights were declined; the hub is made but not running"),
+        Kept::Command(command) => {
+            eprintln!("Its service needs administrator rights: {command}");
+            Ok(false)
+        }
+        Kept::Unsupported => {
+            eprintln!("This system has no service for it.");
+            Ok(false)
+        }
+    }
 }
 
 /// Makes `change` as `account`, on `hub` or the one hub; a token, when it

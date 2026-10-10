@@ -94,6 +94,8 @@ import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
 import type { Address } from "./world/events";
 import { ownerResident, type ResidentDetail } from "./world/world";
 import { agentName, titleOf } from "./world/names";
+import { mapOf } from "./app/map-of";
+import { NetworkMap } from "./app/network-map";
 import {
   applyHosts,
   control,
@@ -131,6 +133,8 @@ import {
   login,
   loginToken,
   openAccount,
+  createWorld,
+  hereAddresses,
   accountChange,
   agentHomes,
   serverCommand,
@@ -166,6 +170,11 @@ const shellWords = english ? enShell : zhShell;
 document.documentElement.lang = english ? "en" : "zh-CN";
 
 const specimen = specimenNow(params.get("accounts") === "2");
+// `?accounts=0`: a computer in no World yet, as on its first open.
+if (params.get("accounts") === "0") {
+  specimen.world.accounts.hubs = [];
+  specimen.world.nodes.hubs = [];
+}
 const store = createStore(() => ({ world: specimen.world, now: specimen.now }));
 const live = store.live;
 /** Whether this interface reaches the World as a device (a phone, or a
@@ -282,6 +291,12 @@ const projectForm = new ProjectForm({
 });
 
 const notLive = () => Promise.reject(new Error(specimenSaid));
+/** A specimen computer's addresses: one on its network, one on a VPN. */
+const specimenAddresses = [
+  { interface: "Ethernet", address: "192.168.1.20", physical: true },
+  { interface: "Wi-Fi", address: "10.0.0.7", physical: true },
+  { interface: "Meta", address: "198.18.0.1", physical: false },
+];
 /** Makes a change as a login, and asks the World again. */
 const change = async (login: Login, made: AccountChange): Promise<void> => {
   if (!live) return notLive();
@@ -571,7 +586,14 @@ function specimenManage(): Manage {
 
 function home(): Page {
   const lastVisit = live ? seen.read() : specimen.lastVisit;
+  // The drawing of the World; a machine on it opens on the machines page,
+  // a hub on the account page.
+  const drawing = new NetworkMap((key) => {
+    location.hash = key.startsWith("hub:") ? link({ kind: "account" }) : link({ kind: "machine", name: key.replace(/^(m|lent):/, "") });
+  });
+  const mapWords = english ? enMachines : zhMachines;
   const page = new HomePage({
+    drawing: drawing.element,
     words: homeWords,
     ended: words.ended,
     lastVisit,
@@ -611,7 +633,11 @@ function home(): Page {
     const world = store.world.get();
     const trouble = store.trouble.get();
     const now = store.clock.get();
-    if (world) page.update(stateOf(world, away), now);
+    if (world) {
+      page.update(stateOf(world, away), now);
+      const map = mapOf(world, mapWords);
+      drawing.update(map.hubs, map.nodes, null, map.hubLabels);
+    }
     if (live && world) {
       const next = shapeOf(world);
       if (next !== shape) {
@@ -1138,6 +1164,13 @@ function show(next: Place): void {
         login: (hub, account, password, register, name) => (live ? login(hub, account, password, register, name) : notLive()),
         loginToken: (token, name) => (live ? loginToken(token, name) : notLive()),
         openAccount: asDevice ? undefined : (hub, account, password, register, name) => (live ? openAccount(hub, account, password, register, name) : notLive()),
+        addresses: asDevice ? undefined : () => (live ? hereAddresses() : Promise.resolve(specimenAddresses)),
+        // A specimen pretends, so the page after it can be looked at.
+        create: asDevice
+          ? undefined
+          : (world, admin, password, reach, register, name) =>
+              live ? createWorld(world, admin, password, reach, register, name) : Promise.resolve({ hub: world, name: name ?? "desktop", account: admin, kept: { kind: "installed" as const } }),
+        invite: (login) => tokens.open(login, "computer"),
         // A phone reads the token off the computer's screen; a specimen
         // shows the button when asked as a phone.
         scan: canScan() ? scanToken : !live && params.has("phone") ? async () => "FX5SPECIMEN" : undefined,

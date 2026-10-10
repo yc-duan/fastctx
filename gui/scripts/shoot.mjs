@@ -45,7 +45,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "share", "lend", "relays", "palette", "login", "token-login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
+const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "share", "lend", "relays", "palette", "login", "token-login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -137,8 +137,10 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named === "drawer" || named === "palette" ? "home" : named === "service" ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "token-login" ? "login" : named === "share" || named === "lend" || named === "relays" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
-      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "");
+      const shown = named === "drawer" || named === "palette" ? "home" : named === "service" ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "token-login" || named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "lend" || named === "relays" ? "machines" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
+      // `welcome` and `create` are a computer's first open, in no World yet.
+      const alone = named === "welcome" || named === "create" || named === "created";
+      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
       const url = written ? `${base}/page-specimen.html?theme=${theme}${extra ? `&${extra}` : ""}` : `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}`;
@@ -263,6 +265,16 @@ for (const session of sessions) {
         const button = session === "lend" ? '[data-machine="desktop"] [data-act="lend"]' : `[data-machine="lab"] [data-act="${session}"]`;
         const pick = session === "lend" ? "" : `document.querySelector('.map-node[data-key="m:lab"]')?.click();`;
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise(r => setTimeout(r, 300)).then(() => { ${pick} return new Promise(r => setTimeout(r, 900)); }).then(() => document.querySelector('${button}')?.click())` });
+      }
+      if (session === "create" || session === "created") {
+        await send("Runtime.evaluate", { awaitPromise: true, expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-way=create]')?.click())" });
+      }
+      if (session === "created") {
+        // Filled in and made: the page that lets the next computer in.
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: "new Promise(r => setTimeout(r, 500)).then(() => { const set = (n, v) => { const f = document.querySelector(`[name=${n}]`); f.value = v; }; set('world', 'home'); set('account', 'me'); set('password', 'pw'); set('again', 'pw'); document.querySelector('.create-form').requestSubmit(); return new Promise(r => setTimeout(r, 900)); })",
+        });
       }
       if (session === "token-login") {
         await send("Runtime.evaluate", { expression: "document.querySelector('[data-way=token]')?.click()" });

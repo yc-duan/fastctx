@@ -53,26 +53,29 @@ function place(hubs: MapHub[], nodes: MapNode[], width: number, height: number):
   // Full size from a box about 640 wide; a phone's draws at about 0.6.
   const scale = Math.max(0.58, Math.min(1, Math.min(width, height * 1.3) / 640));
   const placed: Placed = { hubs: new Map(), nodes: new Map(), ring: 26 * scale, knot: Math.max(6, 8 * scale) };
-  const cy = height * 0.47;
   if (!hubs.length) {
-    nodes.forEach((node, index) => placed.nodes.set(node.key, [width * ((index + 1) / (nodes.length + 1)), cy]));
+    nodes.forEach((node, index) => placed.nodes.set(node.key, [width * ((index + 1) / (nodes.length + 1)), height * 0.5]));
     return placed;
   }
+  const shared = nodes.filter((node) => node.hubs.filter((id) => hubs.some((hub) => hub.id === id)).length > 1);
+  // A ring keeps its name, a line or two, clear of the edge above and below.
+  const room = placed.ring + 44 * scale;
+  const below = height - room;
+  // With a machine shared below, the hubs sit a little high to leave it room.
+  const cy = shared.length ? Math.max(room + placed.ring * 2, height * 0.42) : height * 0.5;
   hubs.forEach((hub, index) => placed.hubs.set(hub.id, [width * ((2 * index + 1) / (2 * hubs.length)), cy]));
-  const shared = nodes.filter((node) => node.hubs.filter((id) => placed.hubs.has(id)).length > 1);
-  // Room left round each ring for its name and its agents.
-  const margin = { x: placed.ring + 70 * scale, y: placed.ring + 46 * scale };
+  const margin = { x: placed.ring + 70 * scale };
   const share = width / hubs.length;
-  const rx = Math.max(placed.ring * 2.4, Math.min(share / 2 - margin.x * 0.55, width * 0.34));
-  const ry = Math.max(placed.ring * 2.2, Math.min(height / 2 - margin.y, height * 0.33));
-  const below: Point = [width / 2, Math.min(height - margin.y * 0.75, cy + ry * 1.05)];
+  const rx = Math.max(placed.ring * 2.4, Math.min(share / 2 - margin.x, width * 0.34));
+  const ry = Math.max(placed.ring * 1.6, Math.min(cy - room, (shared.length ? below - placed.ring * 2.2 : height - room) - cy, height * 0.36));
+  const sharedAt: Point = [width / 2, below];
   for (const hub of hubs) {
     const knot = placed.hubs.get(hub.id)!;
     const own = nodes.filter((node) => node.hubs.includes(hub.id) && !shared.includes(node));
     // Alone, a hub's machines go all the way round, from the upper left;
     // with a machine shared below, they leave a third of the circle on
     // that side open.
-    const toward = Math.atan2(below[1] - knot[1], below[0] - knot[0]);
+    const toward = Math.atan2(sharedAt[1] - knot[1], sharedAt[0] - knot[0]);
     const from = shared.length ? toward + Math.PI / 3 : Math.PI * 1.1;
     const span = shared.length ? (Math.PI * 4) / 3 : Math.PI * 2;
     own.forEach((node, index) => {
@@ -83,7 +86,7 @@ function place(hubs: MapHub[], nodes: MapNode[], width: number, height: number):
   shared.forEach((node, index) => {
     const knots = node.hubs.map((id) => placed.hubs.get(id)).filter((point): point is Point => !!point);
     const x = knots.reduce((sum, point) => sum + point[0], 0) / knots.length;
-    placed.nodes.set(node.key, [x + (index - (shared.length - 1) / 2) * (placed.ring * 4), below[1]]);
+    placed.nodes.set(node.key, [x + (index - (shared.length - 1) / 2) * (placed.ring * 4), sharedAt[1]]);
   });
   return placed;
 }
@@ -162,10 +165,19 @@ export class NetworkMap {
         if (!point) return "";
         const outward = this.outward(node, point);
         const reach = placed.ring + 16;
-        const below = Math.sin(outward) > 0.35;
-        const above = Math.sin(outward) < -0.35;
-        const anchor = Math.abs(Math.cos(outward)) < 0.35 ? "middle" : Math.cos(outward) > 0 ? "start" : "end";
-        const label: Point = [point[0] + Math.cos(outward) * reach, point[1] + Math.sin(outward) * reach + (above ? -10 : below ? 12 : 0)];
+        let below = Math.sin(outward) > 0.35;
+        let above = Math.sin(outward) < -0.35;
+        let anchor = Math.abs(Math.cos(outward)) < 0.35 ? "middle" : Math.cos(outward) > 0 ? "start" : "end";
+        let label: Point = [point[0] + Math.cos(outward) * reach, point[1] + Math.sin(outward) * reach + (above ? -10 : below ? 12 : 0)];
+        // A name with no room above or below its ring goes beside it, on
+        // the side away from the middle.
+        const tall = 22;
+        if ((anchor === "middle" || above || below) && (label[1] - tall < 0 || label[1] + tall > size.height)) {
+          const right = point[0] >= size.width / 2;
+          anchor = right ? "start" : "end";
+          above = below = false;
+          label = [point[0] + (right ? reach : -reach), point[1]];
+        }
         const chosen = shown.selected === node.key;
         const state = node.online === false ? " lost" : "";
         const disc = `width:${(placed.ring * 2 + 8).toFixed(0)}px;height:${(placed.ring * 2 + 8).toFixed(0)}px`;
@@ -179,8 +191,9 @@ export class NetworkMap {
     const box = this.element.getBoundingClientRect();
     for (const label of this.labels.querySelectorAll<HTMLElement>(".map-node, .map-hub")) {
       const rect = label.getBoundingClientRect();
-      const shift = rect.left < box.left ? box.left - rect.left : rect.right > box.right ? box.right - rect.right : 0;
-      if (shift) label.style.translate = `${shift.toFixed(1)}px 0`;
+      const x = rect.left < box.left ? box.left - rect.left : rect.right > box.right ? box.right - rect.right : 0;
+      const y = rect.top < box.top ? box.top - rect.top : rect.bottom > box.bottom ? box.bottom - rect.bottom : 0;
+      if (x || y) label.style.translate = `${x.toFixed(1)}px ${y.toFixed(1)}px`;
     }
   }
 
