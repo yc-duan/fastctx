@@ -411,7 +411,7 @@ async fn collect(
                     .or_else(|| {
                         node.residents.about(&resident).and_then(|(about, _)| {
                             if about.world_started && about.host.agent.as_str() == "codex" {
-                                let codex = node.codex.of(&about);
+                                let codex = node.codex.of(&about).ok()?;
                                 about.session.and_then(|thread| codex.running_turn(&thread))
                             } else {
                                 None

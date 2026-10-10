@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use fastctx_hosts::codex::{CodexHost, HostEvent, Log};
+use fastctx_types::ipc::Failure;
 use fastctx_types::residents::About;
 use tokio::sync::mpsc;
 
@@ -43,31 +44,32 @@ impl CodexHosts {
         &self.default
     }
 
-    /// The host of the home written `dir`; `None` is the default home.
-    pub(crate) fn home(&self, dir: Option<&Path>) -> Arc<CodexHost> {
+    /// The host of the home written `dir`; `None` is the default home. A
+    /// home whose own working directory cannot be kept fails what needed
+    /// it, and only that.
+    pub(crate) fn home(&self, dir: Option<&Path>) -> Result<Arc<CodexHost>, Failure> {
         let Some(dir) = dir.filter(|dir| !crate::homes::same_dir(dir, self.default.config_home())) else {
-            return self.default.clone();
+            return Ok(self.default.clone());
         };
         let mut others = self.others.lock().expect("never poisoned");
         if let Some(host) = others.iter().find(|host| crate::homes::same_dir(host.config_home(), dir)) {
-            return host.clone();
+            return Ok(host.clone());
         }
         let mut environment = self.environment.clone();
         environment.retain(|(name, _)| !name.eq_ignore_ascii_case("CODEX_HOME"));
         environment.push(("CODEX_HOME".into(), dir.as_os_str().to_owned()));
-        let workdir = super::directories::get(&self.workdir.join("homes"), dir).unwrap_or_else(|error| {
-            eprintln!("fastctx node: keeping the Codex home {} separate: {error}; stopping the node", dir.display());
-            std::process::exit(1)
-        });
+        let workdir = super::directories::get(&self.workdir.join("homes"), dir).map_err(|error| {
+            Failure::new(format!("keeping the Codex home {} apart from the others: {error}", dir.display()))
+        })?;
         let program_home = Some(self.default.config_home().to_path_buf());
         let (host, reports) = CodexHost::new(dir.to_path_buf(), program_home, workdir, environment, self.log.clone());
         forward(reports, self.events.clone());
         others.push(host.clone());
-        host
+        Ok(host)
     }
 
     /// The host a resident's threads are in: its home's.
-    pub(crate) fn of(&self, about: &About) -> Arc<CodexHost> {
+    pub(crate) fn of(&self, about: &About) -> Result<Arc<CodexHost>, Failure> {
         self.home(about.home.as_deref())
     }
 

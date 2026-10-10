@@ -76,7 +76,10 @@ pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
 /// Codex in `home`, through the app-server of that home.
 async fn codex(node: &Arc<Node>, env: &[(OsString, OsString)], user_home: &Path, home: AgentHome) -> AgentFacts {
     let dir = (home.found != HomeFound::Default).then(|| home.dir.clone());
-    let mut facts = node.codex.home(dir.as_deref()).agents().await;
+    let mut facts = match node.codex.home(dir.as_deref()) {
+        Ok(codex) => codex.agents().await,
+        Err(failure) => failed(AgentName::try_from("codex").expect("an agent name"), failure.message),
+    };
     let places = places(node, env, user_home, None);
     let at = home.dir.clone();
     facts.integration = match tokio::task::spawn_blocking(move || apply::status_at(&places, Host::Codex, &at)).await {

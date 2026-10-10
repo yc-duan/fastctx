@@ -18,7 +18,7 @@ use crate::Node;
 fn thread(node: &Node, resident: &ResidentId) -> Result<(Arc<CodexHost>, String), Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new(format!("{resident} is not here")))?;
     crate::homes::available(node, &about)?;
-    let host = node.codex.of(&about);
+    let host = node.codex.of(&about)?;
     about.session.map(|thread| (host, thread)).ok_or_else(|| Failure::new(format!("{resident} has no Codex thread")))
 }
 

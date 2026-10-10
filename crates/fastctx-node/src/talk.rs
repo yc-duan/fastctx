@@ -193,7 +193,7 @@ pub async fn watch_here(
     let (recorded, hosted) = match &about.session {
         Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
             crate::homes::available(node, &about)?;
-            let codex = node.codex.of(&about);
+            let codex = node.codex.of(&about)?;
             let history = codex.history(thread).await.map_err(Failure::new)?;
             codex.flush_events(thread).await.map_err(Failure::new)?;
             // Reverted turns remain in the World's audit record, but no
@@ -219,7 +219,7 @@ pub async fn watch_here(
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
     {
-        history.extend(node.codex.of(&about).requests(thread));
+        history.extend(node.codex.of(&about)?.requests(thread));
     }
     Ok((history, events))
 }
@@ -566,7 +566,7 @@ pub async fn open_here(
     let (spec, heard) =
         crate::colleagues::thread_spec(node, &id, &origin, town.as_ref(), &opened.acting, opened.works_on.as_ref())
             .await?;
-    let (thread, model) = node.codex.home(opened.home.as_deref()).start_thread(spec).await.map_err(Failure::new)?;
+    let (thread, model) = node.codex.home(opened.home.as_deref())?.start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {
         id: id.clone(),
@@ -640,7 +640,7 @@ pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, 
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
     match (about.host.agent.as_str(), about.world_started, &about.session) {
-        ("codex", true, Some(thread)) => node.codex.of(&about).interrupt(thread).await.map_err(Failure::new),
+        ("codex", true, Some(thread)) => node.codex.of(&about)?.interrupt(thread).await.map_err(Failure::new),
         ("claude", _, _) => crate::claude::stop(node, resident),
         _ => Err(Failure::new(format!("{resident} is a session the World does not hold; stop it where it is open"))),
     }

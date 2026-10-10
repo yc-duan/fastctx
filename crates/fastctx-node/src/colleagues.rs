@@ -150,7 +150,7 @@ pub async fn ask_here(
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
     let _birth = crate::here::born(node, &id, acting.clone(), None);
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, None).await?;
-    let (thread, model) = node.codex.home(home.as_deref()).start_thread(spec).await.map_err(|error| {
+    let (thread, model) = node.codex.home(home.as_deref())?.start_thread(spec).await.map_err(|error| {
         Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
     })?;
     let born_at = Timestamp::now();
