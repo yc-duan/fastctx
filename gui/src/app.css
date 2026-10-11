@@ -1025,8 +1025,14 @@ button.composer-context[hidden] {
 
   .queue-acts .icon-button,
   .queue-acts .text-button {
-    min-height: 40px;
-    min-width: 40px;
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* The grip is what a finger moves a line by. */
+  .queue-grip {
+    width: 44px;
+    height: 44px;
   }
 }
 

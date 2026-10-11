@@ -598,11 +598,14 @@ export class Conversation {
         }
         group.members.push(entry);
       } else {
-        group = null;
+        // Only words said, the model's or a person's, begin a new stretch
+        // (walkthrough item 33); a note, a notice or a request in between
+        // stands after the stretch it came in.
+        if ((entry.kind === "heard" && !entry.notice) || (entry.kind === "prose" && entry.prose === "message")) group = null;
         blocks.push(entry);
       }
     }
-    return blocks.filter((block) => block.kind !== "activity-group" || block.members.some(visible));
+    return blocks.filter((block) => block.kind !== "activity-group" || block.members.some(visible) || withheld(block));
   }
 }
 
@@ -655,10 +658,16 @@ function replyOf(text: string): { reply?: { item: string; answers: string[] } } 
   return reply ? { reply: { item: reply.item, answers: reply.answers.map((one) => one.answer) } } : {};
 }
 
-/** Whether a member of a stretch has anything to show: thinking only once
- *  it has words or is over. */
+/** Whether a member of a stretch has anything to show: thinking only with
+ *  words; empty thinking takes no row of its own (walkthrough item 33). */
 export function visible(entry: Entry): boolean {
-  return entry.kind !== "prose" || entry.prose !== "thinking" || !!entry.text.trim() || !entry.writing;
+  return entry.kind !== "prose" || entry.prose !== "thinking" || !!entry.text.trim();
+}
+
+/** A stretch that was only thinking the host kept to itself: once that
+ *  thinking is over, its heading says so, with nothing to open beneath. */
+export function withheld(group: Activity): boolean {
+  return !group.members.some(visible) && group.members.some((member) => member.kind === "prose" && !member.writing);
 }
 
 /** The questions of an agent's message asked without waiting, where it is

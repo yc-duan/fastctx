@@ -10,6 +10,7 @@ import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { SendQueue, type Queued } from "./queue";
 import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
+import type { ComposerUpdated } from "../world/composer";
 import { NodeQueue } from "./node-queue";
 import { NodeTray, type FilesOnChoosing } from "./node-tray";
 import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
@@ -426,7 +427,12 @@ export class ConversationPage {
     if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
     const say = (why: string) => this.say(why, why, true);
     const choosing = this.options.attach?.filesOn ?? null;
-    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say, choosing);
+    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say, choosing, (text, attachments, sending) => {
+      const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
+      const key = this.options.conversation.sending(text, this.options.here || null, shown);
+      this.update();
+      this.follow(key, sending);
+    });
     this.queue.element.replaceWith(this.nodeQueue.element);
     if (this.options.attach && this.tray) {
       this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, choosing);
@@ -478,7 +484,14 @@ export class ConversationPage {
       return left ? session.send() : null;
     });
     this.sendingShared = sent.catch(() => {});
-    sent.then(
+    this.follow(key, sent);
+  }
+
+  /** Words shown below the turn's line while on their way: where they
+   *  landed, or that they failed, as the node answers. */
+  private follow(key: string | null, sending: Promise<ComposerUpdated | null>): void {
+    const { conversation } = this.options;
+    sending.then(
       (updated) => {
         if (!key) return;
         if (!updated) {
@@ -973,7 +986,10 @@ export class ConversationPage {
       () => {
         close();
         if (act === "rewind" || act === "regenerate") {
-          void this.run({ name: "rewind", description: "", args: null, arguments: "none", control: "rewind", source: null }, "", { do: "rewind", from: turn }).then(() => {
+          void this.run({ name: "rewind", description: "", args: null, arguments: "none", control: "rewind", source: null }, "", { do: "rewind", from: turn }).then((rewound) => {
+            // Not back before that turn: nothing is sent again or put back,
+            // and the line beside the composer says why.
+            if (!rewound) return;
             // Asking again sends the same words, with what came with them,
             // as soon as the conversation is back before that turn.
             if (act === "regenerate" && words !== null) {

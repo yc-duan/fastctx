@@ -23,7 +23,7 @@ import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
 import { effortLabel } from "./effort-slider";
-import { visible, type Activity, type Conversation, type Entry, type SendState, type ShownAttachment } from "./model";
+import { visible, withheld, type Activity, type Conversation, type Entry, type SendState, type ShownAttachment } from "./model";
 import { escape, plain, render } from "./prose";
 import { counts, numbered, parse, renderRows } from "./diff";
 import { headline, groupHeading, tenseOf } from "./tool";
@@ -441,8 +441,9 @@ export class ConversationView {
       });
       sheet.append(item);
     }
-    const info = acts.querySelector<HTMLElement>(".turn-info");
-    if (info) sheet.insertAdjacentHTML("beforeend", `<p class="act-sheet-info">${escape(info.title)}</p>`);
+    // What the turn took, its rows as the info card has them.
+    const card = acts.querySelector<HTMLElement>(".turn-info-card");
+    if (card) sheet.insertAdjacentHTML("beforeend", `<div class="act-sheet-info turn-info-rows">${card.innerHTML}</div>`);
     scrim.addEventListener("click", close);
     document.body.append(scrim, sheet);
   }
@@ -735,9 +736,15 @@ export class ConversationView {
     const writing = thinking.find((member) => member.kind === "prose" && member.writing);
     const runningTool = tools.find((tool) => tool.ended === null);
     const running = !!runningTool || !!writing;
+    // Thinking the host kept to itself is no row of its own; a stretch that
+    // was nothing else says so on its own line, which opens to nothing.
+    const bare = !running && withheld(group);
+    stretch.head.classList.toggle("withheld", bare);
+    stretch.head.disabled = bare;
     let title: string;
     let stats = "";
-    if (runningTool) {
+    if (bare) title = words.thoughtWithheld;
+    else if (runningTool) {
       const line = headline(runningTool.tool, null, words, (path) => this.conversation.attachmentName(path));
       title = [line.action, line.object].filter(Boolean).join(" ");
     } else if (writing && writing.kind === "prose") {
@@ -761,7 +768,16 @@ export class ConversationView {
     const began = tools.length ? Math.min(...tools.map((tool) => tool.began)) : null;
     const ended = !running && tools.length && tools.every((tool) => tool.ended) ? Math.max(...tools.map((tool) => tool.ended!.at)) : null;
     const titleElement = stretch.head.querySelector<HTMLElement>(".group-title")!;
-    if (titleElement.textContent !== title) titleElement.textContent = title;
+    if (titleElement.textContent !== title) {
+      // The step in hand changes in place: the new words fade in, the line
+      // keeps its height.
+      titleElement.textContent = title;
+      if (running) {
+        titleElement.classList.remove("fresh");
+        void titleElement.offsetWidth;
+        titleElement.classList.add("fresh");
+      }
+    }
     const statsElement = stretch.head.querySelector<HTMLElement>(".group-stats")!;
     if (statsElement.innerHTML !== stats) statsElement.innerHTML = stats;
     stretch.head.classList.toggle("going", running);

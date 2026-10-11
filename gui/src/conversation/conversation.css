@@ -557,8 +557,13 @@
   color: var(--wrong);
 }
 
-.row-thinking.withheld .row-action {
+.row-thinking.withheld .row-action,
+.group-head.withheld {
   color: var(--text-3);
+}
+
+.group-head.withheld .glyph {
+  display: none;
 }
 
 .row > .fold {

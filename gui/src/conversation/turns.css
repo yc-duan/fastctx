@@ -574,10 +574,35 @@
   color: var(--text-3);
 }
 
+.turn-info-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: var(--space-3);
+  row-gap: 4px;
+  color: var(--text);
+}
+
 /* Claude Code's own subagent, followed under the tool that started it. */
 .row-sub {
   margin: -2px 0 2px 28px;
   font-size: var(--size-small);
   font-style: italic;
   color: var(--text-3);
+}
+
+/* A stretch's line under way: the step in hand fades in where the last was. */
+.group-title.fresh {
+  animation: title-fade 0.24s ease both;
+}
+
+@keyframes title-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .group-title.fresh {
+    animation: none;
+  }
 }
