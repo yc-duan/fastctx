@@ -6,8 +6,10 @@
 //! junctions, symbolic links and the reparse points of cloud folders, whose
 //! listing may fetch from the network, and on Linux symbolic links and the
 //! mounts of other filesystems, each walked from its own root or not at all.
-//! A login found is not walked into. The walk keeps only the directories
-//! still to visit, so its memory follows the shape of the tree, not its size.
+//! A directory that looks like a login is walked into like any other: a
+//! stray file in a folder (`auth.json` on a desktop) must not hide what is
+//! below it. The walk keeps only the directories still to visit, so its
+//! memory follows the shape of the tree, not its size.
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -35,11 +37,22 @@ pub struct Found {
 /// The directory where Windows keeps what was deleted, which holds no login.
 const RECYCLE_BIN: &str = "$Recycle.Bin";
 
-/// A path as this machine compares it: on Windows without regard to case or
-/// slash.
+/// Whether a directory is where Windows keeps what was deleted; its name's
+/// case varies by volume.
+fn recycled(name: &std::ffi::OsStr) -> bool {
+    cfg!(windows) && name.to_string_lossy().eq_ignore_ascii_case(RECYCLE_BIN)
+}
+
+/// A path as this machine compares it: on Windows without regard to case,
+/// slash or the verbatim prefix.
 pub fn key(path: &Path) -> String {
     let text = path.to_string_lossy();
-    let text = if cfg!(windows) { text.replace('/', "\\").to_lowercase() } else { text.into_owned() };
+    let text = if cfg!(windows) {
+        let text = text.replace('/', "\\").to_lowercase();
+        text.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(text)
+    } else {
+        text.into_owned()
+    };
     let trimmed = text.trim_end_matches(['\\', '/']);
     if trimmed.is_empty() || trimmed.ends_with(':') { text } else { trimmed.to_string() }
 }
@@ -92,20 +105,15 @@ pub fn walk(root: &Path, skip: &HashSet<String>, stop: &AtomicBool, counters: &C
             };
             let directory = kind.is_dir();
             entries.push((name.to_string_lossy().into_owned(), directory));
-            if directory && walkable(&entry, device) && name != RECYCLE_BIN {
+            if directory && walkable(&entry, device) && !recycled(&name) {
                 below.push(name);
             }
         }
         counters.directories.fetch_add(1, Ordering::Relaxed);
-        let mut login = false;
         for (agent, _) in AGENTS {
             if let Some(traces) = traces::elsewhere(agent, &entries) {
-                login = true;
                 found(Found { agent, dir: dir.clone(), traces });
             }
-        }
-        if login {
-            continue;
         }
         for name in below.into_iter().rev() {
             let path = dir.join(name);

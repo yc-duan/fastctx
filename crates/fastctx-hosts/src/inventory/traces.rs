@@ -22,7 +22,11 @@ fn has(entries: &[Entry], name: &str, directory: bool) -> bool {
 }
 
 fn names<'a>(entries: &'a [Entry], wanted: &[(&str, bool)]) -> Vec<String> {
-    wanted.iter().filter(|(name, directory)| has(entries, name, *directory)).map(|(name, _)| (*name).to_string()).collect()
+    wanted
+        .iter()
+        .filter(|(name, directory)| has(entries, name, *directory))
+        .map(|(name, _)| (*name).to_string())
+        .collect()
 }
 
 /// Whether a directory named `name` directly in the user's home is a
@@ -33,7 +37,9 @@ pub fn usual(agent: &str, name: &str, entries: &[Entry]) -> bool {
         return false;
     }
     match agent {
-        "codex" => has(entries, "config.toml", false) || has(entries, "auth.json", false) || has(entries, "sessions", true),
+        "codex" => {
+            has(entries, "config.toml", false) || has(entries, "auth.json", false) || has(entries, "sessions", true)
+        }
         _ => {
             has(entries, "settings.json", false)
                 || has(entries, ".credentials.json", false)
@@ -89,8 +95,10 @@ pub fn elsewhere(agent: &str, entries: &[Entry]) -> Option<Vec<String>> {
             if !login && !(settings && has(entries, "projects", true) && !used.is_empty()) {
                 return None;
             }
-            let mut traces =
-                names(entries, &[(".credentials.json", false), (".claude.json", false), ("settings.json", false), ("projects", true)]);
+            let mut traces = names(
+                entries,
+                &[(".credentials.json", false), (".claude.json", false), ("settings.json", false), ("projects", true)],
+            );
             traces.extend(used);
             Some(traces)
         }

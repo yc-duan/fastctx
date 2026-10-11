@@ -48,7 +48,8 @@ pub(super) fn claude_keys(path: &[String]) -> bool {
 pub(super) fn toml(before: Option<&[u8]>, after: Option<&[u8]>, shown: Shown) -> Result<Vec<ItemChange>, String> {
     let parse = |bytes: Option<&[u8]>| -> Result<Value, String> {
         let Some(bytes) = bytes else { return Ok(Value::Null) };
-        let text = std::str::from_utf8(bytes).map_err(|error| format!("Codex's configuration is not UTF-8: {error}"))?;
+        let text =
+            std::str::from_utf8(bytes).map_err(|error| format!("Codex's configuration is not UTF-8: {error}"))?;
         let table: toml::Table = text.parse().map_err(|error: toml::de::Error| error.message().to_string())?;
         serde_json::to_value(table).map_err(|error| error.to_string())
     };
@@ -60,7 +61,8 @@ pub(super) fn json(before: Option<&[u8]>, after: Option<&[u8]>, shown: Shown) ->
         let Some(bytes) = bytes else { return Ok(Value::Null) };
         let text = std::str::from_utf8(bytes).map_err(|error| format!("Claude settings are not UTF-8: {error}"))?;
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-        let options = jsonc_parser::ParseOptions { allow_comments: true, allow_trailing_commas: true, ..Default::default() };
+        let options =
+            jsonc_parser::ParseOptions { allow_comments: true, allow_trailing_commas: true, ..Default::default() };
         jsonc_parser::parse_to_serde_value::<Option<Value>>(text, &options)
             .map(Option::unwrap_or_default)
             .map_err(|error| format!("Invalid Claude settings JSONC: {error}"))
@@ -94,11 +96,23 @@ fn find(bytes: &[u8], needle: &[u8]) -> Option<usize> {
 
 fn items(before: &Value, after: &Value, shown: Shown) -> Vec<ItemChange> {
     let mut found = Vec::new();
-    walk(&mut Vec::new(), Some(before).filter(|v| !v.is_null()), Some(after).filter(|v| !v.is_null()), shown, &mut found);
+    walk(
+        &mut Vec::new(),
+        Some(before).filter(|v| !v.is_null()),
+        Some(after).filter(|v| !v.is_null()),
+        shown,
+        &mut found,
+    );
     found
 }
 
-fn walk(path: &mut Vec<String>, before: Option<&Value>, after: Option<&Value>, shown: Shown, found: &mut Vec<ItemChange>) {
+fn walk(
+    path: &mut Vec<String>,
+    before: Option<&Value>,
+    after: Option<&Value>,
+    shown: Shown,
+    found: &mut Vec<ItemChange>,
+) {
     if before == after {
         return;
     }
@@ -118,7 +132,13 @@ fn walk(path: &mut Vec<String>, before: Option<&Value>, after: Option<&Value>, s
         }
         for key in keys {
             path.push(key.clone());
-            walk(path, tables.0.and_then(|table| table.get(key)), tables.1.and_then(|table| table.get(key)), shown, found);
+            walk(
+                path,
+                tables.0.and_then(|table| table.get(key)),
+                tables.1.and_then(|table| table.get(key)),
+                shown,
+                found,
+            );
             path.pop();
         }
         return;
@@ -142,7 +162,11 @@ pub(super) fn how(before: bool, after: bool) -> FileHow {
 fn key(path: &[String]) -> String {
     path.iter()
         .map(|part| {
-            if part.contains(['.', ' ', '"']) || part.is_empty() { serde_json::to_string(part).expect("a key serializes") } else { part.clone() }
+            if part.contains(['.', ' ', '"']) || part.is_empty() {
+                serde_json::to_string(part).expect("a key serializes")
+            } else {
+                part.clone()
+            }
         })
         .collect::<Vec<_>>()
         .join(".")

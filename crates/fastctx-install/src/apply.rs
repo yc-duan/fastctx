@@ -508,8 +508,8 @@ pub fn apply_reporting(
             )
             .map_err(Error::Claude)?;
             report.notices.extend(tools.notices);
-            let (bytes, consent) =
-                crate::claude::consent::grant(tools.bytes.as_deref(), record.consent.as_ref()).map_err(Error::Claude)?;
+            let (bytes, consent) = crate::claude::consent::grant(tools.bytes.as_deref(), record.consent.as_ref())
+                .map_err(Error::Claude)?;
             change(&mut changes, settings_file, bytes);
             Ok::<_, Error>((edit, tools.receipt, consent))
         })();
@@ -584,8 +584,7 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
 
 /// `unapply`, telling `progress` each step as it goes.
 pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progress>) -> Result<Report, Error> {
-    if let Some(report) =
-        progress::delegated(&progress, || kernel::delegate(places, hosts, Approval::Require, false))?
+    if let Some(report) = progress::delegated(&progress, || kernel::delegate(places, hosts, Approval::Require, false))?
     {
         return Ok(report);
     }

@@ -20,7 +20,11 @@ use crate::around::Heard;
 
 /// The record of `machine`, or of this one and every machine `acting` may
 /// look at.
-pub(crate) async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<MachineName>) -> Result<WorldLogins, Failure> {
+pub(crate) async fn query(
+    node: &Arc<Node>,
+    acting: &Acting,
+    machine: Option<MachineName>,
+) -> Result<WorldLogins, Failure> {
     let here = node.machine();
     let mut machines = Vec::new();
     if machine.as_ref().is_none_or(|machine| *machine == here) {
@@ -91,7 +95,13 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
 }
 
 /// Whether `agent`'s login `dir` here is one `asker` may see.
-pub(crate) fn may_see(view: &fastctx_net::directory::View, asker: &Asker, agent: &AgentName, dir: &std::path::Path, default: bool) -> bool {
+pub(crate) fn may_see(
+    view: &fastctx_net::directory::View,
+    asker: &Asker,
+    agent: &AgentName,
+    dir: &std::path::Path,
+    default: bool,
+) -> bool {
     asker.hands
         || view.lent(&asker.account, &view.me).any(|lend| {
             lend.agent == *agent
@@ -104,7 +114,12 @@ pub(crate) fn may_see(view: &fastctx_net::directory::View, asker: &Asker, agent:
 
 /// Asks `machine`'s node, of the user's own, for `call`, or this node when
 /// it is this machine.
-async fn ask(node: &Arc<Node>, machine: &MachineName, purpose: Purpose, call: RemoteCall) -> Result<RemoteReply, Failure> {
+async fn ask(
+    node: &Arc<Node>,
+    machine: &MachineName,
+    purpose: Purpose,
+    call: RemoteCall,
+) -> Result<RemoteReply, Failure> {
     node.call(&Acting::Here, &machine.into(), purpose, call).await.map_err(|error| Failure::new(error.to_string()))?
 }
 
@@ -122,7 +137,12 @@ pub(crate) async fn scan(node: &Arc<Node>, machine: MachineName, stop: bool) -> 
     }
 }
 
-pub(crate) async fn add(node: &Arc<Node>, machine: MachineName, agent: AgentName, dir: PathBuf) -> Result<MachineLogins, Failure> {
+pub(crate) async fn add(
+    node: &Arc<Node>,
+    machine: MachineName,
+    agent: AgentName,
+    dir: PathBuf,
+) -> Result<MachineLogins, Failure> {
     if machine == node.machine() {
         return super::take_up(node, agent, dir).await;
     }
@@ -166,7 +186,12 @@ pub(crate) async fn change(
     }
 }
 
-pub(crate) async fn read_limits(node: &Arc<Node>, machine: MachineName, agent: AgentName, dir: PathBuf) -> Result<MachineLogins, Failure> {
+pub(crate) async fn read_limits(
+    node: &Arc<Node>,
+    machine: MachineName,
+    agent: AgentName,
+    dir: PathBuf,
+) -> Result<MachineLogins, Failure> {
     if machine == node.machine() {
         super::limits::read(node, &agent, &dir).await?;
         return super::here(node).await;
@@ -207,7 +232,9 @@ pub(crate) async fn answer(
                 .chain(&side.candidates)
                 .find(|login| crate::homes::same_dir(&login.dir, &dir))
                 .filter(|login| may_see(view, asker, &agent, &login.dir, login.default))
-                .ok_or_else(|| Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display())))?;
+                .ok_or_else(|| {
+                    Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
+                })?;
             let dir = login.dir.clone();
             super::limits::read(node, &agent, &dir).await?;
             super::here(node).await.map(logins)

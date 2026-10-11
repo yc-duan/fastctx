@@ -62,7 +62,7 @@ fn codex(at: &Where, modules: &[Modules], unreadable: &mut Vec<String>) -> Vec<F
     // release kept in the default login's packages.
     let current = at.codex_home.join("packages").join("standalone").join("current");
     if current.exists() {
-        let release = std::fs::canonicalize(&current).unwrap_or(current.clone());
+        let release = std::fs::canonicalize(&current).map(|release| super::plain(&release)).unwrap_or(current.clone());
         let version = std::fs::read(release.join("codex-package.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
@@ -145,9 +145,11 @@ fn claude(at: &Where, modules: &[Modules], unreadable: &mut Vec<String>) -> Vec<
     }
     // Its first installer's copy, inside the default login.
     let local = at.claude_home.join("local");
-    if let Some((version, entry)) =
-        packages::manifest(&local.join("node_modules").join("@anthropic-ai").join("claude-code"), "@anthropic-ai/claude-code", unreadable)
-    {
+    if let Some((version, entry)) = packages::manifest(
+        &local.join("node_modules").join("@anthropic-ai").join("claude-code"),
+        "@anthropic-ai/claude-code",
+        unreadable,
+    ) {
         let wrapper = local.join("claude");
         let path = if wrapper.is_file() { Some(wrapper.clone()) } else { entry.clone() };
         found.push(Found { program: program(path, Installed::Official, version, None), entries: vec![wrapper] });
@@ -161,7 +163,14 @@ fn claude(at: &Where, modules: &[Modules], unreadable: &mut Vec<String>) -> Vec<
             let mut kept = Vec::new();
             let mut data = Vec::new();
             if let Some(local) = at.var("LOCALAPPDATA") {
-                data.push(local.join("Packages").join("Claude_pzs8sxrjxfjjc").join("LocalCache").join("Roaming").join("Claude"));
+                data.push(
+                    local
+                        .join("Packages")
+                        .join("Claude_pzs8sxrjxfjjc")
+                        .join("LocalCache")
+                        .join("Roaming")
+                        .join("Claude"),
+                );
             }
             if let Some(roaming) = at.var("APPDATA") {
                 data.push(roaming.join("Claude"));
@@ -173,22 +182,35 @@ fn claude(at: &Where, modules: &[Modules], unreadable: &mut Vec<String>) -> Vec<
                         let recorded = recorded(&binary, unreadable)
                             .or_else(|| Some(version.file_name().to_string_lossy().into_owned()));
                         kept.push(Found {
-                            program: program(Some(binary.clone()), Installed::DesktopApp, recorded, Some(within.clone())),
+                            program: program(
+                                Some(binary.clone()),
+                                Installed::DesktopApp,
+                                recorded,
+                                Some(within.clone()),
+                            ),
                             entries: vec![binary],
                         });
                     }
                 }
             }
             if kept.is_empty() {
-                kept.push(Found { program: program(None, Installed::DesktopApp, None, Some(within)), entries: Vec::new() });
+                kept.push(Found {
+                    program: program(None, Installed::DesktopApp, None, Some(within)),
+                    entries: Vec::new(),
+                });
             }
             found.extend(kept);
         }
     }
-    for (editor, extension, version) in extensions(at, "anthropic.claude-code-", "anthropic", "claude-code", unreadable) {
+    for (editor, extension, version) in extensions(at, "anthropic.claude-code-", "anthropic", "claude-code", unreadable)
+    {
         let resources = extension.join("resources");
         let mut binaries = vec![resources.join("native-binary").join(exe("claude"))];
-        binaries.extend(entries(&resources.join("native-binaries"), unreadable).into_iter().map(|platform| platform.path().join(exe("claude"))));
+        binaries.extend(
+            entries(&resources.join("native-binaries"), unreadable)
+                .into_iter()
+                .map(|platform| platform.path().join(exe("claude"))),
+        );
         let binary = binaries.into_iter().find(|path| path.is_file());
         let script = resources.join("claude-code").join("cli.js");
         let cli_version = match &binary {
@@ -225,10 +247,13 @@ fn managed(at: &Where, found: &mut Vec<Found>, scoop: &str, winget: &str, comman
                     continue;
                 }
                 // WinGet keeps a portable program as the release names it.
-                let program_file = entries(&package.path(), unreadable).into_iter().map(|entry| entry.path()).find(|path| {
-                    path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
-                        && path.file_name().is_some_and(|name| name.to_string_lossy().to_lowercase().starts_with(command))
-                });
+                let program_file =
+                    entries(&package.path(), unreadable).into_iter().map(|entry| entry.path()).find(|path| {
+                        path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+                            && path
+                                .file_name()
+                                .is_some_and(|name| name.to_string_lossy().to_lowercase().starts_with(command))
+                    });
                 let version = program_file.as_ref().and_then(|path| recorded(path, unreadable));
                 found.push(Found {
                     entries: program_file.iter().cloned().collect(),
@@ -251,15 +276,15 @@ fn managed(at: &Where, found: &mut Vec<Found>, scoop: &str, winget: &str, comman
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
                 .and_then(|manifest| manifest["version"].as_str().map(str::to_string));
-            let path = [current.join(&binary), current.join("bin").join(&binary)].into_iter().find(|path| path.is_file());
+            let path =
+                [current.join(&binary), current.join("bin").join(&binary)].into_iter().find(|path| path.is_file());
             found.push(Found {
                 entries: path.iter().cloned().chain([root.join("shims").join(&binary)]).collect(),
                 program: program(path, Installed::Scoop, version, None),
             });
         }
-        let chocolatey = at
-            .var("ChocolateyInstall")
-            .or_else(|| at.var("ProgramData").map(|data| data.join("chocolatey")));
+        let chocolatey =
+            at.var("ChocolateyInstall").or_else(|| at.var("ProgramData").map(|data| data.join("chocolatey")));
         if let Some(chocolatey) = chocolatey {
             let lib = chocolatey.join("lib").join(scoop);
             if lib.is_dir() {
@@ -286,10 +311,16 @@ fn managed(at: &Where, found: &mut Vec<Found>, scoop: &str, winget: &str, comman
             for cask in [scoop.to_string(), format!("{scoop}@latest")] {
                 for version in entries(&prefix.join("Caskroom").join(&cask), unreadable) {
                     let dir = version.path();
-                    let path = [dir.join(&binary), dir.join("bin").join(&binary)].into_iter().find(|path| path.is_file());
+                    let path =
+                        [dir.join(&binary), dir.join("bin").join(&binary)].into_iter().find(|path| path.is_file());
                     found.push(Found {
                         entries: path.iter().cloned().chain([prefix.join("bin").join(&binary)]).collect(),
-                        program: program(path, Installed::Homebrew, Some(version.file_name().to_string_lossy().into_owned()), None),
+                        program: program(
+                            path,
+                            Installed::Homebrew,
+                            Some(version.file_name().to_string_lossy().into_owned()),
+                            None,
+                        ),
                     });
                 }
             }
@@ -386,7 +417,8 @@ fn on_path(at: &Where, mut found: Vec<Found>, command: &str, unreadable: &mut Ve
     } else {
         vec![command.to_string()]
     };
-    let first = at.path().into_iter().find_map(|dir| names.iter().map(|name| dir.join(name)).find(|path| path.is_file()));
+    let first =
+        at.path().into_iter().find_map(|dir| names.iter().map(|name| dir.join(name)).find(|path| path.is_file()));
     if let Some(first) = first {
         let known = found.iter_mut().find(|program| program.entries.iter().any(|entry| same_file(entry, &first)));
         match known {

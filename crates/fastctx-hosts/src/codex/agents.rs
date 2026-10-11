@@ -49,7 +49,9 @@ impl CodexHost {
                     _ => {
                         let start = Instant::now();
                         let limits = super::account::limits(&server).await;
-                        facts.timings.push(ProbeTime { step: "account/rateLimits/read".into(), elapsed_ms: elapsed(start) });
+                        facts
+                            .timings
+                            .push(ProbeTime { step: "account/rateLimits/read".into(), elapsed_ms: elapsed(start) });
                         limits
                     }
                 };

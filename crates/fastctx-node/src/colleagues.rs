@@ -121,10 +121,7 @@ async fn ask_there(
         Ok(Ok(RemoteReply::Asked { colleague })) => Ok(Address { machine: lives_on.name.clone(), resident: colleague }),
         Ok(Ok(_)) => Err(Failure::new(format!("{lives_on} answered something other than a colleague"))),
         // The far side says where it is changed when that is what to do.
-        Ok(Err(failure)) => Err(Failure {
-            message: format!("on {lives_on}: {}", failure.message),
-            ..failure
-        }),
+        Ok(Err(failure)) => Err(Failure { message: format!("on {lives_on}: {}", failure.message), ..failure }),
         Err(CallFailure::Offline { last_seen, .. }) => Err(Failure::not_run(format!(
             "{lives_on}, where this callee lives, is offline{}; the user changes it on the Model collaboration page",
             last_seen.map(|at| format!(" (since {at})")).unwrap_or_default()

@@ -25,7 +25,10 @@ pub async fn call(
         return here(node, accept, home, format!("the user on {machine}")).await;
     }
     let call = RemoteCall::ClaudeConsent { accept, home };
-    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|error| Failure::new(error.to_string()))??
+    match node
+        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))??
     {
         RemoteReply::ClaudeConsent { accepted, changed } => Ok((accepted, changed)),
         _ => Err(Failure::new(format!("{machine} answered something other than Claude Code's consent"))),

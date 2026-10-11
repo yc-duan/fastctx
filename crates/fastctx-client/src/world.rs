@@ -185,7 +185,10 @@ impl World {
 
     /// What the nodes of one machine, or of every machine this user may
     /// look at, keep of their agents' logins; no program is started.
-    pub async fn agent_logins(&self, machine: Option<MachineName>) -> Result<fastctx_types::logins::WorldLogins, Error> {
+    pub async fn agent_logins(
+        &self,
+        machine: Option<MachineName>,
+    ) -> Result<fastctx_types::logins::WorldLogins, Error> {
         match self.ask(Call::AgentLogins { machine }).await? {
             Reply::AgentLogins(logins) => Ok(logins),
             other => Err(unexpected(other)),
@@ -194,7 +197,11 @@ impl World {
 
     /// Scans `machine` for its agents, answered once the usual places are
     /// done; with `stop`, stops the walk of its disks.
-    pub async fn scan_agents(&self, machine: MachineName, stop: bool) -> Result<fastctx_types::logins::MachineLogins, Error> {
+    pub async fn scan_agents(
+        &self,
+        machine: MachineName,
+        stop: bool,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
         machine_logins(self.ask(Call::ScanAgents { machine, stop }).await?)
     }
 

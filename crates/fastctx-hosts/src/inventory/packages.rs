@@ -79,7 +79,8 @@ pub(super) fn modules(at: &Where, unreadable: &mut Vec<String>) -> Vec<Modules> 
     // A directory on the search path holding the agent's command and
     // global modules beside it is an npm prefix too (nvm, a custom one).
     for dir in at.path() {
-        let modules = if cfg!(windows) { dir.join("node_modules") } else { dir.with_file_name("lib").join("node_modules") };
+        let modules =
+            if cfg!(windows) { dir.join("node_modules") } else { dir.with_file_name("lib").join("node_modules") };
         if modules.is_dir() {
             add(Installed::Npm, modules, Some(dir));
         }
@@ -111,7 +112,11 @@ pub(super) fn find(modules: &[Modules], name: &str, command: &str, unreadable: &
 }
 
 /// The version and program of the package in `dir`, when it is `name`.
-pub(super) fn manifest(dir: &Path, name: &str, unreadable: &mut Vec<String>) -> Option<(Option<String>, Option<PathBuf>)> {
+pub(super) fn manifest(
+    dir: &Path,
+    name: &str,
+    unreadable: &mut Vec<String>,
+) -> Option<(Option<String>, Option<PathBuf>)> {
     let path = dir.join("package.json");
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,

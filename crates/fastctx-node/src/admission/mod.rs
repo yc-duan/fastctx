@@ -100,7 +100,10 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             | RemoteCall::ChangeAgentLogin { .. }
     ) && view.member(&here).and_then(|member| member.home.as_ref()) != Some(&caller.account)
     {
-        return Err(refuse(format!("only {here}'s owner scans it or changes its agents, not the account {}", caller.account)));
+        return Err(refuse(format!(
+            "only {here}'s owner scans it or changes its agents, not the account {}",
+            caller.account
+        )));
     }
     crate::devices::admit(&view, &caller.machine, call)?;
     let hub = link.membership().id.clone();

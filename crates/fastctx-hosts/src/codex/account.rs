@@ -124,10 +124,14 @@ fn limit_key(snapshot: &Value) -> String {
 /// The limits a read answered, by limit.
 pub fn buckets(answer: &Value) -> BTreeMap<String, Value> {
     match answer["rateLimitsByLimitId"].as_object() {
-        Some(buckets) if !buckets.is_empty() => {
-            buckets.iter().filter(|(_, snapshot)| !snapshot.is_null()).map(|(id, snapshot)| (id.clone(), snapshot.clone())).collect()
+        Some(buckets) if !buckets.is_empty() => buckets
+            .iter()
+            .filter(|(_, snapshot)| !snapshot.is_null())
+            .map(|(id, snapshot)| (id.clone(), snapshot.clone()))
+            .collect(),
+        _ if answer["rateLimits"].is_object() => {
+            [(limit_key(&answer["rateLimits"]), answer["rateLimits"].clone())].into()
         }
-        _ if answer["rateLimits"].is_object() => [(limit_key(&answer["rateLimits"]), answer["rateLimits"].clone())].into(),
         _ => BTreeMap::new(),
     }
 }

@@ -96,8 +96,11 @@ pub fn claude_login(
         let text = |key: &str| value.get(key).and_then(serde_json::Value::as_str).map(str::to_string);
         match (value.get("loggedIn").and_then(serde_json::Value::as_bool), answer.status.code()) {
             (Some(true), Some(0)) => {
-                let account =
-                    AgentAccount { email: text("email"), organization: text("orgName"), plan: text("subscriptionType") };
+                let account = AgentAccount {
+                    email: text("email"),
+                    organization: text("orgName"),
+                    plan: text("subscriptionType"),
+                };
                 return (Fact::known(LoginStatus::LoggedIn { method: text("authMethod") }), Fact::known(account));
             }
             (Some(false), Some(1)) => {
@@ -118,7 +121,11 @@ pub fn claude_login(
 /// login (`claude.ai`) from a token in the environment (`oauth_token`),
 /// which names no account (2.1.294 and 2.1.296). It says a login is
 /// configured; it does not check that it still works.
-pub fn claude_identity(program: &Path, cwd: &Path, env: &[(OsString, OsString)]) -> Fact<fastctx_types::logins::Identity> {
+pub fn claude_identity(
+    program: &Path,
+    cwd: &Path,
+    env: &[(OsString, OsString)],
+) -> Fact<fastctx_types::logins::Identity> {
     let args = ["auth", "status", "--json"];
     let answer = match output(program, &args, cwd, env) {
         Ok(answer) => answer,

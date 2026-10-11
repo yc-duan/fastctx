@@ -6,6 +6,7 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { HomeChange, WorldAgents } from "./agents";
+import type { ChangePreview, LoginChange, MachineLogins, WorldLogins } from "./logins";
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
@@ -208,6 +209,47 @@ export function claudeConsent(
 /** Adds an agent's home on a machine, or hides one or shows it again. */
 export function agentHomes(machine: MachineName, change: HomeChange): Promise<void> {
   return invoke("agent_homes", { machineName: machine, change });
+}
+
+/** What one machine, or every machine the user may look at, keeps of its
+ *  agents' logins; nothing is started to read it. */
+export function agentLogins(machine: MachineName | null): Promise<WorldLogins> {
+  return invoke("agent_logins", { machineName: machine });
+}
+
+/** Scans a machine for its agents, answered once the usual places are
+ *  done while the walk of its disks goes on; with `stop`, stops the walk. */
+export function scanAgents(machine: MachineName, stop = false): Promise<MachineLogins> {
+  return invoke("scan_agents", { machineName: machine, stop });
+}
+
+/** Takes up a directory on a machine as a candidate login of `agent`. */
+export function addAgentLogin(machine: MachineName, agent: string, dir: string): Promise<MachineLogins> {
+  return invoke("add_agent_login", { machineName: machine, agentName: agent, dir });
+}
+
+/** What putting the World's tools into a login (`into`), or taking them
+ *  out, would change, with nothing written. */
+export function previewAgentChange(machine: MachineName, agent: string, dir: string, into: boolean): Promise<ChangePreview> {
+  return invoke("preview_agent_change", { machineName: machine, agentName: agent, dir, into });
+}
+
+/** Puts the World's tools into a login, or takes them out, by its
+ *  machine's node; answered when the change has ended. Its steps are in
+ *  the record (`agentLogins`) as it goes. */
+export function changeAgentLogin(
+  machine: MachineName,
+  agent: string,
+  dir: string,
+  into: boolean,
+  raiseOutputLimit = false,
+): Promise<LoginChange> {
+  return invoke("change_agent_login", { machineName: machine, agentName: agent, dir, into, raiseOutputLimit });
+}
+
+/** Reads a login's limits afresh on its machine. */
+export function readAgentLimits(machine: MachineName, agent: string, dir: string): Promise<MachineLogins> {
+  return invoke("read_agent_limits", { machineName: machine, agentName: agent, dir });
 }
 
 /** Residents or jobs in detail, from every machine that has them. */

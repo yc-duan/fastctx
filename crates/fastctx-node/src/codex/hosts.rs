@@ -79,7 +79,12 @@ impl CodexHosts {
         if crate::homes::same_dir(dir, self.default.config_home()) {
             return Some(self.default.clone());
         }
-        self.others.lock().expect("never poisoned").iter().find(|host| crate::homes::same_dir(host.config_home(), dir)).cloned()
+        self.others
+            .lock()
+            .expect("never poisoned")
+            .iter()
+            .find(|host| crate::homes::same_dir(host.config_home(), dir))
+            .cloned()
     }
 
     /// The environment every app-server runs with, before its home is named.

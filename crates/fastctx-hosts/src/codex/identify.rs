@@ -71,7 +71,8 @@ pub async fn ask_once(
                     let _ = waiter.send(answer);
                 }
                 Inbound::Request { id, method, .. } => {
-                    let _ = answering.refuse(id, -32601, &format!("{method} is not answered while identifying a login"));
+                    let _ =
+                        answering.refuse(id, -32601, &format!("{method} is not answered while identifying a login"));
                 }
                 Inbound::Notification { .. } => {}
                 Inbound::Exited { drained, .. } => {

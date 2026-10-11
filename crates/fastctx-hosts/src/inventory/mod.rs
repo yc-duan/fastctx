@@ -87,6 +87,16 @@ fn entries(dir: &Path, unreadable: &mut Vec<String>) -> Vec<std::fs::DirEntry> {
     }
 }
 
+/// A path without Windows' verbatim prefix, which resolving a link adds,
+/// as people write it.
+pub fn plain(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\UNC\") {
+        Some(rest) => PathBuf::from(format!(r"\\{rest}")),
+        None => text.strip_prefix(r"\\?\").map(PathBuf::from).unwrap_or_else(|| path.to_path_buf()),
+    }
+}
+
 /// Whether two paths are the same file, however each is written.
 pub fn same_file(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {

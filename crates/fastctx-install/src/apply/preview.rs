@@ -101,8 +101,10 @@ fn claude(places: &Places, record: &Record, into: bool, preview: &mut ChangePrev
     if into {
         let claude = places.claude.clone().ok_or(Error::NoClaude)?;
         let state = listings(claude)?;
-        let planned = PluginApply::prepare(&plan, state, previous.as_ref().map(|r| &r.receipt)).map_err(Error::Claude)?;
-        preview.commands = planned.commands().iter().map(|command| format!("claude {}", command.args.join(" "))).collect();
+        let planned =
+            PluginApply::prepare(&plan, state, previous.as_ref().map(|r| &r.receipt)).map_err(Error::Claude)?;
+        preview.commands =
+            planned.commands().iter().map(|command| format!("claude {}", command.args.join(" "))).collect();
         let edit = settings::apply(settings_file.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
         if edit.outcome == settings::SettingsOutcome::UserChanged {
             preview.kept.push(Kept {
@@ -139,7 +141,8 @@ fn claude(places: &Places, record: &Record, into: bool, preview: &mut ChangePrev
         None if previous.as_ref().is_some_and(|record| record.receipt.has_work()) => return Err(Error::NoClaude),
         None => {}
     }
-    let mut bytes = crate::claude::registration::remove(settings_file.bytes(), &plan, true, true).map_err(Error::Claude)?;
+    let mut bytes =
+        crate::claude::registration::remove(settings_file.bytes(), &plan, true, true).map_err(Error::Claude)?;
     if let Some(receipt) = &record.claude_tools {
         let edit = crate::claude::tools::unapply(File { path: &settings_path, bytes: bytes.as_deref() }, receipt)
             .map_err(Error::Claude)?;
@@ -182,7 +185,13 @@ enum Kind {
 }
 
 /// Adds `path` to the preview when its bytes would change.
-fn file(preview: &mut ChangePreview, path: &Path, before: Option<&[u8]>, after: Option<&[u8]>, kind: Kind) -> Result<(), Error> {
+fn file(
+    preview: &mut ChangePreview,
+    path: &Path,
+    before: Option<&[u8]>,
+    after: Option<&[u8]>,
+    kind: Kind,
+) -> Result<(), Error> {
     if before == after {
         return Ok(());
     }

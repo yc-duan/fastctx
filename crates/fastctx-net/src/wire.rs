@@ -376,6 +376,15 @@ pub enum Change {
         home: Option<std::path::PathBuf>,
         lent: bool,
     },
+    /// The super administrator sets the plan shown for `agent`'s login
+    /// `home` on `machine`, or takes it away.
+    Plan {
+        machine: MachineName,
+        agent: fastctx_types::AgentName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<std::path::PathBuf>,
+        plan: Option<fastctx_types::accounts::PlanLabel>,
+    },
     /// `machine` no longer acts for the account.
     StopActing {
         machine: MachineName,

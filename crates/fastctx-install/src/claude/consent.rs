@@ -63,7 +63,10 @@ pub struct Receipt {
 
 /// The settings once granted, and the receipt; no receipt when they said so
 /// already. A previous receipt is kept while the key still says `true`.
-pub fn grant(settings: Option<&[u8]>, previous: Option<&Receipt>) -> Result<(Option<Vec<u8>>, Option<Receipt>), String> {
+pub fn grant(
+    settings: Option<&[u8]>,
+    previous: Option<&Receipt>,
+) -> Result<(Option<Vec<u8>>, Option<Receipt>), String> {
     if accepted(settings)? {
         return Ok((settings.map(<[u8]>::to_vec), previous.cloned()));
     }

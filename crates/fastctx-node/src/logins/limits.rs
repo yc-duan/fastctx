@@ -48,7 +48,11 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<()> {
                 let entry = match index {
                     Some(index) => &mut limits[index],
                     None => {
-                        limits.push(KeptLimits { dir: report.home.clone(), at: report.at, buckets: Default::default() });
+                        limits.push(KeptLimits {
+                            dir: report.home.clone(),
+                            at: report.at,
+                            buckets: Default::default(),
+                        });
                         limits.last_mut().expect("just pushed")
                     }
                 };

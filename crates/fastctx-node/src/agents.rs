@@ -28,11 +28,7 @@ pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
 /// The record in the shape of an older reply: a login a scan has not asked
 /// is said to be unknown, never taken for logged out.
 pub(crate) fn reply(logins: MachineLogins) -> AgentsReply {
-    let checked_at = logins
-        .scan
-        .as_ref()
-        .map(|scan| scan.started_at)
-        .unwrap_or_else(jiff::Timestamp::now);
+    let checked_at = logins.scan.as_ref().map(|scan| scan.started_at).unwrap_or_else(jiff::Timestamp::now);
     let mut agents = Vec::new();
     for agent in crate::logins::AGENTS {
         let side = logins.of(agent).expect("an agent that keeps logins");

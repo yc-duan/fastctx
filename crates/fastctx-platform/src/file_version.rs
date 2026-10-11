@@ -34,8 +34,12 @@ mod imp {
             return match error.raw_os_error() {
                 // A file without version information has no such resource.
                 Some(code)
-                    if [ERROR_RESOURCE_DATA_NOT_FOUND, ERROR_RESOURCE_TYPE_NOT_FOUND, ERROR_RESOURCE_NAME_NOT_FOUND]
-                        .contains(&(code as u32)) =>
+                    if [
+                        ERROR_RESOURCE_DATA_NOT_FOUND,
+                        ERROR_RESOURCE_TYPE_NOT_FOUND,
+                        ERROR_RESOURCE_NAME_NOT_FOUND,
+                    ]
+                    .contains(&(code as u32)) =>
                 {
                     Ok(None)
                 }
@@ -76,14 +80,12 @@ mod imp {
         let mut pointer: *mut std::ffi::c_void = std::ptr::null_mut();
         let mut length = 0u32;
         // SAFETY: `data` is a filled version block; the query is NUL-terminated.
-        if unsafe { VerQueryValueW(data.as_ptr().cast(), query.as_ptr(), &mut pointer, &mut length) } == 0
-            || length < 4
+        if unsafe { VerQueryValueW(data.as_ptr().cast(), query.as_ptr(), &mut pointer, &mut length) } == 0 || length < 4
         {
             return None;
         }
         // SAFETY: the translation table is pairs of u16 inside `data`.
-        let (language, code_page) =
-            unsafe { (*(pointer as *const u16), *((pointer as *const u16).add(1))) };
+        let (language, code_page) = unsafe { (*(pointer as *const u16), *((pointer as *const u16).add(1))) };
         let key = format!("\\StringFileInfo\\{language:04x}{code_page:04x}\\ProductVersion");
         let key: Vec<u16> = key.encode_utf16().chain([0]).collect();
         let mut text: *mut std::ffi::c_void = std::ptr::null_mut();

@@ -65,8 +65,7 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
         return super::here(node).await;
     }
     let started_at = Timestamp::now();
-    let running =
-        Arc::new(Running { started_at, stop: AtomicBool::new(false), disks: Mutex::new(Vec::new()) });
+    let running = Arc::new(Running { started_at, stop: AtomicBool::new(false), disks: Mutex::new(Vec::new()) });
     let began = {
         let mut slot = node.logins.scan.lock().expect("never poisoned");
         let free = slot.is_none();
@@ -80,7 +79,8 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
     }
     let usual = usual(node, &running).await;
     if let Err(failure) = &usual {
-        node.logins.scan.lock().expect("never poisoned").take();
+        // The record says how it ended before the scan is no longer running,
+        // so no reader sees it running in the record and nowhere else.
         let failed = Stage::Failed { at: Timestamp::now(), reason: failure.message.clone() };
         let kept = blocking(node, move |node| {
             kept::change(node, |kept| {
@@ -93,6 +93,7 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
             .map_err(|error| Failure::new(format!("keeping the scan: {error}")))
         })
         .await;
+        node.logins.scan.lock().expect("never poisoned").take();
         kept?;
         return Err(failure.clone());
     }
@@ -100,7 +101,6 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
     tokio::spawn(async move {
         let node = walking.clone();
         let outcome = tokio::task::spawn_blocking(move || disks(&walking, &running)).await;
-        node.logins.scan.lock().expect("never poisoned").take();
         let problem = match outcome {
             Ok(Ok(())) => None,
             Ok(Err(failure)) => Some(failure.message),
@@ -117,6 +117,7 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
                 node.log.line(format_args!("keeping the scan: {error}"));
             }
         }
+        node.logins.scan.lock().expect("never poisoned").take();
     });
     super::here(node).await
 }
@@ -179,7 +180,8 @@ async fn usual(node: &Arc<Node>, running: &Running) -> Result<(), Failure> {
                     identify::codex(&node, &dir).await
                 } else {
                     let path = dir.clone();
-                    match tokio::task::spawn_blocking(move || identify::claude(&path, default, &claude_programs)).await {
+                    match tokio::task::spawn_blocking(move || identify::claude(&path, default, &claude_programs)).await
+                    {
                         Ok(Ok(asked)) => asked,
                         Ok(Err(failure)) => failed(failure.message),
                         Err(error) => failed(error.to_string()),
@@ -256,7 +258,12 @@ fn in_home(home: &Path, agent: &str, unreadable: &mut Vec<String>) -> Vec<PathBu
         let names = match std::fs::read_dir(entry.path()) {
             Ok(names) => names
                 .flatten()
-                .map(|inner| (inner.file_name().to_string_lossy().into_owned(), inner.file_type().is_ok_and(|kind| kind.is_dir())))
+                .map(|inner| {
+                    (
+                        inner.file_name().to_string_lossy().into_owned(),
+                        inner.file_type().is_ok_and(|kind| kind.is_dir()),
+                    )
+                })
                 .collect::<Vec<_>>(),
             Err(error) => {
                 if traces::AGENTS.iter().any(|(_, prefix)| name.starts_with(prefix)) {

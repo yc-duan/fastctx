@@ -91,6 +91,19 @@ impl Lend {
     }
 }
 
+/// The plan the hub's super administrator set by hand on one login of an
+/// agent on a machine, which names none itself; only shown.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct LoginPlan {
+    pub machine: MachineName,
+    pub agent: AgentName,
+    /// The login's directory as the machine writes it; none for the
+    /// agent's default login there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<PathBuf>,
+    pub plan: fastctx_types::accounts::PlanLabel,
+}
+
 /// A machine that acts for an account it is not logged in to: the account
 /// used an agent there, opening a session on it or asking it to be a
 /// colleague, which needs that machine to reach the account's machines
@@ -140,6 +153,9 @@ pub struct Directory {
     pub shares: Vec<Share>,
     #[serde(default)]
     pub lends: Vec<Lend>,
+    /// Plans set by hand on logins that name none.
+    #[serde(default)]
+    pub plans: Vec<LoginPlan>,
     #[serde(default)]
     pub acting: Vec<ActsFor>,
     pub projects: Vec<Project>,

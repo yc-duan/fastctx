@@ -69,7 +69,13 @@ impl Context {
             .map_err(|error| Failure::new(format!("finding the home directory: {error}")))?;
         let claude_default = crate::homes::claude_default(&env, &user_home);
         let places = crate::agents::places(node, &env, &user_home, identify::claude_program());
-        Ok(Self { codex_default: node.codex.default().config_home().to_path_buf(), claude_default, env, user_home, places })
+        Ok(Self {
+            codex_default: node.codex.default().config_home().to_path_buf(),
+            claude_default,
+            env,
+            user_home,
+            places,
+        })
     }
 
     pub(crate) fn default_of(&self, agent: &str) -> &Path {
@@ -107,18 +113,9 @@ fn dirs(node: &Node, context: &Context, kept: &kept::Kept, agent: &str) -> Resul
         .map_err(|error| Failure::new(format!("reading the apply record: {error}")))?;
     let wanted = host(agent)?;
     for integration in integrations.into_iter().filter(|integration| integration.host == wanted) {
-        add(plain(&integration.home), Found::Added);
+        add(fastctx_hosts::inventory::plain(&integration.home), Found::Added);
     }
     Ok(dirs)
-}
-
-/// A path without Windows' verbatim prefix, as people write it.
-pub(crate) fn plain(path: &Path) -> PathBuf {
-    let text = path.to_string_lossy();
-    match text.strip_prefix(r"\\?\UNC\") {
-        Some(rest) => PathBuf::from(format!(r"\\{rest}")),
-        None => text.strip_prefix(r"\\?\").map(PathBuf::from).unwrap_or_else(|| path.to_path_buf()),
-    }
 }
 
 /// Whether the World's tools are in the login `dir` of `host`.
@@ -158,12 +155,8 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
     let claude_models = fastctx_hosts::claude::exchange::models(node.world.path())
         .map_err(|error| Failure::new(format!("reading Claude's model rows: {error}")))?;
     let changes = node.logins.changes.lock().expect("never poisoned").clone();
-    let mut logins = MachineLogins {
-        machine: node.machine(),
-        scan,
-        codex: AgentLogins::default(),
-        claude: AgentLogins::default(),
-    };
+    let mut logins =
+        MachineLogins { machine: node.machine(), scan, codex: AgentLogins::default(), claude: AgentLogins::default() };
     for agent in AGENTS {
         let dirs = dirs(node, &context, &kept, agent)?;
         let side = logins.of_mut(agent).expect("an agent that keeps logins");
@@ -178,17 +171,16 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 Err(error) => return Err(Failure::new(format!("reading how {} stands: {error}", dir.display()))),
             };
             let listed = integration == Integration::In;
-            let limits = if agent == "codex" {
-                limits::of(&kept, dir)
-            } else {
-                claude_reading(&homes, dir, &claude_limits)
-            };
+            let limits =
+                if agent == "codex" { limits::of(&kept, dir) } else { claude_reading(&homes, dir, &claude_limits) };
             let models = if agent == "codex" {
                 known.map(|login| login.models.clone()).unwrap_or_default()
             } else {
                 claude_models
                     .iter()
-                    .find(|(transcript, _, _)| owner(&homes, transcript).is_some_and(|home| crate::homes::same_dir(home, dir)))
+                    .find(|(transcript, _, _)| {
+                        owner(&homes, transcript).is_some_and(|home| crate::homes::same_dir(home, dir))
+                    })
                     .map(|(_, _, models)| models.clone())
                     .unwrap_or_else(|| fastctx_hosts::claude::models::agent_models(None))
             };
@@ -244,7 +236,10 @@ fn owner<'a>(homes: &'a [AgentHome], transcript: &Path) -> Option<&'a Path> {
 /// The newest reading of the limits of the Claude login `dir`, from its
 /// sessions' reports.
 fn claude_reading(homes: &[AgentHome], dir: &Path, readings: &[(PathBuf, AgentLimits)]) -> Fact<AgentLimits> {
-    match readings.iter().find(|(transcript, _)| owner(homes, transcript).is_some_and(|home| crate::homes::same_dir(home, dir))) {
+    match readings
+        .iter()
+        .find(|(transcript, _)| owner(homes, transcript).is_some_and(|home| crate::homes::same_dir(home, dir)))
+    {
         Some((_, limits)) => Fact::known(limits.clone()),
         None => Fact::unavailable("no session in this login has reported its limits yet"),
     }
@@ -318,11 +313,20 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
         tokio::task::spawn_blocking(move || {
             let context = Context::of(&node)?;
-            let kept = kept::read(&node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
-            let elsewhere = kept.of(agent.as_str()).elsewhere.iter().any(|found| crate::homes::same_dir(&found.dir, &dir));
-            kept::add(&node, &agent, &dir).map_err(|error| Failure::new(format!("keeping the added login: {error}")))?;
+            let kept =
+                kept::read(&node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
+            let elsewhere =
+                kept.of(agent.as_str()).elsewhere.iter().any(|found| crate::homes::same_dir(&found.dir, &dir));
+            kept::add(&node, &agent, &dir)
+                .map_err(|error| Failure::new(format!("keeping the added login: {error}")))?;
             let default = crate::homes::same_dir(&dir, context.default_of(agent.as_str()));
-            let found = if default { Found::Default } else if elsewhere { Found::Elsewhere } else { Found::Added };
+            let found = if default {
+                Found::Default
+            } else if elsewhere {
+                Found::Elsewhere
+            } else {
+                Found::Added
+            };
             Ok::<_, Failure>((found, default, kept.claude.programs.clone()))
         })
         .await
@@ -343,7 +347,11 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
                 if let Some((at, answer)) = asked.limits {
                     let limits = &mut kept.codex.limits;
                     limits.retain(|known| !crate::homes::same_dir(&known.dir, &dir));
-                    limits.push(kept::KeptLimits { dir: dir.clone(), at, buckets: fastctx_hosts::codex::buckets(&answer) });
+                    limits.push(kept::KeptLimits {
+                        dir: dir.clone(),
+                        at,
+                        buckets: fastctx_hosts::codex::buckets(&answer),
+                    });
                 }
                 let logins = &mut kept.of_mut(agent.as_str()).logins;
                 logins.retain(|known| !crate::homes::same_dir(&known.dir, &dir));

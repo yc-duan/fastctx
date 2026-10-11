@@ -39,7 +39,12 @@ pub(super) async fn codex(node: &Arc<Node>, dir: &Path) -> Asked {
         });
         return asked_codex(at, said, launcher);
     }
-    let path = node.codex.environment().iter().find(|(name, _)| name.eq_ignore_ascii_case("PATH")).map(|(_, value)| value.clone());
+    let path = node
+        .codex
+        .environment()
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("PATH"))
+        .map(|(_, value)| value.clone());
     let default = node.codex.default().config_home().to_path_buf();
     let program_home = (!crate::homes::same_dir(&default, dir)).then_some(default);
     let launch = match fastctx_hosts::codex::launch::discover_for(dir, program_home.as_deref(), path.as_ref()) {
@@ -58,7 +63,8 @@ pub(super) async fn codex(node: &Arc<Node>, dir: &Path) -> Asked {
         version: None,
         desktop_app: launch.source == ProgramSource::DesktopApp,
     };
-    match fastctx_hosts::codex::identify::ask_once(&launch, dir, &cwd, node.codex.environment(), node.codex.log()).await {
+    match fastctx_hosts::codex::identify::ask_once(&launch, dir, &cwd, node.codex.environment(), node.codex.log()).await
+    {
         Ok(said) => asked_codex(at, said, Some(launcher)),
         Err(error) => Asked {
             identified: Identified { at, who: Fact::failed(error) },
@@ -113,7 +119,8 @@ pub(super) fn claude(dir: &Path, default: bool, programs: &[FoundProgram]) -> Re
         env.retain(|(name, _)| !name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"));
         env.push(("CLAUDE_CONFIG_DIR".into(), dir.as_os_str().to_owned()));
     }
-    let cwd = fastctx_platform::user_home().map_err(|error| Failure::new(format!("finding the home directory: {error}")))?;
+    let cwd =
+        fastctx_platform::user_home().map_err(|error| Failure::new(format!("finding the home directory: {error}")))?;
     let who = fastctx_hosts::agents::claude_identity(&program, &cwd, &env);
     let version = programs
         .iter()

@@ -511,7 +511,8 @@ pub fn withdrawal(plan: &ClaudePlan, state: &PluginState) -> Result<Vec<PluginCo
         commands.push(target.command(Mutation::UninstallPlugin));
     }
     if target.market(state).is_some() {
-        let others = target.members(state).any(|plugin| !(installed && plugin.id == target.id() && plugin.scope == "user"));
+        let others =
+            target.members(state).any(|plugin| !(installed && plugin.id == target.id() && plugin.scope == "user"));
         if others {
             return Err("The fastctx marketplace contains another plugin; it was left unchanged".into());
         }

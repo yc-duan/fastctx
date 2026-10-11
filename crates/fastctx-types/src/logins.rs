@@ -259,10 +259,17 @@ pub struct Scan {
 #[serde(rename_all = "snake_case", tag = "state")]
 pub enum Stage {
     Running,
-    Done { at: Timestamp },
+    Done {
+        at: Timestamp,
+    },
     /// The user stopped it.
-    Stopped { at: Timestamp },
-    Failed { at: Timestamp, reason: String },
+    Stopped {
+        at: Timestamp,
+    },
+    Failed {
+        at: Timestamp,
+        reason: String,
+    },
 }
 
 /// How far the walk of every disk has got.

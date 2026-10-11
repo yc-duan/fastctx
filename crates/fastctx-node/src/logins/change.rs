@@ -28,7 +28,12 @@ fn places(node: &Node, agent: &AgentName, dir: &Path) -> Result<(Places, apply::
 
 /// What putting the World's tools into the login (`into`), or taking them
 /// out, would change.
-pub(crate) async fn preview(node: &Arc<Node>, agent: AgentName, dir: PathBuf, into: bool) -> Result<ChangePreview, Failure> {
+pub(crate) async fn preview(
+    node: &Arc<Node>,
+    agent: AgentName,
+    dir: PathBuf,
+    into: bool,
+) -> Result<ChangePreview, Failure> {
     let node = node.clone();
     tokio::task::spawn_blocking(move || {
         super::known(&node, &agent, &dir)?;
@@ -86,7 +91,11 @@ pub(crate) async fn change(
             node.log.line(format_args!("the user {word} the {agent} login {}", dir.display()));
             ChangeEnd::Done {
                 at,
-                kept: report.notices.into_iter().map(|notice| Kept { location: notice.location, reason: notice.reason }).collect(),
+                kept: report
+                    .notices
+                    .into_iter()
+                    .map(|notice| Kept { location: notice.location, reason: notice.reason })
+                    .collect(),
             }
         }
         Ok(Err(apply::Error::Edit(fastctx_install::Error::TokenLimitApproval { location, current, requested }))) => {
