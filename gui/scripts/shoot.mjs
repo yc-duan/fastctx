@@ -91,6 +91,10 @@ socket.addEventListener("message", (message) => {
     for (const listener of listeners) listener(data);
   }
 });
+socket.addEventListener("close", () => {
+  for (const { reject } of pending.values()) reject(new Error("Chromium's DevTools connection closed"));
+  pending.clear();
+});
 const send = (method, params = {}) =>
   new Promise((resolve, reject) => {
     serial += 1;
@@ -143,7 +147,7 @@ for (const session of sessions) {
       const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
-      const specimen = named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
+      const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
       const url = specimen ? `${base}/${specimen}?theme=${theme}${extra ? `&${extra}` : ""}` : `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}`;
       await send("Page.navigate", { url });
       await loaded;
@@ -387,7 +391,11 @@ for (const session of sessions) {
 }
 
 if (problems.length) console.log(`\nproblems:\n${[...new Set(problems)].join("\n")}`);
+const closed = new Promise((resolve) => chrome.once("exit", resolve));
+const closing = send("Browser.close").then(() => null, (error) => error);
+const code = await closed;
+const closeError = await closing;
 socket.close();
-chrome.kill();
-await new Promise((resolve) => setTimeout(resolve, 300));
+if (code !== 0) throw new Error(`Chromium shutdown exited ${code}: ${closeError ?? ""}`);
+if (closeError) console.log("Chromium exited normally before acknowledging Browser.close");
 rmSync(profile, { recursive: true, force: true });
