@@ -228,7 +228,7 @@ export class ConversationView {
       case "prose":
         return `${entry.key}p${entry.version}${entry.writing ? "w" : ""}`;
       case "tool":
-        return `${entry.key}t${entry.tool.status}${entry.ended?.use ?? "-"}${entry.tool.output.length}`;
+        return `${entry.key}t${entry.tool.status}${entry.ended?.use ?? "-"}${entry.tool.output.length}${this.conversation.agentOf(entry) ? `a${this.conversation.agentStamp}` : ""}`;
       default:
         return entry.key;
     }
@@ -843,7 +843,11 @@ export class ConversationView {
       entry.tool.does.as === "colleague" && entry.tool.does.to && this.context.link
         ? `<a class="row-link" href="${escape(this.context.link({ resident: entry.tool.does.to, machine: entry.tool.machine ?? this.context.residentMachine }))}">${escape(words.openColleague)}${glyph("chevron", 14)}</a>`
         : "";
-    return `<div class="row row-tool row-${tense}${enter}" data-row="${entry.key}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${entry.key}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span>${object}${stats}${this.outcome(entry)}${elsewhere}${chevron}</button>${colleague}${fold}</div>`;
+    // Claude Code's own subagent, followed as it goes: its kind, its steps,
+    // the one it takes now.
+    const agent = this.conversation.agentOf(entry);
+    const sub = agent ? `<div class="row-sub">${escape(words.subagent(agent.kind, agent.steps, tense === "running" ? agent.doing : null))}</div>` : "";
+    return `<div class="row row-tool row-${tense}${enter}" data-row="${entry.key}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${entry.key}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span>${object}${stats}${this.outcome(entry)}${elsewhere}${chevron}</button>${colleague}${sub}${fold}</div>`;
   }
 
   private thinking(entry: Extract<Entry, { kind: "prose" }>, enter: string): string {

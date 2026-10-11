@@ -537,3 +537,11 @@
   font-size: var(--size-small);
   color: var(--text-3);
 }
+
+/* Claude Code's own subagent, followed under the tool that started it. */
+.row-sub {
+  margin: -2px 0 2px 28px;
+  font-size: var(--size-small);
+  font-style: italic;
+  color: var(--text-3);
+}

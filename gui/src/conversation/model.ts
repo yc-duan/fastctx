@@ -95,6 +95,10 @@ export class Conversation {
   /** The model the host last answered with, where it says (Claude's
    *  answers do): what the conversation shows, not the one chosen. */
   answeredBy: string | null = null;
+  /** Claude Code's own subagents: who, how many steps each has taken, the
+   *  one it takes now; `agentStamp` moves whenever one of them does. */
+  readonly agents = new Map<string, { kind: string; description: string; status: string; steps: number; doing: string | null }>();
+  agentStamp = 0;
   /** Attachments by where the World keeps them, with the names they came
    *  with: the World stores each under a name of its own. */
   private attachments = new Map<string, string>();
@@ -301,6 +305,26 @@ export class Conversation {
           this.answeredBy = change.model;
           return;
         }
+        if (change.kind === "agents") {
+          for (const agent of change.agents) {
+            const known = this.agents.get(agent.id);
+            this.agents.set(agent.id, { kind: agent.type, description: agent.description, status: agent.status, steps: known?.steps ?? 0, doing: known?.doing ?? null });
+          }
+          this.agentStamp += 1;
+          return;
+        }
+        if (change.kind === "agent_event") {
+          const known = this.agents.get(change.agent_id) ?? { kind: "", description: "", status: "running", steps: 0, doing: null };
+          const happened = change.happened !== null && typeof change.happened === "object" && !Array.isArray(change.happened) ? change.happened : {};
+          const item = happened.item !== null && typeof happened.item === "object" && !Array.isArray(happened.item) ? happened.item : {};
+          const named = item.kind === "tool" && typeof item.name === "string" ? item.name : null;
+          if (happened.event === "began" && named) known.doing = named;
+          if (happened.event === "finished" && item.kind === "tool") known.steps += 1;
+          if (happened.event === "turn_ended") known.doing = null;
+          this.agents.set(change.agent_id, known);
+          this.agentStamp += 1;
+          return;
+        }
         if (change.kind === "commands_changed") {
           this.offersChanged = true;
           return;
@@ -474,6 +498,16 @@ export class Conversation {
     const changed = this.offersChanged;
     this.offersChanged = false;
     return changed;
+  }
+
+  /** The subagent a tool started, where it is Claude Code's own agent tool:
+   *  known by the description it was given. */
+  agentOf(entry: Extract<Entry, { kind: "tool" }>): { kind: string; status: string; steps: number; doing: string | null } | null {
+    if (entry.tool.name !== "Agent" && entry.tool.name !== "Task") return null;
+    const input = entry.tool.input;
+    const description = input !== null && typeof input === "object" && !Array.isArray(input) && typeof input.description === "string" ? input.description : null;
+    if (!description) return null;
+    return [...this.agents.values()].find((agent) => agent.description === description) ?? null;
   }
 
   /** Words shown as being sent that went into the queue instead. */

@@ -122,6 +122,8 @@ export interface Words {
   notSent(why: string): string;
   /** The way into a colleague's own conversation. */
   openColleague: string;
+  /** Under Claude Code's agent tool: its subagent's kind, steps taken, the one it takes now. */
+  subagent(kind: string, steps: number, doing: string | null): string;
   /** What it started that still runs. */
   stillRunning: string;
   /** Before a job is stopped by the user, and when it could not be. */
@@ -300,6 +302,7 @@ export const zh: Words = {
   watchInterrupted: () => "连接中断，正在重连…",
   notSent: () => "发送失败",
   openColleague: "查看",
+  subagent: (kind, steps, doing) => [`子代理${kind ? ` ${kind}` : ""}`, `${steps} 步`, doing].filter(Boolean).join(" · "),
   stillRunning: "运行中的命令",
   stopJobAsk: "停下这条命令？会告诉智能体是你停的。",
   notStopped: "没能停下",
@@ -450,6 +453,7 @@ export const en: Words = {
   watchInterrupted: () => "Disconnected, reconnecting…",
   notSent: () => "Couldn't send",
   openColleague: "Open",
+  subagent: (kind, steps, doing) => [`Subagent${kind ? ` ${kind}` : ""}`, `${steps} ${steps === 1 ? "step" : "steps"}`, doing].filter(Boolean).join(" · "),
   stillRunning: "Running commands",
   stopJobAsk: "Stop this command? The agent will be told you stopped it.",
   notStopped: "Couldn't stop it",
