@@ -62,10 +62,10 @@ export interface LineNote { line: number; from: number; to: number; note: Output
 export interface ProjectedLines { start: number; lines: string[]; notes: LineNote[] }
 export interface LinePart { line: number; text: string; ended: boolean; note?: OutputNote }
 
-/** lines_open rejects with this object; other failures have no kind. */
+/** lines_open rejects with this object; other failures have no code. */
 export interface LineOpenError {
   message: string;
-  kind?: "output_not_retained" | "source_missing";
+  code?: "original_gone" | "output_not_retained" | "source_missing";
   not_run?: boolean;
 }
 
