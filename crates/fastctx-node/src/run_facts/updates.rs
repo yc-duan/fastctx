@@ -49,13 +49,8 @@ pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io
     let update = JobFacts {
         call_id,
         primary: record.on.is_none(),
-        output: Some(OutputRef {
-            machine: record.machine.clone(),
-            path: record.output.clone(),
-            bytes: 0,
-            lines: 0,
-            cut: true,
-        }),
+        // Job records have no measured output extent; the fitted call answer supplies it.
+        output: None,
         visited: crate::jobs::visited(record_path.parent().expect("job record has a directory"), &record.id),
         machine: record.machine.clone(),
         job: record.id.clone(),
