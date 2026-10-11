@@ -3,6 +3,7 @@
 
 import type { Glyph } from "./tool";
 
+export type GlyphName = Named;
 type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "stop" | "send" | "attach" | "camera" | "file" | Frame;
 
 /** The frame's own glyphs: the sidebar, new conversations, settings, and

@@ -45,6 +45,15 @@ export interface ShellWords {
   phone: string;
   /** The way to log in, on a computer logged in nowhere. */
   logIn: string;
+  /** The networks at the top of the sidebar. */
+  networks: string;
+  newNetwork: string;
+  joinNetwork: string;
+  manageNetwork: string;
+  admin: string;
+  member: string;
+  /** How many machines a network has, as its row says it. */
+  machinesCount(n: number): string;
   account: string;
   /** Who came into the accounts lately, not yet shown, for a screen reader. */
   arrivals(n: number): string;
@@ -1415,6 +1424,13 @@ export const zhShell: ShellWords = {
   thisOne: "本机",
   phone: "手机",
   logIn: "加入世界",
+  networks: "网络",
+  newNetwork: "新建网络",
+  joinNetwork: "加入网络",
+  manageNetwork: "管理",
+  admin: "管理员",
+  member: "成员",
+  machinesCount: (n) => `${n} 台机器`,
   account: "账号",
   arrivals: (n) => `${n} 台新设备`,
   groupOf: (login) => login,
@@ -1453,6 +1469,13 @@ export const enShell: ShellWords = {
   thisOne: "this computer",
   phone: "phone",
   logIn: "Join a World",
+  networks: "Networks",
+  newNetwork: "New network",
+  joinNetwork: "Join a network",
+  manageNetwork: "Manage",
+  admin: "Administrator",
+  member: "Member",
+  machinesCount: (n) => (n === 1 ? "1 machine" : `${n} machines`),
   account: "Account",
   arrivals: (n) => `${n} new device${n === 1 ? "" : "s"}`,
   groupOf: (login) => login,
