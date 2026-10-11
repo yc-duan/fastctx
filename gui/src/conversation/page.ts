@@ -6,6 +6,7 @@ import type { ComposerWords } from "../app/words";
 import type { Words } from "../words";
 import type { Control, Controlled, Offers } from "../world/control";
 import type { Attachment } from "../world/attachments";
+import type { AttachmentSource } from "../world/files";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { SendQueue, type Queued } from "./queue";
@@ -63,6 +64,7 @@ export interface PageOptions {
    *  them here; showing one in its folder, where this is a computer. */
   opening?: {
     open(machine: string, path: string): Promise<void>;
+    openAttachment?: ((attachment: AttachmentSource) => Promise<void>) | undefined;
     reveal?: ((path: string) => Promise<void>) | undefined;
   };
   /** The conversation's pictures, from the machines holding them. */
@@ -286,6 +288,7 @@ export class ConversationPage {
         here: options.here,
         machine: someone.machine,
         open: options.opening.open,
+        openAttachment: options.opening.openAttachment,
         reveal: options.opening.reveal,
         say: (text) => this.say(text),
       });

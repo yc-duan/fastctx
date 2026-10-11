@@ -74,7 +74,7 @@ import { loginsOf, type AccountChange, type Login } from "./world/accounts";
 import { borrowedBy, borrowedOf, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import { Details, type Manage } from "./conversation/details";
 import { ComposerSession } from "./conversation/composer";
-import { attachmentThumbnail, fetchFile, openLocal, reveal, thumbnail, thumbnailUrl } from "./world/files";
+import { attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
 import { specimenComposer } from "./specimen/composer";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/model";
@@ -720,8 +720,9 @@ function specimenTalk(address: Address): Page {
     opening: { open: notLive, reveal: notLive },
     pictures: {
       thumbnail: async (_machine, path, max) => specimenPicture(path, max),
-      attachmentThumbnail: async (attachment, max) => specimenPicture(attachment.name, max),
-      original: async (_machine, path) => (await fetch(specimenPicture(path, 2400))).blob(),
+      attachmentThumbnail: async (attachment, max) => specimenPicture("path" in attachment ? attachment.name : "picture", max),
+      original: async (picture) => (await fetch(specimenPicture(picture.path ?? picture.name, 2400))).blob(),
+      save: async () => true,
     },
     controls: {
       words: composerWords,
@@ -866,15 +867,21 @@ function liveTalk(address: Address): Page {
     // where it is.
     opening: {
       open: async (machine, path) => openLocal(await fetchFile(machine, path)),
+      openAttachment: async (attachment) => openLocal((await fetchAttachment(attachment)).path),
       reveal: onComputer() ? reveal : undefined,
     },
     pictures: {
       thumbnail: async (machine, path, max) => thumbnailUrl(await thumbnail(machine, path, max)),
       attachmentThumbnail: async (attachment, max) => thumbnailUrl(await attachmentThumbnail(attachment, max)),
-      original: async (machine, path) => {
-        const read = await readBytes(machine, path);
+      // A file the user sent is asked for as large as it is known to be,
+      // which a gone original's host record answers too.
+      original: async (picture, max) => {
+        if (picture.attachment) return blobOf(await attachmentThumbnail(picture.attachment, max));
+        const read = await readBytes(picture.machine, picture.path!);
         return new Blob([Uint8Array.from(atob(read.base64), (char) => char.charCodeAt(0))]);
       },
+      save: async (picture) =>
+        savedOf(await saveAs(picture.attachment ? (await fetchAttachment(picture.attachment)).path : await fetchFile(picture.machine, picture.path!), picture.name)),
       reveal: onComputer() ? reveal : undefined,
     },
     files: {
@@ -1576,3 +1583,14 @@ startPresence({
   stop: (address) => stop(address),
   say: (address, text) => talk(address, text),
 });
+
+/** A picture's bytes, as a blob the viewer shows. */
+function blobOf(picture: Thumbnail): Blob {
+  return new Blob([Uint8Array.from(atob(picture.base64), (char) => char.charCodeAt(0))], { type: picture.mime });
+}
+
+/** Whether a save went through: a change of mind is not a failure. */
+function savedOf(saved: Saved): boolean {
+  if (saved.kind === "failed") throw new Error(saved.reason);
+  return saved.kind === "saved";
+}

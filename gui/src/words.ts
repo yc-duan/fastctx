@@ -358,6 +358,7 @@ export const zh: Words = {
     copied: "已复制路径",
     on: (machine, path) => `${machine} 上的 ${path}`,
     openFailed: (why) => `打不开这个文件：${why}`,
+    gone: "原件已不在",
   },
   pictures: {
     close: "关闭",
@@ -556,6 +557,7 @@ export const en: Words = {
     copied: "Path copied",
     on: (machine, path) => `${path} on ${machine}`,
     openFailed: (why) => `Couldn't open the file: ${why}`,
+    gone: "The original is gone",
   },
   pictures: {
     close: "Close",

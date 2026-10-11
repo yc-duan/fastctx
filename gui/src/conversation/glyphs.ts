@@ -8,10 +8,11 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
 /** The frame's own glyphs: the sidebar, new conversations, settings, and
  *  what can be done to an agent (sleep, wake, move to a project, remove,
  *  which archives it), a page and its versions; an account, its password,
- *  a phone, logging out, trust and a relay. */
+ *  a phone, logging out, trust and a relay; saving a copy, and a file's path. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
   | "archive" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone" | "logout" | "shield" | "relay"
+  | "save" | "link"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -52,6 +53,8 @@ const paths: Record<Named, string> = {
   grip: '<circle cx="7.5" cy="5.5" r="0.9" fill="currentColor"/><circle cx="12.5" cy="5.5" r="0.9" fill="currentColor"/><circle cx="7.5" cy="10" r="0.9" fill="currentColor"/><circle cx="12.5" cy="10" r="0.9" fill="currentColor"/><circle cx="7.5" cy="14.5" r="0.9" fill="currentColor"/><circle cx="12.5" cy="14.5" r="0.9" fill="currentColor"/>',
   scan: '<path d="M3.75 7V4.75a1 1 0 0 1 1-1H7M13 3.75h2.25a1 1 0 0 1 1 1V7M16.25 13v2.25a1 1 0 0 1-1 1H13M7 16.25H4.75a1 1 0 0 1-1-1V13"/><path d="M6.25 10h7.5"/>',
   archive: '<rect x="3.75" y="4.75" width="12.5" height="3" rx="0.75"/><path d="M5 7.75v6.5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-6.5"/><path d="M8.25 10.75h3.5"/>',
+  save: '<path d="M10 3.75v8.5M6.75 9l3.25 3.25L13.25 9"/><path d="M4.25 13v2.25a1 1 0 0 0 1 1h9.5a1 1 0 0 0 1-1V13"/>',
+  link: '<path d="M8.5 11.5l3-3"/><path d="M7.4 9.1 5.95 10.55a2.3 2.3 0 0 0 3.25 3.25l1.45-1.45"/><path d="M12.6 10.9l1.45-1.45a2.3 2.3 0 0 0-3.25-3.25L9.35 7.65"/>',
   page: '<rect x="3.75" y="4.25" width="12.5" height="11.5" rx="1.5"/><path d="M3.75 7.25h12.5"/><path d="M6.25 13.25l2.25-2.5 1.75 1.5 3.5-3.5"/>',
   versions: '<rect x="6.25" y="6.75" width="10" height="9" rx="1.25"/><path d="M3.75 13.25v-7.5a1 1 0 0 1 1-1h8.5"/>',
   read: '<path d="M4.5 4.5h7l4 4v7a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M11.5 4.5v4h4"/><path d="M7 11h6M7 13.5h4"/>',

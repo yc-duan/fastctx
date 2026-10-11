@@ -7,8 +7,8 @@
 // machine (`data-path`), or bytes already in the page (`src`).
 
 import { CanvasCamera } from "../map-canvas";
-import type { Attachment } from "../world/attachments";
 import type { MachineName } from "../world/events";
+import type { AttachmentSource } from "../world/files";
 import { glyph } from "./glyphs";
 import { escape, naturalPath } from "./prose";
 
@@ -29,18 +29,29 @@ export interface PictureWords {
   counter(at: number, of: number): string;
 }
 
+/** A picture as the seams are asked for it: a file the user sent (as the
+ *  World kept it, or as its host recorded it), or a file on a machine. */
+export interface PictureSource {
+  name: string;
+  machine: MachineName;
+  path: string | null;
+  attachment: AttachmentSource | null;
+}
+
 export interface PictureSeams {
   /** A file on `machine`, made at most `max` pixels on its longer side by
    *  the machine holding it, as an address an `<img>` takes. */
   thumbnail(machine: MachineName, path: string, max: number): Promise<string>;
   /** The same for a file the user sent, which an agent lent to the user
-   *  may show too. */
-  attachmentThumbnail(attachment: Attachment, max: number): Promise<string>;
-  /** The whole picture, for looking closer than a screen's worth. */
-  original(machine: MachineName, path: string): Promise<Blob>;
+   *  may show too. A failure that carries `gone` says whether the picture
+   *  is nowhere to be had. */
+  attachmentThumbnail(attachment: AttachmentSource, max: number): Promise<string>;
+  /** The whole picture, `max` pixels being what it is known to hold, for
+   *  looking closer than a screen's worth. */
+  original(picture: PictureSource, max: number): Promise<Blob>;
   /** Saves a copy where the user picks on this device; false when they
    *  changed their mind. Absent where this device has no way to. */
-  save?: ((machine: MachineName, path: string, name: string) => Promise<boolean>) | undefined;
+  save?: ((picture: PictureSource) => Promise<boolean>) | undefined;
   /** Shows a file on this computer in its folder; absent on a phone. */
   reveal?: ((path: string) => Promise<void>) | undefined;
 }
@@ -57,12 +68,8 @@ export interface PicturesOptions {
 }
 
 /** One picture as the viewer knows it. */
-interface Picture {
+interface Picture extends PictureSource {
   element: HTMLImageElement;
-  name: string;
-  machine: MachineName;
-  path: string | null;
-  attachment: Attachment | null;
 }
 
 /** Pixels on the longer side of a picture in the conversation: twice what
@@ -70,7 +77,13 @@ interface Picture {
  *  for screens of twice the density. */
 const SMALL = 520;
 
-const isGone = (message: string): boolean => /not found|no such file|cannot find|does not exist|is gone|os error 2\b/i.test(message);
+/** Whether a failure says the picture is nowhere to be had: a file the user
+ *  sent says so itself; a file on a machine is gone when the system says
+ *  it is not there. */
+const isGone = (error: unknown, message: string): boolean =>
+  error && typeof error === "object" && "gone" in error
+    ? error.gone === true
+    : /not found|no such file|cannot find|does not exist|is gone|os error 2\b/i.test(message);
 
 export class Pictures {
   private readonly made = new Map<string, Promise<string>>();
@@ -109,19 +122,20 @@ export class Pictures {
   }
 
   private pictureOf(element: HTMLImageElement): Picture {
-    const attachment = element.dataset.attachment ? (JSON.parse(element.dataset.attachment) as Attachment) : null;
+    const attachment = element.dataset.attachment ? (JSON.parse(element.dataset.attachment) as AttachmentSource) : null;
+    const kept = attachment && "path" in attachment ? attachment : null;
     return {
       element,
-      name: element.alt || attachment?.name || element.dataset.path?.split(/[\\/]/).pop() || "",
+      name: element.alt || kept?.name || element.dataset.path?.split(/[\\/]/).pop() || "",
       machine: attachment?.owner.machine ?? element.dataset.machine ?? this.options.machine,
-      path: attachment?.path ?? element.dataset.path ?? null,
+      path: kept?.path ?? element.dataset.path ?? null,
       attachment,
     };
   }
 
   /** A picture of `max` pixels, asked of the machine holding it once. */
   sized(picture: Picture, max: number): Promise<string> | null {
-    const key = picture.attachment ? `a:${picture.attachment.sha256}:${max}` : picture.path ? `f:${picture.machine}:${picture.path}:${max}` : null;
+    const key = picture.attachment ? `a:${JSON.stringify(picture.attachment)}:${max}` : picture.path ? `f:${picture.machine}:${picture.path}:${max}` : null;
     if (!key) return null;
     let made = this.made.get(key);
     if (!made) {
@@ -146,7 +160,7 @@ export class Pictures {
       const place = image.closest<HTMLElement>(".bubble-picture, .prose-picture") ?? image;
       place.classList.add("picture-missing");
       place.title = message;
-      place.innerHTML = `${glyph("image", 16)}<span>${escape(picture.name)}</span><span class="picture-why">${escape(isGone(message) ? this.options.words.gone : this.options.words.failed(message))}</span>`;
+      place.innerHTML = `${glyph("image", 16)}<span>${escape(picture.name)}</span><span class="picture-why">${escape(isGone(error, message) ? this.options.words.gone : this.options.words.failed(message))}</span>`;
     }
   }
 
@@ -202,7 +216,7 @@ class PictureViewer {
     this.element.innerHTML = `<div class="pv-stage"><img class="pv-image" alt="" draggable="false"></div>
       <div class="pv-bar"><span class="pv-name"></span><span class="pv-counter"></span><span class="pv-acts">${
         typeof ClipboardItem === "undefined" ? "" : button("copy-image", "copy", words.copyImage)
-      }${options.seams.save ? button("save", "archive", words.saveAs) : ""}${button("copy-path", "file", words.copyPath)}${
+      }${options.seams.save ? button("save", "save", words.saveAs) : ""}${button("copy-path", "link", words.copyPath)}${
         options.seams.reveal ? button("reveal", "folder", words.reveal) : ""
       }${button("close", "close", words.close)}</span></div>
       <button class="pv-side pv-previous" type="button" data-pv="previous" aria-label="${escape(words.previous)}" title="${escape(words.previous)}">${glyph("back", 22)}</button>
@@ -282,7 +296,9 @@ class PictureViewer {
     this.element.querySelector<HTMLElement>(".pv-next")!.hidden = this.index === this.pictures.length - 1;
     for (const act of ["copy-path", "save", "reveal"]) {
       const button = this.element.querySelector<HTMLElement>(`[data-pv=${act}]`);
-      if (button) button.hidden = !picture.path || (act === "reveal" && picture.machine !== this.options.here);
+      // Saving takes a file the user sent even where only its host's record
+      // holds it; its path and folder are the World's copy's.
+      if (button) button.hidden = act === "save" ? !picture.path && !picture.attachment : !picture.path || (act === "reveal" && picture.machine !== this.options.here);
     }
     this.place(picture.element.src, shown);
     const screen = Math.round(Math.max(screen_.width, screen_.height) * devicePixelRatio);
@@ -342,12 +358,12 @@ class PictureViewer {
    *  for, once. */
   private closer(): void {
     const picture = this.picture;
-    if (this.original || !this.camera || !picture.path) return;
+    if (this.original || !this.camera || (!picture.path && !picture.attachment)) return;
     const natural = Number(this.image.dataset.natural || this.size[0]);
     if ((this.camera.view.scale * this.size[0] * devicePixelRatio) / natural <= 1.05) return;
     const shown = this.shown;
     this.original = "asked";
-    this.options.seams.original(picture.machine, picture.path).then(
+    this.options.seams.original(picture, natural).then(
       (blob) => {
         if (shown !== this.shown) return;
         this.original = URL.createObjectURL(blob);
@@ -437,8 +453,8 @@ class PictureViewer {
         await navigator.clipboard.writeText(naturalPath(picture.path));
         say(words.copied);
       } else if (act === "reveal" && picture.path && seams.reveal) await seams.reveal(picture.path);
-      else if (act === "save" && picture.path && seams.save) {
-        if (await seams.save(picture.machine, picture.path, picture.name)) say(words.saved);
+      else if (act === "save" && (picture.path || picture.attachment) && seams.save) {
+        if (await seams.save(picture)) say(words.saved);
       } else if (act === "copy-image") {
         await navigator.clipboard.write([new ClipboardItem({ "image/png": pngOf(this.image) })]);
         say(words.copied);

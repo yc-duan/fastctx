@@ -356,7 +356,7 @@ export class ConversationView {
     const file = (item: ShownAttachment) => {
       const label = `${glyph(item.image ? "image" : "file", 16)}<span class="bubble-file-name">${escape(item.name)}</span>${item.size === null ? "" : `<span class="bubble-file-size">${escape(sizeOf(item.size))}</span>`}`;
       return item.kept
-        ? `<li><a class="bubble-file" href="#" data-file="${escape(item.kept.path)}" data-file-machine="${escape(item.kept.owner.machine)}">${label}</a></li>`
+        ? `<li><a class="bubble-file" href="#" data-file="${escape(item.kept.path)}" data-file-machine="${escape(item.kept.owner.machine)}" data-attachment="${escape(JSON.stringify(item.kept))}">${label}</a></li>`
         : `<li class="bubble-file">${label}</li>`;
     };
     return `${pictures.length ? `<ul class="bubble-attached pictures${pictures.length === 1 ? " one" : ""}">${pictures.map(picture).join("")}</ul>` : ""}${

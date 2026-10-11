@@ -5,6 +5,7 @@
 // path as that machine writes it.
 
 import type { MachineName } from "../world/events";
+import type { AttachmentSource } from "../world/files";
 import { glyph } from "./glyphs";
 import { escape, naturalPath } from "./prose";
 
@@ -15,6 +16,8 @@ export interface FileLinkWords {
   /** Where a file on another machine is, for a pointer resting on it. */
   on(machine: string, path: string): string;
   openFailed(why: string): string;
+  /** A file the user sent that is nowhere to be had any more. */
+  gone: string;
 }
 
 export interface FileLinkOptions {
@@ -25,6 +28,9 @@ export interface FileLinkOptions {
   machine: MachineName;
   /** Opens a file on `machine` here, bringing it over first when needed. */
   open(machine: MachineName, path: string): Promise<void>;
+  /** Opens a file the user sent here: the World's copy, or where that is
+   *  gone, its host's own record of it. */
+  openAttachment?: ((attachment: AttachmentSource) => Promise<void>) | undefined;
   /** Shows a file on this computer in its folder; absent where there is no
    *  folder to show (a phone). */
   reveal?: ((path: string) => Promise<void>) | undefined;
@@ -46,7 +52,12 @@ export class FileLinks {
       event.preventDefault();
       event.stopPropagation();
       this.closeMenu();
-      void options.open(link.dataset.fileMachine ?? options.machine, link.dataset.file!).catch((error: unknown) => options.say(options.words.openFailed(error instanceof Error ? error.message : String(error))));
+      const sent = link.dataset.attachment && options.openAttachment ? (JSON.parse(link.dataset.attachment) as AttachmentSource) : null;
+      const opened = sent && options.openAttachment ? options.openAttachment(sent) : options.open(link.dataset.fileMachine ?? options.machine, link.dataset.file!);
+      void opened.catch((error: unknown) => {
+        const gone = !!error && typeof error === "object" && "gone" in error && error.gone === true;
+        options.say(gone ? options.words.gone : options.words.openFailed(error instanceof Error ? error.message : String(error)));
+      });
     });
     root.addEventListener("contextmenu", (event) => {
       const link = linkOf(event.target);
@@ -78,7 +89,7 @@ export class FileLinks {
       // Where the file is, said where a pointer cannot rest on the link.
       `<p class="file-menu-where mono">${escape(machine === here ? naturalPath(path) : words.on(machine, naturalPath(path)))}</p>`,
       machine === here && reveal ? `<button class="file-menu-item" type="button" role="menuitem" data-file-act="reveal">${glyph("folder", 16)}<span>${escape(words.reveal)}</span></button>` : "",
-      `<button class="file-menu-item" type="button" role="menuitem" data-file-act="copy">${glyph("copy", 16)}<span>${escape(words.copyPath)}</span></button>`,
+      `<button class="file-menu-item" type="button" role="menuitem" data-file-act="copy">${glyph("link", 16)}<span>${escape(words.copyPath)}</span></button>`,
     ].join("");
     document.body.append(menu);
     if (!sheet) {
