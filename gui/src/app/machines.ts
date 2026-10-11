@@ -324,7 +324,6 @@ export class MachinesPage implements Page {
       ? `<div class="panel-acts" data-hub="${escape(owners[0]!.hub)}" data-account="${escape(owners[0]!.account)}">${this.button("relays", words.relays, "", glyph("relay", 14))}${machine.here ? "" : this.button("remove", words.remove, " data-danger", glyph("close", 14))}</div>`
       : "";
     const note = this.note?.machine === machine.name ? `<p class="machine-note">${escape(this.note.text)}</p>` : "";
-    const live = machine.here || machine.online === true;
     const state = this.stateOf(machine.online, machine.since, machine.here, now);
     return `<article class="panel-machine" data-machine="${escape(machine.name)}">
       ${this.panelHead(machine.written, tags, state)}
@@ -332,7 +331,7 @@ export class MachinesPage implements Page {
       ${facts ? `<p class="panel-home"><span>${escape(words.home)}</span><code>${escape(facts.home)}</code></p>` : ""}
       ${hubs ? `<ul class="panel-hubs">${hubs}</ul>` : ""}
       ${sharing}
-      ${this.present(machine.name, live, world, viewer)}
+      ${this.present(machine.name, world, viewer)}
       ${this.agentsLink(machine.written)}
       ${note}
       ${acts}
@@ -351,7 +350,7 @@ export class MachinesPage implements Page {
     return `<article class="panel-machine" data-machine="${escape(first.machine)}">
       ${this.panelHead(first.written, tags, state, true)}
       <p class="panel-said" title="${escape(words.borrowedSaid(first.owner ?? ""))}">${glyph("colleague", 14)}<span>${escape(words.borrowedNote)}</span></p>
-      ${this.present(first.machine, first.online === true, world, first.login)}
+      ${this.present(first.machine, world, first.login)}
       ${this.agentsLink(first.written)}
     </article>`;
   }
@@ -388,8 +387,9 @@ export class MachinesPage implements Page {
     </article>`;
   }
 
-  /** Who is on a machine and what runs there, as `login` sees it. */
-  private present(machine: string, live: boolean, world: WorldNow, login: Login | null): string {
+  /** Who is at work on a machine and what runs there, as `login` sees it;
+   *  nothing when no one is. */
+  private present(machine: string, world: WorldNow, login: Login | null): string {
     const { words } = this.options;
     const group = login ? (groupsOf(world).find((one) => sameLogin(one.login, login)) ?? null) : null;
     const residents = residentsOf(world).filter(
@@ -403,9 +403,7 @@ export class MachinesPage implements Page {
               `<li><a href="${talkLink({ resident: r.about.id, machine: r.about.machine })}"><span class="mark ${r.now?.waiting_for_user ? "mark-ask" : r.now?.activity === "busy" ? "mark-busy" : "mark-idle"}" aria-hidden="true"></span>${escape([agentName(r.about.host.agent), titleOf(r)].filter(Boolean).join(" · "))}${r.town ? `<span class="tag">${escape(r.town)}</span>` : ""}</a></li>`,
           )
           .join("")}</ul>`
-      : live
-        ? `<p class="machine-quiet">${escape(words.nobody)}</p>`
-        : "";
+      : "";
     return `${agents}${jobs.length ? `<p class="machine-jobs">${escape(words.jobs(jobs.length))}</p>` : ""}`;
   }
 

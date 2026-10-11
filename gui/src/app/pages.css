@@ -55,7 +55,6 @@
   grid-column: 1 / -1;
 }
 
-.machine-quiet,
 .machine-jobs {
   margin: var(--space-1) 0 0;
   padding-left: calc(8px + 2px + var(--space-2));

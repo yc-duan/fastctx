@@ -360,7 +360,6 @@
    a dot as on a list. */
 .machine-panel .machine-agents,
 .machine-panel .machine-hosts,
-.machine-panel .machine-quiet,
 .machine-panel .machine-jobs,
 .machine-panel .machine-hosts-asking,
 .machine-panel .machine-note {
@@ -368,10 +367,6 @@
 }
 
 .machine-panel .machine-agents {
-  margin-top: var(--space-4);
-}
-
-.machine-panel .machine-quiet {
   margin-top: var(--space-4);
 }
 

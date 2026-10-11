@@ -236,7 +236,6 @@ export interface MachinesWords {
   /** A machine of another whose agents may reach this account's machines. */
   reaching: string;
   reachingWhat: string;
-  nobody: string;
   jobs(n: number): string;
   home: string;
   hosts: string;
@@ -327,7 +326,6 @@ export const zhMachines: MachinesWords = {
   separator: "、",
   reaching: "可访问你的机器",
   reachingWhat: "你用过这台机器上的智能体，它们可以访问你的机器；可在账号页撤销",
-  nobody: "无智能体",
   jobs: (n) => `${n} 个作业`,
   home: "家目录",
   hosts: "智能体",
@@ -411,7 +409,6 @@ export const enMachines: MachinesWords = {
   separator: ", ",
   reaching: "can access your machines",
   reachingWhat: "You used an agent on this machine, so its agents can access your machines; revoke on the Account page",
-  nobody: "No agents",
   jobs: (n) => `${n} job${n === 1 ? "" : "s"}`,
   home: "Home",
   hosts: "Agents",

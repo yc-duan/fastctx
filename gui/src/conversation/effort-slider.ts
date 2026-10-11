@@ -120,7 +120,8 @@ export class EffortSlider {
     for (let x = PAD - 3; x <= reach; x += 6) swash.push([x, LINE_Y + Math.sin(x / 17) * 0.6]);
     swash.push([reach, LINE_Y]);
     const marker = swash.length > 1 ? outline(swash, 7, seeded(`swash:${this.index}`), { pressure: 0.22, taper: 0.06 }) : "";
-    const knob = blot([reach, LINE_Y], 6.5, seeded(`knob:${this.index}`));
+    // Under a finger the knob is drawn larger, so it shows past the fingertip.
+    const knob = blot([reach, LINE_Y], matchMedia("(pointer: coarse)").matches ? 9.5 : 6.5, seeded(`knob:${this.index}`));
     const labelX = Math.max(18, Math.min(WIDTH - 18, reach));
     this.element.innerHTML = `<svg viewBox="0 0 ${WIDTH} ${HEIGHT}" preserveAspectRatio="none" aria-hidden="true">
       <path class="effort-line" d="${line}" filter="url(#pen-rule-lite)"/>

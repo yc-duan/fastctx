@@ -1167,7 +1167,7 @@ function show(next: Place): void {
         machine: next.machine,
         when,
         agents: () => agentsOn(null),
-        applyHere: (agent, into, home) => (live ? applyHosts(agent === "codex", agent === "claude", false, into, home) : notLive()),
+        applyHere: (agent, into, home, raise = false) => (live ? applyHosts(agent === "codex", agent === "claude", raise, into, home) : notLive()),
         consent: {
           allow: (machine, home) => consent.allow(machine, (english ? enConsent : zhConsent).allow, home),
           withdraw: (machine, home) => consent.withdraw(machine, home),

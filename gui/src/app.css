@@ -1005,6 +1005,19 @@ button.composer-context[hidden] {
   margin: var(--space-1) 0 0;
 }
 
+/* What a finger presses is at least 44 pixels square (`world-gui.md`,
+   界面的结构); the marks keep their size and the target grows around them. */
+@media (pointer: coarse) {
+  .composer-tools > button,
+  .composer-action,
+  .job-stop,
+  .model-default,
+  .turn-icon {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 @media (pointer: coarse) {
   .queue-row {
     min-height: 44px;

@@ -41,7 +41,7 @@ export interface AgentsOptions {
   agents(): Promise<WorldAgents>;
   /** Puts the World's tools into one login of an agent on this computer, or
    *  takes them out; what it left as the user had it, said. */
-  applyHere(agent: "codex" | "claude", into: boolean, home: string | null): Promise<string[]>;
+  applyHere(agent: "codex" | "claude", into: boolean, home: string | null, raise?: boolean): Promise<string[]>;
   /** Asks the user, and gives or withdraws Claude's consent to work
    *  without asking in one of its homes on a machine; true once done. */
   consent?: { allow(machine: string, home: ConsentHome): Promise<boolean>; withdraw(machine: string, home: ConsentHome): Promise<boolean> } | undefined;
@@ -83,7 +83,7 @@ export class AgentsPage implements Page {
   private asked = new Map<string, Asked>();
   private asking = false;
   /** What the last thing done on a card left to say, by the card's key. */
-  private notes = new Map<string, { text: string; detail: string; caution: boolean }>();
+  private notes = new Map<string, { text: string; detail: string; caution: boolean; raise?: boolean }>();
   private adding: { machine: string; agent: string; dir: string } | null = null;
   private readonly giving: GiveSheet;
 
@@ -131,6 +131,9 @@ export class AgentsPage implements Page {
         return;
       case "apply":
         this.apply(button, key, machine, agent, button.dataset.into === "1", home);
+        return;
+      case "raise":
+        this.apply(button, key, machine, agent, true, home, true);
         return;
       case "consent":
         void this.consent(machine, button.dataset.allow === "1", { dir: home, label: button.dataset.label || null });
@@ -224,13 +227,20 @@ export class AgentsPage implements Page {
 
   /** Claude Code's tools go in only after the user has read what happens to
    *  sessions already open (the list's 21); Codex's, and taking either
-   *  out, at once. What apply kept as the user had it is behind a pointer's
-   *  rest; its account of the files it wrote never reaches the page. */
-  private apply(button: HTMLButtonElement, key: string, machine: string, agent: "codex" | "claude", into: boolean, home: string | null): void {
+   *  out, at once. What apply left as it was is behind a pointer's rest;
+   *  its account of the files it wrote never reaches the page. Codex's
+   *  output limit is raised only when the user asks, here as with
+   *  `--raise-output-limit` (`world-run.md`). */
+  private apply(button: HTMLButtonElement, key: string, machine: string, agent: "codex" | "claude", into: boolean, home: string | null, raise = false): void {
     const { words } = this.options;
     const run = async () => {
-      const kept = await this.options.applyHere(agent, into, home);
+      const kept = await this.options.applyHere(agent, into, home, raise);
       this.notes.set(key, kept.length ? { text: words.kept, detail: kept.join("\n"), caution: false } : { text: "", detail: "", caution: false });
+    };
+    const failed = (error: unknown) => {
+      const detail = detailOf(error);
+      const limit = into && agent === "codex" && detail.includes("--raise-output-limit");
+      this.notes.set(key, { text: (into ? words.applyFailed : words.takeOutFailed)(detail), detail, caution: true, raise: limit });
     };
     const done = () => this.again(machine);
     if (agent === "claude" && into) {
@@ -239,7 +249,7 @@ export class AgentsPage implements Page {
     }
     button.disabled = true;
     run()
-      .catch((error) => this.notes.set(key, { text: words.applyFailed(detailOf(error)), detail: detailOf(error), caution: true }))
+      .catch(failed)
       .finally(done);
   }
 
@@ -473,7 +483,10 @@ export class AgentsPage implements Page {
       ? `<button class="text-button agent-card-talk" type="button" data-act="talk" data-key="${escape(talk)}">${glyph("plus", 14)}<span>${escape(words.newTalk)}</span></button>`
       : "";
     const note = this.notes.get(key);
-    const said = note?.text ? `<p class="agent-card-note${note.caution ? " caution" : ""}" title="${escape(note.detail)}">${escape(note.text)}</p>` : "";
+    const raise = note?.raise
+      ? `<button class="text-button quiet-button" type="button" data-act="raise" data-agent="${agent}" data-home="${escape(choice)}" title="${escape(words.raiseSaid)}">${escape(words.raise)}</button>`
+      : "";
+    const said = note?.text ? `<p class="agent-card-note${note.caution ? " caution" : ""}"><span title="${escape(note.detail)}">${escape(note.text)}</span>${raise}</p>` : "";
     const limits = limitsHtml(facts.limits, homeWords, now, this.options.when, { notRead: agent === "claude" && !out && facts.login.kind === "known" });
     return `<li class="agent-card${out ? " logged-out" : ""}" data-machine="${escape(m.name)}" data-agent="${agent}" data-key="${escape(key)}">
       <div class="agent-card-head">${glyph(agent, 18)}<span class="agent-card-name">${escape(name)}</span>${version ? `<span class="host-version">${escape(version)}</span>` : ""}</div>

@@ -16,6 +16,9 @@ export interface ProblemWords {
   weakPassword: string;
   notAllowed: string;
   offline: string;
+  /** Codex's output limit, shared by every tool, is below what the World's
+   *  answers need; raising it is the user's to ask for. */
+  outputLimit: string;
   somethingElse: string;
 }
 
@@ -33,6 +36,7 @@ export const zhProblems: ProblemWords = {
   weakPassword: "密码不符合要求",
   notAllowed: "没有权限",
   offline: "机器离线",
+  outputLimit: "Codex 的工具输出上限不够",
   somethingElse: "操作未完成",
 };
 
@@ -50,6 +54,7 @@ export const enProblems: ProblemWords = {
   weakPassword: "The password doesn't meet the requirements",
   notAllowed: "You don't have permission",
   offline: "The machine is offline",
+  outputLimit: "Codex's tool output limit is too low",
   somethingElse: "Something went wrong",
 };
 
@@ -62,7 +67,8 @@ const KNOWN: [RegExp, keyof ProblemWords][] = [
   [/opens accounts only through/i, "noSelfRegistration"],
   [/token was used already/i, "codeUsed"],
   [/token has expired/i, "codeExpired"],
-  [/token|not .* the token names/i, "codeWrong"],
+  [/--raise-output-limit/, "outputLimit"],
+  [/(?<![\w-])token(?![\w-])|not .* the token names/i, "codeWrong"],
   [/a password has at least|a password mixes|a password does not contain|first ones anyone tries/i, "weakPassword"],
   [/not allowed|may not|forbidden|only the super administrator|permission denied/i, "notAllowed"],
   [/is offline|not online|went offline/i, "offline"],

@@ -24,7 +24,6 @@ pub(super) fn run(
             .notices
             .iter()
             .map(|notice| format!("{}: {}", notice.location, notice.reason))
-            .chain(report.messages)
             .chain(report.leftovers)
             .collect());
     }
@@ -52,5 +51,12 @@ pub(super) fn run(
     if !output.status.success() {
         return Err(format!("{stdout}{stderr}"));
     }
-    Ok(stdout.lines().chain(stderr.lines()).map(str::to_owned).collect())
+    // Only what stayed as it was reaches the page: the rest of the report
+    // (`say` in `crates/fastctx/src/apply.rs`) is for the terminal and the log.
+    Ok(stdout
+        .lines()
+        .chain(stderr.lines())
+        .filter_map(|line| line.strip_prefix("left ").or_else(|| line.strip_prefix("could not clear: ")))
+        .map(str::to_owned)
+        .collect())
 }

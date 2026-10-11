@@ -36,7 +36,12 @@ export interface AgentsWords {
   claudeWhat: string;
   claudeGo: string;
   applyFailed(why: string): string;
-  /** What apply left as the user had it, behind a pointer's rest. */
+  takeOutFailed(why: string): string;
+  /** Codex's output limit is below what the World needs: raising it, for
+   *  every tool in Codex, is the user's to ask for. */
+  raise: string;
+  raiseSaid: string;
+  /** What apply left as it was, behind a pointer's rest. */
   kept: string;
   /** Claude working without asking for approval, in this login. */
   unattendedYes: string;
@@ -87,7 +92,10 @@ export const zhAgents: AgentsWords = {
   claudeWhat: "已开着的 Claude Code 会话会马上用不了自带的命令行，重新打开后才有世界的工具。",
   claudeGo: "接入",
   applyFailed: failure(zhProblems, "接入失败"),
-  kept: "保留了你改过的设置",
+  takeOutFailed: failure(zhProblems, "拿出失败"),
+  raise: "调高并接入",
+  raiseSaid: "这个上限是 Codex 所有工具共用的",
+  kept: "有几处保持原样",
   unattendedYes: "免审批",
   unattendedNo: "需许可",
   unattendedSaid: "世界拉起的 Claude 不经审批干活，要先在这个登录里许可一次",
@@ -136,7 +144,10 @@ export const enAgents: AgentsWords = {
   claudeWhat: "Claude Code sessions already open lose their own shell at once and get the World's tools when opened again.",
   claudeGo: "Connect",
   applyFailed: failure(enProblems, "Couldn't connect"),
-  kept: "Kept settings you changed",
+  takeOutFailed: failure(enProblems, "Couldn't take out"),
+  raise: "Raise and connect",
+  raiseSaid: "Every tool in Codex shares this limit",
+  kept: "Some things were left as they were",
   unattendedYes: "No approvals",
   unattendedNo: "Needs consent",
   unattendedSaid: "Claude started by the World works without approvals once this login allows it",
