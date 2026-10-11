@@ -130,11 +130,13 @@ pub(crate) async fn open(
             path.parent().ok_or_else(|| failed("the source has no parent directory"))?,
             notify::RecursiveMode::NonRecursive,
         )
-        .map_err(failed)?;
+        .map_err(|error| watch_failed(error, &path))?;
     if let Some(record) = &job_record
         && record.parent() != path.parent()
     {
-        watcher.watch(record.parent().expect("job parent"), notify::RecursiveMode::NonRecursive).map_err(failed)?;
+        watcher
+            .watch(record.parent().expect("job parent"), notify::RecursiveMode::NonRecursive)
+            .map_err(|error| watch_failed(error, &path))?;
     }
     let cancelled = Cancel::default();
     let cancel = cancelled.0.clone();
@@ -419,6 +421,13 @@ fn observe(path: &std::path::Path) -> std::io::Result<fastctx_platform::file_rea
 }
 fn source_failed(error: std::io::Error) -> Failure {
     if error.kind() == std::io::ErrorKind::NotFound {
+        Failure::source_missing(error.to_string())
+    } else {
+        failed(error)
+    }
+}
+fn watch_failed(error: notify::Error, source: &std::path::Path) -> Failure {
+    if std::fs::metadata(source).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
         Failure::source_missing(error.to_string())
     } else {
         failed(error)
