@@ -3,7 +3,7 @@
 // shows, from both hosts, in the shapes the node really produces.
 
 import type { Attachment } from "../world/attachments";
-import type { Content, Does, Item, Notice, SessionEvent, Speaker, Tool } from "../world/events";
+import type { Content, Does, Item, Notice, SessionEvent, Speaker, Tool, TurnFacts } from "../world/events";
 
 export interface Specimen {
   title: string;
@@ -76,12 +76,12 @@ class Script {
     this.events.push({ at: this.at(Math.max(1, (full.duration_ms ?? 800) / 1000)), event: "finished", turn, item: { id, kind: "tool", ...full } });
   }
 
-  ended(turn: string, how: string, reason: string | null = null, after = 1): void {
+  ended(turn: string, how: string, reason: string | null = null, after = 1, took?: { ms: number; facts: TurnFacts }): void {
     this.events.push({
       at: this.at(after),
       event: "turn_ended",
       turn,
-      end: { how, reason, duration_ms: null, last_message: null },
+      end: { how, reason, duration_ms: took?.ms ?? null, last_message: null, ...(took ? { facts: took.facts } : {}) },
     });
   }
 
@@ -247,7 +247,14 @@ let i = (self.ki.widen() * self.integral).narrow();
     3,
   );
   s.push({ event: "context", used: 61_400, window: 200_000 });
-  s.ended("t1", "completed");
+  s.ended("t1", "completed", null, 1, {
+    ms: 41_000,
+    facts: {
+      models: ["claude-opus-5-5"],
+      efforts: [{ kind: "requested", value: "high" }],
+      tokens: { host: "claude", input_tokens: 2_318, cache_read_input_tokens: 41_872, cache_creation_input_tokens: 3_904, output_tokens: 1_266 },
+    },
+  });
 
   s.heard(
     "t2",
@@ -582,7 +589,12 @@ function asking(): Specimen {
     run("cargo sqlx migrate run", "=== run on laptop (exited 0) ===", "Applied 20261004150000/migrate add batches (31.2ms)", { duration_ms: 900 }),
   );
   s.say("t1", "message", "迁移跑完了：`batches` 表已经建好，旧的 `ingest_files` 没有动。接下来要把离线查询缓存重新生成一遍，`cargo sqlx prepare` 会覆盖 `.sqlx/` 下的文件。", 2);
-  s.ended("t1", "completed");
+  s.ended("t1", "completed", null, 1, {
+    ms: 72_000,
+    facts: {
+      tokens: { host: "codex", input_tokens: 108_054, cached_input_tokens: 102_144, output_tokens: 1_175, reasoning_output_tokens: 640, total_tokens: 109_229 },
+    },
+  });
 
   s.heard("t2", user, "好，接着做。");
   s.started("t2");

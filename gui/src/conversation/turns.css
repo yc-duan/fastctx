@@ -149,7 +149,43 @@
 }
 
 .turn-info {
+  position: relative;
   cursor: default;
+}
+
+/* What the turn took, over its mark while the pointer rests there or it
+   has focus (a tap, on a touch screen). */
+.turn-info-card {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  display: none;
+  grid-template-columns: auto auto;
+  column-gap: var(--space-3);
+  row-gap: 4px;
+  width: max-content;
+  max-width: min(360px, 80vw);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-size: var(--size-small);
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+}
+
+.turn-info:hover .turn-info-card,
+.turn-info:focus-visible .turn-info-card,
+.turn-info:focus .turn-info-card {
+  display: grid;
+  animation: paper-in 0.12s ease both;
+}
+
+.turn-info-label {
+  color: var(--text-3);
 }
 
 /* What the conversation does not take is not offered. */

@@ -101,6 +101,16 @@ export interface Words {
   fullScreen: string;
   /** How long something took: "1 分 12 秒". */
   took(ms: number): string;
+  /** What a turn took, under its info mark: the model and effort the host
+   *  reported, how long, and the tokens. */
+  turnInfo: {
+    model: string;
+    effort: string;
+    requested(effort: string): string;
+    took: string;
+    tokens: string;
+    spent(input: number, cached: number, output: number, reasoning: number): string;
+  };
   /** How many steps a stretch of work has taken. */
   steps(n: number): string;
   /** Under a turn's last message: copy all it said, ask the same again. */
@@ -292,6 +302,17 @@ export const zh: Words = {
   moreLines: (n) => `+ ${n.toLocaleString("zh-CN")} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
   fullScreen: "整屏查看",
+  turnInfo: {
+    model: "模型",
+    effort: "推理强度",
+    requested: (effort) => `${effort}（请求）`,
+    took: "用时",
+    tokens: "token",
+    spent: (input, cached, output, reasoning) =>
+      [`输入 ${input.toLocaleString("zh-CN")}`, cached ? `缓存命中 ${cached.toLocaleString("zh-CN")}` : "", `输出 ${output.toLocaleString("zh-CN")}`, reasoning ? `其中推理 ${reasoning.toLocaleString("zh-CN")}` : ""]
+        .filter(Boolean)
+        .join(" · "),
+  },
   took: (ms) => {
     const seconds = Math.max(0, Math.round(ms / 1000));
     if (seconds < 60) return `${seconds} 秒`;
@@ -468,6 +489,17 @@ export const en: Words = {
   moreLines: (n) => `+ ${n.toLocaleString("en")} more line${n === 1 ? "" : "s"}`,
   unchangedLines: (n) => `${n} unchanged lines`,
   fullScreen: "Full screen",
+  turnInfo: {
+    model: "Model",
+    effort: "Effort",
+    requested: (effort) => `${effort} (requested)`,
+    took: "Took",
+    tokens: "Tokens",
+    spent: (input, cached, output, reasoning) =>
+      [`${input.toLocaleString("en")} in`, cached ? `${cached.toLocaleString("en")} cached` : "", `${output.toLocaleString("en")} out`, reasoning ? `${reasoning.toLocaleString("en")} reasoning` : ""]
+        .filter(Boolean)
+        .join(" · "),
+  },
   took: (ms) => {
     const seconds = Math.max(0, Math.round(ms / 1000));
     if (seconds < 60) return `${seconds}s`;

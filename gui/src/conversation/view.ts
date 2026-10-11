@@ -15,13 +15,14 @@
 // quiet line on the right; what was done to a turn (copy, ask again, fork)
 // appears only once the turn is over.
 
-import type { Content, MachineName, Notice, Speaker, Tool } from "../world/events";
+import type { Content, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
 import { STOPPED_BY_USER } from "../world/events";
 import type { Attachment } from "../world/attachments";
 import type { JsonValue } from "../world/wire";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
+import { effortLabel } from "./effort-slider";
 import { visible, type Activity, type Conversation, type Entry, type SendState, type ShownAttachment } from "./model";
 import { escape, plain, render } from "./prose";
 import { counts, numbered, parse, renderRows } from "./diff";
@@ -313,7 +314,7 @@ export class ConversationView {
     if (entry.writing || !this.lastOfTurn(entry) || !this.conversation.turnEnded(entry.turn)) return "";
     const { words } = this.context;
     const ended = this.conversation.entries.find((other): other is Extract<Entry, { kind: "ended" }> => other.kind === "ended" && other.turn === entry.turn);
-    const took = ended?.end.duration_ms ? words.took(ended.end.duration_ms) : "";
+    const info = ended ? turnInfo(ended.end, words, this.context.english) : [];
     const icon = (act: string, name: Parameters<typeof glyph>[0], label: string, extra = "") =>
       `<button class="turn-icon" type="button" ${act} aria-label="${escape(label)}" title="${escape(label)}"${extra}>${glyph(name, 16)}</button>`;
     return `<div class="turn-acts answer-acts${this.latest(entry.turn) ? " latest" : ""}">${icon(`data-copy-turn="${escape(entry.turn)}"`, "copy", words.copyAnswer)}${icon(
@@ -321,7 +322,13 @@ export class ConversationView {
       "regenerate",
       words.regenerate,
       ' data-needs="rewind"',
-    )}${icon(`data-turn-act="fork" data-turn="${escape(entry.turn)}"`, "fork", words.fork, ' data-needs="fork"')}${took ? `<span class="turn-icon turn-info" tabindex="0" title="${escape(took)}" aria-label="${escape(took)}">${glyph("info", 16)}</span>` : ""}</div>`;
+    )}${icon(`data-turn-act="fork" data-turn="${escape(entry.turn)}"`, "fork", words.fork, ' data-needs="fork"')}${
+      info.length
+        ? `<span class="turn-icon turn-info" tabindex="0" aria-label="${escape(info.map(([label, value]) => `${label} ${value}`).join("; "))}">${glyph("info", 16)}<span class="turn-info-card" role="tooltip">${info
+            .map(([label, value]) => `<span class="turn-info-label">${escape(label)}</span><span>${escape(value)}</span>`)
+            .join("")}</span></span>`
+        : ""
+    }</div>`;
   }
 
   /** What the user attached to their words, above them: pictures, one
@@ -1130,4 +1137,43 @@ function sizeOf(bytes: number): string {
     unit += 1;
   }
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
+/** What a turn took, as label and value: the model and effort its host
+ *  reported, how long, and the tokens; what the host did not report is left
+ *  out. */
+function turnInfo(end: TurnEnd, words: Words, english: boolean): [string, string][] {
+  const { turnInfo: said } = words;
+  const facts = end.facts;
+  const rows: [string, string][] = [];
+  if (facts?.models?.length) rows.push([said.model, facts.models.map(modelName).join(" → ")]);
+  const efforts = (facts?.efforts ?? []).filter((effort) => effort.value !== null && effort.value !== undefined);
+  if (efforts.length) {
+    rows.push([
+      said.effort,
+      efforts
+        .map((effort) => {
+          const value = effortLabel(typeof effort.value === "string" ? effort.value : JSON.stringify(effort.value), english);
+          return effort.kind === "requested" ? said.requested(value) : value;
+        })
+        .join(" → "),
+    ]);
+  }
+  if (end.duration_ms) rows.push([said.took, words.took(end.duration_ms)]);
+  const tokens = facts?.tokens;
+  if (tokens?.host === "codex") rows.push([said.tokens, said.spent(tokens.input_tokens, tokens.cached_input_tokens, tokens.output_tokens, tokens.reasoning_output_tokens)]);
+  else if (tokens?.host === "claude") {
+    const input = tokens.input_tokens + tokens.cache_read_input_tokens + tokens.cache_creation_input_tokens;
+    rows.push([said.tokens, said.spent(input, tokens.cache_read_input_tokens, tokens.output_tokens, 0)]);
+  }
+  return rows;
+}
+
+/** A model as people call it: `claude-opus-5-5` is Opus 5.5; any other
+ *  name as its host writes it. */
+function modelName(id: string): string {
+  const claude = /^claude-([a-z]+)-(\d+)(?:-(\d+))?(?:-\d{8})?$/.exec(id);
+  if (!claude) return id;
+  const [, family, major, minor] = claude;
+  return `${family![0]!.toUpperCase()}${family!.slice(1)} ${major}${minor ? `.${minor}` : ""}`;
 }
