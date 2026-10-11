@@ -10,6 +10,7 @@ import qrcode from "qrcode-generator";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Login } from "../world/accounts";
+import type { NameProblem } from "../world/bridge";
 import type { LoginWords, TokenWords } from "./account-words";
 import { Sheet } from "./confirm";
 import { plainly } from "./problem";
@@ -27,13 +28,14 @@ export interface TokensOptions {
   server(login: Login, name: string | null, hours: number): Promise<string>;
   /** A moment as the interface says it. */
   when(at: Date): string;
+  /** What is wrong with a machine name as typed, where the shell can say. */
+  nameProblem?: ((kind: "machine", text: string) => Promise<NameProblem | null>) | undefined;
   /** Adding a Linux host over SSH, where this device can: a code that
    *  registers it as `login`'s machine `machine`, made once it is reached. */
   remote?: { seams: RemoteSeams; words: LoginWords; token(login: Login, machine: string): Promise<string>; added(): void } | undefined;
 }
 
 const validity = [1, 24, 72];
-const machineRule = "[a-z][a-z0-9\\-]{0,31}";
 
 /** A QR code as an SVG of dark squares on light, whatever the theme:
  *  scanners read dark on light, and the code is never drawn by a pen. */
@@ -176,7 +178,7 @@ export class Tokens {
         ${
           this.kind === "server"
             ? `<label class="field"><span class="field-label">${escape(words.name)}</span>
-          <input name="name" autocomplete="off" spellcheck="false" autocapitalize="off" class="mono" pattern="${machineRule}" placeholder="${escape(words.nameAuto)}"></label>
+          <input name="name" autocomplete="off" spellcheck="false" autocapitalize="off" class="mono" placeholder="${escape(words.nameAuto)}"></label>
         <div class="field"><span class="field-label">${escape(words.valid)}</span>
           ${choices(words.valid, "data-hours", validity.map(String), String(this.hours), (hours) => words.hours(Number(hours)))}</div>`
             : ""
@@ -221,6 +223,15 @@ export class Tokens {
     const name = sheet.body.querySelector<HTMLInputElement>("[name=name]")?.value.trim() || null;
     const kind = this.kind;
     const hours = kind === "phone" ? 1 : this.hours;
+    sheet.busy = true;
+    const check = this.options.nameProblem;
+    const problem = name && check ? await check("machine", name).finally(() => (sheet.busy = false)) : null;
+    if (problem) {
+      note.textContent = words.nameSaid(problem);
+      note.title = "";
+      note.hidden = false;
+      return;
+    }
     sheet.busy = true;
     go.disabled = true;
     go.textContent = words.making;

@@ -8,7 +8,7 @@
 // can be added at once.
 
 import { escape } from "../conversation/prose";
-import type { KeptNow, LoggedIn, Setup } from "../world/bridge";
+import type { KeptNow, LoggedIn, NameProblem, Setup } from "../world/bridge";
 import type { Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { LoginWords } from "./account-words";
@@ -51,6 +51,9 @@ export interface LoginOptions {
   remote?: RemoteSeams | undefined;
   /** Opens the sheet that adds another device to `login`. */
   invite?: ((login: Login) => void) | undefined;
+  /** What is wrong with a machine or server name as typed, where the shell
+   *  can say; nothing is checked before sending otherwise. */
+  nameProblem?: ((kind: "machine" | "hub", text: string) => Promise<NameProblem | null>) | undefined;
   /** Reads a QR code with the camera, where the shell can; null when the
    *  person turned back. */
   scan?: (() => Promise<string | null>) | undefined;
@@ -65,8 +68,6 @@ export interface LoginOptions {
 type Step = "choose" | "password" | "open" | "scan" | "create" | "remote" | "done";
 
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
-const machineRule = "[a-z][a-z0-9\\-]{0,31}";
-const hubRule = "[a-z][a-z0-9\\-]{0,31}";
 /** The port a server made here listens on unless told otherwise. */
 const hubPort = 7443;
 
@@ -257,7 +258,7 @@ export class LoginPage implements Page {
             <h2 class="welcome-form-title">${escape(words.create)}</h2>
             <div class="field-pair">
               <label class="field"><span class="field-label">${escape(words.worldName)}</span>
-                <input name="world" class="mono" required spellcheck="false" autocapitalize="off" pattern="${hubRule}" placeholder="home" value="${escape(this.typed.world)}"></label>
+                <input name="world" class="mono" required spellcheck="false" autocapitalize="off" placeholder="home" value="${escape(this.typed.world)}"></label>
               <label class="field"><span class="field-label">${escape(words.admin)}</span>
                 <input name="account" class="mono" required spellcheck="false" autocapitalize="off" pattern="${accountRule}" placeholder="me" value="${escape(this.typed.account)}"></label>
             </div>
@@ -374,7 +375,7 @@ export class LoginPage implements Page {
     // A phone has no name until it first logs in; a computer has its own.
     const phone = this.options.device;
     slot.innerHTML = `<label class="field"><span class="field-label">${escape(phone ? words.phoneName : words.name)}</span>
-      <input name="name" class="mono" autocomplete="off" spellcheck="false" autocapitalize="off" pattern="${machineRule}"${phone ? " required" : ""} placeholder="${escape(phone ? "phone" : (world?.here ?? ""))}" value="${escape(typed)}"></label>`;
+      <input name="name" class="mono" autocomplete="off" spellcheck="false" autocapitalize="off"${phone ? " required" : ""} placeholder="${escape(phone ? "phone" : (world?.here ?? ""))}" value="${escape(typed)}"></label>`;
   }
 
   /** What is left for the person once in: a startup service that did not
@@ -522,6 +523,17 @@ export class LoginPage implements Page {
     const label = go.textContent ?? "";
     let act: () => Promise<LoggedIn>;
     this.keep();
+    // A name is checked by the World's rule before anything is sent; the
+    // page takes nothing else meanwhile.
+    const named = async (kind: "machine" | "hub", text: string | null): Promise<boolean> => {
+      const check = this.options.nameProblem;
+      if (!text || !check) return true;
+      this.busy = true;
+      const problem = await check(kind, text).finally(() => (this.busy = false));
+      if (problem) this.note(words.nameSaid(problem));
+      return !problem;
+    };
+    if (!(await named("machine", name))) return;
     // A new password must pass before anything is sent.
     const fresh = (account: string, password: string): boolean => {
       const problem = passwordProblem(account, password);
@@ -541,6 +553,7 @@ export class LoginPage implements Page {
       const account = field("account")?.value.trim() ?? "";
       const password = field("password")?.value ?? "";
       if (!create || !world || !account || !password || !fresh(account, password)) return;
+      if (!(await named("hub", world))) return;
       const reach = [...this.chosen, ...this.extraAddresses()].map((address) => `${address}:${this.typed.port.trim()}`);
       if (!reach.length) return this.note(words.noReach);
       act = () => create(world, account, password, reach, true, name);

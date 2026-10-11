@@ -25,11 +25,13 @@ pub(crate) struct Sessions {
     open: Mutex<HashMap<u64, Arc<ssh::Remote>>>,
 }
 
+/// `machine` is the name the server takes in the World, made from its host
+/// name.
 #[derive(Serialize)]
 pub(crate) struct Made {
     session: u64,
     address: String,
-    hostname: String,
+    machine: String,
 }
 
 /// Connects far enough to see the server's key, and says whether this
@@ -49,7 +51,8 @@ pub(crate) async fn remote_hub(
     steps: Channel<&'static str>,
 ) -> Result<Made, String> {
     let (remote, made) = ssh::make_hub(&request, &carried(&app)?, |name| steps.send(name).map_err(|error| error.to_string())).await?;
-    Ok(Made { session: keep(&sessions, remote), address: made.address, hostname: made.hostname })
+    let machine = fastctx_types::MachineName::from_host(&made.hostname).to_string();
+    Ok(Made { session: keep(&sessions, remote), address: made.address, machine })
 }
 
 /// A server for an existing World: signs in, checks it and uploads the
@@ -62,14 +65,14 @@ pub(crate) async fn remote_open(
     steps: Channel<&'static str>,
 ) -> Result<Opened, String> {
     let remote = ssh::open(&server, &carried(&app)?, &|name| steps.send(name).map_err(|error| error.to_string())).await?;
-    let hostname = remote.hostname().to_string();
-    Ok(Opened { session: keep(&sessions, remote), hostname })
+    let machine = fastctx_types::MachineName::from_host(remote.hostname()).to_string();
+    Ok(Opened { session: keep(&sessions, remote), machine })
 }
 
 #[derive(Serialize)]
 pub(crate) struct Opened {
     session: u64,
-    hostname: String,
+    machine: String,
 }
 
 fn keep(sessions: &Sessions, remote: ssh::Remote) -> u64 {
