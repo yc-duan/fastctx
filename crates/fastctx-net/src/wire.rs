@@ -369,6 +369,12 @@ pub enum Change {
         machine: MachineName,
         relays: Vec<Relay>,
     },
+    /// Makes one of the account's own machines a relay reached at
+    /// `addresses`, or, with none, no longer.
+    RelayAt {
+        machine: MachineName,
+        addresses: Vec<std::net::SocketAddr>,
+    },
     /// Takes the member `name` out of the account: a device's login of it,
     /// or one of its machines. The super administrator takes it off the
     /// hub.

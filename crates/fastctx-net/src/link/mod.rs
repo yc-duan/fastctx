@@ -420,10 +420,14 @@ impl Link {
     }
 
     /// Makes `change` as `account`, which must be logged in here, and takes
-    /// the view the change leaves.
+    /// the view the change leaves. The change is made once the hub says so;
+    /// a change to this machine's own ways to the hub ends the connection
+    /// the view would have come by, and the next one takes it.
     pub async fn manage(&self, account: &AccountName, change: Change) -> Result<Told, String> {
         let told = self.inner.ask(Question::Manage { account: account.clone(), change }).await?;
-        self.inner.refresh().await?;
+        if let Err(error) = self.inner.refresh().await {
+            self.inner.node.log(format!("asking the hub for the view after a change: {error}"));
+        }
         Ok(told)
     }
 }

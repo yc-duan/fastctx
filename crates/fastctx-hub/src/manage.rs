@@ -70,6 +70,11 @@ fn describe(change: &Change) -> String {
         ),
         Change::StopActing { machine } => format!("{machine} no longer acts for it"),
         Change::Relays { machine, relays } => format!("{machine} connects through {} relays", relays.len()),
+        Change::RelayAt { machine, addresses } if addresses.is_empty() => format!("{machine} relays no longer"),
+        Change::RelayAt { machine, addresses } => format!(
+            "{machine} relays at {}",
+            addresses.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+        ),
         Change::Remove { name, .. } => format!("removed {name}"),
         Change::Logout => "logged out".to_string(),
         Change::Token { register, expires, .. } => format!("made a token (registers: {register}) until {expires}"),
@@ -145,6 +150,13 @@ fn apply(
             own_machine(directory, account, super_, &machine)?;
             let member = directory.members.iter_mut().find(|member| member.name == machine).expect("checked");
             member.relays = relays;
+            Ok(Told::Done)
+        }
+        Change::RelayAt { machine, addresses } => {
+            let directory = &mut store.book.directory;
+            own_machine(directory, account, super_, &machine)?;
+            let member = directory.members.iter_mut().find(|member| member.name == machine).expect("checked");
+            member.relay_at = addresses;
             Ok(Told::Done)
         }
         Change::Remove { name, reason } => {

@@ -93,7 +93,7 @@ import { enProject, zhProject } from "./project/words";
 import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
-import { specimenAgents, specimenNow } from "./specimen/world";
+import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
 import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenPhone, specimenRead, specimenUpload } from "./specimen/seams";
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
@@ -316,7 +316,12 @@ const specimenAddresses = [
 ];
 /** Makes a change as a login, and asks the World again. */
 const change = async (login: Login, made: AccountChange): Promise<void> => {
-  if (!live) return notLive();
+  if (!live) {
+    const changed = specimenChange(store.world.peek(), login.hub, made);
+    if (!changed) return notLive();
+    store.world.set(changed);
+    return;
+  }
   await accountChange(login.hubName, login.account, made);
   void store.refresh();
 };

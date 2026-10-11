@@ -138,9 +138,10 @@ pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> 
     let hub = membership.id.clone();
     let handler = Arc::new(Handler { node: Arc::downgrade(node), hub: hub.clone() });
     let link = Arc::new(Link::start(net_dir(&node.world, &hub), membership, key, handler)?);
-    if let Some(old) = node.links.write().expect("never poisoned").insert(hub, link.clone()) {
+    if let Some(old) = node.links.write().expect("never poisoned").insert(hub.clone(), link.clone()) {
         old.stop();
     }
+    crate::relaying::follow(node, &hub);
     Ok(link)
 }
 
@@ -298,6 +299,7 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     let hub = link.membership().id.clone();
     link.stop();
     node.links.write().expect("never poisoned").remove(&hub);
+    crate::relaying::follow(node, &hub);
     let net = net_dir(&node.world, &hub);
     let aside = node.world.path().join(format!("net-left-{}-{}", hub, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
     std::fs::rename(net.path(), &aside)
@@ -707,6 +709,7 @@ impl fastctx_net::link::Node for Handler {
     fn directory_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
         crate::admitted::notice(&node, &self.hub);
+        crate::relaying::follow(&node, &self.hub);
         // The machines each session may use are in its tools' descriptions.
         node.tools_changed(None);
     }

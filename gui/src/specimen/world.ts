@@ -4,7 +4,7 @@
 // interface grouped by account.
 
 import type { Address } from "../world/events";
-import type { HubAccounts } from "../world/accounts";
+import type { AccountChange, HubAccounts } from "../world/accounts";
 import type { About, Action, HubNodes, MachineFacts, Node, ProjectRecord, ResidentNow } from "../world/world";
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
@@ -98,15 +98,15 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       home: "me",
       machines: [
         node("laptop", true, "02:04:00", "me", "windows", "C:/Users/me", ["me", true, true]),
-        node("lab", true, "00:00:00", "me", "linux", "/home/me", ["me", true, true], "la"),
+        node("lab", true, "00:00:00", "me", "linux", "/home/me", ["me", true, true], "server"),
         node("server", true, "00:00:00", "me", "linux", "/root", ["me", true, true]),
         node("studio", false, "12:52:00", "me", "windows", "C:/Users/me", ["me", true, true]),
         node("gpu", true, "03:30:00", "bo", "linux", "/home/bo", ["me", true, true], "la"),
       ],
     },
   ];
-  const member = (name: string, kind: "computer" | "phone", logins: string[], home: string | null, added: string, online: boolean, key: string, relays: { label: string; addresses: string[] }[] = []) => ({
-    name, kind, logins, home, relays, added: at(added), online, since: at(added), through: null, key,
+  const member = (name: string, kind: "computer" | "phone", logins: string[], home: string | null, added: string, online: boolean, key: string, relays: { label: string; addresses: string[] }[] = [], relay_at: string[] = []) => ({
+    name, kind, logins, home, relays, relay_at, added: at(added), online, since: at(added), through: null, key,
   });
   const accounts: HubAccounts[] = [
     {
@@ -125,8 +125,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       members: [
         member("desktop", "computer", ["me"], "me", "00:10:00", true, "5be1fcee"),
         member("laptop", "computer", ["me"], "me", "00:20:00", true, "a1c3e9d2"),
-        member("lab", "computer", ["me"], "me", "00:30:00", true, "7d0e44b1", [{ label: "la", addresses: ["203.0.113.20:7444"] }]),
-        member("server", "computer", ["me"], "me", "00:00:00", true, "c0ffee12"),
+        member("lab", "computer", ["me"], "me", "00:30:00", true, "7d0e44b1", [{ label: "server", addresses: ["203.0.113.20:7444"] }]),
+        member("server", "computer", ["me"], "me", "00:00:00", true, "c0ffee12", [], ["203.0.113.20:7444"]),
         member("studio", "computer", ["me"], "me", "00:40:00", false, "9e8d7c6b"),
         member("pixel", "phone", ["me"], null, "13:20:00", true, "4f2a91aa"),
         member("gpu", "computer", ["bo"], "bo", "03:30:00", true, "be3f0a77"),
@@ -421,4 +421,22 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
     machine,
     machines: [{ kind: "answered", reply: { machine, checked_at: at.toISOString(), elapsed_ms: 180, agents } }],
   };
+}
+
+/** The changes a specimen takes as asked, a machine's relays and where it
+ *  relays for others, so the machines page shows what follows them; the
+ *  machine never really goes another way. Anything else it refuses. */
+export function specimenChange(world: WorldNow | null, hub: string, made: AccountChange): WorldNow | null {
+  if (!world || (made.change !== "relays" && made.change !== "relay_at")) return null;
+  const hubs = world.accounts.hubs.map((one) =>
+    one.hub !== hub
+      ? one
+      : {
+          ...one,
+          members: one.members.map((member) =>
+            member.name !== made.machine ? member : made.change === "relays" ? { ...member, relays: made.relays } : { ...member, relay_at: made.addresses },
+          ),
+        },
+  );
+  return { ...world, accounts: { ...world.accounts, hubs } };
 }

@@ -13,7 +13,7 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Bounds, Point } from "../map-canvas";
-import type { AccountChange, HubAccounts, Login } from "../world/accounts";
+import type { AccountChange, HubAccounts, Login, Relay } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { LinkState } from "../world/world";
@@ -21,8 +21,10 @@ import { agentName, osName, titleOf } from "../world/names";
 import type { AccessWords, MachinesWords } from "./account-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
-import { GiveSheet, RelaysSheet } from "./machine-sheets";
+import { GiveSheet, RelaysSheet, socketAddress } from "./machine-sheets";
 import { MachineMap } from "./machine-map";
+import type { MapNode } from "./network-map";
+import { blot, circle, outline, seeded } from "../pen/shapes";
 import { RING } from "./map-layout";
 import { mapOf } from "./map-of";
 import { link, talkLink } from "./places";
@@ -78,6 +80,11 @@ interface Given {
 /** How long a taking back can be undone from the drawing's corner. */
 const UNDO_MS = 6_000;
 
+/** How long a machine is given to go the way it was asked: it finds its
+ *  new address list within a minute (`world-network.md`, 转接站), and its
+ *  next try of each address within another. */
+const ROUTE_MS = 120_000;
+
 /** How long a machine that just arrived stays circled: the drawing-in of
  *  the circle and a moment to see it. */
 const ARRIVED_MS = 6_000;
@@ -98,6 +105,13 @@ export class MachinesPage implements Page {
   private given: Given[] = [];
   private undoing: { timer: number; redo: () => Promise<void> } | null = null;
   private level = 0;
+  /** The card asking to confirm a change made on the drawing, or to fill
+   *  in what one needs. */
+  private readonly card: HTMLElement;
+  private cardFor: string | null = null;
+  /** Ways asked for and not yet taken: a machine, what it was asked to go
+   *  through (a relay's machine or its hub), the relay's label, and when. */
+  private readonly pending = new Map<string, { target: string; label: string | null; since: number }>();
   private drawn = "";
   private floated = "";
   private readonly stop: () => void;
@@ -129,20 +143,23 @@ export class MachinesPage implements Page {
         `<h1 class="page-title">${escape(words.title)}</h1>`,
         `<button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
-      <div class="machines-layout"><div class="machines-canvas"><div class="map-tags"></div><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
+      <div class="machines-layout"><div class="machines-canvas"><div class="map-tags"></div><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
     this.acts = this.element.querySelector<HTMLElement>(".map-acts")!;
     this.menu = this.element.querySelector<HTMLElement>(".map-menu")!;
     this.tags = this.element.querySelector<HTMLElement>(".map-tags")!;
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
+    this.card = this.element.querySelector<HTMLElement>(".map-card")!;
     this.map = new MachineMap({
       words,
       storageKey: "machines-map",
       event: (event) => {
         if (event.kind === "select") this.choose(event.key);
         else if (event.kind === "context") this.openMenu(event.key, event.at, event.input !== "mouse" || matchMedia("(max-width: 760px)").matches);
+        else if (event.kind === "drop") this.proposeRoute(event.handle.source, event.target, event.at);
       },
+      validRoute: (source, target) => this.validRoute(source, target),
       frame: (frame) => {
         this.scale = frame.view.scale;
         this.level = frame.view.level;
@@ -179,7 +196,13 @@ export class MachinesPage implements Page {
       if (event.key === "Escape" && this.menuFor) {
         event.stopPropagation();
         this.closeMenu();
+      } else if (event.key === "Escape" && this.cardFor) {
+        event.stopPropagation();
+        this.closeCard();
       }
+    });
+    this.card.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest("[data-card=cancel]")) this.closeCard();
     });
     document.addEventListener("pointerdown", this.outside, true);
     this.stop = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
@@ -404,11 +427,25 @@ export class MachinesPage implements Page {
       }
     }
     const adds = hubs.filter((hub) => this.hubLogin(hub.id)).map((hub) => hub.id);
-    this.map.update({ hubs, nodes, hubLabels, adds, waiting: new Set(this.waiting.keys()), selected: this.selected, fresh: this.fresh });
+    this.settleRoutes(nodes);
+    const chosen = this.selected ? nodes.find((node) => node.key === this.selected) : undefined;
+    const route = chosen && this.routable(chosen, world) ? chosen.key : null;
+    this.map.update({
+      hubs,
+      nodes,
+      hubLabels,
+      adds,
+      waiting: new Set(this.waiting.keys()),
+      selected: this.selected,
+      fresh: this.fresh,
+      route,
+      pending: new Map([...this.pending].map(([key, way]) => [key, way.target])),
+    });
   }
 
-  /** What can be done to a spot, as `world` stands. */
-  private actsOf(key: string, world: WorldNow): Act[] {
+  /** What can be done to a spot, as `world` stands; the menu lists a few
+   *  more than float beside it. */
+  private actsOf(key: string, world: WorldNow, menu = false): Act[] {
     const { words } = this.options;
     const spot = this.spots(world).get(key);
     if (!spot) return [];
@@ -424,10 +461,13 @@ export class MachinesPage implements Page {
     }
     if (spot.kind === "lent") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
     const owners = this.ownersOf(spot.machine, world);
+    const relaying = !!this.memberOf(spot.machine, world)?.relay_at?.length;
     return [
       { act: "talk", label: words.talk, icon: "plus" },
       { act: "agents", label: words.hosts, icon: "agents" },
-      ...(owners.length ? [{ act: "share", label: words.share, icon: "colleague" as const }, { act: "relays", label: words.relays, icon: "relay" as const }] : []),
+      ...(owners.length ? [{ act: "share", label: words.share, icon: "colleague" as const }] : []),
+      ...(owners.length ? [relaying ? { act: "stop-relay", label: words.stopRelay, icon: "relay" as const } : { act: "be-relay", label: words.beRelay, icon: "relay" as const }] : []),
+      ...(owners.length && menu ? [{ act: "relays", label: words.relays, icon: "relay" as const }] : []),
       details,
       ...(owners.length && !spot.machine.here ? [{ act: "remove", label: words.remove, icon: "close" as const, danger: true }] : []),
     ];
@@ -482,7 +522,182 @@ export class MachinesPage implements Page {
       case "remove":
         if (login) this.remove(login, machine.name);
         return;
+      case "be-relay":
+        if (login) this.askRelay(login, machine, key);
+        return;
+      case "stop-relay":
+        if (login) void this.setRelay(login, machine, []);
+        return;
     }
+  }
+
+  /** The hub's record of one of the account's machines. */
+  private memberOf(machine: Machine, world: WorldNow) {
+    return world.accounts.hubs.flatMap((hub) => hub.members).find((member) => member.name === machine.name && member.kind === "computer");
+  }
+
+  /** Whether a machine's way to its hub can be changed here: one of the
+   *  account's own, online. */
+  private routable(node: MapNode, world: WorldNow): boolean {
+    const spot = this.spots(world).get(node.key);
+    return spot?.kind === "machine" && node.online === true && this.ownersOf(spot.machine, world).length > 0;
+  }
+
+  /** Where a machine's handle may be dropped: a relay's machine on one of
+   *  its hubs, online, or one of its hubs itself. */
+  private validRoute(source: string, target: string): boolean {
+    const world = this.options.store.world.peek();
+    if (!world) return false;
+    const { nodes } = mapOf(world, this.options.words);
+    const node = nodes.find((one) => one.key === source);
+    if (!node || !this.routable(node, world)) return false;
+    if (target.startsWith("hub:")) return node.hubs.includes(target.slice(4));
+    const relay = nodes.find((one) => one.key === target);
+    return !!relay && relay.key !== source && relay.hold !== "lent" && relay.online === true && !!relay.relayAt?.length && relay.hubs.some((hub) => node.hubs.includes(hub));
+  }
+
+  /** A way taken drops from the pending; one not taken in time is said. */
+  private settleRoutes(nodes: MapNode[]): void {
+    for (const [key, way] of this.pending) {
+      const node = nodes.find((one) => one.key === key);
+      const taken = !!node && node.online === true && (way.label === null ? !node.through : node.through === way.label);
+      if (taken) this.pending.delete(key);
+      else if (Date.now() - way.since > ROUTE_MS) {
+        this.pending.delete(key);
+        this.say(this.options.words.routeFailed(node?.name ?? key.slice(2), way.label ?? this.options.words.hubOnline));
+      }
+    }
+  }
+
+  /** The small card where a handle was dropped: the way before and after,
+   *  in two small drawings, one sentence, and what changes underneath
+   *  folded away; confirmed, the machine is asked to go that way. */
+  private proposeRoute(source: string, target: string, at: Point): void {
+    const world = this.options.store.world.peek();
+    if (!world) return;
+    const { words } = this.options;
+    const spot = this.spots(world).get(source);
+    const { nodes } = mapOf(world, words);
+    const node = nodes.find((one) => one.key === source);
+    if (spot?.kind !== "machine" || !node) return;
+    const login = this.ownersOf(spot.machine, world)[0];
+    if (!login) return;
+    const before = this.memberOf(spot.machine, world)?.relays ?? [];
+    const relay = target.startsWith("hub:") ? null : nodes.find((one) => one.key === target);
+    const relays: Relay[] = relay ? [{ label: relay.name, addresses: relay.relayAt ?? [] }, ...before.filter((one) => one.label !== relay.name)] : [];
+    const now = node.through ?? null;
+    if ((relay?.name ?? null) === now && relays.length === before.length) return;
+    const sentence = relay ? words.routeVia(node.name, relay.name) : words.routeDirect(node.name);
+    this.openCard(
+      source,
+      at,
+      `<div class="map-card-pictures">${routePicture(now, false)}<span aria-hidden="true">→</span>${routePicture(relay?.name ?? null, true)}</div>
+       <p class="map-card-said">${escape(sentence)}</p>
+       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.routeList(relays.map((one) => `${one.label}（${one.addresses.join("、")}）`)))}</p></details>
+       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.confirm)}</button></footer>`,
+      async () => {
+        await this.options.change(login, { change: "relays", machine: spot.machine.name, relays });
+        this.pending.set(source, { target, label: relay?.name ?? null, since: Date.now() });
+        this.offerUndo(sentence, () => this.options.change(login, { change: "relays", machine: spot.machine.name, relays: before }));
+      },
+    );
+  }
+
+  /** The card that makes a machine a relay: the address others dial it
+   *  at, and what being a relay means, folded away. */
+  private askRelay(login: Login, machine: Machine, key: string): void {
+    const { words } = this.options;
+    const at = this.map.screenOf(key) ?? [0, 0];
+    this.openCard(
+      key,
+      at,
+      `<p class="map-card-title">${escape(words.relayTitle(machine.written))}</p>
+       <label class="field"><span class="field-label">${escape(words.relayAddress)}</span><input class="mono" name="address" autocomplete="off" spellcheck="false" placeholder="203.0.113.20:7444" required></label>
+       <p class="map-card-wrong" hidden>${escape(words.relayAddressWrong)}</p>
+       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.relayWhat)}</p></details>
+       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.confirm)}</button></footer>`,
+      async () => {
+        const address = this.card.querySelector<HTMLInputElement>("[name=address]")!.value.trim();
+        if (!socketAddress.test(address)) {
+          this.card.querySelector<HTMLElement>(".map-card-wrong")!.hidden = false;
+          throw new Error("kept open");
+        }
+        await this.setRelay(login, machine, [address], false);
+      },
+    );
+    this.card.querySelector<HTMLInputElement>("[name=address]")?.focus();
+  }
+
+  /** Makes a machine a relay at `addresses`, or with none no longer; taken
+   *  away, it can be given back for a moment. */
+  private async setRelay(login: Login, machine: Machine, addresses: string[], undoable = true): Promise<void> {
+    const world = this.options.store.world.peek();
+    const before = (world && this.memberOf(machine, world)?.relay_at) ?? [];
+    try {
+      await this.options.change(login, { change: "relay_at", machine: machine.name, addresses });
+    } catch (error) {
+      this.say(this.options.access.failed(error instanceof Error ? error.message : String(error)));
+      throw error;
+    }
+    if (undoable && before.length) this.offerUndo(this.options.words.stopRelay, () => this.options.change(login, { change: "relay_at", machine: machine.name, addresses: before }));
+    await this.options.store.refresh();
+    this.redraw();
+  }
+
+  private openCard(key: string, at: Point, html: string, go: () => Promise<void>): void {
+    this.closeMenu();
+    this.cardFor = key;
+    this.float();
+    this.card.innerHTML = html;
+    const sheet = matchMedia("(max-width: 760px)").matches;
+    this.card.classList.toggle("as-sheet", sheet);
+    this.card.hidden = false;
+    if (!sheet) {
+      const x = Math.min(this.canvas.clientWidth - this.card.offsetWidth - 8, at[0] + 16);
+      const y = Math.min(this.canvas.clientHeight - this.card.offsetHeight - 8, at[1] + 16);
+      this.card.style.transform = `translate(${Math.max(8, x)}px, ${Math.max(8, y)}px)`;
+    } else this.card.style.transform = "";
+    this.card.onsubmit = (event) => {
+      event.preventDefault();
+      const button = this.card.querySelector<HTMLButtonElement>(".map-card-go");
+      if (button) button.disabled = true;
+      go().then(
+        () => {
+          this.closeCard();
+          void this.options.store.refresh().then(() => this.redraw());
+        },
+        (error: unknown) => {
+          if (button) button.disabled = false;
+          if (!(error instanceof Error && error.message === "kept open")) this.say(this.options.access.failed(error instanceof Error ? error.message : String(error)));
+        },
+      );
+    };
+    this.card.focus({ preventScroll: true });
+  }
+
+  private closeCard(): void {
+    if (!this.cardFor) return;
+    this.cardFor = null;
+    this.card.hidden = true;
+    this.card.innerHTML = "";
+    this.card.onsubmit = null;
+    this.float();
+  }
+
+  /** A change made on the drawing, undone for a moment from its corner. */
+  private offerUndo(said: string, redo: () => Promise<void>): void {
+    if (this.undoing) clearTimeout(this.undoing.timer);
+    this.undoing = { timer: window.setTimeout(() => this.endUndo(), UNDO_MS), redo };
+    this.undoBar.innerHTML = `<span>${escape(said)}</span><button class="text-button map-undo-go" type="button">${escape(this.options.words.undo)}</button>`;
+    this.undoBar.hidden = false;
+  }
+
+  /** A line in the drawing's corner for a moment. */
+  private say(text: string): void {
+    if (this.undoing) clearTimeout(this.undoing.timer);
+    this.undoing = { timer: window.setTimeout(() => this.endUndo(), UNDO_MS), redo: async () => {} };
+    this.undoBar.innerHTML = `<span>${escape(text)}</span>`;
+    this.undoBar.hidden = false;
   }
 
   /** Whom each of the account's own machines is shared with, and whom an
@@ -526,13 +741,7 @@ export class MachinesPage implements Page {
       this.redraw();
       return;
     }
-    if (this.undoing) clearTimeout(this.undoing.timer);
-    this.undoing = {
-      timer: window.setTimeout(() => this.endUndo(), UNDO_MS),
-      redo: () => this.options.change(given.login, given.give),
-    };
-    this.undoBar.innerHTML = `<span>${escape(words.tookBack(given.to))}</span><button class="text-button map-undo-go" type="button">${escape(words.undo)}</button>`;
-    this.undoBar.hidden = false;
+    this.offerUndo(words.tookBack(given.to), () => this.options.change(given.login, given.give));
     await this.options.store.refresh();
     this.redraw();
   }
@@ -594,7 +803,7 @@ export class MachinesPage implements Page {
    *  side with room; the names on the drawing keep clear of them. */
   private float(): void {
     const world = this.options.store.world.peek();
-    const key = this.menuFor ? null : this.selected;
+    const key = this.menuFor || this.cardFor ? null : this.selected;
     const at = key ? this.map.screenOf(key) : null;
     const hung = this.hang();
     if (!world || !key || !at) {
@@ -625,17 +834,23 @@ export class MachinesPage implements Page {
     // not touch: 38 degrees apart, with 6 pixels between.
     const step = (38 * Math.PI) / 180;
     const reach = Math.max(Math.max(RING * this.scale, 14) + size / 2 + 12, (size + 6) / (2 * Math.sin(step / 2)));
-    // Down the right of the ring, or the left where the right has no room.
+    // Away from the handle on its line, where it has one; else down the
+    // right of the ring, or the left where the right has no room.
+    const handle = this.map.handleOf(key);
     const left = at[0] + reach + size > width;
+    const centre = handle ? Math.atan2(at[1] - handle[1], at[0] - handle[0]) : left ? Math.PI : 0;
     const boxes = [...this.acts.children].map((button, index, all) => {
       const degrees = -((all.length - 1) * 38) / 2 + index * 38;
-      const angle = ((left ? 180 - degrees : degrees) * Math.PI) / 180;
+      const angle = centre + (((left && !handle) || (handle && Math.cos(centre) < 0) ? -degrees : degrees) * Math.PI) / 180;
       const x = Math.min(width - size - 4, Math.max(4, at[0] + Math.cos(angle) * reach - size / 2));
       const y = Math.min(height - size - 4, Math.max(4, at[1] + Math.sin(angle) * reach - size / 2));
       (button as HTMLElement).style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
       return { x, y, width: size, height: size };
     });
-    this.map.reserve([...boxes, ...hung]);
+    // The blot of the handle on its line stays clear of the names too;
+    // its wider reach for a finger may lie under one.
+    const pulled = handle ? [{ x: handle[0] - 9, y: handle[1] - 9, width: 18, height: 18 }] : [];
+    this.map.reserve([...boxes, ...hung, ...pulled]);
   }
 
   /** The menu of a spot, or of the drawing itself, where the right button
@@ -645,7 +860,7 @@ export class MachinesPage implements Page {
     if (!world) return;
     const { words } = this.options;
     if (key?.startsWith("add:")) return this.choose(key);
-    const acts: Act[] = key ? this.actsOf(key, world) : [{ act: "fit", label: words.fit, icon: "expand" }];
+    const acts: Act[] = key ? this.actsOf(key, world, true) : [{ act: "fit", label: words.fit, icon: "expand" }];
     if (!acts.length) return;
     if (key) this.selected = key;
     this.menuFor = { key, at, sheet };
@@ -857,4 +1072,18 @@ export function linkSaid(link: LinkState, words: MachinesWords): string {
     case "alone":
       return "";
   }
+}
+
+/** A machine's way to its hub, drawn small for the card: its ring, the
+ *  relay it goes through if any, and the hub's knot; the new way in clay. */
+function routePicture(via: string | null, after: boolean): string {
+  const random = seeded(`route:${via ?? ""}:${after}`);
+  const ring = circle([16, 18], 10, 1.6, random);
+  const knot = circle([116, 18], 4, 1.4, random);
+  const dot = blot([116, 18], 1.6, random);
+  const line = (from: number, to: number) => outline([[from, 18], [(from + to) / 2, 16.5], [to, 18]], 1.3, random, { pressure: 0.3, taper: 0.1 });
+  const relay = via ? circle([66, 18], 8, 1.4, random) : "";
+  const lines = via ? `${line(28, 56)} ${line(76, 110)}` : line(28, 110);
+  const tone = after ? "clay" : "graphite";
+  return `<svg class="map-card-picture" viewBox="0 0 132 36" role="img" aria-label="${escape(via ?? "")}"><g class="ink graphite" filter="url(#pen-marker)"><path d="${ring}"/><path d="${knot}"/><path d="${dot}"/></g><g class="ink ${tone}" filter="url(#pen-marker)"><path d="${lines}"/>${relay ? `<path d="${relay}"/>` : ""}</g>${via ? `<text x="66" y="34" text-anchor="middle">${escape(via)}</text>` : ""}</svg>`;
 }

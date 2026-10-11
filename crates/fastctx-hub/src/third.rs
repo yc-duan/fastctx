@@ -119,6 +119,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
             logins: BTreeSet::from([new.admin.clone()]),
             home: machine.then(|| new.admin.clone()),
             relays: Vec::new(),
+            relay_at: Vec::new(),
             added: admitted.joined_at,
             online: false,
             since: None,

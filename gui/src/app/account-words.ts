@@ -300,6 +300,23 @@ export interface MachinesWords {
   /** A share or loan taken back from the drawing, and giving it again. */
   tookBack(to: string): string;
   undo: string;
+  /** How a machine reaches its hub, changed on the drawing: the handle on
+   *  its line, the card shown where it is dropped, the address list it
+   *  leaves behind, and what is said when the machine did not go that way. */
+  reroute: string;
+  routeVia(machine: string, relay: string): string;
+  routeDirect(machine: string): string;
+  routeList(relays: string[]): string;
+  routeFailed(machine: string, relay: string): string;
+  confirm: string;
+  more: string;
+  /** Making a machine a relay others may connect through, and no longer. */
+  beRelay: string;
+  stopRelay: string;
+  relayTitle(machine: string): string;
+  relayAddress: string;
+  relayAddressWrong: string;
+  relayWhat: string;
 }
 
 export const zhMachines: MachinesWords = {
@@ -395,6 +412,19 @@ export const zhMachines: MachinesWords = {
   actions: "操作",
   tookBack: (to) => `已收回 ${to}`,
   undo: "撤回",
+  reroute: "改连法",
+  routeVia: (machine, relay) => `${machine} 改经 ${relay} 连接服务器`,
+  routeDirect: (machine) => `${machine} 改为直连服务器`,
+  routeList: (relays) => (relays.length ? `地址单子：依次试 ${relays.join("、")}，最后是服务器` : "地址单子：只有服务器"),
+  routeFailed: (machine, relay) => `${machine} 没能经 ${relay} 连上`,
+  confirm: "确定",
+  more: "细节",
+  beRelay: "当中转",
+  stopRelay: "停止中转",
+  relayTitle: (machine) => `让 ${machine} 当中转`,
+  relayAddress: "对外地址",
+  relayAddressWrong: "写成 地址:端口",
+  relayWhat: "这台机器在这个端口上把连接原样转给服务器，看不到也改不了里面的内容。Windows 上要在防火墙里放行这个端口，云服务器要在安全组里放行。",
 };
 
 export const enMachines: MachinesWords = {
@@ -490,6 +520,19 @@ export const enMachines: MachinesWords = {
   actions: "Actions",
   tookBack: (to) => `Revoked ${to}`,
   undo: "Undo",
+  reroute: "Change route",
+  routeVia: (machine, relay) => `${machine} reaches the server through ${relay}`,
+  routeDirect: (machine) => `${machine} reaches the server directly`,
+  routeList: (relays) => (relays.length ? `Address list: ${relays.join(", ")}, then the server` : "Address list: the server only"),
+  routeFailed: (machine, relay) => `${machine} could not connect through ${relay}`,
+  confirm: "Confirm",
+  more: "Details",
+  beRelay: "Be a relay",
+  stopRelay: "Stop relaying",
+  relayTitle: (machine) => `Make ${machine} a relay`,
+  relayAddress: "Public address",
+  relayAddressWrong: "Write it as address:port",
+  relayWhat: "This machine passes connections on this port to the server as they are; it can neither read nor change them. On Windows, allow the port in the firewall; on a cloud server, in its security group.",
 };
 
 /** The sheets on a machine: whom its owner shares it with, whom it lends

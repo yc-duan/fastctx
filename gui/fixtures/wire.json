@@ -160,6 +160,13 @@
         ]
       },
       {
+        "change": "relay_at",
+        "machine": "desktop",
+        "addresses": [
+          "203.0.113.20:7444"
+        ]
+      },
+      {
         "change": "remove",
         "name": "pixel",
         "reason": "lost"

@@ -53,6 +53,8 @@ export interface MemberSeen {
   /** The account it is registered under, when it is a machine. */
   home: AccountName | null;
   relays: Relay[];
+  /** Where it relays to the hub for others, when it is a relay. */
+  relay_at?: string[];
   added: Timestamp;
   online: boolean;
   since: Timestamp | null;
@@ -130,6 +132,7 @@ export type AccountChange =
   | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home?: string; lent: boolean }
   | { change: "stop_acting"; machine: MachineName }
   | { change: "relays"; machine: MachineName; relays: Relay[] }
+  | { change: "relay_at"; machine: MachineName; addresses: string[] }
   | { change: "remove"; name: MachineName; reason: string }
   | { change: "logout" }
   | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp }

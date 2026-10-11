@@ -52,6 +52,7 @@ mod on_delivery;
 mod on_stop;
 mod pages;
 mod reach;
+mod relaying;
 mod renewal;
 mod renewal_legacy;
 pub mod replacement;
@@ -120,6 +121,9 @@ pub(crate) struct Node {
     log: Arc<log::Log>,
     /// The link to each hub this computer is logged in to (`reach`).
     links: RwLock<std::collections::BTreeMap<HubId, Arc<Link>>>,
+    /// The ports this machine forwards to a hub, as the relay its owner
+    /// made it (`relaying`).
+    relaying: relaying::Relaying,
     /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: tokio::sync::Mutex<()>,
     /// Held while a town's record or journals are written from here, from
@@ -356,6 +360,7 @@ pub async fn run_prepared(
         file_searches: file_search::Searches::default(),
         log,
         links: RwLock::new(std::collections::BTreeMap::new()),
+        relaying: relaying::Relaying::default(),
         syncing: tokio::sync::Mutex::new(()),
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),

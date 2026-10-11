@@ -43,6 +43,7 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
     const mine = machine.here || logins.some((login) => owns(machine, login));
     const owner = mine ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null);
     const reaching = !mine && logins.some((login) => machineActsFor(world, machine.name, login));
+    const member = world.accounts.hubs.flatMap((hub) => hub.members).find((one) => one.name === machine.name && one.kind === "computer");
     nodes.push({
       key: `m:${machine.written}`,
       name: machine.written,
@@ -54,6 +55,9 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       reaching,
       marks: marks(machine.name),
       title: [machine.written, owner ? words.ownedBy(owner) : "", reaching ? words.reachingWhat : ""].filter(Boolean).join(" · "),
+      relayAt: member?.relay_at ?? [],
+      through: machine.through ?? null,
+      relays: (member?.relays ?? []).map((relay) => relay.label),
     });
   }
   const lent = new Set<string>();

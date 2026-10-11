@@ -87,6 +87,39 @@
   background: color-mix(in srgb, var(--fill) 70%, transparent);
 }
 
+/* While a handle is dragged, where it may go is shaded a little, and the
+   one under it more. */
+.machine-map .canvas-object[data-valid="true"] {
+  background: color-mix(in srgb, var(--pen-clay) 10%, transparent);
+}
+
+.machine-map .canvas-object[data-target="true"] {
+  background: color-mix(in srgb, var(--pen-clay) 24%, transparent);
+}
+
+/* The handle on the chosen machine's line: a blot of clay to pull. */
+.machine-map .canvas-handle {
+  display: grid;
+  place-items: center;
+  font-size: 0;
+  color: transparent;
+  cursor: grab;
+}
+
+.machine-map .canvas-handle::after {
+  content: "";
+  width: 11px;
+  height: 11px;
+  border-radius: 46% 54% 43% 57% / 55% 45% 58% 42%;
+  background: var(--pen-clay);
+  transition: transform var(--hover) ease;
+}
+
+.machine-map .canvas-handle:hover::after,
+.machine-map .canvas-handle:focus-visible::after {
+  transform: scale(1.35);
+}
+
 .machine-map .canvas-name {
   padding: 1px 6px;
   border-radius: var(--radius-s);
@@ -148,6 +181,45 @@
   stroke-linecap: round;
   stroke-dasharray: 3 14 6 11;
   animation: pen-flow 2.8s linear infinite;
+}
+
+/* A way asked for and not yet taken: a pencil line, dashed, still being
+   drawn toward where it was asked to go. */
+.map-live .asked {
+  fill: none;
+  stroke: var(--pen-clay);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-dasharray: 5 9;
+  opacity: 0.85;
+  animation: pen-flow-slow 3.4s linear infinite;
+}
+
+@keyframes pen-flow-slow {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+
+/* The pencil line following a dragged handle; clay over a place it may be
+   dropped. */
+.map-draft {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.map-draft path {
+  fill: var(--pen-graphite);
+  opacity: 0.7;
+}
+
+.map-draft path.over {
+  fill: var(--pen-clay);
+  opacity: 1;
 }
 
 @keyframes paper-in {
@@ -324,6 +396,120 @@
 @keyframes map-sheet-rise {
   from {
     transform: translateY(100%);
+  }
+}
+
+/* The card shown where a handle is dropped, or where a machine is made a
+   relay: the way before and after, one sentence, details folded away. */
+.map-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(320px, calc(100% - 16px));
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-2);
+  outline: none;
+  animation: paper-in 0.2s ease both;
+}
+
+.map-card.as-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  z-index: 20;
+  width: auto;
+  max-height: 60dvh;
+  overflow: auto;
+  padding: var(--space-4) var(--space-4) calc(var(--space-4) + env(safe-area-inset-bottom));
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  animation: map-sheet-rise 0.22s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.map-card-pictures {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-3);
+}
+
+.map-card-picture {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  overflow: visible;
+}
+
+.map-card-picture .ink {
+  mix-blend-mode: var(--pen-blend);
+}
+
+.map-card-picture .graphite {
+  fill: var(--pen-graphite);
+  opacity: 0.9;
+}
+
+.map-card-picture .clay {
+  fill: var(--pen-clay);
+}
+
+.map-card-picture text {
+  fill: var(--text-3);
+  font-family: var(--font-reading);
+  font-size: 9px;
+}
+
+.map-card-said,
+.map-card-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--size-ui);
+}
+
+.map-card-wrong {
+  margin: 0;
+  color: var(--wrong);
+  font-size: var(--size-small);
+}
+
+.map-card-more {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.map-card-more summary {
+  cursor: pointer;
+  width: max-content;
+}
+
+.map-card-more p {
+  margin: var(--space-1) 0 0;
+  line-height: 1.55;
+}
+
+.map-card-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.map-card-go {
+  color: var(--text-strong);
+}
+
+@media (pointer: coarse) {
+  .map-card-acts .text-button,
+  .map-card-more summary {
+    min-height: 44px;
   }
 }
 
@@ -817,8 +1003,11 @@
   .map-live .flow,
   .map-live .chosen,
   .map-live .arrived,
+  .map-live .asked,
   .map-act,
   .map-menu.as-sheet,
+  .map-card,
+  .map-card.as-sheet,
   .machines-layout > .machine-panel,
   .network-map .flow,
   .map-drawing.arriving .paper,

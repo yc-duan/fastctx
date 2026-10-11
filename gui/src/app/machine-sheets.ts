@@ -16,7 +16,7 @@ import { redrawKeepingFocus } from "./focus";
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 
 /** IPv4 or bracketed IPv6, with a port: what a relay's address must be. */
-const socketAddress = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:.]+\]):\d{1,5}$/;
+export const socketAddress = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:.]+\]):\d{1,5}$/;
 
 /** What a sheet that gives something to other accounts says. */
 export interface GiveWords {

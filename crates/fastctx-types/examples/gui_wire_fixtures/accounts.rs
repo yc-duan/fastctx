@@ -42,6 +42,7 @@ fn hub() -> HubAccounts {
                 logins: vec!["ada".parse().unwrap()],
                 home: Some("ada".parse().unwrap()),
                 relays: vec![Relay { label: "la".into(), addresses: vec!["203.0.113.20:7444".parse().unwrap()] }],
+                relay_at: vec![],
                 added: at(),
                 online: true,
                 since: Some(at()),
@@ -54,6 +55,7 @@ fn hub() -> HubAccounts {
                 logins: vec!["ada".parse().unwrap()],
                 home: None,
                 relays: vec![],
+                relay_at: vec![],
                 added: at(),
                 online: false,
                 since: None,
@@ -114,6 +116,7 @@ pub fn fixtures() -> Fixtures {
                 machine: machine(),
                 relays: vec![Relay { label: "la".into(), addresses: vec!["203.0.113.20:7444".parse().unwrap()] }],
             },
+            AccountChange::RelayAt { machine: machine(), addresses: vec!["203.0.113.20:7444".parse().unwrap()] },
             AccountChange::Remove { name: "pixel".parse().unwrap(), reason: "lost".into() },
             AccountChange::Logout,
             AccountChange::Token {

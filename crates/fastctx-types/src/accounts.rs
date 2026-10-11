@@ -86,6 +86,12 @@ pub enum AccountChange {
         machine: MachineName,
         relays: Vec<Relay>,
     },
+    /// Makes `machine`, one of the account's own, a relay others may
+    /// connect through, reached at `addresses`; none, no longer.
+    RelayAt {
+        machine: MachineName,
+        addresses: Vec<SocketAddr>,
+    },
     Remove {
         name: MachineName,
         reason: String,
@@ -200,6 +206,9 @@ pub struct MemberSeen {
     /// The account it is registered under, when it is a machine.
     pub home: Option<AccountName>,
     pub relays: Vec<Relay>,
+    /// Where it relays to the hub for others, when it is a relay.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relay_at: Vec<SocketAddr>,
     pub added: Timestamp,
     pub online: bool,
     /// When it connected, when online; when it was last connected, when not.

@@ -41,6 +41,10 @@ pub struct Member {
     /// The relays it connects through, in order; the hub comes after them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relays: Vec<Relay>,
+    /// Where it relays to the hub for others, when its owner made it a
+    /// relay: the addresses they dial. Its node forwards those ports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relay_at: Vec<std::net::SocketAddr>,
     pub added: Timestamp,
     /// Whether it is connected now, as the hub saw when it made the view.
     #[serde(default)]

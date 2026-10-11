@@ -298,6 +298,7 @@ fn join(
                     logins: [account.clone()].into(),
                     home,
                     relays: Vec::new(),
+                    relay_at: Vec::new(),
                     added: Timestamp::now(),
                     online: false,
                     since: None,
