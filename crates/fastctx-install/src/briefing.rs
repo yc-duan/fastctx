@@ -19,7 +19,7 @@
 /// effort, 2026-10-09), nor one that applied only to scripts calling `run`
 /// (0 of 4); this unconditional one was (4 of 4). 100,000 holds a whole
 /// answer of the World's budget with what a script adds around it.
-const CODEX_EXEC: &str = "
+pub const CODEX_EXEC: &str = "
 ## fastctx in Codex
 
 You must begin every `exec` script with this exact first line, every time:

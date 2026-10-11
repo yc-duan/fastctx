@@ -331,6 +331,10 @@ pub async fn thread_spec(
         developer_instructions.push_str("\n\n");
         developer_instructions.push_str(&started.rules);
     }
+    // What Code Mode needs before a long answer is seen whole, last, as in
+    // the guidance file: a thread started here may have no such file.
+    developer_instructions.push('\n');
+    developer_instructions.push_str(fastctx_install::briefing::CODEX_EXEC);
     Ok((
         ThreadSpec {
             owner: Address { machine: node.machine(), resident: id.clone() },
