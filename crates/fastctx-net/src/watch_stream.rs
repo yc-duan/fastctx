@@ -23,7 +23,7 @@ enum Incoming {
 /// Sends the existing JSON envelope when it fits; otherwise announces the
 /// signed payload's length and signature, then sends its exact bytes in chunks.
 pub async fn send(stream: &mut Stream, signed: &Signed) -> Result<(), String> {
-    let empty = Signed { data: Bytes(Vec::new()), sig: signed.sig.clone() };
+    let empty = Signed { data: Bytes(Vec::new()), sig: signed.sig };
     let overhead = serde_json::to_vec(&empty).expect("signed envelopes serialize").len();
     let length = signed.data.0.len();
     // Bytes are unpadded base64; the empty envelope accounts for all other JSON bytes.
@@ -31,7 +31,7 @@ pub async fn send(stream: &mut Stream, signed: &Signed) -> Result<(), String> {
     if encoded <= MAX_DATA_MESSAGE {
         return stream.say(signed).await;
     }
-    stream.say(&Carried { watch_bytes: length as u64, sig: signed.sig.clone() }).await?;
+    stream.say(&Carried { watch_bytes: length as u64, sig: signed.sig }).await?;
     stream.send(&signed.data.0).await
 }
 
