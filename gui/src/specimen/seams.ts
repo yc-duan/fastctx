@@ -36,7 +36,7 @@ export const specimenOffers: Offers = {
       { name: "codex secondary 10080m", used_percent: 61, resets_at: "2026-10-08T03:00:00Z" },
     ],
     cost_usd: null,
-    raw: null,
+    raw: { tokenUsage: { last: { inputTokens: 41_822, cachedInputTokens: 38_400, outputTokens: 1_204, reasoningOutputTokens: 512, totalTokens: 43_026 }, modelContextWindow: 258_400 } },
   },
 };
 
@@ -68,7 +68,26 @@ export const specimenClaudeOffers: Offers = {
       { name: "seven_day", used_percent: 18, resets_at: "2026-10-08T03:00:00Z" },
     ],
     cost_usd: null,
-    raw: null,
+    raw: {
+      context: {
+        tokens: 61_280,
+        window: 200_000,
+        breakdown: {
+          categories: [
+            { name: "System prompt", tokens: 3_120, kind: "used" },
+            { name: "System tools", tokens: 11_480, kind: "used" },
+            { name: "MCP tools", tokens: 2_310, kind: "used" },
+            { name: "Memory files", tokens: 1_870, kind: "used" },
+            { name: "Skills", tokens: 940, kind: "used" },
+            { name: "Messages", tokens: 41_560, kind: "used" },
+            { name: "MCP tools (deferred)", tokens: 8_200, kind: "deferred" },
+            { name: "Free space", tokens: 105_720, kind: "free" },
+            { name: "Autocompact buffer", tokens: 33_000, kind: "buffer" },
+          ],
+          apiUsage: { input_tokens: 1_312, cache_read_input_tokens: 58_204, cache_creation_input_tokens: 1_764, output_tokens: 862 },
+        },
+      },
+    },
   },
 };
 

@@ -1015,6 +1015,10 @@ export interface ComposerWords {
     resets(at: Date): string;
     cost(usd: string): string;
     none: string;
+    /** A part of the context, by the name the host's /context gives it. */
+    part(name: string): string;
+    lastCall: string;
+    last(input: number, cached: number, output: number, reasoning: number | null): string;
   };
 }
 
@@ -1184,6 +1188,26 @@ export const zhComposer: ComposerWords = {
     resets: (at) => `${at.getMonth() + 1}月${at.getDate()}日 ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")} 重置`,
     cost: (usd) => `本次对话 $${usd}`,
     none: "暂无用量数据",
+    part: (name) =>
+      ({
+        "System prompt": "系统提示",
+        "System tools": "系统工具",
+        "MCP tools": "MCP 工具",
+        "MCP server instructions": "MCP 说明",
+        "Custom agents": "自定义智能体",
+        "Memory files": "记忆文件",
+        Skills: "技能",
+        Messages: "消息",
+      })[name] ?? name,
+    lastCall: "上一次请求",
+    last: (input, cached, output, reasoning) =>
+      [
+        `输入 ${input.toLocaleString()}`,
+        input ? `缓存命中 ${Math.round((cached / input) * 100)}%` : "",
+        `输出 ${output.toLocaleString()}${reasoning ? `（推理 ${reasoning.toLocaleString()}）` : ""}`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
   },
 };
 
@@ -1353,6 +1377,16 @@ export const enComposer: ComposerWords = {
     resets: (at) => `Resets ${at.toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}`,
     cost: (usd) => `This conversation $${usd}`,
     none: "No usage data",
+    part: (name) => name,
+    lastCall: "Last request",
+    last: (input, cached, output, reasoning) =>
+      [
+        `${input.toLocaleString()} in`,
+        input ? `${Math.round((cached / input) * 100)}% cached` : "",
+        `${output.toLocaleString()} out${reasoning ? ` (${reasoning.toLocaleString()} reasoning)` : ""}`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
   },
 };
 

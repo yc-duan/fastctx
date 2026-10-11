@@ -25,6 +25,7 @@ import type { Conversation } from "./model";
 import { escape, render } from "./prose";
 import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
+import { usageDetail } from "./usage-detail";
 import { ConversationView } from "./view";
 import { detailOf } from "../app/problem";
 
@@ -936,12 +937,27 @@ export class ConversationPage {
     if (!words) return;
     const usage = this.offered?.usage ?? null;
     const context = this.options.conversation.context ?? usage?.context ?? null;
+    const detail = usageDetail(usage?.raw);
     const rows: string[] = [];
     if (context) {
       const share = context.window ? Math.min(1, context.used / context.window) : null;
+      // Where the host breaks the context down, the bar is drawn in its
+      // parts, each a shade of the same ink, named beneath.
+      const window = context.window ?? 0;
+      const parts = window ? detail.parts : [];
+      const tone = (at: number) => Math.round(100 - (at * 75) / Math.max(1, parts.length - 1));
+      const bar = parts.length
+        ? `<span class="usage-bar usage-stack">${parts.map((part, at) => `<span style="width:${Math.min(100, (part.tokens / window) * 100).toFixed(2)}%;--tone:${tone(at)}%"></span>`).join("")}</span><span class="usage-parts">${parts.map((part, at) => `<span class="usage-part"><i style="--tone:${tone(at)}%"></i><span>${escape(words.part(part.name))}</span><span>${part.tokens.toLocaleString()}</span></span>`).join("")}</span>`
+        : share !== null
+          ? `<span class="usage-bar"><span style="width:${(share * 100).toFixed(1)}%"></span></span>`
+          : "";
       rows.push(
-        `<div class="usage-row"><span class="usage-name">${escape(words.context)}</span><span class="usage-fact">${escape(words.contextUsed(context.used, context.window))}${share !== null ? ` · ${Math.round(share * 100)}%` : ""}</span>${share !== null ? `<span class="usage-bar"><span style="width:${(share * 100).toFixed(1)}%"></span></span>` : ""}</div>`,
+        `<div class="usage-row"><span class="usage-name">${escape(words.context)}</span><span class="usage-fact">${escape(words.contextUsed(context.used, context.window))}${share !== null ? ` · ${Math.round(share * 100)}%` : ""}</span>${bar}</div>`,
       );
+    }
+    if (detail.last) {
+      const { input, cached, output, reasoning } = detail.last;
+      rows.push(`<div class="usage-row"><span class="usage-name">${escape(words.lastCall)}</span><span class="usage-fact">${escape(words.last(input, cached, output, reasoning))}</span></div>`);
     }
     for (const limit of usage?.limits ?? []) {
       const percent = limit.used_percent;
