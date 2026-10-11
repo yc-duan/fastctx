@@ -23,6 +23,7 @@ mod commands;
 mod contract;
 mod controls;
 mod history;
+mod image_position;
 mod items;
 pub mod launch;
 mod lifetime;
@@ -32,6 +33,7 @@ mod offers;
 mod presentation;
 mod server;
 mod transport;
+mod user_images;
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -127,6 +129,8 @@ pub const SERVER_NAME: &str = "fastctx";
 /// app-server.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ThreadSpec {
+    /// The resident whose user pictures this thread can address.
+    pub owner: fastctx_types::Address,
     pub cwd: PathBuf,
     pub developer_instructions: String,
     /// Settings for this thread alone, laid over the user's configuration as
@@ -288,6 +292,8 @@ impl Drop for StateGuard<'_> {
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 struct Thread {
+    #[serde(default)]
+    submissions: user_images::Submissions,
     #[serde(default)]
     accounting: accounting::Accounting,
     selection: controls::Selection,
@@ -602,7 +608,9 @@ impl CodexHost {
             return Ok(Vec::new());
         }
         let running = self.running_turn(thread);
-        history::read(&server, thread, running.as_deref()).await
+        let owner =
+            self.lock().threads.get(thread).and_then(|entry| entry.spec.as_ref()).map(|spec| spec.owner.clone());
+        history::read(&server, thread, running.as_deref(), owner.as_ref()).await
     }
 
     /// The rollout belongs to this host's thread. Only this host chooses
@@ -937,6 +945,7 @@ impl CodexHost {
                         entry.last_message = None;
                     }
                     entry.started.insert(turn.clone());
+                    entry.submissions.started(&turn, entry.loaded && entry.subscribed);
                     entry.accounting.started(&turn);
                 }
                 let at = seconds(params.pointer("/turn/startedAt"));
@@ -967,6 +976,9 @@ impl CodexHost {
                         entry.items.remove(&key);
                     } else {
                         entry.items.insert(key, item.clone());
+                    }
+                    if completed {
+                        entry.submissions.observe(&turn, item);
                     }
                 }
                 let mut item = match items::read(item, completed) {

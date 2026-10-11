@@ -12,7 +12,12 @@ use super::{
     turn_how,
 };
 
-pub(super) async fn read(server: &AppServer, thread: &str, running: Option<&str>) -> Result<Vec<SessionEvent>, String> {
+pub(super) async fn read(
+    server: &AppServer,
+    thread: &str,
+    running: Option<&str>,
+    owner: Option<&fastctx_types::Address>,
+) -> Result<Vec<SessionEvent>, String> {
     let answer = server.request("thread/read", json!({"threadId": thread, "includeTurns": false})).await?;
     let metadata = &answer["thread"];
     let mut events = if metadata.get("historyMode").and_then(Value::as_str) == Some("paginated") {
@@ -70,6 +75,7 @@ pub(super) async fn read(server: &AppServer, thread: &str, running: Option<&str>
             })
             .collect();
         let mut messages: HashMap<String, String> = HashMap::new();
+        let mut submissions = super::user_images::Submissions::default();
         let mut at = seconds(metadata.get("createdAt"));
         for entry in timeline {
             let turn = entry.get("turnId").and_then(Value::as_str).unwrap_or_default();
@@ -85,7 +91,11 @@ pub(super) async fn read(server: &AppServer, thread: &str, running: Option<&str>
                     {
                         at = millis(timing.get("completedAtMs"));
                     }
+                    let ordinal = submissions.observe(turn, item);
                     if let Some(mut happened) = completed(turn, item, &mut messages) {
+                        if let Happened::Heard { message: Some(message), .. } = &mut happened {
+                            super::user_images::decorate(message, owner, turn, ordinal, false);
+                        }
                         if let Happened::Finished { item, .. } = &mut happened
                             && let Some(timing) = times.get(&(turn, item.id.as_str()))
                         {
@@ -122,7 +132,7 @@ pub(super) async fn read(server: &AppServer, thread: &str, running: Option<&str>
         events
     } else {
         match server.ask("thread/read", json!({"threadId": thread, "includeTurns": true})).await {
-            Ok(answer) => project(&answer, running),
+            Ok(answer) => project(&answer, running, owner),
             Err(Unanswered::Rpc { code: -32600, message, data })
                 if data.is_null()
                     && message
@@ -220,8 +230,13 @@ fn completed(turn: &str, raw: &Value, messages: &mut HashMap<String, String>) ->
     }
 }
 /// A thread's history from `thread/read`, as session events.
-pub(super) fn project(answer: &Value, running: Option<&str>) -> Vec<SessionEvent> {
+pub(super) fn project(
+    answer: &Value,
+    running: Option<&str>,
+    owner: Option<&fastctx_types::Address>,
+) -> Vec<SessionEvent> {
     let mut events = Vec::new();
+    let mut submissions = super::user_images::Submissions::default();
     for turn in answer.pointer("/thread/turns").and_then(Value::as_array).into_iter().flatten() {
         let Some(id) = turn.get("id").and_then(Value::as_str) else { continue };
         let started = seconds(turn.get("startedAt"));
@@ -230,18 +245,22 @@ pub(super) fn project(answer: &Value, running: Option<&str>) -> Vec<SessionEvent
         let mut last_message = None;
         for item in turn.get("items").and_then(Value::as_array).into_iter().flatten() {
             let turn = id.to_string();
+            let ordinal = submissions.observe(&turn, item);
             match items::read(item, true) {
-                items::Read::Words { text, message } => push(
-                    started,
-                    Happened::Heard {
-                        delivery: None,
-                        turn: Some(turn),
-                        from: None,
-                        text,
-                        message: Some(Box::new(message)),
-                        notice: None,
-                    },
-                ),
+                items::Read::Words { text, mut message } => {
+                    super::user_images::decorate(&mut message, owner, &turn, ordinal, true);
+                    push(
+                        started,
+                        Happened::Heard {
+                            delivery: None,
+                            turn: Some(turn),
+                            from: None,
+                            text,
+                            message: Some(Box::new(message)),
+                            notice: None,
+                        },
+                    )
+                }
                 items::Read::Item(item) => {
                     if let What::Message { text } = &item.what {
                         last_message = Some(text.clone());

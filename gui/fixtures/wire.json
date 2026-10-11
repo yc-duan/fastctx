@@ -1518,6 +1518,24 @@
         },
         "text": "hello 世界",
         "message": {
+          "images": [
+            {
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "host_image": {
+                  "host": "codex",
+                  "turn": "turn-1",
+                  "message": 0,
+                  "image": 0
+                }
+              },
+              "name": "image.png",
+              "media_type": "image/png"
+            }
+          ],
           "id": "message-1",
           "client_id": "client-1",
           "content": [
@@ -1581,6 +1599,87 @@
             "to": "mark50"
           },
           "text": "=== the user moved you to the project mark50 ==="
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "heard",
+        "delivery": null,
+        "turn": "turn-1",
+        "from": null,
+        "text": "",
+        "message": {
+          "images": [
+            {
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "host_image": {
+                  "host": "codex",
+                  "turn": "turn-1",
+                  "message": 1,
+                  "image": 2
+                }
+              },
+              "name": null,
+              "media_type": null
+            }
+          ],
+          "id": "native-codex-provider",
+          "client_id": null,
+          "content": [
+            {
+              "fileId": "provider-reference",
+              "type": "image"
+            }
+          ],
+          "hook_fragments": [],
+          "presentation": null,
+          "detail": null
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "heard",
+        "delivery": null,
+        "turn": "turn-1",
+        "from": null,
+        "text": "",
+        "message": {
+          "images": [
+            {
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "claude-ab12"
+                },
+                "host_image": {
+                  "host": "claude",
+                  "message": "native-claude-user",
+                  "image": 0
+                }
+              },
+              "name": null,
+              "media_type": "image/png"
+            }
+          ],
+          "id": "native-claude-user",
+          "client_id": null,
+          "content": [
+            {
+              "source": {
+                "data": "AAAA",
+                "media_type": "image/png",
+                "type": "base64"
+              },
+              "type": "image"
+            }
+          ],
+          "hook_fragments": [],
+          "presentation": null,
+          "detail": null
         }
       },
       {

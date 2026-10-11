@@ -27,3 +27,11 @@ export interface Attachment extends UploadFile {
   town: string | null;
   path: string;
 }
+
+/** A kept file or one user picture in its resident's native host record. */
+export type AttachmentSource = Attachment | {
+  owner: Address;
+  host_image:
+    | { host: "codex"; turn: string; message: number; image: number }
+    | { host: "claude"; message: string; image: number };
+};

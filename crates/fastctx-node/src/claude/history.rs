@@ -27,7 +27,10 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
                 if let Some(title) = read.title {
                     events.push(SessionEvent { at: Timestamp::now(), happened: Happened::Titled { title } });
                 }
-                events.extend(read.events);
+                events.extend(read.events.into_iter().map(|mut event| {
+                    crate::user_images::claude(node, resident, &mut event);
+                    event
+                }));
                 if !read.problems.is_empty() {
                     let text = format!(
                         "{} part(s) of Claude Code's record of session {id} could not be read: {}",
@@ -252,10 +255,13 @@ pub(super) fn place(mut events: Vec<SessionEvent>, recorded: &[SessionEvent]) ->
                 _ => {}
             }
         }
-        if let Happened::Heard { turn, text, .. } = &event.happened {
+        if let Happened::Heard { turn, text, message, .. } = &event.happened {
             let told = claude::is_framed(text)
                 || turn.as_deref().and_then(|turn| heard.get(turn)).is_some_and(|said| said.contains(&text.as_str()));
-            if told && fastctx_types::session::attachments::AttachedMessage::read(text).is_none() {
+            if told
+                && fastctx_types::session::attachments::AttachedMessage::read(text).is_none()
+                && message.as_ref().is_none_or(|message| message.images.is_empty())
+            {
                 continue;
             }
         }

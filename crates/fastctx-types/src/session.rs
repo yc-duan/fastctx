@@ -26,6 +26,7 @@ use crate::{Address, MachineName, NoticeId};
 pub mod attachments;
 pub mod control;
 mod details;
+pub mod images;
 pub use details::*;
 mod host;
 pub use host::*;

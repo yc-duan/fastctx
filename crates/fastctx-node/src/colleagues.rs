@@ -331,7 +331,16 @@ pub async fn thread_spec(
         developer_instructions.push_str("\n\n");
         developer_instructions.push_str(&started.rules);
     }
-    Ok((ThreadSpec { cwd, developer_instructions, config, name }, heard))
+    Ok((
+        ThreadSpec {
+            owner: Address { machine: node.machine(), resident: id.clone() },
+            cwd,
+            developer_instructions,
+            config,
+            name,
+        },
+        heard,
+    ))
 }
 
 /// How far into its town's ledger a resident is told of it, as of now.

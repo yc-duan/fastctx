@@ -77,6 +77,7 @@ pub mod thumbnail;
 mod town;
 mod turns;
 mod uninstall;
+mod user_images;
 mod waiting;
 mod watch;
 mod watchdog;
