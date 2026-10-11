@@ -35,7 +35,7 @@ use crate::directory::Kind;
 use crate::ids::{CertPin, HubId};
 use crate::sign::{Bytes, Domain, SecretKey};
 use crate::token::Token;
-use crate::wire::{self, Down, Intent, Joining, PROTOCOL, SILENCE, Up};
+use crate::wire::{self, Down, Intent, Joining, SILENCE, Up};
 
 /// The OPAQUE suite: ristretto255 for the OPRF and the key exchange,
 /// 3DH, and Argon2id with its default parameters (19 MiB, two passes) to
@@ -182,7 +182,7 @@ pub fn password_finish(state: PasswordState, password: &str, response: &Bytes) -
 }
 
 async fn hello(socket: &mut HubSocket, intent: Intent) -> Result<(), String> {
-    let hello = Up::Hello { protocol: PROTOCOL, version: env!("CARGO_PKG_VERSION").to_string(), intent };
+    let hello = Up::Hello { protocol: wire::GREETING_PROTOCOL, version: env!("CARGO_PKG_VERSION").to_string(), intent };
     dial::send(socket, &hello).await
 }
 

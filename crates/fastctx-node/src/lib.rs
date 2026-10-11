@@ -36,6 +36,8 @@ mod here;
 mod homes;
 mod inbox;
 mod job_ends;
+mod job_reader;
+mod job_receipts;
 mod job_watch;
 mod jobs;
 mod leases;
@@ -52,6 +54,7 @@ mod on;
 mod on_delivery;
 mod on_stop;
 mod pages;
+mod program_collection;
 mod reach;
 mod relaying;
 mod renewal;
@@ -59,6 +62,7 @@ mod renewal_legacy;
 pub mod replacement;
 mod resident_storage;
 mod residents;
+mod retention;
 mod server;
 mod server_invitation;
 mod session_live;
@@ -108,6 +112,10 @@ pub(crate) struct Node {
     machine: RwLock<MachineName>,
     jobs: jobs::Jobs,
     job_watches: job_watch::Watches,
+    disk: std::sync::Mutex<()>,
+    disk_changed: tokio::sync::Notify,
+    disk_due: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    job_readers: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
     residents: residents::Residents,
     /// This machine's Codex app-server, holding the Codex residents the
     /// World started.
@@ -293,7 +301,7 @@ pub async fn run_prepared(
     let log = Arc::new(log::Log::open(&world.node_log())?);
     // The node usually has no terminal: a panic in any of its tasks is
     // written to its log, or it would leave no trace.
-    let panics = log::Log::open(&world.node_log())?;
+    let panics = log.clone();
     std::panic::set_hook(Box::new(move |info| panics.line(format_args!("panicked: {info}"))));
     let machine = machine::name(&world)?;
     log.line(format_args!("node {} starting as {machine}", env!("CARGO_PKG_VERSION")));
@@ -352,6 +360,10 @@ pub async fn run_prepared(
         machine: RwLock::new(machine),
         jobs: jobs::Jobs::new(),
         job_watches: Default::default(),
+        disk: Default::default(),
+        disk_changed: Default::default(),
+        disk_due: Default::default(),
+        job_readers: Default::default(),
         residents,
         codex,
         home_changes: Default::default(),
@@ -426,6 +438,7 @@ pub async fn run_prepared(
     composer::resume(&node);
     speech::recover(&node).await;
     on_delivery::resume(&node);
+    retention::start(&node).context("starting command artifact retention")?;
     let jobs_node = node.clone();
     tokio::spawn(async move {
         let mut delay = on::Backoff::default();
@@ -469,7 +482,7 @@ pub async fn run_prepared(
         _ => {}
     }
 
-    let watchdog = watchdog::Watchdog::start(&node.world.node_log()).context("starting the control-loop watchdog")?;
+    let watchdog = watchdog::Watchdog::start(node.log.clone()).context("starting the control-loop watchdog")?;
     loop {
         let accepted = tokio::select! {
             // A ready watchdog request precedes a flood of new clients;

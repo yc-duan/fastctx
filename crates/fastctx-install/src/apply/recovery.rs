@@ -95,6 +95,9 @@ pub(super) fn before(places: &Places) -> Result<Report, Error> {
     report.changed.extend(files.changed);
     report.preserved.extend(files.preserved);
     report.leftovers.extend(files.cleanup.iter().map(ToString::to_string));
+    if let Err(error) = crate::transaction::collect_finished(&places.root) {
+        report.leftovers.push(error.to_string());
+    }
     Ok(report)
 }
 

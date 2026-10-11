@@ -352,6 +352,24 @@ pub struct JobProgram {
     pub starter: ProcessIdentity,
 }
 
+/// A host received an ended job's answer. The output name distinguishes
+/// identical short job IDs in different towns without trusting a remote path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobDelivery {
+    pub job: JobId,
+    pub output: String,
+    pub at: Timestamp,
+    pub shown_whole: bool,
+}
+
+/// An ended job included in an MCP response, awaiting its transport receipt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompletedJob {
+    pub machine: MachineName,
+    pub job: JobId,
+    pub output: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputLost {
     pub kept_bytes: u64,

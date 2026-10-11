@@ -19,25 +19,27 @@ use crate::Node;
 
 /// Waits until every job in `jobs` ends. `caller` is the resident whose
 /// shell asked, if any.
-pub async fn wait(node: &Arc<Node>, caller: Option<Address>, jobs: Vec<JobId>) -> Result<Ready, Failure> {
+pub async fn wait(node: &Arc<Node>, caller: Option<Address>, jobs: Vec<JobId>, parent: Option<JobId>) -> Result<Ready, Failure> {
     let here = node.machine();
     // Listening before the records are read, so no end is missed.
     let mut changes = node.jobs.subscribe();
-    let mut paths = Vec::new();
-    for job in &jobs {
-        let (world, wanted) = (node.world.clone(), job.clone());
-        let path = tokio::task::spawn_blocking(move || crate::stop::find(&world, &wanted))
-            .await
-            .map_err(|error| Failure::new(error.to_string()))?
-            .map_err(|error| Failure::new(format!("looking for {job}: {error}")))?
-            .ok_or_else(|| {
-                Failure::new(format!(
-                    "{here} has no job {job}; `fastctx w {job}` says where it runs, and `on` that machine waits there"
-                ))
-            })?;
-        paths.push(path);
-    }
-    let mut held = Held { node: node.clone(), jobs: Vec::new(), followers: Vec::new(), done: false };
+    let registering = node.clone();
+    let wanted = jobs.clone();
+    let (paths, readers) = tokio::task::spawn_blocking(move || {
+        let _gate = registering.disk.lock().expect("never poisoned");
+        let mut paths = Vec::new();
+        let mut readers = Vec::new();
+        for job in wanted {
+            let path = crate::stop::find(&registering.world, &job)
+                .map_err(|error| Failure::new(format!("looking for {job}: {error}")))?
+                .ok_or_else(|| Failure::new(format!("{here} has no job {job}; `fastctx w {job}` says where it runs, and `on` that machine waits there")))?;
+            fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
+            readers.push(crate::job_reader::hold(&registering, &path));
+            paths.push(path);
+        }
+        Ok::<_, Failure>((paths, readers))
+    }).await.map_err(|error| Failure::new(error.to_string()))??;
+    let mut held = Held { node: node.clone(), jobs: Vec::new(), followers: Vec::new(), _readers: readers, done: false };
     for (job, path) in jobs.iter().zip(&paths) {
         let _delivery = node.job_ends.lock(path).await;
         let record = crate::jobs::read(path).await?;
@@ -52,12 +54,12 @@ pub async fn wait(node: &Arc<Node>, caller: Option<Address>, jobs: Vec<JobId>) -
                 follower: None,
                 account: None,
             };
+            let mut follower = crate::on_delivery::Following::start(node, &origin, &record.machine);
+            follower.started(job);
+            held.followers.push((job.clone(), follower));
             if owner.machine == node.machine() {
                 let gate = node.residents.management(&owner.resident)?;
                 let _claiming = gate.write().await;
-                let mut follower = crate::on_delivery::Following::start(node, &origin, &record.machine);
-                follower.started(job);
-                held.followers.push((job.clone(), follower));
                 let directory = node.world.resident(record.town.as_ref(), &owner.resident);
                 for pending in crate::inbox::pending(&directory).map_err(|error| Failure::new(error.to_string()))? {
                     if pending.delivery.id == crate::inbox::job_notice_id(&record)
@@ -84,17 +86,27 @@ pub async fn wait(node: &Arc<Node>, caller: Option<Address>, jobs: Vec<JobId>) -
             Err(broadcast::error::RecvError::Closed) => unreachable!("the node holds the sender"),
         }
     };
-    Ok(Ready { reply: Reply::Waited { records }, held })
+    Ok(Ready { reply: Reply::Waited { records }, held, caller, parent })
 }
 
 /// Keep completion claims alive until the IPC client acknowledges its output.
 pub(crate) struct Ready {
     pub(crate) reply: Reply,
     held: Held,
+    caller: Option<Address>,
+    parent: Option<JobId>,
 }
 
 impl Ready {
-    pub(crate) async fn take(self) -> Result<(), Failure> {
+    pub(crate) async fn take(self, delivered: bool) -> Result<(), Failure> {
+        let Reply::Waited { records } = &self.reply else { unreachable!("a wait answers with records") };
+        let jobs = records.iter().map(|record| fastctx_types::run::CompletedJob {
+            machine: record.machine.clone(), job: record.id.clone(), output: record.output.clone(),
+        }).collect::<Vec<_>>();
+        if delivered {
+            crate::retention::wait_taken(&self.held.node, self.caller.as_ref(), self.parent.as_ref(), &jobs)
+                .map_err(|error| Failure::new(format!("recording waited ends: {error}")))?;
+        }
         self.held.take().await
     }
 }
@@ -141,6 +153,7 @@ struct Held {
     node: Arc<Node>,
     jobs: Vec<(JobId, PathBuf)>,
     followers: Vec<(JobId, crate::on_delivery::Following)>,
+    _readers: Vec<crate::job_reader::Lease>,
     done: bool,
 }
 
@@ -160,14 +173,14 @@ impl Held {
                     fastctx_platform::Permissions::Private,
                 )
                 .map_err(|error| Failure::new(error.to_string()))?;
+                for (followed, follower) in &self.followers {
+                    if followed == job {
+                        follower.taken(job).map_err(|error| Failure::new(error.to_string()))?;
+                    }
+                }
                 if let Some(owner) = record.owner.resident().filter(|owner| owner.machine == self.node.machine()) {
                     let gate = self.node.residents.management(&owner.resident)?;
                     let _taking = gate.write().await;
-                    for (followed, follower) in &self.followers {
-                        if followed == job {
-                            follower.taken(job).map_err(|error| Failure::new(error.to_string()))?;
-                        }
-                    }
                     let directory = self.node.world.resident(record.town.as_ref(), &owner.resident);
                     crate::inbox::consume(&directory, &crate::inbox::job_notice_id(&record))
                         .map_err(|error| Failure::new(error.to_string()))?;
@@ -193,7 +206,8 @@ impl Held {
                     let acting = account
                         .map(|account| fastctx_types::access::Acting::one(account.hub, account.account))
                         .unwrap_or_default();
-                    crate::speech::tell(&self.node, &acting, owner, id, notice, crate::speech::Owed::Working).await?;
+                    crate::job_receipts::consumed(&self.node, owner, &acting, id, notice)
+                        .map_err(|error| Failure::new(error.to_string()))?;
                 }
                 let owed =
                     self.node.world.job_owner(&self.node.machine(), record.town.as_ref(), &record.owner).job_owed(job);
@@ -215,37 +229,6 @@ impl Held {
         self.done = true;
         failed.map_or(Ok(()), Err)
     }
-}
-
-/// Receipts kept beside this owner's jobs, including jobs from earlier towns.
-pub(crate) fn consumed(
-    world: &fastctx_types::layout::WorldDir,
-    machine: &fastctx_types::MachineName,
-    owner: &fastctx_types::run::JobOwner,
-) -> std::io::Result<Vec<fastctx_types::NoticeId>> {
-    let mut ids = Vec::new();
-    for town in std::iter::once(None).chain(world.towns()?.into_iter().map(Some)) {
-        let directory = world.job_owner(machine, town.as_ref(), owner).jobs();
-        let entries = match std::fs::read_dir(directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        for entry in entries {
-            let path = entry?.path();
-            if path.extension().is_some_and(|extension| extension == "wait-taken") {
-                let text = std::fs::read_to_string(&path)?;
-                let id = if text.is_empty() {
-                    let record = fastctx_hands::run::record::read(&path.with_extension("json"))?;
-                    crate::inbox::job_notice_id(&record)
-                } else {
-                    text.parse().map_err(std::io::Error::other)?
-                };
-                ids.push(id);
-            }
-        }
-    }
-    Ok(ids)
 }
 
 impl Drop for Held {

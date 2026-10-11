@@ -36,10 +36,9 @@ fn main(_arguments: Vec<OsString>) {
     if let Err(error) = serve() {
         if let Some(config) = CONFIG.get()
             && let Ok(root) = config.root()
-            && let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(root.join("guardian.log"))
+            && let Ok(file) = fastctx_platform::rolling_log::RollingLog::open(&root.join("guardian.log"))
         {
-            use std::io::Write as _;
-            let _ = writeln!(file, "guardian failed: {error:#}");
+            let _ = file.write(format!("guardian failed: {error:#}\n").as_bytes());
         }
         // Exiting without SERVICE_STOPPED is an SCM failure even if the
         // failure happened before a status handle could be registered.

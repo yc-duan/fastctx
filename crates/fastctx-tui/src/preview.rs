@@ -348,6 +348,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         path_separator: ';',
         case_sensitive: false,
         version: "1.0.0".into(),
+        completion_receipts: false,
         shell: String::new(),
         form: None,
         node_lifetime: None,

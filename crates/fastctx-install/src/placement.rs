@@ -24,6 +24,9 @@ pub fn ensure(root: &Path, source: &Path) -> anyhow::Result<PathBuf> {
             crate::renewal::digest(&installed)? == plan.candidate.build.digest,
             "installed kernel differs from completed renewal"
         );
+        if let Err(error) = crate::program_collection::collect(root) {
+            eprintln!("fastctx: collecting unused programs: {error:#}");
+        }
         return Ok(installed);
     }
     crate::renewal::request(root, true)?;
@@ -35,6 +38,9 @@ pub fn ensure(root: &Path, source: &Path) -> anyhow::Result<PathBuf> {
                     crate::renewal::digest(&installed)? == plan.candidate.build.digest,
                     "installed kernel differs from completed renewal"
                 );
+                if let Err(error) = crate::program_collection::collect(root) {
+                    eprintln!("fastctx: collecting unused programs: {error:#}");
+                }
                 return Ok(installed);
             }
             Phase::Failed => {

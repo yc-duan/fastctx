@@ -318,6 +318,7 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
                     | "upgrade-clean.json"
                     | "config.toml"
                     | "service-node.log"
+                    | "service-node.log.1"
                     | "server-install.lock"
                     | "hub-services.json"
                     | "upgrade-clean.lock"

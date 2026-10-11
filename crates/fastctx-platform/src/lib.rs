@@ -19,6 +19,7 @@ pub mod home;
 pub mod host_process;
 pub mod hostname;
 pub mod identity;
+pub mod image_usage;
 pub mod ipc;
 pub mod job_membership;
 pub mod legacy_text;
@@ -27,6 +28,7 @@ pub mod lock;
 pub mod memory;
 #[cfg(any(target_os = "linux", windows))]
 pub mod output_pipe;
+pub mod owned_directory;
 #[cfg(any(target_os = "linux", windows))]
 pub mod owned_images;
 pub mod parent;
@@ -35,6 +37,7 @@ pub mod private;
 pub mod procfs;
 #[cfg(windows)]
 pub mod registry;
+pub mod rolling_log;
 pub mod service_channel;
 #[cfg(any(target_os = "linux", windows))]
 pub mod terminate;

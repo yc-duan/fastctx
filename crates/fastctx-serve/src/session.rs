@@ -207,6 +207,15 @@ impl Session {
                     fastctx_hands::run::present::display_path(&reply.output.log)
                 )),
                 shown: shown_whole(&reply).then(|| reply.job.clone()),
+                completed: (!matches!(
+                    reply.state,
+                    fastctx_types::run::RunState::Running | fastctx_types::run::RunState::Exited { .. }
+                ))
+                .then(|| fastctx_types::run::CompletedJob {
+                    machine: reply.machine.clone(),
+                    job: reply.job.clone(),
+                    output: reply.output.log.clone(),
+                }),
             },
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== run (not run) ===\n{error}")),
@@ -290,6 +299,7 @@ impl Session {
                 receipt: None,
                 source: None,
                 shown: None,
+                completed: None,
             },
             Ok(other) => Answer::error(format!("=== ask_colleague (the node answered something else: {other:?}) ===")),
             Err(error) => failed(error),
@@ -352,6 +362,7 @@ impl Session {
                     receipt: None,
                     source: None,
                     shown: None,
+                    completed: None,
                 }
             }
             Ok(other) => {

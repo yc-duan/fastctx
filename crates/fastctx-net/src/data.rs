@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use crate::dial::{self, HubSocket};
 use crate::ids::CertPin;
 use crate::sign::{Digest, Domain, SecretKey, sha256};
-use crate::wire::{self, Carried, Down, End, Intent, PROTOCOL, Up};
+use crate::wire::{self, Carried, Down, End, Intent, Up};
 
 /// What the sink says when it has every byte and they check out. The
 /// source waits for it before closing, since a close passes the hub as a
@@ -47,7 +47,7 @@ impl Stream {
         let mut socket = dialed.socket;
         let proof = key.sign(Domain::Session, &dialed.binding);
         let hello = Up::Hello {
-            protocol: PROTOCOL,
+            protocol: wire::GREETING_PROTOCOL,
             version: env!("CARGO_PKG_VERSION").to_string(),
             intent: Intent::Data { key: key.public(), proof, stream, end },
         };

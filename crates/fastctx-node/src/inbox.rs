@@ -123,7 +123,7 @@ pub fn pending(directory: &ResidentDir) -> io::Result<Vec<Pending>> {
 
 /// Something kept that went in: it leaves the inbox and goes on the
 /// `delivered` list. Returns it, or `None` when it was settled already.
-pub fn settle(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pending>> {
+pub fn settle(node: &Node, directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pending>> {
     let (_transaction, current) = crate::resident_storage::current(directory)?;
     let directory = &current;
     let Some(pending) = read_here(directory, id)? else { return Ok(None) };
@@ -132,6 +132,21 @@ pub fn settle(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<Pendi
             std::fs::remove_file(path(directory, id))?;
         }
         return Ok(None);
+    }
+    if let Notice::JobEnded { job, machine, output, .. } = &pending.delivery.notice {
+        let about: fastctx_types::residents::About = parse(&directory.about(), &std::fs::read(directory.about())?)?;
+        crate::retention::confirmed(
+            node,
+            fastctx_types::Address { machine: node.machine(), resident: about.id },
+            machine.clone(),
+            fastctx_types::run::JobDelivery {
+                job: job.clone(),
+                output: output.clone(),
+                at: jiff::Timestamp::now(),
+                shown_whole: false,
+            },
+            Some(&about.acting),
+        )?;
     }
     let receipts = directory.path().join("delivery-receipts");
     ensure_private_dir(&receipts)?;
@@ -169,7 +184,10 @@ pub(crate) fn consume(directory: &ResidentDir, id: &NoticeId) -> io::Result<()> 
     let (_transaction, directory) = crate::resident_storage::current(directory)?;
     let receipts = directory.path().join("delivery-receipts");
     ensure_private_dir(&receipts)?;
-    publish(&receipts.join(id.as_str()), b"", Permissions::Private)?;
+    match publish_new(&receipts.join(id.as_str()), b"consumed", Permissions::Private) {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
+        result => result?,
+    }
     if directory.path().file_name().is_some_and(|name| name == "archive") {
         return Ok(());
     }
@@ -324,7 +342,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
         // Output that went straight on goes once it got there too.
         let piped = record.on.as_ref().is_some_and(|on| on.piped);
         if taken && (!piped || record_path.with_extension("on-piped").try_exists()?) {
-            crate::job_watch::forget(node, &record_path);
+            crate::job_watch::copied(node, &record_path);
         }
         return Ok(());
     }

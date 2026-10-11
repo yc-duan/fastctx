@@ -102,6 +102,11 @@ fn needed(job: &JobRecord) -> io::Result<Option<&'static str>> {
     Ok(Some("the supervisor has not recorded the fate of the reserved job"))
 }
 
+/// Whether a job can still have processes using its files.
+pub fn in_use(job: &JobRecord) -> io::Result<bool> {
+    Ok(needed(job)?.is_some())
+}
+
 fn entries(path: &Path) -> io::Result<Vec<PathBuf>> {
     match fs::read_dir(path) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),

@@ -673,8 +673,8 @@ pub fn receipts(directory: &Path) -> io::Result<Vec<(String, String)>> {
     Ok(accepted)
 }
 
-/// The ids the mod has handed over since the last call; their inbox files
-/// and receipts are gone once this returns.
+/// The ids the mod has handed over; their inbox files and assembled parts
+/// are gone once this returns. Receipts remain as duplicate-delivery proof.
 pub fn handed_over(directory: &Path) -> io::Result<Vec<String>> {
     let receipts = directory.join("receipts");
     let mut ids = Vec::new();
@@ -689,6 +689,20 @@ pub fn handed_over(directory: &Path) -> io::Result<Vec<String>> {
             continue;
         }
         remove(&directory.join("inbox").join(format!("{name}.json")))?;
+        let parts = directory.join("inbox-parts").join(&name);
+        match std::fs::read_dir(&parts) {
+            Ok(entries) => {
+                for part in entries {
+                    let part = part?;
+                    if part.file_name().to_str().is_some_and(|name| name.parse::<usize>().is_ok()) {
+                        remove(&part.path())?;
+                    }
+                }
+                std::fs::remove_dir(&parts)?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
         // Keep the receipt across mod reload and duplicate delivery.
         ids.push(name);
     }

@@ -280,6 +280,11 @@ impl ResidentDir {
         self.out().join(format!("{job}.log"))
     }
 
+    /// Temporary files owned by this job share its confirmed-end lifetime.
+    pub fn job_scratch(&self, job: &JobId) -> PathBuf {
+        self.out().join(format!("{job}.tmp"))
+    }
+
     /// Present while the resident is owed word of the job's end: the job
     /// went on in the background after its call answered.
     pub fn job_owed(&self, job: &JobId) -> PathBuf {

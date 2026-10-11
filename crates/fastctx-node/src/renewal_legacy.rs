@@ -14,7 +14,7 @@ use std::borrow::Cow;
 mod page_identity;
 
 pub(crate) fn enabled(protocol: u32, peer: &Peer) -> bool {
-    matches!(protocol, 5..=10) && self::peer(peer)
+    (protocol == 10 && matches!(peer, Peer::Command { .. })) || (matches!(protocol, 5..=10) && self::peer(peer))
 }
 
 pub(crate) fn peer(peer: &Peer) -> bool {
@@ -28,6 +28,11 @@ pub(crate) fn peer(peer: &Peer) -> bool {
 }
 
 pub(crate) fn call(protocol: u32, peer: &Peer, call: &Call) -> bool {
+    // Protocol 10 commands keep their OS-authenticated caller identity;
+    // their optional receipt fields do not change command authorization.
+    if protocol == 10 && matches!(peer, Peer::Command { .. }) {
+        return true;
+    }
     if protocol == 5 && matches!(call, Call::Machines { .. } | Call::Page(_)) {
         return false;
     }

@@ -33,7 +33,8 @@ pub fn run(args: WaitArgs) -> anyhow::Result<ExitCode> {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let mut client =
         runtime.block_on(Client::connect(&world, command_peer())).context("reaching this machine's node")?;
-    let records = match runtime.block_on(client.call(Call::Wait { jobs, receipt: true })) {
+    let parent = std::env::var("FASTCTX_JOB").ok().map(|job| job.parse()).transpose()?;
+    let records = match runtime.block_on(client.call(Call::Wait { jobs, receipt: true, parent })) {
         Ok(Reply::Waited { records }) => records,
         Ok(other) => anyhow::bail!("the node answered something else: {other:?}"),
         Err(CallError::Failed(failure)) => anyhow::bail!("{}", failure.message),

@@ -282,9 +282,9 @@ pub(crate) async fn run(
         Err(failure) => return Err(Failure::new(format!("the script starts on {}: {failure}", works_on.name))),
     };
     if let Some(consumed) = &reply.consumed {
-        for consumed in consumed.iter() {
-            crate::inbox::consume(&directory, consumed).map_err(|error| Failure::new(error.to_string()))?;
-            let letter = crate::speech::fixed_id("letter", &[reply.machine.as_str(), consumed.as_str()]);
+        crate::job_receipts::apply_consumed(&directory, consumed).map_err(|error| Failure::new(error.to_string()))?;
+        for id in consumed.iter().filter(|id| !id.as_str().starts_with("letter-")) {
+            let letter = crate::speech::fixed_id("letter", &[reply.machine.as_str(), id.as_str()]);
             crate::inbox::consume(&directory, &letter).map_err(|error| Failure::new(error.to_string()))?;
         }
     }
@@ -307,14 +307,22 @@ pub(crate) async fn run(
 
 /// The answer that showed `job` whole reached its host: where it ran, if
 /// it ran elsewhere, its files go.
+pub(crate) fn get_dispatched(node: &Node, resident: &ResidentId, job: &JobId) -> Option<Went> {
+    node.dispatched.jobs.lock().expect("never poisoned").get(&(resident.clone(), job.clone())).cloned()
+}
+
+pub(crate) fn take_dispatched(node: &Node, resident: &ResidentId, job: &JobId) -> Option<Went> {
+    node.dispatched.jobs.lock().expect("never poisoned").remove(&(resident.clone(), job.clone()))
+}
+
 pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bool {
     let Some((works_on, town)) =
-        node.dispatched.jobs.lock().expect("never poisoned").remove(&(resident.clone(), job.clone()))
+        take_dispatched(node, resident, job)
     else {
         return false;
     };
     let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
-    let (node, call) = (node.clone(), RemoteCall::Forget { resident: resident.clone(), town, job: job.clone() });
+    let (node, call) = (node.clone(), RemoteCall::Forget { resident: resident.clone(), town, job: job.clone(), delivery: None, origin: None, through_exit: false });
     tokio::spawn(async move {
         match node.call(&acting, &works_on, Purpose::Hands, call).await {
             Ok(Ok(_)) => {}

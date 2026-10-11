@@ -263,6 +263,7 @@ fn nodes() -> Vec<NodesReply> {
         path_separator: if os == "windows" { '\\' } else { '/' },
         case_sensitive: os != "windows",
         version: "fixture-version".into(),
+        completion_receipts: false,
         shell: String::new(),
         form: None,
         node_lifetime: lifetime.then(|| {

@@ -3,11 +3,11 @@
 //! an idle node handoff; ordinary node-owned children retain its lifetime.
 
 use std::ffi::{OsStr, OsString};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{self, PipeReader, PipeWriter};
 use std::mem::{size_of, zeroed};
 use std::os::windows::ffi::OsStrExt as _;
-use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
+use std::os::windows::io::{AsRawHandle as _, BorrowedHandle, FromRawHandle as _, OwnedHandle};
 use std::ptr;
 use std::rc::Rc;
 use std::sync::{
@@ -38,6 +38,9 @@ use super::account::{Environment, Identity, Login};
 use super::config::Config;
 use super::runtime::{Event, Instance};
 use super::security::Descriptor;
+
+#[path = "output.rs"]
+mod output;
 
 pub(super) struct Child {
     pub instance: Arc<Instance>,
@@ -90,9 +93,16 @@ impl Child {
         let log = if config.kind == Kind::Node {
             config.directory().join("service-node.log")
         } else {
-            config.root()?.join("hub.log")
+            config.root()?.join("service-hub.log")
         };
-        let output = OpenOptions::new().create(true).append(true).open(log).context("opening the foreground log")?;
+        let log = fastctx_platform::rolling_log::RollingLog::shared(&log).context("opening the foreground log")?;
+        let (output_read, output) = private_pipe(user)?;
+        let output_token = token
+            .map(|token| {
+                // SAFETY: the login owns this live token throughout creation.
+                unsafe { BorrowedHandle::borrow_raw(token) }.try_clone_to_owned()
+            })
+            .transpose()?;
         let input = File::open(r"\\.\NUL").context("opening null stdin")?;
         let mut handles = vec![input.as_raw_handle(), output.as_raw_handle()];
         if config.kind == Kind::Node {
@@ -173,6 +183,7 @@ impl Child {
             login: login.map(Rc::new),
         };
         let watching = (|| {
+            child.watchers.push(output::start(output_read, log, output_token)?);
             child.watchers.push(watch_exit(&child.process, child.instance.clone(), events.clone())?);
             if config.kind == Kind::Node {
                 child.watchers.push(watch_messages(

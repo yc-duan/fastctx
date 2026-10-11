@@ -75,6 +75,7 @@ impl Jobs {
         let (world, machine, executable) = (node.world.clone(), node.machine(), node.fastctx.clone());
         let registering = node.clone();
         let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
+            let _collecting = registering.disk.lock().expect("never poisoned");
             let home = user_home().map_err(|error| failure("finding the home directory", error))?;
             let environment =
                 world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
@@ -98,7 +99,8 @@ impl Jobs {
             };
             let launched = run::launch::launch_with_io_registered(&launch, mode, input.as_deref(), |path| {
                 if let Some(registration) = registration {
-                    *registration.lock().expect("never poisoned") = Some(crate::on::Follower::new(&registering, path));
+                    *registration.lock().expect("never poisoned") =
+                        Some(crate::on::Follower::reserved(&registering, path));
                 }
             })?;
             crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());
@@ -208,16 +210,17 @@ impl Jobs {
         let state = state(&record);
         // Why it answered says something only of a job that still runs.
         let answered = answered.filter(|_| state == RunState::Running);
-        let consumed = if record.owner.resident().is_some_and(|owner| &owner.machine != machine) {
-            let (world, machine, owner) = (node.world.clone(), machine.clone(), record.owner.clone());
-            let consumed = tokio::task::spawn_blocking(move || crate::waiting::consumed(&world, &machine, &owner))
-                .await
-                .map_err(|error| Failure::new(format!("reading completion receipts: {error}")))?
+        let (receipt_node, receipt_path) = (node.clone(), launched.record.clone());
+        let consumed = tokio::task::spawn_blocking(move || crate::job_receipts::snapshot(&receipt_node, &receipt_path))
+            .await
+            .map_err(|error| Failure::new(format!("reading completion receipts: {error}")))?
+            .map_err(|error| failure("reading completion receipts", error))?;
+        if let Some(owner) = record.owner.resident().filter(|owner| owner.machine == *machine) {
+            let directory = node.world.resident(record.town.as_ref(), &owner.resident);
+            crate::job_receipts::apply_consumed(&directory, &consumed)
                 .map_err(|error| failure("reading completion receipts", error))?;
-            (!consumed.is_empty()).then(|| Box::new(consumed))
-        } else {
-            None
-        };
+        }
+        let consumed = (!consumed.is_empty()).then(|| Box::new(consumed));
         let reply =
             RunReply { machine: machine.clone(), job: launched.job, state, output, visited, answered, consumed };
         Ok((reply, record))
@@ -234,16 +237,21 @@ pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_typ
     let path = directory.job_record(&job);
     let checked = {
         let path = path.clone();
-        tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+        tokio::task::spawn_blocking(move || -> std::io::Result<Option<JobRecord>> {
             let record = record::read(&path)?;
             let finished = matches!(record.end, Some(Ended { how: EndedHow::Finished, .. }));
-            Ok(record.owner == owner && finished && record.on.is_none() && !directory.job_owed(&job).try_exists()?)
+            Ok((record.owner == owner && finished && record.on.is_none() && !directory.job_owed(&job).try_exists()?).then_some(record))
         })
         .await
     };
     match checked {
-        Ok(Ok(true)) => crate::job_watch::forget(node, &path),
-        Ok(Ok(false)) => {}
+        Ok(Ok(Some(record))) => {
+            let owner = record.owner.resident().expect("checked resident");
+            if let Err(error) = crate::retention::received(node, owner, &fastctx_types::run::JobDelivery {
+                job: record.id.clone(), output: record.output.clone(), at: Timestamp::now(), shown_whole: true,
+            }) { node.log.line(format_args!("recording job delivery: {error}")); }
+        },
+        Ok(Ok(None)) => {}
         Ok(Err(error)) => node.log.line(format_args!("removing a job shown whole: {error}")),
         Err(error) => node.log.line(format_args!("removing a job shown whole: {error}")),
     }
@@ -258,24 +266,35 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
+    if fastctx_hands::run::program::in_use(&record)? {
+        return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "job processes still use its files"));
+    }
     // The supervisor writes its last record and then lets go of the log; on
     // Windows a file it still holds cannot go.
     if let Some(supervisor) = &record.supervisor {
         fastctx_platform::host_process::wait_for_exit(supervisor)?;
     }
+    let delivered =
+        fastctx_install::renewal::read_json::<fastctx_types::run::JobDelivery>(&path.with_extension("delivered"))?
+            .map(|delivery| delivery.at)
+            .unwrap_or_else(Timestamp::now);
+    retain_scratch(path, delivered)?;
     // The record goes last: a log without one would be found by nobody.
     let mut files = vec![
         PathBuf::from(&record.output),
         path.with_extension("sh"),
-        path.with_extension("wait-taken"),
         record::lock_path(path),
+        path.with_extension("on"),
+        path.with_extension("waited"),
     ];
     files.extend(record.stderr.as_deref().map(PathBuf::from));
     if let Some(on) = &record.on {
         files.push(PathBuf::from(&on.state));
         files.extend(record.stdin.as_deref().map(PathBuf::from));
-        files.extend(["notice", "owed", "on-taken", "on-piped"].map(|extension| path.with_extension(extension)));
+        files.extend(["on-taken", "on-piped", "on-stopped"].map(|extension| path.with_extension(extension)));
     }
+    files.extend(["notice", "owed", "delivered"].map(|extension| path.with_extension(extension)));
+    files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));
     files.push(path.to_path_buf());
     for file in files {
         match std::fs::remove_file(&file) {
@@ -284,6 +303,35 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A transferred output can go immediately; temporary artifacts retain
+/// their own durable delivery clock after the job record is gone.
+pub(crate) fn retain_scratch(path: &Path, delivered: Timestamp) -> std::io::Result<()> {
+    let job = match record::read(path) {
+        Ok(job) => job,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let out = Path::new(&job.output).parent().ok_or_else(|| std::io::Error::other("job output has no directory"))?;
+    let scratch = out.join(format!("{}.tmp", job.id));
+    if !scratch.try_exists()? {
+        return Ok(());
+    }
+    if fastctx_platform::owned_directory::is_link(&std::fs::symlink_metadata(&scratch)?) {
+        return Err(std::io::Error::other("job scratch is a filesystem link"));
+    }
+    if crate::retention::entries(&scratch)?.is_empty() {
+        return std::fs::remove_dir(scratch);
+    }
+    match fastctx_platform::publish_new(
+        &scratch.join(".delivered"),
+        &serde_json::to_vec(&delivered).map_err(std::io::Error::other)?,
+        fastctx_platform::Permissions::Private,
+    ) {
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        result => result,
+    }
 }
 
 /// Returns when words come for the resident `words` watches; never, when

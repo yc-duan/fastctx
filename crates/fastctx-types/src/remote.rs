@@ -53,6 +53,12 @@ pub enum RemoteCall {
         resident: ResidentId,
         town: Option<TownName>,
         job: JobId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delivery: Option<crate::run::JobDelivery>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<crate::on::OnOrigin>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        through_exit: bool,
     },
     /// Run a part of a script there (`world-run.md`, `on`). The package
     /// follows on the data connection, `sizes` long; then the machine says

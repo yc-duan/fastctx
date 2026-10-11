@@ -77,7 +77,7 @@ fn archive(world: &WorldDir, id: &ResidentId) -> io::Result<Vec<String>> {
         ensure_private_dir(&destination)?;
         for entry in std::fs::read_dir(&base)? {
             let entry = entry?;
-            if matches!(entry.file_name().to_str(), Some("archive" | "jobs" | "out")) {
+            if matches!(entry.file_name().to_str(), Some("archive" | "jobs" | "out" | "artifacts-delivered.json")) {
                 continue;
             }
             let target = destination.join(entry.file_name());

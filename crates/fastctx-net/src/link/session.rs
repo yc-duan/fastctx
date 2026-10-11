@@ -23,7 +23,7 @@ use crate::dial::{self, HubSocket};
 use crate::envelope::{Envelope, Kind};
 use crate::message::LetterBody;
 use crate::sign::{Domain, sha256};
-use crate::wire::{self, Down, HEARTBEAT, Intent, Letters, PROTOCOL, Refusal, SILENCE, Up};
+use crate::wire::{self, Down, HEARTBEAT, Intent, Letters, Refusal, SILENCE, Up};
 
 /// A connection that stays up this long counts as healthy: the next failure
 /// is tried again at once.
@@ -148,7 +148,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
         Letters { epoch: letters.file.epoch, taken: letters.file.taken }
     };
     let hello = Up::Hello {
-        protocol: PROTOCOL,
+        protocol: wire::GREETING_PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
         intent: Intent::Session { key: inner.key.public(), proof, letters: position, through: upstream.relay.clone() },
     };

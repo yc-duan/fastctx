@@ -22,11 +22,12 @@ pub struct Answer {
     /// until the answer is shortened: told with the receipt, so the node
     /// removes what nobody reads again.
     pub shown: Option<JobId>,
+    pub completed: Option<fastctx_types::run::CompletedJob>,
 }
 
 impl Answer {
     pub fn text(text: String, is_error: bool) -> Self {
-        Self { content: vec![Content::Text(text)], is_error, receipt: None, source: None, shown: None }
+        Self { content: vec![Content::Text(text)], is_error, receipt: None, source: None, shown: None, completed: None }
     }
 
     pub fn error(text: String) -> Self {
@@ -41,7 +42,9 @@ impl Answer {
 
     pub async fn sent(mut self) {
         if let Some((mut client, resident, ids)) = self.receipt.take()
-            && let Err(error) = client.call(Call::Taken { resident, ids, shown: self.shown.take() }).await
+            && let Err(error) = client
+                .call(Call::Taken { resident, ids, shown: self.shown.take(), completed: self.completed.take() })
+                .await
         {
             eprintln!("fastctx serve: the response was written but its receipt could not be recorded: {error}");
         }

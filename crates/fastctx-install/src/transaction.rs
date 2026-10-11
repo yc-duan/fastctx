@@ -37,10 +37,10 @@ pub use crate::snapshot::Snapshot;
 use crate::snapshot::state_of_staged;
 
 mod durable;
+pub use durable::pending_record;
 pub(crate) use durable::prepare_settings_command;
 pub use durable::recover;
-pub use durable::{prune_owned, retained_archives};
-pub use durable::pending_record;
+pub use durable::{collect_finished, prune_owned, retained_archives};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Problem {
