@@ -24,6 +24,8 @@ mod fork_history;
 pub(crate) mod history;
 mod image_records;
 pub(crate) use image_records::paths as image_records;
+mod image_flush;
+pub(crate) use image_flush::wait_for_image;
 pub mod management;
 pub(crate) mod pairing;
 mod process;

@@ -120,6 +120,16 @@ export function presentation(reserve, currentTurn) {
       // Only the conversation's own messages are certain to reach the file;
       // the node waits for the last of them when it reads that file.
       if (result.message.type === 'user' || result.message.type === 'assistant') reports.stored(result.uuid)
+      if (e.agentId === undefined && e.door === 'prompt' && result.message.type === 'user'
+        && !result.message.content.some(block => block.type === 'tool_result')) {
+        const text = result.message.content.filter(block => block.type === 'text').map(block => block.text).join('\n')
+        if (!['<local-command-caveat>', '<local-command-stdout>', '<local-command-stderr>', '<command-name>',
+          '<command-message>', '[Request interrupted by user'].some(prefix => text.trimStart().startsWith(prefix))) {
+          await emit(reports, { event: 'heard', delivery: null, turn: turn ?? null, from: null, text, notice: null,
+            message: { id: result.uuid, client_id: null, attachments: [], content: result.message.content,
+              hook_fragments: [], presentation: null, detail: { uuid: result.uuid, message: result.message } } })
+        }
+      }
       const streamedKinds = new Set()
       if (latestStep?.turn === turn) {
         for (const block of latestStep.blocks.values()) streamedKinds.add(block.kind)

@@ -185,7 +185,7 @@ impl Record {
         &mut self,
         value: &Value,
         data_url: bool,
-        destination: &mut std::fs::File,
+        destination: &mut impl Write,
         cancelled: &AtomicBool,
     ) -> io::Result<String> {
         if value.get("file_id").is_some() || value.get("fileId").is_some() {

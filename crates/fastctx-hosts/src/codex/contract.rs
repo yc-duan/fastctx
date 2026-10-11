@@ -26,6 +26,10 @@ fn dormant_threads_and_completed_turns_release_runtime_state_without_losing_iden
         host.adopt(
             &thread,
             super::ThreadSpec {
+                owner: fastctx_types::Address {
+                    machine: "desktop".parse().unwrap(),
+                    resident: "codex-c0de".parse().unwrap(),
+                },
                 cwd: host.workdir.clone(),
                 developer_instructions: "private fixture".repeat(128),
                 config: json!({}),
@@ -69,7 +73,7 @@ fn captured_live_items_match_completed_history() {
     while let Ok(HostEvent::Happened { event, .. }) = receiver.try_recv() {
         live.push(event);
     }
-    let history = history::project(&fixture["history"], None);
+    let history = history::project(&fixture["history"], None, None);
     let finished = |events: Vec<fastctx_types::session::SessionEvent>| {
         events
             .into_iter()

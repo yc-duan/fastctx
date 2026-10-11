@@ -270,10 +270,41 @@ fn recorded(
             if record.value["type"] != "user" {
                 continue;
             }
-            record.value["message"]["content"]
-                .as_array()
-                .and_then(|blocks| claude_image(blocks, &record.value, source))
-                .map(|(encoded, url, mime)| (encoded.clone(), url, mime))
+            if let AttachmentSource::Upload(wanted) = source {
+                let blocks = record.value["message"]["content"].as_array().map_or(&[][..], Vec::as_slice);
+                if !fastctx_types::session::images::kept(blocks).contains(wanted) {
+                    continue;
+                }
+                let encoded: Vec<_> = blocks
+                    .iter()
+                    .filter(|block| block["type"] == "image")
+                    .map(|block| block["source"]["data"].clone())
+                    .collect();
+                let mut matching = None;
+                for value in encoded {
+                    let mut digest = fastctx_hosts::image_digest::Digest::default();
+                    record.decode(&value, false, &mut digest, cancel)?;
+                    let (size, sha256) = digest.finish();
+                    if size == wanted.file.size && sha256 == wanted.file.sha256 {
+                        matching = Some(value);
+                        break;
+                    }
+                }
+                matching.and_then(|encoded| {
+                    record.value["message"]["content"]
+                        .as_array()?
+                        .iter()
+                        .find(|block| block["type"] == "image" && block["source"]["data"] == encoded)
+                        .map(|block| {
+                            (encoded, false, block["source"]["media_type"].as_str().unwrap_or_default().to_owned())
+                        })
+                })
+            } else {
+                record.value["message"]["content"]
+                    .as_array()
+                    .and_then(|blocks| claude_image(blocks, &record.value, source))
+                    .map(|(encoded, url, mime)| (encoded.clone(), url, mime))
+            }
         };
         let Some((encoded, data_url, media)) = candidate else { continue };
         if selected.is_some() {
@@ -311,18 +342,8 @@ fn recorded(
     Ok(selected.map(|(path, snapshot, description)| File { path, snapshot, description, _temporary: Some(scope) }))
 }
 
-fn envelope(blocks: &[Value], source: &AttachmentSource) -> Option<usize> {
-    let AttachmentSource::Upload(wanted) = source else { return None };
-    blocks.iter().find_map(|block| {
-        let text = block.get("text")?.as_str()?;
-        let (message, _) = AttachedMessage::read(text)?;
-        message.attachments.iter().filter(|a| a.is_image()).position(|a| a == wanted)
-    })
-}
-
 fn claude_image<'a>(blocks: &'a [Value], row: &Value, source: &AttachmentSource) -> Option<(&'a Value, bool, String)> {
     let index = match source {
-        AttachmentSource::Upload(_) => envelope(blocks, source)?,
         AttachmentSource::HostImage { host_image: HostImage::Claude { message, image }, .. }
             if row["uuid"] == *message =>
         {

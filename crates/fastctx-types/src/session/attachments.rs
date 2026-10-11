@@ -45,10 +45,16 @@ pub fn restore(event: SessionEvent) -> Vec<SessionEvent> {
     if decoded.is_empty() {
         return vec![event];
     }
+    let pictures = message.as_ref().map(|message| super::images::delivered(message)).unwrap_or_default();
     decoded
         .into_iter()
         .map(|(metadata, text)| {
             let mut restored = metadata.message(&text);
+            restored.images = pictures
+                .iter()
+                .filter(|(delivery, _)| delivery.as_ref() == Some(&metadata.delivery))
+                .map(|(_, image)| image.clone())
+                .collect();
             if let Some(native) = message {
                 restored.content = native.content.clone();
                 restored.detail = native.detail.clone();
@@ -95,6 +101,7 @@ impl AttachedMessage {
             presentation: serde_json::Value::Null,
             detail: serde_json::Value::Null,
             attachments: self.attachments.clone(),
+            images: Vec::new(),
         }
     }
 

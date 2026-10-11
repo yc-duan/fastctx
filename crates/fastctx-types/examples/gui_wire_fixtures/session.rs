@@ -187,6 +187,18 @@ pub fn fixtures() -> Fixtures {
         let message = if i == 0 {
             Some(Box::new(UserMessage {
                 attachments: Vec::new(),
+                images: vec![fastctx_types::session::images::UserImage {
+                    source: fastctx_types::attachments::AttachmentSource::HostImage {
+                        owner: address(),
+                        host_image: fastctx_types::attachments::HostImage::Codex {
+                            turn: turn.clone(),
+                            message: 0,
+                            image: 0,
+                        },
+                    },
+                    name: Some("image.png".into()),
+                    media_type: Some("image/png".into()),
+                }],
                 id: "message-1".into(),
                 client_id: Some("client-1".into()),
                 content: vec![
@@ -219,6 +231,52 @@ pub fn fixtures() -> Fixtures {
                     text: "=== the user moved you to the project mark50 ===".into(),
                 })
             }),
+        }));
+    }
+    for (id, host_image, name, media_type, content) in [
+        (
+            "native-codex-provider",
+            fastctx_types::attachments::HostImage::Codex { turn: turn.clone(), message: 1, image: 2 },
+            None,
+            None,
+            json!({"type":"image","fileId":"provider-reference"}),
+        ),
+        (
+            "native-claude-user",
+            fastctx_types::attachments::HostImage::Claude { message: "native-claude-user".into(), image: 0 },
+            None,
+            Some("image/png".to_owned()),
+            json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}),
+        ),
+    ] {
+        events.push(event(Happened::Heard {
+            delivery: None,
+            turn: Some(turn.clone()),
+            from: None,
+            text: String::new(),
+            notice: None,
+            message: Some(Box::new(UserMessage {
+                attachments: Vec::new(),
+                images: vec![fastctx_types::session::images::UserImage {
+                    source: fastctx_types::attachments::AttachmentSource::HostImage {
+                        owner: match &host_image {
+                            fastctx_types::attachments::HostImage::Claude { .. } => {
+                                "claude-ab12@desktop".parse().unwrap()
+                            }
+                            _ => address(),
+                        },
+                        host_image,
+                    },
+                    name,
+                    media_type,
+                }],
+                id: id.into(),
+                client_id: None,
+                content: vec![content],
+                hook_fragments: Vec::new(),
+                presentation: Value::Null,
+                detail: Value::Null,
+            })),
         }));
     }
     let mut items = vec![

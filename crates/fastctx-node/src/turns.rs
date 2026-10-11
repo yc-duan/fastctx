@@ -30,12 +30,19 @@ use crate::speech::{self, Owed};
 /// Something a host reported about a resident's session.
 /// Applies a report before the source acknowledges or deletes it.
 pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> std::io::Result<()> {
-    if matches!(&event.happened, Happened::Heard { text, message: Some(_), .. } if fastctx_hands::told::is_told(text)) {
-        return Ok(());
-    }
     let Some((about, town)) = node.residents.about(id) else {
         return Err(std::io::Error::other("unknown resident"));
     };
+    if let Happened::Heard { message: Some(message), .. } = &event.happened
+        && (about.host.agent.as_str() == "codex" && about.world_started && message.detail["type"] == "userMessage"
+            || about.host.agent.as_str() == "claude" && message.detail["uuid"].is_string())
+    {
+        return crate::user_images::live(node, id, event).await;
+    }
+    if matches!(&event.happened, Happened::Heard { text, message: Some(message), .. } if fastctx_hands::told::is_told(text) && message.images.is_empty())
+    {
+        return Ok(());
+    }
     let directory = node.world.resident(town.as_ref(), id);
     if about.host.agent.as_str() == "claude" {
         crate::claude::turn_facts::observe(&directory, &event.happened)?;

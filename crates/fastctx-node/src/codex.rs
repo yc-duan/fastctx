@@ -259,7 +259,19 @@ async fn drain(node: &Arc<Node>, thread: &str) {
                 }
             }
             HostEvent::Happened { event, .. } => match control::reported(node, &id, thread, &event) {
-                Ok(()) => crate::turns::apply(node, &id, event).await,
+                Ok(()) => match crate::user_images::codex(node, &id, thread, event).await {
+                    Ok(events) => {
+                        let mut result = Ok(());
+                        for event in events {
+                            if let Err(error) = crate::turns::apply(node, &id, event).await {
+                                result = Err(error);
+                                break;
+                            }
+                        }
+                        result
+                    }
+                    Err(error) => Err(error),
+                },
                 Err(error) => Err(error),
             },
             HostEvent::Desk { turn, desk, .. } => {

@@ -12,6 +12,8 @@ use super::{Health, HealthKind};
 pub struct UserMessage {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<crate::attachments::Attachment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<super::images::UserImage>,
     pub id: String,
     pub client_id: Option<String>,
     pub content: Vec<Value>,

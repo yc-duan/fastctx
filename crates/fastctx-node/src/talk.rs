@@ -256,20 +256,13 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>, agent
             _ => None,
         })
         .collect();
-    let delivered: std::collections::HashSet<_> = recorded
-        .iter()
-        .filter_map(|event| match &event.happened {
-            Happened::Heard { delivery: Some(id), .. } => Some(id.clone()),
-            _ => None,
-        })
-        .collect();
     let mut history: Vec<SessionEvent> = hosted
         .into_iter()
         .flat_map(fastctx_types::session::attachments::restore)
         .filter(|event| match &event.happened {
-            // Words with attachments are known by their delivery.
-            Happened::Heard { delivery: Some(id), message: Some(message), .. } if !message.attachments.is_empty() => {
-                !delivered.contains(id)
+            Happened::Heard { message: Some(message), .. } if !message.images.is_empty() => true,
+            Happened::Heard { delivery: Some(_), message: Some(message), .. } if !message.attachments.is_empty() => {
+                true
             }
             // Other words the World told are its own record's, except, for
             // Codex, in a turn the World has no record of sending into.
@@ -280,7 +273,14 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>, agent
             _ => true,
         })
         .collect();
-    for event in recorded {
+    for mut event in recorded {
+        // Native words are reconstructed from the host, including the
+        // stable picture coordinates. Older nodes also recorded them here.
+        if matches!(&event.happened, Happened::Heard { delivery: None, from: None, message: Some(message), .. }
+            if agent == "codex" && message.detail["type"] == "userMessage")
+        {
+            continue;
+        }
         let same = history.iter().position(|other| match (&event.happened, &other.happened) {
             (Happened::TurnStarted { turn: a }, Happened::TurnStarted { turn: b })
             | (Happened::TurnEnded { turn: a, .. }, Happened::TurnEnded { turn: b, .. }) => a == b,
@@ -294,6 +294,7 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>, agent
             _ => false,
         });
         if let Some(index) = same {
+            crate::user_images::merge(&mut event, &history[index]);
             history[index] = event;
             continue;
         }
