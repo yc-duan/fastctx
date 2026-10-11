@@ -160,6 +160,11 @@ export class AttachTray {
     this.draw();
   }
 
+  /** What is held, as it is shown. */
+  get held(): readonly Attached[] {
+    return this.items;
+  }
+
   /** What arrived, for sending with the words; the tray is emptied. */
   take(): { refs: unknown[]; shown: Attached[] } {
     const ready = this.items.filter((item) => item.state === "ready");

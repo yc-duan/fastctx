@@ -116,8 +116,14 @@
 
 .turn-acts.latest,
 .block:hover > .turn-acts,
+.block:hover > .message-acts > .turn-acts,
 .turn-acts:focus-within {
   opacity: 1;
+}
+
+/* A message's actions follow its words as if they were the block's own. */
+.message-acts {
+  display: contents;
 }
 
 /* The marks stand on the words' own edge: the room round each glyph lies
@@ -549,10 +555,11 @@
 
 /* The turn's line at the foot of a turn under way: ruled in pencil across
    the column, a drop of clay ink that breathes, and what the agent is
-   doing, in italic, with how long the turn has run. It is a boundary:
-   above it what the session has taken in, below it words sent and not yet
-   read. Waiting on the user, the ink and the words turn to clay and keep
-   still. */
+   doing, in italic, with how long the turn has run (`turn-line.ts`). It is
+   a boundary: above it what the session has taken in, below it words sent
+   and not yet read. Waiting on the user, the ink turns to the accent and
+   keeps still; the card above says what it waits for. It comes drawn in,
+   and goes at once. */
 .turn-status {
   position: relative;
   display: flex;
@@ -565,11 +572,9 @@
   font-style: italic;
   font-size: var(--size-small);
   color: var(--text-2);
-  animation: status-in var(--enter) var(--fold-easing) both;
 }
 
-.turn-status::before {
-  content: "";
+.turn-status-rule {
   position: absolute;
   left: 0;
   right: 0;
@@ -583,6 +588,11 @@
 
 .turn-status-mark {
   flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.turn-status-mark > i {
   width: 9px;
   height: 8px;
   border-radius: 52% 48% 55% 45% / 47% 55% 45% 53%;
@@ -598,6 +608,10 @@
   padding-right: 0.15em;
 }
 
+.turn-status-step:empty {
+  display: none;
+}
+
 .turn-status-time {
   flex: none;
   font-style: normal;
@@ -605,12 +619,12 @@
   color: var(--text-3);
 }
 
-.turn-status-time:not(:empty)::before {
+.turn-status-step:not(:empty) + .turn-status-time:not(:empty)::before {
   content: "·";
   margin-right: 6px;
 }
 
-.turn-status.waiting .turn-status-mark {
+.turn-status.waiting .turn-status-mark > i {
   background: var(--accent);
   animation: none;
 }
@@ -631,18 +645,66 @@
   }
 }
 
-@keyframes status-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
+@media (prefers-reduced-motion: reduce) {
+  .turn-status-mark > i {
+    animation: none;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .turn-status,
-  .turn-status-mark {
-    animation: none;
-  }
+/* A conversation that could not begin: said under its first words, in the
+   clay of what went wrong, with the reason as it was given beneath, to be
+   read and copied. */
+.start-failed {
+  margin-top: calc(-1 * var(--space-1));
+  padding-top: 12px;
+  position: relative;
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+}
+
+.start-failed::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 8px;
+  background: var(--pen-clay);
+  opacity: 0.5;
+  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+}
+
+.start-failed-said {
+  margin: 0;
+  font-family: var(--font-reading);
+  font-style: italic;
+  color: var(--pen-clay);
+}
+
+.start-failed-why {
+  margin: var(--space-1) 0 0;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* Words sent, rising from the input to their place (`flight.ts`): above
+   everything while they travel, never in the way of a press. */
+.bubble-ghost {
+  z-index: 60;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* The input stays quiet while the words it sent are on their way. */
+.composer textarea.hushed::placeholder {
+  color: transparent;
+}
+
+/* A block not yet drawn holds its room. */
+.transcript > .block.lazy {
+  display: block;
 }
 
 .act-sheet-info {

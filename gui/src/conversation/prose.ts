@@ -96,6 +96,50 @@ export function render(text: string): string {
   return markdown.render(text);
 }
 
+/** One block at the top of a text's Markdown (a paragraph, a list, a block
+ *  of code, a table), as the whole text reads it: its source, which names
+ *  it, and its HTML. */
+export interface ProseBlock {
+  source: string;
+  html(): string;
+}
+
+/** Markdown read whole and cut into its top-level blocks, each drawn on its
+ *  own: a text that grows draws again only the blocks that changed. A
+ *  block of code still being written is coloured only where its language
+ *  is named; guessing one is left until the words are done. */
+export function proseBlocks(text: string, writing: boolean): ProseBlock[] {
+  const env = {};
+  const tokens = markdown.parse(text, env);
+  const lines = text.split("\n");
+  const blocks: ProseBlock[] = [];
+  let start = 0;
+  let depth = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    depth += tokens[index]!.nesting;
+    if (depth !== 0) continue;
+    const slice = tokens.slice(start, index + 1);
+    const map = slice[0]!.map ?? slice.find((token) => token.map)?.map ?? null;
+    const source = map ? lines.slice(map[0], map[1]).join("\n") : slice.map((token) => token.content).join("");
+    blocks.push({
+      source,
+      html: () => {
+        guessing = !writing;
+        try {
+          return markdown.renderer.render(slice, markdown.options, env);
+        } finally {
+          guessing = true;
+        }
+      },
+    });
+    start = index + 1;
+  }
+  return blocks;
+}
+
+/** Whether unlabelled code is coloured by guessing its language. */
+let guessing = true;
+
 /** Text with no Markdown, as one escaped paragraph per blank-line block. */
 export function plain(text: string): string {
   return text
@@ -110,7 +154,7 @@ function highlight(code: string, language: string): string {
     return hljs.highlight(code, { language: name, ignoreIllegals: true }).value;
   }
   // Unlabelled code is guessed only while it is small enough to guess fast.
-  if (!name && code.length <= 8000) return hljs.highlightAuto(code).value;
+  if (!name && guessing && code.length <= 8000) return hljs.highlightAuto(code).value;
   return escape(code);
 }
 

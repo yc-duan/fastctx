@@ -108,6 +108,9 @@ export class AnchoredHeight {
     const animation = this.box.animate([], {
       duration, easing: style.getPropertyValue("--fold-easing").trim(), fill: "both",
     });
+    // The motion's clock starts with its first frame: what opening the box
+    // took (its rows made, laid out) is not spent from the motion.
+    animation.pause();
     return new Promise((resolve) => {
       let request = 0;
       const finish = (cancelled: boolean): void => {
@@ -129,6 +132,7 @@ export class AnchoredHeight {
       };
       this.active = { animation, finish, retarget };
       const tick = (time: number): void => {
+        if (animation.playState === "paused") animation.play();
         const progress = animation.effect?.getComputedTiming().progress ?? 0;
         this.box.style.height = `${from + Math.round((height - from) * progress)}px`;
         this.frame?.({ time, height: this.box.getBoundingClientRect().height, anchorError: held.correct() });
