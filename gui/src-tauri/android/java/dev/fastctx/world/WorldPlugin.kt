@@ -7,6 +7,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.activity.result.ActivityResult
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
@@ -28,6 +31,19 @@ class WorldPlugin(activity: Activity) : Plugin(activity) {
     }
 
     @Command fun status(invoke: Invoke) = answer(invoke) { invoke.resolve(JSObject(WorldRuntime.status().toString())) }
+    @Command fun openFile(invoke: Invoke) = answer(invoke) {
+        val context = current()
+        val file = File(invoke.getArgs().getString("path")).canonicalFile
+        require(file.isFile && file.toPath().startsWith(context.cacheDir.canonicalFile.toPath())) {
+            "The file must be in World's cache"
+        }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+            ?: "application/octet-stream"
+        context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        invoke.resolve()
+    }
     @Command fun configure(invoke: Invoke) = answer(invoke) {
         val configuration = invoke.getArgs().getJSONObject("configuration").toString()
         val error = WorldRuntime.validateConfigurationNative(configuration)
