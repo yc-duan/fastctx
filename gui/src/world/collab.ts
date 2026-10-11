@@ -52,5 +52,12 @@ export function writeCollab(hub: string, account: string, collab: Collab): Promi
   return invoke("collab_write", { hub, account, collab });
 }
 
+/** A login's directory as compared: slashes alike and no trailing one;
+ *  case counts except in a Windows path, by its drive. */
+const homeKey = (home: string | null): string => {
+  const plain = (home ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
+  return /^[A-Za-z]:\//.test(plain) ? plain.toLowerCase() : plain;
+};
+
 export const sameAgentLogin = (a: AgentLogin, b: AgentLogin): boolean =>
-  a.machine === b.machine && a.agent === b.agent && (a.home ?? "").replace(/\\/g, "/").toLowerCase() === (b.home ?? "").replace(/\\/g, "/").toLowerCase();
+  a.machine === b.machine && a.agent === b.agent && homeKey(a.home) === homeKey(b.home);
