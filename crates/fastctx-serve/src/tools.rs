@@ -156,6 +156,7 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
 const RUN_SHELL: &str = "\
 Shell:
 - Every machine runs bash with the GNU tools and `rg`, Windows ones too (Git Bash). Write Windows paths like C:/Users/me, and use `ls`, `find`, `du` and `df` rather than PowerShell.
+- Your script reaches bash as a file, exactly as you wrote it: no other shell parses it on the way, so nothing in it is unquoted, halved or cut. A program can run inline in it, in a here-document with a quoted delimiter, as written.
 - Git Bash rewrites arguments that look like Unix paths, such as /FI, before a Windows program sees them. Put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
 ";
 
