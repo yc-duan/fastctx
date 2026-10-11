@@ -18,6 +18,8 @@ mod linux_service;
 #[cfg(desktop)]
 mod removal;
 #[cfg(desktop)]
+mod remote_world;
+#[cfg(desktop)]
 mod retention;
 #[cfg(desktop)]
 mod renewal;
@@ -824,6 +826,8 @@ pub fn run() {
             });
             #[cfg(desktop)]
             app.manage(removal::State::default());
+            #[cfg(desktop)]
+            app.manage(remote_world::Sessions::default());
             Ok(())
         })
         .on_page_load(|webview, payload| {
@@ -841,6 +845,14 @@ pub fn run() {
             removal::removal_run,
             #[cfg(desktop)]
             removal::removal_finish,
+            #[cfg(desktop)]
+            remote_world::remote_probe,
+            #[cfg(desktop)]
+            remote_world::remote_hub,
+            #[cfg(desktop)]
+            remote_world::remote_join,
+            #[cfg(desktop)]
+            remote_world::remote_close,
             #[cfg(desktop)]
             retention::retention_read,
             #[cfg(desktop)]

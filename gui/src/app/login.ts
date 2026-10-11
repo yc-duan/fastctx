@@ -15,6 +15,7 @@ import type { LoginWords } from "./account-words";
 import { passwordProblem, passwordStrength } from "./password";
 import { plainly } from "./problem";
 import { loginLabel } from "./reach";
+import { RemoteWorld, type RemoteSeams } from "./remote-world";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
@@ -46,6 +47,8 @@ export interface LoginOptions {
    *  computer's addresses, and the World made and logged in to. */
   addresses?: (() => Promise<HereAddress[]>) | undefined;
   create?: ((world: string, admin: string, password: string, public_: string[], register: boolean, name: string | null) => Promise<LoggedIn>) | undefined;
+  /** Making a World on a server over SSH, where this computer can. */
+  remote?: RemoteSeams | undefined;
   /** Opens the sheet that adds another device to `login`. */
   invite?: ((login: Login) => void) | undefined;
   /** Reads a QR code with the camera, where the shell can; null when the
@@ -59,7 +62,7 @@ export interface LoginOptions {
   enter(): void;
 }
 
-type Step = "choose" | "password" | "open" | "scan" | "create" | "done";
+type Step = "choose" | "password" | "open" | "scan" | "create" | "remote" | "done";
 
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 const machineRule = "[a-z][a-z0-9\\-]{0,31}";
@@ -84,6 +87,8 @@ export class LoginPage implements Page {
   private addresses: HereAddress[] | null = null;
   private chosen = new Set<string>();
   private readonly stop: () => void;
+  /** The way through a server over SSH, while it is open. */
+  private remote: RemoteWorld | null = null;
 
   constructor(private readonly options: LoginOptions) {
     const { words } = options;
@@ -128,6 +133,7 @@ export class LoginPage implements Page {
   }
 
   leave(): void {
+    this.remote?.leave();
     this.stop();
     this.options.drawing?.stop();
   }
@@ -157,6 +163,8 @@ export class LoginPage implements Page {
   /** Moves to another step; its first field, or its first button, takes
    *  focus, as a new page would. */
   private go(step: Step): void {
+    this.remote?.leave();
+    this.remote = null;
     this.keep();
     this.step = step;
     this.draw();
@@ -200,6 +208,11 @@ export class LoginPage implements Page {
             ${
               this.options.create
                 ? `<button class="welcome-way" type="button" data-way="create">${createMark()}<span class="welcome-way-title">${escape(words.create)}</span><span class="welcome-way-what">${escape(words.createWhat)}</span></button>`
+                : ""
+            }
+            ${
+              this.options.remote
+                ? `<button class="welcome-way" type="button" data-way="remote">${remoteMark()}<span class="welcome-way-title">${escape(words.remote)}</span><span class="welcome-way-what">${escape(words.remoteWhat)}</span></button>`
                 : ""
             }
           </div>
@@ -262,6 +275,21 @@ export class LoginPage implements Page {
         this.drawName();
         void this.drawAddresses();
         break;
+      case "remote":
+        if (this.options.remote) {
+          this.remote = new RemoteWorld(this.body, {
+            words,
+            seams: this.options.remote,
+            name: () => null,
+            back: words.back,
+            done: (done) => {
+              this.done = done;
+              this.created = true;
+              void this.options.store.refresh().then(() => this.arrived());
+            },
+          });
+        }
+        break;
       case "done":
         this.drawDone();
         break;
@@ -285,7 +313,13 @@ export class LoginPage implements Page {
 
   /** Back to the two ways, for a computer that has none yet. */
   private backWay(): string {
-    if (this.options.device || this.loggedIn()) return this.options.create && this.step !== "create" ? `<button class="text-button login-way" type="button" data-way="create">${escape(this.options.words.create)}</button>` : "";
+    if (this.options.device || this.loggedIn()) {
+      const { words } = this.options;
+      return [
+        this.options.create && this.step !== "create" ? `<button class="text-button login-way" type="button" data-way="create">${escape(words.create)}</button>` : "",
+        this.options.remote && this.step !== "remote" ? `<button class="text-button login-way" type="button" data-way="remote">${escape(words.remote)}</button>` : "",
+      ].join("");
+    }
     return `<button class="text-button login-way" type="button" data-way="choose">${escape(this.options.words.back)}</button>`;
   }
 
@@ -395,6 +429,8 @@ export class LoginPage implements Page {
    *  line and the way in (`world-gui.md`, 登录或新建成功之后). A World made
    *  here also offers the next device. */
   private async arrived(): Promise<void> {
+    this.remote?.leave();
+    this.remote = null;
     await this.refreshSetup();
     this.element.classList.add("in");
     this.step = "done";
@@ -560,4 +596,9 @@ function createMark(): string {
 /** Scanning: the four corners of a code's frame, drawn with the marker. */
 function scanMark(): string {
   return `<svg class="welcome-way-mark" viewBox="0 0 64 64" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke-linecap="round" stroke-width="3"><g class="ink-graphite"><path d="M10 22 V10 H22M42 10 H54 V22M54 42 V54 H42M22 54 H10 V42"/></g><g class="ink-clay"><path d="M20 32 H44"/></g></g></svg>`;
+}
+
+/** On a server: a box with a knot inside it, the line reaching it drawn. */
+function remoteMark(): string {
+  return `<svg class="welcome-way-mark" viewBox="0 0 96 64" aria-hidden="true"><g filter="url(#pen-marker)" fill="none" stroke-linecap="round"><g class="ink-graphite" stroke-width="3"><rect x="52" y="16" width="30" height="34" rx="4"/><circle cx="67" cy="33" r="5"/></g><g class="ink-clay" stroke-width="3"><circle cx="18" cy="33" r="9"/><path d="M29 33 C36 30 42 30 47 32"/></g></g></svg>`;
 }

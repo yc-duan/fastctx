@@ -1062,3 +1062,37 @@ a.details-job {
   width: 100%;
   margin-top: var(--space-6);
 }
+
+/* Making a World on a server: the way to sign in to it chosen as chips, its
+   fingerprint read as one solid slip, the steps ticked off in pencil. */
+.remote-by {
+  margin: 0 0 var(--space-1);
+}
+
+.remote-key-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.remote-key-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.remote-fingerprint {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text-strong);
+  font-size: var(--size-ui);
+  word-break: break-all;
+}
+
+.remote-steps {
+  margin: var(--space-2) 0 0;
+}

@@ -95,6 +95,8 @@ import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
 import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
+import { specimenRemote } from "./specimen/remote";
+import type { RemoteSeams } from "./app/remote-world";
 import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
 import { RemoteLines } from "./world/remote-lines";
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
@@ -132,6 +134,10 @@ import {
   removalPlan,
   removeHere,
   removeApp,
+  remoteClose,
+  remoteHub,
+  remoteJoin,
+  remoteProbe,
   retentionRead,
   retentionWrite,
   journal as readJournal,
@@ -328,6 +334,20 @@ const change = async (login: Login, made: AccountChange): Promise<void> => {
   }
   await accountChange(login.hubName, login.account, made);
   void store.refresh();
+};
+/** The way to make a World on a server over SSH, from this computer. */
+const remoteSeams: RemoteSeams = {
+  probe: remoteProbe,
+  hub: remoteHub,
+  join: remoteJoin,
+  close: remoteClose,
+  login: (address, admin, password, name) => login(address, admin, password, true, name),
+  token: async (hub, admin, machine) => {
+    // An hour is the time the server has to use it: it does at once.
+    const token = await accountChange(hub, admin, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString() });
+    if (!token) throw new Error("the hub made no token");
+    return token;
+  },
 };
 const accountConfirm = new Confirm(english ? enAccess : zhAccess);
 const tokens = new Tokens({
@@ -1246,6 +1266,9 @@ function show(next: Place): void {
           ? undefined
           : (world, admin, password, reach, register, name) =>
               live ? createWorld(world, admin, password, reach, register, name) : Promise.resolve({ hub: world, name: name ?? "desktop", account: admin, kept: { kind: "installed" as const } }),
+        // A World made on a server over SSH: this computer signs in as its
+        // administrator, and the server joins with a code made for it.
+        remote: asDevice ? undefined : live ? (onComputer() ? remoteSeams : undefined) : specimenRemote(),
         invite: (login) => tokens.open(login),
         // A phone reads the token off the computer's screen; a specimen
         // shows the button when asked as a phone.

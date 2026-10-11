@@ -18,6 +18,25 @@ export interface LoginWords {
   joinWhat: string;
   create: string;
   createWhat: string;
+  /** Making a World on a server over SSH (`remote-world.ts`). */
+  remote: string;
+  remoteWhat: string;
+  server: string;
+  sshPort: string;
+  sshUser: string;
+  signInBy: string;
+  keyFile: string;
+  keyPassword: string;
+  keyMissing: string;
+  next: string;
+  firstTime: string;
+  fingerprintWhat: string;
+  trust: string;
+  fingerprintChanged: string;
+  sudoPassword: string;
+  sudoWanted: string;
+  portClosed(port: string): string;
+  remoteSteps: Record<"connect" | "check" | "upload" | "hub" | "login" | "join", string>;
   another: string;
   hub: string;
   account: string;
@@ -82,6 +101,24 @@ export const zhLogin: LoginWords = {
   joinWhat: "用服务器地址和账号登录",
   create: "新建世界",
   createWhat: "以这台电脑作为服务器",
+  remote: "建到服务器上",
+  remoteWhat: "用 SSH 在一台服务器上建",
+  server: "服务器地址",
+  sshPort: "SSH 端口",
+  sshUser: "用户名",
+  signInBy: "登录方式",
+  keyFile: "钥匙文件",
+  keyPassword: "钥匙的密码",
+  keyMissing: "选一个钥匙文件",
+  next: "下一步",
+  firstTime: "第一次连这台服务器",
+  fingerprintWhat: "服务器的指纹",
+  trust: "信任并继续",
+  fingerprintChanged: "这台服务器的指纹和这台电脑记下的不一样，没有连接",
+  sudoPassword: "sudo 密码",
+  sudoWanted: "需要 sudo 密码",
+  portClosed: (port) => `连不上端口 ${port}，防火墙或安全组要放行它`,
+  remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建世界", login: "这台电脑登录", join: "服务器加入" },
   another: "登录其他账号",
   hub: "服务器地址",
   account: "账号",
@@ -136,6 +173,24 @@ export const enLogin: LoginWords = {
   joinWhat: "Log in with a server address and account",
   create: "Create a World",
   createWhat: "Use this computer as the server",
+  remote: "Make it on a server",
+  remoteWhat: "Over SSH, on a server",
+  server: "Server address",
+  sshPort: "SSH port",
+  sshUser: "User",
+  signInBy: "Sign in with",
+  keyFile: "Key file",
+  keyPassword: "Key password",
+  keyMissing: "Choose a key file",
+  next: "Next",
+  firstTime: "First time on this server",
+  fingerprintWhat: "The server's fingerprint",
+  trust: "Trust and go on",
+  fingerprintChanged: "This server's fingerprint differs from the one this computer recorded; not connected",
+  sudoPassword: "sudo password",
+  sudoWanted: "sudo needs a password",
+  portClosed: (port) => `Port ${port} can't be reached; allow it in the firewall or security group`,
+  remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Make the World", login: "Sign this computer in", join: "Add the server" },
   another: "Log in to another account",
   hub: "Server address",
   account: "Account",

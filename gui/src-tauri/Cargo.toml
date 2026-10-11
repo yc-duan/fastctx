@@ -56,6 +56,9 @@ fastctx-install = { path = "../../crates/fastctx-install" }
 tauri-plugin-window-state = "2.5"
 # New versions of the app come from the project's GitHub releases, signed.
 tauri-plugin-updater = "2.13"
+# A World made on a server is made over SSH from here: ring, as the rest of
+# the World's TLS, so no second crypto library is built.
+russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa", "flate2"] }
 
 [target.'cfg(windows)'.dependencies]
 tauri = { version = "2", features = ["tray-icon"] }

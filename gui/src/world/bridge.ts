@@ -14,6 +14,7 @@ import type { ConnectionState } from "./device";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { AccountChange, AccountsReply, HubAccount } from "./accounts";
+import type { RemoteHub, RemoteKey, RemoteStep } from "../app/remote-world";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
 export function inShell(): boolean {
@@ -458,4 +459,25 @@ export function retentionRead(): Promise<number | null> {
 
 export function retentionWrite(days: number): Promise<void> {
   return invoke("retention_write", { days });
+}
+
+/** Making a World on a server over SSH (`src-tauri/src/remote_world.rs`). */
+export function remoteProbe(host: string, port: number): Promise<RemoteKey> {
+  return invoke("remote_probe", { host, port });
+}
+
+export function remoteHub(request: RemoteHub, step: (step: RemoteStep) => void): Promise<{ session: number; address: string; hostname: string }> {
+  const steps = new Channel<RemoteStep>();
+  steps.onmessage = step;
+  return invoke("remote_hub", { request, steps });
+}
+
+export function remoteJoin(session: number, token: string, step: (step: RemoteStep) => void): Promise<void> {
+  const steps = new Channel<RemoteStep>();
+  steps.onmessage = step;
+  return invoke("remote_join", { session, token, steps });
+}
+
+export function remoteClose(session: number): Promise<void> {
+  return invoke("remote_close", { session });
 }

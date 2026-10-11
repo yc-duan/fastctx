@@ -265,7 +265,7 @@ export class RemovalSection {
 
 /** A pencil tick for a step done, a cross for one that failed, a dash for
  *  one there was nothing to do for, a faint dot for one still to come. */
-function mark(result: Result["result"] | null): string {
+export function mark(result: Result["result"] | null): string {
   const path =
     result === "done"
       ? `<path d="M3 8.6 L6.6 12 L13 4.2"/>`
