@@ -64,6 +64,7 @@ __FASTCTX_COMMANDS__
 __FASTCTX_SELECTION__
 __FASTCTX_REWIND__
 __FASTCTX_OBSERVATIONS__
+__FASTCTX_FAILURES__
 
 // /clear may replace even the same session ID. Keep the old object alive for
 // its timers, queued writes and late turn/tool results; never reset it in place.
@@ -536,7 +537,13 @@ async function startSession($, context) {
   // skipped: a closed session's answers are what it should see on return.
   context.timer = $.clock.every(LOOK_MS, () => look($, context))
   // Background observations retain this conversation even after /clear.
-  context.observe = (happened) => streamEvent($, context, { kind: 'session', happened })
+  context.observe = (happened) => {
+    try {
+      streamEvent($, context, { kind: 'session', happened })
+    } catch (error) {
+      worldFailure($, 'observation', error)
+    }
+  }
   // Claude Code keeps a record before its file has it; the node waits for
   // the last one kept when it reads the file.
   context.stored = (uuid) => streamEvent($, context, { kind: 'stored', uuid })
@@ -608,7 +615,14 @@ async function boundary($, context, e, next) {
   if (deliveries.length === 0) return result
   const selected = new Set(deliveries)
   for (let i = context.held.length - 1; i >= 0; i--) if (selected.has(context.held[i])) context.held.splice(i, 1)
-  for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'appending', turn: acceptedTurn }))
+  try {
+    for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'appending', turn: acceptedTurn }))
+  } catch (error) {
+    // No native append was attempted. Keep these words ahead of later
+    // deliveries; only an uncertain host append must not be replayed.
+    context.held.unshift(...deliveries)
+    throw error
+  }
   try {
     const appended = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: deliveries.map(framed).join('\n\n') }] } })
     if (appended.deny !== undefined) {
@@ -704,7 +718,7 @@ async function route($, registry, name, e) {
 }
 
 export function register(on) {
-  const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set() }
+  const registry = { sessions: new Map(), turns: new Map(), toolOwners: new Map(), cleared: null, worldTools: new Set(), provedCalls: new Set() }
   // Every handler first steps aside once fastctx is being removed. Each keeps
   // its literal on('…') call, the shape the official loader reads.
   on('session.start', async ($, e, next) => {
@@ -713,15 +727,15 @@ export function register(on) {
     await worldTools($, registry)
     await session($, registry, await $.session.id(), true)
     return next(e)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'session.start', e, next))
   on('turn.start', async ($, e, next) => {
     if (await removed($)) return next(e)
     return startTurn($, await route($, registry, 'turn.start', e), e, next)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'turn.start', e, next))
   on('turn.complete', async ($, e, next) => {
     if (await removed($)) return next(e)
     return completeTurn($, await route($, registry, 'turn.complete', e), e, next)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'turn.complete', e, next))
   on('turn.step', async function* ($, e, next) {
     if (await removed($)) {
       const stream = next(e)
@@ -735,25 +749,29 @@ export function register(on) {
     const shown = e.agentId === undefined ? context.shown : agentPresentation(context, e.agentId)
     const reported = e.agentId === undefined ? base : agentReports(base, e.agentId)
     return yield* shown.step(reported, input, next)
-  })
+  }).catch(async function* ($, e, next) { return yield* streamWithoutWorld($, 'turn.step', e, next) })
   on('tool.call', async ($, e, next) => {
     if (await removed($)) return next(e)
+    registry.provedCalls.delete(e.tool_use_id)
     const context = await route($, registry, 'tool.call', e)
     if (registry.worldTools.has(e.tool)) {
       try {
         await proveCall($, context, e.tool_use_id)
+        registry.provedCalls.add(e.tool_use_id)
       } catch (error) {
-        return { deny: 'The fastctx plugin could not tell fastctx which session made this call, so it did not run: ' + error }
+        return unidentifiedWorldCall(error)
       }
     }
     const shown = e.agentId === undefined ? context.shown : agentPresentation(context, e.agentId)
     const reported = e.agentId === undefined ? reports($, context) : agentReports(reports($, context), e.agentId)
-    return shown.call(reported, e, (input) => controlCall($, input, next))
-  })
+    const result = await shown.call(reported, e, (input) => controlCall($, input, next))
+    registry.provedCalls.delete(e.tool_use_id)
+    return result
+  }).catch(($, e, next) => continueToolWithoutWorld($, registry, e, next))
   on('tool.check', async ($, e, next) => {
     if (await removed($)) return next(e)
     return controlPermission($, e, next)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'tool.check', e, next))
   on('session.append', async ($, e, next) => {
     if (await removed($)) return next(e)
     const context = await route($, registry, 'session.append', e)
@@ -777,18 +795,18 @@ export function register(on) {
       }
     }
     return result
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'session.append', e, next))
   on('session.compact', async ($, e, next) => {
     if (await removed($)) return next(e)
     const context = await route($, registry, 'session.compact', e)
     return context.shown.compact(reports($, context), e, (input) => controlCompaction($, input, next))
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'session.compact', e, next))
   on('prompt.section', async ($, e, next) => {
     if (await removed($)) return next(e)
     if (!['env_info_simple', 'env_info_static'].includes(e.name)) return next(e)
     const context = await session($, registry, await $.session.id())
     return (await sessionPolicy($, context)).lent ? { text: null } : next(e)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'prompt.section', e, next))
   on('classic.PostModelSwitch', async ($, e, next) => {
     if (await removed($)) return next(e)
     await controlModelSwitch($, e)
@@ -797,14 +815,14 @@ export function register(on) {
     await reported.event('session', { happened: { event: 'changed', turn: null, change: {
       kind: 'model_switch', from_model: e.from_model, to_model: e.to_model, source: e.source, requested_model: e.requested_model, raw: e } } })
     return next(e)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'classic.PostModelSwitch', e, next))
   on('classic.Elicitation', async ($, e, next) => {
     if (await removed($)) return next(e)
     await startControls($)
     // Classic mod results cannot carry action/content. The official command
     // hook under next publishes the answerable request with that contract.
     return next(e)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'classic.Elicitation', e, next))
   on('command.describe', async ($, e, next) => {
     const result = await next(e)
     if (await removed($)) return result
@@ -817,22 +835,22 @@ export function register(on) {
       if (context?.observe !== undefined) context.observe({ event: 'changed', turn: null, change: { kind: 'commands_changed' } })
     }
     return result
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'command.describe', e, next))
   on('classic.SubagentStart', async ($, e, next) => {
     if (await removed($)) return next(e)
     await observeAgents($, await session($, registry, await $.session.id()))
     return next(e)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'classic.SubagentStart', e, next))
   on('classic.SubagentStop', async ($, e, next) => {
     if (await removed($)) return next(e)
     await observeAgents($, await session($, registry, await $.session.id()))
     return next(e)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'classic.SubagentStop', e, next))
   on('classic.UserPromptSubmit', async ($, e, next) => {
     if (await removed($)) return next(e)
     await observeTitle($, await session($, registry, await $.session.id()), e)
     return next(e)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'classic.UserPromptSubmit', e, next))
   on('session.measure', async ($, e, next) => {
     if (await removed($)) return next(e)
     const context = await route($, registry, 'session.measure', e)
@@ -844,20 +862,20 @@ export function register(on) {
       }
     }
     return context.shown.measure(reports($, context), e, next)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'session.measure', e, next))
   on('classic.PostToolUse', async ($, e, next) => {
     if (await removed($)) return next(e)
     return boundary($, await route($, registry, 'classic.PostToolUse', e), e, next)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'classic.PostToolUse', e, next))
   on('classic.PostToolUseFailure', async ($, e, next) => {
     if (await removed($)) return next(e)
     return boundary($, await route($, registry, 'classic.PostToolUseFailure', e), e, next)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'classic.PostToolUseFailure', e, next))
   on('session.end', async ($, e, next) => {
     if (await removed($)) return next(e)
     registry.cleared = e.reason === 'clear' ? e.sessionId : null
     return endSession($, await route($, registry, 'session.end', e), e, next)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'session.end', e, next))
   on('classic.SessionStart', async ($, e, next) => {
     if (await removed($)) return next(e)
     await startControls($)
@@ -874,7 +892,7 @@ export function register(on) {
       // A session start must not fail for the World's sake.
     }
     return next(e)
-  })
+  }).catch(($, e, next) => continueWithoutWorld($, 'classic.SessionStart', e, next))
 }
 
 // The account's limits as Claude Code read them from its own answers, shown

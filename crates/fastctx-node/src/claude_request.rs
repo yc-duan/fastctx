@@ -152,7 +152,10 @@ pub fn run(directory: &Path, elicitation: bool) -> io::Result<()> {
                 fields.insert("hookEventName".into(), "Elicitation".into());
                 json!({"hookSpecificOutput": fields})
             }
-            Answer::Pass { .. } => json!({}),
+            Answer::Pass { reason } => {
+                eprintln!("fastctx left MCP elicitation to Claude Code: {reason}");
+                json!({})
+            }
         };
         output(&answer)
     } else {

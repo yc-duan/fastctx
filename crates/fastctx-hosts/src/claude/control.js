@@ -273,8 +273,13 @@ async function controlQuestion($, state, name, params, call, nativeWait = false)
   const request = { key, host: state.host, turn: agent === undefined && state.busy === true ? state.turn : null,
     request: name, params, native_wait: nativeWait }
   if (call !== undefined) call.requests.push(key)
+  let child
   try {
-    const child = $.process.spawn({ argv: [FASTCTX, 'claude-request', state.directory], input: JSON.stringify(request) })
+    child = $.process.spawn({ argv: [FASTCTX, 'claude-request', state.directory], input: JSON.stringify(request) })
+    if (call !== undefined) {
+      call.children ??= new Set()
+      call.children.add(child)
+    }
     let stdout = '', stderr = ''
     for await (const piece of child) {
       if (piece.stream === 'stdout') stdout += piece.text
@@ -282,16 +287,28 @@ async function controlQuestion($, state, name, params, call, nativeWait = false)
     }
     const result = await child.result
     if (result.code !== 0) throw new Error('the World could not receive an answer: ' + stderr)
-    return JSON.parse(stdout)
+    const reply = JSON.parse(stdout)
+    if (reply.kind === 'pass') worldNotice($, 'fastctx left ' + name + ' to Claude Code: ' + reply.reason)
+    return reply
   } finally {
-    if (call !== undefined) call.requests = call.requests.filter((held) => held !== key)
+    if (call !== undefined) {
+      call.children?.delete(child)
+      call.requests = call.requests.filter((held) => held !== key)
+    }
   }
 }
 
 async function controlCancelCall($, state, call) {
+  // A native answer must release the helper even when cancellation files
+  // cannot be written. Stream.return stops this call's own child directly.
+  for (const child of call.children ?? []) {
+    try { await child.return() } catch (error) { worldFailure($, 'request cancellation', error) }
+  }
   for (const key of [...call.requests]) {
-    await controlWrite($, state.directory + '/requests/' + state.host.instance + '-' + key + '/cancel.json',
-      { reason: 'the tool call finished in Claude Code' })
+    try {
+      await controlWrite($, state.directory + '/requests/' + state.host.instance + '-' + key + '/cancel.json',
+        { reason: 'the tool call finished in Claude Code' })
+    } catch (error) { worldFailure($, 'request cancellation', error) }
   }
 }
 
@@ -357,10 +374,12 @@ async function controlCall($, e, next) {
         const native = next(e)
         const world = controlQuestion($, state, 'AskUserQuestion', e, call, true)
           .then((reply) => reply.kind === 'answer' ? reply.answer : native)
+          .catch((error) => { if (!call.finished) worldFailure($, 'AskUserQuestion', error); return native })
         return await Promise.race([native, world])
       }
       return await next(e)
     } finally {
+      call.finished = true
       state.calls.delete(tool_use_id)
       await controlCancelCall($, state, call)
     }
