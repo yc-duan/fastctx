@@ -99,6 +99,8 @@ pub enum NodeFrame {
     Watched { id: u64, watched: crate::session::Watched },
     /// A byte-read header; see `FileReadPart` for the following binary frame.
     FileRead { id: u64, part: crate::file_read::FileReadPart },
+    /// A bounded UTF-8 piece of a logical row, followed by ReadComplete.
+    LinesRead { id: u64, part: crate::lines::Part },
     /// Part of what an `On` call hands over, until its `Reply`.
     On { id: u64, piece: crate::on::OnPiece },
     /// The tools a `WatchTools` session is offered may have changed.

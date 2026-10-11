@@ -36,6 +36,10 @@ pub fn open(path: &Path) -> io::Result<File> {
 }
 
 impl Snapshot {
+    /// Growth is meaningful only while the path still names the opened file.
+    pub fn same_file(&self, other: &Self) -> bool {
+        self.identity == other.identity
+    }
     /// The snapshot as one line, for keeping beside what was read from the
     /// file: a replaced or rewritten file has another.
     pub fn fingerprint(&self) -> String {

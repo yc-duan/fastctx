@@ -49,6 +49,7 @@ pub struct World {
     node_program: Option<std::path::PathBuf>,
     device: Option<std::sync::Arc<crate::device::Device>>,
     pub(crate) searches: std::sync::Arc<std::sync::Mutex<crate::file_search::Searches>>,
+    pub(crate) line_sources: std::sync::Arc<std::sync::Mutex<crate::lines::Sources>>,
 }
 
 /// What became of words said to a resident.
@@ -69,7 +70,14 @@ pub struct TownRecord {
 
 impl World {
     pub fn new(dir: WorldDir, peer: Peer) -> Self {
-        Self { dir, peer, node_program: None, device: None, searches: Default::default() }
+        Self {
+            dir,
+            peer,
+            node_program: None,
+            device: None,
+            searches: Default::default(),
+            line_sources: Default::default(),
+        }
     }
 
     /// The same interface over a device's persistent network connection.
@@ -81,6 +89,7 @@ impl World {
             node_program: None,
             device: Some(device),
             searches: Default::default(),
+            line_sources: Default::default(),
         }
     }
 

@@ -115,7 +115,11 @@ pub(crate) fn visit(reader: impl Read, plan: &Plan, mut consume: impl FnMut(Line
     Ok(())
 }
 
-fn decode(raw: &Bytes, decoder: &mut TextDecoder, end: bool) -> Result<std::result::Result<Bytes, EncodingError>> {
+pub(crate) fn decode(
+    raw: &Bytes,
+    decoder: &mut TextDecoder,
+    end: bool,
+) -> Result<std::result::Result<Bytes, EncodingError>> {
     let mut text = Spool::default();
     for bytes in raw.chunks() {
         match decoder.feed(&bytes.map_err(io)?, false) {
@@ -426,7 +430,7 @@ fn excerpt_at(text: &Bytes, focus: usize) -> Result<String> {
     }
     Ok(shown)
 }
-fn preview(raw: &Bytes, quote_newlines: bool, ending: &str) -> Result<Bytes> {
+pub(crate) fn preview(raw: &Bytes, quote_newlines: bool, ending: &str) -> Result<Bytes> {
     let mut spool = Spool::default();
     let mut pending = Vec::new();
     let mut emit = |bytes: &[u8], end| -> Result<()> {

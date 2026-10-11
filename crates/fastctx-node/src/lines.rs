@@ -1,0 +1,395 @@
+//! User-only line sources, owned by live connections and the holding file.
+
+pub(crate) mod reading;
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{
+    Arc, Mutex, Weak,
+    atomic::{AtomicBool, Ordering},
+};
+
+use fastctx_types::MachineName;
+use fastctx_types::access::{Acting, Purpose};
+use fastctx_types::ipc::Failure;
+use fastctx_types::lines::{Decoding, Extent, Reply, Request, Result as Answer};
+use fastctx_types::remote::{RemoteCall, RemoteReply};
+use notify::Watcher as _;
+
+use crate::Node;
+
+type Key = (MachineName, String);
+#[derive(Default)]
+pub(crate) struct Sources(Mutex<HashMap<Key, Arc<Source>>>);
+struct Source {
+    path: PathBuf,
+    job_record: Option<PathBuf>,
+    state: Mutex<State>,
+    changed: tokio::sync::watch::Sender<u64>,
+    closed: tokio::sync::watch::Sender<bool>,
+    events: tokio::sync::watch::Sender<std::result::Result<u64, String>>,
+    _watcher: Mutex<notify::RecommendedWatcher>,
+    cancelled: Arc<AtomicBool>,
+    requests: Mutex<Vec<Weak<AtomicBool>>>,
+}
+struct State {
+    index: Option<fastctx_hands::lines::Index>,
+    snapshot: fastctx_platform::file_read::Snapshot,
+    extent: Extent,
+    first: u64,
+    error: Option<String>,
+}
+pub(crate) enum Lease {
+    Here { node: Weak<Node>, key: Key, closed: tokio::sync::watch::Receiver<bool> },
+    Remote(fastctx_net::lines::Lease),
+}
+impl Drop for Lease {
+    fn drop(&mut self) {
+        if let Self::Here { node, key, .. } = self
+            && let Some(node) = node.upgrade()
+        {
+            close(&node, key);
+        }
+    }
+}
+impl Lease {
+    pub(crate) async fn closed(&mut self) {
+        match self {
+            Self::Here { closed, .. } => {
+                let _ = closed.wait_for(|closed| *closed).await;
+            }
+            Self::Remote(lease) => lease.closed().await,
+        }
+    }
+}
+struct Cancel(Arc<AtomicBool>);
+impl Default for Cancel {
+    fn default() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+}
+impl Drop for Cancel {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+pub(crate) async fn open(
+    node: &Arc<Node>,
+    from: MachineName,
+    machine: Option<MachineName>,
+    path: String,
+    decoding: Decoding,
+) -> std::result::Result<(Reply, Lease), Failure> {
+    if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
+        let (link, account) = node.speaking(&Acting::Here, &(&machine).into(), Purpose::Hands).map_err(failed)?;
+        let (reply, lease) = fastctx_net::lines::open(link, machine, account, path, decoding).await?;
+        return Ok((reply, Lease::Remote(lease)));
+    }
+    let path = fastctx_platform::local_path(&path).map_err(failed)?;
+    if !path.is_absolute() {
+        return Err(failed("the text path must be absolute"));
+    }
+    let job_record = match &decoding {
+        Decoding::Output { job } => {
+            let found = crate::look::look_here(node, job.as_str()).await?.0;
+            let Some(fastctx_types::town::Looked::Job { record }) = found else {
+                return Err(failed("the output job is no longer retained"));
+            };
+            let expected = PathBuf::from(&record.output);
+            if path != expected && record.stderr.as_ref().is_none_or(|stderr| std::path::Path::new(stderr) != path) {
+                return Err(failed("the path is not this job's output"));
+            }
+            Some(node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_record(&record.id))
+        }
+        Decoding::File { .. } => None,
+    };
+    let (events, event_rx) = tokio::sync::watch::channel(Ok(0u64));
+    let notices = events.clone();
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        notices.send_modify(|state| match event {
+            Ok(_) => {
+                if let Ok(version) = state {
+                    *version += 1;
+                }
+            }
+            Err(error) => *state = Err(error.to_string()),
+        });
+    })
+    .map_err(failed)?;
+    watcher
+        .watch(
+            path.parent().ok_or_else(|| failed("the source has no parent directory"))?,
+            notify::RecursiveMode::NonRecursive,
+        )
+        .map_err(failed)?;
+    if let Some(record) = &job_record
+        && record.parent() != path.parent()
+    {
+        watcher.watch(record.parent().expect("job parent"), notify::RecursiveMode::NonRecursive).map_err(failed)?;
+    }
+    let cancelled = Cancel::default();
+    let cancel = cancelled.0.clone();
+    let (read_path, directory, record_path) = (path.clone(), node.world.path().to_path_buf(), job_record.clone());
+    let opened = tokio::task::spawn_blocking(move || {
+        let snapshot = observe(&read_path)?;
+        let (output, selection) = match &decoding {
+            Decoding::File { encoding } => (false, encoding.as_deref()),
+            Decoding::Output { .. } => (true, None),
+        };
+        let index = fastctx_hands::lines::Index::open(&read_path, &directory, output, selection, cancel)?;
+        let after = observe(&read_path)?;
+        if (!output && snapshot != after) || !snapshot.same_file(&after) || after.size < snapshot.size {
+            return Err("the text source changed during indexing".into());
+        }
+        let complete = complete(record_path.as_deref())?;
+        let extent = Extent { length: index.length, complete, version: 0 };
+        Ok::<_, String>(State { index: Some(index), snapshot, extent, first: 0, error: None })
+    })
+    .await
+    .map_err(failed)?
+    .map_err(failed)?;
+    let source = Arc::new(Source {
+        path: path.clone(),
+        job_record,
+        state: Mutex::new(opened),
+        changed: tokio::sync::watch::channel(0).0,
+        closed: tokio::sync::watch::channel(false).0,
+        events,
+        _watcher: Mutex::new(watcher),
+        cancelled: Arc::new(AtomicBool::new(false)),
+        requests: Mutex::new(Vec::new()),
+    });
+    let mut random = [0; 16];
+    getrandom::fill(&mut random).map_err(failed)?;
+    let id: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    let key = (from, id.clone());
+    let lease = Lease::Here { node: Arc::downgrade(node), key: key.clone(), closed: source.closed.subscribe() };
+    node.line_sources.0.lock().expect("line sources").insert(key, source.clone());
+    tokio::spawn(monitor(Arc::downgrade(&source), event_rx, source.closed.subscribe()));
+    // Catch appends racing the initial bounded snapshot, without waiting for
+    // another filesystem event to happen after the monitor starts.
+    refresh(source.clone()).await?;
+    let extent = source.state.lock().expect("line source").extent.clone();
+    Ok((
+        Reply {
+            machine: node.machine(),
+            result: Answer::Opened { source: id, path: path.to_string_lossy().into_owned(), extent },
+        },
+        lease,
+    ))
+}
+
+async fn monitor(
+    source: Weak<Source>,
+    mut events: tokio::sync::watch::Receiver<std::result::Result<u64, String>>,
+    mut closed: tokio::sync::watch::Receiver<bool>,
+) {
+    loop {
+        tokio::select! { _ = closed.changed() => break, event = events.changed() => if event.is_err() { break; } }
+        let Some(source) = source.upgrade() else { break };
+        if refresh(source).await.is_err() {
+            break;
+        }
+    }
+}
+
+async fn refresh(source: Arc<Source>) -> std::result::Result<(), Failure> {
+    tokio::task::spawn_blocking(move || {
+        let mut state = source.state.lock().expect("line source");
+        if let Some(error) = &state.error {
+            return Err(failed(error));
+        }
+        let update = (|| {
+            if let Err(error) = &*source.events.borrow() {
+                return Err(error.clone());
+            }
+            let snapshot = observe(&source.path)?;
+            let ended = complete(source.job_record.as_deref())?;
+            if state.snapshot == snapshot && state.extent.complete == ended {
+                return Ok(None);
+            }
+            if source.job_record.is_none()
+                || !state.snapshot.same_file(&snapshot)
+                || snapshot.size < state.snapshot.size
+            {
+                return Err("the text source was changed, replaced or truncated".into());
+            }
+            let first = state
+                .index
+                .as_mut()
+                .ok_or_else(|| "the source is closed".to_string())?
+                .grow(snapshot.size, source.cancelled.clone())?;
+            state.snapshot = snapshot;
+            let length = state.index.as_ref().expect("index").length;
+            Ok(Some((length, ended, first)))
+        })();
+        match update {
+            Ok(None) => Ok(()),
+            Ok(Some((length, complete, first))) => {
+                state.extent.length = length;
+                state.extent.complete = complete;
+                state.extent.version += 1;
+                state.first = first;
+                source.changed.send_replace(state.extent.version);
+                Ok(())
+            }
+            Err(error) => {
+                state.index.take();
+                state.error = Some(error.clone());
+                source.changed.send_modify(|version| *version += 1);
+                Err(failed(error))
+            }
+        }
+    })
+    .await
+    .map_err(failed)?
+}
+
+pub(crate) async fn call(
+    node: &Arc<Node>,
+    from: MachineName,
+    machine: Option<MachineName>,
+    request: Request,
+) -> std::result::Result<Reply, Failure> {
+    if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
+        return match node
+            .call_with_stream(
+                &Acting::Here,
+                &(&machine).into(),
+                Purpose::Hands,
+                RemoteCall::Lines { request },
+                fastctx_net::cancellable::feed,
+            )
+            .await
+            .map_err(failed)??
+        {
+            RemoteReply::Lines(reply) => Ok(reply),
+            _ => Err(failed("the machine answered something other than a line request")),
+        };
+    }
+    let id = match &request {
+        Request::Read { source, .. }
+        | Request::Find { source, .. }
+        | Request::Changed { source, .. }
+        | Request::Close { source } => source,
+        Request::Open { .. } => return Err(failed("opening a line source requires its owning connection")),
+    };
+    if matches!(request, Request::Read { .. }) {
+        return Err(failed("logical rows require their data connection"));
+    }
+    let key = (from, id.clone());
+    if matches!(request, Request::Close { .. }) {
+        close(node, &key);
+        return Ok(Reply { machine: node.machine(), result: Answer::Closed });
+    }
+    let source = node
+        .line_sources
+        .0
+        .lock()
+        .expect("line sources")
+        .get(&key)
+        .cloned()
+        .ok_or_else(|| failed("line source is closed or belongs to another caller"))?;
+    let mut changes = source.changed.subscribe();
+    let mut closed = source.closed.subscribe();
+    refresh(source.clone()).await?;
+    if let Request::Changed { version, .. } = &request {
+        loop {
+            if *closed.borrow() {
+                return Err(failed("line source closed"));
+            }
+            {
+                let state = source.state.lock().expect("line source");
+                if let Some(error) = &state.error {
+                    return Err(failed(error));
+                }
+                if state.extent.version > *version {
+                    return Ok(Reply {
+                        machine: node.machine(),
+                        result: Answer::Changed {
+                            extent: state.extent.clone(),
+                            first_changed_line: if state.extent.version - *version > 1 { 0 } else { state.first },
+                        },
+                    });
+                }
+                if state.extent.version < *version {
+                    return Err(failed("line version is ahead of the source"));
+                }
+            }
+            tokio::select! { _ = changes.changed() => {}, _ = closed.changed() => return Err(failed("line source closed")) }
+        }
+    }
+    let cancelled = Cancel::default();
+    let cancel = cancelled.0.clone();
+    {
+        let mut requests = source.requests.lock().expect("line requests");
+        requests.retain(|request| request.strong_count() > 0);
+        requests.push(Arc::downgrade(&cancel));
+        if source.cancelled.load(Ordering::Relaxed) {
+            return Err(failed("line source closed"));
+        }
+    }
+    let result = tokio::task::spawn_blocking(move || {
+        let mut state = source.state.lock().expect("line source");
+        let index = state.index.as_mut().ok_or_else(|| "line source closed".to_string())?;
+        let result = match request {
+            Request::Read { start, count, .. } => Answer::Lines { start, lines: index.read(start, count, &cancel)? },
+            Request::Find { query, position, direction, .. } => {
+                Answer::Found { found: index.find(&query, &position, direction, &cancel)? }
+            }
+            _ => unreachable!("handled before blocking"),
+        };
+        let snapshot = observe(&source.path)?;
+        if source.job_record.is_none() && snapshot != state.snapshot
+            || !snapshot.same_file(&state.snapshot)
+            || snapshot.size < state.snapshot.size
+        {
+            return Err("the text source changed during reading".to_string());
+        }
+        Ok::<_, String>(result)
+    })
+    .await
+    .map_err(failed)?
+    .map_err(failed)?;
+    Ok(Reply { machine: node.machine(), result })
+}
+
+pub(crate) async fn serve(
+    node: &Arc<Node>,
+    link: &Arc<fastctx_net::link::Link>,
+    from: MachineName,
+    path: String,
+    decoding: Decoding,
+    mut stream: fastctx_net::data::Stream,
+) -> std::result::Result<RemoteReply, Failure> {
+    let (reply, mut lease) = tokio::select! { result = open(node, from, None, path, decoding) => result?, () = stream.closed() => return Err(failed("the line source's owner disconnected")) };
+    stream.say(&link.sign(fastctx_net::sign::Domain::Event, &reply)).await.map_err(failed)?;
+    tokio::select! { () = stream.closed() => {}, () = lease.closed() => {} }
+    Ok(RemoteReply::Lines(Reply { machine: node.machine(), result: Answer::Closed }))
+}
+
+fn close(node: &Node, key: &Key) {
+    if let Some(source) = node.line_sources.0.lock().expect("line sources").remove(key) {
+        source.closed.send_replace(true);
+        source.cancelled.store(true, Ordering::Relaxed);
+        for request in source.requests.lock().expect("line requests").iter().filter_map(Weak::upgrade) {
+            request.store(true, Ordering::Relaxed);
+        }
+    }
+}
+fn observe(path: &std::path::Path) -> std::result::Result<fastctx_platform::file_read::Snapshot, String> {
+    let file = fastctx_platform::file_read::open(path).map_err(err)?;
+    fastctx_platform::file_read::snapshot(&file, &file.metadata().map_err(err)?).map_err(err)
+}
+fn complete(path: Option<&std::path::Path>) -> std::result::Result<bool, String> {
+    let Some(path) = path else { return Ok(true) };
+    let record = fastctx_hands::run::record::read(path).map_err(err)?;
+    Ok(record.output_ended_at.is_some())
+}
+fn err(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}
+fn failed(error: impl std::fmt::Display) -> Failure {
+    Failure::new(error.to_string())
+}

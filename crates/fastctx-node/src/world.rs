@@ -411,6 +411,9 @@ impl fastctx_net::link::Node for Handler {
                 | RemoteCall::Follow { .. }
                 | RemoteCall::PipeOut { .. }
                 | RemoteCall::FindFiles { request: fastctx_types::file_search::FileSearchRequest::Open { .. } }
+                | RemoteCall::Lines {
+                    request: fastctx_types::lines::Request::Open { .. } | fastctx_types::lines::Request::Changed { .. }
+                }
         ) {
             return Ok(None);
         }
@@ -440,6 +443,34 @@ impl fastctx_net::link::Node for Handler {
             let from = caller.machine.clone();
             let acting = Acting::one(hub.clone(), caller.account.clone());
             let machine = node.machine();
+            if matches!(
+                &call,
+                RemoteCall::Thumbnail { .. }
+                    | RemoteCall::AttachmentThumbnail { .. }
+                    | RemoteCall::Lines {
+                        request: fastctx_types::lines::Request::Find { .. }
+                            | fastctx_types::lines::Request::Changed { .. }
+                            | fastctx_types::lines::Request::Close { .. }
+                    }
+            ) {
+                let mut stream =
+                    stream.ok_or_else(|| Failure::new("a cancellable read requires its data connection"))?;
+                let reading = async {
+                    match call {
+                        RemoteCall::Thumbnail { request } => {
+                            crate::thumbnail::call(&node, None, request).await.map(RemoteReply::Thumbnail)
+                        }
+                        RemoteCall::AttachmentThumbnail { attachment, max } => {
+                            crate::thumbnail::attachment(&node, attachment, max).await.map(RemoteReply::Thumbnail)
+                        }
+                        RemoteCall::Lines { request } => {
+                            crate::lines::call(&node, from, None, request).await.map(RemoteReply::Lines)
+                        }
+                        _ => unreachable!("cancellable reads"),
+                    }
+                };
+                return tokio::select! { result = reading => result, () = stream.closed() => Err(Failure::new("the read's caller disconnected")) };
+            }
             match call {
                 RemoteCall::PageAction { source, action } => crate::pages::actions::answer(&node, source, action)
                     .await
@@ -529,6 +560,25 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::ReadFile { request, read } => {
                     let stream = stream.ok_or_else(|| Failure::new("a file read requires a data connection"))?;
                     crate::file_read::serve(&node, &link, request, read, stream).await
+                }
+                RemoteCall::Thumbnail { request } => {
+                    crate::thumbnail::call(&node, None, request).await.map(RemoteReply::Thumbnail)
+                }
+                RemoteCall::AttachmentThumbnail { attachment, max } => {
+                    crate::thumbnail::attachment(&node, attachment, max).await.map(RemoteReply::Thumbnail)
+                }
+                RemoteCall::Lines { request } => {
+                    if let fastctx_types::lines::Request::Open { path, decoding } = request {
+                        let stream =
+                            stream.ok_or_else(|| Failure::new("a line source requires its owning data connection"))?;
+                        crate::lines::serve(&node, &link, from, path, decoding, stream).await
+                    } else {
+                        crate::lines::call(&node, from, None, request).await.map(RemoteReply::Lines)
+                    }
+                }
+                RemoteCall::ReadLines { request, read } => {
+                    let stream = stream.ok_or_else(|| Failure::new("logical rows require a data connection"))?;
+                    crate::lines::reading::remote(&node, &link, from, request, read, stream).await
                 }
                 RemoteCall::Open {
                     agent,

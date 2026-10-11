@@ -11,6 +11,7 @@
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod arrivals;
+pub mod cancellable;
 pub mod data;
 pub mod dial;
 pub mod directory;
@@ -19,6 +20,8 @@ pub mod file_read;
 pub mod file_search;
 pub mod ids;
 pub mod ledger;
+pub mod lines;
+pub mod lines_read;
 pub mod link;
 pub mod listen;
 pub mod login;

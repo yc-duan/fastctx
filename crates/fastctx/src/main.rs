@@ -243,6 +243,19 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    // Image workers must set their memory limit before starting a runtime or
+    // entering the World; failures remain isolated from the serving node.
+    if std::env::args_os().nth(1).is_some_and(|argument| argument == "thumbnail-worker") {
+        let arguments: Vec<_> = std::env::args_os().skip(2).collect();
+        let result = (|| {
+            anyhow::ensure!(arguments.len() == 3, "thumbnail-worker needs path, max and allowance");
+            let max = arguments[1].to_str().ok_or_else(|| anyhow::anyhow!("invalid max"))?.parse()?;
+            let budget = arguments[2].to_str().ok_or_else(|| anyhow::anyhow!("invalid allowance"))?.parse()?;
+            fastctx_node::thumbnail::worker(PathBuf::from(&arguments[0]).as_path(), max, budget)
+                .map_err(anyhow::Error::msg)
+        })();
+        return finish(result.map(|()| ExitCode::SUCCESS));
+    }
     // A command forwarded to the World program ends with the entry it came
     // through, and the entry's parent is the process that started it; what
     // it starts does not inherit that.

@@ -24,6 +24,7 @@ pub mod job_membership;
 pub mod legacy_text;
 pub mod local_path;
 pub mod lock;
+pub mod memory;
 #[cfg(any(target_os = "linux", windows))]
 pub mod output_pipe;
 #[cfg(any(target_os = "linux", windows))]

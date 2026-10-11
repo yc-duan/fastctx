@@ -82,6 +82,11 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     let here = node.machine();
     // Nothing of a call turned away here ran.
     let refuse = |why: String| Failure::not_run(format!("{here} refused {}: {why}", caller.machine));
+    if let RemoteCall::AttachmentThumbnail { attachment, .. } = call
+        && attachment.owner.machine != here
+    {
+        return Err(refuse("the attachment names a different holding machine".into()));
+    }
     let view = link.view();
     view.admits(&caller.machine, &caller.account, &here, call.purpose()).map_err(refuse)?;
     crate::devices::admit(&view, &caller.machine, call)?;
@@ -96,14 +101,18 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             return Err(refuse(format!("the account {} may not use the project {town}", caller.account)));
         }
     }
-    if let Some(resident) = resident_of(call) {
+    let hands = view.rights(&caller.account, &here).hands;
+    let resident = resident_of(call).or(match call {
+        RemoteCall::AttachmentThumbnail { attachment, .. } if !hands => Some(&attachment.owner.resident),
+        _ => None,
+    });
+    if let Some(resident) = resident {
         let serves =
             node.residents.about(resident).is_some_and(|(about, _)| node.serves(&about.acting, &hub, &caller.account));
         if !serves {
             return Err(refuse(format!("{resident} does not work for the account {}", caller.account)));
         }
     }
-    let hands = view.rights(&caller.account, &here).hands;
     // Of another's machine, an account lent its agents' logins uses those
     // logins alone (`world-network.md`, 共享机器与借出智能体).
     let login = |agent: &fastctx_types::AgentName, home: Option<&std::path::Path>| {
@@ -118,7 +127,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         RemoteCall::Ask { started, .. } => login(&started.callee.login.agent, started.callee.login.home.as_deref())?,
         _ => {}
     }
-    if let Some(resident) = resident_of(call)
+    if let Some(resident) = resident
         && !hands
         && let Some((about, _)) = node.residents.about(resident)
     {

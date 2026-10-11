@@ -116,6 +116,15 @@ fn pending() {
 
 struct Native(PluginHandle<tauri::Wry>);
 
+pub(crate) async fn open_file(app: &tauri::AppHandle, path: String) -> Result<(), String> {
+    app.state::<Native>()
+        .0
+        .run_mobile_plugin_async::<serde_json::Value>("openFile", serde_json::json!({"path": path}))
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 macro_rules! command {
     ($name:ident, $native:literal) => {
         #[fastctx_gui_command::command]
@@ -169,9 +178,7 @@ pub fn plugin() -> TauriPlugin<tauri::Wry> {
         .on_event(|app, event| match event {
             tauri::RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
             tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } if label == "main" => {
-                for (_, watch) in app.state::<crate::Shell>().watches.lock().expect("watch table").drain() {
-                    watch.abort();
-                }
+                app.state::<crate::Shell>().close_page();
                 rebuild_window();
             }
             _ => (),

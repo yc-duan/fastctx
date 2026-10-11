@@ -50,6 +50,8 @@ use tauri::ipc::Channel;
 mod binary_reading;
 #[cfg(windows)]
 mod desktop_presence;
+mod line_reading;
+mod local_files;
 mod pages;
 mod reading;
 mod uploading;
@@ -62,6 +64,7 @@ struct Shell {
     watches: Arc<Mutex<HashMap<u64, JoinHandle<()>>>>,
     next: AtomicU64,
     page: AtomicU64,
+    line_requests: line_reading::Requests,
 }
 
 impl Shell {
@@ -72,6 +75,8 @@ impl Shell {
     fn close_page(&self) {
         self.page.fetch_add(1, Ordering::Relaxed);
         self.world().close_file_searches();
+        self.world().close_line_sources();
+        self.line_requests.cancel_all();
         for (_, watch) in self.watches.lock().expect("watch table").drain() {
             watch.abort();
         }
@@ -124,6 +129,7 @@ async fn select_connection(
     let (state, changed) = shell.connection.select(mode)?;
     if changed {
         previous.close_file_searches();
+        previous.close_line_sources();
         shell.close_page();
     }
     Ok(state)
@@ -564,6 +570,60 @@ async fn read_bytes(
     reading::read_bytes(&shell.world(), machine(machine_name)?, path).await
 }
 
+/// Streams an original file into this device's cache for an external app.
+#[fastctx_gui_command::command]
+async fn fetch_file(
+    app: tauri::AppHandle,
+    shell: tauri::State<'_, Shell>,
+    machine_name: Option<String>,
+    path: String,
+) -> Result<String, String> {
+    let cache = app.path().app_cache_dir().map_err(|error| error.to_string())?;
+    local_files::fetch(&shell.world(), machine(machine_name)?, path, &cache).await
+}
+
+#[fastctx_gui_command::command]
+async fn thumbnail(
+    shell: tauri::State<'_, Shell>,
+    machine_name: Option<String>,
+    path: String,
+    max: u32,
+) -> Result<fastctx_types::thumbnail::Thumbnail, String> {
+    shell
+        .world()
+        .thumbnail(machine(machine_name)?, fastctx_types::thumbnail::ThumbnailRequest { path, max })
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[fastctx_gui_command::command]
+async fn thumbnail_attachment(
+    shell: tauri::State<'_, Shell>,
+    attachment: fastctx_types::attachments::Attachment,
+    max: u32,
+) -> Result<fastctx_types::thumbnail::Thumbnail, String> {
+    shell.world().thumbnail_attachment(attachment, max).await.map_err(|error| error.to_string())
+}
+
+#[fastctx_gui_command::command]
+async fn open_local(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        android::open_file(&app, path).await
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri_plugin_opener::OpenerExt as _;
+        app.opener().open_path(path, None::<&str>).map_err(|error| error.to_string())
+    }
+}
+
+#[fastctx_gui_command::command]
+async fn reveal(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener().reveal_item_in_dir(path).map_err(|error| error.to_string())
+}
+
 /// A file's metadata and bytes in one binary IPC response.
 #[fastctx_gui_command::command]
 async fn read_binary(
@@ -753,7 +813,13 @@ pub fn run() {
             let directory = app.path().app_data_dir()?;
             let connection = tauri::async_runtime::block_on(async { connection::Connection::open(directory) })
                 .map_err(std::io::Error::other)?;
-            app.manage(Shell { connection, watches: Arc::default(), next: AtomicU64::new(0), page: AtomicU64::new(0) });
+            app.manage(Shell {
+                connection,
+                watches: Arc::default(),
+                next: AtomicU64::new(0),
+                page: AtomicU64::new(0),
+                line_requests: Default::default(),
+            });
             #[cfg(desktop)]
             app.manage(removal::State::default());
             Ok(())
@@ -821,6 +887,16 @@ pub fn run() {
             look,
             read_text,
             read_bytes,
+            fetch_file,
+            thumbnail,
+            thumbnail_attachment,
+            line_reading::lines_open,
+            line_reading::lines_read,
+            line_reading::lines_find,
+            line_reading::lines_close,
+            line_reading::cancel_line_request,
+            open_local,
+            reveal,
             read_binary,
             control,
             offers,

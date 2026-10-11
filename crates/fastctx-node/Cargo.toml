@@ -26,6 +26,7 @@ fastctx-platform = { path = "../fastctx-platform" }
 fastctx-ripgrep = { path = "../fastctx-ripgrep" }
 fastctx-types = { path = "../fastctx-types" }
 getrandom = { version = "0.3", features = ["std"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 jiff.workspace = true
 notify = "8"
 serde.workspace = true
