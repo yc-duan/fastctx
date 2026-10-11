@@ -37,6 +37,16 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
   return defaultLink(tokens, index, options, env, self);
 };
 
+// A picture in an answer that names a file is drawn from the machine holding
+// it, when it comes into view (`pictures.ts`).
+markdown.renderer.rules.image = (tokens, index) => {
+  const token = tokens[index];
+  const alt = token.children?.map((child) => child.content).join("") ?? token.content;
+  const path = filePathOf(token.attrGet("src") ?? "");
+  if (path) return `<span class="prose-picture"><img data-picture data-path="${escape(path)}" alt="${escape(alt)}" tabindex="0"></span>`;
+  return `<img src="${escape(token.attrGet("src") ?? "")}" alt="${escape(alt)}">`;
+};
+
 // A diagram is drawn later, when the turn is done; until then its source.
 const defaultFence =
   markdown.renderer.rules.fence ?? ((tokens, index, options, _env, self) => self.renderToken(tokens, index, options));

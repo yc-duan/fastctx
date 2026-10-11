@@ -1338,31 +1338,262 @@
   padding: 0;
 }
 
+/* Pictures: one drawn larger; several as a row of squares that wraps into
+   a small grid, right-aligned as the words are. Until its picture comes,
+   each holds its place in a solid tone. */
+
 .bubble-picture img {
   display: block;
-  max-width: 220px;
-  max-height: 160px;
+  width: 96px;
+  height: 96px;
   border-radius: var(--radius-m);
+  background: var(--fill);
   object-fit: cover;
+  cursor: zoom-in;
+}
 
+.bubble-attached.one .bubble-picture img {
+  width: auto;
+  height: auto;
+  min-width: 120px;
+  min-height: 90px;
+  max-width: min(260px, 70vw);
+  max-height: 220px;
+}
+
+.bubble-picture img:not([src]) {
+  min-width: 160px;
+  min-height: 120px;
+}
+
+.bubble-attached:not(.one) .bubble-picture img:not([src]) {
+  min-width: 0;
+  min-height: 0;
+}
+
+.bubble-picture img:focus-visible,
+.prose-picture img:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .bubble-file {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: 260px;
-  padding: 6px 12px;
+  max-width: 280px;
+  min-height: 32px;
+  padding: 4px 12px;
   border-radius: var(--radius-m);
   background: var(--bubble);
   color: var(--on-bubble);
   font-size: var(--size-small);
+  text-decoration: none;
+}
+
+a.bubble-file:hover {
+  background: color-mix(in srgb, var(--bubble) 85%, var(--text-strong));
 }
 
 .bubble-file span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.bubble-file .bubble-file-size {
+  flex: none;
+  opacity: 0.7;
+}
+
+/* A picture whose original could not be had: its name and why, in its
+   place. */
+.picture-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 280px;
+  padding: 4px 12px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: var(--size-small);
+}
+
+.picture-missing .picture-why {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* A picture in an answer, drawn from the machine holding its file. */
+.prose-picture img {
+  display: block;
+  max-width: min(100%, 480px);
+  min-width: 160px;
+  min-height: 90px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  cursor: zoom-in;
+}
+
+.prose-picture img[src] {
+  min-width: 0;
+  min-height: 0;
+}
+
+.io-image[data-picture] {
+  cursor: zoom-in;
+}
+
+@media (pointer: coarse) {
+  .bubble-file {
+    min-height: 44px;
+  }
+}
+
+/* One picture over the whole window: the paper dims to a solid dark, the
+   picture is moved and zoomed by hand, its name and what can be done with
+   it along the top. */
+.picture-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: color-mix(in srgb, var(--bg) 18%, #0d0d0c);
+  color: #ece8e0;
+  animation: viewer-in 0.18s ease both;
+}
+
+.pv-stage {
+  position: relative;
+  grid-row: 1 / -1;
+  grid-column: 1;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+.pv-stage:active {
+  cursor: grabbing;
+}
+
+.pv-image {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
+  transform-origin: 0 0;
+  user-select: none;
+  image-rendering: auto;
+}
+
+.pv-bar {
+  position: relative;
+  z-index: 1;
+  grid-row: 1;
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 52px;
+  padding: calc(var(--space-2) + env(safe-area-inset-top)) var(--space-3) var(--space-2) var(--space-4);
+  background: linear-gradient(rgba(13, 13, 12, 0.72), rgba(13, 13, 12, 0));
+  pointer-events: none;
+}
+
+.pv-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-ui);
+}
+
+.pv-counter {
+  flex: none;
+  color: rgba(236, 232, 224, 0.6);
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.pv-acts {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  pointer-events: auto;
+}
+
+.picture-viewer .icon-button {
+  color: #ece8e0;
+}
+
+.picture-viewer .icon-button:hover,
+.picture-viewer .icon-button:focus-visible {
+  background: rgba(236, 232, 224, 0.12);
+}
+
+.pv-side {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 64px;
+  margin-top: -32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: rgba(13, 13, 12, 0.4);
+  color: #ece8e0;
+  cursor: pointer;
+}
+
+.pv-side:hover,
+.pv-side:focus-visible {
+  background: rgba(13, 13, 12, 0.7);
+}
+
+.pv-previous {
+  left: var(--space-3);
+}
+
+.pv-next {
+  right: var(--space-3);
+}
+
+.pv-next svg {
+  transform: scaleX(-1);
+}
+
+.pv-side[hidden] {
+  display: none;
+}
+
+@keyframes viewer-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .picture-viewer .icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* On a touch screen pictures turn over with a swipe. */
+@media (hover: none) {
+  .pv-side {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .picture-viewer {
+    animation: none;
+  }
 }
 
 /* Starting again from the user's words, forking from a turn: quiet

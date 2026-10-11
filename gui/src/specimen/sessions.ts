@@ -2,6 +2,7 @@
 // interface without a world behind it: every kind of thing a conversation
 // shows, from both hosts, in the shapes the node really produces.
 
+import type { Attachment } from "../world/attachments";
 import type { Content, Does, Item, Notice, SessionEvent, Speaker, Tool } from "../world/events";
 
 export interface Specimen {
@@ -34,8 +35,9 @@ class Script {
     return `item-${this.serial}`;
   }
 
-  heard(turn: string | null, from: Speaker | null, text: string, after = 4, notice?: Notice): void {
-    this.events.push({ at: this.at(after), event: "heard", delivery: null, turn, from, text, ...(notice ? { notice } : {}) });
+  heard(turn: string | null, from: Speaker | null, text: string, after = 4, notice?: Notice, attachments?: Attachment[]): void {
+    const message = attachments && { attachments, id: this.id(), client_id: null, content: [], hook_fragments: [], presentation: null, detail: null };
+    this.events.push({ at: this.at(after), event: "heard", delivery: null, turn, from, text, ...(notice ? { notice } : {}), ...(message ? { message } : {}) });
   }
 
   started(turn: string): void {
@@ -124,7 +126,11 @@ function edit(path: string, before: string, after: string, extra: Partial<Tool> 
 function claude(): Specimen {
   const s = new Script("2026-10-04T13:02:00Z");
 
-  s.heard("t1", user, "lab 上 ctrl 的测试一直挂在 step_response，帮我看看是怎么回事，顺手修掉。修完在 lab 上把整套测试跑一遍。");
+  s.heard("t1", user, "lab 上 ctrl 的测试一直挂在 step_response，帮我看看是怎么回事，顺手修掉。修完在 lab 上把整套测试跑一遍。", 4, undefined, [
+    sent("step-response.png", "image/png", 48_210),
+    sent("scope-capture.png", "image/png", 131_884),
+    sent("ctrl-test.log", "text/plain", 9_416),
+  ]);
   s.started("t1");
   s.say("t1", "thinking", "", 2);
   s.tool(
@@ -837,3 +843,17 @@ function asking(): Specimen {
 }
 
 export const specimens: Record<string, () => Specimen> = { claude, codex, asking };
+
+/** A file the user sent in a specimen, as the World would have kept it. */
+function sent(name: string, media_type: string, size: number): Attachment {
+  return {
+    id: `n-${name}`,
+    name,
+    media_type,
+    size,
+    sha256: name.padEnd(64, "0").slice(0, 64),
+    owner: { machine: "laptop", resident: "claude-7f3a" },
+    town: "mark50",
+    path: `C:/Users/me/.fastctx/world/residents/claude-7f3a/sent/${name}`,
+  };
+}

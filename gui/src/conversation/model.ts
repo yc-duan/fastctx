@@ -25,6 +25,9 @@ export interface ShownAttachment {
   size: number | null;
   image: boolean;
   preview: string | null;
+  /** The file as the World kept it, once it has: what a small picture is
+   *  asked for and the original opened from. */
+  kept?: Attachment;
 }
 
 export type Entry =
@@ -190,6 +193,7 @@ export class Conversation {
             size: file.size,
             image: file.media_type.startsWith("image/"),
             preview: null,
+            kept: file,
           }));
           this.entries.push({
             kind: "heard",

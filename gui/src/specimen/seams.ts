@@ -255,3 +255,48 @@ function specimenRemoving(): Removing {
     finish: () => Promise.reject(new Error("this is a specimen")),
   };
 }
+
+/** A picture for a specimen's sent file: a step response sketched on
+ *  squared paper, drawn here at `max` pixels on its longer side. */
+export function specimenPicture(name: string, max: number): string {
+  const canvas = document.createElement("canvas");
+  const wide = name.includes("scope");
+  canvas.width = max;
+  canvas.height = Math.round(max * (wide ? 0.5 : 0.66));
+  const g = canvas.getContext("2d")!;
+  const { width, height } = canvas;
+  g.fillStyle = "#f4efe6";
+  g.fillRect(0, 0, width, height);
+  g.strokeStyle = "rgba(60, 60, 60, 0.12)";
+  g.lineWidth = Math.max(1, max / 520);
+  const step = width / 16;
+  for (let x = 0; x <= width; x += step) {
+    g.beginPath();
+    g.moveTo(x, 0);
+    g.lineTo(x, height);
+    g.stroke();
+  }
+  for (let y = 0; y <= height; y += step) {
+    g.beginPath();
+    g.moveTo(0, y);
+    g.lineTo(width, y);
+    g.stroke();
+  }
+  const plot = (colour: string, wobble: number, damping: number) => {
+    g.strokeStyle = colour;
+    g.lineWidth = Math.max(2, max / 180);
+    g.beginPath();
+    for (let i = 0; i <= 200; i += 1) {
+      const t = i / 200;
+      const y = 1 - Math.exp(-t * damping) * Math.cos(t * wobble);
+      const px = width * 0.06 + t * width * 0.88;
+      const py = height * 0.85 - y * height * 0.6;
+      if (i === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
+    g.stroke();
+  };
+  plot("#4a4a48", wide ? 40 : 18, wide ? 3 : 5);
+  plot("#d97757", 6, 7);
+  return canvas.toDataURL("image/png");
+}

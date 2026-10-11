@@ -1,4 +1,5 @@
 import type { FileLinkWords } from "./conversation/file-links";
+import type { PictureWords } from "./conversation/pictures";
 import type { QueueWords } from "./conversation/queue";
 // Every word the interface says on its own account, in the user's words
 // (`world-gui.md`, 用词): plain, without role-play; what agents and tools
@@ -123,6 +124,8 @@ export interface Words {
   notSent(why: string): string;
   /** Links an agent writes to files. */
   files: FileLinkWords;
+  /** The conversation's pictures, small and over the whole window. */
+  pictures: PictureWords;
   /** The way into a colleague's own conversation. */
   openColleague: string;
   /** Under Claude Code's agent tool: its subagent's kind, steps taken, the one it takes now. */
@@ -311,6 +314,20 @@ export const zh: Words = {
     on: (machine, path) => `${machine} 上的 ${path}`,
     openFailed: (why) => `打不开这个文件：${why}`,
   },
+  pictures: {
+    close: "关闭",
+    previous: "上一张",
+    next: "下一张",
+    copyImage: "复制图片",
+    saveAs: "另存为",
+    copyPath: "复制路径",
+    reveal: "在文件夹中显示",
+    copied: "已复制",
+    saved: "已保存",
+    gone: "原件已不在",
+    failed: (why) => `没能取到：${why}`,
+    counter: (at, of) => `${at} / ${of}`,
+  },
   openColleague: "查看",
   subagent: (kind, steps, doing) => [`子代理${kind ? ` ${kind}` : ""}`, `${steps} 步`, doing].filter(Boolean).join(" · "),
   stillRunning: "运行中的命令",
@@ -468,6 +485,20 @@ export const en: Words = {
     copied: "Path copied",
     on: (machine, path) => `${path} on ${machine}`,
     openFailed: (why) => `Couldn't open the file: ${why}`,
+  },
+  pictures: {
+    close: "Close",
+    previous: "Previous",
+    next: "Next",
+    copyImage: "Copy image",
+    saveAs: "Save as",
+    copyPath: "Copy path",
+    reveal: "Show in folder",
+    copied: "Copied",
+    saved: "Saved",
+    gone: "The original is gone",
+    failed: (why) => `Couldn't get it: ${why}`,
+    counter: (at, of) => `${at} / ${of}`,
   },
   openColleague: "Open",
   subagent: (kind, steps, doing) => [`Subagent${kind ? ` ${kind}` : ""}`, `${steps} ${steps === 1 ? "step" : "steps"}`, doing].filter(Boolean).join(" · "),

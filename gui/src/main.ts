@@ -74,7 +74,7 @@ import { loginsOf, type AccountChange, type Login } from "./world/accounts";
 import { borrowedBy, borrowedOf, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import { Details, type Manage } from "./conversation/details";
 import { ComposerSession } from "./conversation/composer";
-import { fetchFile, openLocal, reveal } from "./world/files";
+import { attachmentThumbnail, fetchFile, openLocal, reveal, thumbnail, thumbnailUrl } from "./world/files";
 import { specimenComposer } from "./specimen/composer";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/model";
@@ -95,7 +95,7 @@ import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
 import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
-import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenPhone, specimenRead, specimenUpload } from "./specimen/seams";
+import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
 import { showPathNotice } from "./app/path-notice";
@@ -676,6 +676,11 @@ function specimenTalk(address: Address): Page {
     link: talkLink,
     conversation,
     opening: { open: notLive, reveal: notLive },
+    pictures: {
+      thumbnail: async (_machine, path, max) => specimenPicture(path, max),
+      attachmentThumbnail: async (attachment, max) => specimenPicture(attachment.name, max),
+      original: async (_machine, path) => (await fetch(specimenPicture(path, 2400))).blob(),
+    },
     controls: {
       words: composerWords,
       offers: async () => (sample.agent === "claude" ? specimenClaudeOffers : specimenOffers),
@@ -819,6 +824,15 @@ function liveTalk(address: Address): Page {
     // where it is.
     opening: {
       open: async (machine, path) => openLocal(await fetchFile(machine, path)),
+      reveal: onComputer() ? reveal : undefined,
+    },
+    pictures: {
+      thumbnail: async (machine, path, max) => thumbnailUrl(await thumbnail(machine, path, max)),
+      attachmentThumbnail: async (attachment, max) => thumbnailUrl(await attachmentThumbnail(attachment, max)),
+      original: async (machine, path) => {
+        const read = await readBytes(machine, path);
+        return new Blob([Uint8Array.from(atob(read.base64), (char) => char.charCodeAt(0))]);
+      },
       reveal: onComputer() ? reveal : undefined,
     },
     files: {

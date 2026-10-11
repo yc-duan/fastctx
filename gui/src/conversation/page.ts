@@ -17,6 +17,7 @@ import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import type { Details } from "./details";
 import { FileLinks } from "./file-links";
+import { Pictures, type PictureSeams } from "./pictures";
 import { glyph } from "./glyphs";
 import type { Conversation } from "./model";
 import { escape, render } from "./prose";
@@ -61,6 +62,8 @@ export interface PageOptions {
     open(machine: string, path: string): Promise<void>;
     reveal?: ((path: string) => Promise<void>) | undefined;
   };
+  /** The conversation's pictures, from the machines holding them. */
+  pictures?: PictureSeams;
   conversation: Conversation;
   /** What the World knows of the agent, shown in a card opened from the
    *  head, and how to ask for it. */
@@ -282,6 +285,9 @@ export class ConversationPage {
         reveal: options.opening.reveal,
         say: (text) => this.say(text),
       });
+    }
+    if (options.pictures) {
+      new Pictures(main, { words: words.pictures, here: options.here, machine: someone.machine, seams: options.pictures, say: (text) => this.say(text) });
     }
 
     const form = this.element.querySelector("form")!;

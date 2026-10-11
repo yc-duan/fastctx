@@ -324,16 +324,23 @@ export class ConversationView {
     )}${icon(`data-turn-act="fork" data-turn="${escape(entry.turn)}"`, "fork", words.fork, ' data-needs="fork"')}${took ? `<span class="turn-icon turn-info" tabindex="0" title="${escape(took)}" aria-label="${escape(took)}">${glyph("info", 16)}</span>` : ""}</div>`;
   }
 
-  /** What the user attached to their words, above them. */
+  /** What the user attached to their words, above them: pictures, one
+   *  larger or several in a row, and the other files as chips. */
   private attached(items: ShownAttachment[]): string {
     if (!items.length) return "";
-    return `<ul class="bubble-attached">${items
-      .map((item) =>
-        item.preview
-          ? `<li class="bubble-picture"><img src="${escape(item.preview)}" alt="${escape(item.name)}" title="${escape(item.name)}"></li>`
-          : `<li class="bubble-file">${glyph(item.image ? "image" : "file", 16)}<span>${escape(item.name)}</span></li>`,
-      )
-      .join("")}</ul>`;
+    const pictures = items.filter((item) => item.image && (item.preview || item.kept));
+    const files = items.filter((item) => !pictures.includes(item));
+    const picture = (item: ShownAttachment) =>
+      `<li class="bubble-picture"><img data-picture ${item.preview ? `src="${escape(item.preview)}"` : `data-attachment="${escape(JSON.stringify(item.kept))}"`} alt="${escape(item.name)}" title="${escape(item.name)}" tabindex="0"></li>`;
+    const file = (item: ShownAttachment) => {
+      const label = `${glyph(item.image ? "image" : "file", 16)}<span class="bubble-file-name">${escape(item.name)}</span>${item.size === null ? "" : `<span class="bubble-file-size">${escape(sizeOf(item.size))}</span>`}`;
+      return item.kept
+        ? `<li><a class="bubble-file" href="#" data-file="${escape(item.kept.path)}" data-file-machine="${escape(item.kept.owner.machine)}">${label}</a></li>`
+        : `<li class="bubble-file">${label}</li>`;
+    };
+    return `${pictures.length ? `<ul class="bubble-attached pictures${pictures.length === 1 ? " one" : ""}">${pictures.map(picture).join("")}</ul>` : ""}${
+      files.length ? `<ul class="bubble-attached">${files.map(file).join("")}</ul>` : ""
+    }`;
   }
 
   /** A request as its card: what it asks, and the answers it takes. */
@@ -1105,9 +1112,22 @@ function textOf(output: Content[]): string {
 function imagesOf(output: Content[]): string {
   return output
     .map((content) => {
-      if (content.type === "image") return `<img class="io-image" alt="" src="data:${escape(content.mime)};base64,${content.base64}">`;
-      if (content.type === "image_url") return `<img class="io-image" alt="" src="${escape(content.url)}">`;
+      if (content.type === "image") return `<img class="io-image" data-picture alt="" src="data:${escape(content.mime)};base64,${content.base64}">`;
+      if (content.type === "image_url") return `<img class="io-image" data-picture alt="" src="${escape(content.url)}">`;
       return "";
     })
     .join("");
+}
+
+/** A file's size as people say it. */
+function sizeOf(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }

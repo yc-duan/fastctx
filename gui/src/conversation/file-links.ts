@@ -46,7 +46,7 @@ export class FileLinks {
       event.preventDefault();
       event.stopPropagation();
       this.closeMenu();
-      void options.open(options.machine, link.dataset.file!).catch((error: unknown) => options.say(options.words.openFailed(error instanceof Error ? error.message : String(error))));
+      void options.open(link.dataset.fileMachine ?? options.machine, link.dataset.file!).catch((error: unknown) => options.say(options.words.openFailed(error instanceof Error ? error.message : String(error))));
     });
     root.addEventListener("contextmenu", (event) => {
       const link = linkOf(event.target);
@@ -60,13 +60,15 @@ export class FileLinks {
       const link = linkOf(event.target);
       if (!link || link.title) return;
       const path = naturalPath(link.dataset.file!);
-      link.title = options.machine === options.here ? path : options.words.on(options.machine, path);
+      const machine = link.dataset.fileMachine ?? options.machine;
+      link.title = machine === options.here ? path : options.words.on(machine, path);
     });
   }
 
   private openMenu(link: HTMLElement, x: number, y: number): void {
     this.closeMenu();
-    const { words, here, machine, reveal } = this.options;
+    const { words, here, reveal } = this.options;
+    const machine = link.dataset.fileMachine ?? this.options.machine;
     const path = link.dataset.file!;
     const sheet = matchMedia("(hover: none)").matches;
     const menu = document.createElement("div");
