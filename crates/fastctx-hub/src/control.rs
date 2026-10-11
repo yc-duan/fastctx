@@ -62,6 +62,7 @@ pub(crate) async fn session(
     proof: Signature,
     letters: Letters,
     through: Option<String>,
+    any_names: bool,
 ) {
     let name = match hub.member(&key, &proof, &binding) {
         Ok(name) => name,
@@ -73,7 +74,7 @@ pub(crate) async fn session(
     };
     let generation = hub.next();
     let (out, mut outgoing) = mpsc::unbounded_channel();
-    if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, through.clone()) {
+    if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, through.clone(), any_names) {
         refuse(&mut socket, reason).await;
         return;
     }
@@ -154,6 +155,7 @@ fn open(
     out: mpsc::UnboundedSender<Out>,
     letters: Letters,
     through: Option<String>,
+    any_names: bool,
 ) -> Result<(), Refusal> {
     // The store's lock is held while the session is registered, so a letter
     // kept meanwhile is either in the backlog below or pushed after it.
@@ -171,6 +173,7 @@ fn open(
     };
     let now = Timestamp::now();
     entry.connected_at = Some(now);
+    entry.any_names = any_names;
     let welcome = Down::Welcome {
         hub: world,
         hub_name,

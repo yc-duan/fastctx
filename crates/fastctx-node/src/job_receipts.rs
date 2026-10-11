@@ -86,7 +86,7 @@ fn enqueue(node: &Node, sending: Sending) -> io::Result<()> {
         _ => return Err(io::Error::other("invalid completion receipt phase")),
     };
     let key = crate::speech::fixed_id("job-delivery", &[
-        sending.owner.machine.as_str(), sending.owner.resident.as_str(), sending.machine.as_str(),
+        sending.owner.machine.key(), sending.owner.resident.as_str(), sending.machine.key(),
         job, output, request, phase, if sending.through_exit { "exit" } else { "end" },
     ]);
     let directory = node.world.path().join("job-deliveries");
@@ -245,7 +245,7 @@ pub(crate) fn wait_taken(node: &Node, caller: Option<&Address>, parent: Option<&
         if let Some(parent) = &parent {
             bind(parent, Child { completed: completed.clone(), destination: (&completed.machine).into(), acting: Acting::default(), origin: None, copied: false, through_exit: false })?;
             let id = crate::inbox::job_notice_id(&record);
-            let letter = crate::speech::fixed_id("letter", &[record.machine.as_str(), id.as_str()]);
+            let letter = crate::speech::fixed_id("letter", &[record.machine.key(), id.as_str()]);
             inherit_consumed(parent, &[id, letter])?;
         } else {
             received_here(node, caller, &JobDelivery { job: completed.job.clone(), output: completed.output.clone(), at: Timestamp::now(), shown_whole: false }, None, false, None, &mut HashSet::new())?;
@@ -340,7 +340,7 @@ fn snapshot_here(node: &Node, path: &Path, seen: &mut HashSet<PathBuf>, receipts
                     match fs::read_to_string(&marker) {
                         Ok(id) => {
                             let id = if id.is_empty() { crate::inbox::job_notice_id(&target) } else { id.parse().map_err(io::Error::other)? };
-                            let letter = crate::speech::fixed_id("letter", &[target.machine.as_str(), id.as_str()]);
+                            let letter = crate::speech::fixed_id("letter", &[target.machine.key(), id.as_str()]);
                             for receipt in [id, letter] {
                                 if !receipts.contains(&receipt) { receipts.push(receipt); }
                             }

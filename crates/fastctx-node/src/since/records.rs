@@ -72,7 +72,7 @@ pub(super) fn read(
                         id: identity(
                             "moved",
                             &[
-                                &Address { machine: machine.clone(), resident: about.id.clone() }.tag(),
+                                &Address { machine: machine.clone(), resident: about.id.clone() }.key(),
                                 &original_directory.to_string_lossy(),
                                 &moved.at.to_string(),
                             ],
@@ -234,7 +234,7 @@ impl Scan<'_> {
             let Some(job) = self.optional::<JobRecord>(&path) else { continue };
             let Some(end) = job.end else { continue };
             self.events.push(SinceEvent {
-                id: identity("job-end", &[job.machine.as_str(), &job.owner.tag(), job.id.as_str()]),
+                id: identity("job-end", &[job.machine.key(), &job.owner.key(), job.id.as_str()]),
                 at: end.at,
                 machine: job.machine,
                 town: known(job.town.as_ref()),
@@ -343,7 +343,7 @@ impl Scan<'_> {
             MessageKind::Told { to, turn, outcome } => scan.events.push(SinceEvent {
                 id: identity(
                     "answer-delivery",
-                    &[&address.tag(), &original.join("messages").to_string_lossy(), &number.to_string()],
+                    &[&address.key(), &original.join("messages").to_string_lossy(), &number.to_string()],
                 ),
                 at: line.at,
                 machine: scan.machine.clone(),
@@ -359,7 +359,7 @@ impl Scan<'_> {
                 scan.events.push(SinceEvent {
                     id: identity(
                         "write",
-                        &[&address.tag(), &original.join("actions").to_string_lossy(), &number.to_string()],
+                        &[&address.key(), &original.join("actions").to_string_lossy(), &number.to_string()],
                     ),
                     at: action.at,
                     machine: action.machine,
@@ -381,7 +381,7 @@ impl Scan<'_> {
                 Ok(id) => scan.events.push(SinceEvent {
                     id: identity(
                         "asked",
-                        &[&address.tag(), &original.join("actions").to_string_lossy(), &number.to_string()],
+                        &[&address.key(), &original.join("actions").to_string_lossy(), &number.to_string()],
                     ),
                     at: action.at,
                     machine: scan.machine.clone(),
@@ -458,7 +458,7 @@ impl Scan<'_> {
         let address = Address { machine: self.machine.clone(), resident: id.clone() };
         let unknown = || SinceTown::Unrecorded { recorded_in: files.homes.iter().cloned().collect() };
         self.events.push(SinceEvent {
-            id: identity("born", &[&address.tag()]),
+            id: identity("born", &[&address.key()]),
             at: about.born_at,
             machine: self.machine.clone(),
             town: files.birth_town.as_ref().map(|town| known(town.as_ref())).unwrap_or_else(unknown),
@@ -471,7 +471,7 @@ impl Scan<'_> {
         });
         for (turn, finished) in &files.turns {
             self.events.push(SinceEvent {
-                id: identity("turn-ended", &[&address.tag(), turn]),
+                id: identity("turn-ended", &[&address.key(), turn]),
                 at: finished.at,
                 machine: self.machine.clone(),
                 town: finished
@@ -492,7 +492,7 @@ impl Scan<'_> {
             let place = SinceTown::Unrecorded { recorded_in: uncertain.homes.iter().cloned().collect() };
             match uncertain.at {
                 Some(at) => self.events.push(SinceEvent {
-                    id: identity("submission-uncertain", &[&address.tag(), delivery.as_str()]),
+                    id: identity("submission-uncertain", &[&address.key(), delivery.as_str()]),
                     at,
                     machine: self.machine.clone(),
                     town: place,
@@ -533,7 +533,7 @@ impl Scan<'_> {
                         id: identity(
                             "claude-registered",
                             &[
-                                &address.tag(),
+                                &address.key(),
                                 &registration.session,
                                 registration.instance.as_deref().unwrap_or(""),
                                 &at.to_string(),

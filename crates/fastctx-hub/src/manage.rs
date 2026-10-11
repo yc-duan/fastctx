@@ -176,10 +176,13 @@ fn apply(
             if expires <= Timestamp::now() {
                 return Err("the token would have expired already".to_string());
             }
-            if let Some(name) = &name
-                && store.book.directory.member(name).is_some()
-            {
-                return Err(format!("the name {name} is taken on this hub"));
+            if let Some(name) = &name {
+                if let Some(taken) = store.book.directory.member(name) {
+                    return Err(crate::login::taken_by(name, &taken.name));
+                }
+                if let Some(reason) = crate::login::unread(store, name, None) {
+                    return Err(reason);
+                }
             }
             let secret = TokenSecret::generate().map_err(|error| format!("making the token: {error}"))?;
             store.book.tokens.push(TokenRecord {

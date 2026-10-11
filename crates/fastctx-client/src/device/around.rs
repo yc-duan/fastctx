@@ -347,7 +347,7 @@ impl Device {
 /// The id a machine's node gives the same presence fact, so copies merge.
 fn presence_id(machine: &MachineName, at: Timestamp, online: bool) -> String {
     let mut bytes = Vec::new();
-    for part in [machine.as_str(), &at.to_string(), if online { "on" } else { "off" }] {
+    for part in [machine.key(), &at.to_string(), if online { "on" } else { "off" }] {
         bytes.extend_from_slice(part.as_bytes());
         bytes.push(0);
     }

@@ -350,8 +350,8 @@ pub(crate) async fn connected(
         return;
     }
     match (path.as_str(), intent) {
-        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through }) => {
-            control::session(hub, socket, peer, binding, key, proof, letters, through).await;
+        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through, any_names }) => {
+            control::session(hub, socket, peer, binding, key, proof, letters, through, any_names).await;
         }
         (wire::CONTROL_PATH, Intent::Login { account, request }) => {
             login::with_password(hub, socket, peer, binding, account, request).await;
