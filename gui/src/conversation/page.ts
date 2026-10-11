@@ -1347,8 +1347,7 @@ export class ConversationPage {
       const label = this.options.controls
         ? this.options.controls.words.context(percent, used.used, used.window)
         : words.context(percent);
-      const arc = (2 * Math.PI * 7).toFixed(2);
-      this.context.innerHTML = `<svg class="context-ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7"/><circle class="used" cx="9" cy="9" r="7" stroke-dasharray="${(share * 2 * Math.PI * 7).toFixed(2)} ${arc}"/></svg><span>${percent}%</span>`;
+      this.context.innerHTML = `<svg class="context-ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7.4"/>${wedge(share)}</svg><span>${percent}%</span>`;
       this.context.title = label;
       this.context.setAttribute("aria-label", label);
       this.context.classList.toggle("full", share >= 0.85);
@@ -1382,4 +1381,16 @@ export class ConversationPage {
 function lasted(ms: number, words: Words): string {
   const minutes = Math.max(0, Math.round(ms / 60_000));
   return minutes < 60 ? words.minutes(minutes) : words.hours(Math.floor(minutes / 60), minutes % 60);
+}
+
+/** The context used, as a filled wedge inside the ring from twelve o'clock
+ *  round: a gauge read at a glance, never taken for something loading. */
+function wedge(share: number): string {
+  const r = 5;
+  if (share <= 0) return "";
+  if (share >= 0.999) return `<circle class="used" cx="9" cy="9" r="${r}"/>`;
+  const angle = share * 2 * Math.PI;
+  const x = (9 + r * Math.sin(angle)).toFixed(2);
+  const y = (9 - r * Math.cos(angle)).toFixed(2);
+  return `<path class="used" d="M9 9V${9 - r}A${r} ${r} 0 ${share > 0.5 ? 1 : 0} 1 ${x} ${y}Z"/>`;
 }

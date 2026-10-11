@@ -154,15 +154,18 @@ export class ConversationView {
     const present = new Set<string>();
     let previous: HTMLElement | null = null;
     // A stretch under way at the very end says the step itself, a light
-    // passing over it and its clock running: the turn's line beneath would
-    // only say it again. With words waiting below it, the line is still the
-    // boundary they wait at.
+    // passing over it and its clock running, and a card waiting at the end
+    // says what it waits for: the turn's line beneath would only say it
+    // again. With words waiting below it, the line is still the boundary
+    // they wait at.
     const last = settled[settled.length - 1];
+    const waiting = this.conversation.waiting();
     const saidAbove =
       !pending.length &&
-      !this.conversation.waiting() &&
-      last?.kind === "activity-group" &&
-      last.members.some((member) => (member.kind === "tool" && member.ended === null) || (member.kind === "prose" && member.writing));
+      (waiting
+        ? last?.kind === "ask" && last.state.state === "waiting"
+        : last?.kind === "activity-group" &&
+          last.members.some((member) => (member.kind === "tool" && member.ended === null) || (member.kind === "prose" && member.writing)));
     const statusShown = this.drawStatus() && !saidAbove;
     let statusPlaced = false;
     const place = (element: HTMLElement) => {

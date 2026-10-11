@@ -466,8 +466,11 @@
   text-underline-offset: 3px;
 }
 
+/* Under a finger the slider takes the width it stands in, its notches far
+   enough apart to land on. */
 @media (hover: none) {
   .effort-slider {
+    max-width: none;
     height: 52px;
   }
 }

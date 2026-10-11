@@ -120,8 +120,11 @@
   opacity: 1;
 }
 
+/* The marks stand on the words' own edge: the room round each glyph lies
+   outside it. */
 .user-acts {
   justify-content: flex-end;
+  margin-right: -6px;
 }
 
 .answer-acts {
@@ -205,9 +208,60 @@
     display: none;
   }
 
+  /* A finger's room round each glyph, the glyphs where a pointer's would
+     be: the larger buttons reach out past the edge and into the gap below,
+     not into the page's rhythm. */
+  .turn-acts {
+    margin-top: -6px;
+    margin-bottom: -12px;
+  }
+
+  .answer-acts {
+    margin-left: -12px;
+  }
+
+  .user-acts {
+    margin-right: -12px;
+  }
+
   .turn-icon {
     width: 40px;
     height: 40px;
+  }
+}
+
+/* Under a finger the conversation's glyphs are a size up, each the same
+   step, so the words keep their size and the marks still read beside them;
+   the stroke grows with them. */
+@media (hover: none) {
+  :is(.conversation-page, .act-sheet, .file-menu, .picture-viewer) .glyph:is([width="14"], [width="15"]) {
+    width: 16px;
+    height: 16px;
+  }
+
+  :is(.conversation-page, .act-sheet, .file-menu, .picture-viewer) .glyph[width="16"] {
+    width: 18px;
+    height: 18px;
+  }
+
+  :is(.conversation-page, .act-sheet, .file-menu, .picture-viewer) .glyph[width="18"] {
+    width: 20px;
+    height: 20px;
+  }
+
+  :is(.conversation-page, .act-sheet, .file-menu, .picture-viewer) .glyph[width="20"] {
+    width: 22px;
+    height: 22px;
+  }
+
+  :is(.conversation-page, .act-sheet, .file-menu, .picture-viewer) .glyph[width="22"] {
+    width: 24px;
+    height: 24px;
+  }
+
+  .context-ring {
+    width: 20px;
+    height: 20px;
   }
 }
 
@@ -266,22 +320,22 @@
   }
 }
 
-/* A notice: what the World told the session, as a quiet line on the right,
-   a hand's mark before it; what it holds folded under it. */
+/* A notice: what the World told the session, as a quiet line on the left,
+   small and leaning, a hand's mark before it; what it holds folded under
+   it in the same quiet voice, under the words rather than the mark. */
 .block-heard.from-world {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-}
-
-.notice-line {
-  display: flex;
-  justify-content: flex-end;
-  max-width: min(100%, 520px);
+  align-items: flex-start;
   font-family: var(--font-reading);
   font-style: italic;
   font-size: var(--size-small);
   color: var(--text-3);
+}
+
+.notice-line {
+  display: flex;
+  max-width: 100%;
 }
 
 .notice-open {
@@ -292,7 +346,7 @@
   max-width: 100%;
   color: inherit;
   font: inherit;
-  text-align: right;
+  text-align: left;
   border-radius: var(--radius-s);
   transition: color var(--hover) ease;
 }
@@ -339,19 +393,42 @@
   align-self: stretch;
 }
 
+/* The mark is 14px and 6px from the words: what is folded hangs under the
+   words. */
 .notice-box > .fold-content {
-  padding: var(--space-2) 0 var(--space-1);
-  font-size: var(--size-small);
-  color: var(--text-2);
+  padding: var(--space-2) 0 var(--space-1) 20px;
+  line-height: 1.6;
+}
+
+/* A program's own lines keep their columns, so stay upright in the code
+   face; quiet as the rest. */
+.notice-box .io-text,
+.notice-box .long-text-box .lv-viewport {
+  font-style: normal;
+  /* The code face stands taller than the reading face at one size. */
+  font-size: calc(var(--size-small) * 0.92);
+  line-height: 1.5;
+  color: var(--text-3);
 }
 
 .notice-path {
   margin: var(--space-1) 0 0;
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
-  color: var(--text-3);
   overflow-wrap: anywhere;
+}
+
+.notice-box .prose,
+.notice-box .told-plain {
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+.notice-box .prose :is(h1, h2, h3, h4, strong) {
+  color: var(--text-2);
+}
+
+.notice-box .prose :is(code, pre) {
+  font-style: normal;
 }
 
 /* Answers to questions asked without waiting: what was answered, on the
