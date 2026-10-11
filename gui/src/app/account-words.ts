@@ -1122,6 +1122,11 @@ export interface AdminWords {
   noOther: string;
   selfRegistration: string;
   selfRegistrationWhat: string;
+  /** Said before sign-up is opened, which lets anyone who reaches the
+   *  server in. */
+  signUpTitle: string;
+  signUpWhat: string;
+  signUpGo: string;
   accounts: string;
   opened(at: string): string;
   superTag: string;
@@ -1171,7 +1176,11 @@ export const zhAdmin: AdminWords = {
   transferGo: "转交",
   noOther: "没有其他账号",
   selfRegistration: "开放注册",
-  selfRegistrationWhat: "能连接服务器的人都可以自行注册，注册的账号为成员",
+  selfRegistrationWhat: "能连接服务器的人都可以自行注册，注册的账号为成员。建议关闭，由管理员新建账号",
+  signUpTitle: "开放注册？",
+  signUpWhat:
+    "开放后，能连上这台服务器的任何人都能自己注册账号。新账号是成员，可以把自己的电脑加进来、开项目，数据存在这台服务器上。服务器在公网上时，陌生人也能注册。\n\n建议保持关闭，需要时用「新建账号」为对方开一个。",
+  signUpGo: "仍要开放",
   accounts: "账号",
   opened: (at) => `${at} 创建`,
   superTag: "管理员",
@@ -1227,7 +1236,11 @@ export const enAdmin: AdminWords = {
   transferGo: "Transfer",
   noOther: "No other accounts",
   selfRegistration: "Open sign-up",
-  selfRegistrationWhat: "Anyone who can reach the server can sign up; new accounts are members",
+  selfRegistrationWhat: "Anyone who can reach the server can sign up; new accounts are members. Best kept off, with accounts made by the administrator",
+  signUpTitle: "Open sign-up?",
+  signUpWhat:
+    "Anyone who can reach this server will be able to create an account. New accounts are members: they can add their own computers and open projects, kept on this server. If the server is on the internet, strangers can sign up too.\n\nWe recommend keeping it off and making accounts for people with New account.",
+  signUpGo: "Open anyway",
   accounts: "Accounts",
   opened: (at) => `created ${at}`,
   superTag: "administrator",

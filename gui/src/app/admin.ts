@@ -62,7 +62,21 @@ export class AdminPage implements Page {
       const box = event.target as HTMLInputElement;
       if (box.name !== "self-registration") return;
       const at = this.at(box);
-      if (at) void this.quietly(box, at.login, { change: "settings", self_registration: box.checked });
+      if (!at) return;
+      if (box.checked) {
+        // Opening it lets anyone who reaches the server in: said first, and
+        // only done once agreed.
+        box.checked = false;
+        this.options.confirm.ask({
+          title: words.signUpTitle,
+          what: words.signUpWhat,
+          go: words.signUpGo,
+          act: () => this.options.change(at.login, { change: "settings", self_registration: true }),
+          done: () => void this.options.store.refresh(),
+        });
+        return;
+      }
+      void this.quietly(box, at.login, { change: "settings", self_registration: false });
     });
     this.stop = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
   }

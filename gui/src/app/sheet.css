@@ -816,7 +816,7 @@
   margin: 0;
   font-size: var(--size-ui);
   line-height: var(--leading-prose);
-  color: var(--text);
+  color: var(--text);  white-space: pre-line;
 }
 
 .sheet-go.danger {
