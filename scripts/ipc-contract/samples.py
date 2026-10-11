@@ -29,6 +29,9 @@ def replies(fixtures):
     # fields older readers ignore.
     yield {"reply": "machines", "here": "desktop", "others": ["laptop"], "program": "server",
            "colleagues": "gpu.acme", "colleagues_lent": True}
+    yield {"reply": "machines", "here": "desktop", "others": ["laptop"], "collab": {
+        "callees": [{"name": "deep", "account": "ada", "use_when": "Check a precise point", "lives_on": "laptop"}],
+        "prompt": "The account's collaboration text"}}
     yield {"reply": "asked", "colleague": ADDRESS}
     for landed in [{"kind": "uncertain", "why": "interrupted"}, {"kind": "new_turn", "turn": "a"},
                    {"kind": "joined_turn", "turn": "b"}, {"kind": "waiting", "why": "offline", "answered": True},
@@ -193,6 +196,7 @@ def samples(root):
             if protocol == 5 and reply["reply"] in ["page", "pages", "machines"]:
                 continue  # These calls did not exist in the frozen protocol-5 binary.
             case = {"mode": "reply", "protocol": protocol, "value": frame(reply)}
+            case["collaboration"] = bool(reply.get("collab"))
             if reply["reply"] == "run":
                 case["encodings"] = [part["encoding"] for part in reply["output"]["legacy"]]
                 case["receipts"] = bool(reply.get("consumed"))
