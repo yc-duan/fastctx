@@ -1,5 +1,6 @@
 //! User-only line sources, owned by live connections and the holding file.
 
+mod projection;
 pub(crate) mod reading;
 
 use std::collections::HashMap;
@@ -38,6 +39,9 @@ struct State {
     extent: Extent,
     first: u64,
     error: Option<String>,
+    projection: Option<fastctx_hands::run::projection::CapturedNotes>,
+    writes: Vec<fastctx_types::run_facts::WriteFact>,
+    writes_revision: Option<(u64, std::time::SystemTime)>,
 }
 pub(crate) enum Lease {
     Here { node: Weak<Node>, key: Key, closed: tokio::sync::watch::Receiver<bool> },
@@ -144,7 +148,18 @@ pub(crate) async fn open(
         }
         let complete = complete(record_path.as_deref())?;
         let extent = Extent { length: index.length, complete, version: 0 };
-        Ok::<_, String>(State { index: Some(index), snapshot, extent, first: 0, error: None })
+        let (projection, writes, writes_revision) =
+            projection::open(&read_path, snapshot.size, record_path.as_deref())?;
+        Ok::<_, String>(State {
+            index: Some(index),
+            snapshot,
+            extent,
+            first: 0,
+            error: None,
+            projection,
+            writes,
+            writes_revision,
+        })
     })
     .await
     .map_err(failed)?
@@ -206,7 +221,8 @@ async fn refresh(source: Arc<Source>) -> std::result::Result<(), Failure> {
             }
             let snapshot = observe(&source.path)?;
             let ended = complete(source.job_record.as_deref())?;
-            if state.snapshot == snapshot && state.extent.complete == ended {
+            let revision = projection::revision(source.job_record.as_deref())?;
+            if state.snapshot == snapshot && state.extent.complete == ended && state.writes_revision == revision {
                 return Ok(None);
             }
             if source.job_record.is_none()
@@ -215,11 +231,14 @@ async fn refresh(source: Arc<Source>) -> std::result::Result<(), Failure> {
             {
                 return Err("the text source was changed, replaced or truncated".into());
             }
-            let first = state
+            let mut first = state
                 .index
                 .as_mut()
                 .ok_or_else(|| "the source is closed".to_string())?
                 .grow(snapshot.size, source.cancelled.clone())?;
+            if projection::refresh(&mut state, &source.path, snapshot.size, source.job_record.as_deref(), revision)? {
+                first = 0;
+            }
             state.snapshot = snapshot;
             let length = state.index.as_ref().expect("index").length;
             Ok(Some((length, ended, first)))
@@ -236,6 +255,7 @@ async fn refresh(source: Arc<Source>) -> std::result::Result<(), Failure> {
             }
             Err(error) => {
                 state.index.take();
+                state.projection.take();
                 state.error = Some(error.clone());
                 source.changed.send_modify(|version| *version += 1);
                 Err(failed(error))
@@ -334,7 +354,9 @@ pub(crate) async fn call(
         let mut state = source.state.lock().expect("line source");
         let index = state.index.as_mut().ok_or_else(|| "line source closed".to_string())?;
         let result = match request {
-            Request::Read { start, count, .. } => Answer::Lines { start, lines: index.read(start, count, &cancel)? },
+            Request::Read { start, count, .. } => {
+                Answer::Lines { start, lines: index.read(start, count, &cancel)?, notes: Vec::new() }
+            }
             Request::Find { query, position, direction, .. } => {
                 Answer::Found { found: index.find(&query, &position, direction, &cancel)? }
             }

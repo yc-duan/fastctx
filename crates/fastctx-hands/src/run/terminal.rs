@@ -82,7 +82,6 @@ pub struct Lines<R> {
     queued: Spool,
     ready: Option<Queue>,
     tracker: super::unfinished::Tracker,
-    read_bytes: u64,
     string_start: u64,
     matches: Option<Vec<(std::ops::Range<u64>, u64)>>,
     text_tags: Vec<(std::ops::Range<usize>, u64)>,
@@ -124,21 +123,16 @@ impl<R: Read> Lines<R> {
             queued: Spool::default(),
             ready: None,
             tracker: Default::default(),
-            read_bytes: 0,
             string_start: 0,
             matches: None,
             text_tags: Vec::new(),
             tagged_records: Vec::new(),
         }
     }
-    pub fn position(&self) -> u64 {
-        self.read_bytes - (self.end - self.start) as u64
-    }
-
     pub(crate) fn tagged_at(input: R, raw_start: u64, ranges: Vec<(std::ops::Range<u64>, u64)>) -> Self {
         let mut lines = Self::new(input);
         lines.matches = Some(ranges);
-        lines.read_bytes = raw_start;
+        lines.input_bytes = raw_start;
         lines
     }
 
@@ -181,7 +175,6 @@ impl<R: Read> Lines<R> {
                     self.finish(std::mem::take(&mut sequence).finish())?;
                     continue;
                 }
-                self.read_bytes += read as u64;
                 self.start = 0;
                 self.end = read;
                 self.tracker.feed(&self.buffer[..read]);
@@ -708,6 +701,9 @@ impl Encoding {
         if matches!(self, Self::Utf8) {
             return display.write_tagged(bytes, literal, tags);
         }
+        if matches!(self, Self::Escaped) {
+            return Self::render_escaped_tagged(bytes, literal, tags, display);
+        }
         // Keep decoder state across source boundaries; labels follow the bytes producing text.
         let mut decoded = Spool::default();
         let mut mapped = Vec::new();
@@ -734,46 +730,64 @@ impl Encoding {
                 let text = decoder.feed(&[], true).map_err(|_| io::Error::other("terminal source does not decode"))?;
                 emit(&text, offset.saturating_sub(1))?;
             }
-            Self::Escaped => {
-                // This path shares the normal renderer, whose escaped ASCII has byte provenance.
-                let mut pending = Vec::new();
-                for chunk in bytes.chunks().chain(std::iter::once(Ok(Vec::new()))) {
-                    let chunk = chunk?;
-                    let end = chunk.is_empty();
-                    pending.extend_from_slice(&chunk);
-                    let mut at = 0;
-                    while at < pending.len() {
-                        let (good, bad) = match std::str::from_utf8(&pending[at..]) {
-                            Ok(text) => (text.len(), 0),
-                            Err(error) => (
-                                error.valid_up_to(),
-                                error.error_len().unwrap_or(if end {
-                                    pending.len() - at - error.valid_up_to()
-                                } else {
-                                    0
-                                }),
-                            ),
-                        };
-                        for character in std::str::from_utf8(&pending[at..at + good]).expect("valid prefix").chars() {
-                            emit(character.encode_utf8(&mut [0; 4]), offset + at)?;
-                            at += character.len_utf8();
-                        }
-                        for byte in &pending[at..at + bad] {
-                            emit(&format!(r"\x{byte:02X}"), offset + at)?;
-                            at += 1;
-                        }
-                        if bad == 0 {
-                            break;
-                        }
-                    }
-                    pending.drain(..at);
-                    offset += at;
-                }
-            }
+            Self::Escaped => unreachable!(),
             Self::Utf8 => unreachable!(),
         }
         display.legacy = matches!(self, Self::Legacy(_));
         display.write_tagged(&decoded.finish(), literal, &mapped)
+    }
+
+    fn render_escaped_tagged(
+        bytes: &Bytes,
+        literal: bool,
+        tags: &[(std::ops::Range<usize>, u64)],
+        display: &mut Display,
+    ) -> io::Result<()> {
+        display.legacy = false;
+        let mut pending = Vec::new();
+        let mut valid = Spool::default();
+        let mut mapped = Vec::new();
+        let mut offset = 0usize;
+        for chunk in bytes.chunks().chain(std::iter::once(Ok(Vec::new()))) {
+            let chunk = chunk?;
+            let end = chunk.is_empty();
+            pending.extend_from_slice(&chunk);
+            let mut at = 0;
+            while at < pending.len() {
+                let (good, bad) = match std::str::from_utf8(&pending[at..]) {
+                    Ok(text) => (text.len(), 0),
+                    Err(error) => (
+                        error.valid_up_to(),
+                        error.error_len().unwrap_or(if end { pending.len() - at - error.valid_up_to() } else { 0 }),
+                    ),
+                };
+                for character in std::str::from_utf8(&pending[at..at + good]).expect("valid prefix").chars() {
+                    let tag = super::display::source_tag(tags, offset + at);
+                    let start = valid.len() as usize;
+                    valid.write_all(character.encode_utf8(&mut [0; 4]).as_bytes())?;
+                    if tag != 0 {
+                        mapped.push((start..start + character.len_utf8(), tag));
+                    }
+                    at += character.len_utf8();
+                }
+                if bad > 0 {
+                    display.write_tagged(&std::mem::take(&mut valid).finish(), literal, &mapped)?;
+                    mapped.clear();
+                    for byte in &pending[at..at + bad] {
+                        display.view = super::display::source_tag(tags, offset + at);
+                        // The canonical renderer gives an escaped byte one cell, not four.
+                        display.byte(*byte)?;
+                        at += 1;
+                    }
+                }
+                if bad == 0 {
+                    break;
+                }
+            }
+            pending.drain(..at);
+            offset += at;
+        }
+        display.write_tagged(&valid.finish(), literal, &mapped)
     }
 
     fn of(bytes: &Bytes) -> io::Result<(Self, bool)> {

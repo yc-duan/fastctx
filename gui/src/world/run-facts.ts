@@ -57,6 +57,11 @@ export interface OutputSpan { note?: OutputNote; piece: DisplayPiece }
 /** All capture matches, including notes outside the model's selected window. */
 export interface OutputNoteMatch { note: OutputNote; from: number; to: number }
 
+/** Lazy full-output reader positions use 0-based indexed rows and UTF-16 units. */
+export interface LineNote { line: number; from: number; to: number; note: OutputNote }
+export interface ProjectedLines { start: number; lines: string[]; notes: LineNote[] }
+export interface LinePart { line: number; text: string; ended: boolean; note?: OutputNote }
+
 export interface RunFacts {
   machine: MachineName;
   state: RunState;

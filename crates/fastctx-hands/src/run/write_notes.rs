@@ -1,4 +1,4 @@
-//! Match recorded stdout notes without changing a byte or the terminal parser's state.
+//! Match recorded stdout notes without changing input bytes or terminal parser state.
 
 use fastctx_types::run_facts::{OutputNote, WriteFact, WriteNote};
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,17 +12,12 @@ pub(super) struct Matches {
     pub notes: BTreeMap<u64, OutputNote>,
 }
 
-/// One pass over the capture, with a disk-linked occurrence index (16 bytes/match).
-/// Missing notes leave the forward cursor where the last successful match ended.
-pub(super) fn read(path: &Path, bytes: u64, writes: &[WriteFact]) -> io::Result<Matches> {
+fn groups(writes: &[WriteFact]) -> io::Result<Vec<(String, OutputNote)>> {
     let mut operations = BTreeSet::new();
-    let mut patterns = Vec::<&str>::new();
-    let mut pattern_ids = BTreeMap::new();
-    let mut ordered = Vec::new();
+    let mut groups = Vec::new();
     for fact in writes {
         let Some(note) = &fact.note else { continue };
         let operation = fact.id.split_once('-').map_or(fact.id.as_str(), |(operation, _)| operation);
-        // A patch emits one note for all its mutations, not one copy per path.
         if !operations.insert(operation) {
             continue;
         }
@@ -37,80 +32,176 @@ pub(super) fn read(path: &Path, bytes: u64, writes: &[WriteFact]) -> io::Result<
         let WriteNote::Text { command, text } = note else {
             return Err(io::Error::other("recorded stdout note does not reference its byte source directly"));
         };
-        if text.is_empty() {
-            continue;
+        if !text.is_empty() {
+            groups.push((text.clone(), OutputNote { command: *command, write: Some(operation.into()) }));
         }
-        let next = patterns.len();
-        let id = *pattern_ids.entry(text.as_str()).or_insert_with(|| {
-            patterns.push(text);
-            next
-        });
-        ordered.push((id, OutputNote { command: *command, write: Some(operation.into()) }));
     }
-    let mut result = Matches { ranges: Vec::new(), notes: BTreeMap::new() };
-    if patterns.is_empty() {
-        return Ok(result);
+    Ok(groups)
+}
+
+/// Append-only, anonymous occurrence index: 16 disk bytes per raw match.
+/// Memory follows note metadata and the longest note, never output length.
+pub(super) struct Matcher {
+    groups: Vec<(String, OutputNote)>,
+    patterns: Vec<String>,
+    order: Vec<usize>,
+    automaton: Option<aho_corasick::AhoCorasick>,
+    index: File,
+    heads: Vec<u64>,
+    tails: Vec<u64>,
+    end: u64,
+    bytes: u64,
+    tail: Vec<u8>,
+    prefix: Vec<(Range<u64>, OutputNote)>,
+}
+
+impl Matcher {
+    pub fn new(writes: &[WriteFact]) -> io::Result<Self> {
+        Self::with_prefix(writes, Vec::new())
     }
-    let matcher = aho_corasick::AhoCorasick::new(&patterns).map_err(io::Error::other)?;
-    let overlap = patterns.iter().map(|pattern| pattern.len()).max().expect("patterns") - 1;
-    let mut input = File::open(path)?.take(bytes);
-    let mut buffer = vec![0; crate::spool::BLOCK + overlap];
-    let mut index = tempfile::tempfile()?;
-    let mut heads = vec![0u64; patterns.len()];
-    let mut tails = heads.clone();
-    let mut end = 8u64;
-    let mut offset = 0u64;
-    let mut kept = 0;
-    loop {
-        let read = input.read(&mut buffer[kept..])?;
-        if read == 0 {
-            break;
+
+    fn with_prefix(writes: &[WriteFact], prefix: Vec<(Range<u64>, OutputNote)>) -> io::Result<Self> {
+        let groups = groups(writes)?;
+        let mut patterns = Vec::new();
+        let mut ids = BTreeMap::new();
+        let mut order = Vec::new();
+        for (text, _) in groups.iter().skip(prefix.len()) {
+            let next = patterns.len();
+            let id = *ids.entry(text.as_str()).or_insert_with(|| {
+                patterns.push(text.clone());
+                next
+            });
+            order.push(id);
         }
-        let filled = kept + read;
-        for found in matcher.find_overlapping_iter(&buffer[..filled]) {
-            let start = offset - kept as u64 + found.start() as u64;
-            let finish = offset - kept as u64 + found.end() as u64;
-            if finish <= offset {
-                continue;
-            }
-            let id = found.pattern().as_usize();
-            if tails[id] != 0 {
-                index.seek(SeekFrom::Start(tails[id] + 8))?;
-                index.write_all(&end.to_le_bytes())?;
-            } else {
-                heads[id] = end;
-            }
-            index.seek(SeekFrom::Start(end))?;
-            index.write_all(&start.to_le_bytes())?;
-            index.write_all(&0u64.to_le_bytes())?;
-            tails[id] = end;
-            end = end.checked_add(16).ok_or_else(|| io::Error::other("note occurrence index overflow"))?;
-        }
-        offset += read as u64;
-        kept = overlap.min(filled);
-        buffer.copy_within(filled - kept..filled, 0);
+        let automaton = if patterns.is_empty() {
+            None
+        } else {
+            Some(aho_corasick::AhoCorasick::new(&patterns).map_err(io::Error::other)?)
+        };
+        let heads = vec![0; patterns.len()];
+        let bytes = prefix.last().map_or(0, |(range, _)| range.end);
+        Ok(Self {
+            groups,
+            patterns,
+            order,
+            automaton,
+            index: tempfile::tempfile()?,
+            tails: heads.clone(),
+            heads,
+            end: 8,
+            bytes,
+            tail: Vec::new(),
+            prefix,
+        })
     }
-    if offset != bytes {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the output prefix is no longer retained"));
+
+    pub fn same_notes(&self, writes: &[WriteFact]) -> io::Result<bool> {
+        Ok(self.groups == groups(writes)?)
     }
-    let mut cursor = 0;
-    for (id, note) in ordered {
-        while heads[id] != 0 {
-            index.seek(SeekFrom::Start(heads[id]))?;
-            let mut entry = [0; 16];
-            index.read_exact(&mut entry)?;
-            let start = u64::from_le_bytes(entry[..8].try_into().expect("offset"));
-            heads[id] = u64::from_le_bytes(entry[8..].try_into().expect("next"));
-            if start >= cursor {
-                cursor = start + patterns[id].len() as u64;
-                let tag = result.notes.len() as u64 + 1;
-                result.ranges.push((start..cursor, tag));
-                result.notes.insert(tag, note);
+
+    /// A successfully matched leading group cannot move when output is appended.
+    /// Preserve that prefix so newly recorded notes search only what follows it.
+    pub fn extend_notes(&mut self, path: &Path, bytes: u64, writes: &[WriteFact]) -> io::Result<()> {
+        self.append(path, bytes)?;
+        let selected = self.selected()?;
+        let mut prefix = Vec::new();
+        for (range, tag) in selected.ranges {
+            let note = selected.notes[&tag].clone();
+            if self.groups.get(prefix.len()).is_none_or(|(_, expected)| *expected != note) {
                 break;
             }
+            prefix.push((range, note));
         }
+        let incoming = groups(writes)?;
+        if incoming.len() < prefix.len() || incoming[..prefix.len()] != self.groups[..prefix.len()] {
+            return Err(io::Error::other("recorded stdout note identity or order changed"));
+        }
+        *self = Self::with_prefix(writes, prefix)?;
+        Ok(())
     }
-    Ok(result)
+
+    pub fn append(&mut self, path: &Path, bytes: u64) -> io::Result<()> {
+        if bytes < self.bytes {
+            return Err(io::Error::other("note capture was truncated"));
+        }
+        if self.automaton.is_none() {
+            self.bytes = bytes;
+            return Ok(());
+        }
+        if bytes == self.bytes {
+            return Ok(());
+        }
+        let overlap = self.patterns.iter().map(String::len).max().expect("patterns") - 1;
+        let mut file = File::open(path)?;
+        file.seek(SeekFrom::Start(self.bytes))?;
+        let mut input = file.take(bytes - self.bytes);
+        let mut buffer = vec![0; crate::spool::BLOCK + overlap];
+        let mut kept = self.tail.len();
+        buffer[..kept].copy_from_slice(&self.tail);
+        loop {
+            let read = input.read(&mut buffer[kept..])?;
+            if read == 0 {
+                break;
+            }
+            let filled = kept + read;
+            for found in self.automaton.as_ref().expect("patterns").find_overlapping_iter(&buffer[..filled]) {
+                let start = self.bytes - kept as u64 + found.start() as u64;
+                let finish = self.bytes - kept as u64 + found.end() as u64;
+                if finish <= self.bytes {
+                    continue;
+                }
+                let id = found.pattern().as_usize();
+                if self.tails[id] != 0 {
+                    self.index.seek(SeekFrom::Start(self.tails[id] + 8))?;
+                    self.index.write_all(&self.end.to_le_bytes())?;
+                } else {
+                    self.heads[id] = self.end;
+                }
+                self.index.seek(SeekFrom::Start(self.end))?;
+                self.index.write_all(&start.to_le_bytes())?;
+                self.index.write_all(&0u64.to_le_bytes())?;
+                self.tails[id] = self.end;
+                self.end =
+                    self.end.checked_add(16).ok_or_else(|| io::Error::other("note occurrence index overflow"))?;
+            }
+            self.bytes += read as u64;
+            kept = overlap.min(filled);
+            buffer.copy_within(filled - kept..filled, 0);
+        }
+        if self.bytes != bytes {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the output prefix is no longer retained"));
+        }
+        self.tail = buffer[..kept].to_vec();
+        Ok(())
+    }
+
+    pub fn selected(&mut self) -> io::Result<Matches> {
+        let mut result = Matches { ranges: Vec::new(), notes: BTreeMap::new() };
+        for (range, note) in &self.prefix {
+            let tag = result.notes.len() as u64 + 1;
+            result.ranges.push((range.clone(), tag));
+            result.notes.insert(tag, note.clone());
+        }
+        let mut heads = self.heads.clone();
+        let mut cursor = self.prefix.last().map_or(0, |(range, _)| range.end);
+        for (operation, &id) in self.order.iter().enumerate() {
+            while heads[id] != 0 {
+                self.index.seek(SeekFrom::Start(heads[id]))?;
+                let mut entry = [0; 16];
+                self.index.read_exact(&mut entry)?;
+                let start = u64::from_le_bytes(entry[..8].try_into().expect("offset"));
+                heads[id] = u64::from_le_bytes(entry[8..].try_into().expect("next"));
+                if start >= cursor {
+                    cursor = start + self.patterns[id].len() as u64;
+                    let tag = result.notes.len() as u64 + 1;
+                    result.ranges.push((start..cursor, tag));
+                    result.notes.insert(tag, self.groups[operation + self.prefix.len()].1.clone());
+                    break;
+                }
+            }
+        }
+        Ok(result)
+    }
 }
 
 pub(super) fn tag(ranges: &[(Range<u64>, u64)], byte: u64) -> u64 {

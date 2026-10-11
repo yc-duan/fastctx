@@ -8,6 +8,8 @@ pub struct Fixtures {
     pub calls: Vec<RunFacts>,
     pub diff: Vec<DiffLine>,
     pub updates: Vec<JobFacts>,
+    pub projected_reads: Vec<fastctx_types::lines::ProjectedLines>,
+    pub parts: Vec<fastctx_types::lines::Part>,
 }
 
 pub fn example() -> RunFacts {
@@ -123,6 +125,31 @@ pub fn fixtures() -> Fixtures {
         },
     ];
     Fixtures {
+        projected_reads: vec![fastctx_types::lines::ProjectedLines {
+            start: 3,
+            lines: vec!["😀 note".into()],
+            notes: vec![fastctx_types::lines::LineNote {
+                line: 3,
+                from: 3,
+                to: 7,
+                note: OutputNote {
+                    command: NoteCommand::Write,
+                    write: Some("00112233445566778899aabbccddeeff".into()),
+                },
+            }],
+        }],
+        parts: vec![
+            fastctx_types::lines::Part { line: 3, text: "😀 ".into(), ended: false, note: None },
+            fastctx_types::lines::Part {
+                line: 3,
+                text: "note".into(),
+                ended: true,
+                note: Some(OutputNote {
+                    command: NoteCommand::Write,
+                    write: Some("00112233445566778899aabbccddeeff".into()),
+                }),
+            },
+        ],
         updates: vec![JobFacts {
             call_id: "host-call-1".into(),
             primary: true,

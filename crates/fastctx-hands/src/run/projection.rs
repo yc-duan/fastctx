@@ -19,6 +19,7 @@ struct Portion {
 /// are absolute; callers assemble fragments into their own indexed rows and UTF-16 ranges.
 pub struct CapturedNotes {
     matches: super::write_notes::Matches,
+    matcher: super::write_notes::Matcher,
 }
 
 impl CapturedNotes {
@@ -27,7 +28,28 @@ impl CapturedNotes {
         bytes: u64,
         writes: &[fastctx_types::run_facts::WriteFact],
     ) -> io::Result<Self> {
-        Ok(Self { matches: super::write_notes::read(path, bytes, writes)? })
+        let mut matcher = super::write_notes::Matcher::new(writes)?;
+        matcher.append(path, bytes)?;
+        let matches = matcher.selected()?;
+        Ok(Self { matches, matcher })
+    }
+
+    /// Unchanged patterns index only newly captured bytes. New patterns can match
+    /// earlier program output too, and therefore need an index of that prefix.
+    pub fn refresh(
+        &mut self,
+        path: &std::path::Path,
+        bytes: u64,
+        writes: &[fastctx_types::run_facts::WriteFact],
+    ) -> io::Result<bool> {
+        if !self.matcher.same_notes(writes)? {
+            self.matcher.extend_notes(path, bytes, writes)?;
+        }
+        self.matcher.append(path, bytes)?;
+        let matches = self.matcher.selected()?;
+        let changed = matches.ranges != self.matches.ranges || matches.notes != self.matches.notes;
+        self.matches = matches;
+        Ok(changed)
     }
 
     /// The returned Line.view is an attribution tag, unrelated to view-budget regions.
@@ -38,6 +60,11 @@ impl CapturedNotes {
 
     pub fn note(&self, tag: u64) -> Option<&OutputNote> {
         self.matches.notes.get(&tag)
+    }
+
+    pub fn intersects(&self, from: u64, to: u64) -> bool {
+        let at = self.matches.ranges.partition_point(|(range, _)| range.end <= from);
+        self.matches.ranges.get(at).is_some_and(|(range, _)| range.start < to)
     }
 
     pub fn matches(&self) -> Vec<fastctx_types::run_facts::OutputNoteMatch> {

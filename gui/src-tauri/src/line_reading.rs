@@ -135,6 +135,21 @@ pub(crate) async fn lines_read(
 }
 
 #[fastctx_gui_command::command]
+pub(crate) async fn lines_read_projected(
+    shell: tauri::State<'_, Shell>,
+    machine_name: String,
+    source: String,
+    start: u64,
+    count: u64,
+    request_id: String,
+) -> Result<fastctx_types::lines::ProjectedLines, String> {
+    match request(&shell, machine_name, request_id, Request::Read { source, start, count }).await? {
+        Answer::Lines { start, lines, notes } => Ok(fastctx_types::lines::ProjectedLines { start, lines, notes }),
+        _ => Err("expected logical lines".into()),
+    }
+}
+
+#[fastctx_gui_command::command]
 pub(crate) async fn lines_find(
     shell: tauri::State<'_, Shell>,
     machine_name: String,
