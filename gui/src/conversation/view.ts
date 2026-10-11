@@ -334,8 +334,24 @@ export class ConversationView {
   /** A slot not drawn, holding the room it would take. */
   private wait(slot: Slot): void {
     slot.element.classList.add("lazy");
-    const metrics = this.metrics();
-    slot.element.style.height = `${Math.round(slot.height ?? estimate(slot.block, metrics.line, metrics.chars))}px`;
+    slot.element.style.height = `${Math.round(slot.height ?? this.estimate(slot.block))}px`;
+  }
+
+  /** How tall a block not yet drawn is taken to be (`lazy.ts`), with the
+   *  room its turn's actions take where it has them: under a pointer each
+   *  ended turn's, on a touch screen only the latest's. */
+  private estimate(block: Block): number {
+    const { line, chars } = this.metrics();
+    const conversation = this.conversation;
+    const turn = block.kind === "heard" || block.kind === "prose" ? block.turn : null;
+    const has =
+      !!turn &&
+      conversation.turnEnded(turn) &&
+      ((block.kind === "heard" && !block.notice && !block.sending && (!block.from || block.from.kind === "user")) ||
+        (block.kind === "prose" && block.prose === "message" && conversation.lastMessageOf(turn) === block.key));
+    const touch = matchMedia("(hover: none)").matches;
+    const acts = !has ? 0 : !touch ? 32 : conversation.latestEnded() === turn ? 22 : 0;
+    return estimate(block, line, chars, acts);
   }
 
   /** The body's line height and how many of its characters a line of the
@@ -356,12 +372,15 @@ export class ConversationView {
    *  newest are there the moment the conversation opens; the rest as the
    *  reader comes to them. */
   private fillFromEnd(blocks: readonly Block[]): void {
+    // Reckoned in the heights blocks are taken to be, so nothing is laid
+    // out until all of them are drawn.
     const screen = this.context.scroller.clientHeight || innerHeight;
     let filled = 0;
     for (let index = blocks.length - 1; index >= 0 && filled < screen * 2; index -= 1) {
-      const slot = this.slots.get(blocks[index]!.key)!;
+      const block = blocks[index]!;
+      const slot = this.slots.get(block.key)!;
       if (slot.signature === null) this.draw(slot);
-      filled += slot.element.offsetHeight;
+      filled += this.estimate(block);
     }
   }
 

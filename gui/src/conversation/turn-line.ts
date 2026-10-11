@@ -41,7 +41,7 @@ export class TurnLine {
     this.element = document.createElement("div");
     this.element.className = "turn-status";
     this.element.setAttribute("role", "status");
-    this.element.innerHTML = `<span class="turn-status-rule" aria-hidden="true"></span><span class="turn-status-mark" aria-hidden="true"><i></i></span><span class="turn-status-step"></span><span class="turn-status-time"></span>`;
+    this.element.innerHTML = `<span class="turn-status-rule" aria-hidden="true"></span><span class="turn-status-mark" aria-hidden="true"><i></i></span><span class="turn-status-step"></span><span class="turn-status-time" aria-hidden="true"></span>`;
     this.rule = this.element.querySelector<HTMLElement>(".turn-status-rule")!;
     this.mark = this.element.querySelector<HTMLElement>(".turn-status-mark")!;
     this.step = this.element.querySelector<HTMLElement>(".turn-status-step")!;

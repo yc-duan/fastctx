@@ -619,6 +619,11 @@
   color: var(--text-3);
 }
 
+/* The words and the time part by a dot with even room on both sides. */
+.turn-status-step:not(:empty) + .turn-status-time:not(:empty) {
+  margin-left: -4px;
+}
+
 .turn-status-step:not(:empty) + .turn-status-time:not(:empty)::before {
   content: "·";
   margin-right: 6px;
