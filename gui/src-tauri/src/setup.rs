@@ -220,38 +220,29 @@ pub async fn keep(world: &World) -> Result<KeptNow, String> {
     })
 }
 
-/// What installing World does for this computer besides the application
-/// (`world-network.md`, 登记了，就一直连着): the fastctx it carries put in
-/// place when there is none yet, and the service that keeps the node from
-/// boot, administrator rights asked for once; a node already running hands
-/// the World over to the service's. An update finds both there and changes
-/// neither: a newer World is put in place by the user, from the settings.
-/// Declined rights leave the installation standing; the settings offer the
-/// service again.
+/// What installing World does for this computer besides the application:
+/// the fastctx it carries put in place when there is none yet, the records
+/// of a removal that kept the data cleared, and the host hook-ups that
+/// removal took out put back (`world-gui.md`, 设置). An update finds the
+/// program there and leaves it: a newer World is put in place by the user,
+/// from the settings. The service that keeps the node from boot is not
+/// installed here; it comes when this computer first joins or creates a
+/// network (`keep`).
 #[cfg(windows)]
-pub fn keep_at_install() -> Result<String, String> {
+pub fn after_install() -> Result<(), String> {
     let places = places()?;
-    let _uninstall = fastctx_platform::uninstall_gate::Gate::try_acquire(&places.root).map_err(|error| error.to_string())?
+    let _uninstall = fastctx_platform::uninstall_gate::Gate::try_acquire(&places.root)
+        .map_err(|error| error.to_string())?
         .ok_or("this World is still being uninstalled")?;
-    fastctx_install::uninstall::delete_file(&places.root.join("uninstalled.json")).map_err(|error| error.to_string())?;
-    fastctx_install::uninstall::delete_file(&places.root.join("uninstall-progress.json")).map_err(|error| error.to_string())?;
+    fastctx_install::uninstall::delete_file(&places.root.join("uninstalled.json"))
+        .map_err(|error| error.to_string())?;
+    fastctx_install::uninstall::delete_file(&places.root.join("uninstall-progress.json"))
+        .map_err(|error| error.to_string())?;
     if !places.installed().is_file() {
         place()?;
     }
     apply::restore_withdrawn(&places).map_err(|error| error.to_string())?;
-    let (kept, _) = keep_connected(&places).map_err(|error| error.to_string())?;
-    if kept == Kept::Installed {
-        hand_over_running(&places)?;
-    }
-    Ok(format!("{kept:?}"))
-}
-
-/// Asks the node running for this World, if one is, to hand the World over
-/// to the service's; none is started for the asking.
-#[cfg(windows)]
-fn hand_over_running(places: &Places) -> Result<(), String> {
-    let world = WorldDir::under(&places.root);
-    tauri::async_runtime::block_on(yield_running(&world))
+    Ok(())
 }
 
 async fn yield_running(world: &WorldDir) -> Result<(), String> {

@@ -18,7 +18,7 @@ struct Completed {
     handoff: Option<tempfile::TempDir>,
 }
 
-fn program() -> Result<PathBuf, String> {
+pub(crate) fn program() -> Result<PathBuf, String> {
     crate::setup::carried()
         .or_else(|| crate::setup::places().ok().map(|places| places.installed()).filter(|path| path.is_file()))
         .ok_or_else(|| "World has no fastctx executable available to uninstall this computer".into())
@@ -262,42 +262,4 @@ fn finish(app: &AppHandle, everything: bool) -> Result<(), String> {
 #[cfg(not(any(windows, target_os = "linux")))]
 fn finish(_app: &AppHandle, _everything: bool) -> Result<(), String> {
     Err("package uninstall is supported on Windows and Linux".into())
-}
-
-#[cfg(windows)]
-pub(crate) fn at_package_uninstall() -> Result<(), String> {
-    let mut command = Command::new(program()?);
-    command.args(["uninstall", "run", "--json"]).stdin(Stdio::null());
-    #[cfg(windows)]
-    {
-        let home = fastctx_platform::user_home().map_err(|error| error.to_string())?;
-        for path in fastctx_install::uninstall::application_directories(&home).map_err(|error| error.to_string())? {
-            command.arg("--application-dir").arg(path);
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        command.creation_flags(0x08000000);
-    }
-    let output = command.output().map_err(|error| error.to_string())?;
-    print!("{}", String::from_utf8_lossy(&output.stdout));
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-pub(crate) fn finish_checkpoint() -> Result<(), String> {
-    use std::os::windows::process::CommandExt as _;
-    let output = Command::new(program()?)
-        .args(["uninstall", "application-finish"])
-        .creation_flags(0x08000000)
-        .output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-    }
-    Ok(())
 }

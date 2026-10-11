@@ -34,6 +34,9 @@ const ACTIVATOR: GUID = GUID::from_u128(0xef96ea86_9390_4a55_ba88_171c5d4bb83e);
 #[cfg(debug_assertions)]
 const ACTIVATOR: GUID = GUID::from_u128(0x74dd9b87_7c59_4ee3_9506_6f0406a472ce);
 
+/// Windows' "the notification platform is unavailable" (`wpnapps.h`).
+const WPN_E_PLATFORM_UNAVAILABLE: i32 = 0x803E_0105_u32 as i32;
+
 const PROPERTY_SET: GUID = GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3);
 const APP_ID_KEY: PROPERTYKEY = PROPERTYKEY { fmtid: PROPERTY_SET, pid: 5 };
 const ACTIVATOR_KEY: PROPERTYKEY = PROPERTYKEY { fmtid: PROPERTY_SET, pid: 26 };
@@ -96,10 +99,18 @@ pub fn uninstall() -> Result<(), String> {
     if has_shortcut {
         verify_shortcut()?;
     }
-    windows::UI::Notifications::ToastNotificationManager::History()
-        .map_err(|e| e.to_string())?
-        .ClearWithId(&HSTRING::from(APP_ID))
-        .map_err(|e| e.to_string())?;
+    match windows::UI::Notifications::ToastNotificationManager::History()
+        .and_then(|history| history.ClearWithId(&HSTRING::from(APP_ID)))
+    {
+        Ok(()) => {}
+        // A removal run where no one is signed in to a desktop (remotely, or
+        // unattended) has no notification platform to ask. What World showed
+        // stays in the history Windows keeps for this user, and is said.
+        Err(error) if error.code().0 == WPN_E_PLATFORM_UNAVAILABLE => println!(
+            "Left on this computer: notifications World showed stay in Windows' notification history, which cannot be reached from this session ({error})"
+        ),
+        Err(error) => return Err(error.to_string()),
+    }
     if has_shortcut {
         std::fs::remove_file(shortcut).map_err(|e| e.to_string())?;
     }

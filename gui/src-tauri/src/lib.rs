@@ -55,6 +55,8 @@ mod attachment_files;
 mod binary_reading;
 #[cfg(windows)]
 mod desktop_presence;
+#[cfg(windows)]
+mod package_removal;
 mod line_reading;
 mod local_files;
 mod pages;

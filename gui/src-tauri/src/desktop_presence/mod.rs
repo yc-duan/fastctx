@@ -179,25 +179,45 @@ pub fn enter() -> Result<Option<Instance>, String> {
             unsafe {
                 CoUninitialize();
             }
-            result?;
-            Ok(None)
-        }
-        // The installer's last step: this computer kept in the World from
-        // boot. What came of it is said and the installation goes on either
-        // way; the settings offer what is missing.
-        [command] if command == "--keep-connected" => {
-            match crate::setup::keep_at_install() {
-                Ok(kept) => println!("{kept}"),
-                Err(error) => eprintln!("keeping this computer in the World: {error}"),
+            if let Err(error) = result {
+                eprintln!("{error}");
+                std::process::exit(1);
             }
             Ok(None)
         }
-        [command] if command == "--uninstall-world" => {
-            crate::removal::at_package_uninstall()?;
+        // The installer's last step. What went wrong is said and the
+        // installation goes on; World offers what is missing when it opens.
+        [command] if command == "--after-install" => {
+            if let Err(error) = crate::setup::after_install() {
+                eprintln!("preparing this computer for World: {error}");
+                std::process::exit(1);
+            }
             Ok(None)
         }
+        // The package uninstaller's steps. Their output is the uninstaller's
+        // details; a failure ends with its reason and a nonzero status, and
+        // exit status 10 says a removal of everything kept the data because
+        // this computer is a world's server.
+        [command, rest @ ..] if command == "--uninstall-world" => {
+            let everything = match rest {
+                [] => false,
+                [flag] if flag == "--everything" => true,
+                _ => return Err("expected --uninstall-world [--everything]".into()),
+            };
+            match crate::package_removal::at_package_uninstall(everything) {
+                Ok(crate::package_removal::Removed::AsAsked) => Ok(None),
+                Ok(crate::package_removal::Removed::KeptForHub) => std::process::exit(10),
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            }
+        }
         [command] if command == "--uninstall-finish" => {
-            crate::removal::finish_checkpoint()?;
+            if let Err(error) = crate::package_removal::finish_checkpoint() {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
             Ok(None)
         }
         [] => instance::enter(Launch::Open(None)),
