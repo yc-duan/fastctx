@@ -12,6 +12,7 @@ mod renewal;
 mod runtime;
 mod scm;
 mod security;
+mod system_cache;
 mod task;
 
 pub(super) fn registrations(installation: &crate::uninstall::Installation) -> anyhow::Result<Vec<super::Registration>> {
@@ -55,6 +56,7 @@ use windows_service::service::{ServiceAccess, ServiceExitCode, ServiceStartType,
 use super::{Service, Status, transaction};
 use config::Config;
 
+pub(super) use system_cache::retire as retire_system_cache;
 pub(super) use renewal::{
     current as guardian_current, replace as renew_guardian, restart as restart_guardian, staged as guardian_staged,
 };

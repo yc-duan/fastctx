@@ -38,7 +38,7 @@ impl Registration {
         for artifact in &self.artifacts {
             match std::fs::symlink_metadata(artifact) {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    retire_services_dir(artifact)?;
+                    left.extend(retire_services_dir(artifact)?);
                     continue;
                 }
                 Err(error) => return Err(error.into()),
@@ -76,7 +76,7 @@ impl Registration {
                     }
                     if std::fs::read_dir(artifact)?.next().is_none() {
                         std::fs::remove_dir(artifact)?;
-                        retire_services_dir(artifact)?;
+                        left.extend(retire_services_dir(artifact)?);
                     }
                 }
                 Ok(_) => crate::uninstall::delete_file(artifact)?,
@@ -88,24 +88,30 @@ impl Registration {
 
 /// The protected directory every Windows service of fastctx lives under goes
 /// with the last of them; while it holds anything but the lock they share, it
-/// stays.
-fn retire_services_dir(service: &std::path::Path) -> anyhow::Result<()> {
+/// stays. With it go the digests their guardians kept under SYSTEM's profile;
+/// what is there that fastctx did not write is returned and stays.
+fn retire_services_dir(service: &std::path::Path) -> anyhow::Result<Vec<PathBuf>> {
     let Some(services) =
         service.parent().filter(|parent| parent.file_name().is_some_and(|name| name == "fastctx-services"))
     else {
-        return Ok(());
+        return Ok(Vec::new());
     };
-    let entries = match std::fs::read_dir(services) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+    let names = match std::fs::read_dir(services) {
+        Ok(entries) => entries.map(|entry| Ok(entry?.file_name())).collect::<std::io::Result<Vec<_>>>()?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(error) => return Err(error.into()),
     };
-    let names = entries.map(|entry| Ok(entry?.file_name())).collect::<std::io::Result<Vec<_>>>()?;
-    if names.iter().all(|name| name == "policy.lock") {
+    if !names.iter().all(|name| name == "policy.lock") {
+        return Ok(Vec::new());
+    }
+    if !names.is_empty() {
         crate::uninstall::delete_file(&services.join("policy.lock"))?;
         std::fs::remove_dir(services)?;
     }
-    Ok(())
+    #[cfg(windows)]
+    return super::windows::retire_system_cache();
+    #[cfg(not(windows))]
+    Ok(Vec::new())
 }
 
 pub fn registrations(installation: &crate::uninstall::Installation) -> anyhow::Result<Vec<Registration>> {
