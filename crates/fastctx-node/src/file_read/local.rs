@@ -10,7 +10,17 @@ use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 
 use super::{Part, Sender};
 
-pub async fn read(machine: MachineName, mut request: ReadFileRequest, sender: &Sender) -> FileReadResult {
+pub async fn read(machine: MachineName, request: ReadFileRequest, sender: &Sender) -> FileReadResult {
+    read_attachment(machine, request, None, None, sender).await
+}
+
+pub async fn read_attachment(
+    machine: MachineName,
+    mut request: ReadFileRequest,
+    attachment: Option<fastctx_types::attachments::AttachmentFile>,
+    expected: Option<Snapshot>,
+    sender: &Sender,
+) -> FileReadResult {
     request.path = fastctx_platform::local_path(&request.path)
         .map_err(|e| error(FileReadErrorKind::InvalidInput, e.to_string(), 0))?
         .to_string_lossy()
@@ -36,6 +46,9 @@ pub async fn read(machine: MachineName, mut request: ReadFileRequest, sender: &S
     .await
     .map_err(|e| error(FileReadErrorKind::Io, e.to_string(), 0))?;
     let (file, check, before) = opened?;
+    if expected.is_some_and(|expected| expected != before) {
+        return Err(error(FileReadErrorKind::Changed, "the verified attachment changed before reading", 0));
+    }
     let initial = metadata(&before).map_err(|e| io_error(e, 0))?;
     let (offset, length) = match request.range {
         FileRange::All => (0, before.size),
@@ -45,7 +58,7 @@ pub async fn read(machine: MachineName, mut request: ReadFileRequest, sender: &S
             (offset, bytes.min(before.size - offset))
         }
     };
-    let info = FileReadInfo { machine, path: request.path.clone(), file: initial, offset, length };
+    let info = FileReadInfo { machine, path: request.path.clone(), file: initial, offset, length, attachment };
     let mut file = tokio::fs::File::from_std(file);
     file.seek(io::SeekFrom::Start(offset)).await.map_err(|e| io_error(e, 0))?;
     sender.send(Ok(Part::Opened(info))).await.map_err(|e| error(FileReadErrorKind::Io, e.to_string(), 0))?;

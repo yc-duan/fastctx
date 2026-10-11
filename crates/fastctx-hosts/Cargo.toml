@@ -9,6 +9,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+base64 = "0.22"
+tempfile = "3"
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 filetime = "0.2"

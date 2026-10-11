@@ -50,6 +50,56 @@ impl Attachment {
     }
 }
 
+/// An upload receipt, or one user image in the resident's native history.
+/// Image counts only image/localImage blocks, starting at zero. Codex
+/// message counts distinct native user submissions in its turn, before
+/// World envelopes are restored into separate messages. Host paths are
+/// never supplied; Claude uses its durable user-message UUID. Image order
+/// follows reloaded host history: original order for canonical Codex
+/// messages, inline images then local images for legacy Codex history.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AttachmentSource {
+    Upload(Attachment),
+    HostImage { owner: Address, host_image: HostImage },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "host", rename_all = "snake_case")]
+pub enum HostImage {
+    Codex { turn: String, message: u32, image: u32 },
+    Claude { message: String, image: u32 },
+}
+
+impl AttachmentSource {
+    pub fn owner(&self) -> &Address {
+        match self {
+            Self::Upload(attachment) => &attachment.owner,
+            Self::HostImage { owner, .. } => owner,
+        }
+    }
+}
+
+impl From<Attachment> for AttachmentSource {
+    fn from(attachment: Attachment) -> Self {
+        Self::Upload(attachment)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentFile {
+    pub name: String,
+    pub media_type: String,
+    pub source: AttachmentFileSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentFileSource {
+    Original,
+    HostRecord,
+}
+
 /// The streaming IPC upload uses raw frames after its Call, terminated by
 /// an empty frame. This is a chunk size, not a file-size limit, and equals
 /// the network data message size so forwarding needs only one chunk.

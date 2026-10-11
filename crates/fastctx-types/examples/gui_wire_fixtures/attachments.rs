@@ -1,4 +1,6 @@
-use fastctx_types::attachments::{Attachment, UploadFile, UploadTarget};
+use fastctx_types::attachments::{
+    Attachment, AttachmentFile, AttachmentFileSource, AttachmentSource, HostImage, UploadFile, UploadTarget,
+};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::session::{Happened, SessionEvent, Speaker, attachments::AttachedMessage};
@@ -8,11 +10,18 @@ use serde::Serialize;
 #[derive(Serialize)]
 pub struct Fixtures {
     calls: Vec<Call>,
-    replies: Vec<Reply>,
+    replies: Vec<Answer>,
     remote_calls: Vec<RemoteCall>,
     remote_replies: Vec<RemoteReply>,
     events: Vec<SessionEvent>,
     host_text: String,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Answer {
+    Reply(Reply),
+    Frame(fastctx_types::ipc::NodeFrame),
 }
 
 pub fn fixtures() -> Fixtures {
@@ -37,6 +46,21 @@ pub fn fixtures() -> Fixtures {
     let target = UploadTarget::Resident { resident: owner.resident.clone() };
     Fixtures {
         calls: vec![
+            Call::ReadAttachment { attachment: attachment.clone().into() },
+            Call::AttachmentThumbnail { attachment: attachment.clone().into(), max: 96 },
+            Call::ReadAttachment {
+                attachment: AttachmentSource::HostImage {
+                    owner: owner.clone(),
+                    host_image: HostImage::Codex { turn: "turn-1".into(), message: 0, image: 1 },
+                },
+            },
+            Call::AttachmentThumbnail {
+                attachment: AttachmentSource::HostImage {
+                    owner: Address { resident: "claude-ab12".parse().unwrap(), ..owner.clone() },
+                    host_image: HostImage::Claude { message: "message-uuid".into(), image: 0 },
+                },
+                max: 96,
+            },
             Call::Upload {
                 target: target.clone(),
                 node: Some(owner.machine.clone()),
@@ -74,17 +98,49 @@ pub fn fixtures() -> Fixtures {
             },
         ],
         replies: vec![
-            Reply::Uploaded(attachment.clone()),
-            Reply::Notices {
+            Answer::Reply(Reply::Uploaded(attachment.clone())),
+            Answer::Reply(Reply::Notices {
                 notices: vec![Delivery {
                     id: envelope.delivery.clone(),
                     at: "2026-10-04T12:00:00Z".parse().unwrap(),
                     notice: Notice::Attached { message: envelope.clone(), text: text.clone() },
                 }],
                 notes: Vec::new(),
-            },
+            }),
+            Answer::Frame(fastctx_types::ipc::NodeFrame::Reply {
+                id: 17,
+                reply: Err(fastctx_types::ipc::Failure::original_gone()),
+            }),
+            Answer::Frame(fastctx_types::ipc::NodeFrame::FileRead {
+                id: 17,
+                part: fastctx_types::file_read::FileReadPart::Opened {
+                    info: fastctx_types::file_read::FileReadInfo {
+                        machine: owner.machine.clone(),
+                        path: "/private/cache/image.jpg".into(),
+                        offset: 0,
+                        length: 2048,
+                        file: fastctx_types::file_read::FileMetadata {
+                            size: 2048,
+                            modified: "2026-10-04T12:00:00Z".parse().unwrap(),
+                        },
+                        attachment: Some(AttachmentFile {
+                            name: "截图.jpg".into(),
+                            media_type: "image/jpeg".into(),
+                            source: AttachmentFileSource::HostRecord,
+                        }),
+                    },
+                },
+            }),
         ],
         remote_calls: vec![
+            RemoteCall::ReadAttachment { attachment: attachment.clone().into(), read: 17 },
+            RemoteCall::AttachmentThumbnail {
+                attachment: AttachmentSource::HostImage {
+                    owner: owner.clone(),
+                    host_image: HostImage::Codex { turn: "turn-1".into(), message: 0, image: 1 },
+                },
+                max: 96,
+            },
             RemoteCall::Upload { target, file, composer: None },
             RemoteCall::Talk {
                 to: owner.resident.clone(),

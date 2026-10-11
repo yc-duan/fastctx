@@ -123,6 +123,7 @@ async fn ask_there(
         Ok(Err(failure)) => Err(Failure {
             message: format!("on {lives_on}: {}; the user changes it on the Model collaboration page", failure.message),
             not_run: failure.not_run,
+            code: failure.code,
         }),
         Err(CallFailure::Offline { last_seen, .. }) => Err(Failure::not_run(format!(
             "{lives_on}, where this callee lives, is offline{}; the user changes it on the Model collaboration page",

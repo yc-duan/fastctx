@@ -497,8 +497,15 @@ impl fastctx_net::link::Node for Handler {
                             None => Address { machine: from, resident },
                         };
                         let account = HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                        crate::retention::received_from(&node, &owner, &delivery, origin.as_ref(), through_exit, Some(&account))
-                            .map_err(|error| Failure::new(format!("recording job delivery: {error}")))?;
+                        crate::retention::received_from(
+                            &node,
+                            &owner,
+                            &delivery,
+                            origin.as_ref(),
+                            through_exit,
+                            Some(&account),
+                        )
+                        .map_err(|error| Failure::new(format!("recording job delivery: {error}")))?;
                         Ok(RemoteReply::Set)
                     } else {
                         Ok(crate::here::forget_here(&node, from, resident, town, job).await)
@@ -578,6 +585,10 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::ReadFile { request, read } => {
                     let stream = stream.ok_or_else(|| Failure::new("a file read requires a data connection"))?;
                     crate::file_read::serve(&node, &link, request, read, stream).await
+                }
+                RemoteCall::ReadAttachment { attachment, read } => {
+                    let stream = stream.ok_or_else(|| Failure::new("an attachment read requires a data connection"))?;
+                    crate::file_read::serve_attachment(&node, &link, attachment, read, stream).await
                 }
                 RemoteCall::Thumbnail { request } => {
                     crate::thumbnail::call(&node, None, request).await.map(RemoteReply::Thumbnail)

@@ -16,6 +16,49 @@ pub(crate) struct Reading {
 }
 
 impl Device {
+    pub(crate) async fn read_attachment(
+        &self,
+        attachment: fastctx_types::attachments::AttachmentSource,
+    ) -> Result<Reading, Error> {
+        let machine = attachment.owner().machine.clone();
+        let session = self.reaching(&machine)?;
+        session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
+        let accounts = {
+            let view = session.link.view();
+            let me = session.link.membership().name.clone();
+            view.me()
+                .into_iter()
+                .flat_map(|member| &member.logins)
+                .filter(|account| view.admits(&me, account, &machine, fastctx_types::access::Purpose::Agents).is_ok())
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let (sender, parts) = mpsc::channel(1);
+        let task = tokio::spawn(async move {
+            let reading = async {
+                let mut refused = None;
+                for account in accounts {
+                    match fastctx_net::file_read::read_attachment(
+                        &session.link,
+                        machine.clone(),
+                        account,
+                        attachment.clone(),
+                        &sender,
+                    )
+                    .await
+                    {
+                        Err(error) if error.not_run => refused = Some(error),
+                        result => return result,
+                    }
+                }
+                Err(refused.unwrap_or_else(|| {
+                    Failure::not_run("this device's accounts changed before reading the attachment")
+                }))
+            };
+            tokio::select! { () = sender.closed() => {}, result = reading => { let _ = sender.send(result.map(Part::Finished)).await; } }
+        });
+        Ok(Reading { parts, task })
+    }
     pub(crate) async fn read_file(
         &self,
         machine: Option<MachineName>,

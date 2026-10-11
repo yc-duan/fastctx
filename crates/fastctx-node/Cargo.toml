@@ -13,6 +13,7 @@ name = "own_lifetime"
 harness = false
 
 [dependencies]
+tempfile = "3"
 anyhow.workspace = true
 base64 = "0.22"
 fastctx-hands = { path = "../fastctx-hands" }

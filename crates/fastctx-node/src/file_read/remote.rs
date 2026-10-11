@@ -15,11 +15,36 @@ pub(crate) async fn serve(
     link: &Arc<fastctx_net::link::Link>,
     request: ReadFileRequest,
     read: u64,
-    mut stream: Stream,
+    stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let mut parts = super::start(node.clone(), Default::default(), None, request);
+    send(link, &mut parts, read, stream).await
+}
+
+pub(crate) async fn serve_attachment(
+    node: &Arc<Node>,
+    link: &Arc<fastctx_net::link::Link>,
+    attachment: fastctx_types::attachments::AttachmentSource,
+    read: u64,
+    stream: Stream,
+) -> Result<RemoteReply, Failure> {
+    let mut parts = super::start_attachment(node.clone(), attachment);
+    send(link, &mut parts, read, stream).await
+}
+
+async fn send(
+    link: &Arc<fastctx_net::link::Link>,
+    parts: &mut super::Receiver,
+    read: u64,
+    mut stream: Stream,
+) -> Result<RemoteReply, Failure> {
     let mut n = 0;
-    while let Some(part) = parts.recv().await {
+    loop {
+        let part = tokio::select! {
+            part = parts.recv() => part,
+            () = stream.closed() => return Err(Failure::new("the file read's caller disconnected")),
+        };
+        let Some(part) = part else { break };
         let (content, bytes, ended) = match part? {
             Part::Opened(info) => (Content::Opened { info }, None, None),
             Part::Chunk { offset, bytes } => {

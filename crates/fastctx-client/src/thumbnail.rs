@@ -8,10 +8,10 @@ impl World {
     /// without permission to read arbitrary files on that host.
     pub async fn thumbnail_attachment(
         &self,
-        attachment: fastctx_types::attachments::Attachment,
+        attachment: impl Into<fastctx_types::attachments::AttachmentSource>,
         max: u32,
     ) -> Result<Thumbnail, Error> {
-        match self.call(Call::AttachmentThumbnail { attachment, max }).await? {
+        match self.call(Call::AttachmentThumbnail { attachment: attachment.into(), max }).await? {
             (Reply::Thumbnail(thumbnail), _) => Ok(thumbnail),
             _ => Err(Error::Unexpected("attachment thumbnail".into())),
         }

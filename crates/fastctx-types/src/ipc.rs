@@ -113,18 +113,34 @@ pub enum NodeFrame {
 #[error("{message}")]
 pub struct Failure {
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<FailureCode>,
     /// The request failed before execution became possible. Absence means
     /// the caller must not infer that nothing ran.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub not_run: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureCode {
+    OriginalGone,
+}
+
 impl Failure {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into(), not_run: false }
+        Self { message: message.into(), not_run: false, code: None }
     }
 
     pub fn not_run(message: impl Into<String>) -> Self {
-        Self { message: message.into(), not_run: true }
+        Self { message: message.into(), not_run: true, code: None }
+    }
+
+    pub fn original_gone() -> Self {
+        Self {
+            message: "the original is gone and its host record holds no recoverable copy".into(),
+            not_run: false,
+            code: Some(FailureCode::OriginalGone),
+        }
     }
 }

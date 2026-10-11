@@ -605,6 +605,22 @@ impl CodexHost {
         history::read(&server, thread, running.as_deref()).await
     }
 
+    /// The rollout belongs to this host's thread. Only this host chooses
+    /// its path; clients cannot supply a record belonging to another login.
+    pub async fn rollout(self: &Arc<Self>, thread: &str) -> Result<Option<PathBuf>, String> {
+        let answer =
+            match self.server().await?.ask("thread/read", json!({"threadId":thread,"includeTurns":false})).await {
+                Ok(answer) => answer,
+                Err(Unanswered::Rpc { code: -32600, message, data })
+                    if message == format!("thread not loaded: {thread}") && data.is_null() =>
+                {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+        Ok(answer["thread"]["path"].as_str().map(PathBuf::from))
+    }
+
     /// Wait until the node has applied every event sent before this barrier.
     pub async fn flush_events(&self, thread: &str) -> Result<(), String> {
         let (done, applied) = oneshot::channel();

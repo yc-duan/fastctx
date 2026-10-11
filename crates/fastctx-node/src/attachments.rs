@@ -402,6 +402,12 @@ pub async fn resolve(node: &Arc<Node>, resident: &ResidentId, attachments: &[Att
     .map_err(failure)?
 }
 
+fn slot_name(attachment: &Attachment) -> Option<&str> {
+    let name = Path::new(&attachment.path).parent()?.file_name()?.to_str()?;
+    let id = attachment.id.as_str();
+    (name == id || name.strip_prefix(id)?.strip_prefix('-')?.parse::<u32>().ok()? >= 2).then_some(name)
+}
+
 /// The upload kept here for `attachment` of `resident`: the one it names, or
 /// the one a copy placed on another machine was made from, known by its id
 /// and its file.
@@ -410,18 +416,32 @@ fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Res
     if attachment.owner.resident != *resident {
         return Err(unknown());
     }
-    let receipt = |town: Option<&TownName>| {
-        node.world.resident(town, resident).path().join("attachments").join(attachment.id.as_str()).join("receipt.json")
-    };
     let placed = attachment.owner.machine != node.machine();
-    let mut kept: Option<Attachment> = read_json(&receipt(attachment.town.as_ref())).ok();
+    // A work copy can occupy id-2 after an earlier copy changed. The path
+    // supplies only a slot hint under this resident; stored equality below
+    // still authenticates the whole receipt before any bytes are opened.
+    let slot = if placed { attachment.id.as_str() } else { slot_name(attachment).unwrap_or(attachment.id.as_str()) };
+    let receipt = |town: Option<&TownName>| {
+        node.world.resident(town, resident).path().join("attachments").join(slot).join("receipt.json")
+    };
+    let load = |town| match std::fs::read(receipt(town)) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(failure),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(failure(error)),
+    };
+    let mut kept: Option<Attachment> = load(attachment.town.as_ref())?;
     // A copy placed on a machine of another hub went outside any project
     // there; the upload it was made from is under the project it was for.
     if kept.is_none() && placed {
-        let towns = node.world.towns().unwrap_or_default();
-        kept = towns.iter().map(Some).chain([None]).find_map(|town| read_json(&receipt(town)).ok());
+        let towns = node.world.towns().map_err(failure)?;
+        for town in towns.iter().map(Some).chain([None]) {
+            if let Some(found) = load(town)? {
+                kept = Some(found);
+                break;
+            }
+        }
     }
-    let kept = kept.ok_or_else(unknown)?;
+    let kept = kept.ok_or_else(Failure::original_gone)?;
     let same = if placed { kept.id == attachment.id && kept.file == attachment.file } else { kept == *attachment };
     if !same {
         return Err(failure("the attachment receipt differs from the stored upload"));
@@ -444,9 +464,11 @@ pub(crate) fn verified_original(
         .resident(kept.town.as_ref(), &kept.owner.resident)
         .path()
         .join("attachments")
-        .join(kept.id.as_str())
+        .join(slot_name(&kept).ok_or_else(|| failure("the stored upload has no valid receipt slot"))?)
         .join(leaf);
-    let file = fastctx_platform::file_read::open(&path).map_err(failure)?;
+    let file = fastctx_platform::file_read::open(&path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound { Failure::original_gone() } else { failure(error) }
+    })?;
     let metadata = file.metadata().map_err(failure)?;
     if !metadata.is_file() || metadata.len() != kept.file.size {
         return Err(failure("the uploaded original changed"));

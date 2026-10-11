@@ -199,6 +199,8 @@ def samples(root):
         # New GUI reads are parsed by today's node and refused before use
         # on the frozen tool-adapter path; old clients cannot encode them.
         for call in [
+            {"call": "read_attachment", "attachment": {"owner": ADDRESS, "host_image": {"host": "codex", "turn": "turn-1", "message": 0, "image": 0}}},
+            {"call": "attachment_thumbnail", "attachment": {"owner": ADDRESS, "host_image": {"host": "claude", "message": "message-uuid", "image": 0}}, "max": 96},
             {"call": "thumbnail", "machine": "laptop", "request": {"path": "C:/a.png", "max": 96}},
             {"call": "lines", "machine": "laptop", "request": {"kind": "open", "path": "C:/a.txt", "decoding": {"kind": "file", "encoding": None}}},
             {"call": "read_lines", "machine": "laptop", "request": {"source": "line-source", "start": 0, "count": 5}},

@@ -13,10 +13,14 @@ pub async fn fetch(world: &World, machine: Option<MachineName>, path: String, ca
         .filter(|name| !name.is_empty() && *name != "." && *name != "..")
         .ok_or_else(|| "the file path has no filename".to_string())?
         .to_owned();
-    let mut reading = world
+    let reading = world
         .read_file(machine, ReadFileRequest { path, range: FileRange::All })
         .await
         .map_err(|error| error.to_string())?;
+    store(reading, name, cache).await
+}
+
+pub(crate) async fn store(mut reading: fastctx_client::Reading, name: String, cache: &Path) -> Result<String, String> {
     tokio::fs::create_dir_all(cache).await.map_err(|error| error.to_string())?;
     let directory =
         tempfile::Builder::new().prefix("world-file-").tempdir_in(cache).map_err(|error| error.to_string())?;

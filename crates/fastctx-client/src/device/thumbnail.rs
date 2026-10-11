@@ -2,13 +2,17 @@
 
 use crate::Error;
 use fastctx_types::access::Purpose;
-use fastctx_types::attachments::Attachment;
+use fastctx_types::attachments::AttachmentSource;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::thumbnail::Thumbnail;
 
 impl super::Device {
-    pub(crate) async fn thumbnail_attachment(&self, attachment: Attachment, max: u32) -> Result<Thumbnail, Error> {
-        let machine = attachment.owner.machine.clone();
+    pub(crate) async fn thumbnail_attachment(
+        &self,
+        attachment: AttachmentSource,
+        max: u32,
+    ) -> Result<Thumbnail, Error> {
+        let machine = attachment.owner().machine.clone();
         let session = self.reaching(&machine)?;
         session.account_for(&machine, Purpose::Agents)?;
         let accounts = {
@@ -33,7 +37,7 @@ impl super::Device {
             .map_err(super::failed)?
             {
                 Err(error) if error.not_run => refused = Some(error),
-                Err(error) => return Err(super::failed(error)),
+                Err(error) => return Err(crate::CallError::Failed(error).into()),
                 Ok(RemoteReply::Thumbnail(thumbnail)) => return Ok(thumbnail),
                 Ok(_) => return Err(super::failed("expected an attachment thumbnail")),
             }
