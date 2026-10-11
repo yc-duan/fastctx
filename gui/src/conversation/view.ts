@@ -1174,7 +1174,10 @@ export class ConversationView {
         others.push({ label: words.output.whole, source: whole, close: () => whole.close() });
         closers.push(() => whole.close());
       }
-      printed = { lines: shown.lines, ...(shown.cut ? { paint: outputPaint(shown) } : {}), name: words.output.modelCopy, others };
+      // Numbered by place in the whole output where that is not simply the
+      // line's place here: something was left out, or a write's note was.
+      const plain = !shown.cut && shown.numbers.every((kept, index) => kept === index + 1);
+      printed = { lines: shown.lines, ...(plain ? {} : { paint: outputPaint(shown) }), name: words.output.modelCopy, others };
     }
     // How a command ended, under what it wrote.
     const ending =

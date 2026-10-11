@@ -149,7 +149,7 @@ export class TextViewer {
     this.message.textContent = this.words.searching;
     const source = this.sources[this.selection].source;
     const from: LineCursor = this.match
-      ? direction === 1 ? { line: this.match.line, offset: this.match.end }
+      ? direction === 1 ? { line: this.match.line, offset: this.match.start + 1 }
         : this.match.start > 0 ? { line: this.match.line, offset: this.match.start - 1 } : { line: this.match.line - 1 }
       : { line: direction === 1 ? 0 : source.extent.length - 1 };
     try {

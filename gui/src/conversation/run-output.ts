@@ -63,8 +63,19 @@ export function shownOutput(spans: readonly OutputSpan[], writes: readonly Write
     part = null;
   };
   for (const span of spans) {
-    if (writeNote(span.note, writes)) continue;
     const piece = span.piece;
+    if (writeNote(span.note, writes)) {
+      // A write's note is drawn as the write's row. Where it is part of a
+      // long line, what it holds was given, not left out.
+      if (piece.kind === "part_of_line") {
+        flush();
+        if (part && part.line !== piece.line) endPart();
+        const before = part ? part.to : 0;
+        if (piece.from - 1 > before) gap(words.charsLeftOut(piece.from - 1 - before));
+        part = { line: piece.line, to: piece.to, of: piece.of };
+      }
+      continue;
+    }
     if (piece.kind !== "part_of_line") endPart();
     switch (piece.kind) {
       case "text": {
@@ -116,7 +127,11 @@ export function shownOutput(spans: readonly OutputSpan[], writes: readonly Write
 /** Draws an output line with its number in the whole output, and what was
  *  left out as a quiet line of its own. */
 export function outputPaint(shown: ShownOutput): LinePaint {
-  const widest = String(Math.max(0, ...shown.numbers.map((n) => n ?? 0))).length;
+  // Not spread into Math.max: an output may have more lines than a call
+  // takes arguments.
+  let most = 0;
+  for (const kept of shown.numbers) if (kept !== null && kept > most) most = kept;
+  const widest = String(most).length;
   return (row, line, index, match) => {
     const holder = row.parentElement;
     if (holder && widest > Number(holder.style.getPropertyValue("--line-digits") || 0)) holder.style.setProperty("--line-digits", String(widest));
