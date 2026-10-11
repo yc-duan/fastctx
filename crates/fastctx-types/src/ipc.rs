@@ -105,6 +105,9 @@ pub enum NodeFrame {
     On { id: u64, piece: crate::on::OnPiece },
     /// The tools a `WatchTools` session is offered may have changed.
     ToolsChanged { id: u64 },
+    /// The interface's optional parts as a `WatchFeatures` call sees them:
+    /// first as they are, then after each change.
+    Features { id: u64, features: crate::features::Features },
 }
 
 /// Why a call did not do what it asked, in words for whoever reads the

@@ -559,13 +559,15 @@ impl Session {
     }
 
     /// The machines this session works on, for its tools' descriptions, and
-    /// whether it may ask for colleagues; none when the node is not
-    /// running, which listing the tools does not start.
+    /// whether it may ask for colleagues. Listing the tools starts the node
+    /// when nothing keeps it, as on a computer in no network: a host that
+    /// lists them once must see them as they will be. None while a service
+    /// keeps the node and it is not running.
     pub async fn machines(&self, meta: Option<&Value>) -> Result<Option<crate::tools::Machines>, String> {
         let host = self.host(meta)?;
-        let mut client = match Client::connect(&self.world, Peer::Session { host: host.clone() }).await {
+        let mut client = match self.connecting(host.clone()).await {
             Ok(client) => client,
-            Err(fastctx_client::ConnectError::NoNode { .. }) => return Ok(None),
+            Err(fastctx_client::ConnectError::KeptByService { .. }) => return Ok(None),
             Err(error) => return Err(error.to_string()),
         };
         let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
@@ -647,9 +649,14 @@ impl Session {
     }
 
     async fn client_for(&self, host: Host) -> Result<Client, String> {
+        self.connecting(host).await.map_err(|error| error.to_string())
+    }
+
+    /// A connection to the node, started first when nothing keeps it; its
+    /// containment is told on standard error once for each node process.
+    async fn connecting(&self, host: Host) -> Result<Client, fastctx_client::ConnectError> {
         let _starting = self.starting.lock().await;
-        let client =
-            Client::connect_or_start(&self.world, Peer::Session { host }).await.map_err(|error| error.to_string())?;
+        let client = Client::connect_or_start(&self.world, Peer::Session { host }).await?;
         if let Some(lifetime) = &client.node_lifetime {
             let mut reported = self.lifetime_reported.lock().expect("never poisoned");
             if reported.as_ref() != Some(&lifetime.process) {

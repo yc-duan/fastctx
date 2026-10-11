@@ -30,6 +30,12 @@ pub enum Page {
 }
 
 impl Page {
+    /// Whether the page belongs to talking with agents, which shows only
+    /// while conversations are on (`world-gui.md`, 功能).
+    pub fn of_conversations(&self) -> bool {
+        matches!(self, Page::Project(_) | Page::Talk(_) | Page::Journal(_))
+    }
+
     /// A turn's end to tell the user of, from a conversation.
     pub fn take_notice(&mut self) -> Option<(String, String)> {
         match self {

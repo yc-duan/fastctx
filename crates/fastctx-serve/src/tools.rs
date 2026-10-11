@@ -310,7 +310,8 @@ fn ask_colleague_definition(woken: bool, collab: &fastctx_types::collab::Offered
             Some(lives_on) => format!("It lives on {lives_on}, the machine configured for this callee, and its scripts start there; it reaches the other machines the same way you do, with `on`."),
             None => "It is an agent another account lent the user: it has no access to the computer it runs on, so each of its commands names its machine with `on`, and it reaches that account's machines.".to_string(),
         };
-        format!("{}: {}\nIt works for account {}. {lives}", callee.name, callee.use_when, callee.account)
+        let account = callee.account.as_ref().map(|account| format!("It works for account {account}. ")).unwrap_or_default();
+        format!("{}: {}\n{account}{lives}", callee.name, callee.use_when)
     }).collect::<Vec<_>>().join("\n\n");
     let mut tool = json!({
         "name": "ask_colleague",

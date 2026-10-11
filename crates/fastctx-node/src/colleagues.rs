@@ -24,6 +24,7 @@ use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 
 use crate::Node;
+use crate::collab::Whose;
 use crate::residents::Heard;
 use crate::speech::{self, Owed};
 
@@ -60,40 +61,20 @@ pub async fn ask(
             ));
         }
     };
-    let machine = chosen.started.callee.login.machine.clone();
-    let account =
-        fastctx_types::access::HubAccount { hub: chosen.link.membership().id.clone(), account: chosen.account.clone() };
-    let view = chosen.link.view();
-    let call_town = node.town_across(&chosen.link, town.as_ref());
-    if let Some(town) = &call_town {
-        let allowed = view
-            .projects
-            .iter()
-            .find(|project| project.name == *town)
-            .is_some_and(|project| view.in_project(&chosen.account, &project.town));
-        if !allowed {
-            return Err(Failure::not_run(format!("the account {} may not use the project {town}", chosen.account)));
-        }
-    }
-    if !view.may_use_login(
-        &chosen.account,
-        &machine,
-        &chosen.started.callee.login.agent,
-        chosen.started.callee.login.home.as_deref(),
-    ) {
-        return Err(Failure::not_run(format!(
-            "the account {} can no longer use this callee's login; the user changes it on the Model collaboration page",
-            chosen.account
-        )));
-    }
     let here = node.machine();
-    let colleague = if machine == here {
-        let acting = Acting::one(chosen.link.membership().id.clone(), chosen.account.clone());
-        let address = Address { machine: here.clone(), resident: asker.clone() };
-        let id = ask_here(node, address, acting, call_town.clone(), label.clone(), prompt, chosen.started).await?;
-        Address { machine: here, resident: id }
-    } else {
-        ask_there(node, &about, chosen, call_town, label.clone(), prompt).await?
+    let (colleague, account) = match chosen.whose {
+        Whose::Account { link, account } => {
+            let request = Request { about: &about, town: town.as_ref(), label: label.clone(), prompt };
+            let colleague = ask_for_account(node, &link, &account, chosen.started, request).await?;
+            (colleague, Some(fastctx_types::access::HubAccount { hub: link.membership().id.clone(), account }))
+        }
+        // This computer's own settings, in no network: the colleague is born
+        // here, for whoever this computer's sessions work for.
+        Whose::Computer => {
+            let address = Address { machine: here.clone(), resident: asker.clone() };
+            let id = ask_here(node, address, Acting::Here, town.clone(), label.clone(), prompt, chosen.started).await?;
+            (Address { machine: here, resident: id }, None)
+        }
     };
     let action = Action {
         at,
@@ -102,29 +83,68 @@ pub async fn ask(
         what: label,
         result: colleague.resident.to_string(),
     };
-    crate::collab::keep_asked(node, &asker, &colleague, &account)?;
+    if let Some(account) = &account {
+        crate::collab::keep_asked(node, &asker, &colleague, account)?;
+    }
     record(node, &asker, town, action).await;
     Ok(colleague)
 }
 
-async fn ask_there(
-    node: &Arc<Node>,
-    asker: &About,
-    chosen: crate::collab::Candidate,
-    town: Option<TownName>,
+/// What a resident asks of a colleague.
+struct Request<'a> {
+    about: &'a About,
+    town: Option<&'a TownName>,
     label: String,
     prompt: String,
+}
+
+/// Starts a callee an account configured, on whichever of its machines the
+/// callee lives, once the account may still use its login and the project.
+async fn ask_for_account(
+    node: &Arc<Node>,
+    link: &Arc<fastctx_net::link::Link>,
+    account: &fastctx_types::AccountName,
+    started: fastctx_types::collab::Started,
+    request: Request<'_>,
 ) -> Result<Address, Failure> {
-    let lives_on = node.written(&chosen.link, &chosen.started.callee.login.machine);
-    let call = RemoteCall::Ask { asker: asker.id.clone(), town, label, prompt, started: chosen.started };
-    match chosen.link.call(&lives_on.name, &chosen.account, Purpose::Agents, call).await {
+    let machine = started.callee.login.machine.clone();
+    let view = link.view();
+    let call_town = node.town_across(link, request.town);
+    if let Some(town) = &call_town {
+        let allowed = view
+            .projects
+            .iter()
+            .find(|project| project.name == *town)
+            .is_some_and(|project| view.in_project(account, &project.town));
+        if !allowed {
+            return Err(Failure::not_run(format!("the account {account} may not use the project {town}")));
+        }
+    }
+    if !view.may_use_login(account, &machine, &started.callee.login.agent, started.callee.login.home.as_deref()) {
+        return Err(Failure::not_run(format!(
+            "the account {account} can no longer use this callee's login; the user changes it on the Model collaboration page"
+        )));
+    }
+    let here = node.machine();
+    if machine == here {
+        let acting = Acting::one(link.membership().id.clone(), account.clone());
+        let address = Address { machine: here.clone(), resident: request.about.id.clone() };
+        let id = ask_here(node, address, acting, call_town, request.label, request.prompt, started).await?;
+        return Ok(Address { machine: here, resident: id });
+    }
+    let lives_on = node.written(link, &machine);
+    let call = RemoteCall::Ask {
+        asker: request.about.id.clone(),
+        town: call_town,
+        label: request.label,
+        prompt: request.prompt,
+        started,
+    };
+    match link.call(&lives_on.name, account, Purpose::Agents, call).await {
         Ok(Ok(RemoteReply::Asked { colleague })) => Ok(Address { machine: lives_on.name.clone(), resident: colleague }),
         Ok(Ok(_)) => Err(Failure::new(format!("{lives_on} answered something other than a colleague"))),
         // The far side says where it is changed when that is what to do.
-        Ok(Err(failure)) => Err(Failure {
-            message: format!("on {lives_on}: {}", failure.message),
-            ..failure
-        }),
+        Ok(Err(failure)) => Err(Failure { message: format!("on {lives_on}: {}", failure.message), ..failure }),
         Err(CallFailure::Offline { last_seen, .. }) => Err(Failure::not_run(format!(
             "{lives_on}, where this callee lives, is offline{}; the user changes it on the Model collaboration page",
             last_seen.map(|at| format!(" (since {at})")).unwrap_or_default()
@@ -483,11 +503,15 @@ pub async fn message(
             .residents
             .about(&to.resident)
             .ok_or_else(|| Failure::not_run(format!("no resident {} lives here", to.resident)))?;
-        let shares = node.links().iter().any(|link| {
-            node.accounts_on(link, &acting)
-                .iter()
-                .any(|account| node.serves(&recipient.acting, &link.membership().id, account))
-        });
+        // A colleague this computer's own settings started works for its
+        // user, as the sessions those settings let ask do.
+        let own = matches!((&acting, &recipient.acting), (Acting::Here, Acting::Here));
+        let shares = own
+            || node.links().iter().any(|link| {
+                node.accounts_on(link, &acting)
+                    .iter()
+                    .any(|account| node.serves(&recipient.acting, &link.membership().id, account))
+            });
         if !shares {
             return Err(Failure::not_run(
                 "this colleague works for none of the accounts that enable collaboration for this caller",

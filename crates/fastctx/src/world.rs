@@ -350,7 +350,19 @@ pub fn relay(args: RelayArgs) -> anyhow::Result<()> {
 
 pub fn accounts() -> anyhow::Result<()> {
     match call(Call::Accounts)? {
-        Reply::Accounts(reply) => print!("{}", render_accounts(&reply, Timestamp::now())),
+        Reply::Accounts(reply) => {
+            print!("{}", render_accounts(&reply, Timestamp::now()));
+            // In a network, this computer is to be there from boot
+            // (`world-network.md`, 登记了，就一直连着); when the service that
+            // does it was never installed, the user is told so.
+            let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
+            if !reply.hubs.is_empty() && !world.node_service().try_exists()? {
+                println!(
+                    "\nno system service keeps this computer's node: it runs only while something here started it. \
+                     `fastctx service node install`, as administrator, installs one."
+                );
+            }
+        }
         other => anyhow::bail!("the node answered something else: {other:?}"),
     }
     Ok(())
