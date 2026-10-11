@@ -58,7 +58,7 @@ async fn here(
                     .map_err(|error| error.to_string())
             })?
         };
-        let snapshot = observe(&source.path)?;
+        let snapshot = observe(&source.path).map_err(|error| error.to_string())?;
         if source.job_record.is_none() && snapshot != state.snapshot
             || !snapshot.same_file(&state.snapshot)
             || snapshot.size < state.snapshot.size

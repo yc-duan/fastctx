@@ -2,6 +2,7 @@
 
 use crate::Shell;
 use fastctx_types::MachineName;
+use fastctx_types::ipc::Failure;
 use fastctx_types::lines::{Decoding, Direction, Extent, Match, Position, Request, Result as Answer};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -55,13 +56,15 @@ pub(crate) async fn lines_open(
     path: String,
     decoding: Decoding,
     channel: Channel<Change>,
-) -> Result<Opened, String> {
+) -> Result<Opened, Failure> {
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
-    let reply =
-        world.open_lines(crate::machine(machine_name)?, path, decoding).await.map_err(|error| error.to_string())?;
+    let reply = world
+        .open_lines(crate::machine(machine_name).map_err(Failure::new)?, path, decoding)
+        .await
+        .map_err(open_failed)?;
     let Answer::Opened { source, path, extent } = reply.result else {
-        return Err("expected an opened line source".into());
+        return Err(Failure::new("expected an opened line source"));
     };
     let watch = shell.next.fetch_add(1, Ordering::Relaxed);
     let (held_source, held_machine, initial_version) = (source.clone(), reply.machine.clone(), extent.version);
@@ -97,10 +100,17 @@ pub(crate) async fn lines_open(
         world
             .lines(reply.machine.clone(), Request::Close { source: source.clone() })
             .await
-            .map_err(|closing| format!("{error}; closing its line source: {closing}"))?;
-        return Err(error);
+            .map_err(|closing| Failure::new(format!("{error}; closing its line source: {closing}")))?;
+        return Err(Failure::new(error));
     }
     Ok(Opened { machine: reply.machine, source, path, extent, watch })
+}
+
+fn open_failed(error: fastctx_client::Error) -> Failure {
+    match error {
+        fastctx_client::Error::Call(fastctx_client::CallError::Failed(failure)) => failure,
+        error => Failure::new(error.to_string()),
+    }
 }
 
 async fn request(shell: &Shell, machine_name: String, request_id: String, request: Request) -> Result<Answer, String> {

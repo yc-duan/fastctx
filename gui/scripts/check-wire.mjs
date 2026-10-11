@@ -38,7 +38,7 @@ import type { PageView, PageSummary, PageVersion, PageConsent, PageResult } from
 import type { Speaker } from "../src/world/events";
 import type { Writer, JobOwner, MapView } from "../src/world/world";
 import type { Address } from "../src/world/wire";
-import type { RunFacts, DiffLine, JobFacts, ProjectedLines, LinePart } from "../src/world/run-facts";
+import type { RunFacts, DiffLine, JobFacts, ProjectedLines, LinePart, LineOpenError } from "../src/world/run-facts";
 import type { RenewalStatus, MaintenanceRequest, MaintenanceResponse, VersionRefusal } from "../src/world/renewal";
 import type { AccountChange, AccountsReply } from "../src/world/accounts";
 import type { ConnectionState } from "../src/world/device";
@@ -50,7 +50,7 @@ export const fixture = ${json.trimEnd()} satisfies {
   composer: { snapshots: ComposerSnapshot[]; mutations: ComposerMutation[]; updated: ComposerUpdated };
   // Accounts as the interface reads and changes them, the device's
   // standing, and what the user chose for a new conversation.
-  run_facts: { calls: RunFacts[]; diff: DiffLine[]; updates: JobFacts[]; projected_reads: ProjectedLines[]; parts: LinePart[] };
+  run_facts: { calls: RunFacts[]; diff: DiffLine[]; updates: JobFacts[]; projected_reads: ProjectedLines[]; parts: LinePart[]; open_errors: LineOpenError[] };
   accounts: { replies: AccountsReply[]; changes: AccountChange[]; connections: ConnectionState[]; choices: Choices[] };
   session: {
     events: SessionEvent[];

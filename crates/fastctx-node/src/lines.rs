@@ -99,7 +99,7 @@ pub(crate) async fn open(
         Decoding::Output { job } => {
             let found = crate::look::look_here(node, job.as_str()).await?.0;
             let Some(fastctx_types::town::Looked::Job { record }) = found else {
-                return Err(failed("the output job is no longer retained"));
+                return Err(Failure::output_not_retained("the output job is no longer retained"));
             };
             let expected = PathBuf::from(&record.output);
             if path != expected && record.stderr.as_ref().is_none_or(|stderr| std::path::Path::new(stderr) != path) {
@@ -141,21 +141,22 @@ pub(crate) async fn open(
     let (read_path, directory, record_path) = (path.clone(), node.world.path().to_path_buf(), job_record.clone());
     let note_path = notes_record.clone();
     let opened = tokio::task::spawn_blocking(move || {
-        let snapshot = observe(&read_path)?;
+        let snapshot = observe(&read_path).map_err(source_failed)?;
         let (output, selection) = match &decoding {
             Decoding::File { encoding } => (false, encoding.as_deref()),
             Decoding::Output { .. } => (true, None),
         };
-        let index = fastctx_hands::lines::Index::open(&read_path, &directory, output, selection, cancel.clone())?;
-        let after = observe(&read_path)?;
+        let index = fastctx_hands::lines::Index::open(&read_path, &directory, output, selection, cancel.clone())
+            .map_err(failed)?;
+        let after = observe(&read_path).map_err(source_failed)?;
         if (!output && snapshot != after) || !snapshot.same_file(&after) || after.size < snapshot.size {
-            return Err("the text source changed during indexing".into());
+            return Err(failed("the text source changed during indexing"));
         }
-        let complete = complete(record_path.as_deref())?;
+        let complete = complete(record_path.as_deref()).map_err(failed)?;
         let extent = Extent { length: index.length, complete, version: 0 };
         let (projection, writes, writes_revision) =
-            projection::open(&read_path, snapshot.size, note_path.as_deref(), &cancel)?;
-        Ok::<_, String>(State {
+            projection::open(&read_path, snapshot.size, note_path.as_deref(), &cancel).map_err(failed)?;
+        Ok::<_, Failure>(State {
             index: Some(index),
             snapshot,
             extent,
@@ -167,8 +168,7 @@ pub(crate) async fn open(
         })
     })
     .await
-    .map_err(failed)?
-    .map_err(failed)?;
+    .map_err(failed)??;
     let source = Arc::new(Source {
         path: path.clone(),
         job_record,
@@ -225,7 +225,7 @@ async fn refresh(source: Arc<Source>) -> std::result::Result<(), Failure> {
             if let Err(error) = &*source.events.borrow() {
                 return Err(error.clone());
             }
-            let snapshot = observe(&source.path)?;
+            let snapshot = observe(&source.path).map_err(err)?;
             let ended = complete(source.job_record.as_deref())?;
             let revision = projection::revision(source.notes_record.as_deref())?;
             if state.snapshot == snapshot && state.extent.complete == ended && state.writes_revision == revision {
@@ -375,7 +375,7 @@ pub(crate) async fn call(
             }
             _ => unreachable!("handled before blocking"),
         };
-        let snapshot = observe(&source.path)?;
+        let snapshot = observe(&source.path).map_err(err)?;
         if source.job_record.is_none() && snapshot != state.snapshot
             || !snapshot.same_file(&state.snapshot)
             || snapshot.size < state.snapshot.size
@@ -413,9 +413,16 @@ fn close(node: &Node, key: &Key) {
         }
     }
 }
-fn observe(path: &std::path::Path) -> std::result::Result<fastctx_platform::file_read::Snapshot, String> {
-    let file = fastctx_platform::file_read::open(path).map_err(err)?;
-    fastctx_platform::file_read::snapshot(&file, &file.metadata().map_err(err)?).map_err(err)
+fn observe(path: &std::path::Path) -> std::io::Result<fastctx_platform::file_read::Snapshot> {
+    let file = fastctx_platform::file_read::open(path)?;
+    fastctx_platform::file_read::snapshot(&file, &file.metadata()?)
+}
+fn source_failed(error: std::io::Error) -> Failure {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        Failure::source_missing(error.to_string())
+    } else {
+        failed(error)
+    }
 }
 fn complete(path: Option<&std::path::Path>) -> std::result::Result<bool, String> {
     let Some(path) = path else { return Ok(true) };

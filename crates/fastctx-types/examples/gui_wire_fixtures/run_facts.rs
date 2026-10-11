@@ -10,6 +10,7 @@ pub struct Fixtures {
     pub updates: Vec<JobFacts>,
     pub projected_reads: Vec<fastctx_types::lines::ProjectedLines>,
     pub parts: Vec<fastctx_types::lines::Part>,
+    pub open_errors: Vec<fastctx_types::ipc::Failure>,
 }
 
 pub fn example() -> RunFacts {
@@ -125,6 +126,11 @@ pub fn fixtures() -> Fixtures {
         },
     ];
     Fixtures {
+        open_errors: vec![
+            fastctx_types::ipc::Failure::output_not_retained("the output job is no longer retained"),
+            fastctx_types::ipc::Failure::source_missing("the source does not exist"),
+            fastctx_types::ipc::Failure::new("the connection broke"),
+        ],
         projected_reads: vec![fastctx_types::lines::ProjectedLines {
             start: 3,
             lines: vec!["😀 note".into()],

@@ -36,7 +36,7 @@ impl super::Device {
         let account = session.account_for(&machine, Purpose::Hands)?;
         fastctx_net::lines::open(session.link.clone(), machine, account, path, decoding)
             .await
-            .map_err(|error| Error::Other(error.to_string()))
+            .map_err(|error| crate::CallError::Failed(error).into())
     }
 }
 
