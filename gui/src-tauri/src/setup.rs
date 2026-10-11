@@ -313,11 +313,12 @@ pub fn hosts(codex: bool, claude: bool, raise: bool, into: bool, home: Option<Pa
     }
     let hosts = Hosts { codex, claude };
     let report = apply::unapply(&places, hosts).map_err(|error| error.to_string())?;
+    // As in `hosts::run`: only what stayed as it was reaches the page; the
+    // account of what was done is for the terminal and the log.
     Ok(report
         .notices
         .iter()
         .map(|notice| format!("{}: {}", notice.location, notice.reason))
-        .chain(report.messages)
         .chain(report.leftovers)
         .collect())
 }
