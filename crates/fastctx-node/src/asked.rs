@@ -42,9 +42,12 @@ pub fn of_request(id: &Value, request: &str, params: &Value, at: Timestamp) -> O
                 params["fileChanges"].as_object().into_iter().flat_map(|files| files.keys()).cloned().collect();
             (AskedFor::Change, paths.join("\n"), vec![])
         }
-        "classic.PermissionRequest" => {
-            let input = &params["tool_input"];
-            match params["tool_name"].as_str().unwrap_or_default() {
+        "classic.PermissionRequest" | "tool.check" => {
+            let (tool, input) = match request {
+                "tool.check" => (&params["tool"], &params["input"]),
+                _ => (&params["tool_name"], &params["tool_input"]),
+            };
+            match tool.as_str().unwrap_or_default() {
                 "Bash" => (AskedFor::Command, text(&input["command"]), vec![]),
                 "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => {
                     let path = input["file_path"].as_str().or_else(|| input["notebook_path"].as_str());
