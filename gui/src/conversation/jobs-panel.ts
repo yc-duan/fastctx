@@ -1,0 +1,226 @@
+// What the resident started that still runs: a mark in the input's row with
+// how many, quietly moving, and over it a small panel of each, where it runs
+// and for how long. A row pressed opens its output in place, read from the
+// machine running it a screen at a time and following as it grows; a row's
+// stop asks once, and the agent is told the user stopped it, so it does not
+// take it for a failure. A row whose output is open stays until it is
+// closed, also after its command ends.
+
+import { LineViewport, type LineSource } from "../longview";
+import { glyph } from "./glyphs";
+import { escape } from "./prose";
+
+export interface Job {
+  job: string;
+  machine: string;
+  started_at: string;
+  command: string;
+  output: string;
+}
+
+export interface JobsWords {
+  title: string;
+  stop: string;
+  stopAsk: string;
+  notStopped: string;
+  cancel: string;
+  output(command: string): string;
+  loading: string;
+  failed(why: string): string;
+  ended: string;
+  lasted(ms: number): string;
+}
+
+/** A job's output as lines, from the machine holding it; closed when the
+ *  row is. */
+export type OutputLines = LineSource & { close(): Promise<void> };
+
+export interface JobsPanelOptions {
+  words: JobsWords;
+  /** Stops a job by the World's own way; absent where it cannot be. */
+  stop?: ((job: string, machine: string) => Promise<void>) | undefined;
+  /** Opens a job's output; absent where it cannot be read from here. */
+  output?: ((job: Job) => Promise<OutputLines>) | undefined;
+  /** The World's words for why a stop failed, for the pointer resting on
+   *  it. */
+  detail(error: unknown): string;
+}
+
+interface Row {
+  job: Job;
+  element: HTMLElement;
+  open: { element: HTMLElement; viewport: LineViewport | null; lines: OutputLines | null; closed: boolean } | null;
+  ended: boolean;
+}
+
+export class JobsPanel {
+  private readonly rows = new Map<string, Row>();
+  private readonly list: HTMLUListElement;
+
+  constructor(
+    private readonly button: HTMLButtonElement,
+    private readonly pop: HTMLElement,
+    private readonly options: JobsPanelOptions,
+  ) {
+    pop.innerHTML = `<p class="jobs-title">${escape(options.words.title)}</p><ul class="jobs-list"></ul>`;
+    this.list = pop.querySelector("ul")!;
+    button.addEventListener("click", () => this.show(pop.hidden));
+    document.addEventListener("pointerdown", (event) => {
+      if (!pop.hidden && !pop.contains(event.target as Node) && !button.contains(event.target as Node)) this.show(false);
+    });
+    pop.addEventListener("click", (event) => void this.act(event));
+  }
+
+  private show(shown: boolean): void {
+    this.pop.hidden = !shown;
+    this.button.setAttribute("aria-expanded", String(shown));
+    // Closed, rows of ended commands are let go with their output.
+    if (!shown) for (const row of [...this.rows.values()]) if (row.ended) this.remove(row);
+  }
+
+  update(jobs: Job[], now: Date): void {
+    const { words } = this.options;
+    const running = new Set(jobs.map((job) => job.job));
+    for (const row of [...this.rows.values()]) {
+      if (running.has(row.job.job)) continue;
+      if (row.open) this.end(row);
+      else this.remove(row);
+    }
+    for (const job of jobs) {
+      let row = this.rows.get(job.job);
+      if (!row) {
+        row = { job, element: this.draw(job), open: null, ended: false };
+        this.rows.set(job.job, row);
+        this.list.append(row.element);
+      }
+      row.job = job;
+      const where = `${job.machine} · ${words.lasted(now.getTime() - Date.parse(job.started_at))}`;
+      const shown = row.element.querySelector<HTMLElement>(".job-where")!;
+      if (shown.textContent !== where) shown.textContent = where;
+    }
+    const count = jobs.length;
+    this.button.hidden = this.rows.size === 0;
+    if (!this.rows.size) this.show(false);
+    this.button.title = words.title;
+    this.button.setAttribute("aria-label", `${words.title} ${count}`);
+    const html = `${glyph("terminal", 16)}<span class="jobs-count">${count}</span>`;
+    if (this.button.innerHTML !== html) this.button.innerHTML = html;
+  }
+
+  private draw(job: Job): HTMLElement {
+    const { words } = this.options;
+    const element = document.createElement("li");
+    element.className = "job-item";
+    element.dataset.job = job.job;
+    const command = job.command.split("\n")[0] ?? "";
+    const what = `<code class="job-command">${escape(command)}</code><span class="job-where"></span>`;
+    element.innerHTML = `<div class="job-row"><span class="pulse" aria-hidden="true"></span>${
+      this.options.output
+        ? `<button class="job-what" type="button" data-open aria-expanded="false" title="${escape(job.command)}">${what}</button>`
+        : `<span class="job-what" title="${escape(job.command)}">${what}</span>`
+    }${this.options.stop ? `<button class="icon-button job-stop" type="button" data-stop title="${escape(words.stop)}" aria-label="${escape(words.stop)}">${glyph("stop", 14)}</button>` : ""}</div>`;
+    return element;
+  }
+
+  /** A command that ended while its output was open: its row stays,
+   *  still, saying so. */
+  private end(row: Row): void {
+    if (row.ended) return;
+    row.ended = true;
+    row.element.classList.add("ended");
+    row.element.querySelector(".job-stop")?.remove();
+    row.element.querySelector(".jobs-confirm")?.remove();
+    row.element.querySelector<HTMLElement>(".job-where")!.textContent = `${row.job.machine} · ${this.options.words.ended}`;
+  }
+
+  private remove(row: Row): void {
+    this.close(row);
+    row.element.remove();
+    this.rows.delete(row.job.job);
+  }
+
+  private async act(event: Event): Promise<void> {
+    const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
+    const element = target?.closest<HTMLElement>(".job-item");
+    const row = element ? this.rows.get(element.dataset.job!) : undefined;
+    if (!target || !row) return;
+    const { words } = this.options;
+    if (target.dataset.open !== undefined) {
+      if (row.open) {
+        this.close(row);
+        if (row.ended) this.remove(row);
+      } else void this.openOutput(row);
+      return;
+    }
+    if (target.dataset.stop !== undefined) {
+      if (row.element.querySelector(".jobs-confirm")) return;
+      row.element
+        .querySelector(".job-row")!
+        .insertAdjacentHTML(
+          "afterend",
+          `<div class="jobs-confirm"><span>${escape(words.stopAsk)}</span><button class="ask-button" type="button" data-cancel>${escape(words.cancel)}</button><button class="ask-button ask-primary" type="button" data-confirm>${escape(words.stop)}</button></div>`,
+        );
+      return;
+    }
+    const confirm = target.closest<HTMLElement>(".jobs-confirm");
+    if (!confirm) return;
+    if (target.dataset.cancel !== undefined) {
+      confirm.remove();
+      return;
+    }
+    if (target.dataset.confirm !== undefined && this.options.stop) {
+      target.disabled = true;
+      try {
+        await this.options.stop(row.job.job, row.job.machine);
+        confirm.remove();
+      } catch (error) {
+        confirm.querySelector("span")!.textContent = words.notStopped;
+        confirm.title = this.options.detail(error);
+        target.disabled = false;
+      }
+    }
+  }
+
+  private async openOutput(row: Row): Promise<void> {
+    const { words, output } = this.options;
+    if (!output) return;
+    const element = document.createElement("div");
+    element.className = "job-output";
+    element.textContent = words.loading;
+    row.element.append(element);
+    row.element.querySelector(".job-what")?.setAttribute("aria-expanded", "true");
+    const open: NonNullable<Row["open"]> = { element, viewport: null, lines: null, closed: false };
+    row.open = open;
+    try {
+      const lines = await output(row.job);
+      if (open.closed) {
+        void lines.close();
+        return;
+      }
+      open.lines = lines;
+      const command = row.job.command.split("\n")[0] ?? "";
+      open.viewport = new LineViewport(lines, {
+        label: words.output(command),
+        follow: true,
+        loading: words.loading,
+        failed: (error) => words.failed(error instanceof Error ? error.message : String(error)),
+      });
+      element.textContent = "";
+      element.append(open.viewport.element);
+    } catch (error) {
+      element.textContent = words.failed(error instanceof Error ? error.message : String(error));
+      element.classList.add("failed");
+    }
+  }
+
+  private close(row: Row): void {
+    const open = row.open;
+    if (!open) return;
+    open.closed = true;
+    open.viewport?.destroy();
+    if (open.lines) void open.lines.close().catch((error: unknown) => console.warn("a job's output could not be let go", error));
+    open.element.remove();
+    row.open = null;
+    row.element.querySelector(".job-what")?.setAttribute("aria-expanded", "false");
+  }
+}

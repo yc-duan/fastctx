@@ -2,6 +2,7 @@
 // nothing anywhere, so each part of the interface can be looked at in a
 // plain browser.
 
+import { MemoryLines } from "../longview";
 import type { Removing } from "../app/removal";
 import type { PhoneSeam } from "../app/phone";
 import type { RenewalStatus } from "../world/renewal";
@@ -299,4 +300,21 @@ export function specimenPicture(name: string, max: number): string {
   plot("#4a4a48", wide ? 40 : 18, wide ? 3 : 5);
   plot("#d97757", 6, 7);
   return canvas.toDataURL("image/png");
+}
+
+/** A specimen job's output, growing a line a second while it is read. */
+export function specimenOutput(command: string): MemoryLines & { close(): Promise<void> } {
+  const lines = [`$ ${command}`, "   Compiling mark50 v0.4.2 (/home/me/mark50)", "    Finished `test` profile [unoptimized + debuginfo] target(s) in 41.07s", "     Running unittests src/lib.rs"];
+  const source = new MemoryLines(lines, false);
+  let n = 0;
+  const timer = window.setInterval(() => {
+    n += 1;
+    lines.push(`test ctrl::fixed::step_response_${String(n).padStart(3, "0")} ... ok`);
+    source.replace([...lines], false, lines.length - 1);
+  }, 1000);
+  return Object.assign(source, {
+    close: async () => {
+      clearInterval(timer);
+    },
+  });
 }

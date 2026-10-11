@@ -136,6 +136,11 @@ export interface Words {
   stopJobAsk: string;
   notStopped: string;
   cancel: string;
+  /** A job's output opened under its row. */
+  jobOutput(command: string): string;
+  jobOutputLoading: string;
+  jobOutputFailed(why: string): string;
+  jobOver: string;
   /** A job running on a machine for so long. */
   jobRunning(job: string, machine: string, lasted: string): string;
   minutes(n: number): string;
@@ -334,6 +339,10 @@ export const zh: Words = {
   stopJobAsk: "停下这条命令？会告诉智能体是你停的。",
   notStopped: "没能停下",
   cancel: "取消",
+  jobOutput: (command) => `${command} 的输出`,
+  jobOutputLoading: "正在读取…",
+  jobOutputFailed: (why) => `读不到输出：${why}`,
+  jobOver: "已结束",
   jobRunning: (job, machine, lasted) => `${job} · ${machine} · ${lasted}`,
   minutes: (n) => (n < 1 ? "不到 1 分钟" : `${n} 分钟`),
   hours: (hours, minutes) => (minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`),
@@ -506,6 +515,10 @@ export const en: Words = {
   stopJobAsk: "Stop this command? The agent will be told you stopped it.",
   notStopped: "Couldn't stop it",
   cancel: "Cancel",
+  jobOutput: (command) => `Output of ${command}`,
+  jobOutputLoading: "Reading…",
+  jobOutputFailed: (why) => `Couldn't read the output: ${why}`,
+  jobOver: "Ended",
   jobRunning: (job, machine, lasted) => `${job} · ${machine} · ${lasted}`,
   minutes: (n) => (n < 1 ? "under a minute" : `${n} min`),
   hours: (hours, minutes) => (minutes ? `${hours} h ${minutes} min` : `${hours} h`),

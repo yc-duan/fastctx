@@ -42,7 +42,7 @@ import { Tokens } from "./app/tokens";
 import { NewTalk } from "./app/new-talk";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
-import { fileLink, link, placeOf, talkLink, type Place } from "./app/places";
+import { link, placeOf, talkLink, type Place } from "./app/places";
 import { SettingsPage } from "./app/settings";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
@@ -95,7 +95,8 @@ import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
 import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
-import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
+import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
+import { RemoteLines } from "./world/remote-lines";
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
 import { showPathNotice } from "./app/path-notice";
@@ -738,7 +739,7 @@ function specimenTalk(address: Address): Page {
     },
     stop() {},
     stopJob: async () => {},
-    jobLink: (machine, path) => fileLink(machine, path, true),
+    jobOutput: async (job) => specimenOutput(job.command),
   });
   // What it started that still runs, as the specimen World lists it.
   const runningJobs = effect(() => {
@@ -920,7 +921,7 @@ function liveTalk(address: Address): Page {
       void stop(address);
     },
     stopJob: (job, machine) => stopJob(job, machine),
-    jobLink: (machine, path) => fileLink(machine, path, true),
+    jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
   });
   let watchId: number | null = null;
   let left = false;

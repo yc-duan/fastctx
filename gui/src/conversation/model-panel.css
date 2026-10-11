@@ -264,7 +264,51 @@
   text-align: left;
 }
 
+button.job-what {
+  align-self: stretch;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.job-what[aria-expanded="true"] .job-command {
+  color: var(--text-strong);
+}
+
+/* A job's output, opened under its row: a few screens' height at most,
+   read from the machine as it is scrolled, following the end. */
+.job-output {
+  margin: 2px var(--space-1) var(--space-2) calc(10px + var(--space-3));
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.job-output .lv-viewport {
+  height: min(240px, 34dvh);
+}
+
+.job-output.failed {
+  color: var(--wrong);
+}
+
+.jobs-pop:has(.job-output) {
+  max-height: min(70dvh, 560px);
+}
+
+.job-item.ended .pulse {
+  animation: none;
+  opacity: 0.35;
+}
+
 .job-command {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -275,12 +319,13 @@
   text-decoration: none;
 }
 
-a.job-command:hover {
+button.job-what:hover .job-command {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 
-.job-where {
+.jobs-pop .job-where {
+  align-self: flex-start;
   font-size: var(--size-small);
   color: var(--text-3);
 }

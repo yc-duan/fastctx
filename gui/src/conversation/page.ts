@@ -17,6 +17,7 @@ import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import type { Details } from "./details";
 import { FileLinks } from "./file-links";
+import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { Pictures, type PictureSeams } from "./pictures";
 import { glyph } from "./glyphs";
 import type { Conversation } from "./model";
@@ -116,9 +117,10 @@ export interface PageOptions {
   send(text: string, attached: { refs: unknown[]; shown: Attached[]; filesOn?: string | null }): Promise<Sent> | void;
   stop(): void;
   /** Stops one job it started, on the machine it runs on. */
-  stopJob?(job: string, machine: string): Promise<void>;
-  /** Where a job's output is read as it grows. */
-  jobLink?(machine: string, path: string): string;
+  stopJob?: ((job: string, machine: string) => Promise<void>) | undefined;
+  /** A job's output as lines from the machine running it, read as it
+   *  grows. */
+  jobOutput?: ((job: Job) => Promise<OutputLines>) | undefined;
 }
 
 export class ConversationPage {
@@ -1168,90 +1170,29 @@ export class ConversationPage {
     this.input.style.overflowY = this.input.scrollHeight > this.input.clientHeight + 1 ? "auto" : "hidden";
   }
 
-  private jobsWired = false;
+  private jobs: JobsPanel | null = null;
 
-  /** What the resident started that still runs: a mark in the input's row
-   *  with how many, quietly moving, and under it a small panel of each, where
-   *  it runs, for how long, its output a press away, and a way to stop it.
-   *  When one ends, the resident is told and the conversation goes on. */
-  running(jobs: { job: string; machine: string; started_at: string; command: string; output: string }[], now: Date): void {
+  /** What the resident started that still runs (`jobs-panel.ts`). */
+  running(jobs: Job[], now: Date): void {
     const { words } = this.options;
-    const button = this.element.querySelector<HTMLButtonElement>(".composer-jobs")!;
-    const pop = this.element.querySelector<HTMLElement>(".jobs-pop")!;
-    if (!this.jobsWired) {
-      this.jobsWired = true;
-      button.addEventListener("click", () => {
-        pop.hidden = !pop.hidden;
-        button.setAttribute("aria-expanded", String(!pop.hidden));
-      });
-      document.addEventListener("pointerdown", (event) => {
-        if (!pop.hidden && !pop.contains(event.target as Node) && !button.contains(event.target as Node)) {
-          pop.hidden = true;
-          button.setAttribute("aria-expanded", "false");
-        }
-      });
-      pop.addEventListener("click", (event) => void this.jobAct(event));
-    }
-    button.hidden = jobs.length === 0;
-    if (!jobs.length) pop.hidden = true;
-    const label = words.stillRunning;
-    button.title = label;
-    button.setAttribute("aria-label", `${label} ${jobs.length}`);
-    const html = `${glyph("terminal", 16)}<span class="jobs-count">${jobs.length}</span>`;
-    if (button.innerHTML !== html) button.innerHTML = html;
-    const rows = jobs
-      .map((job) => {
-        const link = this.options.jobLink?.(job.machine, job.output);
-        const command = job.command.split("\n")[0] ?? "";
-        return `<li class="job-row" data-job="${escape(job.job)}" data-machine="${escape(job.machine)}">
-          <span class="pulse" aria-hidden="true"></span>
-          <span class="job-what">${link ? `<a class="job-command" href="${escape(link)}" title="${escape(job.command)}">${escape(command)}</a>` : `<code class="job-command" title="${escape(job.command)}">${escape(command)}</code>`}<span class="job-where">${escape(job.machine)} · ${escape(lasted(now.getTime() - Date.parse(job.started_at), words))}</span></span>
-          ${this.options.stopJob ? `<button class="icon-button job-stop" type="button" data-stop title="${escape(words.stop)}" aria-label="${escape(words.stop)}">${glyph("stop", 14)}</button>` : ""}
-        </li>`;
-      })
-      .join("");
-    const list = `<p class="jobs-title">${escape(label)}</p><ul class="jobs-list">${rows}</ul>`;
-    if (!pop.querySelector(".jobs-confirm") && pop.dataset.drawn !== list) {
-      pop.dataset.drawn = list;
-      pop.innerHTML = list;
-    }
-  }
-
-  /** Stopping a job asks first, in the panel: the agent is told the user
-   *  stopped it, so it does not take it for a failure. */
-  private async jobAct(event: Event): Promise<void> {
-    const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
-    const row = target?.closest<HTMLElement>(".job-row");
-    const pop = this.element.querySelector<HTMLElement>(".jobs-pop")!;
-    const { words } = this.options;
-    if (!target) return;
-    if (target.dataset.stop !== undefined && row) {
-      const job = row.dataset.job!;
-      const machine = row.dataset.machine!;
-      row.insertAdjacentHTML(
-        "afterend",
-        `<li class="jobs-confirm" data-job="${escape(job)}" data-machine="${escape(machine)}"><span>${escape(words.stopJobAsk)}</span><button class="ask-button" type="button" data-cancel>${escape(this.options.controls?.words.never ?? words.cancel)}</button><button class="ask-button ask-primary" type="button" data-confirm>${escape(words.stop)}</button></li>`,
-      );
-      return;
-    }
-    const confirm = target.closest<HTMLElement>(".jobs-confirm");
-    if (!confirm) return;
-    if (target.dataset.cancel !== undefined) {
-      confirm.remove();
-      return;
-    }
-    if (target.dataset.confirm !== undefined && this.options.stopJob) {
-      target.disabled = true;
-      try {
-        await this.options.stopJob(confirm.dataset.job!, confirm.dataset.machine!);
-        confirm.remove();
-      } catch (error) {
-        confirm.querySelector("span")!.textContent = words.notStopped;
-        confirm.title = detailOf(error);
-        target.disabled = false;
-      }
-      delete pop.dataset.drawn;
-    }
+    this.jobs ??= new JobsPanel(this.element.querySelector<HTMLButtonElement>(".composer-jobs")!, this.element.querySelector<HTMLElement>(".jobs-pop")!, {
+      words: {
+        title: words.stillRunning,
+        stop: words.stop,
+        stopAsk: words.stopJobAsk,
+        notStopped: words.notStopped,
+        cancel: this.options.controls?.words.never ?? words.cancel,
+        output: words.jobOutput,
+        loading: words.jobOutputLoading,
+        failed: words.jobOutputFailed,
+        ended: words.jobOver,
+        lasted: (ms) => lasted(ms, words),
+      },
+      stop: this.options.stopJob,
+      output: this.options.jobOutput,
+      detail: detailOf,
+    });
+    this.jobs.update(jobs, now);
   }
 
   private away: "removed" | null = null;
