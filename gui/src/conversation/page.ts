@@ -372,6 +372,8 @@ export class ConversationPage {
   private unbindShared: (() => void) | null = null;
   private nodeQueue: NodeQueue | null = null;
   private nodeTray: NodeTray | null = null;
+  /** This device's last send of the shared words, until the node answers. */
+  private sendingShared: Promise<unknown> = Promise.resolve();
 
   /** Opens the shared input: the words typed here before it opened go into
    *  it, the queue and what is attached become the node's. */
@@ -442,9 +444,23 @@ export class ConversationPage {
     const shown = (draft?.draft.attachments ?? []).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
     const key = queued ? null : conversation.sending(text, here || null, shown);
     this.update();
-    session.send().then(
+    // Words sent here while the last ones are still on their way go once
+    // the node has those, as the next draft rather than the one already sent.
+    // Nothing is sent when those took everything the input held.
+    const sent = this.sendingShared.then(() => {
+      const draft = session.draft;
+      const left = draft.view.characters.some((one) => /\S/u.test(one.text)) || draft.attachments.length > 0 || draft.uploads.length > 0;
+      return left ? session.send() : null;
+    });
+    this.sendingShared = sent.catch(() => {});
+    sent.then(
       (updated) => {
         if (!key) return;
+        if (!updated) {
+          conversation.unsend(key);
+          this.update();
+          return;
+        }
         const landed = updated.landed;
         if (!landed) conversation.unsend(key);
         else if (landed.kind === "waiting" || landed.kind === "sent" || landed.kind === "uncertain") {

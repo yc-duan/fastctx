@@ -331,6 +331,7 @@ for (const session of sessions) {
             const t = document.querySelector(".composer textarea");
             const say = (text) => { t.value = text; t.dispatchEvent(new Event("input")); document.querySelector(".composer-action").click(); };
             say("先别动 writer.rs，等我看完这份日志再说");
+            await new Promise((r) => setTimeout(r, 300));
             say("看完之后把 retry 的测试在 lab 上也跑一遍，结果贴给我");
             await new Promise((r) => setTimeout(r, 300));
           })()`,

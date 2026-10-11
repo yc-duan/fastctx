@@ -94,7 +94,7 @@ import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
 import { specimenAgents, specimenNow } from "./specimen/world";
-import { specimenComputer, specimenFiles, specimenOffers, specimenPhone, specimenRead, specimenUpload } from "./specimen/seams";
+import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenPhone, specimenRead, specimenUpload } from "./specimen/seams";
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
 import { showPathNotice } from "./app/path-notice";
@@ -671,7 +671,7 @@ function specimenTalk(address: Address): Page {
     conversation,
     controls: {
       words: composerWords,
-      offers: async () => specimenOffers,
+      offers: async () => (sample.agent === "claude" ? specimenClaudeOffers : specimenOffers),
       control: async () => ({ kind: "done", said: english ? "this is a specimen" : "这是样例，没有连着世界" }),
       forked: () => {},
       open: openOutside,

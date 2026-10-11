@@ -39,6 +39,38 @@ export const specimenOffers: Offers = {
   },
 };
 
+/** What a specimen Claude conversation offers: the models its mod reports
+ *  from Claude Code's own `/config`, and the five efforts. */
+export const specimenClaudeOffers: Offers = {
+  controls: ["command", "compact", "model", "rename", "fork", "rewind", "answer"],
+  commands: [
+    { name: "review", description: "Review a pull request", args: null, arguments: "optional", source: "claude" },
+    { name: "init", description: "Write a CLAUDE.md for this place", args: null, arguments: "none", source: "claude" },
+  ],
+  models: ["opus", "fable", "sonnet", "haiku"].map((id, index) => ({
+    id,
+    name: id[0]!.toUpperCase() + id.slice(1),
+    description: "",
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default_effort: id === "fable" ? "high" : "medium",
+    default: index === 0,
+    service_tiers: [],
+    default_service_tier: null,
+  })),
+  model: "opus",
+  effort: "medium",
+  service_tier: null,
+  usage: {
+    context: null,
+    limits: [
+      { name: "five_hour", used_percent: 42, resets_at: "2026-10-04T18:40:00Z" },
+      { name: "seven_day", used_percent: 18, resets_at: "2026-10-08T03:00:00Z" },
+    ],
+    cost_usd: null,
+    raw: null,
+  },
+};
+
 /** Files a specimen's machine has in its project's places, found by the
  *  letters typed in order, as a fuzzy finder does. */
 export async function specimenFiles(query: string) {
