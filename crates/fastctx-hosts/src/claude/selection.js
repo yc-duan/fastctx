@@ -1,9 +1,12 @@
 const effortLevels = ['low', 'medium', 'high', 'xhigh', 'max']
 
+// Claude Code's own `default` is whatever the sign-in makes it (a token's
+// lands on Sonnet), so it is not offered: the World names a model every time
+// and starts on the first of the list (walkthrough item 30).
 function modelOffers(rows) {
-  return (rows.find((row) => row.key === 'model')?.options ?? []).map((id) => ({
+  return (rows.find((row) => row.key === 'model')?.options ?? []).filter((id) => id !== 'default').map((id, index) => ({
     id, name: null, description: null, efforts: effortLevels, default_effort: id === 'fable' ? 'high' : 'medium',
-    default: id === 'default', service_tiers: [], default_service_tier: null,
+    default: index === 0, service_tiers: [], default_service_tier: null,
   }))
 }
 
