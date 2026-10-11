@@ -45,7 +45,6 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::Control { resident: who, .. }
         | RemoteCall::Manage { resident: who, .. }
         | RemoteCall::Offers { resident: who }
-        | RemoteCall::Colleagues { resident: who, .. }
         | RemoteCall::WorksOn { resident: who, .. }
         | RemoteCall::Upload {
             target:
@@ -116,7 +115,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     };
     match call {
         RemoteCall::Open { agent, home, .. } => login(agent, home.as_deref())?,
-        RemoteCall::Ask { home, .. } => login(&"codex".parse().expect("an agent name"), home.as_deref())?,
+        RemoteCall::Ask { started, .. } => login(&started.callee.login.agent, started.callee.login.home.as_deref())?,
         _ => {}
     }
     if let Some(resident) = resident_of(call)

@@ -69,6 +69,8 @@ pub struct About {
     /// (`agents::AgentHome`), when not the default one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<std::path::PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callee: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

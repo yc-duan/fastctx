@@ -120,8 +120,8 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         acting: source.acting,
         works_on: source.works_on,
         home: source.home,
+        callee: None,
     };
-    crate::colleagues::setting::inherit(node, &source.id, &id)?;
     node.residents.create(&node.world, about, town, crate::residents::idle(at)).map_err(failure)?;
     let finishing = async {
         node.residents.set_heard(&id, heard);

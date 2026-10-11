@@ -43,11 +43,21 @@ impl Device {
                 let token = session.link.account_change(&account, change).await.map_err(failed)?;
                 return Ok((Reply::Changed { token }, here()));
             }
+            Call::CollabRead { hub, account } => {
+                let session = self.on_hub(Some(&hub))?;
+                return Ok((Reply::CollabRead(session.link.collab_read(&account).map_err(failed)?), here()));
+            }
+            Call::CollabWrite { hub, account, collab } => {
+                let session = self.on_hub(Some(&hub))?;
+                let version = session.link.collab_write(&account, collab).await.map_err(failed)?;
+                return Ok((Reply::CollabWritten { version }, here()));
+            }
             Call::Accounts => {
                 let mut hubs = Vec::new();
                 for session in self.sessions() {
                     let mut accounts = session.link.accounts();
-                    accounts.arrivals = fastctx_net::arrivals::fresh(&self.store.arrivals(&accounts.hub)).map_err(failed)?;
+                    accounts.arrivals =
+                        fastctx_net::arrivals::fresh(&self.store.arrivals(&accounts.hub)).map_err(failed)?;
                     hubs.push(accounts);
                 }
                 return Ok((Reply::Accounts(AccountsReply { machine: here(), hubs }), here()));
@@ -67,7 +77,9 @@ impl Device {
                     machine.ok_or_else(|| failed("choose a machine for file search; a device has no local files"))?;
                 (machine, RemoteCall::FindFiles { request }, None)
             }
-            Call::ClaudeConsent { machine, accept, home } => (machine, RemoteCall::ClaudeConsent { accept, home }, None),
+            Call::ClaudeConsent { machine, accept, home } => {
+                (machine, RemoteCall::ClaudeConsent { accept, home }, None)
+            }
             Call::Homes { machine, change } => (machine, RemoteCall::Homes { change }, None),
             Call::Talk { to, machine, text, attachments, files_on } => {
                 let machine = self.find(&to, machine).await?;
@@ -85,16 +97,10 @@ impl Device {
                     reasoning_effort,
                     attachments,
                     works_on: choices.works_on,
-                    colleagues: choices.colleagues,
                     home: choices.home,
-                    colleagues_home: choices.colleagues_home,
                     files_on: choices.files_on,
                 };
                 (machine, open, None)
-            }
-            Call::Colleagues { resident, machine, lives_on, home } => {
-                let machine = self.find(&resident, machine).await?;
-                (machine, RemoteCall::Colleagues { resident: resident.clone(), lives_on, home }, Some(resident))
             }
             Call::WorksOn { resident, machine, works_on } => {
                 let machine = self.find(&resident, machine).await?;
@@ -179,7 +185,7 @@ impl Device {
             (RemoteCall::Offers { .. }, RemoteReply::Offers(offers)) => {
                 Reply::Offers { resident: address.expect("offers resident"), offers }
             }
-            (RemoteCall::Colleagues { .. } | RemoteCall::WorksOn { .. }, RemoteReply::Set) => Reply::Done,
+            (RemoteCall::WorksOn { .. }, RemoteReply::Set) => Reply::Done,
             _ => {
                 return Err(failed(format!(
                     "{machine} answered something other than the requested conversation operation"

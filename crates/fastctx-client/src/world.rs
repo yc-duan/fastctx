@@ -438,18 +438,6 @@ impl World {
         }
     }
 
-    /// Turns asking for colleagues on for `resident`, with where they live,
-    /// or off.
-    pub async fn colleagues(
-        &self,
-        resident: ResidentId,
-        machine: Option<MachineName>,
-        lives_on: Option<fastctx_types::access::Written>,
-        home: Option<std::path::PathBuf>,
-    ) -> Result<(), Error> {
-        done(self.ask(Call::Colleagues { resident, machine, lives_on, home }).await?)
-    }
-
     /// Adds an agent's home on `machine`, or hides one or shows it again.
     pub async fn homes(&self, machine: MachineName, change: fastctx_types::agents::HomeChange) -> Result<(), Error> {
         done(self.ask(Call::Homes { machine, change }).await?)

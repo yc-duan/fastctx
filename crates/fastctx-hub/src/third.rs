@@ -91,6 +91,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         level: fastctx_net::directory::Level::Super,
         locked: false,
         opened: Timestamp::now(),
+        collab: None,
     });
     book.passwords.insert(new.admin.clone(), Bytes(crate::password_record(&secrets, &new.admin, &new.password)?));
     let mut report = Report::default();

@@ -137,7 +137,13 @@ async fn serve_session(
             (Some("ping"), Some(id)) => output.send(&protocol.response(&id, json!({}), false)),
             (Some("tools/list"), Some(id)) => {
                 let meta = params.get("_meta");
-                let machines = session.machines(meta).await;
+                let machines = match session.machines(meta).await {
+                    Ok(machines) => machines,
+                    Err(error) => {
+                        output.send(&error_response(&id, -32603, &error));
+                        continue;
+                    }
+                };
                 let tools = tools::definitions(writes_off, session.woken(meta), session.codex(meta), machines.as_ref());
                 output.send(&protocol.response(&id, json!({ "tools": tools }), true));
                 session.watch_tools(&output, meta);
@@ -219,6 +225,7 @@ async fn serve_session(
     }
     eprintln!("fastctx serve: {ended}; answering the calls in flight, then leaving");
     while calls.join_next().await.is_some() {}
+    session.stop_watching();
     drop(output);
     printing.await??;
     Ok(())

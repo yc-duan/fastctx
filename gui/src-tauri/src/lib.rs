@@ -7,6 +7,7 @@
 mod accounts;
 #[cfg(target_os = "android")]
 mod android;
+mod collab;
 mod composer;
 mod connection;
 
@@ -15,11 +16,11 @@ mod founding;
 #[cfg(target_os = "linux")]
 mod linux_service;
 #[cfg(desktop)]
+mod removal;
+#[cfg(desktop)]
 mod renewal;
 #[cfg(desktop)]
 mod setup;
-#[cfg(desktop)]
-mod removal;
 #[cfg(desktop)]
 mod terminal;
 #[cfg(desktop)]
@@ -779,9 +780,10 @@ pub fn run() {
             accounts::login_token,
             accounts::open_account,
             accounts::accounts,
+            collab::collab_read,
+            collab::collab_write,
             accounts::account_change,
             accounts::server_command,
-            accounts::colleagues,
             accounts::agent_homes,
             accounts::works_on,
             world_now,

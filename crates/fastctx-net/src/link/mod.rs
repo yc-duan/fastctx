@@ -14,6 +14,7 @@ mod accounts;
 mod answering;
 mod calls;
 mod changes;
+mod collab;
 mod kernel;
 mod ledger;
 mod letters;

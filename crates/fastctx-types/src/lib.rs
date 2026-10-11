@@ -12,6 +12,8 @@ pub mod accounts;
 pub mod agents;
 pub mod attachments;
 pub mod calls;
+pub mod collab;
+pub mod collab_prompt;
 pub mod composer;
 pub mod copy;
 pub mod device;
@@ -36,8 +38,8 @@ pub mod run;
 pub mod session;
 pub mod since;
 pub mod town;
-pub mod world;
 pub mod uninstall;
+pub mod world;
 pub mod write;
 
 pub use calls::{Attach, Call, JournalCall, ProjectCall, Reply};

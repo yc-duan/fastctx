@@ -443,7 +443,7 @@ fn login_asked(message: &Envelope) -> Option<(AgentName, Option<std::path::PathB
     };
     match call {
         RemoteCall::Open { agent, home, .. } => Some((agent, home)),
-        RemoteCall::Ask { home, .. } => Some(("codex".parse().expect("an agent name"), home)),
+        RemoteCall::Ask { started, .. } => Some((started.callee.login.agent, started.callee.login.home)),
         _ => None,
     }
 }

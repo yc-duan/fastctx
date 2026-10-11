@@ -34,13 +34,15 @@ use crate::transaction::{Created, FileChange, FileError, Snapshot, Transaction};
 use crate::{File, Notice, executable, guidance, legacy};
 
 mod homes;
+mod identity;
 pub mod kernel;
 mod recovery;
 mod tools;
 mod withdrawn;
-pub use withdrawn::{Integration, integrations, read_withdrawn, remember_withdrawn, restore_withdrawn};
 pub use homes::Host;
+pub use identity::forward_login_identity;
 pub use tools::ToolCheck;
+pub use withdrawn::{Integration, integrations, read_withdrawn, remember_withdrawn, restore_withdrawn};
 
 /// Where the things an apply touches are, for this user on this machine.
 #[derive(Clone, Debug)]

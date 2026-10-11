@@ -27,7 +27,10 @@ fn hub(name: Option<String>) -> Result<Option<HubName>, String> {
     name.map(|name| HubName::try_from(name).map_err(|error| error.to_string())).transpose()
 }
 
-pub(crate) async fn logged_in(shell: &Shell, (hub, name, account): (HubName, MachineName, AccountName)) -> Result<LoggedIn, String> {
+pub(crate) async fn logged_in(
+    shell: &Shell,
+    (hub, name, account): (HubName, MachineName, AccountName),
+) -> Result<LoggedIn, String> {
     #[cfg(desktop)]
     let kept = match shell.connection.local_world() {
         Ok(world) => Some(crate::setup::keep(&world).await?),
@@ -79,7 +82,10 @@ pub(crate) async fn login_token(
     let world = shell.world();
     #[cfg(target_os = "android")]
     crate::android::joining(true)?;
-    let joined = world.login_with_token(token.trim().to_string(), crate::machine(name)?).await.map_err(|error| error.to_string());
+    let joined = world
+        .login_with_token(token.trim().to_string(), crate::machine(name)?)
+        .await
+        .map_err(|error| error.to_string());
     #[cfg(target_os = "android")]
     crate::android::joining(false)?;
     logged_in(&shell, joined?).await
@@ -157,26 +163,6 @@ pub(crate) async fn works_on(
     shell
         .world()
         .works_on(crate::resident(resident_id)?, crate::machine(machine_name)?, works_on)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-/// Turns asking for colleagues on for a conversation, with where they
-/// live and the Codex home they use there, or off.
-#[fastctx_gui_command::command]
-pub(crate) async fn colleagues(
-    shell: tauri::State<'_, Shell>,
-    resident_id: String,
-    machine_name: Option<String>,
-    lives_on: Option<String>,
-    home: Option<std::path::PathBuf>,
-) -> Result<(), String> {
-    let lives_on = lives_on
-        .map(|text| text.parse::<fastctx_types::access::Written>().map_err(|error| error.to_string()))
-        .transpose()?;
-    shell
-        .world()
-        .colleagues(crate::resident(resident_id)?, crate::machine(machine_name)?, lives_on, home)
         .await
         .map_err(|error| error.to_string())
 }

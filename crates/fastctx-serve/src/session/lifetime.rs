@@ -52,8 +52,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
                 here: Some("fixture".to_string()),
                 others: vec![],
                 program: None,
-                colleagues: None,
-                colleagues_lent: false,
+                collab: None,
             }),
         };
         let sent = connection.send(&serde_json::to_vec(&machines).unwrap()).await.map_err(|error| error.to_string());
@@ -67,13 +66,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
         reply(
             &mut connection,
             next.0,
-            Reply::Machines {
-                here: Some("fixture".to_string()),
-                others: vec![],
-                program: None,
-                colleagues: None,
-                colleagues_lent: false,
-            },
+            Reply::Machines { here: Some("fixture".to_string()), others: vec![], program: None, collab: None },
         )
         .await;
         answered.send(()).unwrap();

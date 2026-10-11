@@ -20,50 +20,80 @@ use fastctx_types::residents::{
     PendingState,
 };
 use fastctx_types::session::{Speaker, TurnHow};
-use fastctx_types::{AccountName, Address, AgentName, MachineName, ResidentId, TownName};
+use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 
 use crate::Node;
 use crate::residents::Heard;
 use crate::speech::{self, Owed};
 
-pub mod setting;
-
-/// Asks for a colleague for `asker`, a resident of this machine, where the
-/// user set its colleagues to live. Returns where the colleague lives.
+/// Starts the named callee configured by an account the caller serves.
+/// Returns where the colleague lives.
 pub async fn ask(
     node: &Arc<Node>,
     asker: ResidentId,
     town: Option<TownName>,
     label: String,
     prompt: String,
+    callee: Option<String>,
+    login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<Address, Failure> {
-    let here = node.machine();
     let at = Timestamp::now();
     let (about, _) =
         node.residents.about(&asker).ok_or_else(|| Failure::not_run(format!("no resident {asker} lives here")))?;
-    if let Origin::Colleague { asked_by, .. } = &about.origin {
+    let choices = crate::collab::require(node, &asker, login)?;
+    let mut matching: Vec<_> = choices
+        .candidates
+        .into_iter()
+        .filter(|choice| callee.as_ref().is_none_or(|name| *name == choice.shown))
+        .collect();
+    let chosen = match matching.len() {
+        1 => matching.pop().expect("one callee"),
+        0 => {
+            return Err(Failure::not_run(
+                "the named callee is not configured for this caller; the user changes it on the Model collaboration page",
+            ));
+        }
+        _ => {
+            return Err(Failure::not_run(
+                "choose a callee by its offered name; the user configures them on the Model collaboration page",
+            ));
+        }
+    };
+    let machine = chosen.started.callee.login.machine.clone();
+    let account =
+        fastctx_types::access::HubAccount { hub: chosen.link.membership().id.clone(), account: chosen.account.clone() };
+    let view = chosen.link.view();
+    let call_town = node.town_across(&chosen.link, town.as_ref());
+    if let Some(town) = &call_town {
+        let allowed = view
+            .projects
+            .iter()
+            .find(|project| project.name == *town)
+            .is_some_and(|project| view.in_project(&chosen.account, &project.town));
+        if !allowed {
+            return Err(Failure::not_run(format!("the account {} may not use the project {town}", chosen.account)));
+        }
+    }
+    if !view.may_use_login(
+        &chosen.account,
+        &machine,
+        &chosen.started.callee.login.agent,
+        chosen.started.callee.login.home.as_deref(),
+    ) {
         return Err(Failure::not_run(format!(
-            "you are a colleague {asked_by} asked for, and a colleague does not ask for colleagues; say what you need in your last message"
+            "the account {} can no longer use this callee's login; the user changes it on the Model collaboration page",
+            chosen.account
         )));
     }
-    let lives_on = setting::read(node, &asker)
-        .map_err(|error| Failure::not_run(format!("reading whether this conversation may ask for colleagues: {error}")))?
-        .ok_or_else(|| {
-            Failure::not_run(
-                "asking for colleagues is off for this conversation; the user turns it on, and chooses the machine colleagues live on, in the conversation's details",
-            )
-        })?;
-    let home = setting::home(node, &asker)
-        .map_err(|error| Failure::not_run(format!("reading which Codex home colleagues use: {error}")))?;
-    let colleague = if node.is_here(&lives_on) {
+    let here = node.machine();
+    let colleague = if machine == here {
+        let acting = Acting::one(chosen.link.membership().id.clone(), chosen.account.clone());
         let address = Address { machine: here.clone(), resident: asker.clone() };
-        let id = ask_here(node, address, about.acting.clone(), town.clone(), label.clone(), prompt, home).await?;
+        let id = ask_here(node, address, acting, call_town.clone(), label.clone(), prompt, chosen.started).await?;
         Address { machine: here, resident: id }
     } else {
-        let Address { machine, resident } =
-            ask_there(node, &about, &lives_on, town.clone(), label.clone(), prompt, home).await?;
-        Address { machine, resident }
+        ask_there(node, &about, chosen, call_town, label.clone(), prompt).await?
     };
     let action = Action {
         at,
@@ -72,53 +102,35 @@ pub async fn ask(
         what: label,
         result: colleague.resident.to_string(),
     };
+    crate::collab::keep_asked(node, &asker, &colleague, &account)?;
     record(node, &asker, town, action).await;
     Ok(colleague)
 }
 
-/// Asks `lives_on`, another machine, for a colleague for `asker`: working
-/// for those of the asker's accounts that may use the agents there.
 async fn ask_there(
     node: &Arc<Node>,
     asker: &About,
-    lives_on: &Written,
+    chosen: crate::collab::Candidate,
     town: Option<TownName>,
     label: String,
     prompt: String,
-    home: Option<std::path::PathBuf>,
 ) -> Result<Address, Failure> {
-    let set = "the user chooses the machine colleagues live on in this conversation's details";
-    let (link, account) = node.speaking(&asker.acting, lives_on, Purpose::Agents).map_err(|failure| {
-        Failure::not_run(format!(
-            "{lives_on}, where this conversation's colleagues live, cannot be asked: {failure}; {set}"
-        ))
-    })?;
-    let view = link.view();
-    let here = node.machine();
-    let accounts: Vec<AccountName> = node
-        .accounts_on(&link, &asker.acting)
-        .into_iter()
-        .filter(|other| *other != account && view.admits(&here, other, &lives_on.name, Purpose::Agents).is_ok())
-        .collect();
-    // A project is of one hub; a colleague asked on another is born
-    // outside it.
-    let hub = link.membership().id.clone();
-    let town = town.filter(|town| {
-        crate::ledger::names::place(&node.world, town).ok().flatten().is_some_and(|place| place.hub == hub)
-    });
-    let call = RemoteCall::Ask { asker: asker.id.clone(), town, label, prompt, accounts, home };
-    match link.call(&lives_on.name, &account, Purpose::Agents, call).await {
+    let lives_on = node.written(&chosen.link, &chosen.started.callee.login.machine);
+    let call = RemoteCall::Ask { asker: asker.id.clone(), town, label, prompt, started: chosen.started };
+    match chosen.link.call(&lives_on.name, &chosen.account, Purpose::Agents, call).await {
         Ok(Ok(RemoteReply::Asked { colleague })) => Ok(Address { machine: lives_on.name.clone(), resident: colleague }),
         Ok(Ok(_)) => Err(Failure::new(format!("{lives_on} answered something other than a colleague"))),
-        // What went wrong there is said of that machine, not the asker's.
-        Ok(Err(failure)) => {
-            Err(Failure { message: format!("on {lives_on}: {}", failure.message), not_run: failure.not_run })
-        }
+        Ok(Err(failure)) => Err(Failure {
+            message: format!("on {lives_on}: {}; the user changes it on the Model collaboration page", failure.message),
+            not_run: failure.not_run,
+        }),
         Err(CallFailure::Offline { last_seen, .. }) => Err(Failure::not_run(format!(
-            "{lives_on}, where this conversation's colleagues live, is offline{}; {set}",
+            "{lives_on}, where this callee lives, is offline{}; the user changes it on the Model collaboration page",
             last_seen.map(|at| format!(" (since {at})")).unwrap_or_default()
         ))),
-        Err(failure) => Err(Failure::new(format!("asking {lives_on}: {failure}"))),
+        Err(failure) => Err(Failure::new(format!(
+            "asking {lives_on}: {failure}; the user changes it on the Model collaboration page"
+        ))),
     }
 }
 
@@ -133,7 +145,7 @@ pub async fn ask_here(
     town: Option<TownName>,
     label: String,
     prompt: String,
-    home: Option<std::path::PathBuf>,
+    started: fastctx_types::collab::Started,
 ) -> Result<ResidentId, Failure> {
     node.residents.set_departed(asker.clone(), false);
     if let Some(town) = &town {
@@ -141,19 +153,36 @@ pub async fn ask_here(
     }
     // The Codex home it is born in must be one this machine has, so the
     // account the user chose is the one that answers.
-    let home = match home {
+    if started.callee.login.machine != node.machine() {
+        return Err(Failure::not_run("the configured callee lives on another machine"));
+    }
+    let home = match started.callee.login.home.clone() {
         None => None,
         Some(dir) => {
             let env = crate::claude::environment()?;
             let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
             let home = crate::homes::find(node, &env, &user_home, "codex", Some(&dir)).map_err(|failure| {
-                Failure::not_run(format!("{}; the user chooses it in the conversation's details", failure.message))
+                Failure::not_run(format!("{}; the user changes it on the Model collaboration page", failure.message))
             })?;
             (home.found != fastctx_types::agents::HomeFound::Default).then_some(home.dir)
         }
     };
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
+    node.codex.home(home.as_deref())?.require_login().await.map_err(|error| {
+        Failure::not_run(format!(
+            "this callee's Codex login is unavailable: {error}; the user changes it on the Model collaboration page"
+        ))
+    })?;
+    crate::collab::keep(node, &id, &started)?;
+    crate::session_options::keep(
+        node,
+        &id,
+        &fastctx_types::agents::SessionOptions {
+            model: started.callee.model.clone(),
+            reasoning_effort: started.callee.effort.clone(),
+        },
+    )?;
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
     let _birth = crate::here::born(node, &id, acting.clone(), None);
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, None, home.as_deref()).await?;
@@ -173,6 +202,7 @@ pub async fn ask_here(
         acting,
         works_on: None,
         home,
+        callee: Some(started.callee.name.clone()),
     };
     let now = Now {
         activity: Activity::Busy,
@@ -272,6 +302,7 @@ pub async fn thread_spec(
     let env = vec![
         ("FASTCTX_HOME".to_string(), node.root.to_string_lossy().into_owned()),
         ("FASTCTX_RESIDENT".to_string(), address.tag()),
+        ("FASTCTX_AGENT_HOME".to_string(), home.map(|home| home.to_string_lossy().into_owned()).unwrap_or_default()),
     ];
     let mut tools = vec!["run"];
     // A colleague's thread is listed under its task; a session the user
@@ -284,13 +315,20 @@ pub async fn thread_spec(
         }
     };
     let mut config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
-    if works_on.filter(|works_on| !node.is_here(works_on)).is_none() && node.works_here(acting).is_err() {
+    let started = crate::collab::started(node, id)?;
+    if started.as_ref().is_some_and(|started| !started.callee.screen)
+        || works_on.filter(|works_on| !node.is_here(works_on)).is_none() && node.works_here(acting).is_err()
+    {
         let config_home = home.unwrap_or_else(|| node.codex.default().config_home());
         let (servers, plugins) = codex::desktop_hands(config_home).map_err(Failure::new)?;
         codex::lend(&mut config, &servers, &plugins);
     }
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
-    let (developer_instructions, heard) = instructions(node, id, town, origin, acting, works_on).await?;
+    let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, works_on).await?;
+    if let Some(started) = started.filter(|started| !started.rules.is_empty()) {
+        developer_instructions.push_str("\n\n");
+        developer_instructions.push_str(&started.rules);
+    }
     Ok((ThreadSpec { cwd, developer_instructions, config, name }, heard))
 }
 
@@ -395,32 +433,6 @@ fn words(
     )
 }
 
-/// The user turns asking for colleagues on for `resident`, on any machine,
-/// with where they live, or off.
-pub async fn set(
-    node: &Arc<Node>,
-    resident: ResidentId,
-    machine: Option<MachineName>,
-    lives_on: Option<Written>,
-    home: Option<std::path::PathBuf>,
-) -> Result<(), Failure> {
-    let machine = match machine {
-        Some(machine) => machine,
-        None if node.residents.about(&resident).is_some() => node.machine(),
-        None => find_for(node, &Acting::Here, &resident).await?,
-    };
-    if machine == node.machine() {
-        return setting::set(node, &resident, lives_on, home);
-    }
-    let call = RemoteCall::Colleagues { resident, lives_on, home };
-    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await {
-        Ok(Ok(RemoteReply::Set)) => Ok(()),
-        Ok(Ok(_)) => Err(Failure::new(format!("{machine} answered something other than the setting"))),
-        Ok(Err(failure)) => Err(failure),
-        Err(failure) => Err(Failure::new(failure.to_string())),
-    }
-}
-
 /// Words from `from`, a resident of this machine, to `to`, on any machine.
 pub async fn message(
     node: &Arc<Node>,
@@ -429,7 +441,9 @@ pub async fn message(
     to: ResidentId,
     to_machine: Option<MachineName>,
     text: String,
+    login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<(Address, Landed), Failure> {
+    let choices = crate::collab::require(node, &from, login)?;
     let here = node.machine();
     let at = Timestamp::now();
     let machine = match to_machine {
@@ -438,7 +452,33 @@ pub async fn message(
     };
     let to = Address { machine, resident: to };
     let sender = Address { machine: here, resident: from.clone() };
-    let acting = crate::around::acting_of(node, &crate::town::caller::Caller::Resident(sender.clone()));
+    let acting = match crate::collab::asked_account(node, &from, &to)? {
+        Some(account) if node.serves(&choices.acting, &account.hub, &account.account) => {
+            Acting::one(account.hub, account.account)
+        }
+        Some(_) => {
+            return Err(Failure::not_run(
+                "model collaboration no longer enables this caller for the colleague's account; the user changes it on the Model collaboration page",
+            ));
+        }
+        None => choices.acting,
+    };
+    if to.machine == node.machine() {
+        let (recipient, _) = node
+            .residents
+            .about(&to.resident)
+            .ok_or_else(|| Failure::not_run(format!("no resident {} lives here", to.resident)))?;
+        let shares = node.links().iter().any(|link| {
+            node.accounts_on(link, &acting)
+                .iter()
+                .any(|account| node.serves(&recipient.acting, &link.membership().id, account))
+        });
+        if !shares {
+            return Err(Failure::not_run(
+                "this colleague works for none of the accounts that enable collaboration for this caller",
+            ));
+        }
+    }
     let notice = Notice::Words { from: Speaker::Resident { address: sender.clone() }, text };
     let landed = speech::tell(node, &acting, &to, speech::new_id("words"), notice, Owed::Speaker(sender)).await?;
     let result = match &landed {

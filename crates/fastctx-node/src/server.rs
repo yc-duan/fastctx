@@ -718,15 +718,15 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::Upload { .. } => Err(Failure::new("an upload requires its byte stream on a dedicated connection")),
         Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),
         Call::Wait { .. } => Err(Failure::new("a wait is asked on a command's own connection")),
-        Call::Ask { resident, label, prompt } => {
+        Call::Ask { resident, label, prompt, callee, login } => {
             let town = town_of(node, &resident)?;
-            crate::colleagues::ask(node, resident, town, label, prompt)
+            crate::colleagues::ask(node, resident, town, label, prompt, callee, login.as_ref())
                 .await
                 .map(|colleague| Reply::Asked { colleague })
         }
-        Call::Message { resident, to, machine, text } => {
+        Call::Message { resident, to, machine, text, login } => {
             let town = town_of(node, &resident)?;
-            crate::colleagues::message(node, resident, town, to, machine, text)
+            crate::colleagues::message(node, resident, town, to, machine, text, login.as_ref())
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed })
         }
@@ -782,11 +782,23 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::copy::copy(node, &acting, from, to).await.map(Reply::Copied)
         }
-        Call::Nodes => nodes(node).await.map(Reply::Nodes),
-        Call::Machines { resident } => machines(node, resident.as_ref()),
-        Call::Colleagues { resident, machine, lives_on, home } => {
+        Call::CollabRead { hub, account } => {
             users_voice(node, peer)?;
-            crate::colleagues::set(node, resident, machine, lives_on, home).await.map(|()| Reply::Done)
+            crate::world::hub_link(node, Some(&hub))?.collab_read(&account).map(Reply::CollabRead).map_err(Failure::new)
+        }
+        Call::CollabWrite { hub, account, collab } => {
+            users_voice(node, peer)?;
+            crate::world::hub_link(node, Some(&hub))?
+                .collab_write(&account, collab)
+                .await
+                .map(|version| Reply::CollabWritten { version })
+                .map_err(Failure::new)
+        }
+        Call::Nodes => nodes(node).await.map(Reply::Nodes),
+        Call::Machines { resident, login, thread } => {
+            let resident =
+                resident.or_else(|| thread.as_deref().and_then(|thread| node.residents.resident_of_thread(thread)));
+            machines(node, resident.as_ref(), login.as_ref())
         }
         Call::WorksOn { resident, machine, works_on } => {
             users_voice(node, peer)?;
@@ -1009,7 +1021,11 @@ async fn who(
 /// For a session here: where its shell starts and the other machines it may
 /// work on, from the hubs' views as they stand, asking none of them; and
 /// where its colleagues live, when it may ask for them.
-fn machines(node: &Arc<Node>, resident: Option<&ResidentId>) -> Result<Reply, Failure> {
+fn machines(
+    node: &Arc<Node>,
+    resident: Option<&ResidentId>,
+    login: Option<&fastctx_types::collab::Caller>,
+) -> Result<Reply, Failure> {
     let placed = resident.and_then(|resident| crate::here::placed(node, resident));
     let acting = placed.as_ref().map(|(acting, _)| acting.clone()).unwrap_or_default();
     let (here, mut others) = crate::world::machines(node, &acting);
@@ -1031,18 +1047,8 @@ fn machines(node: &Arc<Node>, resident: Option<&ResidentId>) -> Result<Reply, Fa
         None if lent => (None, None),
         None => (Some(here.to_string()), None),
     };
-    let colleagues = match resident.filter(|_| placed.is_some()) {
-        Some(resident) => crate::colleagues::setting::read(node, resident)
-            .map_err(|error| Failure::new(format!("reading the colleague setting: {error}")))?,
-        None => None,
-    };
-    // A colleague whose machine the session's accounts may not work on is
-    // an agent lent to them, and goes unnamed as one too.
-    let colleagues_lent = colleagues.as_ref().is_some_and(|lives_on| {
-        let (_, workable) = crate::world::machines(node, &acting);
-        !(workable.contains(&lives_on.to_string()) || node.is_here(lives_on) && !lent)
-    });
-    Ok(Reply::Machines { here, others, program, colleagues, colleagues_lent })
+    let collab = crate::collab::choices(node, resident, login)?.map(|choices| choices.offered);
+    Ok(Reply::Machines { here, others, program, collab })
 }
 
 /// `fastctx nodes`: this computer, and hub by hub the machines its logins

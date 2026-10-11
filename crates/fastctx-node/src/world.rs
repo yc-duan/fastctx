@@ -489,21 +489,11 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|record| RemoteReply::JobStopped { record: record.map(Box::new) })
                 }
-                RemoteCall::Ask { asker: resident, town, label, prompt, accounts, home } => {
-                    // The colleague works for each of the asker's accounts
-                    // that may use the agents here, as this machine sees it.
-                    let view = link.view();
-                    let mut working = vec![HubAccount { hub: hub.clone(), account: caller.account.clone() }];
-                    for account in accounts {
-                        let may = view.admits(&from, &account, &machine, Purpose::Agents).is_ok();
-                        if may && working.iter().all(|other| other.account != account) {
-                            working.push(HubAccount { hub: hub.clone(), account });
-                        }
-                    }
-                    let acting = Acting::Accounts { accounts: working };
+                RemoteCall::Ask { asker: resident, town, label, prompt, started } => {
+                    let acting = Acting::one(hub.clone(), caller.account.clone());
                     let asker = Address { machine: from, resident };
                     let colleague =
-                        crate::colleagues::ask_here(&node, asker, acting, town, label, prompt, home).await?;
+                        crate::colleagues::ask_here(&node, asker, acting, town, label, prompt, started).await?;
                     Ok(RemoteReply::Asked { colleague })
                 }
                 RemoteCall::Talk { to, text, attachments, files_on } => {
@@ -546,27 +536,15 @@ impl fastctx_net::link::Node for Handler {
                     reasoning_effort,
                     attachments,
                     works_on,
-                    colleagues,
                     home,
-                    colleagues_home,
                     files_on,
                 } => {
                     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
-                    let choices = fastctx_types::agents::Choices {
-                        account: None,
-                        works_on,
-                        colleagues,
-                        home,
-                        colleagues_home,
-                        files_on,
-                    };
+                    let choices = fastctx_types::agents::Choices { account: None, works_on, home, files_on };
                     let (resident, landed) =
                         crate::talk::open_here(&node, &from, acting, agent, town, text, options, attachments, choices)
                             .await?;
                     Ok(RemoteReply::Opened { resident, landed })
-                }
-                RemoteCall::Colleagues { resident, lives_on, home } => {
-                    crate::colleagues::setting::set(&node, &resident, lives_on, home).map(|()| RemoteReply::Set)
                 }
                 RemoteCall::WorksOn { resident, works_on } => {
                     crate::here::set(&node, &resident, works_on).await.map(|()| RemoteReply::Set)

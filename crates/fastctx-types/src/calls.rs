@@ -18,6 +18,15 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    CollabRead {
+        hub: crate::HubName,
+        account: crate::AccountName,
+    },
+    CollabWrite {
+        hub: crate::HubName,
+        account: crate::AccountName,
+        collab: crate::collab::Collab,
+    },
     /// Reads or changes the shared composer on the resident's machine.
     Composer {
         resident: ResidentId,
@@ -88,24 +97,17 @@ pub enum Call {
         request: crate::file_search::FileSearchRequest,
     },
     /// Asks for a colleague for a resident of this machine
-    /// (`ask_colleague`): a Codex resident started where the user set the
-    /// resident's colleagues to live, with `prompt` as its first words.
+    /// (`ask_colleague`): the named callee configured by one of its accounts,
+    /// with `prompt` as its first words.
     /// `label` is the task's few words.
     Ask {
         resident: ResidentId,
         label: String,
         prompt: String,
-    },
-    /// The user turns asking for colleagues on for a resident on any
-    /// machine, with where they live, or off (`world-colleagues.md`, 同事从
-    /// 哪里来、能去哪里).
-    Colleagues {
-        resident: ResidentId,
-        machine: Option<MachineName>,
-        lives_on: Option<crate::access::Written>,
-        /// The Codex home there they use, when not the default one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        home: Option<std::path::PathBuf>,
+        callee: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        login: Option<crate::collab::Caller>,
     },
     /// The user sets where a resident on any machine works: another
     /// machine, or the one it lives on with `None` (`world-run.md`, 这里).
@@ -129,6 +131,8 @@ pub enum Call {
         to: ResidentId,
         machine: Option<MachineName>,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        login: Option<crate::collab::Caller>,
     },
     /// Records what a resident saw of files on this machine through
     /// `fastctx view`; the resident may live on another machine.
@@ -340,16 +344,24 @@ pub enum Call {
     /// The machines a session here may work on, as it writes them: this
     /// one, and the others its accounts may use, `name.hub` where a name
     /// is on more than one hub; for `resident`, the session's resident when
-    /// it is known, also where its colleagues live.
+    /// it is known, also the collaboration its accounts offer it.
     Machines {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resident: Option<ResidentId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        login: Option<crate::collab::Caller>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread: Option<String>,
     },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    CollabRead(crate::collab::CollabView),
+    CollabWritten {
+        version: u64,
+    },
     ComposerUploaded(Box<crate::composer::UploadResult>),
     /// Where the machine relays now; nowhere when it stopped.
     Relaying {
@@ -493,14 +505,8 @@ pub enum Reply {
         /// it may work there too; one it may not work on is not named.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         program: Option<String>,
-        /// Where the calling session's colleagues live, when it may ask
-        /// for them.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        colleagues: Option<crate::access::Written>,
-        /// Its colleagues are an agent another account lent, which may not
-        /// work where it runs.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        colleagues_lent: bool,
+        collab: Option<crate::collab::Offered>,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.

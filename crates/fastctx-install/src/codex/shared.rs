@@ -24,17 +24,28 @@ pub(super) fn matches(current: &Item, expected: &Item) -> bool {
 }
 
 pub(super) fn adopt(source: &Source<'_>, plan: &CodexPlan) -> Result<Server, Error> {
-    let server = Server { body: server_body(plan, COMMAND, false, "\n"), prefix: vec![], inline: false };
+    let mut server = Server { body: server_body(plan, COMMAND, false, "\n"), prefix: vec![], inline: false };
     let expected = server_document(&server);
     let expected = Source::parse(&expected, "shared server")?;
-    if source.item(SERVER).is_some_and(|current| same_value(current, expected.item(SERVER).unwrap())) {
-        Ok(server)
-    } else {
-        Err(Error::at(
-            "mcp_servers.fastctx",
-            "the shared server's other keys or values differ from the World's; left it in place",
-        ))
+    let Some(current) = source.item(SERVER) else {
+        return Err(Error::at("mcp_servers.fastctx", "missing shared server"));
+    };
+    if same_value(current, expected.item(SERVER).unwrap()) {
+        return Ok(server);
     }
+    // Shared configurations written before login forwarding remain adoptable.
+    let mut before = expected.doc.clone().into_mut();
+    let table = before["mcp_servers"]["fastctx"].as_table_like_mut().expect("generated server table");
+    table.remove("env");
+    table.remove("env_vars");
+    if same_value(current, &before["mcp_servers"]["fastctx"]) {
+        server.body = before.to_string().into_bytes();
+        return Ok(server);
+    }
+    Err(Error::at(
+        "mcp_servers.fastctx",
+        "the shared server's other keys or values differ from the World's; left it in place",
+    ))
 }
 
 pub(super) fn conflict(reason: &str) -> String {

@@ -206,8 +206,8 @@ async fn fork(
         acting: source.acting,
         works_on: source.works_on,
         home: source.home,
+        callee: None,
     };
-    crate::colleagues::setting::inherit(node, parent, &id)?;
     let now = Now {
         activity: Activity::Idle,
         since: at,

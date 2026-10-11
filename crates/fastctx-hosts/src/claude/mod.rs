@@ -111,7 +111,10 @@ pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
                 "description": description,
                 "author": { "name": "FastCtx" },
                 "mcpServers": {
-                    "fastctx": { "command": command, "args": ["serve"], "env": { "FASTCTX_HOME": root } },
+                    "fastctx": { "command": command, "args": ["serve"], "env": {
+                        "FASTCTX_HOME": root,
+                        "FASTCTX_AGENT_HOME": "${CLAUDE_CONFIG_DIR:-}",
+                    } },
                 },
             }),
         ),
