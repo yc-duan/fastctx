@@ -5,6 +5,9 @@ import { test, expect, mock } from 'claude-code/testing'
 test('uses the public controls and request return types through the official engine', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, {})
+  on('ui.log', () => ({ value: undefined }))
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
   const files = new Map<string, string>()
   const markers = new Map<string, () => void>()
   const normalize = (path: string) => path.replaceAll('\\', '/')
@@ -27,7 +30,7 @@ test('uses the public controls and request return types through the official eng
   on('fs.write', (_, e) => { const path = normalize(e.path); files.set(path, e.text); markers.get(path)?.(); return { value: undefined } })
   on('fs.read', (_, e) => {
     const path = normalize(e.path)
-    if (!files.has(path)) throw new Error('missing fixture: ' + path)
+    if (!files.has(path)) return { deny: 'fixture: file unavailable' }
     return { value: files.get(path)! }
   })
   on('fs.list', (_, e) => {
@@ -137,13 +140,15 @@ test('uses the public controls and request return types through the official eng
   const answered = await $.tool.call({ tool: 'AskUserQuestion', tool_use_id: 'q2', questions: [question] })
   expect(answered.result).toEqual(requestAnswer.answer.result)
   expect(cancelledQuestions).toBe(1)
-  expect(questions[1].native_wait).toBe(true)
-  expect(questions[1].params.questions).toEqual([question])
+  const answeredQuestion = questions.find((request) => request.params.tool_use_id === 'q2')!
+  expect(answeredQuestion.native_wait).toBe(true)
+  expect(answeredQuestion.params.questions).toEqual([question])
   requestAnswer = { kind: 'answer', answer: { decision: 'allow' } }
   const permission = await $.tool.check({ tool: 'permission-tool', tool_use_id: 'p1', input: { path: '/file' } })
   expect(permission).toEqual(requestAnswer.answer)
-  expect(questions[2].request).toBe('tool.check')
-  expect(questions[0].key).not.toBe(questions[1].key)
+  const permissionQuestion = questions.find((request) => request.params.tool_use_id === 'p1')!
+  expect(permissionQuestion.request).toBe('tool.check')
+  expect(answeredQuestion.key).not.toBe(permissionQuestion.key)
   await $.turn.complete({ turnId: 'turn-1', answer: '', reason: 'answer', isAborted: false, durationMs: 0 })
   await $.session.end({ sessionId: 'control-fixture', reason: 'prompt_input_exit', resume: { id: 'control-fixture' } })
   expect(files.has(directory + '/closed/' + host.instance + '.json')).toBe(true)

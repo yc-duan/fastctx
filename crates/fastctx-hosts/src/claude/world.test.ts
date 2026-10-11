@@ -1,5 +1,12 @@
 import { test, expect, mock } from 'claude-code/testing'
-import type { SessionUsage } from 'claude-code'
+import type { On, SessionUsage } from 'claude-code'
+
+function fixtureUi(on: On, lines: string[] = []) {
+  on('ui.log', (_, e) => { lines.push(e.text); return { value: undefined } })
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  return lines
+}
 
 const worldTool = 'mcp__configured_World_alias__run'
 // What connect answers; the tools carry its tool-name spelling.
@@ -33,6 +40,7 @@ async function* guard(_$: any, _e: any, next: any) {
 test('loads, streams without waiting for disk, and retains the old session after clear', async ($, on) => {
   const clock = mock.clock(on)
   mock.env(on, {})
+  fixtureUi(on)
   on('mcp.connect', () => ({ value: { isConnected: true, server: serverName } }))
   on('session.usage', () => ({ value: usage() }))
   on('config.list', () => ({ value: [] }))
@@ -66,7 +74,7 @@ test('loads, streams without waiting for disk, and retains the old session after
     return { value: undefined }
   })
   on('fs.read', (_, e) => {
-    if (!files.has(e.path.replaceAll('\\', '/'))) throw new Error('missing fixture file: ' + e.path.replaceAll('\\', '/'))
+    if (!files.has(e.path.replaceAll('\\', '/'))) return { deny: 'fixture: file unavailable' }
     return { value: files.get(e.path.replaceAll('\\', '/'))! }
   })
   on('fs.list', (_, e) => ({ value: [...files.keys()]
@@ -123,9 +131,11 @@ test('loads, streams without waiting for disk, and retains the old session after
 test('proves only World calls, before they run, and distinguishes clear from resume', async ($, on) => {
   mock.clock(on)
   mock.env(on, {})
+  fixtureUi(on)
   const files = new Map<string, string>()
   let sessionId = 'one'
   let failProof = false
+  let failReports = false
   let executed = 0
   const proofs = () => [...files.keys()].filter((path) => path.includes('/claude-calls/'))
   const proof = (id: string) => {
@@ -147,13 +157,14 @@ test('proves only World calls, before they run, and distinguishes clear from res
   on('session.messages', () => ({ value: [] }))
   on('fs.write', (_, e) => {
     const path = e.path.replaceAll('\\', '/')
-    if (failProof && path.includes('/claude-calls/')) throw new Error('disk refused')
+    if (failProof && path.includes('/claude-calls/')) return { deny: 'fixture: disk refused' }
+    if (failReports && (path.includes('/events/') || path.endsWith('/presentation.json'))) return { deny: 'fixture: reports unavailable' }
     files.set(path, e.text)
     return { value: undefined }
   })
   on('fs.read', (_, e) => {
     const path = e.path.replaceAll('\\', '/')
-    if (!files.has(path)) throw new Error('missing fixture file: ' + path)
+    if (!files.has(path)) return { deny: 'fixture: file unavailable' }
     return { value: files.get(path)! }
   })
   on('fs.list', (_, e) => {
@@ -207,6 +218,117 @@ test('proves only World calls, before they run, and distinguishes clear from res
   expect(proofs().length).toBe(4)
   failProof = true
   const refused = await $.tool.call({ tool: worldTool, command: 'must not run' })
-  expect(refused.deny).toContain('could not identify this MCP call')
+  expect(refused).toEqual(expect.objectContaining({ deny: expect.any(String) }))
+  expect(refused.deny).toContain('fixture: disk refused')
   expect(executed).toBe(4)
+  failProof = false
+  failReports = true
+  expect((await $.tool.call({ tool: worldTool, command: 'proved despite reporting failure' })).result).toEqual({ raw: '  exact \r\n🦊' })
+  expect(executed).toBe(5)
+  expect(proofs().length).toBe(5)
+})
+
+// The native chain must still run once when the World cannot initialize or
+// cannot persist observations. No fixture refers to the plugin's location.
+test('World failures preserve native operations before and after initialization', async ($, on) => {
+  mock.clock(on)
+  mock.env(on, {})
+  const lines = fixtureUi(on)
+  const stored = mock.session(on)
+  const files = new Map<string, string>()
+  let sessionId = 'unavailable-at-start'
+  let unavailable = true
+  let tools = 0, compactions = 0
+  const classics: string[] = []
+  on('mcp.connect', () => ({ value: { isConnected: false, reason: 'disabled', message: 'fixture' } }))
+  on('session.id', () => ({ value: sessionId }))
+  on('session.cwd', () => ({ value: '/fixture' }))
+  on('session.model', () => ({ value: 'fixture' }))
+  on('session.surfaces', () => ({ value: ['terminal'] }))
+  on('session.version', () => ({ value: { version: '2.1.294' } }))
+  on('session.messages', () => ({ value: [] }))
+  on('config.list', () => ({ value: [] }))
+  on('agent.list', () => ({ value: [] }))
+  on('session.usage', () => ({ value: usage() }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.spawn', async function* (_, e, next) {
+    if (e.argv[1] === 'claude-control-guard') {
+      yield { stream: 'stdout', text: JSON.stringify({ process: { pid: 124, token: 'activation' }, parent: { pid: 123, token: 'fixture-lifetime' } }) + '\n' }
+      await new Promise<void>((resolve) => next.signal.addEventListener('abort', () => resolve(), { once: true }))
+      return { value: { code: 0, signal: null } }
+    }
+    yield { stream: 'stderr', text: 'fixture: node unavailable' }
+    return { value: { code: 1, signal: null } }
+  })
+  on('fs.write', (_, e) => {
+    if (unavailable) return { deny: 'fixture: disk unavailable' }
+    files.set(e.path.replaceAll('\\', '/'), e.text)
+    return { value: undefined }
+  })
+  on('fs.read', (_, e) => {
+    const path = e.path.replaceAll('\\', '/')
+    return unavailable || !files.has(path) ? { deny: 'fixture: file unavailable' } : { value: files.get(path)! }
+  })
+  on('fs.list', (_, e) => {
+    if (unavailable) return { deny: 'fixture: directory unavailable' }
+    const prefix = e.path.replaceAll('\\', '/') + '/'
+    return { value: [...files.keys()].filter((path) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))
+      .map((path) => ({ name: path.slice(prefix.length), kind: 'file', size: files.get(path)!.length, mtimeMs: 0, isLink: false })) }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.end', (_, e) => ({ sessionId: e.sessionId }))
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  on('tool.call', () => { tools++; return { result: { native: true } } })
+  on('turn.step', async function* (_, e) {
+    yield { kind: 'text', index: 0, text: 'native response' }
+    return { turnId: e.turnId, index: e.index, answer: 'native response', toolUses: [], stopReason: 'end_turn', usage: null }
+  })
+  on('tool.check', () => ({ decision: 'ask', reason: 'native permission' }))
+  on('session.compact', () => { compactions++; return { messages: [{ role: 'user', text: 'native summary', toolUses: [] }] } })
+  on('prompt.section', () => ({ text: 'native environment' }))
+  on('classic.Elicitation', () => { classics.push('Elicitation'); return {} })
+  on('classic.SubagentStart', () => { classics.push('SubagentStart'); return {} })
+  on('classic.SubagentStop', () => { classics.push('SubagentStop'); return {} })
+  on('classic.UserPromptSubmit', () => { classics.push('UserPromptSubmit'); return {} })
+  on('classic.PostToolUse', () => { classics.push('PostToolUse'); return {} })
+  on('classic.PostToolUseFailure', () => { classics.push('PostToolUseFailure'); return {} })
+  on('classic.SessionStart', () => { classics.push('SessionStart'); return {} })
+  on('classic.PostModelSwitch', () => { classics.push('PostModelSwitch'); return {} })
+
+  for (const initialized of [false, true]) {
+    sessionId = initialized ? 'unavailable-after-start' : 'unavailable-at-start'
+    unavailable = !initialized
+    await $.session.start({ cwd: '/fixture', surface: 'terminal', isInteractive: true })
+    unavailable = true
+    await $.turn.start({ turnId: sessionId, text: 'native prompt' })
+    expect((await $.tool.call({ tool: 'Read', path: '/fixture/file' })).result).toEqual({ native: true })
+    expect((await $.tool.check({ tool: 'Read', tool_use_id: sessionId, input: { path: '/fixture/file' } })).decision).toBe('ask')
+    const appended = await $.session.append({ door: 'prompt', origin: { kind: 'composer' }, uuid: 'native-' + sessionId,
+      message: { type: 'user', role: 'user', content: [{ type: 'text', text: sessionId }] } })
+    expect(appended.deny).toBe(undefined)
+    expect((await $.session.compact({ trigger: 'auto', messages: [] })).messages![0].text).toBe('native summary')
+    expect((await $.prompt.section({ name: 'env_info_simple', text: 'native environment' })).text).toBe('native environment')
+    const stream = $.turn.step({ turnId: sessionId, index: 0, model: 'native-fixture', messageCount: 1 })
+    const pieces = []
+    for await (const piece of stream) pieces.push(piece)
+    expect(pieces).toEqual([{ kind: 'text', index: 0, text: 'native response' }])
+    expect((await stream.result).answer).toBe('native response')
+    await $.classic.Elicitation({ mcp_server_name: 'fixture', message: 'native form', mode: 'form', requested_schema: { type: 'object' } })
+    await $.classic.SubagentStart({ agent_id: 'child', agent_type: 'Explore' })
+    await $.classic.SubagentStop({ agent_id: 'child', agent_type: 'Explore', agent_transcript_path: '', stop_hook_active: false })
+    await $.classic.UserPromptSubmit({ prompt: 'native prompt', session_title: 'fixture title' })
+    await $.classic.PostToolUse({ tool_name: 'Read', tool_use_id: sessionId, tool_input: {}, tool_response: {} })
+    await $.classic.PostToolUseFailure({ tool_name: 'Read', tool_use_id: sessionId, tool_input: {}, error: 'native failure' })
+    await $.classic.SessionStart({ source: 'resume' })
+    await $.classic.PostModelSwitch({ from_model: 'fixture-old', to_model: 'fixture-new', requested_model: null, source: 'auto',
+      context_tokens: 0, prompt_cache_warm: false, cache_ttl: '5m', estimated_cache_write_usd: 0, pricing: 'default' })
+    await $.turn.complete({ turnId: sessionId, answer: 'native answer', reason: 'answer', isAborted: false, durationMs: 0 })
+    await $.session.end({ sessionId, reason: 'prompt_input_exit', resume: { id: sessionId } })
+  }
+  expect(tools).toBe(2)
+  expect(compactions).toBe(2)
+  expect(stored.appended().length).toBe(2)
+  expect(classics).toEqual(Array.from({ length: 2 }).flatMap(() => ['Elicitation', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'SessionStart', 'PostModelSwitch']))
+  expect(lines.some((line) => line.includes('disk unavailable'))).toBe(true)
 })
