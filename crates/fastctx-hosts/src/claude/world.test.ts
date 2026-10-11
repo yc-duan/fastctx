@@ -19,7 +19,11 @@ function usage(): SessionUsage {
 }
 
 async function* guard(_$: any, _e: any, next: any) {
-  yield { stream: 'stdout', text: JSON.stringify({ process: { pid: 124, token: 'activation' }, parent: { pid: 123, token: 'fixture-lifetime' } }) + '\n' }
+  if (_e.argv[1] === 'claude-session-policy') {
+    yield { stream: 'stdout' as const, text: JSON.stringify({ lent: false, model: null, effort: null }) }
+    return { value: { code: 0, signal: null } }
+  }
+  yield { stream: 'stdout' as const, text: JSON.stringify({ process: { pid: 124, token: 'activation' }, parent: { pid: 123, token: 'fixture-lifetime' } }) + '\n' }
   await new Promise<void>((resolve) => next.signal.addEventListener('abort', () => resolve(), { once: true }))
   return { value: { code: 0, signal: null } }
 }
@@ -31,6 +35,8 @@ test('loads, streams without waiting for disk, and retains the old session after
   mock.env(on, {})
   on('mcp.connect', () => ({ value: { isConnected: true, server: serverName } }))
   on('session.usage', () => ({ value: usage() }))
+  on('config.list', () => ({ value: [] }))
+  on('session.messages', () => ({ value: [] }))
   const files = new Map<string, string>()
   let sessionId = 'first'
   let blockWrites = false
@@ -137,6 +143,8 @@ test('proves only World calls, before they run, and distinguishes clear from res
   on('session.version', () => ({ value: { version: '2.1.289' } }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('process.spawn', guard)
+  on('config.list', () => ({ value: [] }))
+  on('session.messages', () => ({ value: [] }))
   on('fs.write', (_, e) => {
     const path = e.path.replaceAll('\\', '/')
     if (failProof && path.includes('/claude-calls/')) throw new Error('disk refused')

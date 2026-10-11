@@ -77,6 +77,16 @@ enum Command {
     /// A lifetime witness for a Claude mod activation.
     #[command(hide = true)]
     ClaudeControlGuard,
+    #[command(hide = true)]
+    ClaudeSessionPolicy {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+        session: String,
+        #[arg(long)]
+        messages: Option<usize>,
+        #[arg(long)]
+        after_compact: Option<String>,
+    },
     /// Run this machine's node in the foreground.
     Node {
         /// The fastctx root to serve; defaults to this user's fastctx root.
@@ -293,6 +303,7 @@ fn main() -> ExitCode {
             | Command::ClaudeElicitation { .. }
             | Command::ClaudeControlOwner { .. }
             | Command::ClaudeControlGuard
+            | Command::ClaudeSessionPolicy { .. }
             | Command::Uninstall(_)
     );
     #[cfg(windows)]
@@ -325,6 +336,10 @@ fn main() -> ExitCode {
         Command::ClaudeElicitation { world } => fastctx_node::claude_request::run(&world, true).map_err(Into::into),
         Command::ClaudeControlOwner { world } => fastctx_node::claude_request::owner(&world).map_err(Into::into),
         Command::ClaudeControlGuard => fastctx_node::claude_request::guard().map_err(Into::into),
+        Command::ClaudeSessionPolicy { world, session, messages, after_compact } => {
+            fastctx_node::claude_request::policy(&world, &session, messages, after_compact.as_deref())
+                .map_err(Into::into)
+        }
         Command::Node {
             dir,
             supervised,

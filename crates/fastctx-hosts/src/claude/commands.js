@@ -1,12 +1,12 @@
 // Background-safe command knowledge for Claude Code 2.1.294. Offsets below
 // are zero-based characters in the decoded Bun modules, not byte offsets.
-// command.list omits type, path and argumentHint (claude-code.d.ts:1721).
+// command.describe supplies the host's final hints; list has no execution type.
 // Unknown built-ins and unknown plugin registrations are not assumed safe.
+const commandDescriptions = new Map()
 const commandPolicies294 = {
   // exe-230444374.js:3664 I3n, 4807 ROs. Empty arguments generate a name.
-  rename: { arguments: 'required', args: '<name>', route: 'native' },
-  // config.set has a structured deny and never opens /model's cost dialog:
-  // exe-230843066.js:8266 _e, 27921 model row, 42376 Co; d.ts:3081.
+  rename: { arguments: 'optional', args: '[name]', route: 'native' },
+  // Request overrides leave the user's saved host preference alone.
   model: { arguments: 'required', args: '<model>', route: 'model' },
   config: { arguments: 'optional', args: '[<key>=<value>]', route: 'config' },
   // exe-249103290.js:10230 At; exe-212767153.js:1504/3077. Empty => picker.
@@ -22,11 +22,34 @@ const commandPolicies294 = {
   'reload-skills': { arguments: 'none', args: null, route: 'native' },
   // d.ts:2836 session.compact has instructions and an explicit skip result.
   compact: { arguments: 'optional', args: '[instructions]', route: 'compact' },
+  advisor: { arguments: 'required', args: '<model> | off | unset', route: 'native' },
+  fast: { arguments: 'required', args: 'on | off', route: 'fast' },
+  mcp: { arguments: 'required', args: 'enable | disable | reconnect <server>', route: 'mcp' },
+  import: { arguments: 'required', args: '<source> --yes', route: 'import' },
+  export: { arguments: 'required', args: '<filename>', route: 'native' },
+  plugin: { arguments: 'required', args: 'help | list | validate <directory>', route: 'plugin' },
+  plugins: { arguments: 'required', args: 'help | list | validate <directory>', route: 'plugin' },
+  marketplace: { arguments: 'required', args: 'help | list | validate <directory>', route: 'plugin' },
+  design: { arguments: 'optional', args: '<brief> | types | hub', route: 'design' },
+  vim: { arguments: 'optional', args: null, route: 'editor' },
+  'output-style': { arguments: 'required', args: '<style>', route: 'output_style' },
+  plan: { arguments: 'required', args: '<description>', route: 'plan' },
+  btw: { arguments: 'required', args: '<question>', route: 'side_answer' },
+  ultraplan: { arguments: 'none', args: null, route: 'native' },
+  'code-review': { arguments: 'optional', args: '[target] [effort]', route: 'review' },
+  review: { arguments: 'optional', args: '[target] [effort]', route: 'review' },
 }
 
+for (const name of ['clear', 'reset', 'new', 'color', 'keybindings', 'design-consent', 'design-revoke',
+  'install-slack-app', 'voice', 'terminal-setup', 'tui', 'branch', 'fork', 'agents', 'reload-plugins',
+  'heapdump', 'stickers', 'radio', 'exit', 'quit', 'list-agents', 'peers', 'brief', 'low-priority', 'focus', 'claim-credit']) {
+  commandPolicies294[name] = { arguments: 'optional', args: null, route: 'native' }
+}
+for (const name of ['background', 'bg', 'stop']) commandPolicies294[name] = { arguments: 'optional', args: null, route: 'native' }
+commandPolicies294.subtask = { arguments: 'required', args: '<task>', route: 'native' }
+
 // Prompt expanders inspected at exe-226157729.js:231528 U8e and their
-// registrars. Excluded: design, code-review/review (panel subcommands),
-// claude-in-chrome (requestDialog), and userInvocable:false skills.
+// registrars. Commands with panel subcommands have separate argument policies.
 const promptCommands294 = new Map([
   // exe-226157729.js registrars; null means no argumentHint was defined.
   ['design-sync', '[<project hint, e.g. "Acme DS">]'], // 116892
@@ -64,6 +87,7 @@ const promptCommands294 = new Map([
   ['team-onboarding', null], // exe-216985381.js:1193557
   ['security-review', null], // exe-216985381.js:1214250
   ['statusline', null], // exe-216985381.js:1654569
+  ['insights', null], ['plugin-authoring', null],
 ])
 
 async function controlCatalog($, state) {
@@ -91,7 +115,10 @@ async function controlCatalog($, state) {
     // The public catalog supplies no proof that an unknown one is a prompt.
     if (!policy) continue
     if (command.name === 'compact' && state.busy !== false) continue
-    offered.push({ ...command, ...policy })
+    const described = commandDescriptions.get(state.host.session)?.get(command.name)
+    if (described?.isHidden) continue
+    offered.push({ ...command, ...policy, description: described?.description ?? command.description,
+      args: described?.argumentHint ?? null, argument_forms: policy.args === null ? [] : [policy.args] })
   }
   return offered
 }
@@ -116,21 +143,14 @@ async function controlRunNative($, state, command, args) {
 
 async function controlCompact($, state, instructions) {
   if (state.busy === true) throw new Error('Claude Code can compact only between turns')
-  const result = await $.session.compact(instructions === undefined ? undefined : { instructions })
-  if (result.skip !== undefined) return { kind: 'refused', said: result.skip }
-  if (state.busy === null) { state.busy = false; state.turn = null }
-  return { kind: 'done', said: null }
-}
-
-async function controlSetModel($, value) {
-  if (!value.trim()) throw new Error('a model cannot be empty; use default to reset it')
-  const result = await $.config.set({ key: 'model', value })
-  const actual = await $.session.model()
-  if (result.deny !== undefined) return { kind: 'refused', said: result.deny, current_model: actual }
-  // Aliases and hook rewrites can differ from the requested model. The
-  // writer can change the session before a defaults-save failure, so only
-  // a confirmed write is called done (exe-230843066.js model row).
-  return { kind: 'done', said: 'Current model: ' + actual }
+  if (state.compacting) throw new Error('another context operation is still running')
+  state.compacting = true
+  try {
+    const result = await $.session.compact(instructions === undefined ? undefined : { instructions })
+    if (result.skip !== undefined) return { kind: 'refused', said: result.skip }
+    if (state.busy === null) { state.busy = false; state.turn = null }
+    return { kind: 'done', said: null }
+  } finally { state.compacting = false }
 }
 
 async function controlConfig($, args) {
@@ -163,14 +183,34 @@ async function controlCommand($, state, control) {
   const command = (await controlCatalog($, state)).find((entry) => entry.name === control.name)
   if (!command) throw new Error('/' + control.name + ' is not an unambiguous background-safe command in this Claude Code version')
   const args = control.args
-  if (command.arguments === 'required' && !args.trim()) throw new Error('/' + command.name + ' requires ' + command.args)
+  if (command.arguments === 'required' && !args.trim()) throw new Error('/' + command.name + ' requires arguments')
   if (command.arguments === 'none' && args.trim()) throw new Error('/' + command.name + ' takes no arguments')
-  if (command.route === 'model') return controlSetModel($, args.trim())
+  if (command.route === 'model') return controlSelection($, state, args.trim(), null)
   if (command.route === 'config') return controlConfig($, args)
   if (command.route === 'compact') return controlCompact($, state, args)
-  if (command.route === 'effort' && !['status', 'current', 'help', '-h', '--help'].includes(args)
+  if (command.route === 'side_answer') return { kind: 'side_answer', reply: await $.model.fork({ prompt: args }) }
+  if (command.route === 'editor' || command.route === 'output_style') {
+    const key = command.route === 'editor' ? 'editor' : 'outputStyle'
+    const row = (await $.config.list()).find((row) => row.key === key)
+    if (row === undefined) throw new Error('Claude Code has no configuration row ' + key)
+    const value = command.route === 'editor' && !args.trim() ? (row.value === 'vim' ? 'normal' : 'vim') : args.trim()
+    const result = await $.config.set({ key, value })
+    return result.deny !== undefined ? { kind: 'refused', said: result.deny } : { kind: 'done', said: null }
+  }
+  if (command.route === 'effort' && !['status', 'current', 'help', '-h', '--help'].includes(args.trim().toLowerCase())
       && !/^ultracode(?:\s+(?:on|off))?$/i.test(args.trim())) {
     throw new Error('This effort change may require a Claude Code terminal confirmation; use ' + command.args)
   }
+  if (command.route === 'fast') {
+    if (!['on', 'off'].includes(args.trim().toLowerCase())) throw new Error('/fast requires on or off')
+    const result = await $.config.set({ key: 'fast', value: args.trim().toLowerCase() === 'on' })
+    return result.deny !== undefined ? { kind: 'refused', said: result.deny } : { kind: 'done', said: null }
+  }
+  if (command.route === 'mcp' && !/^(enable|disable|reconnect)\s+\S/.test(args.trim())) throw new Error('/mcp requires an operation and server')
+  if (command.route === 'import' && !/(^|\s)--yes(?:=\S+)?(?:\s|$)/.test(args)) throw new Error('/import requires --yes to finish in the background')
+  if (command.route === 'plugin' && !/^(help|--help|-h|list|ls|validate|tag)(\s|$)|^(marketplace|market)\s+list(?:\s|$)/i.test(args.trim())) throw new Error('this plugin operation requires a terminal')
+  if (command.route === 'design' && /^(sync|login|consent|revoke)$/i.test(args.trim())) throw new Error('this design subcommand requires a terminal')
+  if (command.route === 'review' && /^ultra(?:\s|$)/i.test(args.trim())) throw new Error('ultrareview requires a terminal confirmation')
+  if (command.route === 'plan' && /^open$/i.test(args.trim())) throw new Error('opening the plan requires a local editor')
   return controlRunNative($, state, command.name, args)
 }

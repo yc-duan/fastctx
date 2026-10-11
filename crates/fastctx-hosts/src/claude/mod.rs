@@ -16,8 +16,10 @@ pub mod agents;
 pub mod background;
 pub mod calls;
 mod content;
+mod context;
 pub mod control;
 pub mod exchange;
+pub mod titles;
 mod tools;
 pub mod transcript;
 pub mod trust;
@@ -137,7 +139,10 @@ pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
     let directory = trust::directory_key(world)?;
     let module = MOD
         .replace("__FASTCTX_CONTROLS__", include_str!("control.js"))
-        .replace("__FASTCTX_COMMANDS__", include_str!("commands.js"));
+        .replace("__FASTCTX_COMMANDS__", include_str!("commands.js"))
+        .replace("__FASTCTX_SELECTION__", include_str!("selection.js"))
+        .replace("__FASTCTX_REWIND__", include_str!("rewind.js"))
+        .replace("__FASTCTX_OBSERVATIONS__", include_str!("observations.js"));
     let module = module.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));
     let module = module.replace("__FASTCTX_COMMAND__", &serde_json::to_string(&command).expect("strings serialize"));
     let module = module.replace("__FASTCTX_LOOK_MS__", &MOD_LOOK.as_millis().to_string());

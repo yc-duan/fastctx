@@ -34,6 +34,16 @@ pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
     let limits = limits.await.map_err(|error| Failure::new(format!("reading Claude's limits: {error}")))?;
     let claude_homes: Vec<_> =
         homes.iter().filter(|(agent, _, _)| agent.as_str() == "claude").map(|(_, home, _)| home.clone()).collect();
+    let models = fastctx_hosts::claude::exchange::models(node.world.path())
+        .map_err(|error| Failure::new(format!("reading Claude's model rows: {error}")))?;
+    let models = Arc::new(
+        models
+            .into_iter()
+            .filter_map(|(transcript, _, models)| {
+                crate::homes::limits_home(&claude_homes, &transcript).map(|home| (home.dir.clone(), models))
+            })
+            .collect::<Vec<_>>(),
+    );
     let limits = Arc::new(
         limits
             .into_iter()
@@ -47,7 +57,8 @@ pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
         .into_iter()
         .filter_map(|(agent, home, visible)| visible.then_some((agent, home)))
         .map(|(agent, home)| {
-            let (node, env, user_home, limits) = (node.clone(), env.clone(), user_home.clone(), limits.clone());
+            let (node, env, user_home, limits, models) =
+                (node.clone(), env.clone(), user_home.clone(), limits.clone(), models.clone());
             tokio::spawn(async move {
                 if home.found != HomeFound::Default && !home.dir.is_dir() {
                     let mut facts = failed(
@@ -59,7 +70,7 @@ pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
                 }
                 match agent.as_str() {
                     "codex" => codex(&node, &env, &user_home, home).await,
-                    _ => tokio::task::spawn_blocking(move || claude(&node, &env, &user_home, home, &limits))
+                    _ => tokio::task::spawn_blocking(move || claude(&node, &env, &user_home, home, &limits, &models))
                         .await
                         .unwrap_or_else(|error| failed(agent, format!("probing Claude Code: {error}"))),
                 }
@@ -99,6 +110,7 @@ fn claude(
     user_home: &Path,
     home: AgentHome,
     limits: &[(PathBuf, AgentLimits)],
+    models: &[(PathBuf, Vec<AgentModel>)],
 ) -> AgentFacts {
     let mut env = env.to_vec();
     if home.found != HomeFound::Default {
@@ -125,6 +137,9 @@ fn claude(
         Some((_, limits)) => Fact::known(limits.clone()),
         None => Fact::unavailable("no session in this home has reported its limits yet"),
     };
+    if let Some((_, models)) = models.iter().find(|(owner, _)| crate::homes::same_dir(&home.dir, owner)) {
+        claude.models = Fact::known(models.clone());
+    }
     claude.home = Some(home);
     claude
 }

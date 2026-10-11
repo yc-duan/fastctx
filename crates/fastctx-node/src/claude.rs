@@ -20,10 +20,13 @@
 pub(crate) mod calls;
 pub(crate) mod control;
 mod fork;
+mod fork_history;
 pub(crate) mod history;
 pub mod management;
 pub(crate) mod pairing;
 mod process;
+mod rewind;
+mod titles;
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -43,6 +46,7 @@ use tokio::sync::mpsc;
 use crate::Node;
 
 pub struct Claude {
+    title_files: titles::Files,
     state: Mutex<State>,
     bridge: control::Bridge,
     delivering: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
@@ -72,6 +76,7 @@ impl Claude {
     pub fn new(world: &fastctx_types::layout::WorldDir) -> std::io::Result<Self> {
         let root = world.path().join("resident-cache");
         Ok(Self {
+            title_files: Default::default(),
             state: Mutex::new(State {
                 sessions: HashMap::new(),
                 observed: HashSet::new(),
@@ -148,6 +153,47 @@ pub async fn replay(node: &Arc<Node>) {
     }
 }
 
+fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Result<()> {
+    let (about, _) = node.residents.about(resident).ok_or_else(|| std::io::Error::other("unknown Claude resident"))?;
+    let options = crate::session_options::read(node, resident).map_err(|error| std::io::Error::other(error.message))?;
+    let path = directory.join("policy.json");
+    let registration =
+        exchange::registration(directory)?.ok_or_else(|| std::io::Error::other("Claude registration is incomplete"))?;
+    let transcript = exchange::transcript(directory)?;
+    if transcript.is_none() {
+        return Ok(());
+    }
+    if let Some(prior) = claude::control::read::<serde_json::Value>(&path)?
+        && prior["instance"] == serde_json::to_value(&registration.instance).map_err(std::io::Error::other)?
+    {
+        return Ok(());
+    }
+    let mut last_uuid = None;
+    let mut context_tail = None;
+    let mut context_uuids = None;
+    if let Some(transcript) = transcript {
+        loop {
+            match claude::transcript::read(&transcript) {
+                Ok(read) => {
+                    last_uuid = read.context_uuids.last().cloned();
+                    context_tail = read.context_tail;
+                    if read.context_uuids.len() < 4096 {
+                        context_uuids = Some(read.context_uuids)
+                    }
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    let value = serde_json::json!({"instance": registration.instance, "lent": node.works_here(&about.acting).is_err(), "model": options.model,
+        "effort": options.reasoning_effort, "last_uuid": last_uuid, "context_uuids":context_uuids, "context_tail":context_tail});
+    let bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;
+    fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
+}
+
 async fn look_all(node: &Arc<Node>, sessions: &Path) {
     let directories: Vec<PathBuf> = match std::fs::read_dir(sessions) {
         Ok(entries) => entries.filter_map(|entry| Some(entry.ok()?.path())).filter(|path| path.is_dir()).collect(),
@@ -197,6 +243,13 @@ async fn look(node: &Arc<Node>, directory: &Path) {
         }
         return;
     };
+    if let Err(error) = policy(node, &resident, directory) {
+        node.log.line(format_args!("publishing Claude session policy for {session}: {error}"));
+        return;
+    }
+    if let Err(error) = titles::start(node, &resident, directory).await {
+        node.log.line(format_args!("watching Claude's title: {error}"));
+    }
     if node.residents.removed(&resident).is_some() {
         let _births = node.claude.births.write().await;
         node.claude.state.lock().expect("never poisoned").sessions.remove(&session);
@@ -1084,6 +1137,7 @@ pub async fn open_here(
         .create(&node.world, about, town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
     node.residents.set_heard(&id, heard);
+    crate::session_options::keep(node, &id, &options)?;
     let directory = node.world.resident(town.as_ref(), &id);
     let settings = directory.path().join("claude-settings.json");
     let instructions = directory.path().join("claude-instructions.md");

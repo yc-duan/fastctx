@@ -38,10 +38,24 @@ struct Request {
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
     match control {
         Control::Fork { through } => super::fork::fork(node, resident, through).await,
-        Control::Rewind { .. } => {
-            Err(Failure::new("Claude Code has no public control for an exact conversation rewind"))
-        }
         Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
+        Control::Rewind { from } => {
+            super::history::wait_stored(
+                node,
+                &node
+                    .residents
+                    .about(resident)
+                    .and_then(|(about, _)| about.session)
+                    .ok_or_else(|| Failure::new("Claude has not identified this conversation"))?,
+            )
+            .await
+            .map_err(Failure::new)?;
+            let result = invoke(node, resident, json!({"do":"rewind", "from":from})).await?;
+            if result["kind"] == "rewound" {
+                super::rewind::finish(node, resident, &result, Some(&from)).await?
+            }
+            serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude control reply: {error}")))
+        }
         control => {
             let result = invoke(node, resident, serde_json::to_value(control).expect("control serializes")).await?;
             serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude control reply: {error}")))
@@ -63,7 +77,56 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
         let value = invoke(node, resident, json!({"do":"offers"})).await?;
         serde_json::from_value::<Offers>(value).map_err(|error| Failure::new(format!("Claude offers: {error}")))?
     } else {
-        Offers::default()
+        let selected = about
+            .session
+            .as_ref()
+            .map(|session| files::read::<Value>(&files::directory(node.world.path(), session).join("selection.json")))
+            .transpose()
+            .map_err(failure)?
+            .flatten();
+        let initial = crate::session_options::read(node, resident)?;
+        let checkpoints = about
+            .session
+            .as_ref()
+            .map(|session| files::read_message(&files::directory(node.world.path(), session).join("checkpoints.json")))
+            .transpose();
+        let checkpoints = match checkpoints {
+            Ok(value) => value.filter(|value| value["full"] == true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(failure(error)),
+        };
+        Offers {
+            checkpoints: checkpoints.as_ref().map(|value| {
+                value["turns"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(turn, point)| fastctx_types::session::control::TurnCheckpoint {
+                        turn: turn.clone(),
+                        rewind: false,
+                        fork: point["after"].as_u64().is_some_and(|count| count > 0) && point["after_uuid"].is_string(),
+                    })
+                    .collect()
+            }),
+            history_limits: Some(fastctx_types::session::control::HistoryLimits {
+                files_restored: false,
+                compacted_turns_reachable: false,
+                empty_prefix_allowed: false,
+                complete_prefix: checkpoints.is_some(),
+            }),
+            model: selected
+                .as_ref()
+                .and_then(|value| value["model"].as_str())
+                .map(str::to_owned)
+                .or(initial.model)
+                .or(about.model),
+            effort: selected
+                .as_ref()
+                .and_then(|value| value["effort"].as_str())
+                .map(str::to_owned)
+                .or(initial.reasoning_effort),
+            ..Default::default()
+        }
     };
     if about.session.is_some() && super::command(node, about.home.as_deref()).is_ok() {
         offers.controls.push(ControlKind::Fork);
@@ -93,7 +156,35 @@ fn live_host(node: &Node, resident: &ResidentId) -> Result<(PathBuf, Host), Fail
     Ok((directory, host))
 }
 
-async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Value) -> Result<Value, Failure> {
+pub(super) async fn selection(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    running: bool,
+) -> Result<fastctx_types::agents::SessionOptions, Failure> {
+    let initial = crate::session_options::read(node, resident)?;
+    let selected = if running {
+        Some(invoke(node, resident, json!({"do":"selection"})).await?)
+    } else {
+        let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
+        about
+            .session
+            .as_ref()
+            .map(|session| files::read::<Value>(&files::directory(node.world.path(), session).join("selection.json")))
+            .transpose()
+            .map_err(failure)?
+            .flatten()
+    };
+    Ok(fastctx_types::agents::SessionOptions {
+        model: selected.as_ref().and_then(|value| value["model"].as_str()).map(str::to_owned).or(initial.model),
+        reasoning_effort: selected
+            .as_ref()
+            .and_then(|value| value["effort"].as_str())
+            .map(str::to_owned)
+            .or(initial.reasoning_effort),
+    })
+}
+
+pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Value) -> Result<Value, Failure> {
     let (directory, host) = live_host(node, resident)?;
     let key = crate::speech::new_id("control").to_string();
     let path = directory.join("inbox").join(format!("{key}.json"));

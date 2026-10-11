@@ -138,10 +138,59 @@ pub fn limits(world: &Path) -> Vec<(PathBuf, fastctx_types::agents::AgentLimits)
                 resets_at: limit.resets_at,
             })
             .collect();
-        readings.push((transcript, fastctx_types::agents::AgentLimits { observed_at: reading.at, windows, credits: None }));
+        readings
+            .push((transcript, fastctx_types::agents::AgentLimits { observed_at: reading.at, windows, credits: None }));
     }
     readings.sort_by(|(_, a), (_, b)| b.observed_at.cmp(&a.observed_at));
     readings
+}
+
+/// The newest model row each session's mod observed, attributed by transcript home.
+pub fn models(world: &Path) -> io::Result<Vec<(PathBuf, Timestamp, Vec<fastctx_types::agents::AgentModel>)>> {
+    #[derive(Deserialize)]
+    struct Reading {
+        at: Timestamp,
+        #[serde(default = "available")]
+        available: bool,
+        models: Vec<fastctx_types::session::control::ModelOffer>,
+    }
+    fn available() -> bool {
+        true
+    }
+    let mut readings = Vec::new();
+    let entries = match std::fs::read_dir(sessions(world)) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(readings),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let directory = entry?.path();
+        let Some(reading) = super::control::read_mod::<Reading>(&directory.join("models.json"))? else { continue };
+        if !reading.available {
+            continue;
+        }
+        let Some(transcript) = transcript(&directory)? else { continue };
+        let models = reading
+            .models
+            .into_iter()
+            .map(|model| fastctx_types::agents::AgentModel {
+                model: model.id.clone(),
+                display_name: model.name.unwrap_or_else(|| model.id.clone()),
+                id: model.id,
+                description: model.description.unwrap_or_default(),
+                is_default: model.default,
+                default_reasoning_effort: model.default_effort.unwrap_or_default(),
+                reasoning_efforts: model
+                    .efforts
+                    .into_iter()
+                    .map(|effort| fastctx_types::agents::ReasoningEffort { effort, description: String::new() })
+                    .collect(),
+            })
+            .collect();
+        readings.push((transcript, reading.at, models));
+    }
+    readings.sort_by(|(_, a, _), (_, b, _)| b.cmp(a));
+    Ok(readings)
 }
 
 /// What the mod reported, in the World's terms.
@@ -172,6 +221,10 @@ pub enum Reported {
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum ModEvent {
+    Agent {
+        agent_id: String,
+        report: Box<ModEvent>,
+    },
     Batch {
         events: Vec<ModEvent>,
     },
@@ -397,6 +450,25 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
         |at: Option<Timestamp>, happened| Reported::Happened(SessionEvent { at: at.unwrap_or(recorded_at), happened });
     let turn_of = |turn: Option<String>| turn.unwrap_or_default();
     match event {
+        ModEvent::Agent { agent_id, report } => translate(*report, recorded_at)
+            .into_iter()
+            .filter_map(|report| {
+                if let Reported::Happened(event) = report {
+                    Some(Reported::Happened(SessionEvent {
+                        at: event.at,
+                        happened: Happened::Changed {
+                            turn: None,
+                            change: fastctx_types::session::SessionChange::AgentEvent {
+                                agent_id: agent_id.clone(),
+                                happened: Box::new(event.happened),
+                            },
+                        },
+                    }))
+                } else {
+                    None
+                }
+            })
+            .collect(),
         ModEvent::Batch { events } => events.into_iter().flat_map(|event| translate(event, recorded_at)).collect(),
         ModEvent::Stored { uuid } => vec![Reported::Stored { uuid }],
         ModEvent::Session { at, happened: observed } => vec![happened(at, observed)],

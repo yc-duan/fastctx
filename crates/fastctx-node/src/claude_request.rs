@@ -29,6 +29,95 @@ pub fn owner(world: &Path) -> io::Result<()> {
     output(&current)
 }
 
+/// Waits for the node to identify this session before its system prompt is built.
+pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compact: Option<&str>) -> io::Result<()> {
+    crate::claude::pairing::validate_session(session)?;
+    let directory = world.join("claude").join(session);
+    let expected: Option<Value> = if messages.is_some() {
+        let mut input = String::new();
+        io::stdin().read_to_string(&mut input)?;
+        Some(serde_json::from_str(&input).map_err(io::Error::other)?)
+    } else {
+        None
+    };
+    let controller = control::read::<ProcessIdentity>(&world.join("claude-controller.json"))?
+        .ok_or_else(|| io::Error::other("the World node is not running"))?;
+    let (sender, receiver) = mpsc::channel();
+    let changes = sender.clone();
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        let _ = changes.send(event.map(|_| false).map_err(io::Error::other));
+    })
+    .map_err(io::Error::other)?;
+    notify::Watcher::watch(&mut watcher, &directory, notify::RecursiveMode::NonRecursive).map_err(io::Error::other)?;
+    std::thread::spawn(move || {
+        let _ = sender.send(fastctx_platform::host_process::wait_for_exit(&controller).map(|()| true));
+    });
+    let mut transcript_watched = false;
+    loop {
+        if messages.is_some()
+            && let Some(host) = control::host(&directory)?
+            && !control::active(&directory, &host)?
+        {
+            return Err(io::Error::other("the Claude activation ended before persisting its context"));
+        }
+        if let Some(mut policy) = control::read::<Value>(&directory.join("policy.json"))? {
+            if let Some(messages) = messages {
+                let path = fastctx_hosts::claude::exchange::transcript(&directory)?
+                    .ok_or_else(|| io::Error::other("Claude did not report its transcript path"))?;
+                if !transcript_watched {
+                    notify::Watcher::watch(
+                        &mut watcher,
+                        path.parent().ok_or_else(|| io::Error::other("Claude transcript has no parent"))?,
+                        notify::RecursiveMode::NonRecursive,
+                    )
+                    .map_err(io::Error::other)?;
+                    transcript_watched = true;
+                }
+                match fastctx_hosts::claude::transcript::read(&path) {
+                    Ok(read)
+                        if read.context_uuids.len() == messages
+                            && after_compact.is_none_or(|parent| read.context_parent.as_deref() == Some(parent)) =>
+                    {
+                        if !read.problems.is_empty() {
+                            return Err(io::Error::other(read.problems.join("; ")));
+                        }
+                        let tail = expected
+                            .as_ref()
+                            .and_then(|value| value["tail"].as_array())
+                            .ok_or_else(|| io::Error::other("the mod omitted its observed message projection"))?;
+                        if !read.message_tail_matches(tail) {
+                            return Err(io::Error::other(
+                                "the native file does not match the mod's current message projection",
+                            ));
+                        }
+                        policy["last_uuid"] =
+                            serde_json::to_value(read.context_uuids.last()).map_err(io::Error::other)?;
+                        policy["context_tail"] = serde_json::to_value(read.context_tail).map_err(io::Error::other)?;
+                        policy["context_uuids"] = serde_json::to_value(read.context_uuids).map_err(io::Error::other)?;
+                        return output(&policy);
+                    }
+                    Ok(read)
+                        if after_compact.is_none_or(|parent| read.context_parent.as_deref() == Some(parent))
+                            && read.context_uuids.len() > messages =>
+                    {
+                        return Err(io::Error::other(
+                            "the native file has more context than the mod's observed prefix",
+                        ));
+                    }
+                    Ok(_) => {}
+                    Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::Interrupted) => {}
+                    Err(error) => return Err(error),
+                }
+            } else {
+                return output(&policy);
+            }
+        }
+        if receiver.recv().map_err(io::Error::other)?? {
+            return Err(io::Error::other("the World node exited before identifying this Claude session"));
+        }
+    }
+}
+
 /// Runs the mod helper, or the official plugin Elicitation command hook.
 /// Neither reads the environment or any Claude login/configuration file.
 pub fn run(directory: &Path, elicitation: bool) -> io::Result<()> {
@@ -42,8 +131,12 @@ pub fn run(directory: &Path, elicitation: bool) -> io::Result<()> {
         let Some(host) = control::host(&directory)? else {
             return output(&json!({}));
         };
-        let turn = control::read_mod::<Value>(&directory.join("activity.json"))?
-            .and_then(|value| value["turn"].as_str().map(str::to_string));
+        let turn = if params.get("agent_id").is_some_and(Value::is_string) {
+            None
+        } else {
+            control::read_mod::<Value>(&directory.join("activity.json"))?
+                .and_then(|value| value["turn"].as_str().map(str::to_string))
+        };
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(io::Error::other)?;
         let key = format!("elicitation-{}", random.iter().map(|byte| format!("{byte:02x}")).collect::<String>());

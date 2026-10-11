@@ -24,6 +24,9 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
     for Session { id, began, process, kept } in sessions {
         match read_whole(root.join(&id), kept, process).await {
             Ok(read) => {
+                if let Some(title) = read.title {
+                    events.push(SessionEvent { at: Timestamp::now(), happened: Happened::Titled { title } });
+                }
                 events.extend(read.events);
                 if !read.problems.is_empty() {
                     let text = format!(
@@ -126,10 +129,11 @@ async fn read_whole(
     kept: Option<String>,
     process: Option<ProcessIdentity>,
 ) -> Result<transcript::Transcript, String> {
+    let cuts = super::rewind::cuts(&directory).map_err(|error| error.to_string())?;
     let path = exchange::transcript(&directory)
         .map_err(|error| format!("where it is kept could not be read: {error}"))?
         .ok_or("the World's plugin never said where Claude Code keeps it")?;
-    let Some(kept) = kept else { return read_now(path).await };
+    let Some(kept) = kept else { return read_now(path, cuts).await };
     // Watched before it is read, so no change between the two goes unseen.
     let (changed, mut changes) = tokio::sync::mpsc::unbounded_channel();
     let mut watcher = notify::recommended_watcher(move |_: notify::Result<notify::Event>| {
@@ -144,7 +148,7 @@ async fn read_whole(
         None => Box::pin(std::future::pending()),
     };
     loop {
-        let read = read_now(path.clone()).await?;
+        let read = read_now(path.clone(), cuts.clone()).await?;
         if read.uuids.contains(&kept) {
             return Ok(read);
         }
@@ -152,7 +156,7 @@ async fn read_whole(
             Some(()) = changes.recv() => {}
             result = &mut ended => {
                 result.map_err(|error| format!("observing Claude's process: {error}"))?;
-                let mut read = read_now(path.clone()).await?;
+                let mut read = read_now(path.clone(), cuts.clone()).await?;
                 if !read.uuids.contains(&kept) {
                     read.problems.push("its process ended before its file held the last of what it kept".to_string());
                 }
@@ -164,10 +168,11 @@ async fn read_whole(
 
 /// The record as the file holds it now. A session at work adds to its file
 /// as it goes; a read it overtook is read again, until one sees it whole.
-async fn read_now(path: PathBuf) -> Result<transcript::Transcript, String> {
+async fn read_now(path: PathBuf, cuts: Vec<transcript::HistoryCut>) -> Result<transcript::Transcript, String> {
     loop {
         let reading = path.clone();
-        let read = tokio::task::spawn_blocking(move || transcript::read(&reading))
+        let cuts = cuts.clone();
+        let read = tokio::task::spawn_blocking(move || transcript::read_with_cuts(&reading, &cuts))
             .await
             .map_err(|error| format!("reading it: {error}"))?;
         match read {
@@ -196,7 +201,7 @@ fn note(at: Timestamp, text: String) -> SessionEvent {
 /// it. What the World did not see stays where it is, in no turn. Words the
 /// World itself handed over are told by the World's record, which knows
 /// who said them, and are left out here.
-fn place(mut events: Vec<SessionEvent>, recorded: &[SessionEvent]) -> Vec<SessionEvent> {
+pub(super) fn place(mut events: Vec<SessionEvent>, recorded: &[SessionEvent]) -> Vec<SessionEvent> {
     let mut turns: Vec<(Timestamp, Option<Timestamp>, String)> = Vec::new();
     let mut ends: HashMap<&str, Timestamp> = HashMap::new();
     let mut heard: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -237,7 +242,9 @@ fn place(mut events: Vec<SessionEvent>, recorded: &[SessionEvent]) -> Vec<Sessio
         });
         if let Some(turn) = turn {
             match &mut event.happened {
-                Happened::Heard { turn: slot, .. } | Happened::Health { turn: slot, .. } => *slot = Some(turn),
+                Happened::Heard { turn: slot, .. }
+                | Happened::Health { turn: slot, .. }
+                | Happened::Changed { turn: slot, .. } => *slot = Some(turn),
                 Happened::Began { turn: slot, .. }
                 | Happened::Grew { turn: slot, .. }
                 | Happened::Finished { turn: slot, .. }

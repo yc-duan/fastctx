@@ -7,8 +7,9 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
-use fastctx_types::session::{Happened, Item, SessionEvent, ToolStatus, UserMessage, What};
+use fastctx_types::session::{Happened, Item, SessionChange, SessionEvent, ToolStatus, UserMessage, What};
 use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{content, tools};
@@ -16,11 +17,41 @@ use super::{content, tools};
 /// What the host still stores, with unreadable records reported separately.
 #[derive(Debug)]
 pub struct Transcript {
+    pub title: Option<String>,
+    pub pending_cuts: bool,
+    pub retained_tail: Option<String>,
+    pub tail_uuid: Option<String>,
+    pub context_uuids: Vec<String>,
+    pub context_parent: Option<String>,
+    pub context_tail: Option<String>,
+    pub context_times: Vec<Timestamp>,
+    pub context_messages: Vec<Value>,
     pub events: Vec<SessionEvent>,
     pub problems: Vec<String>,
     /// Every record's UUID the file holds, shown or not: whether a record
     /// the session is known to have kept has reached the file yet.
     pub uuids: HashSet<String>,
+}
+
+impl Transcript {
+    /// Confirms the mod's public tail before assigning native row UUIDs to it.
+    pub fn message_tail_matches(&self, tail: &[Value]) -> bool {
+        tail.len() <= self.context_messages.len()
+            && tail
+                .iter()
+                .zip(self.context_messages.iter().skip(self.context_messages.len().saturating_sub(tail.len())))
+                .all(|(expected, actual)| super::context::same(expected, actual))
+    }
+}
+
+/// A World context replacement, identified by observed message UUIDs and the
+/// native compact boundary's logical parent. The host file is never edited.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HistoryCut {
+    pub until: String,
+    pub parent: String,
+    pub messages: usize,
+    pub retained: Vec<Value>,
 }
 
 struct Row {
@@ -79,12 +110,30 @@ impl Pair {
 /// Unknown records without UUIDs are identified by their file line only.
 /// Detected size or modification-time changes return `Interrupted`, without a retry.
 pub fn read(path: &Path) -> io::Result<Transcript> {
+    read_with_cuts(path, &[])
+}
+
+pub fn read_with_cuts(path: &Path, cuts: &[HistoryCut]) -> io::Result<Transcript> {
     let file = File::open(path)?;
     let before = file.metadata()?;
     let mut reader = BufReader::new(file);
     let mut rows: Vec<Row> = Vec::new();
     let mut by_uuid = HashMap::new();
-    let mut transcript = Transcript { events: Vec::new(), problems: Vec::new(), uuids: HashSet::new() };
+    let mut transcript = Transcript {
+        title: None,
+        pending_cuts: false,
+        retained_tail: None,
+        tail_uuid: None,
+        context_uuids: Vec::new(),
+        context_parent: None,
+        context_tail: None,
+        context_times: Vec::new(),
+        context_messages: Vec::new(),
+        events: Vec::new(),
+        problems: Vec::new(),
+        uuids: HashSet::new(),
+    };
+    let mut titles = super::titles::Titles::default();
     let mut line = Vec::new();
     let mut number = 0;
     loop {
@@ -105,6 +154,12 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
             }
         };
         let row = Row { line: number, value };
+        if matches!(row.kind(), Some("custom-title" | "ai-title")) {
+            if let Err(error) = titles.row(&row.value) {
+                transcript.problem(&row, &error.to_string());
+            }
+            continue;
+        }
         if !row.value.is_object() || row.kind().is_none() {
             transcript.problem(&row, "expected an object with a string type");
             continue;
@@ -158,6 +213,77 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "Claude transcript changed while it was being read"));
     }
     transcript.uuids = by_uuid.keys().cloned().collect();
+    transcript.title = titles.title();
+    transcript.tail_uuid = rows
+        .iter()
+        .rev()
+        .find(|row| matches!(row.kind(), Some("user" | "assistant")))
+        .and_then(|row| row.value["uuid"].as_str())
+        .map(str::to_owned);
+    let context_start = rows.iter().rposition(Row::replacement).map_or(0, |index| index + 1);
+    transcript.context_parent = context_start
+        .checked_sub(1)
+        .and_then(|index| rows[index].value["logicalParentUuid"].as_str())
+        .map(str::to_owned);
+    let context_order = super::context::order(&rows.iter().map(|row| &row.value).collect::<Vec<_>>())?;
+    transcript.context_tail = context_order
+        .iter()
+        .rev()
+        .map(|&index| &rows[index])
+        .find_map(|row| row.value["uuid"].as_str())
+        .map(str::to_owned);
+
+    let mut cut_rows = HashSet::new();
+    for cut in cuts {
+        if cut.retained.len() != cut.messages {
+            return Err(io::Error::other("the World rewind omitted its retained message projections"));
+        }
+        let Some(&until) = by_uuid.get(&cut.until) else {
+            transcript.problems.push("the retained World turn's transcript anchor is absent".into());
+            continue;
+        };
+        let boundaries: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.replacement() && row.value["logicalParentUuid"].as_str() == Some(&cut.parent))
+            .map(|(index, _)| index)
+            .collect();
+        if boundaries.is_empty() {
+            transcript.pending_cuts = true;
+            continue;
+        }
+        if boundaries.len() != 1 {
+            return Err(io::Error::other("the World rewind has an ambiguous compact boundary"));
+        }
+        let boundary = boundaries[0];
+        if boundary <= until {
+            return Err(io::Error::other("the World rewind boundary precedes its retained anchor"));
+        }
+        let copied: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .skip(boundary + 1)
+            .take_while(|(_, row)| !row.replacement())
+            .filter(|(_, row)| super::context::projected(&row.value))
+            .take(cut.messages)
+            .map(|(index, _)| index)
+            .collect();
+        if copied.len() != cut.messages {
+            transcript.pending_cuts = true;
+            continue;
+        }
+        if !copied
+            .iter()
+            .zip(&cut.retained)
+            .all(|(&index, expected)| super::context::same(&super::context::projection(&rows[index].value), expected))
+        {
+            return Err(io::Error::other("Claude persisted a different replacement prefix than its mod returned"));
+        }
+        let tail = copied.last().copied().unwrap_or(boundary);
+        transcript.retained_tail = rows[tail].value["uuid"].as_str().map(str::to_owned);
+        cut_rows.extend(until + 1..boundary);
+        cut_rows.extend(boundary + 1..=tail);
+    }
 
     let mut times = Vec::with_capacity(rows.len());
     let mut removed = HashSet::new();
@@ -184,9 +310,36 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
             }
         }
     }
-    let visible = |row: &Row| {
+    let native_visible = |row: &Row| {
         !row.value.get("uuid").and_then(Value::as_str).is_some_and(|id| removed.contains(id))
             && !row.value.get("sourceToolAssistantUUID").and_then(Value::as_str).is_some_and(|id| removed.contains(id))
+    };
+    transcript.context_uuids = context_order
+        .iter()
+        .map(|&index| &rows[index])
+        .filter(|row| native_visible(row) && super::context::projected(&row.value))
+        .filter_map(|row| row.value["uuid"].as_str().map(str::to_owned))
+        .collect();
+    transcript.context_times = context_order
+        .iter()
+        .map(|&index| &rows[index])
+        .filter(|row| native_visible(row) && super::context::projected(&row.value))
+        .filter_map(|row| row.value["timestamp"].as_str()?.parse().ok())
+        .collect();
+    transcript.context_messages = context_order
+        .iter()
+        .map(|&index| &rows[index])
+        .filter(|row| native_visible(row) && super::context::projected(&row.value))
+        .map(|row| super::context::projection(&row.value))
+        .collect();
+    let visible = |row: &Row| {
+        native_visible(row)
+            && !row
+                .value
+                .get("uuid")
+                .and_then(Value::as_str)
+                .and_then(|id| by_uuid.get(id))
+                .is_some_and(|index| cut_rows.contains(index))
     };
     let mut pairs: HashMap<&str, Pair> = HashMap::new();
     let mut summaries: HashMap<&str, Vec<usize>> = HashMap::new();
@@ -231,6 +384,36 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
             transcript.problem(row, problem);
             transcript.other(row, at, 0, "record", row.value.clone());
             continue;
+        }
+        if row.kind() == Some("assistant")
+            && let Some(model) = row.value["message"]["model"].as_str()
+        {
+            let items = row
+                .blocks()
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .map(|(index, block)| {
+                    if block["type"] == "tool_use" {
+                        block["id"].as_str().map(str::to_owned).unwrap_or_else(|| row.id(index))
+                    } else {
+                        row.id(index)
+                    }
+                })
+                .collect();
+            transcript.events.push(SessionEvent {
+                at,
+                happened: Happened::Changed {
+                    turn: None,
+                    change: SessionChange::MessageUsage {
+                        items,
+                        response: row.value["message"]["id"].as_str().map(str::to_owned),
+                        model: model.to_owned(),
+                        api_error: row.value["isApiErrorMessage"] == true,
+                        usage: row.value["message"]["usage"].clone(),
+                    },
+                },
+            });
         }
         if row.compaction() || row.kind() == Some("user") && row.value["isCompactSummary"] == true {
             let summary = row.value.get("uuid").and_then(Value::as_str).and_then(|id| summaries.get(id));
@@ -446,6 +629,10 @@ impl Row {
                 self.value.get("subtype").and_then(Value::as_str),
                 Some("compact_boundary" | "microcompact_boundary")
             )
+    }
+
+    fn replacement(&self) -> bool {
+        self.kind() == Some("system") && self.value["subtype"] == "compact_boundary"
     }
 
     fn prompt(&self) -> bool {

@@ -9,6 +9,7 @@ export function presentation(reserve, currentTurn) {
   const requests = new Map()
   const rows = new Set()
   let latestStep = null
+  let agentTurn = null
   const steps = taskSteps()
   const emit = (reports, happened) => reports.event('session', { happened })
   const item = (id, kind, fields = {}) => ({ id, kind, started_at: reserve().at, ...fields })
@@ -42,14 +43,20 @@ export function presentation(reserve, currentTurn) {
     },
     async *step(reports, e, next) {
       const stream = next(e)
-      if (e.agentId !== undefined) {
-        for await (const chunk of stream) yield chunk
-        return await stream.result
-      }
+      if (e.agentId !== undefined) agentTurn = e.turnId
+      reports.stream({ event: 'changed', turn: e.turnId, change: { kind: 'model_request', step: e.index,
+        model: e.model, effort: e.effort ?? null } })
       const blocks = new Map()
+      let responseReported = false
+      let observedUsage = null
       latestStep = { turn: e.turnId, blocks }
       try {
         for await (const chunk of stream) {
+          if (chunk.kind === 'stop') {
+            reports.stream({ event: 'changed', turn: e.turnId, change: { kind: 'model_response', step: e.index, usage: chunk.usage ?? null } })
+            responseReported = true
+            observedUsage = chunk.usage ?? null
+          }
           if (chunk.kind === 'text' || chunk.kind === 'thinking') {
             const key = chunk.kind + ':' + chunk.index
             let block = blocks.get(key)
@@ -64,7 +71,11 @@ export function presentation(reserve, currentTurn) {
           }
           yield chunk
         }
-        return await stream.result
+        const result = await stream.result
+        if (!responseReported || result.usage != null && ['model', 'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'].some((key) => observedUsage?.[key] !== result.usage[key])) {
+          reports.stream({ event: 'changed', turn: e.turnId, change: { kind: 'model_response', step: e.index, usage: result.usage ?? null } })
+        }
+        return result
       } finally {
         // Claude Code 2.1.289 exposes neither attempt withdrawal nor a
         // binding from stream blocks to stored row UUIDs (2026-10-04).
@@ -78,9 +89,8 @@ export function presentation(reserve, currentTurn) {
     },
 
     async call(reports, e, next) {
-      if (e.agentId !== undefined) return next(e)
       const { tool, tool_use_id: id, consent, agentId, ...input } = e
-      const call = { id, tool, input, turn: currentTurn(), started_at: reserve().at }
+      const call = { id, tool, input, turn: agentId === undefined ? currentTurn() : agentTurn, started_at: reserve().at }
       tools.set(id, call)
       await checkpoint(reports)
       await reports.event('tool_start', { turn: call.turn, item: id, tool, input, started_at: call.started_at })
@@ -103,9 +113,9 @@ export function presentation(reserve, currentTurn) {
     },
 
     async append(reports, e, next) {
-      const turn = currentTurn()
+      const turn = e.agentId === undefined ? currentTurn() : agentTurn
       const result = await next(e)
-      if (e.agentId !== undefined || result.deny !== undefined || rows.has(result.uuid)) return result
+      if (result.deny !== undefined || rows.has(result.uuid)) return result
       rows.add(result.uuid)
       // Only the conversation's own messages are certain to reach the file;
       // the node waits for the last of them when it reads that file.
@@ -143,14 +153,14 @@ export function presentation(reserve, currentTurn) {
             call.stored = stored
             await checkpoint(reports)
           }
-        } else if (result.message.type === 'assistant' && (block.type === 'text' || block.type === 'thinking')) {
+        } else if (result.message.type === 'assistant' && (block.type === 'text' || block.type === 'thinking' || block.type === 'redacted_thinking')) {
           const kind = block.type === 'text' ? 'message' : 'thinking'
           if (!streamedKinds.has(kind)) {
             // The host can return a non-streamed assistant row: its stream
             // projects only an opaque engine ref. This stored block is the
             // first observable prose, with its own stable row identity.
             const prose = item(JSON.stringify([result.uuid, index]), kind, {
-              text: block.type === 'text' ? block.text : block.thinking, detail: block,
+              text: block.type === 'text' ? block.text : block.type === 'thinking' ? block.thinking : '', detail: block,
             })
             await emit(reports, { event: 'began', turn: turn ?? '', item: prose })
             await emit(reports, { event: 'finished', turn: turn ?? '', item: prose })
@@ -201,6 +211,7 @@ export function presentation(reserve, currentTurn) {
     },
 
     async measure(reports, e, next) {
+      await emit(reports, { event: 'changed', turn: null, change: { kind: 'usage', usage: e } })
       if (e.context.tokens !== undefined) {
         await emit(reports, { event: 'context', used: e.context.tokens, window: e.context.window })
       }

@@ -68,6 +68,41 @@ impl SessionChange {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionChange {
+    /// The request parameters handed to the host; effort can be normalized by it.
+    ModelRequest {
+        step: u64,
+        model: String,
+        effort: Value,
+    },
+    /// The model and counts the answer actually reported. Missing usage stays unknown.
+    ModelResponse {
+        step: u64,
+        usage: Option<super::RequestUsage>,
+    },
+    ModelSwitch {
+        from_model: String,
+        to_model: String,
+        source: String,
+        requested_model: Option<String>,
+        raw: Value,
+    },
+    /// A stored assistant row's model and usage, distinct from a request total.
+    MessageUsage {
+        items: Vec<String>,
+        response: Option<String>,
+        model: String,
+        api_error: bool,
+        usage: Value,
+    },
+    /// Command descriptions changed; refresh the session's offered catalog.
+    CommandsChanged,
+    Agents {
+        agents: Vec<super::HostAgent>,
+    },
+    AgentEvent {
+        agent_id: String,
+        happened: Box<super::Happened>,
+    },
     /// Current input state, outside the host transcript and replaced as a whole.
     Composer {
         composer: Box<crate::composer::Composer>,
@@ -79,6 +114,9 @@ pub enum SessionChange {
     /// Re-read host history: a stable host operation removed or replaced
     /// turns. This says nothing about restoring files on disk.
     HistoryChanged,
+    HistoryCut {
+        removed_turns: Vec<String>,
+    },
     /// The World created this resident from another thread's history.
     Forked {
         source: crate::Address,

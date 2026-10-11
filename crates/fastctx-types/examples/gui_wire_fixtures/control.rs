@@ -41,6 +41,9 @@ pub fn fixtures() -> Fixtures {
         offers: vec![
             Offers::default(),
             Offers {
+                checkpoints: None,
+                history_limits: None,
+                automatic_model: None,
                 controls: vec![
                     ControlKind::Command,
                     ControlKind::Compact,
@@ -55,6 +58,7 @@ pub fn fixtures() -> Fixtures {
                         name: "compact".into(),
                         description: "Compact".into(),
                         args: None,
+                        argument_forms: Vec::new(),
                         arguments: CommandArguments::None,
                         source: Some("codex".into()),
                         path: None,
@@ -63,6 +67,7 @@ pub fn fixtures() -> Fixtures {
                         name: "skill".into(),
                         description: "A skill".into(),
                         args: Some("[instructions]".into()),
+                        argument_forms: Vec::new(),
                         arguments: CommandArguments::Optional,
                         source: Some("skill".into()),
                         path: Some("C:/skills/example/SKILL.md".into()),
@@ -71,6 +76,7 @@ pub fn fixtures() -> Fixtures {
                         name: "rename".into(),
                         description: "Rename".into(),
                         args: Some("<name>".into()),
+                        argument_forms: Vec::new(),
                         arguments: CommandArguments::Required,
                         source: Some("builtin".into()),
                         path: None,
