@@ -16,13 +16,13 @@ mod founding;
 #[cfg(target_os = "linux")]
 mod linux_service;
 #[cfg(desktop)]
-mod removal;
-#[cfg(desktop)]
 mod remote_world;
 #[cfg(desktop)]
-mod retention;
+mod removal;
 #[cfg(desktop)]
 mod renewal;
+#[cfg(desktop)]
+mod retention;
 #[cfg(desktop)]
 mod setup;
 #[cfg(desktop)]
@@ -51,6 +51,7 @@ use tauri::Manager as _;
 use tauri::async_runtime::JoinHandle;
 use tauri::ipc::Channel;
 
+mod attachment_files;
 mod binary_reading;
 #[cfg(windows)]
 mod desktop_presence;
@@ -603,10 +604,20 @@ async fn thumbnail(
 #[fastctx_gui_command::command]
 async fn thumbnail_attachment(
     shell: tauri::State<'_, Shell>,
-    attachment: fastctx_types::attachments::Attachment,
+    attachment: fastctx_types::attachments::AttachmentSource,
     max: u32,
-) -> Result<fastctx_types::thumbnail::Thumbnail, String> {
-    shell.world().thumbnail_attachment(attachment, max).await.map_err(|error| error.to_string())
+) -> Result<fastctx_types::thumbnail::Thumbnail, attachment_files::Failure> {
+    shell.world().thumbnail_attachment(attachment, max).await.map_err(attachment_files::Failure::from)
+}
+
+#[fastctx_gui_command::command]
+async fn fetch_attachment(
+    app: tauri::AppHandle,
+    shell: tauri::State<'_, Shell>,
+    attachment: fastctx_types::attachments::AttachmentSource,
+) -> Result<attachment_files::Fetched, attachment_files::Failure> {
+    let cache = app.path().app_cache_dir().map_err(|error| attachment_files::Failure::failed(error.to_string()))?;
+    attachment_files::fetch(&shell.world(), attachment, &cache).await
 }
 
 #[fastctx_gui_command::command]
@@ -908,6 +919,7 @@ pub fn run() {
             fetch_file,
             thumbnail,
             thumbnail_attachment,
+            fetch_attachment,
             line_reading::lines_open,
             line_reading::lines_read,
             line_reading::lines_find,
