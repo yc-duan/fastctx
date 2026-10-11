@@ -163,8 +163,8 @@ const zhActs: Record<Act, [string, string, string]> = {
   command: ["运行命令", "运行中", "命令失败"],
   search: ["搜索", "搜索中", "搜索失败"],
   image: ["查看图片", "查看中", "查看失败"],
-  ask: ["请同事", "请同事中", "请同事失败"],
-  message: ["发消息给同事", "发送中", "发送失败"],
+  ask: ["调用模型", "调用中", "调用失败"],
+  message: ["给模型发消息", "发送中", "发送失败"],
   fetch: ["获取网页", "获取中", "获取失败"],
   websearch: ["网页搜索", "搜索中", "搜索失败"],
   tasks: ["更新待办", "更新中", "更新失败"],
@@ -180,8 +180,8 @@ const enActs: Record<Act, [string, string, string]> = {
   command: ["Ran command", "Running command", "Command Failed"],
   search: ["Searched", "Searching", "Search Failed"],
   image: ["Viewed image", "Viewing image", "Image Failed"],
-  ask: ["Asked a colleague", "Asking a colleague", "Colleague Failed"],
-  message: ["Wrote to a colleague", "Writing to a colleague", "Message Failed"],
+  ask: ["Called a model", "Calling a model", "Call Failed"],
+  message: ["Wrote to a model", "Writing to a model", "Message Failed"],
   fetch: ["Fetched", "Fetching", "Fetch Failed"],
   websearch: ["Searched the web", "Searching the web", "Web search Failed"],
   tasks: ["Updated tasks", "Updating tasks", "Tasks Failed"],
@@ -220,7 +220,7 @@ export const zh: Words = {
     if (t.edited) parts.push(`修改 ${t.edited} 个文件`);
     if (t.ran) parts.push(`运行 ${t.ran} 条命令`);
     if (t.searched) parts.push(`搜索 ${t.searched} 次`);
-    if (t.asked) parts.push(`请 ${t.asked} 位同事`);
+    if (t.asked) parts.push(`调用模型 ${t.asked} 次`);
     if (t.other) parts.push(`调用 ${t.other} 个工具`);
     let heading = parts.join(" · ");
     if (!heading) heading = t.thinking ? "思考" : "活动";
@@ -370,7 +370,7 @@ export const en: Words = {
     if (t.edited) parts.push(`edited ${plural(t.edited, "file", "files")}`);
     if (t.ran) parts.push(`ran ${plural(t.ran, "command", "commands")}`);
     if (t.searched) parts.push(t.searched === 1 ? "searched once" : `searched ${t.searched} times`);
-    if (t.asked) parts.push(`asked ${plural(t.asked, "colleague", "colleagues")}`);
+    if (t.asked) parts.push(`called ${plural(t.asked, "model", "models")}`);
     if (t.other) parts.push(plural(t.other, "tool call", "tool calls"));
     let heading = parts.join(", ");
     if (!heading) heading = t.thinking ? "Thinking" : "Activity";
