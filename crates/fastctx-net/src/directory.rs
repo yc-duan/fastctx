@@ -388,6 +388,16 @@ pub struct View {
     /// Whether accounts may be opened by anyone who reaches the hub.
     #[serde(default)]
     pub self_registration: bool,
+    /// Where this member reaches the hub now, given by a hub that was moved
+    /// to where it runs (`crate::moving`); a hub never moved gives none, and
+    /// the member keeps the addresses it logged in with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hub_addresses: Vec<std::net::SocketAddr>,
+    /// The moves of the hub this member is told of: the super
+    /// administrator's devices of every one, the machine a hub moves to of
+    /// its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hub_moves: Vec<fastctx_types::hub_move::HubMove>,
     #[serde(flatten)]
     pub directory: Directory,
 }
@@ -395,7 +405,16 @@ pub struct View {
 impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
-        Self { machine_log: false, hub, hub_name, me, self_registration: false, directory: Directory::default() }
+        Self {
+            machine_log: false,
+            hub,
+            hub_name,
+            me,
+            self_registration: false,
+            hub_addresses: Vec::new(),
+            hub_moves: Vec::new(),
+            directory: Directory::default(),
+        }
     }
 
     pub fn me(&self) -> Option<&Member> {

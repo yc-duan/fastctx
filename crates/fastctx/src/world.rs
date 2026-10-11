@@ -202,6 +202,12 @@ pub enum HubCommand {
         #[arg(long, value_parser = crate::paths::parser())]
         dir: Option<std::path::PathBuf>,
     },
+    /// Install the system service of the hub moving to this computer, which
+    /// takes administrator rights here; the old hub then hands over to it.
+    Arrive {
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: Option<std::path::PathBuf>,
+    },
 }
 
 /// A computer that logs in joins as one of the account's machines
@@ -390,7 +396,25 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
         }
         HubCommand::Serve { dir: chosen } => {
             let dir = dir(chosen);
-            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_hub::serve(&dir))?;
+            let leave = fastctx_hub::Leave { remove_service: Box::new(remove_hub_service) };
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(fastctx_hub::serve(&dir, leave))?;
+        }
+        HubCommand::Arrive { dir: chosen } => {
+            let dir = dir(chosen);
+            let Some((hub, id)) = fastctx_hub::arriving(&dir)? else {
+                anyhow::bail!("no hub is moving to this computer in {}", dir.display());
+            };
+            if !keep_hub(&dir)? {
+                anyhow::bail!("the hub's service is not running here, so the move waits");
+            }
+            println!("the hub's service runs here from {}", dir.display());
+            match call(Call::HubArrived { hub })? {
+                Reply::Done => println!("the old hub is told: it reaches this one and hands over (move {id})"),
+                other => anyhow::bail!("the node answered something else: {other:?}"),
+            }
         }
         HubCommand::Password { account, dir: chosen } => {
             let password = crate::secret::new_password(&format!("A new password for {account}: "))?;
@@ -443,6 +467,37 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Removes the system service of the hub kept in `dir`, which moved away
+/// and whose old data is deleted. The service's removal stops this very
+/// process, so another one does it, started on its own.
+fn remove_hub_service(dir: &std::path::Path) -> Result<String, String> {
+    use fastctx_install::service::{Kind, Service};
+    let running = std::env::current_exe().map_err(|error| format!("finding this program: {error}"))?;
+    // The installed program, not the copy the service runs, which the removal deletes.
+    let installed = dir.parent().map(fastctx_install::executable::installed_path).filter(|path| path.is_file());
+    let program = installed.unwrap_or(running);
+    let service = Service::new(Kind::Hub, &program, dir);
+    let status = service.status().map_err(|error| format!("looking for the hub's service: {error}"))?;
+    if !status.installed {
+        return Ok("no system service runs this hub here; there is none to remove".to_string());
+    }
+    let cwd = dir.parent().ok_or("the hub's directory has no parent")?;
+    let args: Vec<&std::ffi::OsStr> = vec![
+        "service".as_ref(),
+        "hub".as_ref(),
+        "uninstall".as_ref(),
+        "--dir".as_ref(),
+        dir.as_os_str(),
+        "--executable".as_ref(),
+        program.as_os_str(),
+    ];
+    let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let started = fastctx_platform::spawn_detached(&program, &args, cwd, &env)
+        .map_err(|error| format!("starting the removal of the service {}: {error}", status.name))?;
+    let pid = started.identity.map(|identity| identity.pid.to_string()).unwrap_or_else(|| "ended".to_string());
+    Ok(format!("removing the hub's system service {} (process {pid})", status.name))
 }
 
 /// Runs the hub in `dir` as a system service; whether it runs now.

@@ -376,6 +376,18 @@ pub enum Call {
         name: Option<MachineName>,
         expires: Timestamp,
     },
+    /// Moving the hub named `hub`, or the one hub, as `account`, its super
+    /// administrator (`crate::hub_move`).
+    HubMove {
+        hub: Option<crate::HubName>,
+        account: crate::AccountName,
+        request: crate::hub_move::HubMoveRequest,
+    },
+    /// The system service of the hub `hub` moving to this computer is
+    /// installed here (`fastctx hub arrive`): the old hub may reach it now.
+    HubArrived {
+        hub: crate::access::HubId,
+    },
     /// The node hands the World over once idle and exits: a system service
     /// now keeps this World's node, and its node waits to take over.
     HandOver,
@@ -540,6 +552,7 @@ pub enum Reply {
     ServerInvitation {
         command: String,
     },
+    HubMove(crate::hub_move::HubMoveReply),
     Nodes(NodesReply),
     Machines {
         /// Where the session's shell starts, as written: the machine it

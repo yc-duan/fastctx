@@ -42,7 +42,12 @@ pub(crate) fn follow(node: &Node, hub: &HubId) {
         .as_ref()
         .map(|link| {
             let view = link.view();
-            view.directory.members.iter().find(|member| member.name == view.me).map(|member| member.relay_at.clone()).unwrap_or_default()
+            view.directory
+                .members
+                .iter()
+                .find(|member| member.name == view.me)
+                .map(|member| member.relay_at.clone())
+                .unwrap_or_default()
         })
         .unwrap_or_default();
     let mut running = node.relaying.running.lock().expect("never poisoned");
@@ -53,11 +58,14 @@ pub(crate) fn follow(node: &Node, hub: &HubId) {
         node.log.line(format_args!("relaying to {hub}: stopped"));
     }
     let Some(link) = link.filter(|_| !wanted.is_empty()) else { return };
-    let to = link.membership().addresses.clone();
+    let to = link.hub_addresses();
     let ports: BTreeSet<(bool, u16)> = wanted.iter().map(|address| (address.is_ipv6(), address.port())).collect();
     let mut tasks = Vec::new();
     for (v6, port) in ports {
-        let listen = SocketAddr::new(if v6 { IpAddr::V6(Ipv6Addr::UNSPECIFIED) } else { IpAddr::V4(Ipv4Addr::UNSPECIFIED) }, port);
+        let listen = SocketAddr::new(
+            if v6 { IpAddr::V6(Ipv6Addr::UNSPECIFIED) } else { IpAddr::V4(Ipv4Addr::UNSPECIFIED) },
+            port,
+        );
         let to = to.clone();
         let log = node.log.clone();
         tasks.push(tokio::spawn(async move {

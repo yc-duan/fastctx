@@ -20,6 +20,7 @@ pub mod device;
 pub mod file_read;
 pub mod file_search;
 pub mod files;
+pub mod hub_move;
 pub mod ipc;
 pub mod kernel;
 pub mod layout;

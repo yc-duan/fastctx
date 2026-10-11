@@ -277,6 +277,10 @@ pub enum RemoteCall {
     },
     /// What that machine is like, for `fastctx nodes`.
     Facts,
+    /// That machine's network addresses, as a place for the hub
+    /// (`crate::hub_move`). A machine that cannot take the hub does not
+    /// know this call.
+    Interfaces,
     /// Copy `from`, a path there, to another machine.
     CopySend {
         from: String,
@@ -357,6 +361,7 @@ impl RemoteCall {
             | RemoteCall::Who { .. }
             | RemoteCall::Since { .. }
             | RemoteCall::Facts
+            | RemoteCall::Interfaces
             | RemoteCall::Relay { .. } => Purpose::Look,
         }
     }
@@ -428,6 +433,9 @@ pub enum RemoteReply {
     /// A conversation's setting there changed as asked.
     Set,
     Facts(MachineFacts),
+    Interfaces {
+        addresses: Vec<crate::hub_move::InterfaceAddress>,
+    },
     Copied(CopyReport),
     Canon {
         heads: Vec<CanonHead>,

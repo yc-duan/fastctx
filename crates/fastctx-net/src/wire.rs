@@ -126,6 +126,11 @@ pub enum Intent {
         letters: Letters,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         through: Option<String>,
+        /// The address this connection was dialed to, as the machine dialed
+        /// it: a hub that moved tells by it which machines still come
+        /// through the old place (`crate::moving`). Older machines omit it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dialed: Option<std::net::SocketAddr>,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -143,6 +148,10 @@ pub enum Intent {
     /// `Down::Ready`, and closed. A machine on a later address of its list
     /// asks the earlier ones.
     Probe,
+    /// The old hub of the move `id`, dialing the new place for `role`;
+    /// `proof` is the move's key's signature of the TLS exporter
+    /// (`crate::moving`).
+    Handover { id: String, role: crate::moving::HandoverRole, proof: Signature },
 }
 
 /// A computer or phone logging in: the name it asks for, its key, and
@@ -351,6 +360,11 @@ pub enum Question {
     /// A project's entries after the one numbered `after`, as many as fit
     /// in one frame.
     LedgerRead { town: TownId, after: u64 },
+    /// Moving the hub, asked as `account`, which must be the super
+    /// administrator's and logged in on the asking member.
+    HubMove { account: AccountName, request: fastctx_types::hub_move::HubMoveRequest },
+    /// What the machine the hub moves to asks of it.
+    HubArrival { request: crate::moving::ArrivalRequest },
 }
 
 /// What an account changes on its hub.
@@ -498,6 +512,13 @@ pub enum Told {
     Entries {
         entries: Vec<(u64, Signed)>,
         more: bool,
+    },
+    HubMove {
+        reply: fastctx_types::hub_move::HubMoveReply,
+    },
+    /// The hub's identity, for the machine it moves to.
+    HubIdentity {
+        identity: Box<crate::moving::Identity>,
     },
 }
 

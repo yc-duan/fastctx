@@ -14,6 +14,7 @@ import type { ConnectionState } from "./device";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { AccountChange, AccountsReply, HubAccount } from "./accounts";
+import type { HubMoveReply, HubMoveRequest } from "./hub-move";
 import type { RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
@@ -483,10 +484,27 @@ export function remoteOpen(server: RemoteServer, step: (step: RemoteStep) => voi
   return invoke("remote_open", { server, steps });
 }
 
-export function remoteJoin(session: number, token: string, step: (step: RemoteStep) => void): Promise<void> {
+export function remoteJoin(session: number, token: string, step: (step: RemoteStep) => void, keepOpen = false): Promise<void> {
   const steps = new Channel<RemoteStep>();
   steps.onmessage = step;
-  return invoke("remote_join", { session, token, steps });
+  return invoke("remote_join", { session, token, keepOpen, steps });
+}
+
+/** Installs the service of the hub moving to the server the session is open to. */
+export function remoteArrive(session: number, step: (step: "arrive") => void): Promise<void> {
+  const steps = new Channel<"arrive">();
+  steps.onmessage = step;
+  return invoke("remote_arrive", { session, steps });
+}
+
+/** `request` of a move of the hub named `hub`, as `account`, its super administrator. */
+export function hubMove(hub: string | null, account: string, request: HubMoveRequest): Promise<HubMoveReply> {
+  return invoke("hub_move", { hubName: hub, accountName: account, request });
+}
+
+/** Installs the service of the hub moving to this computer, asking for administrator rights here. */
+export function arriveHub(): Promise<void> {
+  return invoke("arrive_hub");
 }
 
 export function remoteClose(session: number): Promise<void> {

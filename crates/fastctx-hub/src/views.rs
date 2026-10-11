@@ -8,7 +8,9 @@
 //! super administrator, whom every member is told of, since it may use them
 //! all; and whether each member it sees is online, since when, and through
 //! which relay. A device logged in to the super administrator's account sees
-//! the whole directory.
+//! the whole directory, and the moves of the hub (`crate::moving`), as the
+//! machine the hub moves to sees its move. Once the hub was moved, every
+//! member is told where it reaches the hub now.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -24,7 +26,12 @@ pub(crate) struct Presence {
     pub through: Option<String>,
 }
 
-pub(crate) fn view_for(store: &Store, online: &HashMap<MachineName, Presence>, me: &MachineName) -> View {
+pub(crate) fn view_for(
+    hub: &crate::Hub,
+    store: &Store,
+    online: &HashMap<MachineName, Presence>,
+    me: &MachineName,
+) -> View {
     let all = &store.book.directory;
     let mine = all.acts_for(me);
     let whole = mine.iter().any(|account| all.logged_in(me, account) && all.is_super(account));
@@ -38,6 +45,8 @@ pub(crate) fn view_for(store: &Store, online: &HashMap<MachineName, Presence>, m
         hub_name: store.hub.name.clone(),
         me: me.clone(),
         self_registration: store.hub.self_registration,
+        hub_addresses: crate::moving::addresses_for(store, me),
+        hub_moves: crate::moving::requests::told(hub, store, me, whole),
         directory,
     }
 }

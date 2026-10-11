@@ -23,7 +23,8 @@ pub(crate) async fn expire(hub: &crate::Hub) -> io::Result<()> {
         let notified = hub.machine_log_changed.notified();
         let expires = {
             let mut store = hub.store();
-            if store.book.machine_log.expire(Timestamp::now()) {
+            // Nothing changes while the hub hands its records over.
+            if !hub.moving.frozen() && store.book.machine_log.expire(Timestamp::now()) {
                 store.save_book()?;
             }
             store.book.machine_log.expires()

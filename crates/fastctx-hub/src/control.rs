@@ -62,6 +62,7 @@ pub(crate) async fn session(
     proof: Signature,
     letters: Letters,
     through: Option<String>,
+    dialed: Option<SocketAddr>,
 ) {
     let name = match hub.member(&key, &proof, &binding) {
         Ok(name) => name,
@@ -73,10 +74,11 @@ pub(crate) async fn session(
     };
     let generation = hub.next();
     let (out, mut outgoing) = mpsc::unbounded_channel();
-    if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, through.clone()) {
+    if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, through.clone(), peer) {
         refuse(&mut socket, reason).await;
         return;
     }
+    crate::moving::follow::came(&hub, &name, dialed);
     match &through {
         Some(relay) => hub.log.line(format_args!("{name} connected from {peer} through the relay {relay}")),
         None => hub.log.line(format_args!("{name} connected from {peer}")),
@@ -154,6 +156,7 @@ fn open(
     out: mpsc::UnboundedSender<Out>,
     letters: Letters,
     through: Option<String>,
+    peer: SocketAddr,
 ) -> Result<(), Refusal> {
     // The store's lock is held while the session is registered, so a letter
     // kept meanwhile is either in the backlog below or pushed after it.
@@ -189,7 +192,7 @@ fn open(
     for (seq, message) in backlog {
         let _ = out.send(Out::Frame(Down::Deliver { seq, message }));
     }
-    let replaced = hub.sessions().insert(name.clone(), Session { generation, out, since: now, through });
+    let replaced = hub.sessions().insert(name.clone(), Session { generation, out, since: now, through, peer });
     drop(store);
     if let Some(old) = replaced {
         let _ = old.out.send(Out::End(Refusal::Replaced));
@@ -277,7 +280,7 @@ pub(crate) fn cut_calls(hub: &Hub) {
 }
 
 fn handle(
-    hub: &Hub,
+    hub: &Arc<Hub>,
     name: &MachineName,
     generation: u64,
     out: &mpsc::UnboundedSender<Out>,
@@ -579,7 +582,7 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
     }
 }
 
-fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String> {
+fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
         Question::MachineLog { account, before } => {
             let store = hub.store();
@@ -617,6 +620,8 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
                 .collect();
             Ok(Told::Towns { towns })
         }
+        Question::HubMove { account, request } => crate::moving::requests::ask(hub, name, &account, request),
+        Question::HubArrival { request } => crate::moving::requests::arrival(hub, name, request),
         Question::LedgerRead { town, after } => {
             if !hub.store().book.directory.member_in_project(name, &town) {
                 return Err(format!("{name} acts for no account that may read {town}"));

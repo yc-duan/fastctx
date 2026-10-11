@@ -35,6 +35,8 @@ mod file_search;
 pub mod handoff;
 mod here;
 mod homes;
+mod hub_arrival;
+mod hub_moving;
 mod inbox;
 mod job_ends;
 mod job_reader;

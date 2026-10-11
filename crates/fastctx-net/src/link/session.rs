@@ -150,7 +150,13 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
     let hello = Up::Hello {
         protocol: wire::GREETING_PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
-        intent: Intent::Session { key: inner.key.public(), proof, letters: position, through: upstream.relay.clone() },
+        intent: Intent::Session {
+            key: inner.key.public(),
+            proof,
+            letters: position,
+            through: upstream.relay.clone(),
+            dialed: Some(address),
+        },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
         Ok(Ok(())) => {}
@@ -176,7 +182,11 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             // The hub's short name is the hub's to say: a membership kept
             // before it was known takes it from the welcome.
             if hub_name != membership.hub_name {
-                let corrected = super::Membership { hub_name: hub_name.clone(), ..membership.clone() };
+                let corrected = super::Membership {
+                    hub_name: hub_name.clone(),
+                    addresses: inner.hub_addresses(),
+                    ..membership.clone()
+                };
                 match super::state::write(&inner.dir.membership(), &corrected) {
                     Ok(()) => inner.node.log(format!("the hub {hub} is called {hub_name}")),
                     Err(error) => inner.node.log(format!("recording that the hub is called {hub_name}: {error}")),
@@ -258,9 +268,18 @@ async fn connected(
         tokio::spawn(take_letters(inner.clone(), up.clone(), hub_letters, delivered, letter_failed)),
     ]);
     let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
-    if tried.len() > 1 {
+    let mut preferred = tried[..tried.len() - 1].to_vec();
+    // On a later address of the hub's own, as one a moved hub's old place
+    // forwards from, the earlier ones are asked too.
+    if upstream.relay.is_none()
+        && let Some(position) = upstream.addresses.iter().position(|dialed| *dialed == address)
+        && position > 0
+    {
+        preferred.push(Upstream { relay: None, addresses: upstream.addresses[..position].to_vec() });
+    }
+    if !preferred.is_empty() {
         let cert = inner.membership.cert;
-        tasks.0.push(tokio::spawn(ask_preferred(tried[..tried.len() - 1].to_vec(), cert, returned)));
+        tasks.0.push(tokio::spawn(ask_preferred(preferred, cert, returned)));
     }
     {
         let inner = inner.clone();

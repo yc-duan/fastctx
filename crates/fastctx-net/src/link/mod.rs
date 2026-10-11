@@ -11,6 +11,7 @@
 //! (`crate::directory`). The node checks again what each call asks.
 
 mod accounts;
+mod addresses;
 mod answering;
 mod calls;
 mod changes;
@@ -19,6 +20,7 @@ mod kernel;
 mod ledger;
 mod letters;
 mod machine_log;
+mod moving;
 mod outgoing;
 mod session;
 pub mod state;
@@ -164,6 +166,9 @@ pub struct Link {
 pub(crate) struct Inner {
     dir: NetDir,
     membership: Membership,
+    /// Where the hub is reached now (`addresses`): the membership's, until
+    /// a hub that moved says otherwise.
+    addresses: Mutex<Vec<SocketAddr>>,
     key: SecretKey,
     node: Arc<dyn Node>,
     counter: Counter,
@@ -271,6 +276,7 @@ impl Link {
         let (status, _) = watch::channel(Status::Connecting { since: Timestamp::now(), last_error: None });
         let inner = Arc::new(Inner {
             dir,
+            addresses: Mutex::new(membership.addresses.clone()),
             membership,
             key,
             node,
@@ -314,8 +320,16 @@ impl Link {
         self.inner.status.send_replace(Status::Stopped { reason: "the link was stopped".to_string() });
     }
 
+    /// This machine's place on the hub. Its addresses are those it logged
+    /// in with; where the hub is reached now is `hub_addresses`.
     pub fn membership(&self) -> &Membership {
         &self.inner.membership
+    }
+
+    /// Where the hub is reached now, in the order to try: what this machine
+    /// logged in with, or, once the hub moved, what the hub said since.
+    pub fn hub_addresses(&self) -> Vec<SocketAddr> {
+        self.inner.hub_addresses()
     }
 
     pub fn status(&self) -> Status {
@@ -455,7 +469,7 @@ impl Inner {
                     .collect()
             })
             .unwrap_or_default();
-        upstreams.push(Upstream { relay: None, addresses: self.membership.addresses.clone() });
+        upstreams.push(Upstream { relay: None, addresses: self.hub_addresses() });
         upstreams
     }
 
@@ -555,6 +569,7 @@ impl Inner {
         let changed = *self.view() != *view;
         if changed {
             state::write(&self.dir.view(), &*view).map_err(|error| format!("keeping the view: {error}"))?;
+            self.follow_addresses(&view);
             *self.view.lock().expect("never poisoned") = Arc::from(view);
         }
         self.reroute_if_changed();

@@ -10,6 +10,7 @@ mod android;
 mod collab;
 mod composer;
 mod connection;
+mod hub_moving;
 
 #[cfg(desktop)]
 mod founding;
@@ -877,6 +878,8 @@ pub fn run() {
             #[cfg(desktop)]
             remote_world::remote_join,
             #[cfg(desktop)]
+            remote_world::remote_arrive,
+            #[cfg(desktop)]
             remote_world::remote_close,
             #[cfg(desktop)]
             retention::retention_read,
@@ -894,6 +897,9 @@ pub fn run() {
             collab::collab_write,
             accounts::account_change,
             accounts::server_command,
+            hub_moving::hub_move,
+            #[cfg(desktop)]
+            hub_moving::arrive_hub,
             accounts::agent_homes,
             accounts::works_on,
             world_now,

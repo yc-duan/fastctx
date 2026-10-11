@@ -35,6 +35,7 @@ async fn open(world: &WorldDir, directory: &Path) -> anyhow::Result<Option<dial:
         proof: key.sign(sign::Domain::Session, &connection.binding),
         letters: wire::Letters { epoch: letters.epoch, taken: letters.taken },
         through: None,
+        dialed: Some(connection.address),
     };
     dial::send(
         &mut connection.socket,

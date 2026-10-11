@@ -222,6 +222,14 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
         node.set_machine(name.clone());
     }
     match node.link_of(&hub) {
+        // Logged in again where the hub is reached now, as after a move this
+        // computer did not follow: the link connects there from now on.
+        Some(link) if !addresses.is_empty() && link.hub_addresses() != addresses => {
+            link.reach_hub_at(addresses);
+            if let Err(error) = link.refresh().await {
+                node.log.line(format_args!("logged in again; the link connects to the hub anew: {error}"));
+            }
+        }
         Some(link) => {
             link.refresh().await.map_err(|error| Failure::new(format!("logged in, but asking the hub: {error}")))?;
         }
@@ -668,6 +676,9 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
+                RemoteCall::Interfaces => {
+                    crate::hub_arrival::interfaces().map(|addresses| RemoteReply::Interfaces { addresses })
+                }
                 RemoteCall::CopySend { from: path, to } => {
                     let from = fastctx_types::copy::Place { machine: None, hub: None, path };
                     Box::pin(crate::copy::copy(&node, &acting, from, to)).await.map(RemoteReply::Copied)
@@ -793,6 +804,7 @@ impl fastctx_net::link::Node for Handler {
         let Some(node) = self.node.upgrade() else { return };
         crate::admitted::notice(&node, &self.hub);
         crate::relaying::follow(&node, &self.hub);
+        crate::hub_arrival::check(&node, &self.hub);
         // The machines each session may use are in its tools' descriptions.
         node.tools_changed(None);
     }

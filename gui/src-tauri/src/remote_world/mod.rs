@@ -48,7 +48,8 @@ pub(crate) async fn remote_hub(
     request: Request,
     steps: Channel<&'static str>,
 ) -> Result<Made, String> {
-    let (remote, made) = ssh::make_hub(&request, &carried(&app)?, |name| steps.send(name).map_err(|error| error.to_string())).await?;
+    let (remote, made) =
+        ssh::make_hub(&request, &carried(&app)?, |name| steps.send(name).map_err(|error| error.to_string())).await?;
     Ok(Made { session: keep(&sessions, remote), address: made.address, hostname: made.hostname })
 }
 
@@ -61,7 +62,8 @@ pub(crate) async fn remote_open(
     server: Server,
     steps: Channel<&'static str>,
 ) -> Result<Opened, String> {
-    let remote = ssh::open(&server, &carried(&app)?, &|name| steps.send(name).map_err(|error| error.to_string())).await?;
+    let remote =
+        ssh::open(&server, &carried(&app)?, &|name| steps.send(name).map_err(|error| error.to_string())).await?;
     let hostname = remote.hostname().to_string();
     Ok(Opened { session: keep(&sessions, remote), hostname })
 }
@@ -79,18 +81,50 @@ fn keep(sessions: &Sessions, remote: ssh::Remote) -> u64 {
 }
 
 /// Installs the server as one of the World's machines with `token`, then
-/// takes the temporary directory away and closes the session.
+/// takes the temporary directory away and closes the session; with
+/// `keep_open`, the session stays, as for the hub to move to the server
+/// next (`remote_arrive`).
 #[fastctx_gui_command::command]
 pub(crate) async fn remote_join(
     sessions: tauri::State<'_, Sessions>,
     session: u64,
     token: String,
+    keep_open: Option<bool>,
     steps: Channel<&'static str>,
 ) -> Result<(), String> {
     steps.send("join").map_err(|error| error.to_string())?;
-    let remote = sessions.open.lock().expect("never poisoned").get(&session).cloned().ok_or("the connection to the server is gone")?;
+    let remote = sessions
+        .open
+        .lock()
+        .expect("never poisoned")
+        .get(&session)
+        .cloned()
+        .ok_or("the connection to the server is gone")?;
     remote.join(&token).await?;
+    if keep_open == Some(true) {
+        return Ok(());
+    }
     close(&sessions, session).await
+}
+
+/// Installs the system service of the hub moving to the server, with the
+/// sudo the session has (`fastctx hub arrive` there); the session stays
+/// open.
+#[fastctx_gui_command::command]
+pub(crate) async fn remote_arrive(
+    sessions: tauri::State<'_, Sessions>,
+    session: u64,
+    steps: Channel<&'static str>,
+) -> Result<(), String> {
+    steps.send("arrive").map_err(|error| error.to_string())?;
+    let remote = sessions
+        .open
+        .lock()
+        .expect("never poisoned")
+        .get(&session)
+        .cloned()
+        .ok_or("the connection to the server is gone")?;
+    remote.arrive().await
 }
 
 /// Takes the temporary directory away and closes the session.

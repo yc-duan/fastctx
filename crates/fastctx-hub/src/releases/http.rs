@@ -23,10 +23,19 @@ use tokio_util::io::ReaderStream;
 
 use crate::Hub;
 
+/// Who answers what comes in on the hub's port: the hub, or the new place
+/// of a move standing by (`crate::moving::standby`), which serves no
+/// releases and takes only the old hub.
+#[derive(Clone)]
+pub(crate) enum Host {
+    Hub(Arc<Hub>),
+    Standby(Arc<crate::moving::standby::Standby>),
+}
+
 type Body = UnsyncBoxBody<Bytes, io::Error>;
 type TlsStream = tokio_rustls::server::TlsStream<TcpStream>;
 
-pub(crate) async fn serve(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: TcpStream, peer: SocketAddr) {
+pub(crate) async fn serve(host: Host, tls: tokio_rustls::TlsAcceptor, tcp: TcpStream, peer: SocketAddr) {
     // Keep the existing initial handshake budget. File transfer itself has
     // no deadline: a slow download must not be cut off by a session policy.
     let deadline = Instant::now() + wire::SILENCE;
@@ -38,7 +47,7 @@ pub(crate) async fn serve(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: Tc
     if stream.get_ref().1.export_keying_material(&mut binding, wire::EXPORTER_LABEL, None).is_err() {
         return;
     }
-    let service = service_fn(move |request| respond(hub.clone(), request, peer, binding, deadline));
+    let service = service_fn(move |request| respond(host.clone(), request, peer, binding, deadline));
     let mut builder = hyper::server::conn::http1::Builder::new();
     builder.timer(TokioTimer::new()).header_read_timeout(deadline.saturating_duration_since(Instant::now()));
     // keep_alive(false) rewrites Connection: Upgrade and breaks WebSockets.
@@ -46,7 +55,7 @@ pub(crate) async fn serve(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: Tc
 }
 
 async fn respond(
-    hub: Arc<Hub>,
+    host: Host,
     mut request: Request<Incoming>,
     peer: SocketAddr,
     binding: [u8; 32],
@@ -75,11 +84,19 @@ async fn respond(
                 Ok::<_, String>((socket, hello))
             };
             if let Ok(Ok((socket, hello))) = tokio::time::timeout_at(deadline, opened).await {
-                crate::connected(hub, socket, path, binding, hello, peer).await;
+                match host {
+                    Host::Hub(hub) => crate::connected(hub, socket, path, binding, hello, peer).await,
+                    Host::Standby(standby) => {
+                        crate::moving::standby::connected(standby, socket, path, binding, hello, peer).await;
+                    }
+                }
             }
         });
         return Ok(response);
     }
+    let Host::Hub(hub) = host else {
+        return Ok(text(StatusCode::NOT_FOUND, "Not found"));
+    };
     if request.uri().query().is_some() || !matches!(*request.method(), Method::GET | Method::HEAD) {
         return Ok(text(StatusCode::NOT_FOUND, "Not found"));
     }

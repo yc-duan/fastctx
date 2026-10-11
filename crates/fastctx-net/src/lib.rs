@@ -26,6 +26,7 @@ pub mod link;
 pub mod listen;
 pub mod login;
 pub mod message;
+pub mod moving;
 pub mod proxy;
 pub mod route;
 pub mod sign;
