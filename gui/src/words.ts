@@ -67,8 +67,7 @@ export interface Words {
   compacted: string;
   turn(how: string, reason: string | null): string | null;
   wentOnAs(job: string): string;
-  /** On a tool's row: it went on in the background; failed without a code. */
-  wentOn: string;
+  /** On a tool's row: it failed, where nothing else says so. */
   rowFailed: string;
   exited(code: number): string;
   cut: string;
@@ -285,7 +284,6 @@ export const zh: Words = {
     return reason ? `${said}：${reason}` : said;
   },
   wentOnAs: (job) => `转入后台 ${job}`,
-  wentOn: "后台",
   rowFailed: "失败",
   exited: (code) => `退出 ${code}`,
   cut: "本轮结束时仍在运行",
@@ -484,7 +482,6 @@ export const en: Words = {
     return reason ? `${said}: ${reason}` : said;
   },
   wentOnAs: (job) => `went on as ${job}`,
-  wentOn: "background",
   rowFailed: "failed",
   exited: (code) => `exit ${code}`,
   cut: "still running when the turn ended",

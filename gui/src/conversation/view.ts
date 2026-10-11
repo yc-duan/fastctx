@@ -869,7 +869,7 @@ export class ConversationView {
     const expandable = this.hasDetails(entry.tool);
     const elsewhere =
       entry.tool.machine && entry.tool.machine !== this.context.residentMachine
-        ? `<span class="row-machine">${glyph("machine", 14)}${escape(words.on(entry.tool.machine))}</span>`
+        ? `<span class="row-machine">${escape(words.on(entry.tool.machine))}</span>`
         : "";
     const stats =
       line.added !== null && line.removed !== null
@@ -891,13 +891,10 @@ export class ConversationView {
     // the one it takes now.
     const agent = this.conversation.agentOf(entry);
     const sub = agent ? `<div class="row-sub">${escape(words.subagent(agent.kind, agent.steps, tense === "running" ? agent.doing : null))}</div>` : "";
-    // What it did, on what, and on the right how it came out: the stretch's
-    // rows share their columns, so verbs, objects and outcomes each line up.
+    // What it did and on what, its figures beside it, the machine where it
+    // was not here; how a command ended is in what it holds.
     const meta = `<span class="row-meta">${stats}${this.outcome(entry, tense)}${elsewhere}${chevron}</span>`;
-    // Commands, paths, queries and addresses are set in the code face; a
-    // task given in words stays in the reading face.
-    const code = !["colleague", "tasks", "tool"].includes(line.glyph);
-    return `<div class="row row-tool row-${tense}${code ? " row-code" : ""}${enter}" data-row="${entry.key}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${entry.key}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest">${object}${meta}</span></button>${colleague}${sub}${fold}</div>`;
+    return `<div class="row row-tool row-${tense}${enter}" data-row="${entry.key}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${entry.key}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest">${object}${meta}</span></button>${colleague}${sub}${fold}</div>`;
   }
 
   private thinking(entry: Extract<Entry, { kind: "prose" }>, enter: string): string {
@@ -920,12 +917,10 @@ export class ConversationView {
   private outcome(entry: ToolEntry, tense: string): string {
     const { words } = this.context;
     const { tool } = entry;
-    if (tool.does.as === "command") {
-      if (tool.does.job) return `<span class="row-outcome went-on" title="${escape(words.wentOnAs(tool.does.job))}">${escape(words.wentOn)}</span>`;
-      if (tool.does.exit !== null && tool.does.exit !== 0) {
-        return `<span class="row-outcome wrong">${escape(words.exited(tool.does.exit))}</span>`;
-      }
-    }
+    // A command's ending is not an outcome of the row: a code other than
+    // zero is often what was asked, and one that went on in the background
+    // is counted beside the composer; both are said in what it holds.
+    if (tool.does.as === "command" && (tool.does.job || tool.does.exit !== null)) return "";
     switch (entry.ended?.use) {
       case "cut":
         return `<span class="row-outcome">${escape(words.cut)}</span>`;
@@ -1008,8 +1003,15 @@ export class ConversationView {
       holder.append(out);
       surface.append(holder);
     };
+    // How a command ended, under what it wrote.
+    const ending =
+      tool.does.as === "command" && tool.does.job
+        ? `<p class="io-end">${escape(words.wentOnAs(tool.does.job))}</p>`
+        : tool.does.as === "command" && tool.does.exit !== null
+          ? `<p class="io-end${tool.does.exit === 0 ? "" : " nonzero"}">${escape(words.exited(tool.does.exit))}</p>`
+          : "";
     if (given) part("IN", given);
-    if (output || images) part("OUT", output, images);
+    if (output || images || ending) part("OUT", output, images + ending);
     content.append(surface);
     this.longs.set(key, longs);
   }

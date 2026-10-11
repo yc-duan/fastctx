@@ -392,15 +392,14 @@
   padding-top: var(--space-1);
 }
 
-/* A row: a glyph in the rail, then what it did, on what, and on the right
-   how it came out, then anything it links to. Rails are joined by a thin
-   line that breaks a little before each glyph.
+/* A row: a glyph in the rail, then what it did and on what, its figures
+   beside it, then anything it links to; quiet, one size. Rails are joined
+   by a thin line that breaks a little before each glyph.
 
    A stretch's rows share the rail's and the verbs' columns: each row and
    its line are subgrids of the stretch, so the verbs' column is as wide as
    the widest verb there, in whatever language, and the objects start on
-   one line. The rest is each row's own: its object takes what its outcome
-   leaves, and the outcomes end on the right edge. */
+   one line. */
 .rows {
   display: grid;
   grid-template-columns: calc(var(--rail-glyph) + var(--rail-gap)) max-content minmax(0, 1fr) auto;
@@ -489,12 +488,11 @@
   white-space: nowrap;
 }
 
-/* The object gives the line its baseline, which the verb shares; what
-   stands on the right is centred on the line. */
 .row-rest {
   grid-column: 2;
   display: flex;
   align-items: center;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -508,13 +506,6 @@
   transition: color var(--hover) ease;
 }
 
-/* The code face stands taller than the reading face at one size. */
-.row-code .row-object {
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
-}
-
 .row-line:not(:disabled):hover .row-object {
   color: var(--text-2);
 }
@@ -524,16 +515,13 @@
   white-space: normal;
 }
 
-/* How it came out, at the right of the line: figures, an outcome, the
-   machine, the arrow; quiet, one size, ending on one edge. */
+/* After the object, as quiet as it: its figures, an outcome where there
+   is one, the machine, the arrow. */
 .row-meta {
   flex: none;
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding-left: var(--space-3);
-  font-size: var(--size-small);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -560,25 +548,13 @@
   font-variant-numeric: tabular-nums;
 }
 
-.row-outcome.wrong {
-  color: var(--wrong);
+.row-machine::before {
+  content: "·";
+  margin-right: var(--space-2);
 }
 
-.row-outcome.went-on {
-  color: var(--accent);
-}
-
-.row-machine {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.row-machine .glyph {
-  align-self: center;
-}
-
-/* The arrow that opens a row appears only when it can be used. */
+/* The arrow that opens a row shows under a pointer, on focus and while the
+   row is open: the whole line is what is pressed. */
 .row-chevron {
   flex: none;
   display: inline-grid;
@@ -598,16 +574,6 @@
 
 .row-line[aria-expanded="true"] .row-chevron {
   transform: rotate(0deg);
-}
-
-@media (hover: none) {
-  .row-chevron {
-    opacity: 1;
-  }
-}
-
-.row-failed .row-action {
-  color: var(--wrong);
 }
 
 .row-failed .rail {
@@ -816,6 +782,17 @@
 
 .io-part + .io-part {
   border-top: 1px solid var(--divider);
+}
+
+/* How a command ended, small under what it wrote. */
+.io-end {
+  margin: var(--space-1) 0 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.io-end.nonzero {
+  color: var(--wrong);
 }
 
 .io-label {
