@@ -15,8 +15,8 @@ pub use placement::place;
 #[derive(Clone, Copy, Debug)]
 pub struct Kernel<'a> {
     pub version: &'a str,
-    pub x86_64_sha256: &'a str,
-    pub aarch64_sha256: &'a str,
+    pub x86_64_sha256: Option<&'a str>,
+    pub aarch64_sha256: Option<&'a str>,
 }
 
 /// A release directory containing the platform archive. A hub must supply its
@@ -51,8 +51,9 @@ pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyh
         !invitation.is_empty() && !invitation.contains('\0') && !invitation.chars().any(char::is_whitespace),
         "the invitation must be one nonempty word"
     );
-    digest(kernel.x86_64_sha256)?;
-    digest(kernel.aarch64_sha256)?;
+    for value in [kernel.x86_64_sha256, kernel.aarch64_sha256].into_iter().flatten() {
+        digest(value)?;
+    }
     let (directory, pin) = match source {
         Source::GitHub => {
             (format!("https://github.com/yc-duan/fastctx/releases/download/v{}", kernel.version), String::new())
@@ -72,12 +73,21 @@ pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyh
         }
     };
     Ok(format!(
-        "(set -e;a=$(uname -m);case $a in x86_64) h={};;aarch64) h={};;*) echo Unsupported:$a >&2;exit 1;;esac;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;cd \"$d\";curl --proto '=https' -fLo a{pin} {}/fastctx-$a-unknown-linux-gnu.tar.gz;echo \"$h  a\"|sha256sum -c -;tar xzf a;./fastctx server install {})",
-        kernel.x86_64_sha256.to_ascii_lowercase(),
-        kernel.aarch64_sha256.to_ascii_lowercase(),
+        "(set -e;a=$(uname -m);case $a in x86_64) {};;aarch64) {};;*) echo Unsupported:$a >&2;exit 1;;esac;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;cd \"$d\";curl --proto '=https' -fLo a{pin} {}/fastctx-$a-unknown-linux-gnu.tar.gz;echo \"$h  a\"|sha256sum -c -;tar xzf a;./fastctx server install {})",
+        architecture(kernel.x86_64_sha256, kernel.version),
+        architecture(kernel.aarch64_sha256, kernel.version),
         quote(&directory),
         quote(invitation),
     ))
+}
+
+fn architecture(digest: Option<&str>, version: &str) -> String {
+    match digest {
+        Some(digest) => format!("h={}", digest.to_ascii_lowercase()),
+        None => format!(
+            "echo \"fastctx {version} for $a is unavailable from this source; get the $a Linux archive from GitHub Releases or place it with SHA256SUMS on the hub.\" >&2;exit 1"
+        ),
+    }
 }
 
 fn digest(value: &str) -> anyhow::Result<()> {

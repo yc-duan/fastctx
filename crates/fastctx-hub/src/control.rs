@@ -301,12 +301,12 @@ fn handle(
                 .expect("never poisoned")
                 .retain(|_, pending| !(pending.caller == *name && pending.id == id));
         }
-        Up::Ask { id, question: Question::KernelRelease { version } } => {
+        Up::Ask { id, question: Question::KernelRelease { version, allow_partial } } => {
             let releases = hub.releases.clone();
             let out = out.clone();
             tokio::spawn(async move {
                 let read = releases.clone();
-                let answer = match tokio::task::spawn_blocking(move || read.ready(&version)).await {
+                let answer = match tokio::task::spawn_blocking(move || read.ready(&version, allow_partial)).await {
                     Ok(Ok(release)) => Ok(Told::KernelRelease { release, certificate: releases.certificate.clone() }),
                     Ok(Err(reason)) => Err(reason),
                     Err(error) => Err(format!("reading the kernel release: {error}")),

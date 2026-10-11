@@ -23,6 +23,7 @@ def replies(fixtures):
     for controlled in fixtures["control"]["controlled"]:
         yield {"reply": "controlled", "resident": ADDRESS, "controlled": controlled}
     yield {"reply": "done"}
+    yield {"reply": "server_invitation", "command": "(set -e;echo x86_64 unavailable >&2;exit 1)"}
     yield {"reply": "arrived", "resident": ADDRESS["resident"], "town": "project"}
     yield {"reply": "machines", "here": "desktop", "others": ["laptop"]}
     # Where its own program runs, and colleagues lent by another account:
@@ -210,6 +211,8 @@ def samples(root):
                 welcome["node_lifetime"] = lifetime
             yield {"mode": "welcome", "protocol": protocol, "value": welcome}
         for reply in replies(fixtures):
+            if protocol == 5 and reply["reply"] == "server_invitation":
+                continue
             if reply["reply"] == "waited" and protocol < 10:
                 continue
             if protocol == 5 and reply["reply"] in ["page", "pages", "machines"]:
@@ -227,6 +230,11 @@ def samples(root):
             case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and reply["controlled"]["kind"] in ["reported", "refused", "model_menu"] and protocol < 10)
             yield case
         yield {"mode": "reply", "protocol": protocol, "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}
+        if protocol >= 8:
+            yield {"mode": "request", "protocol": protocol,
+                   "peer": {"kind": "command", "resident": None, "session": None}, "admitted": protocol == 10,
+                   "value": {"kind": "call", "id": 37, "call": {"call": "server_command", "hub": None,
+                             "account": "ada", "name": None, "expires": AT}}}
         for call, peer, admitted in calls(fixtures):
             if call["call"] == "wait" and protocol < 10:
                 continue

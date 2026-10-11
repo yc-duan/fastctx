@@ -1,7 +1,9 @@
-//! Only complete, checksum-matching Linux releases are offered to installers.
+//! Verified hand-placed archives take precedence over the running Linux kernel.
 
 mod files;
 pub(crate) mod http;
+#[cfg(target_os = "linux")]
+mod own;
 
 use std::fs::File;
 use std::io::{self, Read as _};
@@ -13,11 +15,18 @@ use sha2::{Digest as _, Sha256};
 pub(crate) struct Releases {
     files: files::Files,
     pub certificate: Vec<u8>,
+    #[cfg(target_os = "linux")]
+    own: own::Own,
 }
 
 impl Releases {
     pub fn new(directory: &Path, certificate: Vec<u8>) -> io::Result<Self> {
-        Ok(Self { files: files::Files::new(directory)?, certificate })
+        Ok(Self {
+            files: files::Files::new(directory)?,
+            certificate,
+            #[cfg(target_os = "linux")]
+            own: own::Own::new()?,
+        })
     }
 
     /// One published file, for a download. Nothing is hashed here: the line
@@ -25,45 +34,67 @@ impl Releases {
     /// archives for every unauthenticated request would let anyone keep the
     /// hub's processors busy with a few bytes each.
     pub fn file(&self, version: &str, name: &str) -> io::Result<File> {
-        self.files.open(version, name)
+        match self.files.open(version, name) {
+            Ok(file) => Ok(file),
+            #[cfg(target_os = "linux")]
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound
+                    && version == env!("CARGO_PKG_VERSION")
+                    && (Some(name) == own::name() || name == SUMS) =>
+            {
+                self.own.file(name == SUMS)
+            }
+            Err(error) => Err(error),
+        }
     }
 
-    pub fn ready(&self, version: &str) -> Result<KernelRelease, String> {
+    pub fn ready(&self, version: &str, allow_partial: bool) -> Result<KernelRelease, String> {
         if !stable_version(version) {
             return Err("a kernel release version must be stable major.minor.patch".into());
         }
-        self.load(version).map_err(|error| {
+        self.load(version, allow_partial).map_err(|error| {
             format!(
-                "fastctx {version} is not ready on the hub: {error}. Place {X86_64_ARCHIVE}, {AARCH64_ARCHIVE}, and {SUMS} as regular copied files in {}. Prepare all three in a staging directory and rename it to v{version} when complete",
+                "fastctx {version} is not ready on the hub: {error}. Place the required Linux archives and {SUMS} as regular copied files in {}. Prepare them in a staging directory and rename it to v{version} when complete",
                 // A canonical Windows path is verbatim, `\\?\C:\…`; people write it without the prefix.
                 self.files.root.join("releases").join(format!("v{version}")).display().to_string().trim_start_matches(r"\\?\")
             )
         })
     }
 
-    fn load(&self, version: &str) -> Result<KernelRelease, String> {
-        let mut files = Vec::new();
-        let mut faults = Vec::new();
-        for name in [SUMS, X86_64_ARCHIVE, AARCH64_ARCHIVE] {
-            match self.files.open(version, name) {
-                Ok(file) => files.push(file),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => faults.push(format!("missing {name}")),
-                Err(error) => faults.push(format!("{name}: {error}")),
+    fn load(&self, version: &str, allow_partial: bool) -> Result<KernelRelease, String> {
+        let sums = match self.files.open(version, SUMS) {
+            Ok(mut file) => {
+                let mut text = String::new();
+                file.read_to_string(&mut text).map_err(|error| format!("reading {SUMS}: {error}"))?;
+                Some(text)
             }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(format!("{SUMS}: {error}")),
+        };
+        let x86_64_sha256 = self.archive(version, X86_64_ARCHIVE, sums.as_deref())?;
+        let aarch64_sha256 = self.archive(version, AARCH64_ARCHIVE, sums.as_deref())?;
+        if !allow_partial && (x86_64_sha256.is_none() || aarch64_sha256.is_none()) {
+            return Err("this caller requires both x86_64 and aarch64 archives".into());
         }
-        if !faults.is_empty() {
-            return Err(faults.join("; "));
-        }
-        let [mut sums, mut x86_64, mut aarch64]: [File; 3] =
-            files.try_into().expect("the three release files were opened");
-        let mut bytes = Vec::new();
-        sums.read_to_end(&mut bytes).map_err(|error| error.to_string())?;
-        let text = std::str::from_utf8(&bytes).map_err(|error| format!("{SUMS} is not UTF-8: {error}"))?;
-        let x86_64_sha256 = checksum(text, X86_64_ARCHIVE)?;
-        let aarch64_sha256 = checksum(text, AARCH64_ARCHIVE)?;
-        verify(&mut x86_64, X86_64_ARCHIVE, &x86_64_sha256)?;
-        verify(&mut aarch64, AARCH64_ARCHIVE, &aarch64_sha256)?;
         Ok(KernelRelease { version: version.to_owned(), x86_64_sha256, aarch64_sha256 })
+    }
+
+    fn archive(&self, version: &str, name: &str, sums: Option<&str>) -> Result<Option<String>, String> {
+        match self.files.open(version, name) {
+            Ok(mut file) => {
+                let digest = checksum(sums.ok_or_else(|| format!("missing {SUMS}"))?, name)?;
+                verify(&mut file, name, &digest)?;
+                Ok(Some(digest))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                #[cfg(target_os = "linux")]
+                if version == env!("CARGO_PKG_VERSION") && Some(name) == own::name() {
+                    return self.own.digest(&self.files.root).map(Some);
+                }
+                Ok(None)
+            }
+            Err(error) => Err(format!("{name}: {error}")),
+        }
     }
 }
 
