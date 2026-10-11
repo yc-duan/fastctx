@@ -237,6 +237,9 @@ export interface SettingsWords {
   /** How long this computer keeps a command's output once its end was
    *  delivered. */
   retention: string;
+  /** This computer's data: a row, and the way to its page. */
+  data: string;
+  dataOpen: string;
   days(n: number): string;
   keys: string;
   keyList: [string, string][];
@@ -336,6 +339,8 @@ export const zhSettings: SettingsWords = {
   notifyOn: "等待回复或回复完成时通知",
   notifyOff: "关闭",
   retention: "命令输出保留",
+  data: "本机数据",
+  dataOpen: "查看与管理",
   days: (n) => `${n} 天`,
   theme: "主题",
   system: "跟随系统",
@@ -451,6 +456,8 @@ export const enSettings: SettingsWords = {
   notifyOn: "Notify when waiting or replied",
   notifyOff: "Off",
   retention: "Keep command output",
+  data: "Data on this computer",
+  dataOpen: "View and manage",
   days: (n) => (n === 1 ? "1 day" : `${n} days`),
   theme: "Theme",
   system: "System",
