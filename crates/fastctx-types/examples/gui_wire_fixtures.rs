@@ -20,6 +20,8 @@ mod control;
 mod file_read;
 #[path = "gui_wire_fixtures/file_search.rs"]
 mod file_search;
+#[path = "gui_wire_fixtures/machine_log.rs"]
+mod machine_log;
 #[path = "gui_wire_fixtures/pages.rs"]
 mod pages;
 #[path = "gui_wire_fixtures/renewal.rs"]
@@ -36,6 +38,7 @@ mod management;
 
 #[derive(Serialize)]
 struct Fixtures {
+    machine_log: Vec<fastctx_types::machine_log::Page>,
     accounts: accounts::Fixtures,
     pages: pages::Fixtures,
     session: session::Fixtures,
@@ -54,6 +57,7 @@ struct Fixtures {
 
 fn main() {
     let fixtures = Fixtures {
+        machine_log: machine_log::fixtures(),
         accounts: accounts::fixtures(),
         pages: pages::fixtures(),
         session: session::fixtures(),

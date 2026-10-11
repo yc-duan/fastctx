@@ -15,6 +15,7 @@ use fastctx_net::login::HubSecrets;
 use fastctx_net::sign::Bytes;
 use fastctx_net::token::{Token, TokenSecret};
 use fastctx_net::wire::{Change, Refusal, Told};
+use fastctx_types::machine_log::{Actor, Outcome};
 use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;
 
@@ -22,35 +23,62 @@ use crate::store::{Removed, Store, TokenRecord};
 use crate::{Hub, Out};
 
 pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, change: Change) -> Result<Told, String> {
-    let what = describe(&change);
     let mut ended = Vec::new();
     let told = {
         let mut store = hub.store();
-        let directory = &store.book.directory;
-        let found = directory.account(account).cloned().ok_or_else(|| format!("there is no account {account}"))?;
-        if found.locked {
-            return Err(format!("the account {account} is locked"));
-        }
-        let allowed = match &change {
-            Change::OpenProject { .. } => directory.may_act_for(account, asker),
-            _ => directory.logged_in(asker, account),
+        let before = store.book.clone();
+        let action = crate::machine_log::action(&change, &before);
+        let authenticated = match &change {
+            Change::OpenProject { .. } => before.directory.may_act_for(account, asker),
+            _ => before.directory.logged_in(asker, account),
         };
-        if !allowed {
-            return Err(format!("{asker} is not logged in to the account {account}"));
-        }
-        let super_ = found.level == Level::Super;
-        let before = matches!(&change, Change::Collab { .. }).then(|| store.book.clone());
-        let told = apply(hub, &mut store, asker, account, super_, change, &mut ended)?;
-        store.book.directory.settle_acting();
-        if let Err(error) = store.save_book() {
-            if let Some(before) = before {
-                store.book = before;
+        let actor = Actor { account: Some(account.clone()), authenticated, member: Some(asker.clone()), peer: None };
+        let before_hub = store.hub.clone();
+        let result = (|| {
+            let directory = &before.directory;
+            let found = directory.account(account).cloned().ok_or_else(|| format!("there is no account {account}"))?;
+            if found.locked {
+                return Err(format!("the account {account} is locked"));
             }
-            return Err(format!("the hub could not keep the change: {error}"));
+            let allowed = match &change {
+                Change::OpenProject { .. } => directory.may_act_for(account, asker),
+                _ => directory.logged_in(asker, account),
+            };
+            if !allowed {
+                return Err(format!("{asker} is not logged in to the account {account}"));
+            }
+            let super_ = found.level == Level::Super;
+            let told = apply(hub, &mut store, asker, account, super_, change, &mut ended)?;
+            store.book.directory.settle_acting();
+            crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
+            let committed = match &told {
+                Told::CollabWritten { version } => fastctx_types::machine_log::Action::Collab { version: *version },
+                _ => action.clone(),
+            };
+            crate::machine_log::keep(&mut store, &before.directory, actor.clone(), committed, Outcome::Done)?;
+            Ok(told)
+        })();
+        match result {
+            Ok(told) => told,
+            Err(reason) => {
+                store.book = before;
+                if store.hub.self_registration != before_hub.self_registration {
+                    store.hub = before_hub;
+                    store.save_hub().map_err(|error| format!("restoring the hub's settings: {error}"))?;
+                }
+                let directory = store.book.directory.clone();
+                crate::machine_log::keep(
+                    &mut store,
+                    &directory,
+                    actor,
+                    action,
+                    Outcome::Refused { reason: reason.clone() },
+                )?;
+                hub.machine_log_changed.notify_one();
+                return Err(reason);
+            }
         }
-        told
     };
-    hub.log.line(format_args!("{asker}, as {account}: {what}"));
     for (name, refusal) in ended {
         if let Some(session) = hub.sessions().get(&name) {
             let _ = session.out.send(Out::End(refusal));
@@ -58,37 +86,6 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
     }
     hub.changed();
     Ok(told)
-}
-
-fn describe(change: &Change) -> String {
-    match change {
-        Change::Collab { collab } => format!("changed model collaboration from version {}", collab.version),
-        Change::Share { machine, to, shared } => format!("shares {machine} with {to}: {shared}"),
-        Change::Lend { machine, to, agent, home, lent } => format!(
-            "lends {agent}'s login {} on {machine} to {to}: {lent}",
-            home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "(default)".to_string())
-        ),
-        Change::StopActing { machine } => format!("{machine} no longer acts for it"),
-        Change::Relays { machine, relays } => format!("{machine} connects through {} relays", relays.len()),
-        Change::RelayAt { machine, addresses } if addresses.is_empty() => format!("{machine} relays no longer"),
-        Change::RelayAt { machine, addresses } => format!(
-            "{machine} relays at {}",
-            addresses.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
-        ),
-        Change::Remove { name, .. } => format!("removed {name}"),
-        Change::Logout => "logged out".to_string(),
-        Change::Token { register, expires, .. } => format!("made a token (registers: {register}) until {expires}"),
-        Change::PasswordStart { target, .. } => format!("began setting the password of {target}"),
-        Change::PasswordFinish { target, .. } => format!("set the password of {target}"),
-        Change::OpenAccount { name } => format!("opened the account {name}"),
-        Change::SetAccount { name, locked } => format!("set {name}: locked {locked}"),
-        Change::Transfer { to } => format!("handed being the super administrator to {to}"),
-        Change::DeleteAccount { name } => format!("deleted the account {name}"),
-        Change::Settings { self_registration } => format!("anyone may open an account: {self_registration}"),
-        Change::OpenProject { name, .. } => format!("opened the project {name}"),
-        Change::ShareProject { town, with, shared } => format!("shared {town} with {with}: {shared}"),
-        Change::MoveProject { town, to } => format!("handed {town} to {to}"),
-    }
 }
 
 fn apply(

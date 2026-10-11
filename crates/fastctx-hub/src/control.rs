@@ -467,14 +467,29 @@ fn use_agent(hub: &Hub, message: &Envelope, standing: &Standing) -> Result<(), S
         if directory.may_act_for(account, to) {
             false
         } else {
+            let before = store.book.clone();
             store.book.directory.acting.push(fastctx_net::directory::ActsFor {
                 machine: to.clone(),
                 account: account.clone(),
                 since: Timestamp::now(),
             });
-            store
-                .save_book()
-                .map_err(|error| format!("the hub could not keep that {to} acts for {account}: {error}"))?;
+            let actor = fastctx_types::machine_log::Actor {
+                account: Some(account.clone()),
+                authenticated: true,
+                member: Some(message.from.clone()),
+                peer: None,
+            };
+            let action = fastctx_types::machine_log::Action::AllowActing { machine: to.clone(), agent, home };
+            if let Err(reason) = crate::machine_log::keep(
+                &mut store,
+                &before.directory,
+                actor,
+                action,
+                fastctx_types::machine_log::Outcome::Done,
+            ) {
+                store.book = before;
+                return Err(reason);
+            }
             true
         }
     };
@@ -566,6 +581,14 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
 
 fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
+        Question::MachineLog { account, before } => {
+            let store = hub.store();
+            store
+                .book
+                .machine_log
+                .read(&store.book.directory, name, &account, before)
+                .map(|page| Told::MachineLog { page })
+        }
         Question::KernelRelease { .. } => Err("release reads are dispatched asynchronously".into()),
         Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),
         Question::Manage { account, change } => crate::manage::change(hub, name, &account, change),

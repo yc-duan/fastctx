@@ -47,6 +47,11 @@ impl Device {
                 let session = self.on_hub(Some(&hub))?;
                 return Ok((Reply::CollabRead(session.link.collab_read(&account).map_err(failed)?), here()));
             }
+            Call::MachineLog { hub, account, before } => {
+                let session = self.on_hub(Some(&hub))?;
+                let page = session.link.machine_log(&account, before).await.map_err(failed)?;
+                return Ok((Reply::MachineLog(page), here()));
+            }
             Call::CollabWrite { hub, account, collab } => {
                 let session = self.on_hub(Some(&hub))?;
                 let version = session.link.collab_write(&account, collab).await.map_err(failed)?;

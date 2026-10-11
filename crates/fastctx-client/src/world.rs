@@ -461,6 +461,20 @@ impl World {
         }
     }
 
+    /// Reads the selected account's machine changes from its hub, newest
+    /// first. Pass the returned `next_before` to read older visible records.
+    pub async fn machine_log(
+        &self,
+        hub: fastctx_types::HubName,
+        account: fastctx_types::AccountName,
+        before: Option<u64>,
+    ) -> Result<fastctx_types::machine_log::Page, Error> {
+        match self.ask(Call::MachineLog { hub, account, before }).await? {
+            Reply::MachineLog(page) => Ok(page),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// A verified hub-hosted installation line that registers a Linux
     /// server as a machine of `account`. Missing releases fail before the
     /// node makes a token.

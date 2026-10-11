@@ -1,0 +1,77 @@
+use fastctx_types::accounts::{MemberKind, Relay};
+use fastctx_types::machine_log::{Action, Actor, LoginMethod, Outcome, Page, Record};
+
+pub fn fixtures() -> Vec<Page> {
+    let account = || "ada".parse().unwrap();
+    let to = || "bo".parse().unwrap();
+    let machine = || "laptop".parse().unwrap();
+    let town = || fastctx_types::access::TownId::try_from("t-0123456789abcdef".to_string()).unwrap();
+    let at = "2026-10-10T12:00:00Z".parse().unwrap();
+    let actions = vec![
+        Action::Collab { version: 2 },
+        Action::Share { machine: machine(), to: to(), shared: true },
+        Action::Lend {
+            machine: machine(),
+            to: to(),
+            agent: "codex".parse().unwrap(),
+            home: Some("/home/me/agent".into()),
+            lent: false,
+        },
+        Action::StopActing { machine: machine() },
+        Action::Relays {
+            machine: machine(),
+            relays: vec![Relay { label: "relay".into(), addresses: vec!["203.0.113.20:7444".parse().unwrap()] }],
+        },
+        Action::RelayAt { machine: machine(), addresses: vec![] },
+        Action::Remove { name: machine(), reason: "retired".into() },
+        Action::Logout,
+        Action::Token { register: false, name: None, kind: MemberKind::Phone, expires: at },
+        Action::PasswordStart { target: account() },
+        Action::PasswordFinish { target: account() },
+        Action::OpenAccount { name: to() },
+        Action::SetAccount { name: to(), locked: true },
+        Action::Transfer { to: to() },
+        Action::DeleteAccount { name: to() },
+        Action::Settings { self_registration: true },
+        Action::OpenProject { town: town(), name: "research".parse().unwrap() },
+        Action::ShareProject { town: town(), name: Some("research".parse().unwrap()), with: to(), shared: true },
+        Action::MoveProject { town: town(), name: None, to: to() },
+        Action::Joined { name: machine(), kind: MemberKind::Computer, registered: true, via: LoginMethod::Password },
+        Action::Joined { name: machine(), kind: MemberKind::Web, registered: false, via: LoginMethod::Token },
+        Action::AllowActing { machine: machine(), agent: "claude".parse().unwrap(), home: None },
+        Action::ActingStopped { machine: machine(), account: account() },
+        Action::Left {
+            name: machine(),
+            account: account(),
+            kind: MemberKind::Computer,
+            unregistered: true,
+            reason: "logged out".into(),
+        },
+    ];
+    let length = actions.len();
+    let records = actions
+        .into_iter()
+        .enumerate()
+        .map(|(index, action)| Record {
+            id: (length - index) as u64,
+            at,
+            actor: if index == 11 {
+                Actor {
+                    account: None,
+                    authenticated: false,
+                    member: None,
+                    peer: Some("203.0.113.10:4567".parse().unwrap()),
+                }
+            } else {
+                Actor { account: Some(account()), authenticated: true, member: Some(machine()), peer: None }
+            },
+            action,
+            outcome: if index == 2 {
+                Outcome::Refused { reason: "the machine is another account's".into() }
+            } else {
+                Outcome::Done
+            },
+        })
+        .collect();
+    vec![Page { records, next_before: Some(1) }, Page { records: vec![], next_before: None }]
+}

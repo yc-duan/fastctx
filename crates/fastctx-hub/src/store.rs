@@ -7,6 +7,7 @@
 //! <hub>/login.secret          the hub's OPAQUE secrets (`fastctx_net::login::HubSecrets`)
 //! <hub>/directory.json        accounts and their password records, members, shares, loans,
 //!                             acting, projects, enrollment tokens, removed members
+//!                             and 90 days of machine-layer change records
 //! <hub>/letters.json          where each member's letters stand
 //! <hub>/outbox/<name>/<seq>   letters waiting for a member, one file each
 //! <hub>/ledger/<town>/<seq>.json   the projects' ledgers (`crate::ledger`)
@@ -49,6 +50,8 @@ pub struct HubFile {
 /// what only the hub holds.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Book {
+    #[serde(default)]
+    pub(crate) machine_log: crate::machine_log::History,
     #[serde(flatten)]
     pub directory: Directory,
     /// What setting each account's password left with the hub.

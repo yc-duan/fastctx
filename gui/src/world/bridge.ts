@@ -290,6 +290,11 @@ export function accounts(): Promise<AccountsReply> {
   return invoke("accounts");
 }
 
+/** Newest first; pass next_before to read the next page. */
+export function machineLog(hub: string, account: string, before: number | null = null): Promise<import("./machine-log").MachineLogPage> {
+  return invoke("machine_log", { hubName: hub, accountName: account, before });
+}
+
 /** Makes `change` as `account` at the hub named `hub`; resolves to a token
  *  when it made one. */
 export function accountChange(hub: string | null, account: string, change: AccountChange): Promise<string | null> {

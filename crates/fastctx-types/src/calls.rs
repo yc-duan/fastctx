@@ -18,6 +18,13 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    /// The selected account's machine changes, before a previous page's
+    /// cursor when supplied. The hub checks visibility on every read.
+    MachineLog {
+        hub: crate::HubName,
+        account: crate::AccountName,
+        before: Option<u64>,
+    },
     CollabRead {
         hub: crate::HubName,
         account: crate::AccountName,
@@ -358,6 +365,7 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    MachineLog(crate::machine_log::Page),
     CollabRead(crate::collab::CollabView),
     CollabWritten {
         version: u64,
