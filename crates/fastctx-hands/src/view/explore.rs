@@ -49,6 +49,21 @@ impl Entry {
         }
         out.push_str(&format!("{}\t{}\n", self.number, self.text));
     }
+
+    /// An outline's entry says only where it is: inside a long line, as
+    /// `line:character` the way a compiler points, the text from there.
+    fn located(&self) -> String {
+        if self.from > 1 { format!("{}:{}", self.number, self.from) } else { self.number.to_string() }
+    }
+
+    pub fn outline_cost(&self) -> usize {
+        self.located().len() + 2 + self.text.len() + self.note.len()
+    }
+
+    pub fn write_outline(&self, out: &mut String) {
+        out.push_str(&self.note);
+        out.push_str(&format!("{}\t{}\n", self.located(), self.text));
+    }
 }
 
 /// A deterministic, evenly spaced sample with bounded retained text.
@@ -108,7 +123,7 @@ impl Sample {
             .entries
             .into_iter()
             .filter_map(|(_, entry)| {
-                let cost = entry.cost();
+                let cost = entry.outline_cost();
                 (!entry.text.is_empty() && cost <= budget).then_some((entry, cost))
             })
             .collect();
@@ -316,6 +331,10 @@ impl Exploring {
                 "line 1: characters 1-{} and {}-{} of {} shown",
                 cut.to, first_tail.from, first_tail.length, first_tail.length
             )
+        } else if first_tail.number <= head_last {
+            // The beginning and the end meet inside the last line, which
+            // the facts after this and the end's own heading cut apart.
+            format!("lines 1-{total} of {total}")
         } else {
             format!("lines 1-{head_last} and {}-{total} of {total}", first_tail.number)
         };
@@ -375,7 +394,7 @@ impl Exploring {
                 } else {
                     previous_note = entry.note.clone();
                 }
-                entry.write(&mut text);
+                entry.write_outline(&mut text);
             }
         } else if let (Some(first), Some(last)) = (self.first_time, self.last_time) {
             text.push_str(&format!("=== timestamps (line 1: {first}; line {total}: {last}) ===\n"));

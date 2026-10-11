@@ -481,9 +481,13 @@ impl Reader {
                 self.show_note();
                 let line = std::mem::take(&mut self.line);
                 self.show(&line);
-            } else if (self.shown_lines == 0 || self.preview) && self.body_cost + note_cost + digits + 6 < self.budget {
+            } else if (self.shown_lines == 0 || self.preview && self.position as usize > self.budget)
+                && self.body_cost + note_cost + digits + 6 < self.budget
+            {
                 self.show_note();
-                // A preview can end inside any line; explicit reads retain their line window.
+                // A read ends inside a line only where that line is the first
+                // or, for a preview, where it is longer than the whole preview
+                // could ever be; otherwise it ends on a whole line.
                 let room = self.budget - (self.body_cost + digits + 2);
                 let shown = crate::answer::prefix(&self.line, room);
                 let from = self.chars.map_or(1, |(from, _)| from);
