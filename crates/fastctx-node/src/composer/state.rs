@@ -51,14 +51,16 @@ impl Document {
                     + 1
             }
         };
-        for id in delete {
-            if !self.atoms.iter().any(|a| &a.character.id == id) {
+        if !delete.is_empty() {
+            let known: HashSet<_> = self.atoms.iter().map(|atom| &atom.character.id).collect();
+            if delete.iter().any(|id| !known.contains(id)) {
                 return Err(Failure::new("a deleted character is not in this draft"));
             }
-        }
-        for atom in &mut self.atoms {
-            if delete.contains(&atom.character.id) {
-                atom.deleted = true;
+            let deleted: HashSet<_> = delete.iter().collect();
+            for atom in &mut self.atoms {
+                if deleted.contains(&atom.character.id) {
+                    atom.deleted = true;
+                }
             }
         }
         self.atoms.splice(
