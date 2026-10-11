@@ -7,6 +7,7 @@
 // turn. The chip names the speed only when it is not the standard one.
 
 import { EffortSlider, effortLabel } from "./effort-slider";
+import { Popover } from "./popover";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
 import type { ModelOffer, Offers } from "../world/control";
@@ -19,10 +20,12 @@ export interface ModelPanelWords {
   noModels: string;
   /** The chip's words before the host has said its model. */
   chip: string;
+  /** Said of a model whose window this conversation has outgrown. */
+  tooLong: string;
 }
 
-export const zhModelPanel: ModelPanelWords = { model: "模型", effort: "推理强度", speed: "速度", backToDefault: "回到默认", noModels: "没有可选的模型", chip: "模型" };
-export const enModelPanel: ModelPanelWords = { model: "Model", effort: "Reasoning", speed: "Speed", backToDefault: "Back to default", noModels: "No models available", chip: "Model" };
+export const zhModelPanel: ModelPanelWords = { model: "模型", effort: "推理强度", speed: "速度", backToDefault: "回到默认", noModels: "没有可选的模型", chip: "模型", tooLong: "这段对话已超过它的上下文" };
+export const enModelPanel: ModelPanelWords = { model: "Model", effort: "Reasoning", speed: "Speed", backToDefault: "Back to default", noModels: "No models available", chip: "Model", tooLong: "This conversation is longer than its context" };
 
 export interface ModelChoice {
   /** The model and effort from the next turn on; null keeps what is. */
@@ -34,6 +37,7 @@ export interface ModelChoice {
 export class ModelPanel {
   readonly element: HTMLElement;
   private readonly slider: EffortSlider;
+  private readonly popover: Popover;
   private offered: Offers | null = null;
   private listing = false;
   private busy = false;
@@ -51,13 +55,9 @@ export class ModelPanel {
     this.element.setAttribute("aria-label", words.model);
     this.slider = new EffortSlider(words.effort, (effort) => void this.change(() => this.choose.model(this.current()?.id ?? null, effort)));
     this.element.addEventListener("click", (event) => this.click(event));
-    chip.addEventListener("click", () => (this.element.hidden ? this.show() : this.hide()));
+    this.popover = new Popover(this.element, chip, () => (this.listing = false));
+    chip.addEventListener("click", () => (this.popover.open ? this.hide() : this.show()));
     chip.setAttribute("aria-haspopup", "dialog");
-    document.addEventListener("pointerdown", (event) => {
-      if (this.element.hidden) return;
-      const target = event.target as Node;
-      if (!this.element.contains(target) && !chip.contains(target)) this.hide();
-    });
     this.element.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       event.stopPropagation();
@@ -67,27 +67,25 @@ export class ModelPanel {
   }
 
   get open(): boolean {
-    return !this.element.hidden;
+    return this.popover.open;
   }
 
   /** What the host offers now: the chip and, when open, the panel follow. */
   update(offered: Offers | null): void {
     this.offered = offered;
     this.drawChip();
-    if (!this.element.hidden) this.draw();
+    if (this.popover.open) this.draw();
   }
 
   show(listing = false): void {
     this.listing = listing;
-    this.element.hidden = false;
-    this.chip.setAttribute("aria-expanded", "true");
+    this.popover.show();
     this.draw();
     this.element.querySelector<HTMLElement>("button, [tabindex]")?.focus({ preventScroll: true });
   }
 
   hide(): void {
-    this.element.hidden = true;
-    this.chip.setAttribute("aria-expanded", "false");
+    this.popover.hide();
   }
 
   private current(): ModelOffer | undefined {
@@ -111,12 +109,16 @@ export class ModelPanel {
     const offered = this.offered;
     const model = this.current();
     const models = offered?.models ?? [];
+    const used = offered?.usage?.context?.used ?? null;
     const list = this.listing
       ? `<ul class="model-list" role="listbox">${models.length ? models
-          .map(
-            (one) =>
-              `<li><button type="button" role="option" data-model="${escape(one.id)}" aria-selected="${one.id === model?.id}"${one.description ? ` title="${escape(one.description)}"` : ""}><span>${escape(one.name ?? one.id)}</span>${one.id === model?.id ? glyph("check", 14) : ""}</button></li>`,
-          )
+          .map((one) => {
+            // A conversation already longer than a model's window would be
+            // refused on it: marked, not hidden, so the choice stays the user's.
+            const tooLong = used !== null && one.context_window != null && used > one.context_window;
+            const title = tooLong ? words.tooLong : (one.description ?? "");
+            return `<li><button type="button" role="option" data-model="${escape(one.id)}" aria-selected="${one.id === model?.id}"${tooLong ? ` class="model-too-long"` : ""}${title ? ` title="${escape(title)}"` : ""}><span>${escape(one.name ?? one.id)}</span>${one.id === model?.id ? glyph("check", 14) : tooLong ? `<span class="model-mark" aria-hidden="true">${glyph("info", 13)}</span>` : ""}</button></li>`;
+          })
           .join("") : `<li class="model-none">${escape(words.noModels)}</li>`}</ul>`
       : "";
     const tiers = model?.service_tiers ?? [];
