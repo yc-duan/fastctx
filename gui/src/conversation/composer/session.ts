@@ -124,7 +124,7 @@ export class ComposerSession {
       canSend: this.canSend(this.draft) };
   }
 
-  /** Includes uploads being prepared locally, before the node can expose their placeholders. */
+  /** Includes attachment destinations and uploads being prepared before the node exposes them. */
   canSend(document = this.draft): boolean {
     const entry = this.documents.get(document);
     if (!entry || entry.error || !this.connected || this.closed || this.closing || !document.view.state.canSend) return false;
@@ -134,7 +134,7 @@ export class ComposerSession {
       return state.target.kind === target.kind && (target.kind === "draft" || (state.target.kind === "queued" && state.target.id === target.id))
         && (state.pending > 0 || state.composing || state.error !== null || other.error !== null);
     })) return false;
-    return !this.pendingAttachments(target, epoch).length && ![...this.operations.values()].some((operation) =>
+    return !this.pendingMetadata(target, epoch).length && ![...this.operations.values()].some((operation) =>
       operation.status === "pending" && (target.kind === "draft"
         ? operation.change.do === "send" && operation.change.epoch === epoch
         : operation.change.do === "send_queued" && operation.change.id === target.id));
@@ -298,7 +298,7 @@ export class ComposerSession {
     if (document.view.state.composing) throw new Error("finish the input composition before closing its editor");
     document.setClosing(true);
     try {
-      await this.flushAttachments(document.view.state.target, document.view.state.epoch);
+      await this.flushMetadata(document.view.state.target, document.view.state.epoch);
       await document.flush();
       await this.save(this.documents.get(document)!);
       const target = document.view.state.target;
@@ -323,7 +323,7 @@ export class ComposerSession {
     this.assertConnected();
     const epoch = this.draft.view.state.epoch;
     if (this.draft.view.state.composing) throw new Error("finish the input composition before sending");
-    await this.flushAttachments({ kind: "draft" }, epoch);
+    await this.flushMetadata({ kind: "draft" }, epoch);
     await this.flushDocuments({ kind: "draft" });
     return this.mutate({ do: "send", epoch });
   }
@@ -336,7 +336,7 @@ export class ComposerSession {
 
   async sendQueued(id: string): Promise<ComposerUpdated> {
     const item = this.snapshot.queue.find((item) => item.id === id);
-    if (item) await this.flushAttachments({ kind: "queued", id }, item.draft.epoch);
+    if (item) await this.flushMetadata({ kind: "queued", id }, item.draft.epoch);
     await this.flushEditors(id);
     return this.mutate({ do: "send_queued", id });
   }
@@ -359,6 +359,15 @@ export class ComposerSession {
     this.owned(document);
     const { target, epoch } = document.view.state;
     return this.mutate({ do: "detach", target, epoch, attachment });
+  }
+
+  /** Persists one destination for all non-images in this draft or queued editor.
+   * Uses Talk's machine or machine.hub spelling; null restores its working-machine default.
+   * Uploads still go to the resident's host. Placement happens when the message is delivered. */
+  async setFilesOn(machine: string | null, document = this.draft): Promise<ComposerUpdated> {
+    this.owned(document);
+    const { target, epoch } = document.view.state;
+    return this.mutate({ do: "files_on", target, epoch, files_on: machine });
   }
 
   /** Attaches an already verified receipt, including an upload that finished after detachment. */
@@ -387,19 +396,19 @@ export class ComposerSession {
     return this.run(operation) as Promise<ComposerAttachmentAdded>;
   }
 
-  private pendingAttachments(target: ComposerTarget, epoch: number): Operation[] {
+  private pendingMetadata(target: ComposerTarget, epoch: number): Operation[] {
     return [...this.operations.values()].filter((operation) => {
       const change = operation.change;
-      return operation.status === "pending" && (change.do === "upload" || change.do === "attach" || change.do === "detach") && change.epoch === epoch
+      return operation.status === "pending" && (change.do === "upload" || change.do === "attach" || change.do === "detach" || change.do === "files_on") && change.epoch === epoch
         && change.target.kind === target.kind && (target.kind === "draft" || (change.target.kind === "queued" && change.target.id === target.id));
     });
   }
 
-  private async flushAttachments(target: ComposerTarget, epoch: number): Promise<void> {
-    let pending = this.pendingAttachments(target, epoch);
+  private async flushMetadata(target: ComposerTarget, epoch: number): Promise<void> {
+    let pending = this.pendingMetadata(target, epoch);
     while (pending.length) {
       await Promise.all(pending.map((operation) => operation.flight));
-      pending = this.pendingAttachments(target, epoch);
+      pending = this.pendingMetadata(target, epoch);
     }
   }
 

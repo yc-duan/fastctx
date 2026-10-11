@@ -27,6 +27,9 @@ pub struct Draft {
     pub characters: Vec<Character>,
     pub attachments: Vec<Attachment>,
     pub uploads: Vec<Uploading>,
+    /// The user's chosen destination for non-images; None uses the resident's working machine.
+    #[serde(default)]
+    pub files_on: Option<crate::access::Written>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,6 +110,12 @@ pub enum Change {
         target: Target,
         epoch: u64,
         attachment: NoticeId,
+    },
+    /// Changes the destination of every non-image attachment in this document.
+    FilesOn {
+        target: Target,
+        epoch: u64,
+        files_on: Option<crate::access::Written>,
     },
     /// Sends the current shared draft, or appends it when the resident is busy.
     Send {

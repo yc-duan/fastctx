@@ -101,6 +101,7 @@ export class ComposerDocument {
 
   get attachments(): ComposerDraft["attachments"] { return this.draft.attachments; }
   get uploads(): ComposerDraft["uploads"] { return this.draft.uploads; }
+  get filesOn(): ComposerDraft["files_on"] { return this.draft.files_on; }
 
   /** A flat context table avoids recursive cloning of a long pasted prefix. */
   checkpoint(): ComposerJournal | null {

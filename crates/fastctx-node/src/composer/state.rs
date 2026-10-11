@@ -14,6 +14,8 @@ pub struct Document {
     atoms: Vec<Atom>,
     pub attachments: Vec<fastctx_types::attachments::Attachment>,
     pub uploads: Vec<fastctx_types::composer::Uploading>,
+    #[serde(default)]
+    pub files_on: Option<fastctx_types::access::Written>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -31,6 +33,7 @@ impl Document {
             characters,
             attachments: self.attachments.clone(),
             uploads: self.uploads.clone(),
+            files_on: self.files_on.clone(),
         }
     }
 
@@ -91,6 +94,8 @@ pub struct Flight {
     pub delivery: Delivery,
     pub automatic: bool,
     pub idle_only: bool,
+    #[serde(default)]
+    pub files_on: Option<fastctx_types::access::Written>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -195,6 +200,10 @@ impl Stored {
                 document.uploads.retain(|upload| &upload.id != attachment);
                 Ok(())
             }
+            Change::FilesOn { target, epoch, files_on } => {
+                self.document(target, *epoch)?.files_on = files_on.clone();
+                Ok(())
+            }
             Change::Delete { id } => {
                 if self.unobserved.iter().any(|entry| &entry.id == id) {
                     self.unobserved.retain(|entry| &entry.id != id);
@@ -240,7 +249,7 @@ impl Stored {
         }
         let draft = entry.document.view();
         let delivery = crate::attachments::delivery(&entry.from, draft.text, draft.attachments);
-        let flight = Flight { entry: id.clone(), delivery, automatic, idle_only };
+        let flight = Flight { entry: id.clone(), delivery, automatic, idle_only, files_on: draft.files_on };
         self.sending = Some(flight.clone());
         if automatic {
             self.opportunity = None;
