@@ -12,6 +12,8 @@ mod agents;
 mod attachments;
 #[path = "gui_wire_fixtures/claude.rs"]
 mod claude;
+#[path = "gui_wire_fixtures/composer.rs"]
+mod composer;
 #[path = "gui_wire_fixtures/control.rs"]
 mod control;
 #[path = "gui_wire_fixtures/file_read.rs"]
@@ -44,6 +46,7 @@ struct Fixtures {
     file_read: file_read::Fixtures,
     file_search: file_search::Fixtures,
     attachments: attachments::Fixtures,
+    composer: composer::Fixtures,
     claude: claude::Fixtures,
     management: management::Fixtures,
     renewal: renewal::Fixtures,
@@ -61,6 +64,7 @@ fn main() {
         file_read: file_read::fixtures(),
         file_search: file_search::fixtures(),
         attachments: attachments::fixtures(),
+        composer: composer::fixtures(),
         claude: claude::fixtures(),
         management: management::fixtures(),
         renewal: renewal::fixtures(),

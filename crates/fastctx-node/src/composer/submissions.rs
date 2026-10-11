@@ -8,7 +8,8 @@ pub(super) async fn dispatch(node: &Arc<Node>, id: &ResidentId, flight: Flight) 
         if let fastctx_types::residents::Notice::Attached { message, .. } = &mut delivery.notice {
             crate::attachments::resolve(node, id, &message.attachments).await?;
             message.attachments =
-                crate::attachments::place(node, id, std::mem::take(&mut message.attachments), None).await?;
+                crate::attachments::place(node, id, std::mem::take(&mut message.attachments), flight.files_on.as_ref())
+                    .await?;
         }
         crate::speech::send_composer(node, id, delivery, flight.idle_only).await
     }

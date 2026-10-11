@@ -27,4 +27,5 @@ pub mod route;
 pub mod sign;
 pub mod tls;
 pub mod token;
+pub mod watch_stream;
 pub mod wire;

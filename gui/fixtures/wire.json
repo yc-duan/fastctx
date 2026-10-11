@@ -11823,6 +11823,111 @@
     ],
     "host_text": "=== from fastctx (user attachments, v2) ===\nThe user attached these files. Each path is on the machine named with it; sizes are in bytes. Look at them with `fastctx view` on that machine (`on MACHINE fastctx view PATH`); images come back as images.\n{\"delivery\":\"talk-ab12\",\"from\":\"phone\",\"attachments\":[{\"id\":\"attachment-ab12\",\"owner\":{\"machine\":\"laptop\",\"resident\":\"codex-ab12\"},\"town\":\"world\",\"path\":\"C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png\",\"name\":\"截图.png\",\"media_type\":\"image/png\",\"size\":3145728,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}\n=== user's words (verbatim) ===\n看这张图。\nKeep my words verbatim."
   },
+  "composer": {
+    "snapshots": [
+      {
+        "revision": 0,
+        "draft": {
+          "epoch": 0,
+          "text": "",
+          "characters": [],
+          "attachments": [],
+          "uploads": [],
+          "files_on": null
+        },
+        "queue": [],
+        "unobserved": [],
+        "held": null,
+        "awaiting_turn": null
+      },
+      {
+        "revision": 0,
+        "draft": {
+          "epoch": 0,
+          "text": "",
+          "characters": [],
+          "attachments": [],
+          "uploads": [],
+          "files_on": "target.lab"
+        },
+        "queue": [
+          {
+            "id": "queued-ab12",
+            "from": "phone",
+            "draft": {
+              "epoch": 0,
+              "text": "",
+              "characters": [],
+              "attachments": [],
+              "uploads": [],
+              "files_on": "target.lab"
+            },
+            "editing": true,
+            "sending": false,
+            "error": null
+          }
+        ],
+        "unobserved": [],
+        "held": null,
+        "awaiting_turn": null
+      }
+    ],
+    "mutations": [
+      {
+        "operation": "destination-a",
+        "do": "files_on",
+        "target": {
+          "kind": "draft"
+        },
+        "epoch": 0,
+        "files_on": "target.lab"
+      },
+      {
+        "operation": "destination-b",
+        "do": "files_on",
+        "target": {
+          "kind": "queued",
+          "id": "queued-ab12"
+        },
+        "epoch": 0,
+        "files_on": null
+      }
+    ],
+    "updated": {
+      "composer": {
+        "revision": 0,
+        "draft": {
+          "epoch": 0,
+          "text": "",
+          "characters": [],
+          "attachments": [],
+          "uploads": [],
+          "files_on": "target.lab"
+        },
+        "queue": [
+          {
+            "id": "queued-ab12",
+            "from": "phone",
+            "draft": {
+              "epoch": 0,
+              "text": "",
+              "characters": [],
+              "attachments": [],
+              "uploads": [],
+              "files_on": "target.lab"
+            },
+            "editing": true,
+            "sending": false,
+            "error": null
+          }
+        ],
+        "unobserved": [],
+        "held": null,
+        "awaiting_turn": null
+      },
+      "landed": null
+    }
+  },
   "claude": {
     "events": [
       {

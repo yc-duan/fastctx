@@ -42,7 +42,9 @@ import type { RenewalStatus, MaintenanceRequest, MaintenanceResponse, VersionRef
 import type { AccountChange, AccountsReply } from "../src/world/accounts";
 import type { ConnectionState } from "../src/world/device";
 import type { Choices } from "../src/world/bridge";
+import type { ComposerSnapshot, ComposerMutation, ComposerUpdated } from "../src/world/composer";
 export const fixture = ${json.trimEnd()} satisfies {
+  composer: { snapshots: ComposerSnapshot[]; mutations: ComposerMutation[]; updated: ComposerUpdated };
   // Accounts as the interface reads and changes them, the device's
   // standing, and what the user chose for a new conversation.
   accounts: { replies: AccountsReply[]; changes: AccountChange[]; connections: ConnectionState[]; choices: Choices[] };

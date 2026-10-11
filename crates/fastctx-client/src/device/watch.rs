@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use fastctx_net::link::{Feed, Link};
-use fastctx_net::sign::{Domain, Signed};
+use fastctx_net::sign::Domain;
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::session::Watched;
@@ -93,7 +93,7 @@ fn feed(
             loop {
                 let signed = tokio::select! {
                     () = sender.closed() => return Ok(()),
-                    signed = stream.hear::<Signed>() => signed?,
+                    signed = fastctx_net::watch_stream::receive(&mut stream) => signed?,
                 };
                 let piece: Piece = link.unseal(&from, Domain::Event, &signed).await?;
                 if piece.watch != watch || piece.n != n {

@@ -20,6 +20,7 @@ export interface ComposerDraft {
   readonly characters: readonly Character[];
   readonly attachments: readonly Attachment[];
   readonly uploads: readonly { id: NoticeId; file: UploadFile; error: string | null }[];
+  readonly files_on: string | null;
 }
 
 export interface ComposerQueued {
@@ -61,6 +62,7 @@ export type ComposerChange =
   | Omit<ComposerEdit, "operation">
   | { readonly do: "attach"; readonly target: ComposerTarget; readonly epoch: number; readonly attachment: Attachment }
   | { readonly do: "detach"; readonly target: ComposerTarget; readonly epoch: number; readonly attachment: NoticeId }
+  | { readonly do: "files_on"; readonly target: ComposerTarget; readonly epoch: number; readonly files_on: string | null }
   | { readonly do: "send"; readonly epoch: number }
   | { readonly do: "editing"; readonly id: NoticeId; readonly watch: string; readonly editing: boolean }
   | { readonly do: "delete"; readonly id: NoticeId }
