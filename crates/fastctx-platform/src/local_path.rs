@@ -24,6 +24,22 @@ pub fn local_path(path: impl AsRef<Path>) -> io::Result<PathBuf> {
                 native.extend_from_slice(&units[units.len().min(3)..]);
                 return Ok(PathBuf::from(OsString::from_wide(&native)));
             }
+            // `/A:/work` is a drive path with a slash before it, not a
+            // mount: `cygpath` would put it under Git's own folder.
+            if let Some(&drive) = units.get(1)
+                && ((b'a' as u16..=b'z' as u16).contains(&drive) || (b'A' as u16..=b'Z' as u16).contains(&drive))
+                && units.get(2) == Some(&u16::from(b':'))
+            {
+                let native = OsString::from_wide(&units[1..]);
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "{} has a slash before its drive; write it {}",
+                        path.display(),
+                        Path::new(&native).display()
+                    ),
+                ));
+            }
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
@@ -54,6 +70,9 @@ mod tests {
             } else {
                 assert_eq!(local_path(path).unwrap(), PathBuf::from(path));
             }
+        }
+        if cfg!(windows) {
+            assert!(local_path("/A:/work/file").unwrap_err().to_string().ends_with("write it A:/work/file"));
         }
     }
 }

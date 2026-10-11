@@ -120,8 +120,9 @@ async fn ask_there(
     match chosen.link.call(&lives_on.name, &chosen.account, Purpose::Agents, call).await {
         Ok(Ok(RemoteReply::Asked { colleague })) => Ok(Address { machine: lives_on.name.clone(), resident: colleague }),
         Ok(Ok(_)) => Err(Failure::new(format!("{lives_on} answered something other than a colleague"))),
+        // The far side says where it is changed when that is what to do.
         Ok(Err(failure)) => Err(Failure {
-            message: format!("on {lives_on}: {}; the user changes it on the Model collaboration page", failure.message),
+            message: format!("on {lives_on}: {}", failure.message),
             not_run: failure.not_run,
             code: failure.code,
         }),
