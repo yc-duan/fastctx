@@ -99,7 +99,9 @@ pub enum OnWord {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         lettered: bool,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        consumed: Vec<crate::run::ConsumedEnd>,
+        consumed: Vec<crate::NoticeId>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        through_exit: bool,
     },
 }
 

@@ -283,6 +283,10 @@ pub(crate) async fn run(
     };
     if let Some(consumed) = &reply.consumed {
         crate::job_receipts::apply_consumed(&directory, consumed).map_err(|error| Failure::new(error.to_string()))?;
+        for id in consumed.iter().filter(|id| !id.as_str().starts_with("letter-")) {
+            let letter = crate::speech::fixed_id("letter", &[reply.machine.as_str(), id.as_str()]);
+            crate::inbox::consume(&directory, &letter).map_err(|error| Failure::new(error.to_string()))?;
+        }
     }
     if reply.state != RunState::Running {
         node.dispatched
@@ -318,7 +322,7 @@ pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bo
         return false;
     };
     let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
-    let (node, call) = (node.clone(), RemoteCall::Forget { resident: resident.clone(), town, job: job.clone(), delivery: None, origin: None });
+    let (node, call) = (node.clone(), RemoteCall::Forget { resident: resident.clone(), town, job: job.clone(), delivery: None, origin: None, through_exit: false });
     tokio::spawn(async move {
         match node.call(&acting, &works_on, Purpose::Hands, call).await {
             Ok(Ok(_)) => {}

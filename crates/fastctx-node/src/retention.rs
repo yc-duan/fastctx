@@ -204,7 +204,7 @@ fn collect_records(
                     pending = true;
                     continue;
                 }
-                if delivery.shown_whole || now.as_second() - delivery.at.as_second() >= lifetime {
+                if delivery.shown_whole || expired(now, delivery.at, lifetime) {
                     // Watches still read the record after the supervisor exits.
                     // Their own forgetting mechanism serializes that last reader.
                     forget(&path)?;
@@ -228,7 +228,7 @@ fn collect_records(
                     continue;
                 }
                 if let Some(delivered) = fastctx_install::renewal::read_json::<Timestamp>(&scratch.join(".delivered"))?
-                    && now.as_second() - delivered.as_second() >= lifetime
+                    && expired(now, delivered, lifetime)
                 {
                     fastctx_platform::owned_directory::delete(&scratch)?;
                 }
@@ -236,7 +236,7 @@ fn collect_records(
             if !pending
                 && idle(&directory)
                 && let Some(delivered) = latest
-                && now.as_second() - delivered.as_second() >= lifetime
+                && expired(now, delivered, lifetime)
             {
                 collect_out(&directory.join("out"), delivered)?;
             }
@@ -299,6 +299,10 @@ fn legacy_delivery(
         }
     }
     Ok(None)
+}
+
+fn expired(now: Timestamp, delivered: Timestamp, lifetime: i64) -> bool {
+    now.as_nanosecond() - delivered.as_nanosecond() >= i128::from(lifetime) * 1_000_000_000
 }
 
 fn collect_out(path: &Path, delivered: Timestamp) -> io::Result<()> {

@@ -306,6 +306,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
         let cancellable = matches!(&call, Call::Offers { .. });
         let run_resident = match &call { Call::Run { resident, .. } => Some(resident.clone()), _ => None };
+        if run_resident.is_some() {
+            arrived.completed = None;
+        }
         let answer = async {
             match call {
                 Call::Collect { resident, answering } => {

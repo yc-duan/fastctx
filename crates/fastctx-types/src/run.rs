@@ -71,7 +71,7 @@ pub struct StopRequested {
 pub struct RunReply {
     /// Completion notices taken by waits of this owner on the executing node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub consumed: Option<Box<Vec<ConsumedEnd>>>,
+    pub consumed: Option<Box<Vec<crate::NoticeId>>>,
     pub machine: MachineName,
     pub job: JobId,
     pub state: RunState,
@@ -368,14 +368,6 @@ pub struct CompletedJob {
     pub machine: MachineName,
     pub job: JobId,
     pub output: String,
-}
-
-/// Consumption travels through enclosing hops with the source that sent
-/// its notice. The source also identifies the letter's wrapper receipt.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ConsumedEnd {
-    pub machine: MachineName,
-    pub id: crate::NoticeId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

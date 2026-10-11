@@ -217,8 +217,6 @@ impl Jobs {
             .map_err(|error| failure("reading completion receipts", error))?;
         if let Some(owner) = record.owner.resident().filter(|owner| owner.machine == *machine) {
             let directory = node.world.resident(record.town.as_ref(), &owner.resident);
-            let (_transaction, directory) = crate::resident_storage::current(&directory)
-                .map_err(|error| failure("reading completion receipts", error))?;
             crate::job_receipts::apply_consumed(&directory, &consumed)
                 .map_err(|error| failure("reading completion receipts", error))?;
         }
@@ -296,7 +294,7 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         files.extend(["on-taken", "on-piped", "on-stopped"].map(|extension| path.with_extension(extension)));
     }
     files.extend(["notice", "owed", "delivered"].map(|extension| path.with_extension(extension)));
-    files.extend(["copied", "wait-taken", "consumed"].map(|extension| path.with_extension(extension)));
+    files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));
     files.push(path.to_path_buf());
     for file in files {
         match std::fs::remove_file(&file) {

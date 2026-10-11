@@ -333,7 +333,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         path_separator: if cfg!(windows) { ';' } else { ':' },
         case_sensitive: !cfg!(any(windows, target_os = "macos")),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        protocol: Some(fastctx_types::ipc::PROTOCOL),
+        completion_receipts: true,
         shell: shell().clone(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -451,7 +451,7 @@ impl fastctx_net::link::Node for Handler {
                     crate::here::serve(&node, from, account, resident, town, request).await
                 }
                 RemoteCall::WordsCame { resident } => Ok(crate::here::words_came(&node, from, resident)),
-                RemoteCall::Forget { resident, town, job, delivery, mut origin } => {
+                RemoteCall::Forget { resident, town, job, delivery, mut origin, through_exit } => {
                     if let Some(delivery) = delivery {
                         if job != delivery.job {
                             return Err(Failure::new("the end receipt names another job"));
@@ -463,7 +463,8 @@ impl fastctx_net::link::Node for Handler {
                             }
                             None => Address { machine: from, resident },
                         };
-                        crate::retention::received_from(&node, &owner, &delivery, origin.as_ref())
+                        let account = HubAccount { hub: hub.clone(), account: caller.account.clone() };
+                        crate::retention::received_from(&node, &owner, &delivery, origin.as_ref(), through_exit, Some(&account))
                             .map_err(|error| Failure::new(format!("recording job delivery: {error}")))?;
                         Ok(RemoteReply::Set)
                     } else {

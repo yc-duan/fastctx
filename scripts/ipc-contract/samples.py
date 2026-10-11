@@ -71,7 +71,7 @@ def replies(fixtures):
                           "escaped_lines": 0}, "answered": answered}
     yield {"reply": "run", "machine": "desktop", "job": "j-abc123", "state": {"kind": "ended", "status": {"code": 0}},
            "output": {"log": "C:/job.log", "bytes": 0, "lines": 0, "pieces": [], "legacy": [], "escaped_lines": 0},
-           "consumed": [{"machine": "desktop", "id": "desktop-j-def456"}]}
+           "consumed": ["desktop-j-def456", "letter-consumed456"]}
     notices = []
     for how in [{"kind": "finished"}, {"kind": "stopped"}, {"kind": "interrupted", "reason": "restart"},
                 {"kind": "failed", "error": "disk full"}]:
@@ -127,6 +127,7 @@ def replies(fixtures):
               "output_lost": {"kept_bytes": 5, "error": "disk full"}, "end": {"at": AT, "how": {"kind": "finished"}},
               "ends_with_node": False, "stderr": "C:/job.err", "stderr_lost": {"kept_bytes": 4, "error": "full"}}
     resident = fixtures["world"]["who"][0]["machines"][0]["reply"]["residents"][0]
+    yield {"reply": "waited", "records": [{**record, "owner": ADDRESS}]}
     jobs = fixtures["world"]["who"][0]["machines"][0]["reply"]["jobs"]
     for owner in [ADDRESS, fixtures["pages"]["job_owner"]]:
         yield {"reply": "looked", "looked": [{"id": "j-abc123", "found": [{"kind": "job", "record": {**record, "owner": owner}}], "unasked": ["offline"]}]}
@@ -151,6 +152,10 @@ def calls(fixtures):
     yield {"call": "message", "resident": ADDRESS["resident"], "to": "codex-ab34", "machine": None, "text": "test"}, PEER, True
     yield {"call": "collect", "resident": ADDRESS["resident"]}, PEER, True
     yield {"call": "taken", "resident": ADDRESS["resident"], "ids": ["notice-a"]}, PEER, True
+    yield {"call": "taken", "resident": ADDRESS["resident"], "ids": [], "shown": None,
+           "completed": {"machine": "desktop", "job": "j-abc123", "output": "C:/job.log"}}, PEER, True
+    for receipt in [False, True]:
+        yield {"call": "wait", "jobs": ["j-abc123"], "receipt": receipt, "parent": "j-def456"}, {"kind": "command", "resident": ADDRESS, "session": None}, True
     yield {"call": "who", "all": True, "town": None}, PEER, True
     yield {"call": "look", "ids": [ADDRESS["resident"], "j-abc123"]}, PEER, True
     yield {"call": "saw", "owner": ADDRESS, "town": None, "seen": [{"path": "C:/a", "at": AT, "sha256": None, "size": 1, "modified": None, "encoding": "UTF-8"}]}, PEER, True
@@ -193,6 +198,8 @@ def samples(root):
                 welcome["node_lifetime"] = lifetime
             yield {"mode": "welcome", "protocol": protocol, "value": welcome}
         for reply in replies(fixtures):
+            if reply["reply"] == "waited" and protocol < 10:
+                continue
             if protocol == 5 and reply["reply"] in ["page", "pages", "machines"]:
                 continue  # These calls did not exist in the frozen protocol-5 binary.
             case = {"mode": "reply", "protocol": protocol, "value": frame(reply)}
@@ -208,6 +215,10 @@ def samples(root):
             yield case
         yield {"mode": "reply", "protocol": protocol, "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}
         for call, peer, admitted in calls(fixtures):
+            if call["call"] == "wait" and protocol < 10:
+                continue
+            if protocol == 10 and peer["kind"] == "command":
+                admitted = True
             if protocol == 5 and call["call"] in ["page", "machines"]:
                 continue
             yield {"mode": "request", "protocol": protocol, "peer": peer, "admitted": admitted,
