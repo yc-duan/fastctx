@@ -78,3 +78,11 @@ windows = { version = "0.62", features = [
 ] }
 windows-registry = "0.6"
 windows-core = "0.62"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "=0.12.3", default-features = false, features = ["tokio"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-foundation = "0.3"

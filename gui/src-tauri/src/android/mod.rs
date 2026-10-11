@@ -116,6 +116,18 @@ fn pending() {
 
 struct Native(PluginHandle<tauri::Wry>);
 
+pub(crate) async fn save_as(
+    app: &tauri::AppHandle,
+    path: String,
+    name: String,
+) -> Result<crate::save_as::Outcome, String> {
+    app.state::<Native>()
+        .0
+        .run_mobile_plugin_async("saveAs", serde_json::json!({"path": path, "suggestedName": name}))
+        .await
+        .map_err(|error| error.to_string())
+}
+
 pub(crate) async fn open_file(app: &tauri::AppHandle, path: String) -> Result<(), String> {
     app.state::<Native>()
         .0

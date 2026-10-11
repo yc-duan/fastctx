@@ -44,7 +44,7 @@ class WorldNotices(private val context: Context) {
     }
 
     /** A button giving one of a question's answers, sent from the notification without opening the app. */
-    private fun answer(tag: String, choice: Int): PendingIntent {
+    private fun answerIntent(tag: String, choice: Int): PendingIntent {
         val intent = Intent(context, WorldAnswer::class.java).apply {
             data = Uri.Builder().scheme("world-answer").authority(context.packageName).appendPath(tag).appendPath(choice.toString()).build()
             putExtra(ANSWER_NOTICE, tag)
@@ -84,7 +84,7 @@ class WorldNotices(private val context: Context) {
             .setOnlyAlertOnce(previous != null && previous.optString("version") == notice.optString("version"))
             .setPriority(NotificationCompat.PRIORITY_HIGH).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
         val answers = notice.optJSONArray("answers") ?: JSONArray()
-        for (choice in 0 until answers.length()) builder.addAction(0, answers.getJSONObject(choice).getString("label"), answer(tag, choice))
+        for (choice in 0 until answers.length()) builder.addAction(0, answers.getJSONObject(choice).getString("label"), answerIntent(tag, choice))
         manager.notify(tag, 0, builder.build())
         return tag
     }

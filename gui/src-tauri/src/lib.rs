@@ -59,6 +59,7 @@ mod line_reading;
 mod local_files;
 mod pages;
 mod reading;
+mod save_as;
 mod uploading;
 
 #[cfg(windows)]
@@ -633,6 +634,17 @@ async fn open_local(app: tauri::AppHandle, path: String) -> Result<(), String> {
     }
 }
 
+/// Select a destination on this device and copy a local file there.
+#[fastctx_gui_command::command]
+async fn save_as(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    path: String,
+    suggested_name: String,
+) -> save_as::Outcome {
+    save_as::save(app, window, path, suggested_name).await
+}
+
 #[fastctx_gui_command::command]
 async fn reveal(app: tauri::AppHandle, path: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt as _;
@@ -926,6 +938,7 @@ pub fn run() {
             line_reading::lines_close,
             line_reading::cancel_line_request,
             open_local,
+            save_as,
             reveal,
             read_binary,
             control,

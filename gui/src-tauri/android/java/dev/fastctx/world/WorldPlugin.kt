@@ -24,6 +24,8 @@ import com.journeyapps.barcodescanner.ScanOptions
 
 @TauriPlugin(permissions = [Permission(alias = "notifications", strings = [Manifest.permission.POST_NOTIFICATIONS])])
 class WorldPlugin(activity: Activity) : Plugin(activity) {
+    private var selecting = false
+    private var saving: Saving.Request? = null
     private fun current(): Activity = WorldRuntime.currentActivity.get()
         ?: throw IllegalStateException("World has no foreground activity")
     private fun answer(invoke: Invoke, work: () -> Unit) {
@@ -84,17 +86,40 @@ class WorldPlugin(activity: Activity) : Plugin(activity) {
     }
 
     @Command fun scan(invoke: Invoke) = answer(invoke) {
+        check(!selecting) { "A system picker is already open" }
         val context = current()
         check(context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) { "This device has no camera" }
         val options = ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false)
             .setBarcodeImageEnabled(false).setOrientationLocked(false)
-        startActivityForResult(invoke, options.createScanIntent(context), "scanResult")
+        selecting = true
+        try { startActivityForResult(invoke, options.createScanIntent(context), "scanResult") }
+        catch (error: Exception) { selecting = false; throw error }
     }
     @ActivityCallback fun scanResult(invoke: Invoke, result: ActivityResult) = answer(invoke) {
+        selecting = false
         val parsed = ScanIntentResult.parseActivityResult(result.resultCode, result.data)
         if (parsed.contents != null) invoke.resolve(JSObject().put("kind", "scanned").put("code", parsed.contents))
         else if (result.data?.getBooleanExtra("MISSING_CAMERA_PERMISSION", false) == true)
             invoke.reject("Android camera permission was denied")
         else invoke.resolve(JSObject().put("kind", "cancelled"))
+    }
+
+    @Command fun saveAs(invoke: Invoke) {
+        try {
+            check(!selecting) { "A system picker is already open" }
+            current()
+            val request = Saving.request(invoke)
+            saving = request
+            selecting = true
+            try { startActivityForResult(invoke, request.intent, "saveResult") }
+            catch (error: Exception) { selecting = false; saving = null; request.close(); throw error }
+        } catch (error: Exception) { Saving.failed(invoke, error) }
+    }
+    @ActivityCallback fun saveResult(invoke: Invoke, result: ActivityResult) {
+        selecting = false
+        val request = saving
+        saving = null
+        if (request == null) Saving.failed(invoke, IllegalStateException("The save request is gone"))
+        else try { Saving.complete(invoke, request, result) } catch (error: Exception) { Saving.failed(invoke, error) }
     }
 }
