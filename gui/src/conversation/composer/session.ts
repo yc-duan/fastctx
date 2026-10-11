@@ -363,7 +363,9 @@ export class ComposerSession {
 
   /** Persists one destination for all non-images in this draft or queued editor.
    * Uses Talk's machine or machine.hub spelling; null restores its working-machine default.
-   * Uploads still go to the resident's host. Placement happens when the message is delivered. */
+   * Uploads still go to the resident's host. Placement happens when the message is delivered.
+   * Competing choices follow node arrival order; an earlier epoch is refused.
+   * A broken connection rejects the call; state.operations retains its ID for retryOperation. */
   async setFilesOn(machine: string | null, document = this.draft): Promise<ComposerUpdated> {
     this.owned(document);
     const { target, epoch } = document.view.state;
