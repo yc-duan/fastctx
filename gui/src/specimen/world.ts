@@ -123,9 +123,9 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { name: "bo", level: "member", locked: false, opened: at("00:06:00") },
       ],
       members: [
-        member("desktop", "computer", ["me"], "me", "00:10:00", true, "5be1fcee"),
+        member("desktop", "computer", ["me"], "me", "00:10:00", true, "5be1fcee", [], ["192.168.1.20:7444"]),
         member("laptop", "computer", ["me"], "me", "00:20:00", true, "a1c3e9d2"),
-        member("lab", "computer", ["me"], "me", "00:30:00", true, "7d0e44b1", [{ label: "server", addresses: ["203.0.113.20:7444"] }]),
+        member("lab", "computer", ["me"], "me", "00:30:00", true, "7d0e44b1", [{ label: "server", addresses: ["203.0.113.20:7444"] }, { label: "desktop", addresses: ["192.168.1.20:7444"] }]),
         member("server", "computer", ["me"], "me", "00:00:00", true, "c0ffee12", [], ["203.0.113.20:7444"]),
         member("studio", "computer", ["me"], "me", "00:40:00", false, "9e8d7c6b"),
         member("pixel", "phone", ["me"], null, "13:20:00", true, "4f2a91aa"),

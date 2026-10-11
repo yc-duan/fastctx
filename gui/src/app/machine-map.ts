@@ -50,6 +50,21 @@ export interface MachineMapScene {
   /** Ways asked for and not yet taken: a machine, and what it was asked to
    *  go through, a relay's machine or a hub. */
   pending: ReadonlyMap<string, string>;
+  /** The chosen machine's ways to its hub, in the order it tries them:
+   *  each relay of its list that is a machine on the drawing, then the hub.
+   *  The one it is on is its line; the others are drawn faint and dashed. */
+  ways: Way[];
+}
+
+/** One of a machine's ways to its hub. */
+export interface Way {
+  machine: string;
+  /** A relay's machine, or `hub:<id>`. */
+  to: string;
+  /** Its place in the order, from 1. */
+  order: number;
+  /** The way the machine is on now. */
+  current: boolean;
 }
 
 /** The key of the handle on a machine's line. */
@@ -122,6 +137,29 @@ export class MachineMap {
   screenOf(key: string): Point | null {
     const point = this.pointOf(key);
     return point ? this.surface.camera.toScreen(point) : null;
+  }
+
+  /** Where each of the chosen machine's ways is marked with its order, on
+   *  the screen: the middle of its line. */
+  wayPoints(): { way: Way; at: Point }[] {
+    const { scene, placement } = this;
+    if (!scene || !placement) return [];
+    return scene.ways.flatMap((way) => {
+      const from = placement.machines.get(way.machine);
+      const to = this.pointOf(way.to);
+      if (!from || !to) return [];
+      const line = this.lineOf(from, to, way.current ? this.currentName(way) : `${way.machine}>${way.to}`, way.to.startsWith("hub:") ? KNOT : RING);
+      const middle: Point = [
+        0.25 * line.from[0] + 0.5 * line.control[0] + 0.25 * line.to[0],
+        0.25 * line.from[1] + 0.5 * line.control[1] + 0.25 * line.to[1],
+      ];
+      return [{ way, at: this.surface.camera.toScreen(middle) }];
+    });
+  }
+
+  /** The name a machine's current line is bowed by (`routesOf`). */
+  private currentName(way: Way): string {
+    return `${way.machine}>${way.to.startsWith("hub:") ? way.to.slice(4) : way.to}`;
   }
 
   /** Where the handle on a machine's line is on the screen, while it has
@@ -399,7 +437,7 @@ export class MachineMap {
     const { scene, placement } = this;
     if (!scene || !placement) return;
     const near = this.level >= 1;
-    const key = JSON.stringify([scene.selected, [...scene.fresh], near, scene.route, [...scene.pending], scene.nodes.map((node) => [node.key, node.online, node.marks.includes("busy"), node.through]), [...placement.machines]]);
+    const key = JSON.stringify([scene.selected, [...scene.fresh], near, scene.route, [...scene.pending], scene.ways, scene.nodes.map((node) => [node.key, node.online, node.marks.includes("busy"), node.through]), [...placement.machines]]);
     if (key === this.marked) return;
     this.marked = key;
     const circles: string[] = [];
@@ -433,7 +471,17 @@ export class MachineMap {
       const { from: start, control, to: end } = this.lineOf(from, to, `${machine}>${target}`, target.startsWith("hub:") ? KNOT : RING);
       asked.push(`<path class="asked" d="M${start[0].toFixed(1)} ${start[1].toFixed(1)}Q${control[0].toFixed(1)} ${control[1].toFixed(1)} ${end[0].toFixed(1)} ${end[1].toFixed(1)}"/>`);
     }
-    this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)">${circles.join("")}</g><g class="flows">${flows.join("")}${asked.join("")}</g>`;
+    // The ways the chosen machine tries when its line fails: faint, dashed.
+    const fallbacks: string[] = [];
+    for (const way of scene.ways) {
+      if (way.current || scene.pending.has(way.machine)) continue;
+      const from = placement.machines.get(way.machine);
+      const to = this.pointOf(way.to);
+      if (!from || !to) continue;
+      const { from: start, control, to: end } = this.lineOf(from, to, `${way.machine}>${way.to}`, way.to.startsWith("hub:") ? KNOT : RING);
+      fallbacks.push(`<path class="fallback" d="M${start[0].toFixed(1)} ${start[1].toFixed(1)}Q${control[0].toFixed(1)} ${control[1].toFixed(1)} ${end[0].toFixed(1)} ${end[1].toFixed(1)}"/>`);
+    }
+    this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)">${circles.join("")}</g><g class="flows">${fallbacks.join("")}${flows.join("")}${asked.join("")}</g>`;
   }
 }
 

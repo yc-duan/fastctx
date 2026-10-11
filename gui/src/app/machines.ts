@@ -22,7 +22,7 @@ import type { AccessWords, MachinesWords } from "./account-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { GiveSheet, RelaysSheet, socketAddress } from "./machine-sheets";
-import { MachineMap } from "./machine-map";
+import { MachineMap, type Way } from "./machine-map";
 import type { MapNode } from "./network-map";
 import { blot, circle, outline, seeded } from "../pen/shapes";
 import { RING } from "./map-layout";
@@ -100,6 +100,9 @@ export class MachinesPage implements Page {
   private readonly acts: HTMLElement;
   private readonly menu: HTMLElement;
   private readonly tags: HTMLElement;
+  /** The order of the chosen machine's ways, a number on each line. */
+  private readonly orders: HTMLElement;
+  private ordered = "";
   private readonly undoBar: HTMLElement;
   private tagged = "";
   private given: Given[] = [];
@@ -143,12 +146,14 @@ export class MachinesPage implements Page {
         `<h1 class="page-title">${escape(words.title)}</h1>`,
         `<button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
-      <div class="machines-layout"><div class="machines-canvas"><div class="map-tags"></div><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
+      <div class="machines-layout"><div class="machines-canvas"><div class="map-tags"></div><div class="map-orders"></div><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
     this.acts = this.element.querySelector<HTMLElement>(".map-acts")!;
     this.menu = this.element.querySelector<HTMLElement>(".map-menu")!;
     this.tags = this.element.querySelector<HTMLElement>(".map-tags")!;
+    this.orders = this.element.querySelector<HTMLElement>(".map-orders")!;
+    this.orders.addEventListener("pointerdown", (event) => this.dragOrder(event));
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
     this.map = new MachineMap({
@@ -430,6 +435,7 @@ export class MachinesPage implements Page {
     this.settleRoutes(nodes);
     const chosen = this.selected ? nodes.find((node) => node.key === this.selected) : undefined;
     const route = chosen && this.routable(chosen, world) ? chosen.key : null;
+    const ways = route && chosen ? waysOf(chosen, nodes) : [];
     this.map.update({
       hubs,
       nodes,
@@ -440,6 +446,7 @@ export class MachinesPage implements Page {
       fresh: this.fresh,
       route,
       pending: new Map([...this.pending].map(([key, way]) => [key, way.target])),
+      ways,
     });
   }
 
@@ -529,6 +536,86 @@ export class MachinesPage implements Page {
         if (login) void this.setRelay(login, machine, []);
         return;
     }
+  }
+
+  /** The numbers on the chosen machine's ways, where their lines are; only
+   *  a machine with more than one way has them, and only a relay's number
+   *  can be moved: the hub is always tried last. */
+  private drawOrders(): void {
+    const points = this.menuFor || this.cardFor ? [] : this.map.wayPoints();
+    const shown = points.length > 1 ? points : [];
+    const html = shown
+      .map(({ way }) => `<button class="map-order${way.current ? " current" : ""}" type="button" data-order="${escape(way.to)}"${way.to.startsWith("hub:") ? " disabled" : ""}>${way.order}</button>`)
+      .join("");
+    if (html !== this.ordered) {
+      this.ordered = html;
+      this.orders.innerHTML = html;
+    }
+    const buttons = [...this.orders.children] as HTMLElement[];
+    shown.forEach(({ at }, index) => {
+      const button = buttons[index];
+      if (button && !button.classList.contains("dragging")) button.style.transform = `translate(${(at[0] - 13).toFixed(1)}px, ${(at[1] - 13).toFixed(1)}px)`;
+    });
+  }
+
+  /** A relay's number dragged onto another's swaps their places in the
+   *  order the machine tries them; the card asks before it is changed. */
+  private dragOrder(event: PointerEvent): void {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".map-order");
+    if (!button || button.disabled || !this.selected) return;
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    button.classList.add("dragging");
+    const box = this.canvas.getBoundingClientRect();
+    const start = button.style.transform;
+    const move = (moved: PointerEvent) => {
+      button.style.transform = `translate(${(moved.clientX - box.left - 13).toFixed(1)}px, ${(moved.clientY - box.top - 13).toFixed(1)}px)`;
+    };
+    const up = (ended: PointerEvent) => {
+      button.removeEventListener("pointermove", move);
+      button.classList.remove("dragging");
+      button.style.transform = start;
+      const under = document.elementsFromPoint(ended.clientX, ended.clientY).find((element) => element !== button && element.classList.contains("map-order")) as HTMLButtonElement | undefined;
+      if (under && !under.disabled && this.selected) this.proposeOrder(this.selected, button.dataset.order!, under.dataset.order!, [ended.clientX - box.left, ended.clientY - box.top]);
+    };
+    button.addEventListener("pointermove", move);
+    button.addEventListener("pointerup", up, { once: true });
+    button.addEventListener("pointercancel", () => {
+      button.removeEventListener("pointermove", move);
+      button.classList.remove("dragging");
+      button.style.transform = start;
+    }, { once: true });
+  }
+
+  /** The card for swapping two relays in a machine's order: the order
+   *  before and after, in words. */
+  private proposeOrder(source: string, first: string, second: string, at: Point): void {
+    const world = this.options.store.world.peek();
+    if (!world) return;
+    const { words } = this.options;
+    const spot = this.spots(world).get(source);
+    const { nodes } = mapOf(world, words);
+    if (spot?.kind !== "machine") return;
+    const login = this.ownersOf(spot.machine, world)[0];
+    const before = this.memberOf(spot.machine, world)?.relays ?? [];
+    const name = (key: string) => nodes.find((node) => node.key === key)?.name;
+    const a = before.findIndex((relay) => relay.label === name(first));
+    const b = before.findIndex((relay) => relay.label === name(second));
+    if (!login || a < 0 || b < 0 || a === b) return;
+    const relays = [...before];
+    [relays[a], relays[b]] = [relays[b]!, relays[a]!];
+    const said = words.routeList(relays.map((relay) => relay.label));
+    this.openCard(
+      source,
+      at,
+      `<p class="map-card-said">${escape(said)}</p>
+       <p class="map-card-was">${escape(words.routeList(before.map((relay) => relay.label)))}</p>
+       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.confirm)}</button></footer>`,
+      async () => {
+        await this.options.change(login, { change: "relays", machine: spot.machine.name, relays });
+        this.offerUndo(said, () => this.options.change(login, { change: "relays", machine: spot.machine.name, relays: before }));
+      },
+    );
   }
 
   /** The hub's record of one of the account's machines. */
@@ -802,6 +889,7 @@ export class MachinesPage implements Page {
   /** The icons beside the one chosen, on an arc round its ring, kept on the
    *  side with room; the names on the drawing keep clear of them. */
   private float(): void {
+    this.drawOrders();
     const world = this.options.store.world.peek();
     const key = this.menuFor || this.cardFor ? null : this.selected;
     const at = key ? this.map.screenOf(key) : null;
@@ -1086,4 +1174,18 @@ function routePicture(via: string | null, after: boolean): string {
   const lines = via ? `${line(28, 56)} ${line(76, 110)}` : line(28, 110);
   const tone = after ? "clay" : "graphite";
   return `<svg class="map-card-picture" viewBox="0 0 132 36" role="img" aria-label="${escape(via ?? "")}"><g class="ink graphite" filter="url(#pen-marker)"><path d="${ring}"/><path d="${knot}"/><path d="${dot}"/></g><g class="ink ${tone}" filter="url(#pen-marker)"><path d="${lines}"/>${relay ? `<path d="${relay}"/>` : ""}</g>${via ? `<text x="66" y="34" text-anchor="middle">${escape(via)}</text>` : ""}</svg>`;
+}
+
+/** A machine's ways to its hub in the order it tries them: the relays of
+ *  its list that are machines on the drawing, then the hub. */
+function waysOf(node: MapNode, nodes: MapNode[]): Way[] {
+  const relays = node.relays ?? [];
+  const ways: Way[] = [];
+  relays.forEach((label, index) => {
+    const relay = nodes.find((one) => one.name === label && one.relayAt?.length && one.key !== node.key);
+    if (relay) ways.push({ machine: node.key, to: relay.key, order: index + 1, current: node.through === label });
+  });
+  const hub = node.hubs[0];
+  if (hub) ways.push({ machine: node.key, to: `hub:${hub}`, order: relays.length + 1, current: !node.through || !ways.some((way) => way.current) });
+  return ways;
 }

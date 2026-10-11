@@ -1017,3 +1017,74 @@
     animation: none;
   }
 }
+
+/* The ways a chosen machine tries in turn, when the one it is on fails: a
+   faint dashed line each, and a number on each line; a relay's number is
+   dragged onto another's to swap them. */
+.map-live .fallback {
+  fill: none;
+  stroke: var(--pen-graphite);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-dasharray: 2 7;
+  opacity: 0.55;
+}
+
+.map-orders {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.map-order {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+.map-order.current {
+  background: var(--pen-clay);
+  color: var(--bg);
+}
+
+.map-order:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.map-order.dragging {
+  z-index: 1;
+  cursor: grabbing;
+  box-shadow: var(--shadow-pop), 0 0 0 3px color-mix(in srgb, var(--pen-clay) 35%, transparent);
+}
+
+.map-card-was {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--size-small);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-3) 60%, transparent);
+}
+
+@media (pointer: coarse) {
+  .map-order {
+    width: 36px;
+    height: 36px;
+  }
+}
