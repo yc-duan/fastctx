@@ -21,10 +21,13 @@ pub mod device;
 pub mod file_read;
 mod file_search;
 pub mod host;
+mod lines;
+mod lines_read;
 mod management;
 pub mod pages;
 pub mod renewal;
 pub mod shown;
+mod thumbnail;
 pub mod town;
 pub mod world;
 
@@ -220,6 +223,7 @@ impl Client {
                 Err(broken("the node answered a call as a stream".to_string()))
             }
             NodeFrame::FileRead { .. } => Err(broken("use read_file to consume a file byte stream".to_string())),
+            NodeFrame::LinesRead { .. } => Err(broken("use World.lines to consume logical rows".to_string())),
         }
     }
 

@@ -286,6 +286,35 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             let acting = fastctx_types::access::Acting::Here;
             return crate::file_read::serve_local(node, acting, machine, request, id, &mut reader, &mut writer).await;
         }
+        if let Call::ReadLines { machine, request } = call {
+            if let Err(error) = users_voice(node, &hello.peer) {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
+                return writer.drain().await;
+            }
+            return crate::lines::reading::local(node, machine, request, id, &mut reader, &mut writer).await;
+        }
+        if let Call::Lines { machine, request: fastctx_types::lines::Request::Open { path, decoding } } = call {
+            if let Err(error) = users_voice(node, &hello.peer) {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
+                return writer.drain().await;
+            }
+            let opened = tokio::select! {
+                result = crate::lines::open(node, node.machine(), machine, path, decoding) => result,
+                _ = reader.recv() => return Ok(()),
+            };
+            match opened {
+                Ok((reply, mut lease)) => {
+                    writer.send(&json(&NodeFrame::Reply { id, reply: Ok(Reply::Lines(reply)) })).await?;
+                    writer.drain().await?;
+                    tokio::select! { _ = reader.recv() => {}, () = lease.closed() => {} }
+                    return Ok(());
+                }
+                Err(error) => {
+                    writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
+                    return writer.drain().await;
+                }
+            }
+        }
         if let Call::Upload { target, node: machine, file, composer } = call {
             let reply = match users_voice(node, &hello.peer) {
                 Ok(()) => crate::attachments::upload(node, target, machine, file, composer, reader)
@@ -304,7 +333,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             continue;
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
-        let cancellable = matches!(&call, Call::Offers { .. });
+        let cancellable = matches!(
+            &call,
+            Call::Offers { .. } | Call::Lines { .. } | Call::Thumbnail { .. } | Call::AttachmentThumbnail { .. }
+        );
         let answer = async {
             match call {
                 Call::Collect { resident, answering } => {
@@ -715,6 +747,19 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
         Call::On { .. } => Err(Failure::new("an on is answered as it goes, not at once")),
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
+        Call::ReadLines { .. } => Err(Failure::new("logical rows are answered as a text stream")),
+        Call::Thumbnail { machine, request } => {
+            users_voice(node, peer)?;
+            crate::thumbnail::call(node, machine, request).await.map(Reply::Thumbnail)
+        }
+        Call::AttachmentThumbnail { attachment, max } => {
+            users_voice(node, peer)?;
+            crate::thumbnail::attachment(node, attachment, max).await.map(Reply::Thumbnail)
+        }
+        Call::Lines { machine, request } => {
+            users_voice(node, peer)?;
+            crate::lines::call(node, node.machine(), machine, request).await.map(Reply::Lines)
+        }
         Call::Upload { .. } => Err(Failure::new("an upload requires its byte stream on a dedicated connection")),
         Call::Collect { .. } | Call::Taken { .. } => Err(Failure::new("this is asked on a session's own connection")),
         Call::Wait { .. } => Err(Failure::new("a wait is asked on a command's own connection")),

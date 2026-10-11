@@ -7,8 +7,8 @@
 mod encode;
 mod evidence;
 pub(crate) mod file;
-mod iso2022;
-mod line;
+pub(crate) mod iso2022;
+pub(crate) mod line;
 mod mapping;
 mod statistics;
 mod stream;

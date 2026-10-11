@@ -429,6 +429,36 @@ fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Res
     Ok(kept)
 }
 
+/// Locate an immutable original from its recorded receipt, including when
+/// the resident's directory was archived. No client path selects a file.
+pub(crate) fn verified_original(node: &Node, attachment: &Attachment, cancelled: &std::sync::atomic::AtomicBool) -> Result<(String, fastctx_platform::file_read::Snapshot), Failure> {
+    let kept = kept_here(node, &attachment.owner.resident, attachment)?;
+    let leaf = std::path::Path::new(&kept.path).file_name().ok_or_else(|| failure("the stored upload has no filename"))?;
+    let path = node.world.resident(kept.town.as_ref(), &kept.owner.resident).path()
+        .join("attachments").join(kept.id.as_str()).join(leaf);
+    let file = fastctx_platform::file_read::open(&path).map_err(failure)?;
+    let metadata = file.metadata().map_err(failure)?;
+    if !metadata.is_file() || metadata.len() != kept.file.size { return Err(failure("the uploaded original changed")); }
+    let before = fastctx_platform::file_read::snapshot(&file, &metadata).map_err(failure)?;
+    let mut reading = (&file).take(before.size);
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0; UPLOAD_CHUNK];
+    let mut received = 0;
+    loop {
+        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(failure("attachment thumbnail was cancelled"));
+        }
+        let bytes = reading.read(&mut buffer).map_err(failure)?;
+        if bytes == 0 { break; }
+        hash.update(&buffer[..bytes]); received += bytes as u64;
+    }
+    let after = fastctx_platform::file_read::snapshot(&file, &file.metadata().map_err(failure)?).map_err(failure)?;
+    if before != after || received != kept.file.size || format!("{:x}", hash.finalize()) != kept.file.sha256 {
+        return Err(failure("the uploaded original changed"));
+    }
+    Ok((crate::world::native(&path), before))
+}
+
 /// Whether the file `kept` names still holds the bytes it was kept with.
 fn holds(kept: &Attachment, buffer: &mut [u8]) -> Result<bool, Failure> {
     let mut file = std::fs::File::open(&kept.path).map_err(failure)?;

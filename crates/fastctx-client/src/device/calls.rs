@@ -77,6 +77,17 @@ impl Device {
                     machine.ok_or_else(|| failed("choose a machine for file search; a device has no local files"))?;
                 (machine, RemoteCall::FindFiles { request }, None)
             }
+            Call::Thumbnail { machine, request } => {
+                let machine = machine.ok_or_else(|| failed("choose the machine holding the image"))?;
+                (machine, RemoteCall::Thumbnail { request }, None)
+            }
+            Call::AttachmentThumbnail { attachment, max } => {
+                (attachment.owner.machine.clone(), RemoteCall::AttachmentThumbnail { attachment, max }, None)
+            }
+            Call::Lines { machine, request } => {
+                let machine = machine.ok_or_else(|| failed("choose the machine holding the text file"))?;
+                (machine, RemoteCall::Lines { request }, None)
+            }
             Call::ClaudeConsent { machine, accept, home } => {
                 (machine, RemoteCall::ClaudeConsent { accept, home }, None)
             }
@@ -163,6 +174,9 @@ impl Device {
         let reply = match (remote, answer) {
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
+            (RemoteCall::Thumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
+            (RemoteCall::AttachmentThumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
+            (RemoteCall::Lines { .. }, RemoteReply::Lines(reply)) => Reply::Lines(reply),
             (RemoteCall::Homes { .. }, RemoteReply::Set) => Reply::Done,
             (RemoteCall::ClaudeConsent { .. }, RemoteReply::ClaudeConsent { accepted, changed }) => {
                 Reply::ClaudeConsent { machine: machine.clone(), accepted, changed }

@@ -42,6 +42,7 @@ mod leases;
 mod ledger;
 mod letters;
 mod lifetime;
+mod lines;
 mod log;
 mod login_identity;
 mod look;
@@ -66,6 +67,7 @@ mod since;
 mod speech;
 mod stop;
 mod talk;
+pub mod thumbnail;
 mod town;
 mod turns;
 mod uninstall;
@@ -117,6 +119,7 @@ pub(crate) struct Node {
     watchers: watch::Watchers,
     composers: composer::Composers,
     file_searches: file_search::Searches,
+    line_sources: lines::Sources,
     log: Arc<log::Log>,
     /// The link to each hub this computer is logged in to (`reach`).
     links: RwLock<std::collections::BTreeMap<HubId, Arc<Link>>>,
@@ -354,6 +357,7 @@ pub async fn run_prepared(
         watchers: watch::Watchers::default(),
         composers: composer::Composers::default(),
         file_searches: file_search::Searches::default(),
+        line_sources: lines::Sources::default(),
         log,
         links: RwLock::new(std::collections::BTreeMap::new()),
         syncing: tokio::sync::Mutex::new(()),

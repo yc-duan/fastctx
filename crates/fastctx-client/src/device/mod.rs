@@ -7,6 +7,7 @@ mod calls;
 mod connection_state;
 pub(crate) mod file_read;
 mod file_search;
+mod lines;
 mod store;
 mod upload;
 pub(crate) mod watch;
@@ -53,7 +54,9 @@ impl Device {
     /// Ends this application's connections while retaining every login.
     /// Uninstall uses this before a separate withdrawal connection or exit.
     pub fn disconnect(&self) {
-        for session in self.sessions() { session.link.stop(); }
+        for session in self.sessions() {
+            session.link.stop();
+        }
     }
     /// Opens an identity and uses the platform's network/resume notifications.
     /// Must run inside a Tokio runtime.
@@ -71,7 +74,12 @@ impl Device {
     fn open_with_notifications(directory: PathBuf, managed: bool) -> io::Result<Arc<Self>> {
         let store = Arc::new(Store::open(directory)?);
         let memberships = store.memberships()?;
-        let device = Arc::new(Self { store, sessions: RwLock::new(BTreeMap::new()), lifecycle: tokio::sync::Mutex::new(()), managed });
+        let device = Arc::new(Self {
+            store,
+            sessions: RwLock::new(BTreeMap::new()),
+            lifecycle: tokio::sync::Mutex::new(()),
+            managed,
+        });
         for membership in memberships {
             device.start(membership)?;
         }
@@ -119,8 +127,7 @@ impl Device {
             let _changing = device.lifecycle.lock().await;
             let key = device.store.key()?;
             let joining = Joining { name: device.name(name)?, key: &key, kind: Kind::Phone, register: false };
-            let joined =
-                fastctx_net::login::with_password(&hub, &account, &password, joining).await.map_err(failed)?;
+            let joined = fastctx_net::login::with_password(&hub, &account, &password, joining).await.map_err(failed)?;
             device.logged_in(joined).await
         })
         .await
@@ -129,7 +136,11 @@ impl Device {
 
     /// Logs this device in with an enrollment token, as a phone scanning a
     /// QR code does.
-    pub async fn login_with_token(self: &Arc<Self>, token: String, name: Option<MachineName>) -> Result<DeviceJoined, Error> {
+    pub async fn login_with_token(
+        self: &Arc<Self>,
+        token: String,
+        name: Option<MachineName>,
+    ) -> Result<DeviceJoined, Error> {
         let device = self.clone();
         tokio::spawn(async move {
             let _changing = device.lifecycle.lock().await;
@@ -162,8 +173,14 @@ impl Device {
         match self.session(&hub) {
             Some(session) => session.link.refresh().await.map_err(failed)?,
             None => {
-                let membership =
-                    Membership { id: hub.clone(), hub_name: hub_name.clone(), name: name.clone(), addresses, cert, kind: Kind::Phone };
+                let membership = Membership {
+                    id: hub.clone(),
+                    hub_name: hub_name.clone(),
+                    name: name.clone(),
+                    addresses,
+                    cert,
+                    kind: Kind::Phone,
+                };
                 self.store.keep(&membership)?;
                 self.start(membership)?;
             }
@@ -257,7 +274,11 @@ impl Session {
         view.account_for(&logins, &me, machine, purpose).ok_or_else(|| {
             let why: Vec<String> =
                 logins.iter().filter_map(|account| view.admits(&me, account, machine, purpose).err()).collect();
-            failed(if why.is_empty() { format!("this device is logged in to no account that may use {machine}") } else { why.join("; ") })
+            failed(if why.is_empty() {
+                format!("this device is logged in to no account that may use {machine}")
+            } else {
+                why.join("; ")
+            })
         })
     }
 }

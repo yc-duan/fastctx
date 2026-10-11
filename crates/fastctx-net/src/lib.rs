@@ -19,6 +19,8 @@ pub mod file_read;
 pub mod file_search;
 pub mod ids;
 pub mod ledger;
+pub mod lines;
+pub mod lines_read;
 pub mod link;
 pub mod login;
 pub mod message;

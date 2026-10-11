@@ -200,7 +200,7 @@ impl TextEncoding {
         }
     }
 
-    pub(super) fn is_stateful(self) -> bool {
+    pub(crate) fn is_stateful(self) -> bool {
         self.codec == Codec::Rs(encoding_rs::ISO_2022_JP)
     }
 

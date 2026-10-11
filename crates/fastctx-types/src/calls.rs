@@ -91,6 +91,22 @@ pub enum Call {
         machine: Option<MachineName>,
         request: crate::file_read::ReadFileRequest,
     },
+    Thumbnail {
+        machine: Option<MachineName>,
+        request: crate::thumbnail::ThumbnailRequest,
+    },
+    AttachmentThumbnail {
+        attachment: crate::attachments::Attachment,
+        max: u32,
+    },
+    Lines {
+        machine: Option<MachineName>,
+        request: crate::lines::Request,
+    },
+    ReadLines {
+        machine: Option<MachineName>,
+        request: crate::lines::ReadRequest,
+    },
     /// File-name completion, with scope checked on the machine holding it.
     FindFiles {
         machine: Option<MachineName>,
@@ -406,6 +422,8 @@ pub enum Reply {
     FileRead {
         result: crate::file_read::FileReadResult,
     },
+    Thumbnail(crate::thumbnail::Thumbnail),
+    Lines(crate::lines::Reply),
     Asked {
         colleague: Address,
     },

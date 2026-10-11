@@ -1,7 +1,7 @@
 //! State at a character boundary in a strictly validated ISO-2022-JP stream.
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) enum State {
+pub(crate) enum State {
     #[default]
     Ascii,
     Roman,

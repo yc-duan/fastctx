@@ -68,6 +68,36 @@ enum Data<'a> {
     Records(Bytes),
 }
 impl<'a> Parts<'a> {
+    /// Stream text without collecting a potentially enormous terminal row.
+    /// Images remain identifiable in a text viewer through a size label.
+    pub fn write_text(&self, out: &mut impl Write) -> io::Result<()> {
+        match &self.0 {
+            Data::Text(text) => out.write_all(text.as_bytes()),
+            Data::Records(bytes) => {
+                for record in Records::new(bytes.clone()) {
+                    let record = record?;
+                    match record.kind {
+                        0 | 3 => {
+                            io::copy(&mut record.payload.reader(), out)?;
+                        }
+                        1 => {
+                            let spaces = [b' '; crate::spool::BLOCK];
+                            let mut remaining = record.a;
+                            while remaining > 0 {
+                                let count = remaining.min(spaces.len() as u64) as usize;
+                                out.write_all(&spaces[..count])?;
+                                remaining -= count as u64;
+                            }
+                        }
+                        2 => write!(out, "[image {}x{}]", record.a, record.b)?,
+                        _ => return Err(io::Error::other("invalid terminal part")),
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
     pub(super) fn from_text(text: std::borrow::Cow<'a, str>) -> Self {
         Self(Data::Text(text))
     }

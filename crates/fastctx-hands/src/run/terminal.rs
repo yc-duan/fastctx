@@ -74,6 +74,7 @@ pub struct Lines<R> {
     text: Spool,
     kitty: Option<Spool>,
     finished: bool,
+    input_bytes: u64,
     view: u64,
     line_view: u64,
     next_view: u64,
@@ -84,6 +85,16 @@ pub struct Lines<R> {
 }
 
 impl<R: Read> Lines<R> {
+    /// Original bytes consumed, excluding input buffered for later rows.
+    pub fn position(&self) -> u64 {
+        self.input_bytes - (self.end - self.start) as u64
+    }
+
+    /// Whether the next original row starts inside a literal view span.
+    pub fn in_view(&self) -> bool {
+        self.view > 0
+    }
+
     pub fn new(input: R) -> Self {
         Self {
             input,
@@ -100,6 +111,7 @@ impl<R: Read> Lines<R> {
             text: Spool::default(),
             kitty: None,
             finished: false,
+            input_bytes: 0,
             view: 0,
             line_view: 0,
             next_view: 1,
@@ -127,6 +139,7 @@ impl<R: Read> Lines<R> {
                     return Ok(None);
                 }
                 let read = self.input.read(&mut self.buffer)?;
+                self.input_bytes += read as u64;
                 if read == 0 {
                     self.finished = true;
                     self.finish(std::mem::take(&mut sequence).finish())?;

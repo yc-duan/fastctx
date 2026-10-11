@@ -18,6 +18,11 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
+    pub(crate) fn line_endings(&self) -> (Vec<u8>, Vec<u8>) {
+        let codec = self.fixed.unwrap_or_else(TextEncoding::utf8);
+        (codec.encode("\n").expect("newline"), codec.encode("\r\n").expect("CRLF"))
+    }
+
     pub fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result<Self, String> {
         evidence::inspect(reader, selection)
     }

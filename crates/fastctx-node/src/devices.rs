@@ -49,6 +49,10 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             // and a file the user attaches to their words, kept in that
             // agent's own place: byte streams, which no relay carries.
             | RemoteCall::ReadFile { .. }
+            | RemoteCall::Thumbnail { .. }
+            | RemoteCall::AttachmentThumbnail { .. }
+            | RemoteCall::Lines { .. }
+            | RemoteCall::ReadLines { .. }
             | RemoteCall::Upload { .. }
             // Names of the user's files for an `@` in their words: the
             // machine that has them limits the search to the conversation's

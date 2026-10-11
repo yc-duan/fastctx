@@ -135,6 +135,17 @@ pub enum RemoteCall {
         request: crate::file_read::ReadFileRequest,
         read: u64,
     },
+    Thumbnail {
+        request: crate::thumbnail::ThumbnailRequest,
+    },
+    AttachmentThumbnail {
+        attachment: crate::attachments::Attachment,
+        max: u32,
+    },
+    Lines {
+        request: crate::lines::Request,
+    },
+    ReadLines { request: crate::lines::ReadRequest, read: u64 },
     FindFiles {
         request: crate::file_search::FileSearchRequest,
     },
@@ -302,6 +313,9 @@ impl RemoteCall {
             | RemoteCall::StopJob { .. }
             | RemoteCall::FindFiles { .. }
             | RemoteCall::ReadFile { .. }
+            | RemoteCall::Thumbnail { .. }
+            | RemoteCall::Lines { .. }
+            | RemoteCall::ReadLines { .. }
             | RemoteCall::Canon { .. }
             | RemoteCall::CopySend { .. }
             | RemoteCall::CopyFetch { .. }
@@ -312,6 +326,7 @@ impl RemoteCall {
             | RemoteCall::ClaudeConsent { .. }
             | RemoteCall::Homes { .. } => Purpose::Hands,
             RemoteCall::Composer { .. }
+            | RemoteCall::AttachmentThumbnail { .. }
             | RemoteCall::Ask { .. }
             | RemoteCall::Talk { .. }
             | RemoteCall::Watch { .. }
@@ -342,6 +357,8 @@ pub enum RemoteReply {
         result: crate::pages::PageResult,
     },
     FilesFound(crate::file_search::FileSearchReply),
+    Thumbnail(crate::thumbnail::Thumbnail),
+    Lines(crate::lines::Reply),
     ClaudeConsent {
         accepted: bool,
         changed: bool,
