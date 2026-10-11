@@ -131,6 +131,8 @@ def verify(reader):
                 expected = json.loads(json.dumps(answer["current"]))
                 if case.get("receipts"):
                     expected["reply"]["Ok"].pop("consumed")
+                if case.get("collaboration"):
+                    expected["reply"]["Ok"].pop("collab")
                 assert wire == expected, (case, answer)
             if case.get("attached") and case["protocol"] >= 6:
                 assert wire["reply"]["Ok"]["notices"] == case["value"]["reply"]["Ok"]["notices"]

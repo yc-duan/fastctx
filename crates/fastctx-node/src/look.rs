@@ -13,8 +13,8 @@ use fastctx_types::town::{CurrentTool, Looked, LookedUp, ResidentDetail, Residen
 use fastctx_types::{Address, JobId, ResidentId};
 
 use crate::Node;
-use crate::around::Heard;
 use crate::activity::entries;
+use crate::around::Heard;
 use crate::residents::OnRecord;
 
 // Twenty action lines provide the recent working context; the named file
@@ -130,8 +130,6 @@ pub(crate) fn read_here(
             asked,
             answers,
             jobs,
-            colleagues: crate::colleagues::setting::read_in(world, &record.id)?,
-            colleagues_home: crate::colleagues::setting::home_in(world, &record.id)?,
         }))))
     } else {
         Ok(None)

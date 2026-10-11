@@ -13,7 +13,9 @@ use crate::source::{Source, comma_in, edit, newline, same_value, splice};
 use crate::{Error, File, Notice, check_path, finish};
 
 mod command;
+mod identity;
 mod shared;
+pub(crate) use identity::forward_home;
 pub(crate) mod tools;
 
 const SERVER: &[&str] = &["mcp_servers", "fastctx"];
@@ -390,7 +392,7 @@ fn server_body(plan: &CodexPlan, command: &str, inline: bool, nl: &str) -> Vec<u
             .map(|name| format!("{name} = {{ output_token_limit = {} }}", plan.output_token_limit))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("fastctx = {{ command = {command}, args = {args}, startup_timeout_sec = {}, tool_timeout_sec = {}, {omit}, tools = {{ {limits} }} }}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
+        format!("fastctx = {{ command = {command}, args = {args}, env_vars = [\"CODEX_HOME\"], env = {{ FASTCTX_LOGIN_IDENTITY = \"1\" }}, startup_timeout_sec = {}, tool_timeout_sec = {}, {omit}, tools = {{ {limits} }} }}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
     } else {
         let limits = tools
             .iter()
@@ -401,7 +403,7 @@ fn server_body(plan: &CodexPlan, command: &str, inline: bool, nl: &str) -> Vec<u
                 )
             })
             .collect::<String>();
-        format!("[mcp_servers.fastctx]{nl}command = {command}{nl}args = {args}{nl}startup_timeout_sec = {}{nl}tool_timeout_sec = {}{nl}{omit}{nl}{limits}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
+        format!("[mcp_servers.fastctx]{nl}command = {command}{nl}args = {args}{nl}env_vars = [\"CODEX_HOME\"]{nl}env = {{ FASTCTX_LOGIN_IDENTITY = \"1\" }}{nl}startup_timeout_sec = {}{nl}tool_timeout_sec = {}{nl}{omit}{nl}{limits}", plan.startup_timeout_sec, plan.tool_timeout_sec).into_bytes()
     }
 }
 

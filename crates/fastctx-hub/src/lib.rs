@@ -87,6 +87,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         level: fastctx_net::directory::Level::Super,
         locked: false,
         opened: Timestamp::now(),
+        collab: None,
     });
     book.passwords.insert(new.admin, Bytes(record));
     let hub = HubFile {

@@ -236,6 +236,7 @@ pub(crate) async fn open_account(
             level: fastctx_net::directory::Level::Member,
             locked: false,
             opened: Timestamp::now(),
+            collab: None,
         });
         store.book.passwords.insert(account.clone(), Bytes(record));
         store.save_book().map_err(|error| format!("the hub could not keep the account: {error}"))

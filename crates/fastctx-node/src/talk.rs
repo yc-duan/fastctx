@@ -503,9 +503,7 @@ pub async fn open(
                 reasoning_effort: options.reasoning_effort,
                 attachments,
                 works_on: choices.works_on,
-                colleagues: choices.colleagues,
                 home: choices.home,
-                colleagues_home: choices.colleagues_home,
                 files_on: choices.files_on,
             };
             let reply = node.call(&acting, &(&target).into(), Purpose::Agents, call).await;
@@ -560,14 +558,7 @@ pub async fn open_here(
             (home.found != fastctx_types::agents::HomeFound::Default).then_some(home.dir)
         }
     };
-    let opened = Opened {
-        acting,
-        works_on,
-        colleagues: choices.colleagues,
-        home,
-        colleagues_home: choices.colleagues_home,
-        files_on: choices.files_on,
-    };
+    let opened = Opened { acting, works_on, home, files_on: choices.files_on };
     match agent.as_str() {
         "codex" => {}
         "claude" => return crate::claude::open_here(node, typed_on, opened, town, text, options, attachments).await,
@@ -584,9 +575,6 @@ pub async fn open_here(
     let _birth = crate::here::born(node, &id, opened.acting.clone(), opened.works_on.clone());
     let origin = Origin::User;
     crate::session_options::keep(node, &id, &options)?;
-    if let Some(lives_on) = &opened.colleagues {
-        crate::colleagues::setting::keep(node, &id, lives_on, opened.colleagues_home.clone())?;
-    }
     let (spec, heard) = crate::colleagues::thread_spec(
         node,
         &id,
@@ -611,6 +599,7 @@ pub async fn open_here(
         acting: opened.acting,
         works_on: opened.works_on,
         home: opened.home,
+        callee: None,
     };
     let now = Now {
         activity: Activity::Idle,
@@ -696,12 +685,8 @@ async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<MachineName, Failur
 pub struct Opened {
     pub acting: Acting,
     pub works_on: Option<Written>,
-    pub colleagues: Option<Written>,
     /// The agent's home here it is born in, when not the default one.
     pub home: Option<std::path::PathBuf>,
-    /// The Codex home its colleagues use where they live, when not the
-    /// default one there.
-    pub colleagues_home: Option<std::path::PathBuf>,
     /// Where the files attached to its first words go, other than images,
     /// when the user chose.
     pub files_on: Option<Written>,

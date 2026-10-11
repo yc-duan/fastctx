@@ -1086,9 +1086,6 @@ pub async fn open_here(
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
     let _birth = crate::here::born(node, &id, opened.acting.clone(), opened.works_on.clone());
-    if let Some(lives_on) = &opened.colleagues {
-        crate::colleagues::setting::keep(node, &id, lives_on, opened.colleagues_home.clone())?;
-    }
     let Command { program, env, .. } = command(node, opened.home.as_deref())?;
     // A login lent to another account starts without the browser of this
     // machine (`background::Start::lent`).
@@ -1115,6 +1112,7 @@ pub async fn open_here(
         acting: opened.acting,
         works_on: opened.works_on,
         home: opened.home,
+        callee: None,
     };
     let now = Now {
         activity: Activity::Busy,

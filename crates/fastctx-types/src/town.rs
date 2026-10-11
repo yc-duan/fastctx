@@ -154,12 +154,6 @@ pub struct ResidentDetail {
     pub answers: Vec<MessageLine>,
     /// What it started that still runs on its machine.
     pub jobs: Vec<RunningJob>,
-    /// Where its colleagues live, when the user let it ask for them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub colleagues: Option<crate::access::Written>,
-    /// The Codex home they use there, when not the default one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub colleagues_home: Option<std::path::PathBuf>,
 }
 
 /// One id looked up across the World: what each machine that has it said,

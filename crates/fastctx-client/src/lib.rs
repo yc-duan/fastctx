@@ -14,6 +14,7 @@
 
 mod address;
 pub mod attachments;
+mod collab;
 pub mod composer;
 pub mod conversation;
 pub mod device;

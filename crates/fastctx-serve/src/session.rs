@@ -262,7 +262,7 @@ impl Session {
         // still name a machine.
         if arguments.get("node").is_some_and(|node| !node.is_null()) {
             return failed(
-                "ask_colleague has no `node`: colleagues live on the machine the user chose in this conversation's details; say in `prompt` where the colleague works".to_string(),
+                "ask_colleague has no `node`: callees use the logins configured on the Model collaboration page; say in `prompt` where the colleague works".to_string(),
             );
         }
         let whereabouts = match self.whereabouts(meta).await {
@@ -271,7 +271,12 @@ impl Session {
         };
         let reply = async {
             let mut client = self.client(meta).await?;
-            let call = Call::Ask { resident: whereabouts.resident.clone(), label, prompt };
+            let callee = match arguments.get("callee").filter(|value| !value.is_null()) {
+                Some(_) => Some(text_argument(arguments, "callee")?),
+                None => None,
+            };
+            let login = self.login(&self.host(meta)?);
+            let call = Call::Ask { resident: whereabouts.resident.clone(), label, prompt, callee, login };
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;
@@ -313,7 +318,13 @@ impl Session {
         };
         let reply = async {
             let mut client = self.client(meta).await?;
-            let call = Call::Message { resident: whereabouts.resident.clone(), to, machine, text: message };
+            let call = Call::Message {
+                resident: whereabouts.resident.clone(),
+                to,
+                machine,
+                text: message,
+                login: self.login(&self.host(meta)?),
+            };
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;
@@ -435,7 +446,7 @@ impl Session {
         if let Some(mut known) = residents.remove(&thread) {
             // Check the arrival connection itself before trusting presence. A detached
             // EOF watcher can run after this call has already reached a replacement node.
-            match known.client.call(Call::Machines { resident: None }).await {
+            match known.client.call(Call::Machines { resident: None, login: None, thread: None }).await {
                 Ok(Reply::Machines { .. }) => {
                     let whereabouts = known.whereabouts.clone();
                     residents.insert(thread, known);
@@ -474,21 +485,35 @@ impl Session {
     /// The machines this session works on, for its tools' descriptions, and
     /// whether it may ask for colleagues; none when the node is not
     /// running, which listing the tools does not start.
-    pub async fn machines(&self, meta: Option<&Value>) -> Option<crate::tools::Machines> {
-        let host = self.host(meta).ok()?;
-        let mut client = Client::connect(&self.world, Peer::Session { host }).await.ok()?;
-        match client.call(Call::Machines { resident: self.known_resident(meta) }).await {
-            Ok(Reply::Machines { here, others, program, colleagues, colleagues_lent }) => {
-                Some(crate::tools::Machines {
-                    here,
-                    others,
-                    program,
-                    colleagues: colleagues.map(|lives_on| lives_on.to_string()),
-                    colleagues_lent,
-                })
+    pub async fn machines(&self, meta: Option<&Value>) -> Result<Option<crate::tools::Machines>, String> {
+        let host = self.host(meta)?;
+        let mut client = match Client::connect(&self.world, Peer::Session { host: host.clone() }).await {
+            Ok(client) => client,
+            Err(fastctx_client::ConnectError::NoNode { .. }) => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
+        match client
+            .call(Call::Machines { resident: self.known_resident(meta), login: self.login(&host), thread })
+            .await
+        {
+            Ok(Reply::Machines { here, others, program, collab }) => {
+                Ok(Some(crate::tools::Machines { here, others, program, collab }))
             }
-            _ => None,
+            Ok(other) => Err(format!("the node answered something else: {other:?}")),
+            Err(error) => Err(error.to_string()),
         }
+    }
+
+    fn login(&self, host: &Host) -> Option<fastctx_types::collab::Caller> {
+        let key = if host.agent.as_str() == "codex" { "CODEX_HOME" } else { "CLAUDE_CONFIG_DIR" };
+        let explicit = std::env::var_os("FASTCTX_AGENT_HOME");
+        let inherited = std::env::var_os(key);
+        if explicit.is_none() && inherited.is_none() && std::env::var_os("FASTCTX_LOGIN_IDENTITY").is_none() {
+            return None;
+        }
+        let home = explicit.or(inherited).filter(|home| !home.is_empty()).map(std::path::PathBuf::from);
+        Some(fastctx_types::collab::Caller { agent: host.agent.clone(), home })
     }
 
     /// This session's resident, when it is known without asking the node:
@@ -532,6 +557,12 @@ impl Session {
                 }
             });
             *watching = Some((resident, task));
+        }
+    }
+
+    pub fn stop_watching(&self) {
+        if let Some((_, task)) = self.watching.lock().expect("never poisoned").take() {
+            task.abort();
         }
     }
 

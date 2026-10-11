@@ -36,7 +36,6 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
         RemoteCall::Talk { .. }
             | RemoteCall::Composer { .. }
             | RemoteCall::Open { .. }
-            | RemoteCall::Colleagues { .. }
             | RemoteCall::WorksOn { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Control { .. }
@@ -93,9 +92,9 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
     // `Some(None)` for "the caller's", which a device has none of.
     let town: Option<Option<&TownName>> = match &call {
         Call::Project(ProjectCall::List) => None,
-        Call::Project(
-            ProjectCall::Show { town } | ProjectCall::Map { town } | ProjectCall::Edit { town, .. },
-        ) => Some(town.as_ref()),
+        Call::Project(ProjectCall::Show { town } | ProjectCall::Map { town } | ProjectCall::Edit { town, .. }) => {
+            Some(town.as_ref())
+        }
         Call::Project(ProjectCall::New { .. }) => {
             return Err(refuse("a project is opened in an account from a computer logged in to it".into()));
         }
@@ -120,9 +119,8 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
             ));
         }
     };
-    let may_use = |town: &TownName| {
-        crate::ledger::names::town_id(node, town).is_some_and(|id| view.in_project(account, &id))
-    };
+    let may_use =
+        |town: &TownName| crate::ledger::names::town_id(node, town).is_some_and(|id| view.in_project(account, &id));
     match town {
         Some(Some(town)) if !may_use(town) => {
             return Err(refuse(format!("the account {account} may not use the project {town}")));
@@ -159,12 +157,9 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
     let reply = match call {
         Call::Page(call) => crate::pages::call(node, &crate::town::caller::Caller::User, from, call).await?,
         call => match crate::server::handle(node, &user, call).await? {
-            Reply::Towns { towns } => Reply::Towns {
-                towns: towns
-                    .into_iter()
-                    .filter(|summary| may_use(&summary.town))
-                    .collect(),
-            },
+            Reply::Towns { towns } => {
+                Reply::Towns { towns: towns.into_iter().filter(|summary| may_use(&summary.town)).collect() }
+            }
             // The canon lives on a machine of its own, which this machine
             // read as itself: the device sees it only if it may read there.
             Reply::Map { mut map } => {

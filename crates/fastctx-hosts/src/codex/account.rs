@@ -7,6 +7,16 @@ use serde_json::{Value, json};
 
 use super::server::AppServer;
 
+impl super::CodexHost {
+    pub async fn require_login(self: &std::sync::Arc<Self>) -> Result<(), String> {
+        let server = self.server().await?;
+        match account(&server).await {
+            Fact::Known { .. } => Ok(()),
+            Fact::Unavailable { reason } | Fact::Failed { reason } => Err(reason),
+        }
+    }
+}
+
 /// `account/read`, without asking it to refresh the login: an API key and a
 /// ChatGPT login without an email name no one.
 pub(super) async fn account(server: &AppServer) -> Fact<AgentAccount> {
@@ -51,11 +61,8 @@ pub(super) async fn limits(server: &AppServer) -> Fact<AgentLimits> {
                 unlimited: held["unlimited"].as_bool() == Some(true),
             });
         }
-        let name = snapshot["limitName"]
-            .as_str()
-            .or_else(|| snapshot["limitId"].as_str())
-            .unwrap_or("codex")
-            .to_string();
+        let name =
+            snapshot["limitName"].as_str().or_else(|| snapshot["limitId"].as_str()).unwrap_or("codex").to_string();
         for slot in ["primary", "secondary"] {
             let window = &snapshot[slot];
             let Some(used) = window["usedPercent"].as_i64() else { continue };

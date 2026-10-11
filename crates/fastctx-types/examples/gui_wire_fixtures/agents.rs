@@ -18,12 +18,26 @@ pub fn fixtures() -> Fixtures {
     let codex = AgentFacts {
         agent: "codex".parse().unwrap(),
         home: Some(AgentHome { dir: "C:/Users/ada/.codex".into(), found: HomeFound::Default }),
-        account: Fact::known(AgentAccount { email: Some("ada@example.com".into()), organization: None, plan: Some("plus".into()) }),
+        account: Fact::known(AgentAccount {
+            email: Some("ada@example.com".into()),
+            organization: None,
+            plan: Some("plus".into()),
+        }),
         limits: Fact::known(AgentLimits {
             observed_at: checked_at,
             windows: vec![
-                LimitWindow { name: "codex".into(), minutes: Some(300), used_tenths: 423, resets_at: reset("2026-10-04T14:00:00Z") },
-                LimitWindow { name: "codex".into(), minutes: Some(10080), used_tenths: 1000, resets_at: reset("2026-10-09T00:00:00Z") },
+                LimitWindow {
+                    name: "codex".into(),
+                    minutes: Some(300),
+                    used_tenths: 423,
+                    resets_at: reset("2026-10-04T14:00:00Z"),
+                },
+                LimitWindow {
+                    name: "codex".into(),
+                    minutes: Some(10080),
+                    used_tenths: 1000,
+                    resets_at: reset("2026-10-09T00:00:00Z"),
+                },
                 LimitWindow { name: "codex_other".into(), minutes: None, used_tenths: 0, resets_at: None },
             ],
             credits: Some(AgentCredits { balance: Some("52230.1460550000".into()), unlimited: false }),
@@ -135,9 +149,7 @@ pub fn fixtures() -> Fixtures {
                         account: "ada".parse().unwrap(),
                     }),
                     works_on: Some("laptop".parse().unwrap()),
-                    colleagues: Some("lab.home".parse().unwrap()),
                     home: Some("C:/Users/ada/.codex-work".into()),
-                    colleagues_home: Some("/home/ada/.codex-lab".into()),
                     files_on: None,
                 },
             },
@@ -152,7 +164,11 @@ pub fn fixtures() -> Fixtures {
                 choices: Default::default(),
             },
             Call::ClaudeConsent { machine: machine.clone(), accept: true, home: None },
-            Call::ClaudeConsent { machine: machine.clone(), accept: false, home: Some("/home/ada/.claude-work".into()) },
+            Call::ClaudeConsent {
+                machine: machine.clone(),
+                accept: false,
+                home: Some("/home/ada/.claude-work".into()),
+            },
             Call::Homes {
                 machine: machine.clone(),
                 change: HomeChange::Add { agent: "claude".parse().unwrap(), dir: "D:/agents/claude-token".into() },
@@ -185,9 +201,7 @@ pub fn fixtures() -> Fixtures {
                 reasoning_effort: Some("high".into()),
                 attachments: Vec::new(),
                 works_on: None,
-                colleagues: Some("desktop".parse().unwrap()),
                 home: Some("/home/ada/.claude-work".into()),
-                colleagues_home: None,
                 files_on: Some("laptop".parse().unwrap()),
             },
             RemoteCall::ClaudeConsent { accept: true, home: Some("/home/ada/.claude-work".into()) },

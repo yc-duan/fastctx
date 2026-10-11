@@ -96,6 +96,7 @@ fn residents() -> Vec<ResidentNow> {
                 },
                 works_on: (i == 1).then(|| "laptop.home".parse().unwrap()),
                 home: (i == 1).then(|| "C:/Users/ada/.codex-work".into()),
+                callee: None,
             },
             town: (i != 0).then(|| "project-0".parse().unwrap()),
             here: i != 2,

@@ -20,6 +20,7 @@ mod attachments;
 mod claude;
 pub mod claude_request;
 mod codex;
+mod collab;
 mod colleagues;
 mod composer;
 mod consent;
@@ -42,6 +43,7 @@ mod ledger;
 mod letters;
 mod lifetime;
 mod log;
+mod login_identity;
 mod look;
 mod machine;
 mod management;
@@ -436,6 +438,9 @@ pub async fn run_prepared(
     // still in use is touched (`world-upgrade.md`).
     let cleaning = node.clone();
     tokio::task::spawn_blocking(move || legacy(&cleaning));
+
+    let identity = node.clone();
+    tokio::task::spawn_blocking(move || login_identity::refresh(&identity));
 
     if let Some(supervision) = supervision {
         handoff::follow(node.clone(), supervision);

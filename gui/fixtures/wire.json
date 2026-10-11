@@ -261,9 +261,7 @@
           "account": "ada"
         },
         "works_on": "lab.home",
-        "colleagues": "gpu",
-        "home": "C:/Users/ada/.claude-work",
-        "colleagues_home": "/home/ada/.codex-gpu"
+        "home": "C:/Users/ada/.claude-work"
       },
       {
         "files_on": "laptop"
@@ -9809,9 +9807,7 @@
           "account": "ada"
         },
         "works_on": "laptop",
-        "colleagues": "lab.home",
-        "home": "C:/Users/ada/.codex-work",
-        "colleagues_home": "/home/ada/.codex-lab"
+        "home": "C:/Users/ada/.codex-work"
       },
       {
         "call": "open",
@@ -10247,7 +10243,6 @@
         "text": "First words",
         "model": "opus",
         "reasoning_effort": "high",
-        "colleagues": "desktop",
         "home": "/home/ada/.claude-work",
         "files_on": "laptop"
       },

@@ -77,6 +77,7 @@ fn resident(
             acting: Default::default(),
             works_on: None,
             home: None,
+            callee: None,
         },
         town: in_town.map(town),
         here: true,

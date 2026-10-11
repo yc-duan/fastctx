@@ -56,6 +56,11 @@ pub(crate) fn call(protocol: u32, peer: &Peer, call: &Call) -> bool {
 }
 
 pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
+    if protocol <= 10
+        && let Reply::Machines { collab, .. } = reply
+    {
+        *collab = None;
+    }
     // The World's own facts became a notice of their own in protocol 11;
     // before it they were the World's words, which is what the model reads.
     if protocol <= 10

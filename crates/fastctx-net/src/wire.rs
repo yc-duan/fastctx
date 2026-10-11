@@ -341,6 +341,9 @@ pub enum Question {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "change")]
 pub enum Change {
+    Collab {
+        collab: fastctx_types::collab::Collab,
+    },
     /// Shares `machine`, one of the account's own, with `to`, or no longer.
     Share {
         machine: MachineName,
@@ -440,6 +443,9 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    CollabWritten {
+        version: u64,
+    },
     KernelRelease {
         release: fastctx_types::kernel::KernelRelease,
         certificate: Vec<u8>,

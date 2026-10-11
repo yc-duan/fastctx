@@ -19,11 +19,7 @@ pub struct Machines {
     /// The machine its own program runs on, when that is not `here` and it
     /// may work there too.
     pub program: Option<String>,
-    /// Where this session's colleagues live, when the user turned asking
-    /// for them on.
-    pub colleagues: Option<String>,
-    /// The colleagues are an agent another account lent.
-    pub colleagues_lent: bool,
+    pub collab: Option<fastctx_types::collab::Offered>,
 }
 
 impl Machines {
@@ -38,7 +34,7 @@ pub fn list_changed() -> Value {
 }
 
 /// The tools this session lists: the shell, and the colleague tools where
-/// the user turned asking for colleagues on for this conversation, which a
+/// an account enabled for this caller, which a
 /// colleague never has: the World is one level deep (`world-colleagues.md`).
 /// Writing files and going to other machines are commands in the shell
 /// (`world-run.md`, `world-write.md`). `woken` says whether the World can
@@ -47,10 +43,8 @@ pub fn list_changed() -> Value {
 /// the tools from Codex's `exec` must set.
 pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<&Machines>) -> Value {
     let mut tools = vec![run_definition(writes_off, woken, codex, machines)];
-    if let Some(machines) = machines
-        && let Some(lives_on) = machines.colleagues.as_deref()
-    {
-        tools.push(ask_colleague_definition(woken, lives_on, machines.colleagues_lent));
+    if let Some(collab) = machines.and_then(|machines| machines.collab.as_ref()) {
+        tools.push(ask_colleague_definition(woken, collab));
         tools.push(message_colleague_definition());
     }
     for tool in &mut tools {
@@ -268,20 +262,18 @@ More commands (`--help` on each gives all its options):
 - `fastctx project` lists the user's projects and shows their records. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its record says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx page` publishes an HTML page the user opens in the World app.";
 
-fn ask_colleague_definition(woken: bool, lives_on: &str, lent: bool) -> Value {
+fn ask_colleague_definition(woken: bool, collab: &fastctx_types::collab::Offered) -> Value {
     let delivered = if woken { "" } else { " with the answer of your next call to a fastctx tool" };
-    // A colleague lent by another account may not work where it runs, and
-    // that machine goes unnamed to this session too.
-    let lives = if lent {
-        "It is an agent another account lent the user, the one the user chose for this conversation's colleagues: it has no access to the computer it runs on, so each of its commands names its machine with `on`, and it reaches the machines you have access to.".to_string()
-    } else {
-        format!(
-            "It lives on {lives_on}, the machine the user chose for this conversation's colleagues, and its scripts start there; it reaches the other machines the same way you do, with `on`."
-        )
-    };
-    json!({
+    let lives = collab.callees.iter().map(|callee| {
+        let lives = match &callee.lives_on {
+            Some(lives_on) => format!("It lives on {lives_on}, the machine configured for this callee, and its scripts start there; it reaches the other machines the same way you do, with `on`."),
+            None => "It is an agent another account lent the user: it has no access to the computer it runs on, so each of its commands names its machine with `on`, and it reaches that account's machines.".to_string(),
+        };
+        format!("{}: {}\nIt works for account {}. {lives}", callee.name, callee.use_when, callee.account)
+    }).collect::<Vec<_>>().join("\n\n");
+    let mut tool = json!({
         "name": "ask_colleague",
-        "description": ASK_COLLEAGUE_DESCRIPTION.replace("{delivered}", delivered).replace("{lives}", &lives),
+        "description": format!("{}{lives}\n\n{}", ASK_COLLEAGUE_DESCRIPTION.replace("{delivered}", delivered), collab.prompt),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -303,29 +295,22 @@ fn ask_colleague_definition(woken: bool, lives_on: &str, lent: bool) -> Value {
             "idempotentHint": false,
             "openWorldHint": true
         }
-    })
+    });
+    if collab.callees.len() > 1 {
+        let names = collab.callees.iter().map(|callee| callee.name.clone()).collect::<Vec<_>>();
+        tool["inputSchema"]["properties"]["callee"] = json!({ "type": "string", "enum": names,
+            "description": "The callee's offered name, including its account when qualified." });
+        tool["inputSchema"]["required"].as_array_mut().expect("required fields").push("callee".into());
+    }
+    tool
 }
 
 const ASK_COLLEAGUE_DESCRIPTION: &str = "\
 Start a colleague on a part of the work: a GPT agent, run by Codex, that works on its own while you go on. The call returns its id at once.
 
-A colleague is not a subagent inside this conversation. {lives} It knows nothing of this conversation, so the prompt must say which machines and paths it works on. It keeps working if you stop, and `fastctx w ID` shows what it is doing. Each time it ends a turn, its last message is delivered to you{delivered}, under a line saying how the turn ended: that message is its answer, or its question to you. Reply, or give it more, with message_colleague.
+A colleague is not a subagent inside this conversation. It knows nothing of this conversation, so the prompt must say which machines and paths it works on. It keeps working if you stop, and `fastctx w ID` shows what it is doing. Each time it ends a turn, its last message is delivered to you{delivered}, under a line saying how the turn ended: that message is its answer, or its question to you. Reply, or give it more, with message_colleague.
 
-When to ask one:
-- GPT is strong on a part and weak on the whole. Within one part it reads all the material before acting, works a hard point for hours, changes approach when one fails, and says plainly when it cannot do something. Asked to judge a whole that has not taken shape, or to build a whole thing from nothing, it returns pieces that are each careful and have no idea holding them together.
-- So keep the whole yourself, and hand out parts as they come up: code whose need you can state and whose result facts can judge; something that must be airtight; a behavior nobody understands yet; a detail that must be exactly right; an exhaustive check of an outside fact, such as an interface or a program's real behavior; a counterexample to construct; an experiment or measurement that answers a definite question.
-- Ask when you are about to read through a pile of material, try a set of cases, or make something airtight. Being able to do it in a few minutes is no reason to keep it: done in minutes, it is often done shallowly.
-- Do not use it mainly to review your work; that is its weakest use. Give it things to build, find out or measure.
-
-Writing the prompt:
-- Say what this part needs, why, and where things stand. Point to the material rather than summarizing it.
-- Do not limit which files it may touch or which checks it must pass, and do not tell it how to work: that is where it is strongest.
-- State the rules it must keep: what must not break, and the limits of anything shared it will use, such as a server's memory.
-- To learn a fact, ask a question facts can answer, not for its opinion of a plan.
-
-When it reports:
-- Check the claims you will build on. If it answered a different question, ask again: does it hold, yes or no, and what is the evidence?
-- One part, one colleague; several can work at once. Colleagues that might touch the same files each work in their own copy, such as a git worktree, and you merge.";
+";
 
 fn message_colleague_definition() -> Value {
     json!({

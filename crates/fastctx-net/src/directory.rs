@@ -115,6 +115,8 @@ pub struct Account {
     pub level: Level,
     pub locked: bool,
     pub opened: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collab: Option<fastctx_types::collab::Collab>,
 }
 
 impl Account {

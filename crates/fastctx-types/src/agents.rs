@@ -253,17 +253,10 @@ pub struct Choices {
     /// (`world-run.md`, 这里).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub works_on: Option<crate::access::Written>,
-    /// Where its colleagues live; without it, it asks for none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub colleagues: Option<crate::access::Written>,
     /// The agent's home it uses on the machine it lives on, when not the
     /// default one there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<PathBuf>,
-    /// The Codex home its colleagues use where they live, when not the
-    /// default one there.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub colleagues_home: Option<PathBuf>,
     /// Where the files attached to its first words go, other than images,
     /// when the user chose: an agent lent to the account has no machine it
     /// works on (`world-run.md`, 这里).

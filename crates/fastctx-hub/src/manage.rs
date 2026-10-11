@@ -39,9 +39,15 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
             return Err(format!("{asker} is not logged in to the account {account}"));
         }
         let super_ = found.level == Level::Super;
+        let before = matches!(&change, Change::Collab { .. }).then(|| store.book.clone());
         let told = apply(hub, &mut store, asker, account, super_, change, &mut ended)?;
         store.book.directory.settle_acting();
-        store.save_book().map_err(|error| format!("the hub could not keep the change: {error}"))?;
+        if let Err(error) = store.save_book() {
+            if let Some(before) = before {
+                store.book = before;
+            }
+            return Err(format!("the hub could not keep the change: {error}"));
+        }
         told
     };
     hub.log.line(format_args!("{asker}, as {account}: {what}"));
@@ -56,6 +62,7 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
 
 fn describe(change: &Change) -> String {
     match change {
+        Change::Collab { collab } => format!("changed model collaboration from version {}", collab.version),
         Change::Share { machine, to, shared } => format!("shares {machine} with {to}: {shared}"),
         Change::Lend { machine, to, agent, home, lent } => format!(
             "lends {agent}'s login {} on {machine} to {to}: {lent}",
@@ -91,6 +98,21 @@ fn apply(
     let need_super =
         || if super_ { Ok(()) } else { Err(format!("the account {account} is not the hub's super administrator")) };
     match change {
+        Change::Collab { mut collab } => {
+            collab.validate()?;
+            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            let version = found.collab.as_ref().map_or(0, |current| current.version);
+            if collab.version != version {
+                return Err(format!(
+                    "model collaboration changed: version {} was read, current version is {version}",
+                    collab.version
+                ));
+            }
+            collab.version = version.checked_add(1).ok_or("model collaboration version cannot be incremented")?;
+            let version = collab.version;
+            found.collab = Some(collab);
+            Ok(Told::CollabWritten { version })
+        }
         Change::Share { machine, to, shared } => {
             let directory = &mut store.book.directory;
             let owner = own_machine(directory, account, super_, &machine)?;
@@ -195,6 +217,7 @@ fn apply(
                 level: Level::Member,
                 locked: false,
                 opened: Timestamp::now(),
+                collab: None,
             });
             Ok(Told::Done)
         }
