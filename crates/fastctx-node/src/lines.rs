@@ -25,6 +25,7 @@ pub(crate) struct Sources(Mutex<HashMap<Key, Arc<Source>>>);
 struct Source {
     path: PathBuf,
     job_record: Option<PathBuf>,
+    notes_record: Option<PathBuf>,
     state: Mutex<State>,
     changed: tokio::sync::watch::Sender<u64>,
     closed: tokio::sync::watch::Sender<bool>,
@@ -94,7 +95,7 @@ pub(crate) async fn open(
     if !path.is_absolute() {
         return Err(failed("the text path must be absolute"));
     }
-    let job_record = match &decoding {
+    let (job_record, notes_record) = match &decoding {
         Decoding::Output { job } => {
             let found = crate::look::look_here(node, job.as_str()).await?.0;
             let Some(fastctx_types::town::Looked::Job { record }) = found else {
@@ -104,9 +105,12 @@ pub(crate) async fn open(
             if path != expected && record.stderr.as_ref().is_none_or(|stderr| std::path::Path::new(stderr) != path) {
                 return Err(failed("the path is not this job's output"));
             }
-            Some(node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_record(&record.id))
+            let job_record =
+                node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_record(&record.id);
+            let notes_record = (path == expected).then(|| job_record.clone());
+            (Some(job_record), notes_record)
         }
-        Decoding::File { .. } => None,
+        Decoding::File { .. } => (None, None),
     };
     let (events, event_rx) = tokio::sync::watch::channel(Ok(0u64));
     let notices = events.clone();
@@ -135,13 +139,14 @@ pub(crate) async fn open(
     let cancelled = Cancel::default();
     let cancel = cancelled.0.clone();
     let (read_path, directory, record_path) = (path.clone(), node.world.path().to_path_buf(), job_record.clone());
+    let note_path = notes_record.clone();
     let opened = tokio::task::spawn_blocking(move || {
         let snapshot = observe(&read_path)?;
         let (output, selection) = match &decoding {
             Decoding::File { encoding } => (false, encoding.as_deref()),
             Decoding::Output { .. } => (true, None),
         };
-        let index = fastctx_hands::lines::Index::open(&read_path, &directory, output, selection, cancel)?;
+        let index = fastctx_hands::lines::Index::open(&read_path, &directory, output, selection, cancel.clone())?;
         let after = observe(&read_path)?;
         if (!output && snapshot != after) || !snapshot.same_file(&after) || after.size < snapshot.size {
             return Err("the text source changed during indexing".into());
@@ -149,7 +154,7 @@ pub(crate) async fn open(
         let complete = complete(record_path.as_deref())?;
         let extent = Extent { length: index.length, complete, version: 0 };
         let (projection, writes, writes_revision) =
-            projection::open(&read_path, snapshot.size, record_path.as_deref())?;
+            projection::open(&read_path, snapshot.size, note_path.as_deref(), &cancel)?;
         Ok::<_, String>(State {
             index: Some(index),
             snapshot,
@@ -167,6 +172,7 @@ pub(crate) async fn open(
     let source = Arc::new(Source {
         path: path.clone(),
         job_record,
+        notes_record,
         state: Mutex::new(opened),
         changed: tokio::sync::watch::channel(0).0,
         closed: tokio::sync::watch::channel(false).0,
@@ -221,7 +227,7 @@ async fn refresh(source: Arc<Source>) -> std::result::Result<(), Failure> {
             }
             let snapshot = observe(&source.path)?;
             let ended = complete(source.job_record.as_deref())?;
-            let revision = projection::revision(source.job_record.as_deref())?;
+            let revision = projection::revision(source.notes_record.as_deref())?;
             if state.snapshot == snapshot && state.extent.complete == ended && state.writes_revision == revision {
                 return Ok(None);
             }
@@ -236,7 +242,14 @@ async fn refresh(source: Arc<Source>) -> std::result::Result<(), Failure> {
                 .as_mut()
                 .ok_or_else(|| "the source is closed".to_string())?
                 .grow(snapshot.size, source.cancelled.clone())?;
-            if projection::refresh(&mut state, &source.path, snapshot.size, source.job_record.as_deref(), revision)? {
+            if projection::refresh(
+                &mut state,
+                &source.path,
+                snapshot.size,
+                source.notes_record.as_deref(),
+                revision,
+                &source.cancelled,
+            )? {
                 first = 0;
             }
             state.snapshot = snapshot;

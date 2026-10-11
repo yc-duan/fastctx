@@ -28,9 +28,18 @@ impl CapturedNotes {
         bytes: u64,
         writes: &[fastctx_types::run_facts::WriteFact],
     ) -> io::Result<Self> {
+        Self::read_cancellable(path, bytes, writes, None)
+    }
+
+    pub fn read_cancellable(
+        path: &std::path::Path,
+        bytes: u64,
+        writes: &[fastctx_types::run_facts::WriteFact],
+        cancelled: Option<&std::sync::atomic::AtomicBool>,
+    ) -> io::Result<Self> {
         let mut matcher = super::write_notes::Matcher::new(writes)?;
-        matcher.append(path, bytes)?;
-        let matches = matcher.selected()?;
+        matcher.append(path, bytes, cancelled)?;
+        let matches = matcher.selected(cancelled)?;
         Ok(Self { matches, matcher })
     }
 
@@ -42,11 +51,21 @@ impl CapturedNotes {
         bytes: u64,
         writes: &[fastctx_types::run_facts::WriteFact],
     ) -> io::Result<bool> {
+        self.refresh_cancellable(path, bytes, writes, None)
+    }
+
+    pub fn refresh_cancellable(
+        &mut self,
+        path: &std::path::Path,
+        bytes: u64,
+        writes: &[fastctx_types::run_facts::WriteFact],
+        cancelled: Option<&std::sync::atomic::AtomicBool>,
+    ) -> io::Result<bool> {
         if !self.matcher.same_notes(writes)? {
-            self.matcher.extend_notes(path, bytes, writes)?;
+            self.matcher.extend_notes(path, bytes, writes, cancelled)?;
         }
-        self.matcher.append(path, bytes)?;
-        let matches = self.matcher.selected()?;
+        self.matcher.append(path, bytes, cancelled)?;
+        let matches = self.matcher.selected(cancelled)?;
         let changed = matches.ranges != self.matches.ranges || matches.notes != self.matches.notes;
         self.matches = matches;
         Ok(changed)

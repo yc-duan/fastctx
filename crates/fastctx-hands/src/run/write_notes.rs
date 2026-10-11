@@ -6,6 +6,14 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::ops::Range;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+fn check_cancelled(cancelled: Option<&AtomicBool>) -> io::Result<()> {
+    if cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Relaxed)) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "output note projection cancelled"));
+    }
+    Ok(())
+}
 
 pub(super) struct Matches {
     pub ranges: Vec<(Range<u64>, u64)>,
@@ -101,11 +109,18 @@ impl Matcher {
 
     /// A successfully matched leading group cannot move when output is appended.
     /// Preserve that prefix so newly recorded notes search only what follows it.
-    pub fn extend_notes(&mut self, path: &Path, bytes: u64, writes: &[WriteFact]) -> io::Result<()> {
-        self.append(path, bytes)?;
-        let selected = self.selected()?;
+    pub fn extend_notes(
+        &mut self,
+        path: &Path,
+        bytes: u64,
+        writes: &[WriteFact],
+        cancelled: Option<&AtomicBool>,
+    ) -> io::Result<()> {
+        self.append(path, bytes, cancelled)?;
+        let selected = self.selected(cancelled)?;
         let mut prefix = Vec::new();
         for (range, tag) in selected.ranges {
+            check_cancelled(cancelled)?;
             let note = selected.notes[&tag].clone();
             if self.groups.get(prefix.len()).is_none_or(|(_, expected)| *expected != note) {
                 break;
@@ -120,7 +135,8 @@ impl Matcher {
         Ok(())
     }
 
-    pub fn append(&mut self, path: &Path, bytes: u64) -> io::Result<()> {
+    pub fn append(&mut self, path: &Path, bytes: u64, cancelled: Option<&AtomicBool>) -> io::Result<()> {
+        check_cancelled(cancelled)?;
         if bytes < self.bytes {
             return Err(io::Error::other("note capture was truncated"));
         }
@@ -139,12 +155,14 @@ impl Matcher {
         let mut kept = self.tail.len();
         buffer[..kept].copy_from_slice(&self.tail);
         loop {
+            check_cancelled(cancelled)?;
             let read = input.read(&mut buffer[kept..])?;
             if read == 0 {
                 break;
             }
             let filled = kept + read;
             for found in self.automaton.as_ref().expect("patterns").find_overlapping_iter(&buffer[..filled]) {
+                check_cancelled(cancelled)?;
                 let start = self.bytes - kept as u64 + found.start() as u64;
                 let finish = self.bytes - kept as u64 + found.end() as u64;
                 if finish <= self.bytes {
@@ -175,9 +193,11 @@ impl Matcher {
         Ok(())
     }
 
-    pub fn selected(&mut self) -> io::Result<Matches> {
+    pub fn selected(&mut self, cancelled: Option<&AtomicBool>) -> io::Result<Matches> {
+        check_cancelled(cancelled)?;
         let mut result = Matches { ranges: Vec::new(), notes: BTreeMap::new() };
         for (range, note) in &self.prefix {
+            check_cancelled(cancelled)?;
             let tag = result.notes.len() as u64 + 1;
             result.ranges.push((range.clone(), tag));
             result.notes.insert(tag, note.clone());
@@ -185,7 +205,9 @@ impl Matcher {
         let mut heads = self.heads.clone();
         let mut cursor = self.prefix.last().map_or(0, |(range, _)| range.end);
         for (operation, &id) in self.order.iter().enumerate() {
+            check_cancelled(cancelled)?;
             while heads[id] != 0 {
+                check_cancelled(cancelled)?;
                 self.index.seek(SeekFrom::Start(heads[id]))?;
                 let mut entry = [0; 16];
                 self.index.read_exact(&mut entry)?;

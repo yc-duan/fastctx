@@ -4,6 +4,7 @@ use super::State;
 use fastctx_hands::run::projection::CapturedNotes;
 use fastctx_types::run_facts::WriteFact;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
 type Revision = Option<(u64, SystemTime)>;
@@ -18,11 +19,12 @@ pub(super) fn revision(record: Option<&Path>) -> Result<Revision, String> {
     }
 }
 
-pub(super) fn open(path: &Path, bytes: u64, record: Option<&Path>) -> Result<Opened, String> {
+pub(super) fn open(path: &Path, bytes: u64, record: Option<&Path>, cancelled: &AtomicBool) -> Result<Opened, String> {
     let Some(record) = record else { return Ok((None, Vec::new(), None)) };
     let revision = revision(Some(record))?;
     let writes = crate::run_facts::writes(record).map_err(|error| error.to_string())?;
-    let projection = CapturedNotes::read(path, bytes, &writes).map_err(|error| error.to_string())?;
+    let projection =
+        CapturedNotes::read_cancellable(path, bytes, &writes, Some(cancelled)).map_err(|error| error.to_string())?;
     Ok((Some(projection), writes, revision))
 }
 
@@ -32,6 +34,7 @@ pub(super) fn refresh(
     bytes: u64,
     record: Option<&Path>,
     revision: Revision,
+    cancelled: &AtomicBool,
 ) -> Result<bool, String> {
     let Some(record) = record else { return Ok(false) };
     if state.writes_revision != revision {
@@ -42,6 +45,6 @@ pub(super) fn refresh(
         .projection
         .as_mut()
         .ok_or_else(|| "output projection is closed".to_string())?
-        .refresh(path, bytes, &state.writes)
+        .refresh_cancellable(path, bytes, &state.writes, Some(cancelled))
         .map_err(|error| error.to_string())
 }
