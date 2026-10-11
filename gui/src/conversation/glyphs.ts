@@ -11,7 +11,7 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  a phone, logging out, trust and a relay. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
-  | "archive" | "reread" | "scan" | "grip" | "page" | "versions" | "person" | "key" | "phone" | "logout" | "shield" | "relay"
+  | "archive" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone" | "logout" | "shield" | "relay"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -61,6 +61,7 @@ const paths: Record<Named, string> = {
   image: '<rect x="3.75" y="4.75" width="12.5" height="10.5" rx="1.5"/><circle cx="7.75" cy="8.5" r="1.25"/><path d="M4 13.5l3.5-3 2.8 2.4 2.2-1.9 3.5 2.8"/>',
   colleague: '<circle cx="7.5" cy="7.5" r="2.5"/><path d="M3.5 15.5c.6-2.4 2.1-3.6 4-3.6s3.4 1.2 4 3.6"/><circle cx="13.5" cy="8.5" r="2"/><path d="M13.2 12.1c1.6 0 2.8.9 3.3 2.9"/>',
   web: '<circle cx="10" cy="10" r="6.25"/><path d="M3.75 10h12.5M10 3.75c1.8 1.8 2.6 3.9 2.6 6.25S11.8 14.45 10 16.25C8.2 14.45 7.4 12.35 7.4 10S8.2 5.55 10 3.75z"/>',
+  history: '<path d="M4.7 10a5.3 5.3 0 1 0 1.5-3.7"/><path d="M4.4 4.3v2.5h2.5"/><path d="M10 7.3V10l1.9 1.3"/>',
   tasks: '<path d="M4.5 6l1.2 1.2L8 5"/><path d="M10.5 6.2h5"/><path d="M4.5 12l1.2 1.2L8 11"/><path d="M10.5 12.2h5"/>',
   tool: '<path d="M12.4 4.2a3.4 3.4 0 0 0-4 4.4l-4.2 4.2 2.9 2.9 4.2-4.2a3.4 3.4 0 0 0 4.4-4l-2 2-1.9-.5-.5-1.9z"/>',
   thinking: '<path d="M10 4.5c-2.9 0-5 1.9-5 4.4 0 1.5.8 2.8 2 3.6v2.5l2.4-1.6c.2 0 .4.1.6.1 2.9 0 5-1.9 5-4.6S12.9 4.5 10 4.5z"/>',

@@ -22,6 +22,7 @@ import type { AccessWords, MachinesWords } from "./account-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { GiveSheet, RelaysSheet, socketAddress } from "./machine-sheets";
+import { MachineLog, type ReadLog } from "./machine-log";
 import { MachineMap, type Way } from "./machine-map";
 import type { MapNode } from "./network-map";
 import { blot, circle, outline, seeded } from "../pen/shapes";
@@ -50,6 +51,8 @@ export interface MachinesOptions {
   /** Opens a new conversation with an agent on `machine`, as written. */
   talk(machine: string): void;
   confirm: Confirm;
+  /** Reads the hub's record of changes, a page at a time. */
+  log: ReadLog;
 }
 
 /** One thing on the map, as the page knows it. */
@@ -130,6 +133,7 @@ export class MachinesPage implements Page {
   /** Redraws when the page turns narrow or wide: the sheet and what floats
    *  beside the one chosen depend on it. */
   private readonly resized: ResizeObserver;
+  private readonly log: MachineLog;
   /** The one to bring into view once the drawing has drawn its next
    *  frame at its size: until then where it stands is not yet known. */
   private bring: string | null = null;
@@ -189,6 +193,8 @@ export class MachinesPage implements Page {
       },
     });
     this.canvas.prepend(this.map.element);
+    this.log = new MachineLog(words, options.log, () => loginsOf(options.store.world.peek()?.accounts), (at) => options.when(at, options.store.clock.peek()));
+    this.canvas.append(this.log.button, this.log.panel);
     // A ring pressed twice opens what is known of it.
     this.map.element.addEventListener("dblclick", (event) => {
       const key = (event.target as HTMLElement).closest<HTMLElement>("[data-item]")?.dataset.item;
@@ -198,6 +204,9 @@ export class MachinesPage implements Page {
     // Another device comes into an account: offered where there is one.
     effect(() => {
       add.hidden = !loginsOf(options.store.world.get()?.accounts).length;
+    });
+    effect(() => {
+      this.log.button.hidden = !loginsOf(options.store.world.get()?.accounts).length;
     });
     add.addEventListener("click", () => {
       const [first] = loginsOf(options.store.world.peek()?.accounts);
@@ -247,6 +256,7 @@ export class MachinesPage implements Page {
   leave(): void {
     this.stop();
     this.resized.disconnect();
+    this.log.dispose();
     if (this.undoing) clearTimeout(this.undoing.timer);
     document.removeEventListener("pointerdown", this.outside, true);
     this.map.dispose();

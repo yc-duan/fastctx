@@ -1,0 +1,22 @@
+// A hub's record of changes for a specimen, as `machine_log` answers it:
+// newest first, a page at a time.
+
+import type { MachineLogPage, MachineLogRecord } from "../world/machine-log";
+
+const records: MachineLogRecord[] = [
+  { id: 9, at: "2026-10-04T05:58:00Z", actor: { account: "me", authenticated: true, member: "desktop", peer: null }, action: { change: "relays", machine: "server", relays: [{ label: "lab", addresses: ["203.0.113.20:7444"] }] }, outcome: { kind: "done" } },
+  { id: 8, at: "2026-10-04T05:57:00Z", actor: { account: "me", authenticated: true, member: "desktop", peer: null }, action: { change: "relay_at", machine: "lab", addresses: ["203.0.113.20:7444"] }, outcome: { kind: "done" } },
+  { id: 7, at: "2026-10-04T05:41:00Z", actor: { account: "me", authenticated: true, member: "pixel", peer: null }, action: { change: "lend", machine: "laptop", to: "ada", agent: "codex", home: null, lent: true }, outcome: { kind: "done" } },
+  { id: 6, at: "2026-10-04T05:30:00Z", actor: { account: "me", authenticated: true, member: "desktop", peer: null }, action: { change: "set_account", name: "bo", locked: false }, outcome: { kind: "done" } },
+  { id: 5, at: "2026-10-04T05:12:00Z", actor: { account: "ada", authenticated: false, member: "studio", peer: null }, action: { change: "remove", name: "laptop", reason: "" }, outcome: { kind: "refused", reason: "ada may not remove a machine of me's" } },
+  { id: 4, at: "2026-10-03T22:20:00Z", actor: { account: "me", authenticated: true, member: null, peer: null }, action: { change: "joined", name: "pixel", kind: "phone", registered: false, via: "token" }, outcome: { kind: "done" } },
+  { id: 3, at: "2026-10-03T22:19:00Z", actor: { account: "me", authenticated: true, member: "desktop", peer: null }, action: { change: "token", register: false, name: null, kind: "phone", expires: "2026-10-03T23:19:00Z" }, outcome: { kind: "done" } },
+  { id: 2, at: "2026-10-03T17:10:00Z", actor: { account: "me", authenticated: true, member: "desktop", peer: null }, action: { change: "share", machine: "laptop", to: "ada", shared: true }, outcome: { kind: "done" } },
+  { id: 1, at: "2026-10-03T17:00:00Z", actor: { account: "me", authenticated: true, member: null, peer: null }, action: { change: "joined", name: "desktop", kind: "computer", registered: true, via: "password" }, outcome: { kind: "done" } },
+];
+
+export async function specimenMachineLog(_hub: string, _account: string, before: number | null): Promise<MachineLogPage> {
+  const older = records.filter((record) => before === null || record.id < before);
+  const page = older.slice(0, 6);
+  return { records: page, next_before: older.length > page.length ? page[page.length - 1]!.id : null };
+}

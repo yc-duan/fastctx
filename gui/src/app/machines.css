@@ -1169,3 +1169,140 @@
     height: 36px;
   }
 }
+
+/* The hub's record of changes: a disc in the drawing's top corner, and the
+   list it opens; on a phone the list rises from below. */
+.map-log-open {
+  position: absolute;
+  left: var(--space-3);
+  top: var(--space-3);
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.map-log-open:hover,
+.map-log-open[aria-expanded="true"] {
+  color: var(--text);
+}
+
+@media (pointer: coarse) {
+  .map-log-open {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+.map-log {
+  position: absolute;
+  left: var(--space-3);
+  top: calc(var(--space-3) + 44px);
+  z-index: 4;
+  width: min(380px, calc(100% - 2 * var(--space-3)));
+  max-height: min(70%, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.map-log.as-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  z-index: 21;
+  width: auto;
+  max-height: 64dvh;
+  padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  animation: map-sheet-rise 0.22s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.map-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.map-log-logins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+.map-log-logins .chip.current {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.map-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.map-log-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  column-gap: var(--space-2);
+  row-gap: 2px;
+  padding: var(--space-2) 0;
+}
+
+.map-log-row + .map-log-row {
+  border-top: 1px solid var(--divider);
+}
+
+.map-log-mark {
+  grid-row: span 2;
+  padding-top: 2px;
+  color: var(--text-3);
+}
+
+.map-log-said {
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.map-log-by {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.map-log-row.refused .map-log-mark,
+.map-log-row.refused .map-log-said {
+  color: var(--accent);
+}
+
+.map-log-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.map-log-note.wrong {
+  color: var(--wrong);
+}
+
+.map-log-earlier {
+  margin-top: var(--space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-log.as-sheet {
+    animation: none;
+  }
+}

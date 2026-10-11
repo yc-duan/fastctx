@@ -96,6 +96,7 @@ import { markdownOf } from "./conversation/export";
 import { specimens } from "./specimen/sessions";
 import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
 import { specimenRemote } from "./specimen/remote";
+import { specimenMachineLog } from "./specimen/machine-log";
 import type { RemoteSeams } from "./app/remote-world";
 import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
 import { RemoteLines } from "./world/remote-lines";
@@ -168,6 +169,7 @@ import {
   agentHomes,
   serverCommand,
   setWorksOn,
+  machineLog,
 } from "./world/bridge";
 import { en, zh } from "./words";
 import { updating } from "./world/updater";
@@ -1206,6 +1208,7 @@ function show(next: Place): void {
         invite: (login) => tokens.open(login),
         talk: (machine) => newTalk.open(null, null, machine),
         confirm: accountConfirm,
+        log: live ? machineLog : specimenMachineLog,
       });
       break;
     case "agents":

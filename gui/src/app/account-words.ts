@@ -9,6 +9,8 @@
 import type { MemberKind } from "../world/accounts";
 import type { PasswordProblem } from "./password";
 import { enProblems, failure, zhProblems, type ProblemWords } from "./problem";
+import type { MachineLogAction } from "../world/machine-log";
+import { agentName } from "../world/names";
 
 export interface LoginWords {
   lede: string;
@@ -388,6 +390,18 @@ export interface MachinesWords {
   relayAddress: string;
   relayAddressWrong: string;
   relayWhat: string;
+  /** The hub's record of changes, in the drawing's corner. */
+  log: string;
+  logEmpty: string;
+  logEarlier: string;
+  logFailed: string;
+  /** Who asked: an account, and the device it asked from. */
+  logBy(account: string | null, device: string | null): string;
+  /** A request the hub could not tie to the account it named. */
+  logUnverified: string;
+  /** What a record changed, in a line; `null` for what is not about
+   *  machines (accounts, passwords, projects). */
+  logSaid(action: MachineLogAction): string | null;
 }
 
 export const zhMachines: MachinesWords = {
@@ -496,6 +510,40 @@ export const zhMachines: MachinesWords = {
   relayAddress: "对外地址",
   relayAddressWrong: "写成 地址:端口",
   relayWhat: "这台机器把这个端口收到的连接原样转给服务器，看不到内容。防火墙或安全组要放行这个端口。",
+  log: "变更记录",
+  logEmpty: "暂无记录",
+  logEarlier: "更早",
+  logFailed: "读取失败",
+  logBy: (account, device) => [account, device].filter(Boolean).join(" · "),
+  logUnverified: "未验证",
+  logSaid: (a) => {
+    switch (a.change) {
+      case "share":
+        return a.shared ? `把 ${a.machine} 共享给 ${a.to}` : `收回 ${a.machine} 对 ${a.to} 的共享`;
+      case "lend":
+        return a.lent ? `把 ${a.machine} 上的 ${agentName(a.agent)} 借给 ${a.to}` : `收回借给 ${a.to} 的 ${agentName(a.agent)}`;
+      case "stop_acting":
+        return `撤销 ${a.machine} 访问的权限`;
+      case "relays":
+        return a.relays.length ? `让 ${a.machine} 经 ${a.relays.map((r) => r.label).join("、")} 连接` : `让 ${a.machine} 直连`;
+      case "relay_at":
+        return a.addresses.length ? `把 ${a.machine} 设为中转` : `${a.machine} 停止中转`;
+      case "remove":
+        return `移除 ${a.name}`;
+      case "token":
+        return a.register ? `生成加入命令${a.name ? ` · ${a.name}` : ""}` : "生成登录二维码";
+      case "joined":
+        return a.registered ? `${a.name} 加入` : `${a.name} 登录`;
+      case "left":
+        return `${a.name} 离开`;
+      case "allow_acting":
+        return `${a.machine} 上的 ${agentName(a.agent)} 获准访问`;
+      case "acting_stopped":
+        return `${a.machine} 不再能替 ${a.account} 访问`;
+      default:
+        return null;
+    }
+  },
 };
 
 export const enMachines: MachinesWords = {
@@ -604,6 +652,40 @@ export const enMachines: MachinesWords = {
   relayAddress: "Public address",
   relayAddressWrong: "Write it as address:port",
   relayWhat: "This machine passes connections on this port to the server unread. Allow the port in the firewall or security group.",
+  log: "Changes",
+  logEmpty: "No changes yet",
+  logEarlier: "Earlier",
+  logFailed: "Couldn't load",
+  logBy: (account, device) => [account, device].filter(Boolean).join(" · "),
+  logUnverified: "unverified",
+  logSaid: (a) => {
+    switch (a.change) {
+      case "share":
+        return a.shared ? `Shared ${a.machine} with ${a.to}` : `Stopped sharing ${a.machine} with ${a.to}`;
+      case "lend":
+        return a.lent ? `Lent ${agentName(a.agent)} on ${a.machine} to ${a.to}` : `Took back ${agentName(a.agent)} from ${a.to}`;
+      case "stop_acting":
+        return `Revoked ${a.machine}'s access`;
+      case "relays":
+        return a.relays.length ? `${a.machine} connects through ${a.relays.map((r) => r.label).join(", ")}` : `${a.machine} connects directly`;
+      case "relay_at":
+        return a.addresses.length ? `Made ${a.machine} a relay` : `${a.machine} stopped relaying`;
+      case "remove":
+        return `Removed ${a.name}`;
+      case "token":
+        return a.register ? `Made a join command${a.name ? ` · ${a.name}` : ""}` : "Made a sign-in QR code";
+      case "joined":
+        return a.registered ? `${a.name} joined` : `${a.name} signed in`;
+      case "left":
+        return `${a.name} left`;
+      case "allow_acting":
+        return `${agentName(a.agent)} on ${a.machine} was allowed access`;
+      case "acting_stopped":
+        return `${a.machine} no longer acts for ${a.account}`;
+      default:
+        return null;
+    }
+  },
 };
 
 /** The sheets on a machine: whom its owner shares it with, whom it lends
