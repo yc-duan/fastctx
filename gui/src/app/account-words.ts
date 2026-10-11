@@ -36,6 +36,12 @@ export interface LoginWords {
   sudoPassword: string;
   sudoWanted: string;
   portClosed(port: string): string;
+  /** What the server said, in the person's words. */
+  sshRefused: string;
+  sshUnreachable: string;
+  sudoWrong: string;
+  notLinux: string;
+  notX86: string;
   remoteSteps: Record<"connect" | "check" | "upload" | "hub" | "login" | "join", string>;
   another: string;
   hub: string;
@@ -118,6 +124,11 @@ export const zhLogin: LoginWords = {
   sudoPassword: "sudo 密码",
   sudoWanted: "需要 sudo 密码",
   portClosed: (port) => `连不上端口 ${port}，防火墙或安全组要放行它`,
+  sshRefused: "服务器没有接受这个用户名和密码或钥匙",
+  sshUnreachable: "连不上这台服务器的 SSH 端口",
+  sudoWrong: "sudo 密码不对",
+  notLinux: "这台服务器不是 Linux",
+  notX86: "这台服务器不是 x86_64，World 只带了 x86_64 的程序",
   remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建世界", login: "这台电脑登录", join: "服务器加入" },
   another: "登录其他账号",
   hub: "服务器地址",
@@ -190,6 +201,11 @@ export const enLogin: LoginWords = {
   sudoPassword: "sudo password",
   sudoWanted: "sudo needs a password",
   portClosed: (port) => `Port ${port} can't be reached; allow it in the firewall or security group`,
+  sshRefused: "The server didn't accept this user and password or key",
+  sshUnreachable: "Can't reach this server's SSH port",
+  sudoWrong: "Wrong sudo password",
+  notLinux: "This server isn't Linux",
+  notX86: "This server isn't x86_64; World carries the program for x86_64 only",
   remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Make the World", login: "Sign this computer in", join: "Add the server" },
   another: "Log in to another account",
   hub: "Server address",

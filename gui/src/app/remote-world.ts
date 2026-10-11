@@ -272,7 +272,10 @@ export class RemoteWorld {
         this.stage = this.shown.known === "known" ? "world" : "key";
         this.draw();
       } catch (error) {
-        this.problem(error);
+        const message = error instanceof Error ? error.message : String(error);
+        const said = sshSaid(message, words, false);
+        if (said) this.note(said, message);
+        else this.problem(error);
       } finally {
         this.busy = false;
       }
@@ -329,12 +332,14 @@ export class RemoteWorld {
       const failed = this.progress.find((one) => one.state === "doing");
       if (failed) failed.state = "failed";
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes(SUDO_WANTED)) this.wantsSudo = true;
+      const sudoWrong = /incorrect password attempt|Sorry, try again/.test(message);
+      if (message.includes(SUDO_WANTED) || sudoWrong) this.wantsSudo = true;
       this.stage = "world";
       this.draw();
       const { text, detail } = plainly(error, words.problems);
       // The hub is made by then: this computer not reaching it is its port.
-      this.note(message.includes(SUDO_WANTED) ? words.sudoWanted : failed?.step === "login" ? words.portClosed(this.typed.hubPort) : text, detail);
+      const said = failed?.step === "login" ? words.portClosed(this.typed.hubPort) : (sshSaid(message, words, sudoWrong) ?? text);
+      this.note(said, detail || message);
     }
   }
 }
@@ -350,4 +355,17 @@ function serverName(hostname: string): string {
     .slice(0, 32)
     .replace(/-+$/, "");
   return machineRule.test(name) ? name : "server";
+}
+
+/** What the server's side said, in the person's words, where it is one of
+ *  the things only this way in says (`src-tauri/src/remote_world/ssh.rs`). */
+function sshSaid(message: string, words: LoginWords, sudoWrong: boolean): string | null {
+  if (message.includes(SUDO_WANTED)) return words.sudoWanted;
+  if (sudoWrong) return words.sudoWrong;
+  if (/showed another key than the one confirmed/.test(message)) return words.fingerprintChanged;
+  if (/did not accept .* with this password or key|reading the key file/.test(message)) return words.sshRefused;
+  if (/^reaching \S+: /.test(message)) return words.sshUnreachable;
+  if (/carries the program for x86_64 only/.test(message)) return words.notX86;
+  if (/, not Linux$/.test(message)) return words.notLinux;
+  return null;
 }
