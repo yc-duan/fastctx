@@ -74,6 +74,7 @@ import { loginsOf, type AccountChange, type Login } from "./world/accounts";
 import { borrowedBy, borrowedOf, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import { Details, type Manage } from "./conversation/details";
 import { ComposerSession } from "./conversation/composer";
+import { fetchFile, openLocal, reveal } from "./world/files";
 import { specimenComposer } from "./specimen/composer";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/model";
@@ -674,6 +675,7 @@ function specimenTalk(address: Address): Page {
     head,
     link: talkLink,
     conversation,
+    opening: { open: notLive, reveal: notLive },
     controls: {
       words: composerWords,
       offers: async () => (sample.agent === "claude" ? specimenClaudeOffers : specimenOffers),
@@ -813,6 +815,12 @@ function liveTalk(address: Address): Page {
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
     composer: () => ComposerSession.open(address),
+    // A file elsewhere is brought to this device first; one here opens
+    // where it is.
+    opening: {
+      open: async (machine, path) => openLocal(await fetchFile(machine, path)),
+      reveal: onComputer() ? reveal : undefined,
+    },
     files: {
       words: composerWords.files,
       find: (query) => search.find(query).then((files) => files.map((file) => ({ path: file.path, relative: file.relative }))),

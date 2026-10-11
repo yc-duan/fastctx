@@ -17,12 +17,23 @@ const markdown: MarkdownIt = new MarkdownIt({
 
 markdown.use(math);
 
-// Links leave the conversation in the system's browser, never inside it.
+// Links leave the conversation in the system's browser, never inside it; a
+// link to a file carries its path for the page to open (`file-links.ts`).
+// `file:` addresses are such links, not a protocol to refuse.
+const validLink = markdown.validateLink.bind(markdown);
+markdown.validateLink = (url) => /^file:/i.test(url.trim()) || validLink(url);
 const defaultLink =
   markdown.renderer.rules.link_open ?? ((tokens, index, options, _env, self) => self.renderToken(tokens, index, options));
 markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
-  tokens[index].attrSet("target", "_blank");
-  tokens[index].attrSet("rel", "noreferrer noopener");
+  const token = tokens[index];
+  const path = filePathOf(token.attrGet("href") ?? "");
+  if (path) {
+    token.attrSet("href", "#");
+    token.attrSet("data-file", path);
+  } else {
+    token.attrSet("target", "_blank");
+    token.attrSet("rel", "noreferrer noopener");
+  }
   return defaultLink(tokens, index, options, env, self);
 };
 
@@ -47,6 +58,28 @@ let codeCopy = "Copy code";
 export function nameCodeCopy(label: string): void {
   codeCopy = label;
 }
+
+/** The path a link names, when it names a file: a Windows path, an absolute
+ *  POSIX one, or a `file:` address, without the line or column a reader
+ *  of code points at. Anything else is a link to the web. */
+export function filePathOf(href: string): string | null {
+  let path: string;
+  try {
+    path = decodeURI(href);
+  } catch {
+    path = href;
+  }
+  if (/^file:/i.test(path)) {
+    path = path.replace(/^file:\/\/(?:localhost)?/i, "");
+    if (/^\/[A-Za-z]:[\\/]/.test(path)) path = path.slice(1);
+  } else if (!/^[A-Za-z]:[\\/]/.test(path) && !/^\/(?!\/)/.test(path)) {
+    return null;
+  }
+  return path.replace(/#L\d+(?:-L?\d+)?$/, "").replace(/(\.[^\\/:.]+):\d+(?::\d+)?$/, "$1");
+}
+
+/** A path as its own system writes it: backslashes for Windows. */
+export const naturalPath = (path: string): string => (/^[A-Za-z]:[\\/]/.test(path) ? path.replace(/\//g, "\\") : path);
 
 /** Markdown as HTML. Safe to place in the page: raw HTML is escaped. */
 export function render(text: string): string {

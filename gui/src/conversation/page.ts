@@ -16,6 +16,7 @@ import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } f
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import type { Details } from "./details";
+import { FileLinks } from "./file-links";
 import { glyph } from "./glyphs";
 import type { Conversation } from "./model";
 import { escape, render } from "./prose";
@@ -54,6 +55,12 @@ export interface PageOptions {
   head(title: string, actions?: string): string;
   /** Where another resident's conversation opens. */
   link?: (address: { resident: string; machine: string }) => string;
+  /** Opening the files an agent's links name, where the World can bring
+   *  them here; showing one in its folder, where this is a computer. */
+  opening?: {
+    open(machine: string, path: string): Promise<void>;
+    reveal?: ((path: string) => Promise<void>) | undefined;
+  };
   conversation: Conversation;
   /** What the World knows of the agent, shown in a card opened from the
    *  head, and how to ask for it. */
@@ -266,6 +273,16 @@ export class ConversationPage {
       },
       turnAct: controls && ((act, turn, words, kept) => this.turnAct(act, turn, words, kept)),
     });
+    if (options.opening) {
+      new FileLinks(main, {
+        words: words.files,
+        here: options.here,
+        machine: someone.machine,
+        open: options.opening.open,
+        reveal: options.opening.reveal,
+        say: (text) => this.say(text),
+      });
+    }
 
     const form = this.element.querySelector("form")!;
     form.addEventListener("submit", (event) => {

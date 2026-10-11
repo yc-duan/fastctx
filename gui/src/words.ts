@@ -1,3 +1,4 @@
+import type { FileLinkWords } from "./conversation/file-links";
 import type { QueueWords } from "./conversation/queue";
 // Every word the interface says on its own account, in the user's words
 // (`world-gui.md`, 用词): plain, without role-play; what agents and tools
@@ -120,6 +121,8 @@ export interface Words {
   watchInterrupted(why: string | null): string;
   /** Words that could not be sent. */
   notSent(why: string): string;
+  /** Links an agent writes to files. */
+  files: FileLinkWords;
   /** The way into a colleague's own conversation. */
   openColleague: string;
   /** Under Claude Code's agent tool: its subagent's kind, steps taken, the one it takes now. */
@@ -301,6 +304,13 @@ export const zh: Words = {
   watchEnded: () => "已停止同步",
   watchInterrupted: () => "连接中断，正在重连…",
   notSent: () => "发送失败",
+  files: {
+    reveal: "在文件夹中显示",
+    copyPath: "复制路径",
+    copied: "已复制路径",
+    on: (machine, path) => `${machine} 上的 ${path}`,
+    openFailed: (why) => `打不开这个文件：${why}`,
+  },
   openColleague: "查看",
   subagent: (kind, steps, doing) => [`子代理${kind ? ` ${kind}` : ""}`, `${steps} 步`, doing].filter(Boolean).join(" · "),
   stillRunning: "运行中的命令",
@@ -452,6 +462,13 @@ export const en: Words = {
   watchEnded: () => "Sync stopped",
   watchInterrupted: () => "Disconnected, reconnecting…",
   notSent: () => "Couldn't send",
+  files: {
+    reveal: "Show in folder",
+    copyPath: "Copy path",
+    copied: "Path copied",
+    on: (machine, path) => `${path} on ${machine}`,
+    openFailed: (why) => `Couldn't open the file: ${why}`,
+  },
   openColleague: "Open",
   subagent: (kind, steps, doing) => [`Subagent${kind ? ` ${kind}` : ""}`, `${steps} ${steps === 1 ? "step" : "steps"}`, doing].filter(Boolean).join(" · "),
   stillRunning: "Running commands",

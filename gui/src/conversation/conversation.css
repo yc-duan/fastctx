@@ -1435,3 +1435,74 @@
 .divider a:hover {
   color: var(--text);
 }
+
+/* What a link to a file offers on the right button or a long press: its
+   folder, where it is on this computer, and its path. */
+.file-menu {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 11em;
+  padding: var(--space-1);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.file-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--size-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-menu-item:hover,
+.file-menu-item:focus-visible {
+  outline: 0;
+  color: var(--text-strong);
+  background: var(--fill);
+}
+
+/* On a phone it rises from below. */
+.file-menu.as-sheet {
+  top: auto;
+  right: 0;
+  bottom: 0;
+  padding: var(--space-3) var(--space-3) calc(var(--space-4) + env(safe-area-inset-bottom));
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  animation: file-menu-rise 0.22s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.file-menu.as-sheet .file-menu-item {
+  min-height: 48px;
+}
+
+@keyframes file-menu-rise {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@media (pointer: coarse) {
+  .file-menu-item {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-menu.as-sheet {
+    animation: none;
+  }
+}
