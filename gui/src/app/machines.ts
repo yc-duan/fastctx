@@ -12,7 +12,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import type { Point } from "../map-canvas";
+import type { Bounds, Point } from "../map-canvas";
 import type { AccountChange, HubAccounts, Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
@@ -64,6 +64,20 @@ interface Act {
   danger?: boolean;
 }
 
+/** Something of a machine's given to another account, hung on its ring:
+ *  the change that takes it back, and the one that gives it again. */
+interface Given {
+  key: string;
+  label: string;
+  to: string;
+  login: Login;
+  take: AccountChange;
+  give: AccountChange;
+}
+
+/** How long a taking back can be undone from the drawing's corner. */
+const UNDO_MS = 6_000;
+
 /** How long a machine that just arrived stays circled: the drawing-in of
  *  the circle and a moment to see it. */
 const ARRIVED_MS = 6_000;
@@ -74,9 +88,16 @@ export class MachinesPage implements Page {
   private readonly panel: HTMLElement;
   private readonly canvas: HTMLElement;
   private readonly map: MachineMap;
-  /** The actions floating beside the one chosen, and the menu. */
+  /** The actions floating beside the one chosen, the menu, the tags of
+   *  whom each machine is given to, and the moment to undo a taking back. */
   private readonly acts: HTMLElement;
   private readonly menu: HTMLElement;
+  private readonly tags: HTMLElement;
+  private readonly undoBar: HTMLElement;
+  private tagged = "";
+  private given: Given[] = [];
+  private undoing: { timer: number; redo: () => Promise<void> } | null = null;
+  private level = 0;
   private drawn = "";
   private floated = "";
   private readonly stop: () => void;
@@ -108,11 +129,13 @@ export class MachinesPage implements Page {
         `<h1 class="page-title">${escape(words.title)}</h1>`,
         `<button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
-      <div class="machines-layout"><div class="machines-canvas"><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
+      <div class="machines-layout"><div class="machines-canvas"><div class="map-tags"></div><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
     this.acts = this.element.querySelector<HTMLElement>(".map-acts")!;
     this.menu = this.element.querySelector<HTMLElement>(".map-menu")!;
+    this.tags = this.element.querySelector<HTMLElement>(".map-tags")!;
+    this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
     this.map = new MachineMap({
       words,
       storageKey: "machines-map",
@@ -122,6 +145,7 @@ export class MachinesPage implements Page {
       },
       frame: (frame) => {
         this.scale = frame.view.scale;
+        this.level = frame.view.level;
         this.float();
       },
     });
@@ -143,6 +167,14 @@ export class MachinesPage implements Page {
     this.panel.addEventListener("click", (event) => this.click(event));
     this.acts.addEventListener("click", (event) => this.clickAct(event));
     this.menu.addEventListener("click", (event) => this.clickAct(event));
+    this.tags.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-given]");
+      const given = button ? this.given[Number(button.dataset.given)] : undefined;
+      if (button && given) void this.takeBack(button, given);
+    });
+    this.undoBar.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest(".map-undo-go")) void this.undo();
+    });
     this.element.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && this.menuFor) {
         event.stopPropagation();
@@ -155,6 +187,7 @@ export class MachinesPage implements Page {
 
   leave(): void {
     this.stop();
+    if (this.undoing) clearTimeout(this.undoing.timer);
     document.removeEventListener("pointerdown", this.outside, true);
     this.map.dispose();
   }
@@ -452,19 +485,125 @@ export class MachinesPage implements Page {
     }
   }
 
+  /** Whom each of the account's own machines is shared with, and whom an
+   *  agent on it is lent to. */
+  private givenOf(world: WorldNow): Given[] {
+    const given: Given[] = [];
+    for (const machine of machinesOf(world)) {
+      for (const login of this.ownersOf(machine, world)) {
+        const hub = world.accounts.hubs.find((one) => one.hub === login.hub);
+        for (const share of hub?.shares ?? []) {
+          if (share.machine !== machine.name || share.account === login.account) continue;
+          given.push({ key: `m:${machine.written}`, label: share.account, to: share.account, login, take: { change: "share", machine: machine.name, to: share.account, shared: false }, give: { change: "share", machine: machine.name, to: share.account, shared: true } });
+        }
+        for (const lend of hub?.lends ?? []) {
+          if (lend.machine !== machine.name) continue;
+          const home = lend.home ? { home: lend.home } : {};
+          given.push({
+            key: `m:${machine.written}`,
+            label: `${agentName(lend.agent)} · ${lend.account}`,
+            to: lend.account,
+            login,
+            take: { change: "lend", machine: machine.name, to: lend.account, agent: lend.agent, ...home, lent: false },
+            give: { change: "lend", machine: machine.name, to: lend.account, agent: lend.agent, ...home, lent: true },
+          });
+        }
+      }
+    }
+    return given;
+  }
+
+  /** Takes back a share or a loan at once; for a moment it can be given
+   *  again from the drawing's corner. */
+  private async takeBack(button: HTMLButtonElement, given: Given): Promise<void> {
+    const { words } = this.options;
+    button.disabled = true;
+    try {
+      await this.options.change(given.login, given.take);
+    } catch (error) {
+      this.note = { machine: given.key.slice(2), text: this.options.access.failed(error instanceof Error ? error.message : String(error)) };
+      button.disabled = false;
+      this.redraw();
+      return;
+    }
+    if (this.undoing) clearTimeout(this.undoing.timer);
+    this.undoing = {
+      timer: window.setTimeout(() => this.endUndo(), UNDO_MS),
+      redo: () => this.options.change(given.login, given.give),
+    };
+    this.undoBar.innerHTML = `<span>${escape(words.tookBack(given.to))}</span><button class="text-button map-undo-go" type="button">${escape(words.undo)}</button>`;
+    this.undoBar.hidden = false;
+    await this.options.store.refresh();
+    this.redraw();
+  }
+
+  private async undo(): Promise<void> {
+    const undoing = this.undoing;
+    if (!undoing) return;
+    this.endUndo();
+    try {
+      await undoing.redo();
+    } catch (error) {
+      this.note = { machine: "", text: this.options.access.failed(error instanceof Error ? error.message : String(error)) };
+    }
+    await this.options.store.refresh();
+    this.redraw();
+  }
+
+  private endUndo(): void {
+    if (this.undoing) clearTimeout(this.undoing.timer);
+    this.undoing = null;
+    this.undoBar.hidden = true;
+    this.undoBar.innerHTML = "";
+  }
+
+  /** The tags of whom a machine is given to, hung at its ring's lower right
+   *  when the drawing is near enough to read them; not on the one chosen,
+   *  whose actions float there instead. */
+  private hang(): Bounds[] {
+    const world = this.options.store.world.peek();
+    this.given = world ? this.givenOf(world) : [];
+    const shown = this.level >= 1 ? this.given.map((given, index) => ({ given, index })).filter(({ given }) => given.key !== this.selected) : [];
+    const html = shown
+      .map(
+        ({ given, index }) =>
+          `<span class="map-tag" data-for="${escape(given.key)}">${escape(given.label)}<button class="chip-x" type="button" data-given="${index}" aria-label="${escape(this.options.words.takeBack(given.label))}" title="${escape(this.options.words.takeBack(given.label))}">${glyph("close", 12)}</button></span>`,
+      )
+      .join("");
+    if (html !== this.tagged) {
+      this.tagged = html;
+      this.tags.innerHTML = html;
+    }
+    const below = new Map<string, number>();
+    const boxes: Bounds[] = [];
+    for (const tag of this.tags.children as HTMLCollectionOf<HTMLElement>) {
+      const key = tag.dataset.for!;
+      const at = this.map.screenOf(key);
+      if (!at) continue;
+      const row = below.get(key) ?? 0;
+      below.set(key, row + 1);
+      const x = at[0] + RING * this.scale * 0.7;
+      const y = at[1] + RING * this.scale * 0.7 + row * 28;
+      tag.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+      boxes.push({ x, y, width: tag.offsetWidth, height: tag.offsetHeight });
+    }
+    return boxes;
+  }
+
   /** The icons beside the one chosen, on an arc round its ring, kept on the
    *  side with room; the names on the drawing keep clear of them. */
   private float(): void {
     const world = this.options.store.world.peek();
     const key = this.menuFor ? null : this.selected;
     const at = key ? this.map.screenOf(key) : null;
+    const hung = this.hang();
     if (!world || !key || !at) {
       if (!this.acts.hidden) {
         this.acts.hidden = true;
         this.acts.innerHTML = "";
         this.floated = "";
-        this.map.reserve([]);
       }
+      this.map.reserve(hung);
       return;
     }
     const acts = this.actsOf(key, world);
@@ -496,7 +635,7 @@ export class MachinesPage implements Page {
       (button as HTMLElement).style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
       return { x, y, width: size, height: size };
     });
-    this.map.reserve(boxes);
+    this.map.reserve([...boxes, ...hung]);
   }
 
   /** The menu of a spot, or of the drawing itself, where the right button

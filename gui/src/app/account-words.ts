@@ -297,6 +297,9 @@ export interface MachinesWords {
   details: string;
   closeDetails: string;
   actions: string;
+  /** A share or loan taken back from the drawing, and giving it again. */
+  tookBack(to: string): string;
+  undo: string;
 }
 
 export const zhMachines: MachinesWords = {
@@ -390,6 +393,8 @@ export const zhMachines: MachinesWords = {
   details: "详情",
   closeDetails: "收起详情",
   actions: "操作",
+  tookBack: (to) => `已收回 ${to}`,
+  undo: "撤回",
 };
 
 export const enMachines: MachinesWords = {
@@ -483,6 +488,8 @@ export const enMachines: MachinesWords = {
   details: "Details",
   closeDetails: "Hide details",
   actions: "Actions",
+  tookBack: (to) => `Revoked ${to}`,
+  undo: "Undo",
 };
 
 /** The sheets on a machine: whom its owner shares it with, whom it lends
