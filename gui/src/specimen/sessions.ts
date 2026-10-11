@@ -3,7 +3,7 @@
 // shows, from both hosts, in the shapes the node really produces.
 
 import type { Attachment } from "../world/attachments";
-import type { Content, Does, Item, Notice, SessionEvent, Speaker, Tool, TurnFacts } from "../world/events";
+import type { Content, Does, Item, Notice, SessionEvent, Speaker, Tool, TurnFacts, UserImage } from "../world/events";
 
 export interface Specimen {
   title: string;
@@ -46,8 +46,17 @@ class Script {
     return `item-${this.serial}`;
   }
 
-  heard(turn: string | null, from: Speaker | null, text: string, after = 4, notice?: Notice, attachments?: Attachment[]): void {
-    const message = attachments && { attachments, id: this.id(), client_id: null, content: [], hook_fragments: [], presentation: null, detail: null };
+  heard(turn: string | null, from: Speaker | null, text: string, after = 4, notice?: Notice, attachments?: Attachment[], images?: UserImage[]): void {
+    const message = (attachments || images) && {
+      ...(attachments ? { attachments } : {}),
+      ...(images ? { images } : {}),
+      id: this.id(),
+      client_id: null,
+      content: [],
+      hook_fragments: [],
+      presentation: null,
+      detail: null,
+    };
     this.events.push({ at: this.at(after), event: "heard", delivery: null, turn, from, text, ...(notice ? { notice } : {}), ...(message ? { message } : {}) });
   }
 
@@ -376,7 +385,11 @@ let i = (self.ki.widen() * self.integral).narrow();
 function codex(): Specimen {
   const s = new Script("2026-10-04T08:40:00Z");
 
-  s.heard("t1", user, "ingest 服务现在每个文件提交一次，大文件会把事务拖得很长。改成每 5000 条一批提交，先给我个计划。");
+  // A screenshot pasted straight into Codex: the World never kept it, its
+  // thread's own record holds it.
+  s.heard("t1", user, "ingest 服务现在每个文件提交一次，大文件会把事务拖得很长。改成每 5000 条一批提交，先给我个计划。", 4, undefined, undefined, [
+    { source: { owner: { machine: "laptop", resident: "codex-7f3a" }, host_image: { host: "codex", turn: "t1", message: 0, image: 0 } }, name: null, media_type: "image/png" },
+  ]);
   s.started("t1");
   s.say(
     "t1",

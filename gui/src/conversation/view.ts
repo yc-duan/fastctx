@@ -349,10 +349,10 @@ export class ConversationView {
    *  larger or several in a row, and the other files as chips. */
   private attached(items: ShownAttachment[]): string {
     if (!items.length) return "";
-    const pictures = items.filter((item) => item.image && (item.preview || item.kept));
+    const pictures = items.filter((item) => item.image && (item.preview || item.kept || item.recorded));
     const files = items.filter((item) => !pictures.includes(item));
     const picture = (item: ShownAttachment) =>
-      `<li class="bubble-picture"><img data-picture ${item.preview ? `src="${escape(item.preview)}"` : `data-attachment="${escape(JSON.stringify(item.kept))}"`} alt="${escape(item.name)}" title="${escape(item.name)}" tabindex="0"></li>`;
+      `<li class="bubble-picture"><img data-picture ${item.preview ? `src="${escape(item.preview)}"` : `data-attachment="${escape(JSON.stringify(item.kept ?? item.recorded))}"`} alt="${escape(item.name)}"${item.name ? ` title="${escape(item.name)}"` : ""} tabindex="0"></li>`;
     const file = (item: ShownAttachment) => {
       const label = `${glyph(item.image ? "image" : "file", 16)}<span class="bubble-file-name">${escape(item.name)}</span>${item.size === null ? "" : `<span class="bubble-file-size">${escape(sizeOf(item.size))}</span>`}`;
       return item.kept

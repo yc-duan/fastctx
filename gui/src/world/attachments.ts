@@ -28,7 +28,9 @@ export interface Attachment extends UploadFile {
   path: string;
 }
 
-/** A kept file or one user picture in its resident's native host record. */
+/** A file the user sent: as the World kept it, or a picture its agent's own
+ *  host recorded with the user's words, placed there by the node, never by
+ *  the page. */
 export type AttachmentSource = Attachment | {
   owner: Address;
   host_image:

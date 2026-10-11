@@ -4,9 +4,10 @@
 // (`src-tauri/src/local_files.rs`).
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Attachment } from "./attachments";
+import type { AttachmentSource } from "./attachments";
 import type { MachineName } from "./events";
-import type { Address } from "./wire";
+
+export type { AttachmentSource } from "./attachments";
 
 /** A picture made small on the machine holding it, never kept there. */
 export interface Thumbnail {
@@ -24,13 +25,6 @@ export const thumbnailUrl = (thumbnail: Thumbnail): string => `data:${thumbnail.
 export function thumbnail(machine: MachineName | null, path: string, max: number): Promise<Thumbnail> {
   return invoke("thumbnail", { machineName: machine, path, max });
 }
-
-/** A picture the agent's own host recorded with the user's words, named by
- *  where it stands in that record: the node says which, never the page. */
-export type HostImage = { host: "codex"; turn: string; message: number; image: number } | { host: "claude"; message: string; image: number };
-
-/** A file the user sent: as the World kept it, or as its host recorded it. */
-export type AttachmentSource = Attachment | { owner: Address; host_image: HostImage };
 
 /** A file the user sent that could not be had; `gone` when neither the
  *  World's copy nor the host's own record holds it any more. */

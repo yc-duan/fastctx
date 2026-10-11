@@ -4,7 +4,7 @@
 // shows a session alike.
 
 import type { Health, MachineName, Notice, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
-import type { Attachment } from "../world/attachments";
+import type { Attachment, AttachmentSource } from "../world/attachments";
 import type { JsonValue } from "../world/wire";
 import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
@@ -28,6 +28,8 @@ export interface ShownAttachment {
   /** The file as the World kept it, once it has: what a small picture is
    *  asked for and the original opened from. */
   kept?: Attachment;
+  /** A picture the World never kept, as its agent's host recorded it. */
+  recorded?: AttachmentSource;
 }
 
 export type Entry =
@@ -188,13 +190,22 @@ export class Conversation {
         if (!known) {
           for (const file of heard.message?.attachments ?? []) this.attachments.set(file.path.replaceAll("\\", "/"), file.name);
           // The files that came with the words, as the World kept them.
-          const attached = (heard.message?.attachments ?? []).map((file) => ({
-            name: file.name,
-            size: file.size,
-            image: file.media_type.startsWith("image/"),
-            preview: null,
-            kept: file,
-          }));
+          const attached: ShownAttachment[] = [
+            ...(heard.message?.attachments ?? []).map((file) => ({
+              name: file.name,
+              size: file.size,
+              image: file.media_type.startsWith("image/"),
+              preview: null,
+              kept: file,
+            })),
+            ...(heard.message?.images ?? []).map((picture) => ({
+              name: picture.name ?? "",
+              size: null,
+              image: true,
+              preview: null,
+              recorded: picture.source,
+            })),
+          ];
           this.entries.push({
             kind: "heard",
             key: this.key("heard"),
