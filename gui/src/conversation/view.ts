@@ -149,10 +149,21 @@ export class ConversationView {
     // Words sent and not yet read stand below the turn's line, in order.
     const all = this.conversation.blocks();
     const pending = all.filter((block) => block.kind === "heard" && block.sending !== undefined);
-    const blocks = [...all.filter((block) => !pending.includes(block)), ...pending];
+    const settled = all.filter((block) => !pending.includes(block));
+    const blocks = [...settled, ...pending];
     const present = new Set<string>();
     let previous: HTMLElement | null = null;
-    const statusShown = this.drawStatus();
+    // A stretch under way at the very end says the step itself, a light
+    // passing over it and its clock running: the turn's line beneath would
+    // only say it again. With words waiting below it, the line is still the
+    // boundary they wait at.
+    const last = settled[settled.length - 1];
+    const saidAbove =
+      !pending.length &&
+      !this.conversation.waiting() &&
+      last?.kind === "activity-group" &&
+      last.members.some((member) => (member.kind === "tool" && member.ended === null) || (member.kind === "prose" && member.writing));
+    const statusShown = this.drawStatus() && !saidAbove;
     let statusPlaced = false;
     const place = (element: HTMLElement) => {
       const want: Element | null = previous ? previous.nextElementSibling : this.root.firstElementChild;

@@ -25,6 +25,17 @@ class Script {
     this.clock = Date.parse(start);
   }
 
+  /** The events as if the conversation's last moment was a minute ago, so
+   *  a turn still under way shows minutes, not the days since its date. */
+  recent(): SessionEvent[] {
+    const shift = Date.now() - 60_000 - this.clock;
+    const moved = (at: string) => new Date(Date.parse(at) + shift).toISOString();
+    return this.events.map((event) => {
+      const item = "item" in event && typeof event.item === "object" && event.item && "started_at" in event.item && typeof event.item.started_at === "string" ? { ...event.item, started_at: moved(event.item.started_at) } : null;
+      return { ...event, at: moved(event.at), ...(item ? { item } : {}) } as SessionEvent;
+    });
+  }
+
   private at(seconds: number): string {
     this.clock += seconds * 1000;
     return new Date(this.clock).toISOString();
@@ -358,7 +369,7 @@ let i = (self.ki.widen() * self.integral).narrow();
     model: "Opus 5.5",
     town: "mark50",
     here: "desktop",
-    events: s.events,
+    events: s.recent(),
   };
 }
 
@@ -547,7 +558,7 @@ function codex(): Specimen {
     model: "gpt-6.1-sol",
     town: "ingest",
     here: "desktop",
-    events: s.events,
+    events: s.recent(),
   };
 }
 
@@ -850,7 +861,7 @@ function asking(): Specimen {
     model: claude ? "claude-opus-5-5" : "gpt-6.1-sol",
     town: "ingest",
     here: "desktop",
-    events: s.events,
+    events: s.recent(),
   };
 }
 
