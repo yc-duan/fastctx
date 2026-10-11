@@ -20,10 +20,10 @@ pub enum PageCommand {
         /// The HTML file to publish.
         #[arg(long)]
         file: PathBuf,
-        /// The title shown above the page.
+        /// The title shown above the page; without it, the page's name.
         #[arg(long)]
         title: Option<String>,
-        /// One sentence saying what the page shows.
+        /// One sentence saying what the page shows; without it, none.
         #[arg(long)]
         description: Option<String>,
         /// Run this exact command on this machine; repeat for each command.
@@ -45,9 +45,13 @@ pub enum PageCommand {
     },
     /// Read a page, optionally writing its exact HTML to a file.
     Read {
+        /// The page's name, as `fastctx page list` shows it.
         name: String,
+        /// Which version to read; without it, the current one.
         #[arg(long)]
         version: Option<u32>,
+        /// Write the version's exact HTML to this file, for editing it and
+        /// publishing again; without it, the page is printed.
         #[arg(long)]
         out: Option<PathBuf>,
         /// The project; without it, the one you work in.
