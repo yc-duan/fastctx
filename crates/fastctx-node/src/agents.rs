@@ -1,162 +1,103 @@
-//! Agent discovery, requested on demand and fanned out like `who`.
+//! The agents of each machine in the shape interfaces and nodes before the
+//! logins record read (`AgentsReply`): built from what the node keeps of its
+//! logins (`logins`), with no program started for the asking.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
 
-use fastctx_hosts::agents::{elapsed, measured};
-use fastctx_install::apply::{self, Host, Places, Standing};
+use fastctx_install::apply::Places;
 use fastctx_net::link::CallFailure;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::agents::*;
 use fastctx_types::ipc::Failure;
+use fastctx_types::logins::{Found, Login, MachineLogins};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::{AgentName, MachineName};
-use jiff::Timestamp;
 
 use crate::Node;
 use crate::around::Heard;
 
-/// The agents on this machine, one for each home of each: every account
-/// answers for itself, its program, login, models, limits, and whether the
-/// World is put into it.
+/// The agents on this machine, one for each login of each, listed and
+/// candidates, as the node keeps them.
 pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
-    let start = Instant::now();
-    let checked_at = Timestamp::now();
-    let env = crate::claude::environment()?;
-    let user_home =
-        fastctx_platform::user_home().map_err(|error| Failure::new(format!("finding the home directory: {error}")))?;
-    let homes = crate::homes::catalog(node, &env, &user_home)
-        .map_err(|error| Failure::new(format!("listing the agents' homes: {error}")))?;
-    let world = node.world.path().to_path_buf();
-    let limits = tokio::task::spawn_blocking(move || fastctx_hosts::claude::exchange::limits(&world));
-    let limits = limits.await.map_err(|error| Failure::new(format!("reading Claude's limits: {error}")))?;
-    let claude_homes: Vec<_> =
-        homes.iter().filter(|(agent, _, _)| agent.as_str() == "claude").map(|(_, home, _)| home.clone()).collect();
-    let models = fastctx_hosts::claude::exchange::models(node.world.path())
-        .map_err(|error| Failure::new(format!("reading Claude's model rows: {error}")))?;
-    let models = Arc::new(
-        models
-            .into_iter()
-            .filter_map(|(transcript, _, models)| {
-                crate::homes::limits_home(&claude_homes, &transcript).map(|home| (home.dir.clone(), models))
-            })
-            .collect::<Vec<_>>(),
-    );
-    let limits = Arc::new(
-        limits
-            .into_iter()
-            .filter_map(|(transcript, limits)| {
-                crate::homes::limits_home(&claude_homes, &transcript).map(|home| (home.dir.clone(), limits))
-            })
-            .collect::<Vec<_>>(),
-    );
-    // Each home is asked at once: a slow account does not hold the others.
-    let probes: Vec<_> = homes
-        .into_iter()
-        .filter_map(|(agent, home, visible)| visible.then_some((agent, home)))
-        .map(|(agent, home)| {
-            let (node, env, user_home, limits, models) =
-                (node.clone(), env.clone(), user_home.clone(), limits.clone(), models.clone());
-            tokio::spawn(async move {
-                if home.found != HomeFound::Default && !home.dir.is_dir() {
-                    let mut facts = failed(
-                        agent,
-                        format!("{} is no longer a home directory on {}", home.dir.display(), node.machine()),
-                    );
-                    facts.home = Some(home);
-                    return facts;
-                }
-                match agent.as_str() {
-                    "codex" => codex(&node, &env, &user_home, home).await,
-                    _ => tokio::task::spawn_blocking(move || claude(&node, &env, &user_home, home, &limits, &models))
-                        .await
-                        .unwrap_or_else(|error| failed(agent, format!("probing Claude Code: {error}"))),
-                }
-            })
-        })
-        .collect();
-    let mut agents = Vec::with_capacity(probes.len());
-    for probe in probes {
-        agents.push(probe.await.map_err(|error| Failure::new(format!("probing agents: {error}")))?);
-    }
-    Ok(AgentsReply { machine: node.machine(), checked_at, elapsed_ms: elapsed(start), agents })
+    let logins = crate::logins::here(node).await?;
+    Ok(reply(logins))
 }
 
-/// Codex in `home`, through the app-server of that home.
-async fn codex(node: &Arc<Node>, env: &[(OsString, OsString)], user_home: &Path, home: AgentHome) -> AgentFacts {
-    let dir = (home.found != HomeFound::Default).then(|| home.dir.clone());
-    let mut facts = match node.codex.home(dir.as_deref()) {
-        Ok(codex) => codex.agents().await,
-        Err(failure) => failed(AgentName::try_from("codex").expect("an agent name"), failure.message),
-    };
-    let places = places(node, env, user_home, None);
-    let at = home.dir.clone();
-    facts.integration = match tokio::task::spawn_blocking(move || apply::status_at(&places, Host::Codex, &at)).await {
-        Ok(Ok(standing)) => Fact::known(integration(standing)),
-        Ok(Err(error)) => Fact::failed(error.to_string()),
-        Err(error) => Fact::failed(error.to_string()),
-    };
-    facts.home = Some(home);
-    facts
+/// The record in the shape of an older reply: a login a scan has not asked
+/// is said to be unknown, never taken for logged out.
+pub(crate) fn reply(logins: MachineLogins) -> AgentsReply {
+    let checked_at = logins
+        .scan
+        .as_ref()
+        .map(|scan| scan.started_at)
+        .unwrap_or_else(jiff::Timestamp::now);
+    let mut agents = Vec::new();
+    for agent in crate::logins::AGENTS {
+        let side = logins.of(agent).expect("an agent that keeps logins");
+        for login in side.listed.iter().chain(&side.candidates) {
+            agents.push(facts(agent, login));
+        }
+    }
+    AgentsReply { machine: logins.machine, checked_at, elapsed_ms: 0, agents }
 }
 
-/// Claude Code in `home`: its commands run with the home named, and its
-/// limits are what its sessions here last reported.
-fn claude(
-    node: &Node,
-    env: &[(OsString, OsString)],
-    user_home: &Path,
-    home: AgentHome,
-    limits: &[(PathBuf, AgentLimits)],
-    models: &[(PathBuf, Vec<AgentModel>)],
-) -> AgentFacts {
-    let mut env = env.to_vec();
-    if home.found != HomeFound::Default {
-        env.retain(|(name, _)| !name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"));
-        env.push(("CLAUDE_CONFIG_DIR".into(), home.dir.as_os_str().to_owned()));
-    }
-    let mut claude = fastctx_hosts::claude::agents::probe(user_home, &env, std::env::var_os("PATH").as_ref());
-    let program = match &claude.program {
-        Fact::Known { value: Some(program) } => Some(program.path.clone()),
-        _ => None,
+fn facts(agent: &str, login: &Login) -> AgentFacts {
+    let unasked = || "not asked yet: scan this machine on the agents page".to_string();
+    let who = login.identity.as_ref().map(|identified| identified.who.clone());
+    let (login_status, account) = match &who {
+        Some(Fact::Known { value }) if value.logged_in => (
+            Fact::known(LoginStatus::LoggedIn { method: value.method.clone() }),
+            Fact::known(AgentAccount {
+                email: value.email.clone(),
+                organization: value.organization.clone(),
+                plan: value.plan.clone(),
+            }),
+        ),
+        Some(Fact::Known { .. }) => {
+            (Fact::known(LoginStatus::LoggedOut), Fact::unavailable("no one is logged in to this login"))
+        }
+        Some(Fact::Unavailable { reason }) => (Fact::unavailable(reason.clone()), Fact::unavailable(reason.clone())),
+        Some(Fact::Failed { reason }) => (Fact::failed(reason.clone()), Fact::failed(reason.clone())),
+        None => (Fact::unavailable(unasked()), Fact::unavailable(unasked())),
     };
-    let places = places(node, &env, user_home, program);
-    claude.integration =
-        match measured(&mut claude.timings, "apply status", || apply::status_at(&places, Host::Claude, &home.dir)) {
-            Ok(standing) => Fact::known(integration(standing)),
-            Err(error) => Fact::failed(error.to_string()),
-        };
-    claude.unattended = match measured(&mut claude.timings, "consent", || apply::claude_consent_at(&places, &home.dir))
-    {
-        Ok(accepted) => Fact::known(accepted),
-        Err(error) => Fact::failed(error.to_string()),
+    let program = match (&login.launcher, &login.identity) {
+        (Some(launcher), _) => Fact::known(Some(AgentProgram {
+            path: launcher.path.clone(),
+            source: if launcher.desktop_app { ProgramSource::DesktopApp } else { ProgramSource::Path },
+            exists: launcher.path.is_file(),
+        })),
+        (None, Some(_)) => Fact::known(None),
+        (None, None) => Fact::unavailable(unasked()),
     };
-    claude.limits = match limits.iter().find(|(owner, _)| crate::homes::same_dir(&home.dir, owner)) {
-        Some((_, limits)) => Fact::known(limits.clone()),
-        None => Fact::unavailable("no session in this home has reported its limits yet"),
+    let version = match login.launcher.as_ref().and_then(|launcher| launcher.version.clone()) {
+        Some(version) => Fact::known(version),
+        None => Fact::unavailable("its version is not known"),
     };
-    if let Some((_, models)) = models.iter().find(|(owner, _)| crate::homes::same_dir(&home.dir, owner)) {
-        claude.models = Fact::known(models.clone());
-    }
-    claude.home = Some(home);
-    claude
-}
-
-fn failed(agent: AgentName, reason: String) -> AgentFacts {
     AgentFacts {
-        agent,
-        home: None,
-        account: Fact::failed(reason.clone()),
-        limits: Fact::failed(reason.clone()),
-        program: Fact::failed(reason.clone()),
-        version: Fact::failed(reason.clone()),
-        launch: Fact::failed(reason.clone()),
-        login: Fact::failed(reason.clone()),
-        models: Fact::failed(reason.clone()),
-        integration: Fact::failed(reason.clone()),
-        unattended: Fact::failed(reason),
+        agent: AgentName::try_from(agent).expect("an agent name"),
+        home: Some(AgentHome {
+            dir: login.dir.clone(),
+            found: match login.found {
+                Found::Default => HomeFound::Default,
+                Found::Home | Found::Elsewhere => HomeFound::Found,
+                Found::Added => HomeFound::Added,
+            },
+        }),
+        account,
+        limits: login.limits.clone(),
+        program,
+        version,
+        launch: Fact::unavailable("not checked: nothing is started to look at an agent"),
+        login: login_status,
+        models: Fact::known(login.models.clone()),
+        integration: Fact::known(login.integration),
+        unattended: match (agent, login.unattended) {
+            ("codex", _) => Fact::known(true),
+            (_, Some(unattended)) => Fact::known(unattended),
+            (_, None) => Fact::unavailable("granted when the World's tools are put in"),
+        },
         timings: Vec::new(),
     }
 }
@@ -172,15 +113,6 @@ pub(crate) fn places(node: &Node, env: &[(OsString, OsString)], home: &Path, cla
         claude_home: crate::homes::claude_default(env, home),
         claude,
         fastctx: node.fastctx.clone(),
-    }
-}
-
-fn integration(standing: Standing) -> Integration {
-    match standing {
-        Standing::Absent => Integration::Absent,
-        Standing::Out => Integration::Out,
-        Standing::In => Integration::In,
-        Standing::Old => Integration::Old,
     }
 }
 

@@ -755,6 +755,38 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::homes::call(node, machine, change).await.map(|()| Reply::Done)
         }
+        Call::AgentLogins { machine } => {
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            crate::logins::query(node, &acting, machine).await.map(Reply::AgentLogins)
+        }
+        Call::ScanAgents { machine, stop } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::scan(node, machine, stop).await.map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
+        Call::AddAgentLogin { machine, agent, dir } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::add(node, machine, agent, dir)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
+        Call::PreviewAgentChange { machine, agent, dir, into } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::preview(node, machine, agent, dir, into)
+                .await
+                .map(|preview| Reply::AgentChangePreview(Box::new(preview)))
+        }
+        Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::change(node, machine, agent, dir, into, raise_output_limit)
+                .await
+                .map(|change| Reply::AgentLoginChanged(Box::new(change)))
+        }
+        Call::ReadAgentLimits { machine, agent, dir } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::read_limits(node, machine, agent, dir)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
         Call::FindFiles { machine, request } => {
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::file_search::call(node, &acting, machine, request).await.map(Reply::FilesFound)

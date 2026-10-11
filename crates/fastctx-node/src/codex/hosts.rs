@@ -9,7 +9,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use fastctx_hosts::codex::{CodexHost, HostEvent, Log};
+use fastctx_hosts::codex::{CodexHost, HostEvent, LimitsReport, Log};
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::About;
 use tokio::sync::mpsc;
@@ -23,21 +23,25 @@ pub(crate) struct CodexHosts {
     environment: Vec<(OsString, OsString)>,
     log: Log,
     events: mpsc::UnboundedSender<HostEvent>,
+    /// What every host reads or hears of its login's limits.
+    limits: mpsc::UnboundedSender<LimitsReport>,
 }
 
 impl CodexHosts {
-    /// The node's hosts, the default home's `default_home` among them, and
-    /// what they all report.
+    /// The node's hosts, the default home's `default_home` among them, what
+    /// they all report, and what they read or hear of their logins' limits.
     pub(crate) fn new(
         default_home: PathBuf,
         workdir: PathBuf,
         environment: Vec<(OsString, OsString)>,
         log: Log,
-    ) -> (Self, mpsc::UnboundedReceiver<HostEvent>) {
+    ) -> (Self, mpsc::UnboundedReceiver<HostEvent>, mpsc::UnboundedReceiver<LimitsReport>) {
         let (events, merged) = mpsc::unbounded_channel();
+        let (limits, heard) = mpsc::unbounded_channel();
         let (default, reports) = CodexHost::new(default_home, None, workdir.clone(), environment.clone(), log.clone());
+        default.report_limits_to(limits.clone());
         forward(reports, events.clone());
-        (Self { default, others: Mutex::new(Vec::new()), workdir, environment, log, events }, merged)
+        (Self { default, others: Mutex::new(Vec::new()), workdir, environment, log, events, limits }, merged, heard)
     }
 
     pub(crate) fn default(&self) -> &Arc<CodexHost> {
@@ -63,9 +67,36 @@ impl CodexHosts {
         })?;
         let program_home = Some(self.default.config_home().to_path_buf());
         let (host, reports) = CodexHost::new(dir.to_path_buf(), program_home, workdir, environment, self.log.clone());
+        host.report_limits_to(self.limits.clone());
         forward(reports, self.events.clone());
         others.push(host.clone());
         Ok(host)
+    }
+
+    /// The host of the home written `dir` when the node holds one already;
+    /// none is made for the asking.
+    pub(crate) fn existing(&self, dir: &Path) -> Option<Arc<CodexHost>> {
+        if crate::homes::same_dir(dir, self.default.config_home()) {
+            return Some(self.default.clone());
+        }
+        self.others.lock().expect("never poisoned").iter().find(|host| crate::homes::same_dir(host.config_home(), dir)).cloned()
+    }
+
+    /// The environment every app-server runs with, before its home is named.
+    pub(crate) fn environment(&self) -> &[(OsString, OsString)] {
+        &self.environment
+    }
+
+    pub(crate) fn log(&self) -> Log {
+        self.log.clone()
+    }
+
+    /// Where an app-server started only to ask a login who it is runs:
+    /// apart from every host's, so it never shares their sockets.
+    pub(crate) fn asking_dir(&self, dir: &Path) -> Result<PathBuf, Failure> {
+        super::directories::get(&self.workdir.join("identify"), dir).map_err(|error| {
+            Failure::new(format!("keeping a directory to ask the Codex home {} in: {error}", dir.display()))
+        })
     }
 
     /// The host a resident's threads are in: its home's.

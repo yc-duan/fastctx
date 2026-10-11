@@ -249,6 +249,10 @@ pub struct Scan {
     /// The walk of every disk; none once the usual places were not done.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disks: Option<DiskWalk>,
+    /// Places the scan could not look into, and why: what is there was not
+    /// found, which is not to say nothing is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unreadable: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

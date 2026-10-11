@@ -1,59 +1,21 @@
-//! The agents' homes on this machine, one account apiece (`AgentHome`).
-//! Neither agent keeps a list of them, so the node finds them: each agent's
-//! default home, the directories directly in the user's home whose names
-//! begin like it and that hold that agent's things, and those the user
-//! added; minus those the user hid. What the user changed is kept in
-//! `<world>/agent-homes.json`.
+//! The agents' homes on this machine, one account apiece (`AgentHome`): how
+//! two spellings of one directory are known as one, which of them a Claude
+//! session's records belong to, and which the World may use. The World uses
+//! only the logins in this machine's agent list, those its tools are put
+//! into (`logins`); a session born in a login that has since been removed,
+//! or whose directory is gone, is refused, never moved to another login.
 
 use std::ffi::OsString;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fastctx_platform::{Permissions, publish};
+use fastctx_types::MachineName;
 use fastctx_types::access::{Acting, Purpose};
-use fastctx_types::agents::{AgentHome, HomeChange, HomeFound};
+use fastctx_types::agents::{AgentHome, HomeChange};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use fastctx_types::{AgentName, MachineName};
-use serde::{Deserialize, Serialize};
 
 use crate::Node;
-
-/// The agents that keep homes, each with the start of its directories'
-/// names and what in a directory shows it is that agent's: only whether
-/// these are there is looked at, never what they hold.
-const AGENTS: [(&str, &str, &[&str]); 2] = [
-    ("codex", ".codex", &["config.toml", "auth.json", "sessions"]),
-    ("claude", ".claude", &["settings.json", ".credentials.json", "projects", ".claude.json", "daemon.json"]),
-];
-
-#[derive(Default, Serialize, Deserialize)]
-struct Changes {
-    #[serde(default)]
-    added: Vec<Kept>,
-    #[serde(default)]
-    hidden: Vec<Kept>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct Kept {
-    agent: AgentName,
-    dir: PathBuf,
-}
-
-fn path(node: &Node) -> PathBuf {
-    node.world.path().join("agent-homes.json")
-}
-
-fn read(node: &Node) -> io::Result<Changes> {
-    match std::fs::read(path(node)) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-homes.json: {error}"))),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Changes::default()),
-        Err(error) => Err(error),
-    }
-}
 
 /// Whether two directories are the same home, as this machine writes
 /// paths: on Windows letters' case and either slash do not matter.
@@ -96,7 +58,7 @@ fn location(path: &Path) -> String {
 }
 
 /// The most specific registered home containing a Claude transcript.
-/// Hidden homes still own their readings, which must not move to a parent.
+/// Removed homes still own their readings, which must not move to a parent.
 pub(crate) fn limits_home<'a>(homes: &'a [AgentHome], transcript: &Path) -> Option<&'a AgentHome> {
     homes
         .iter()
@@ -122,111 +84,27 @@ pub(crate) fn claude_default(env: &[(OsString, OsString)], user_home: &Path) -> 
         .unwrap_or_else(|| user_home.join(".claude"))
 }
 
-/// Every home on this machine the user has not hidden, each agent's
-/// default first.
-pub(crate) fn list(
-    node: &Node,
-    env: &[(OsString, OsString)],
-    user_home: &Path,
-) -> io::Result<Vec<(AgentName, AgentHome)>> {
-    Ok(catalog(node, env, user_home)?
-        .into_iter()
-        .filter_map(|(agent, home, visible)| visible.then_some((agent, home)))
-        .collect())
+/// The login of `agent` written `dir` (`None`: the default one) when it is
+/// in this machine's agent list, as a session records it: `None` for the
+/// default one, so that it follows the user's environment.
+pub(crate) fn listed(node: &Node, agent: &str, dir: Option<&Path>) -> Result<Option<PathBuf>, Failure> {
+    crate::logins::listed(node, agent, dir)
 }
 
-/// Known homes, including hidden ones, with visibility from the same snapshot.
-pub(crate) fn catalog(
-    node: &Node,
-    env: &[(OsString, OsString)],
-    user_home: &Path,
-) -> io::Result<Vec<(AgentName, AgentHome, bool)>> {
-    let changes = read(node)?;
-    let hidden = |agent: &str, dir: &Path| {
-        changes.hidden.iter().any(|kept| kept.agent.as_str() == agent && same_dir(&kept.dir, dir))
-    };
-    let mut homes: Vec<(AgentName, AgentHome, bool)> = Vec::new();
-    let mut add = |agent: &str, dir: PathBuf, found: HomeFound| {
-        let known = homes.iter().any(|(known, home, _)| known.as_str() == agent && same_dir(&home.dir, &dir));
-        if !known {
-            let visible = found == HomeFound::Default || !hidden(agent, &dir);
-            homes.push((agent.parse().expect("an agent name"), AgentHome { dir, found }, visible));
-        }
-    };
-    add("codex", node.codex.default().config_home().to_path_buf(), HomeFound::Default);
-    add("claude", claude_default(env, user_home), HomeFound::Default);
-    let mut found = Vec::new();
-    for entry in std::fs::read_dir(user_home)?.flatten() {
-        let dir = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        for (agent, prefix, marks) in AGENTS {
-            if name.starts_with(prefix) && dir.is_dir() && marks.iter().any(|mark| dir.join(mark).exists()) {
-                found.push((agent, dir.clone()));
-            }
-        }
-    }
-    found.sort_by(|a, b| a.1.cmp(&b.1));
-    for (agent, dir) in found {
-        add(agent, dir, HomeFound::Found);
-    }
-    for kept in &changes.added {
-        add(kept.agent.as_str(), kept.dir.clone(), HomeFound::Added);
-    }
-    for kept in &changes.hidden {
-        add(kept.agent.as_str(), kept.dir.clone(), HomeFound::Added);
-    }
-    Ok(homes)
-}
-
-/// The home of `agent` written `dir`, if this machine has it; `None` is the
-/// default one.
-pub(crate) fn find(
-    node: &Node,
-    env: &[(OsString, OsString)],
-    user_home: &Path,
-    agent: &str,
-    dir: Option<&Path>,
-) -> Result<AgentHome, Failure> {
-    let homes =
-        list(node, env, user_home).map_err(|error| Failure::new(format!("listing the agents' homes: {error}")))?;
-    let found = homes.into_iter().find(|(known, home)| {
-        known.as_str() == agent
-            && match dir {
-                None => home.found == HomeFound::Default,
-                Some(dir) => same_dir(&home.dir, dir),
-            }
-    });
-    let home = found.map(|(_, home)| home).ok_or_else(|| {
-        Failure::new(format!(
-            "{agent} has no home {} on {}",
-            dir.map(|dir| dir.display().to_string()).unwrap_or_default(),
-            node.machine()
-        ))
-    })?;
-    if home.found != HomeFound::Default && !home.dir.is_dir() {
-        return Err(Failure::new(format!(
-            "{} is no longer a {agent} home directory on {}",
-            home.dir.display(),
-            node.machine()
-        )));
-    }
-    Ok(home)
-}
-
-/// Whether an existing session's selected login may still be used.
+/// Whether an existing session's login may still be used: one born in
+/// another login than the default needs that login still listed, and its
+/// directory still there.
 pub(crate) fn available(node: &Node, about: &fastctx_types::residents::About) -> Result<(), Failure> {
     if let Some(dir) = &about.home {
-        let env = crate::claude::environment()?;
-        let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
-        find(node, &env, &user_home, about.host.agent.as_str(), Some(dir))?;
+        listed(node, about.host.agent.as_str(), Some(dir))?;
     }
     Ok(())
 }
 
-/// What the user changes of the homes `machine` knows, carried there.
+/// What an older interface or node asks of the homes `machine` knows.
 pub(crate) async fn call(node: &Arc<Node>, machine: MachineName, change: HomeChange) -> Result<(), Failure> {
     if machine == node.machine() {
-        return self::change(node, change);
+        return self::change(node, change).await;
     }
     let call = RemoteCall::Homes { change };
     match node
@@ -239,66 +117,13 @@ pub(crate) async fn call(node: &Arc<Node>, machine: MachineName, change: HomeCha
     }
 }
 
-/// What the user changes of the homes the node knows.
-pub(crate) fn change(node: &Node, change: HomeChange) -> Result<(), Failure> {
-    let _changing = node.home_changes.lock().expect("never poisoned");
-    let mut changes = read(node).map_err(|error| Failure::new(format!("reading the agents' homes: {error}")))?;
-    let (agent, dir) = match &change {
-        HomeChange::Add { agent, dir } | HomeChange::Hide { agent, dir } | HomeChange::Show { agent, dir } => {
-            (agent.clone(), dir.clone())
-        }
-    };
-    if !AGENTS.iter().any(|(known, _, _)| *known == agent.as_str()) {
-        return Err(Failure::new(format!("{agent} keeps no homes the World knows of")));
-    }
-    let same = |kept: &Kept| kept.agent == agent && same_dir(&kept.dir, &dir);
+/// An older interface's change of the homes: adding one takes it up as a
+/// candidate; logins are no longer hidden, but removed from the list.
+pub(crate) async fn change(node: &Arc<Node>, change: HomeChange) -> Result<(), Failure> {
     match change {
-        HomeChange::Add { .. } => {
-            if !dir.is_absolute() {
-                return Err(Failure::new(format!("{} is not an absolute path", dir.display())));
-            }
-            if !dir.is_dir() {
-                return Err(Failure::new(format!("{} is not a directory on {}", dir.display(), node.machine())));
-            }
-            changes.hidden.retain(|kept| !same(kept));
-            if !changes.added.iter().any(same) {
-                changes.added.push(Kept { agent, dir });
-            }
-        }
-        HomeChange::Hide { .. } => {
-            let env = crate::claude::environment()?;
-            let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
-            let default = if agent.as_str() == "codex" {
-                node.codex.default().config_home().to_path_buf()
-            } else {
-                claude_default(&env, &user_home)
-            };
-            if same_dir(&default, &dir) {
-                return Err(Failure::new(format!("the default {agent} home {} cannot be hidden", default.display())));
-            }
-            changes.added.retain(|kept| !same(kept));
-            if !changes.hidden.iter().any(same) {
-                changes.hidden.push(Kept { agent, dir });
-            }
-        }
-        HomeChange::Show { .. } => {
-            let restored = changes.hidden.iter().find(|kept| same(kept)).cloned();
-            if let Some(kept) = restored {
-                if !kept.dir.is_dir() {
-                    return Err(Failure::new(format!(
-                        "{} is not a directory on {}",
-                        kept.dir.display(),
-                        node.machine()
-                    )));
-                }
-                changes.hidden.retain(|kept| !same(kept));
-                if !changes.added.iter().any(same) {
-                    changes.added.push(kept);
-                }
-            }
-        }
+        HomeChange::Add { agent, dir } => crate::logins::take_up(node, agent, dir).await.map(|_| ()),
+        HomeChange::Hide { .. } | HomeChange::Show { .. } => Err(Failure::not_run(
+            "logins are no longer hidden or shown: a login is in the agent list once the World's tools are put into it, and removing it takes them out",
+        )),
     }
-    let bytes = serde_json::to_vec_pretty(&changes).expect("homes serialize");
-    publish(&path(node), &bytes, Permissions::Private)
-        .map_err(|error| Failure::new(format!("keeping the agents' homes: {error}")))
 }
