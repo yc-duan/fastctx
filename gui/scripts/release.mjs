@@ -41,7 +41,10 @@ const triple = kernel.bundleTarget;
 const binaries = join(gui, "src-tauri", "binaries");
 mkdirSync(binaries, { recursive: true });
 copyFileSync(kernel.binary, join(binaries, `fastctx-${triple}${linux ? "" : ".exe"}`));
-const config = { bundle: { externalBin: ["binaries/fastctx"], createUpdaterArtifacts: !unsigned } };
+// The release configuration's bundle, with the Linux archives a World made on a server, or a server
+// added, over SSH is installed from; this build sets whether updater artifacts are made.
+const release = JSON.parse(readFileSync(join(gui, "src-tauri", "tauri.release.conf.json"), "utf8"));
+const config = { bundle: { ...release.bundle, externalBin: ["binaries/fastctx"], createUpdaterArtifacts: !unsigned } };
 if (linux) {
   config.bundle.targets = ["deb", "appimage"];
   config.bundle.linux = { deb: { depends: ["pkexec"], files: {
