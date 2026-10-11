@@ -986,6 +986,11 @@
     box-shadow: var(--shadow-pop);
     animation: map-sheet-rise 0.24s cubic-bezier(0.33, 1, 0.68, 1) both;
   }
+
+  /* While the sheet is up the zoom bar would sit on it; two fingers zoom. */
+  .machines-layout:has(> .machine-panel:not([hidden])) .canvas-controls {
+    display: none;
+  }
 }
 
 /* A phone's page: the names alone, a size smaller. */
