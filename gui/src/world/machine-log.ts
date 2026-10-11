@@ -16,6 +16,7 @@ export type MachineLogAction =
   | { change: "stop_acting"; machine: MachineName }
   | { change: "relays"; machine: MachineName; relays: Relay[] }
   | { change: "relay_at"; machine: MachineName; addresses: string[] }
+  | { change: "direct"; machine: MachineName; at: string[] }
   | { change: "remove"; name: MachineName; reason: string }
   | { change: "logout" }
   | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp }

@@ -1,21 +1,19 @@
 // What the owner of a machine sets on it (`world-network.md`, 共享机器与借出
-// 智能体; 转接站): whom the machine is shared with, working on it and every
-// agent there; whom one login of an agent on it is lent to, that login
-// alone; each said plainly with what the owner gives and sees. And the
-// relays it connects to the hub through, in order, the hub always last.
-// Each change is the account's own, made at once; the hub refuses what it
-// may not do, and the sheet stays open with why.
+// 智能体): whom the machine is shared with, working on it and every agent
+// there; whom one login of an agent on it is lent to, that login alone;
+// each said plainly with what the owner gives and sees. Each change is the
+// account's own, made at once; the hub refuses what it may not do, and the
+// sheet stays open with why.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import type { Relay } from "../world/accounts";
 import type { AccessWords } from "./account-words";
 import { Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 
-/** IPv4 or bracketed IPv6, with a port: what a relay's address must be. */
+/** IPv4 or bracketed IPv6, with a port. */
 export const socketAddress = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:.]+\]):\d{1,5}$/;
 
 /** What a sheet that gives something to other accounts says. */
@@ -116,110 +114,5 @@ export class GiveSheet {
       shown.title = error instanceof Error ? error.message : String(error);
       shown.hidden = false;
     }
-  }
-}
-
-export class RelaysSheet {
-  private readonly sheet = new Sheet("device-sheet relays-sheet");
-  private relays: { label: string; addresses: string }[] = [];
-
-  constructor(private readonly words: AccessWords) {
-    this.sheet.body.addEventListener("click", (event) => {
-      const target = event.target as HTMLElement;
-      if (target.closest(".add-relay")) {
-        this.read();
-        this.relays.push({ label: "", addresses: "" });
-        this.draw();
-        this.sheet.body.querySelector<HTMLInputElement>(".relay-row:last-child .relay-label")?.focus();
-        return;
-      }
-      const remove = target.closest<HTMLButtonElement>("[data-remove]");
-      if (remove) {
-        this.read();
-        this.relays.splice(Number(remove.dataset.remove), 1);
-        redrawKeepingFocus(this.sheet.body, () => this.draw());
-      }
-    });
-  }
-
-  /** Opens the sheet for `machine` as it connects now; `set` keeps the
-   *  relays, in order. */
-  open(machine: string, relays: Relay[], set: (relays: Relay[]) => Promise<void>, done: () => void): void {
-    const { sheet, words } = this;
-    this.relays = relays.map((relay) => ({ label: relay.label, addresses: relay.addresses.join(", ") }));
-    this.machine = machine;
-    this.draw();
-    sheet.body.onsubmit = (event) => {
-      event.preventDefault();
-      if (sheet.busy) return;
-      this.read();
-      const note = sheet.body.querySelector<HTMLElement>(".sheet-note")!;
-      const say = (text: string) => {
-        note.textContent = text;
-        note.hidden = !text;
-      };
-      const rows = this.relays.filter((relay) => relay.label.trim() || relay.addresses.trim());
-      const made: Relay[] = [];
-      for (const row of rows) {
-        const label = row.label.trim();
-        if (!label) return say(words.needsLabel);
-        const addresses = row.addresses.split(/[\s,，、]+/).filter(Boolean);
-        const wrong = addresses.find((address) => !socketAddress.test(address));
-        if (wrong || !addresses.length) return say(words.badAddress(wrong ?? row.addresses));
-        made.push({ label, addresses });
-      }
-      const go = sheet.body.querySelector<HTMLButtonElement>(".sheet-go")!;
-      sheet.busy = true;
-      go.disabled = true;
-      go.textContent = words.working;
-      say("");
-      set(made)
-        .then(() => {
-          sheet.busy = false;
-          sheet.close();
-          done();
-        })
-        .catch((error: unknown) => {
-          sheet.busy = false;
-          go.disabled = false;
-          go.textContent = words.relaysGo;
-          say(words.failed(error instanceof Error ? error.message : String(error)));
-        });
-    };
-    sheet.show();
-  }
-
-  private machine = "";
-
-  /** Keeps what was typed before the rows are drawn again. */
-  private read(): void {
-    this.relays = [...this.sheet.body.querySelectorAll<HTMLElement>(".relay-row")].map((row) => ({
-      label: row.querySelector<HTMLInputElement>(".relay-label")!.value,
-      addresses: row.querySelector<HTMLInputElement>(".relay-addresses")!.value,
-    }));
-  }
-
-  private draw(): void {
-    const { words, sheet } = this;
-    const rows = this.relays
-      .map(
-        (relay, index) => `<li class="relay-row">
-          <span class="relay-order" aria-hidden="true">${index + 1}</span>
-          <input class="relay-label" aria-label="${escape(words.relayLabel)}" placeholder="${escape(words.relayLabel)}" autocomplete="off" value="${escape(relay.label)}">
-          <input class="relay-addresses mono" aria-label="${escape(words.relayAddresses)}" placeholder="203.0.113.5:7443" autocomplete="off" spellcheck="false" value="${escape(relay.addresses)}">
-          <button class="icon-button" type="button" data-remove="${index}" aria-label="${escape(words.removeRelay)}">${glyph("close", 16)}</button>
-        </li>`,
-      )
-      .join("");
-    sheet.body.innerHTML = `
-      ${sheet.head(words.relaysTitle(this.machine), words.close)}
-      <p class="confirm-what">${escape(words.relaysWhat)}</p>
-      <div class="field">
-        ${rows ? `<ol class="relay-rows">${rows}</ol>` : `<p class="field-hint">${escape(words.noRelays)}</p>`}
-        <button class="text-button add-relay" type="button">${glyph("plus", 16)}<span>${escape(words.addRelay)}</span></button>
-        ${rows ? `<p class="relay-last">${glyph("relay", 14)}<span>${escape(words.hubLast)}</span></p>` : ""}
-      </div>
-      <p class="sheet-note" role="alert" hidden></p>
-      <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.relaysGo)}</button></footer>`;
   }
 }

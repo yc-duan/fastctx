@@ -433,12 +433,12 @@ export const zhMachines: MachinesWords = {
   inviteDevice: "添加设备",
   manageHub: "管理账号",
   linkOnline: (address) => `直连 · ${address}`,
-  linkVia: (relay, address) => `经 ${relay} 中转 · ${address}`,
+  linkVia: (through, address) => `经 ${through} · ${address}`,
   linkConnecting: () => "连接中",
   linkStopped: () => "已被服务器移除",
   registeredUnder: (account) => `${account} 的机器`,
   onlyLogins: (accounts) => `已登录 ${accounts}`,
-  via: (relay) => `经 ${relay} 中转`,
+  via: (through) => `经 ${through}`,
   direct: "直连",
   yours: "你的",
   ownedBy: (account) => `${account} 的`,
@@ -536,6 +536,8 @@ export const zhMachines: MachinesWords = {
         return a.relays.length ? `让 ${a.machine} 经 ${a.relays.map((r) => r.label).join("、")} 连接` : `让 ${a.machine} 直连`;
       case "relay_at":
         return a.addresses.length ? `把 ${a.machine} 设为中转` : `${a.machine} 停止中转`;
+      case "direct":
+        return a.at.length ? `允许直接连到 ${a.machine}` : `不再允许直接连到 ${a.machine}`;
       case "remove":
         return `移除 ${a.name}`;
       case "token":
@@ -678,6 +680,8 @@ export const enMachines: MachinesWords = {
         return a.relays.length ? `${a.machine} connects through ${a.relays.map((r) => r.label).join(", ")}` : `${a.machine} connects directly`;
       case "relay_at":
         return a.addresses.length ? `Made ${a.machine} a relay` : `${a.machine} stopped relaying`;
+      case "direct":
+        return a.at.length ? `Allowed direct connections to ${a.machine}` : `No more direct connections to ${a.machine}`;
       case "remove":
         return `Removed ${a.name}`;
       case "token":

@@ -7,8 +7,8 @@
 // a line while something on it works. Beside each hub the account may add
 // to, a dashed ring adds a machine. A machine of another whose agent alone
 // is lent is a broken ring of clay; one out of reach is drawn with a dry
-// pen. A machine that relays for others carries a small mark, and one
-// connected through it has its line bent through it. The machine chosen has
+// pen. A machine others may connect to directly carries a small mark, and
+// one that reaches its hub through it has its line bent through it. The machine chosen has
 // a handle on its line: dragged onto a relay or a hub, it asks to change how
 // that machine reaches the hub, and the way it was asked for is drawn as a
 // pencil line until the machine really goes that way. What floats beside a
@@ -304,7 +304,7 @@ export class MachineMap {
       scene.hubs,
       scene.adds,
       [...scene.waiting],
-      scene.nodes.map((node) => [node.key, node.hubs, node.online, node.hold, node.reaching, node.here, near ? node.marks : null, node.relayAt, node.through]),
+      scene.nodes.map((node) => [node.key, node.hubs, node.online, node.hold, node.reaching, node.here, near ? node.marks : null, node.directAt, node.through]),
       [...placement.machines],
     ]);
     if (key === this.composed) return;
@@ -367,7 +367,7 @@ export class MachineMap {
       if (node.here) add(blot(point, 3, random), around(point, 5), "marker", graphite, 0.9);
       // A relay: two short strokes across the upper left of its ring, as
       // a line passing through it.
-      if (node.relayAt?.length) {
+      if (node.directAt?.length) {
         for (const shift of [-4, 4]) {
           const stroke: Point[] = [
             [x - RING * 0.95 + shift, y - RING * 0.55 - shift],
@@ -406,7 +406,7 @@ export class MachineMap {
    *  drawing, to that machine. */
   private routesOf(node: MapNode): { to: Point; name: string; end: number }[] {
     const placement = this.placement!;
-    const relay = node.through ? this.scene?.nodes.find((one) => one.name === node.through && one.relayAt?.length) : undefined;
+    const relay = node.through ? this.scene?.nodes.find((one) => one.name === node.through && one.directAt?.length) : undefined;
     return node.hubs.flatMap((id) => {
       const knot = placement.hubs.get(id);
       if (!knot) return [];

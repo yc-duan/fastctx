@@ -30,10 +30,40 @@ export type Acting = { kind: "here" } | { kind: "accounts"; accounts: HubAccount
 
 export type MemberKind = "computer" | "phone" | "web";
 
-/** A relay a machine connects through: a port forwarded to the hub. */
+/** A relay a machine connected through before direct connections replaced
+ *  relays; only change records made then still name one. */
 export interface Relay {
   label: string;
   addresses: string[];
+}
+
+/** What the network's administrator chooses a machine's direct address
+ *  from: its network cards' addresses, and where the hub sees it. */
+export interface Reach {
+  /** None while it reaches the hub through another machine. */
+  seen?: string;
+  interfaces?: string[];
+}
+
+/** One machine's direct link with another. */
+export interface LinkSeen {
+  peer: MachineName;
+  /** Whether it is up; when not, what goes between the two goes through
+   *  the hub. */
+  up: boolean;
+  /** Its round trip in milliseconds while up, as last measured. */
+  ms?: number;
+  /** When it came up or went down. */
+  since: Timestamp;
+  /** Why it is down, or why the last try to bring it up failed. */
+  why?: string;
+}
+
+/** How a machine's lines go, as it last told the hub. */
+export interface Paths {
+  /** The round trip of its line to the hub, in milliseconds. */
+  hub_ms?: number;
+  links?: LinkSeen[];
 }
 
 /** What an account is on its hub: the one super administrator, or a member. */
@@ -52,13 +82,19 @@ export interface MemberSeen {
   logins: AccountName[];
   /** The account it is registered under, when it is a machine. */
   home: AccountName | null;
-  relays: Relay[];
-  /** Where it relays to the hub for others, when it is a relay. */
-  relay_at?: string[];
+  /** Where other machines connect to it directly, when the network's
+   *  administrator allowed that. */
+  direct?: string[];
   added: Timestamp;
   online: boolean;
   since: Timestamp | null;
+  /** The machine it reaches the hub through, when its own line is down. */
   through: string | null;
+  /** What its direct address may be chosen from: for the administrator,
+   *  while it is online. */
+  reach?: Reach;
+  /** How its lines go, as it last said, while it is online. */
+  paths?: Paths;
   /** The start of its key, to tell two devices of one name apart. */
   key: string;
 }
@@ -119,6 +155,9 @@ export interface HubAccounts {
   acting: ActingSeen[];
   projects: ProjectSeen[];
   arrivals: Arrival[];
+  /** This computer's direct links with the machines there, as it holds
+   *  them now. */
+  links?: LinkSeen[];
 }
 
 export interface AccountsReply {
@@ -131,8 +170,9 @@ export type AccountChange =
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
   | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home?: string; lent: boolean }
   | { change: "stop_acting"; machine: MachineName }
-  | { change: "relays"; machine: MachineName; relays: Relay[] }
-  | { change: "relay_at"; machine: MachineName; addresses: string[] }
+  /** The administrator's change: the server checks it reaches the machine
+   *  at `at` before it counts; none, no longer. */
+  | { change: "direct"; machine: MachineName; at: string[] }
   | { change: "remove"; name: MachineName; reason: string }
   | { change: "logout" }
   | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp }

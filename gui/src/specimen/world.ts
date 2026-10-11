@@ -105,8 +105,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       ],
     },
   ];
-  const member = (name: string, kind: "computer" | "phone", logins: string[], home: string | null, added: string, online: boolean, key: string, relays: { label: string; addresses: string[] }[] = [], relay_at: string[] = []) => ({
-    name, kind, logins, home, relays, relay_at, added: at(added), online, since: at(added), through: null, key,
+  const member = (name: string, kind: "computer" | "phone", logins: string[], home: string | null, added: string, online: boolean, key: string, direct: string[] = []) => ({
+    name, kind, logins, home, direct, added: at(added), online, since: at(added), through: null, key,
   });
   const accounts: HubAccounts[] = [
     {
@@ -123,10 +123,10 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { name: "bo", level: "member", locked: false, opened: at("00:06:00") },
       ],
       members: [
-        member("desktop", "computer", ["me"], "me", "00:10:00", true, "5be1fcee", [], ["192.168.1.20:7444"]),
+        member("desktop", "computer", ["me"], "me", "00:10:00", true, "5be1fcee", ["192.168.1.20:7444"]),
         member("laptop", "computer", ["me"], "me", "00:20:00", true, "a1c3e9d2"),
-        member("lab", "computer", ["me"], "me", "00:30:00", true, "7d0e44b1", [{ label: "server", addresses: ["203.0.113.20:7444"] }, { label: "desktop", addresses: ["192.168.1.20:7444"] }]),
-        member("server", "computer", ["me"], "me", "00:00:00", true, "c0ffee12", [], ["203.0.113.20:7444"]),
+        member("lab", "computer", ["me"], "me", "00:30:00", true, "7d0e44b1"),
+        member("server", "computer", ["me"], "me", "00:00:00", true, "c0ffee12", ["203.0.113.20:7444"]),
         member("studio", "computer", ["me"], "me", "00:40:00", false, "9e8d7c6b"),
         member("pixel", "phone", ["me"], null, "13:20:00", true, "4f2a91aa"),
         member("gpu", "computer", ["bo"], "bo", "03:30:00", true, "be3f0a77"),
@@ -426,19 +426,17 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
   };
 }
 
-/** The changes a specimen takes as asked, a machine's relays and where it
- *  relays for others, so the machines page shows what follows them; the
- *  machine never really goes another way. Anything else it refuses. */
+/** The changes a specimen takes as asked, where other machines connect to
+ *  a machine directly, so the machines page shows what follows; nothing
+ *  really connects. Anything else it refuses. */
 export function specimenChange(world: WorldNow | null, hub: string, made: AccountChange): WorldNow | null {
-  if (!world || (made.change !== "relays" && made.change !== "relay_at")) return null;
+  if (!world || made.change !== "direct") return null;
   const hubs = world.accounts.hubs.map((one) =>
     one.hub !== hub
       ? one
       : {
           ...one,
-          members: one.members.map((member) =>
-            member.name !== made.machine ? member : made.change === "relays" ? { ...member, relays: made.relays } : { ...member, relay_at: made.addresses },
-          ),
+          members: one.members.map((member) => (member.name !== made.machine ? member : { ...member, direct: made.at })),
         },
   );
   return { ...world, accounts: { ...world.accounts, hubs } };

@@ -182,9 +182,15 @@ export type Route =
 export type LinkState =
   | { kind: "alone" }
   | { kind: "connecting"; since: Timestamp; last_error: string | null }
-  /** `relay` is the label of the relay it connects through. */
-  | { kind: "online"; since: Timestamp; hub: string; relay?: string | null; route: Route }
+  /** `through`, the machine it reaches the hub through when its own line
+   *  is down; `ms`, the round trip to the hub as last measured. */
+  | { kind: "online"; since: Timestamp; hub: string; through?: string | null; route: Route; ms?: number | null }
   | { kind: "stopped"; reason: string };
+
+/** How this computer's calls to a machine go: over a direct link between
+ *  the two, or through the hub, with why there is no direct link when it
+ *  allows direct connections (`fastctx_types::world::Path`). */
+export type NodePath = { kind: "direct"; ms?: number } | { kind: "hub"; why?: string };
 
 /** This computer, and hub by hub the machines its logins may use
  *  (`fastctx_types::world::NodesReply`). */
@@ -213,8 +219,12 @@ export interface Node {
   written: string;
   online: boolean | null;
   since: Timestamp | null;
-  /** The relay it is connected through. */
+  /** The machine it reaches the hub through, when its own line is down. */
   through?: string | null;
+  /** Whether the network's administrator allowed direct connections to it. */
+  allows_direct?: boolean;
+  /** How this computer's calls to it go now. */
+  path?: NodePath;
   facts: Result<MachineFacts, string>;
   /** The account it is registered under. */
   owner: AccountName | null;
