@@ -38,6 +38,9 @@ export interface SettingsOptions {
     renewing: Renewing;
     /** The app's own version, and a newer one from its releases. */
     updating?: Updating | undefined;
+    /** How many days this computer keeps a command's output once its end
+     *  was delivered; none before its node first ran. */
+    retention?: { read(): Promise<number | null>; write(days: number): Promise<void> } | undefined;
   } | undefined;
   /** Told of a newer app version, so the sidebar can mark the way to it. */
   appUpdate?(version: string | null): void;
@@ -78,7 +81,7 @@ export class SettingsPage implements Page {
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
       <div class="settings scroller">
         <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
-        <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-service" hidden></dl><dl class="facts settings-renewal" hidden></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-phone" hidden></dl></section>
+        <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-service" hidden></dl><dl class="facts settings-renewal" hidden></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-phone" hidden></dl><div class="look settings-retention" hidden></div></section>
         <section class="home-section"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
@@ -99,6 +102,7 @@ export class SettingsPage implements Page {
         (version) => options.appUpdate?.(version),
       );
     }
+    this.askRetention();
     if (options.phone) new PhoneRow(this.element.querySelector<HTMLElement>(".settings-phone")!, words, options.phone);
     if (options.computer) new RemovalSection(this.element.querySelector<HTMLElement>(".removal")!, options.removalWords, options.computer.removing);
     this.service.addEventListener("click", (event) => {
@@ -123,6 +127,9 @@ export class SettingsPage implements Page {
           chooseNotifying(value === "on");
           options.notifyChanged?.(value === "on");
           break;
+        case "retention":
+          this.keepFor(Number(value));
+          return;
       }
       redrawKeepingFocus(this.element, () => this.drawLook());
     });
@@ -133,6 +140,51 @@ export class SettingsPage implements Page {
     this.stop();
     this.renewal?.leave();
     this.appUpdate?.leave();
+  }
+
+  private retained: number | null = null;
+  private retentionSaid = "";
+
+  private askRetention(): void {
+    const retention = this.options.computer?.retention;
+    if (!retention) return;
+    retention.read().then(
+      (days) => {
+        this.retained = days;
+        this.drawRetention();
+      },
+      (error: unknown) => console.warn("the retention settings could not be read", error),
+    );
+  }
+
+  /** The days to choose from: a day, a few, a week, two, a month, and
+   *  whatever was set otherwise. */
+  private drawRetention(): void {
+    const { words } = this.options;
+    const place = this.element.querySelector<HTMLElement>(".settings-retention")!;
+    if (this.retained === null) return;
+    const days = [...new Set([1, 3, 7, 14, 30, this.retained])].sort((a, b) => a - b);
+    place.hidden = false;
+    place.innerHTML = `<div class="choice-row" role="radiogroup" aria-label="${escape(words.retention)}"><span class="choice-label">${escape(words.retention)}</span><div class="choice-options">${days
+      .map(
+        (n) =>
+          `<button type="button" class="choice${n === this.retained ? " chosen" : ""}" role="radio" aria-checked="${n === this.retained}" data-choice="retention" data-value="${n}">${escape(words.days(n))}</button>`,
+      )
+      .join("")}</div></div>${this.retentionSaid ? `<p class="settings-said">${escape(this.retentionSaid)}</p>` : ""}`;
+  }
+
+  private keepFor(days: number): void {
+    const retention = this.options.computer?.retention;
+    if (!retention || days === this.retained) return;
+    const before = this.retained;
+    this.retained = days;
+    this.retentionSaid = "";
+    redrawKeepingFocus(this.element, () => this.drawRetention());
+    retention.write(days).catch((error: unknown) => {
+      this.retained = before;
+      this.retentionSaid = String(error);
+      this.drawRetention();
+    });
   }
 
   private askService(): void {

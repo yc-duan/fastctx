@@ -99,8 +99,15 @@ export async function specimenFiles(query: string) {
  *  anywhere, only how the settings show it. */
 export function specimenComputer() {
   let kept = false;
+  let days = 7;
   const after = <T>(value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), 900));
   return {
+    retention: {
+      read: async () => days,
+      write: async (n: number) => {
+        days = n;
+      },
+    },
     setup: async (): Promise<Setup> => ({
       installed: "C:/Users/me/.fastctx/bin/fastctx.exe",
       carried: null,

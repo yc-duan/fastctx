@@ -18,6 +18,8 @@ mod linux_service;
 #[cfg(desktop)]
 mod removal;
 #[cfg(desktop)]
+mod retention;
+#[cfg(desktop)]
 mod renewal;
 #[cfg(desktop)]
 mod setup;
@@ -839,6 +841,10 @@ pub fn run() {
             removal::removal_run,
             #[cfg(desktop)]
             removal::removal_finish,
+            #[cfg(desktop)]
+            retention::retention_read,
+            #[cfg(desktop)]
+            retention::retention_write,
             connection_state,
             select_connection,
             reconnect,

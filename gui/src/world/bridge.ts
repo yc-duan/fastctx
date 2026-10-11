@@ -448,3 +448,14 @@ export async function scanToken(): Promise<string | null> {
 export function stopJob(job: string, machine: string | null): Promise<void> {
   return invoke("stop_job", { job, machineName: machine });
 }
+
+/** How many days this computer keeps a command's output once its end was
+ *  delivered (`src-tauri/src/retention.rs`); none before its node first
+ *  ran. */
+export function retentionRead(): Promise<number | null> {
+  return invoke("retention_read");
+}
+
+export function retentionWrite(days: number): Promise<void> {
+  return invoke("retention_write", { days });
+}

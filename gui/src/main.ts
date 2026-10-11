@@ -132,6 +132,8 @@ import {
   removalPlan,
   removeHere,
   removeApp,
+  retentionRead,
+  retentionWrite,
   journal as readJournal,
   journalAdd,
   look,
@@ -1327,6 +1329,7 @@ function show(next: Place): void {
                 setup: setupState,
                 keep: keepHere,
                 removing: { plan: removalPlan, run: removeHere, finish: removeApp },
+                retention: { read: retentionRead, write: retentionWrite },
                 renewing: {
                   state: renewalState,
                   // The program the interface carries is put in place,

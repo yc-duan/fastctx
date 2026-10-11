@@ -248,6 +248,10 @@ export interface SettingsWords {
   notify: string;
   notifyOn: string;
   notifyOff: string;
+  /** How long this computer keeps a command's output once its end was
+   *  delivered. */
+  retention: string;
+  days(n: number): string;
   keys: string;
   keyList: [string, string][];
   theme: string;
@@ -345,6 +349,8 @@ export const zhSettings: SettingsWords = {
   notify: "通知",
   notifyOn: "等待回复或回复完成时通知",
   notifyOff: "关闭",
+  retention: "命令输出保留",
+  days: (n) => `${n} 天`,
   theme: "主题",
   system: "跟随系统",
   themes: { "warm-black": "暖黑", "ink-black": "墨黑", "warm-white": "暖白" },
@@ -458,6 +464,8 @@ export const enSettings: SettingsWords = {
   notify: "Notifications",
   notifyOn: "Notify when waiting or replied",
   notifyOff: "Off",
+  retention: "Keep command output",
+  days: (n) => (n === 1 ? "1 day" : `${n} days`),
   theme: "Theme",
   system: "System",
   themes: { "warm-black": "Warm black", "ink-black": "Ink black", "warm-white": "Warm white" },

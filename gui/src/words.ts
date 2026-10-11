@@ -1,3 +1,4 @@
+import type { HealthKind } from "./world/events";
 import type { FileLinkWords } from "./conversation/file-links";
 import type { PictureWords } from "./conversation/pictures";
 import type { QueueWords } from "./conversation/queue";
@@ -132,6 +133,9 @@ export interface Words {
   watchInterrupted(why: string | null): string;
   /** Words that could not be sent. */
   notSent(why: string): string;
+  /** What the session's host said of its own health, in a plain line; the
+   *  host's words go on hover. */
+  health: Record<HealthKind, string>;
   /** Links an agent writes to files. */
   files: FileLinkWords;
   /** The conversation's pictures, small and over the whole window. */
@@ -333,6 +337,15 @@ export const zh: Words = {
   watchEnded: () => "已停止同步",
   watchInterrupted: () => "连接中断，正在重连…",
   notSent: () => "发送失败",
+  health: {
+    reconnecting: "连接中断，正在重试",
+    safety: "OpenAI 正在对这一轮的输出做额外的安全审查",
+    rerouted: "OpenAI 把这一轮换到了另一个模型",
+    tools_missing: "世界的工具没有接上",
+    tool_server: "有一组工具没能启动",
+    warning: "宿主提醒了一件事",
+    error: "这一轮出错了",
+  },
   files: {
     reveal: "在文件夹中显示",
     copyPath: "复制路径",
@@ -369,10 +382,10 @@ export const zh: Words = {
   hours: (hours, minutes) => (minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`),
   landed: (how, machine) =>
     how === "sent"
-      ? `已发往 ${machine}，送达后投递`
+      ? `已发往 ${machine}`
       : how === "uncertain"
-        ? "送达状态未知"
-        : "将在它下次调用 fastctx 时送达",
+        ? "不确定是否送到"
+        : "等它下次用世界的工具时送到",
   jobEnded: (job, machine) => `作业 ${job} 在 ${machine} 上结束`,
   movedTo: (town) => `已移到项目 ${town}`,
   movedOut: "已移出项目",
@@ -520,6 +533,15 @@ export const en: Words = {
   watchEnded: () => "Sync stopped",
   watchInterrupted: () => "Disconnected, reconnecting…",
   notSent: () => "Couldn't send",
+  health: {
+    reconnecting: "Connection lost, retrying",
+    safety: "OpenAI is giving this turn's output extra safety review",
+    rerouted: "OpenAI moved this turn to another model",
+    tools_missing: "The World's tools are not connected",
+    tool_server: "A set of tools did not start",
+    warning: "The host raised something",
+    error: "This turn hit an error",
+  },
   files: {
     reveal: "Show in folder",
     copyPath: "Copy path",
@@ -556,10 +578,10 @@ export const en: Words = {
   hours: (hours, minutes) => (minutes ? `${hours} h ${minutes} min` : `${hours} h`),
   landed: (how, machine) =>
     how === "sent"
-      ? `Sent to ${machine}; delivered when it arrives`
+      ? `Sent to ${machine}`
       : how === "uncertain"
-        ? "Delivery unknown"
-        : "Delivered at its next fastctx call",
+        ? "Not sure it arrived"
+        : "Arrives when it next uses a World tool",
   jobEnded: (job, machine) => `Job ${job} on ${machine} ended`,
   movedTo: (town) => `Moved to project ${town}`,
   movedOut: "Removed from project",

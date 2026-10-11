@@ -282,7 +282,7 @@ export class ConversationView {
         return `<div class="note ${entry.end.how === "failed" ? "wrong" : "caution"}">${escape(said)}</div>`;
       }
       case "health":
-        return `<div class="note caution">${escape(entry.health.text)}</div>`;
+        return `<div class="note caution" title="${escape(entry.health.text)}">${escape(this.context.words.health[entry.health.kind] ?? entry.health.text)}</div>`;
       case "uncertain":
         return `<div class="note caution" title="${escape(entry.why)}">${escape(words.uncertain(entry.why))}</div>`;
       case "ask":
@@ -556,7 +556,7 @@ export class ConversationView {
       }
       case "health":
         ok = false;
-        said = `${notice.label} · ${notice.health.text}`;
+        said = `${notice.label} · ${words.health[notice.health.kind] ?? notice.health.text}`;
         break;
       case "world": {
         const fact = notice.fact;

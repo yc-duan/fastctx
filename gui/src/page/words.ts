@@ -5,7 +5,9 @@ import { world } from "./element";
 import type { AgentState } from "./tools";
 
 const zh = {
-  state: { working: "在干活", waiting: "在等你回答", idle: "空闲", asleep: "睡着了", offline: "离线" } as Record<AgentState, string>,
+  // A conversation is never asleep to the person reading it: one the World
+  // let rest is idle (walkthrough item 20).
+  state: { working: "在干活", waiting: "等你回复", idle: "空闲", asleep: "空闲", offline: "离线" } as Record<AgentState, string>,
   online: "在线",
   offline: "离线",
   device: "设备",
@@ -25,7 +27,7 @@ const zh = {
 };
 
 const en: typeof zh = {
-  state: { working: "working", waiting: "waiting for you", idle: "idle", asleep: "asleep", offline: "offline" },
+  state: { working: "working", waiting: "waiting for your reply", idle: "idle", asleep: "idle", offline: "offline" },
   online: "online",
   offline: "offline",
   device: "device",
