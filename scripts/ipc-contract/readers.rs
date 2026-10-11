@@ -54,7 +54,7 @@ fn main() {
                 let peer = serde_json::from_value(case["peer"].clone()).unwrap();
                 let accepted =
                     protocol as u32 == fastctx_types::ipc::PROTOCOL || compat::enabled(protocol as u32, &peer);
-                json!({"admitted": accepted && compat::peer(&peer) && compat::call(protocol as u32, &peer, &call)})
+                json!({"admitted": accepted && compat::call(protocol as u32, &peer, &call)})
             }
             "decode" => json!({"read": decode(protocol, value, false)}),
             "reply" => {

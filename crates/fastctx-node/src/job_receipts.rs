@@ -292,10 +292,10 @@ pub(crate) fn snapshot(node: &Node, path: &Path) -> io::Result<Vec<NoticeId>> {
 
 pub(crate) fn snapshot_through(node: &Node, path: &Path, through_exit: bool) -> io::Result<Vec<NoticeId>> {
     let _gate = node.disk.lock().expect("never poisoned");
-    if through_exit {
-        if let Some(receipt) = fastctx_install::renewal::read_json::<ExitReceipt>(&path.with_extension("exit-receipt"))? {
-            return Ok(receipt.consumed);
-        }
+    if through_exit
+        && let Some(receipt) = fastctx_install::renewal::read_json::<ExitReceipt>(&path.with_extension("exit-receipt"))?
+    {
+        return Ok(receipt.consumed);
     }
     let mut receipts = Vec::new();
     snapshot_here(node, path, &mut HashSet::new(), &mut receipts)?;
