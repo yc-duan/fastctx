@@ -91,3 +91,30 @@ fn read(directory: &Path) -> io::Result<Vec<(String, Recorded)>> {
     }
     Ok(records)
 }
+
+/// What `history` reads, told by the files it reads: each event is a file
+/// written once.
+pub fn stamp(directory: &Path, digest: &mut impl FnMut(&[u8])) -> io::Result<()> {
+    stamp_files(&directory.join("session-events"), digest)
+}
+
+/// The files of `directory` by name, size and time of change, in name order;
+/// a directory that is not there is told as empty.
+pub fn stamp_files(directory: &Path, digest: &mut impl FnMut(&[u8])) -> io::Result<()> {
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let meta = entry.metadata()?;
+        files.push(format!("{}|{}|{:?}", entry.file_name().to_string_lossy(), meta.len(), meta.modified().ok()));
+    }
+    files.sort();
+    for file in files {
+        digest(file.as_bytes());
+    }
+    Ok(())
+}

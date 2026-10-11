@@ -13,7 +13,16 @@ impl World {
         action: Management,
     ) -> Result<(Address, Managed), Error> {
         match self.ask(Call::Manage { resident, machine, action }).await? {
-            Reply::Managed { resident, managed } => Ok((resident, managed)),
+            Reply::Managed { resident, managed } => {
+                // A conversation removed or deleted is not kept here either
+                // (`world-gui.md`, 对话).
+                if managed.removed.is_some()
+                    && let Some(cache) = self.cache()
+                {
+                    cache.forget(&resident).map_err(Error::Kept)?;
+                }
+                Ok((resident, managed))
+            }
             reply => Err(Error::Unexpected(format!("{reply:?}"))),
         }
     }

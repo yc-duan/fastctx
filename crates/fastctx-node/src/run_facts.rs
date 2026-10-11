@@ -3,7 +3,9 @@
 mod log;
 mod storage;
 mod updates;
-pub(crate) use storage::{begin as begin_for, discard_unlaunched, failed as failed_for, receive, record_failure};
+pub(crate) use storage::{
+    begin as begin_for, discard_unlaunched, failed as failed_for, receive, record_failure, stamp,
+};
 pub(crate) use updates::job as update_job;
 
 use crate::Node;

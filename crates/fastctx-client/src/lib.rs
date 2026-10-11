@@ -14,6 +14,7 @@
 
 mod address;
 pub mod attachments;
+pub mod cache;
 mod collab;
 pub mod composer;
 pub mod conversation;
@@ -24,6 +25,7 @@ pub mod host;
 mod lines;
 mod lines_read;
 mod management;
+mod originals;
 pub mod pages;
 pub mod renewal;
 pub mod shown;
@@ -32,7 +34,7 @@ pub mod town;
 pub mod world;
 
 pub use address::hub_addresses;
-pub use conversation::{Conversation, Following, Moment};
+pub use conversation::{Conversation, Following, Moment, Update};
 pub use file_read::Reading;
 pub use town::TownView;
 pub use world::{Error, Said, TownRecord, World};

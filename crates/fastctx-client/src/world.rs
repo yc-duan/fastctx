@@ -24,6 +24,10 @@ use crate::{CallError, Client, ConnectError, Watching};
 pub enum Error {
     #[error("keeping the device identity: {0}")]
     Io(#[from] std::io::Error),
+    /// What this device keeps of the conversations it viewed could not be
+    /// read or written (`crate::cache`).
+    #[error("this device's copy of the conversation: {0}")]
+    Kept(std::io::Error),
     #[error(transparent)]
     FileRead(#[from] fastctx_types::file_read::FileReadError),
     #[error(transparent)]
@@ -50,6 +54,9 @@ pub struct World {
     device: Option<std::sync::Arc<crate::device::Device>>,
     pub(crate) searches: std::sync::Arc<std::sync::Mutex<crate::file_search::Searches>>,
     pub(crate) line_sources: std::sync::Arc<std::sync::Mutex<crate::lines::Sources>>,
+    /// What this device keeps of the conversations it views, when it keeps
+    /// them (`crate::cache`).
+    cache: Option<std::sync::Arc<crate::cache::Cache>>,
 }
 
 /// What became of words said to a resident.
@@ -77,6 +84,7 @@ impl World {
             device: None,
             searches: Default::default(),
             line_sources: Default::default(),
+            cache: None,
         }
     }
 
@@ -90,7 +98,20 @@ impl World {
             device: Some(device),
             searches: Default::default(),
             line_sources: Default::default(),
+            cache: None,
         }
+    }
+
+    /// The same World, keeping what it views of conversations in `cache`.
+    pub fn keeping(mut self, cache: std::sync::Arc<crate::cache::Cache>) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+
+    /// What this device keeps of the conversations it views, if it keeps
+    /// them.
+    pub fn cache(&self) -> Option<&std::sync::Arc<crate::cache::Cache>> {
+        self.cache.as_ref()
     }
 
     pub fn device(&self) -> Option<&std::sync::Arc<crate::device::Device>> {
@@ -108,6 +129,14 @@ impl World {
     /// runs the program (`crate::command_peer`).
     pub fn here() -> std::io::Result<Self> {
         Ok(Self::new(WorldDir::under(&fastctx_platform::fastctx_root()?), crate::command_peer()))
+    }
+
+    /// The World kept for this user on this machine, as `World::here`,
+    /// keeping what it views of conversations where every interface on this
+    /// computer keeps it (`crate::cache::Cache::under`).
+    pub fn here_keeping() -> std::io::Result<Self> {
+        let root = fastctx_platform::fastctx_root()?;
+        Ok(Self::new(WorldDir::under(&root), crate::command_peer()).keeping(crate::cache::Cache::under(&root)?))
     }
 
     /// The local node's World directory, or the application's private
@@ -374,10 +403,37 @@ impl World {
         }
     }
 
+    /// The host's own record of one item of a resident's conversation: what
+    /// a slimmed history leaves out, for when the user would see it.
+    pub async fn item_detail(
+        &self,
+        address: Address,
+        turn: Option<String>,
+        item: String,
+    ) -> Result<Option<serde_json::Value>, Error> {
+        let call = Call::ItemDetail { resident: address.resident, machine: Some(address.machine), turn, item };
+        match self.ask(call).await? {
+            Reply::ItemDetail { detail, .. } => Ok(detail),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Watches a resident on any machine: its history, then each event as
     /// it happens.
     pub async fn watch(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<Watching, Error> {
         self.watch_with_composer(resident, machine, None).await
+    }
+
+    /// Watches a resident on any machine, saying what this viewer holds of
+    /// its history (`fastctx_types::session::held`): its history comes as
+    /// the segments it lacks, then each event as it happens.
+    pub async fn watch_held(
+        &self,
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        held: fastctx_types::session::held::Held,
+    ) -> Result<Watching, Error> {
+        self.watch_as(resident, machine, None, Some(held)).await
     }
 
     pub(crate) async fn watch_with_composer(
@@ -386,10 +442,20 @@ impl World {
         machine: Option<MachineName>,
         composer: Option<String>,
     ) -> Result<Watching, Error> {
+        self.watch_as(resident, machine, composer, None).await
+    }
+
+    async fn watch_as(
+        &self,
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        composer: Option<String>,
+        held: Option<fastctx_types::session::held::Held>,
+    ) -> Result<Watching, Error> {
         if let Some(device) = &self.device {
-            return Ok(Watching::device(device.watch(resident, machine, composer).await?));
+            return Ok(Watching::device(device.watch(resident, machine, composer, held).await?));
         }
-        Ok(self.connect().await?.watch(Call::Watch { resident, machine, composer }).await?)
+        Ok(self.connect().await?.watch(Call::Watch { resident, machine, composer, held }).await?)
     }
 
     pub async fn copy(&self, from: Place, to: Place) -> Result<CopyReport, Error> {

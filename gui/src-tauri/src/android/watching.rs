@@ -1,10 +1,12 @@
 //! A hidden Android page releases its live stream. History replaces the
 //! page's previous reading when it returns, avoiding an unbounded JS backlog.
+//! What this phone keeps of a conversation is shown at once, connected or
+//! not; only what it lacks is read when it is connected again.
 
-use fastctx_client::{Conversation, World};
+use fastctx_client::{Conversation, Update, World};
 use fastctx_net::link::Status;
 use fastctx_types::session::SessionEvent;
-use fastctx_types::{MachineName, ResidentId};
+use fastctx_types::{Address, MachineName, ResidentId};
 use tauri::ipc::Channel;
 
 use crate::Piece;
@@ -14,6 +16,12 @@ pub(crate) async fn open(
     resident: ResidentId,
     machine: Option<MachineName>,
 ) -> Result<(Conversation, Vec<SessionEvent>), String> {
+    if let (Some(machine), Some(cache)) = (&machine, world.cache()) {
+        let address = Address { machine: machine.clone(), resident: resident.clone() };
+        if cache.holds(&address).map_err(|error| error.to_string())? {
+            return Conversation::open(world, address).await.map_err(|error| error.to_string());
+        }
+    }
     let (_, mut connection) =
         world.device().expect("Android device").machine_changes(machine.as_ref()).map_err(|error| error.to_string())?;
     loop {
@@ -24,7 +32,7 @@ pub(crate) async fn open(
             Status::Online { .. } => {
                 let read = tokio::select! {
                     changed = connection.changed() => { changed.map_err(|error| error.to_string())?; continue; }
-                    read = Conversation::watch(world, resident.clone(), machine.clone()) => read,
+                    read = opening(world, resident.clone(), machine.clone()) => read,
                 };
                 // A foreground resume can replace the connection between
                 // checking it and opening the read-only subscription.
@@ -34,6 +42,19 @@ pub(crate) async fn open(
                 return read.map_err(|error| error.to_string());
             }
         }
+    }
+}
+
+/// Opens the conversation through what this phone keeps, where its
+/// machine is known.
+async fn opening(
+    world: &World,
+    resident: ResidentId,
+    machine: Option<MachineName>,
+) -> Result<(Conversation, Vec<SessionEvent>), fastctx_client::Error> {
+    match machine {
+        Some(machine) => Conversation::open(world, Address { machine, resident }).await,
+        None => Conversation::watch(world, resident, None).await,
     }
 }
 
@@ -89,12 +110,13 @@ pub(crate) async fn stream(
             changed = visible.changed() => { if changed.is_err() { return; } }
             piece = async {
                 match conversation.as_mut() {
-                    Some(conversation) => conversation.next().await,
+                    Some(conversation) => conversation.update().await,
                     None => std::future::pending().await,
                 }
             } => {
                 match piece {
-                    Ok(Some(moment)) => if pieces.send(Piece::Event { event: moment.event }).is_err() { return; },
+                    Ok(Some(Update::Moment(moment))) => if pieces.send(Piece::Event { event: moment.event }).is_err() { return; },
+                    Ok(Some(Update::History(history))) => if pieces.send(Piece::Reset { history }).is_err() { return; },
                     ended => {
                         conversation = None;
                         let error = ended.err().map(|error| error.to_string());

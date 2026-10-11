@@ -24,8 +24,10 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
     for Session { id, began, process, kept } in sessions {
         match read_whole(root.join(&id), kept, process).await {
             Ok(read) => {
+                // The title belongs to the session, so it takes the session's
+                // time: read again, the history reads the same.
                 if let Some(title) = read.title {
-                    events.push(SessionEvent { at: Timestamp::now(), happened: Happened::Titled { title } });
+                    events.push(SessionEvent { at: began, happened: Happened::Titled { title } });
                 }
                 events.extend(read.events.into_iter().map(|mut event| {
                     crate::user_images::claude(node, resident, &mut event);
@@ -44,6 +46,30 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
         }
     }
     place(events, recorded)
+}
+
+/// What `hosted` would read, as cheaply as it can be told: the sessions the
+/// resident has been, the last record the mod saw kept in each, each one's
+/// record file by size and time of change, and the turns cut from it.
+/// Claude Code only appends to a record and the World's cuts are files of
+/// their own, so equal stamps mean `hosted` reads the same.
+pub fn stamp(node: &Node, resident: &ResidentId, digest: &mut impl FnMut(&[u8])) {
+    let root = exchange::sessions(node.world.path());
+    let (sessions, problems) = sessions(node, resident);
+    for problem in problems {
+        digest(problem.as_bytes());
+    }
+    for Session { id, began, kept, .. } in sessions {
+        let directory = root.join(&id);
+        digest(format!("{id}|{began}|{kept:?}").as_bytes());
+        let cuts =
+            std::fs::metadata(directory.join("history-cuts.json")).map(|meta| (meta.len(), meta.modified().ok()));
+        digest(format!("{cuts:?}").as_bytes());
+        let record = exchange::transcript(&directory).map(|path| {
+            path.map(|path| (std::fs::metadata(&path).map(|meta| (meta.len(), meta.modified().ok())), path))
+        });
+        digest(format!("{record:?}").as_bytes());
+    }
 }
 
 /// CLI forking reads the saved conversation. Wait for the last message

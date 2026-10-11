@@ -44,6 +44,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
                 ..
             }
             | RemoteCall::Offers { .. }
+            | RemoteCall::ItemDetail { .. }
             | RemoteCall::Watch { .. }
             // Reading the user's own files, from the machine that has them,
             // and a file the user attaches to their words, kept in that

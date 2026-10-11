@@ -10,6 +10,7 @@ mod android;
 mod collab;
 mod composer;
 mod connection;
+mod kept;
 
 #[cfg(desktop)]
 mod founding;
@@ -175,7 +176,9 @@ struct WorldNow {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum Piece {
-    #[cfg(target_os = "android")]
+    /// What came before is now this, in place of all that was given: the
+    /// rest of what this device keeps, the history as its machine has it
+    /// now, or the history read again on a phone that came back.
     Reset {
         history: Vec<SessionEvent>,
     },
@@ -227,8 +230,11 @@ async fn world_now(shell: tauri::State<'_, Shell>) -> Result<WorldNow, String> {
     Ok(WorldNow { here: nodes.machine.clone(), towns: towns.clone(), who, nodes, accounts })
 }
 
-/// Starts watching a resident: returns what came before, and sends each
-/// event after it down `pieces` until the page lets go.
+/// Starts watching a resident: returns what came before, from what this
+/// device keeps of it at once where it keeps it, and sends each event
+/// after it down `pieces` until the page lets go; the rest of the history,
+/// and the history as its machine has it now when that is different, come
+/// as `reset` pieces.
 #[fastctx_gui_command::command]
 async fn watch(
     shell: tauri::State<'_, Shell>,
@@ -241,8 +247,13 @@ async fn watch(
     let resident = resident(resident_id)?;
     let machine = machine(machine_name)?;
     #[cfg(not(target_os = "android"))]
-    let (conversation, history) =
-        Conversation::watch(&world, resident.clone(), machine.clone()).await.map_err(|error| error.to_string())?;
+    let (conversation, history) = match &machine {
+        Some(machine) => {
+            Conversation::open(&world, Address { machine: machine.clone(), resident: resident.clone() }).await
+        }
+        None => Conversation::watch(&world, resident.clone(), None).await,
+    }
+    .map_err(|error| error.to_string())?;
     #[cfg(target_os = "android")]
     let (conversation, history) = android::watching::open(&world, resident.clone(), machine.clone()).await?;
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
@@ -252,12 +263,9 @@ async fn watch(
     let work = async move {
         let mut conversation = conversation;
         loop {
-            match conversation.next().await {
-                Ok(Some(moment)) => {
-                    if pieces.send(Piece::Event { event: moment.event }).is_err() {
-                        return;
-                    }
-                }
+            let piece = match conversation.update().await {
+                Ok(Some(fastctx_client::Update::Moment(moment))) => Piece::Event { event: moment.event },
+                Ok(Some(fastctx_client::Update::History(history))) => Piece::Reset { history },
                 Ok(None) => {
                     let _ = pieces.send(Piece::Ended { error: None });
                     return;
@@ -266,6 +274,9 @@ async fn watch(
                     let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
                     return;
                 }
+            };
+            if pieces.send(piece).is_err() {
+                return;
             }
         }
     };
@@ -617,8 +628,16 @@ async fn fetch_attachment(
     shell: tauri::State<'_, Shell>,
     attachment: fastctx_types::attachments::AttachmentSource,
 ) -> Result<attachment_files::Fetched, attachment_files::Failure> {
+    let world = shell.world();
+    // Kept by its bytes where this device keeps what it views: opened again,
+    // it is not fetched again.
+    if let Some((path, file)) =
+        world.kept_original(attachment.clone()).await.map_err(attachment_files::Failure::from)?
+    {
+        return Ok(attachment_files::Fetched { path: path.to_string_lossy().into_owned(), file });
+    }
     let cache = app.path().app_cache_dir().map_err(|error| attachment_files::Failure::failed(error.to_string()))?;
-    attachment_files::fetch(&shell.world(), attachment, &cache).await
+    attachment_files::fetch(&world, attachment, &cache).await
 }
 
 #[fastctx_gui_command::command]
@@ -907,6 +926,9 @@ pub fn run() {
             project_edit,
             watch,
             unwatch,
+            kept::kept_usage,
+            kept::kept_clear,
+            kept::kept_forget,
             composer::composer_read,
             composer::composer_watch,
             composer::composer_update,

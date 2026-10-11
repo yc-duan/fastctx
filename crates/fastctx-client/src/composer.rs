@@ -59,7 +59,8 @@ impl World {
                                 if let Happened::Changed { change: SessionChange::Composer { composer }, .. } = event.happened
                                     && sender.send(Ok(*composer)).is_err() { return; }
                             }
-                            Ok(Some(Watched::History { .. })) => {},
+                            // A composer has no history; nothing of one is asked for.
+                            Ok(Some(Watched::History { .. } | Watched::Unchanged { .. } | Watched::Segments { .. })) => {},
                             Ok(None) => return,
                             Err(error) => { let _ = sender.send(Err(error.into())); return; }
                         }

@@ -45,6 +45,7 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::Control { resident: who, .. }
         | RemoteCall::Manage { resident: who, .. }
         | RemoteCall::Offers { resident: who }
+        | RemoteCall::ItemDetail { resident: who, .. }
         | RemoteCall::WorksOn { resident: who, .. }
         | RemoteCall::Upload {
             target:

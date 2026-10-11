@@ -249,3 +249,9 @@ pub(crate) fn receive(node: &Node, resident: &ResidentId, update: &JobFacts) -> 
     );
     Ok(())
 }
+
+/// What `get` reads for any call, told by each file's name, size and time
+/// of change: a call's facts are replaced whole or appended to.
+pub(crate) fn stamp(directory: &ResidentDir, digest: &mut impl FnMut(&[u8])) -> io::Result<()> {
+    crate::session_record::stamp_files(&directory.calls(), digest)
+}

@@ -1356,6 +1356,8 @@ function imagesOf(output: Content[]): string {
     .map((content) => {
       if (content.type === "image") return `<img class="io-image" data-picture alt="" src="data:${escape(content.mime)};base64,${content.base64}">`;
       if (content.type === "image_url") return `<img class="io-image" data-picture alt="" src="${escape(content.url)}">`;
+      // Drawn as it scrolls into view, from where the session keeps it.
+      if (content.type === "image_ref") return `<img class="io-image" data-picture data-attachment="${escape(JSON.stringify(content.source))}" alt="">`;
       return "";
     })
     .join("");

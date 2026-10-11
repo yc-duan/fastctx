@@ -364,6 +364,24 @@ impl Link {
         Signed::new(&self.inner.key, domain, statement)
     }
 
+    /// Signs `bytes` as they are, as this machine, in `domain`.
+    pub fn sign_bytes(&self, domain: Domain, bytes: Vec<u8>) -> Signed {
+        Signed::of_bytes(&self.inner.key, domain, bytes)
+    }
+
+    /// What `signed` says, packed or not (`crate::history::unpack`), if the
+    /// member `from` signed it in `domain`.
+    pub async fn unseal_packed<T: serde::de::DeserializeOwned>(
+        &self,
+        from: &MachineName,
+        domain: Domain,
+        signed: &Signed,
+    ) -> Result<T, String> {
+        let key = self.inner.key_of(from).await.ok_or_else(|| format!("{from} is not a member of the hub"))?;
+        let bytes = signed.verified(&key, domain).map_err(|error| format!("what came from {from}: {error}"))?;
+        crate::history::unpack(bytes).map_err(|error| format!("what came from {from}: {error}"))
+    }
+
     /// What `signed` says, if the member `from` signed it in `domain`.
     pub async fn unseal<T: serde::de::DeserializeOwned>(
         &self,

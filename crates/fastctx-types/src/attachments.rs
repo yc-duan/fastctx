@@ -62,6 +62,7 @@ impl Attachment {
 pub enum AttachmentSource {
     Upload(Attachment),
     HostImage { owner: Address, host_image: HostImage },
+    ToolImage { owner: Address, tool_image: ToolImage },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,11 +72,23 @@ pub enum HostImage {
     Claude { message: String, image: u32 },
 }
 
+/// An image a tool gave back, as its host's record keeps it: the tool's
+/// item and the image's place among the images of its output, counting
+/// from zero. Codex finds an item within its turn; Claude Code's tool ids
+/// are unique in a session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolImage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
+    pub item: String,
+    pub image: u32,
+}
+
 impl AttachmentSource {
     pub fn owner(&self) -> &Address {
         match self {
             Self::Upload(attachment) => &attachment.owner,
-            Self::HostImage { owner, .. } => owner,
+            Self::HostImage { owner, .. } | Self::ToolImage { owner, .. } => owner,
         }
     }
 }

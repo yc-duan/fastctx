@@ -237,6 +237,11 @@ pub enum RemoteCall {
         watch: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         composer: Option<String>,
+        /// What the viewer keeps of the history (`session::held`). Said, the
+        /// pieces are signed as zstd-compressed JSON (`fastctx-net`'s
+        /// `history::pack`) and the history comes as segments.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        held: Option<crate::session::held::Held>,
     },
     /// Open a session there for the user, as `Call::Open`.
     Open {
@@ -274,6 +279,13 @@ pub enum RemoteCall {
     /// What a resident's conversation there offers now.
     Offers {
         resident: ResidentId,
+    },
+    /// The host's own record of one item of a resident's conversation there
+    /// (`Call::ItemDetail`).
+    ItemDetail {
+        resident: ResidentId,
+        turn: Option<String>,
+        item: String,
     },
     /// What that machine is like, for `fastctx nodes`.
     Facts,
@@ -350,6 +362,7 @@ impl RemoteCall {
             | RemoteCall::Manage { .. }
             | RemoteCall::Control { .. }
             | RemoteCall::Offers { .. }
+            | RemoteCall::ItemDetail { .. }
             | RemoteCall::Upload { .. } => Purpose::Agents,
             RemoteCall::Agents
             | RemoteCall::Look { .. }
@@ -423,6 +436,9 @@ pub enum RemoteReply {
     Managed(Managed),
     Controlled(Controlled),
     Offers(Box<Offers>),
+    ItemDetail {
+        detail: Option<serde_json::Value>,
+    },
     /// A watch ended: the caller left, or the session's machine stopped it.
     Watched,
     /// A conversation's setting there changed as asked.

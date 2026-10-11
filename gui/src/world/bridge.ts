@@ -89,6 +89,30 @@ export function unwatch(id: number): Promise<void> {
   return invoke("unwatch", { id });
 }
 
+/** What this device keeps of the conversations it viewed: every byte, the
+ *  pictures and files shared by them, and each conversation, the largest
+ *  first (`fastctx_client::cache::Usage`). */
+export interface KeptUsage {
+  bytes: number;
+  pictures: number;
+  conversations: { address: Address; bytes: number; updated: string }[];
+}
+
+export function keptUsage(): Promise<KeptUsage> {
+  return invoke("kept_usage");
+}
+
+/** Lets go of everything this device keeps of conversations. */
+export function keptClear(): Promise<void> {
+  return invoke("kept_clear");
+}
+
+/** Lets go of one conversation this device keeps, and of the pictures only
+ *  it showed. */
+export function keptForget(address: Address): Promise<void> {
+  return invoke("kept_forget", { address });
+}
+
 /** The user's words to a resident, with the files uploaded for them;
  *  those other than images go to `filesOn` when the user chose a machine
  *  (an agent lent to them works on none of its own). */

@@ -2464,7 +2464,11 @@
                 }
               },
               "name": "image.png",
-              "media_type": "image/png"
+              "media_type": "image/png",
+              "content": {
+                "size": 68,
+                "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+              }
             }
           ],
           "id": "message-1",
@@ -3119,6 +3123,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -3320,6 +3343,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -3521,6 +3563,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -3608,6 +3669,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -3695,6 +3775,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -3782,6 +3881,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -3843,6 +3961,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -3904,6 +4041,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -3965,6 +4121,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4022,6 +4197,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4079,6 +4273,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4134,6 +4347,25 @@
             {
               "type": "image_url",
               "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
             },
             {
               "type": "audio_url",
@@ -4197,6 +4429,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4258,6 +4509,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4317,6 +4587,25 @@
             {
               "type": "image_url",
               "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
             },
             {
               "type": "audio_url",
@@ -4377,6 +4666,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4435,6 +4743,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4491,6 +4818,25 @@
             {
               "type": "image_url",
               "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
             },
             {
               "type": "audio_url",
@@ -4555,6 +4901,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4617,6 +4982,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4677,6 +5061,25 @@
             {
               "type": "image_url",
               "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
             },
             {
               "type": "audio_url",
@@ -4735,6 +5138,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4791,6 +5213,25 @@
               "url": "https://example.test/image.png"
             },
             {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
               "type": "audio_url",
               "url": "https://example.test/audio.wav"
             },
@@ -4845,6 +5286,25 @@
             {
               "type": "image_url",
               "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
             },
             {
               "type": "audio_url",
@@ -5710,6 +6170,30 @@
           "from": null,
           "text": "old record"
         }
+      },
+      {
+        "kind": "unchanged",
+        "version": "version-1"
+      },
+      {
+        "kind": "segments",
+        "version": "version-2",
+        "layout": [
+          "07070707070707070707070707070707"
+        ],
+        "segments": [
+          {
+            "id": "07070707070707070707070707070707",
+            "events": [
+              {
+                "at": "2026-10-04T12:06:07.123456789Z",
+                "event": "turn_started",
+                "turn": "turn-1"
+              }
+            ]
+          }
+        ],
+        "complete": true
       }
     ],
     "health_cases": [

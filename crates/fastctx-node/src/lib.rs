@@ -33,6 +33,7 @@ mod devices;
 mod file_read;
 mod file_search;
 pub mod handoff;
+mod held_history;
 mod here;
 mod homes;
 mod inbox;

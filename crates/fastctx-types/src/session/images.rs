@@ -16,6 +16,10 @@ pub struct UserImage {
     pub source: AttachmentSource,
     pub name: Option<String>,
     pub media_type: Option<String>,
+    /// The picture's bytes, where its machine read them out of the host's
+    /// record: a viewer keeps it by this and fetches it once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<super::Fingerprint>,
 }
 
 struct Block<'a> {
@@ -98,6 +102,7 @@ pub fn codex(message: &mut UserMessage, owner: &Address, turn: &str, submission:
                 },
                 name,
                 media_type,
+                content: None,
             })
         })
         .collect();
@@ -118,6 +123,7 @@ pub fn claude(message: &mut UserMessage, owner: &Address) {
             },
             name: block.value["name"].as_str().map(str::to_owned),
             media_type: block.value["source"]["media_type"].as_str().map(str::to_owned),
+            content: None,
         })
         .collect();
 }

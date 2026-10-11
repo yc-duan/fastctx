@@ -84,10 +84,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 .await?;
             return writer.drain().await;
         }
-        if let Call::Watch { resident, machine, composer } = call {
+        if let Call::Watch { resident, machine, composer, held } = call {
             // A watch keeps the connection until one end leaves.
             let opening = tokio::select! {
-                result = crate::talk::watch(node, resident, machine, composer) => result,
+                result = crate::talk::watch(node, resident, machine, composer, held) => result,
                 _ = reader.recv() => return Ok(()),
             };
             let ended = match opening {
@@ -789,6 +789,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::composer::request(node, resident, machine, request)
                 .await
                 .map(|updated| Reply::Composer(Box::new(updated)))
+        }
+        Call::ItemDetail { resident, machine, turn, item } => {
+            crate::held_history::item_detail(node, resident, machine, turn, item)
+                .await
+                .map(|(resident, detail)| Reply::ItemDetail { resident, detail })
         }
         Call::Offers { resident, machine } => crate::control::offers(node, resident, machine)
             .await

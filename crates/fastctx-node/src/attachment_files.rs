@@ -1,6 +1,6 @@
 //! Resolve a receipt first, then the image its own resident's host kept.
 
-use fastctx_types::attachments::{AttachmentFile, AttachmentFileSource, AttachmentSource, HostImage};
+use fastctx_types::attachments::{AttachmentFile, AttachmentFileSource, AttachmentSource, HostImage, ToolImage};
 use fastctx_types::ipc::{Failure, FailureCode};
 use fastctx_types::session::attachments::AttachedMessage;
 use serde_json::Value;
@@ -70,6 +70,24 @@ pub(crate) async fn resolve(
         if about.host.agent.as_str() != host {
             return Err(Failure::new("the image selector names a different host"));
         }
+    }
+    // Codex lists a turn's items: the tool's own is read from there.
+    if let AttachmentSource::ToolImage { tool_image, .. } = &source
+        && about.host.agent.as_str() == "codex"
+    {
+        let thread = about.session.as_deref().ok_or_else(Failure::original_gone)?;
+        let turn = tool_image.turn.as_deref().ok_or_else(Failure::original_gone)?;
+        let (mime, base64) = node
+            .codex
+            .of(&about)?
+            .tool_image(thread, turn, &tool_image.item, tool_image.image)
+            .await
+            .map_err(failed)?
+            .ok_or_else(Failure::original_gone)?;
+        let temporary = node.world.path().join("image-reading");
+        return tokio::task::spawn_blocking(move || decoded(&temporary, &mime, &base64).map_err(failed))
+            .await
+            .map_err(failed)?;
     }
     let paths = match about.host.agent.as_str() {
         "codex" => {
@@ -299,6 +317,11 @@ fn recorded(
                             (encoded, false, block["source"]["media_type"].as_str().unwrap_or_default().to_owned())
                         })
                 })
+            } else if let AttachmentSource::ToolImage { tool_image, .. } = source {
+                record.value["message"]["content"]
+                    .as_array()
+                    .and_then(|blocks| claude_tool_image(blocks, tool_image))
+                    .map(|(encoded, url, mime)| (encoded.clone(), url, mime))
             } else {
                 record.value["message"]["content"]
                     .as_array()
@@ -353,6 +376,64 @@ fn claude_image<'a>(blocks: &'a [Value], row: &Value, source: &AttachmentSource)
     };
     let image = blocks.iter().filter(|b| b["type"] == "image").nth(index)?;
     Some((&image["source"]["data"], false, image["source"]["media_type"].as_str().unwrap_or_default().into()))
+}
+
+/// The `image`th image a Claude tool result gave back, counting those of
+/// the shape the session's history reads as images
+/// (`fastctx_hosts::claude::content`).
+fn claude_tool_image<'a>(blocks: &'a [Value], wanted: &ToolImage) -> Option<(&'a Value, bool, String)> {
+    let result =
+        blocks.iter().find(|block| block["type"] == "tool_result" && block["tool_use_id"] == wanted.item.as_str())?;
+    let image = result["content"]
+        .as_array()?
+        .iter()
+        .filter(|block| {
+            let source = &block["source"];
+            block["type"] == "image"
+                && block.as_object().is_some_and(|object| object.len() == 2)
+                && source.as_object().is_some_and(|object| object.len() == 3)
+                && source["type"] == "base64"
+                && source["media_type"].is_string()
+                && !source["data"].is_null()
+        })
+        .nth(wanted.image as usize)?;
+    Some((&image["source"]["data"], false, image["source"]["media_type"].as_str().unwrap_or_default().into()))
+}
+
+/// An image a host gave as base64, written where it can be read as a file.
+fn decoded(temporary: &std::path::Path, mime: &str, base64: &str) -> io::Result<File> {
+    use base64::Engine as _;
+    let extension = match mime {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unsupported host image media type {mime}"),
+            ));
+        }
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("the host's image: {error}")))?;
+    fastctx_platform::ensure_private_dir(temporary)?;
+    let scope = tempfile::tempdir_in(temporary)?;
+    let path = scope.path().join("decoded-image").with_extension(extension);
+    std::fs::write(&path, &bytes)?;
+    let file = fastctx_platform::file_read::open(&path)?;
+    let snapshot = fastctx_platform::file_read::snapshot(&file, &file.metadata()?)?;
+    Ok(File {
+        path,
+        snapshot,
+        description: AttachmentFile {
+            name: format!("image.{extension}"),
+            media_type: mime.into(),
+            source: AttachmentFileSource::HostRecord,
+        },
+        _temporary: Some(scope),
+    })
 }
 
 fn codex_image<'a>(blocks: &'a [Value], source: &AttachmentSource) -> Option<(&'a Value, bool, String)> {

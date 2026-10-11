@@ -109,10 +109,9 @@ impl Connection {
             Mode::Device => {
                 #[cfg(not(target_os = "android"))]
                 let world = {
-                    let directory = directory.join("device");
                     let open = if cfg!(mobile) { Device::open_managed } else { Device::open };
-                    let device = open(directory).map_err(|error| error.to_string())?;
-                    World::from_device(device)
+                    let device = open(directory.join("device")).map_err(|error| error.to_string())?;
+                    World::from_device(device).keeping(kept(directory)?)
                 };
                 #[cfg(target_os = "android")]
                 let world = crate::android::world()?;
@@ -134,11 +133,20 @@ impl Connection {
                     if !program.is_file() && crate::setup::carried().is_some() {
                         crate::setup::place_initial()?;
                     }
+                    // The TUI on this computer keeps what it views in the same place.
+                    let cache = fastctx_client::cache::Cache::under(&root).map_err(|error| error.to_string())?;
                     let world = World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None })
-                        .starting_node_from(program.clone());
+                        .starting_node_from(program.clone())
+                        .keeping(cache);
                     Ok(Selected { mode, world, program: Some(program) })
                 }
             }
         }
     }
+}
+
+/// What a device keeps of the conversations it views, in its application's
+/// own directory.
+pub fn kept(directory: &std::path::Path) -> Result<std::sync::Arc<fastctx_client::cache::Cache>, String> {
+    fastctx_client::cache::Cache::open(directory.join("cache").join("viewed")).map_err(|error| error.to_string())
 }
