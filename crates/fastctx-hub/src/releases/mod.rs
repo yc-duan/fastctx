@@ -29,10 +29,11 @@ impl Releases {
         })
     }
 
-    /// One published file, for a download. Nothing is hashed here: the line
-    /// that downloads it carries the digest and checks it, and hashing both
-    /// archives for every unauthenticated request would let anyone keep the
-    /// hub's processors busy with a few bytes each.
+    /// One published file, for a download. Placed files are not hashed here:
+    /// the line that downloads it carries the digest and checks it, and
+    /// hashing both archives for every unauthenticated request would let
+    /// anyone keep the hub's processors busy with a few bytes each. The
+    /// running kernel's own archive is packed at most once per process.
     pub fn file(&self, version: &str, name: &str) -> io::Result<File> {
         match self.files.open(version, name) {
             Ok(file) => Ok(file),
@@ -42,6 +43,9 @@ impl Releases {
                     && version == env!("CARGO_PKG_VERSION")
                     && (Some(name) == own::name() || name == SUMS) =>
             {
+                // A line made before this hub restarted still downloads: the
+                // archive is packed at most once per process, whoever asks.
+                self.own.digest(&self.files.root).map_err(io::Error::other)?;
                 self.own.file(name == SUMS)
             }
             Err(error) => Err(error),
