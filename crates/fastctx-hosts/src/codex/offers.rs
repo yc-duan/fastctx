@@ -121,6 +121,7 @@ impl CodexHost {
                 name: (*name).into(),
                 description: (*description).into(),
                 args: args.map(str::to_string),
+                argument_forms: Vec::new(),
                 arguments: *arguments,
                 source: Some("codex".into()),
                 path: None,
@@ -135,6 +136,7 @@ impl CodexHost {
                 name,
                 description: string(&skill, "description")?,
                 args: Some("[instructions]".into()),
+                argument_forms: Vec::new(),
                 arguments: CommandArguments::Optional,
                 source: Some("skill".into()),
                 path: Some(string(&skill, "path")?),
@@ -156,6 +158,7 @@ impl CodexHost {
                         name,
                         description: tier.description.clone(),
                         args: None,
+                        argument_forms: Vec::new(),
                         arguments: CommandArguments::None,
                         source: Some("codex".into()),
                         path: None,
@@ -218,6 +221,9 @@ impl CodexHost {
         // credits/USD-micros contract instead of calling it a final cost.
         usage.raw = json!({"tokenUsage":entry.usage,"accountRateLimits":account,"accountUsage":account_usage});
         Ok(Offers {
+            checkpoints: None,
+            history_limits: None,
+            automatic_model: None,
             controls,
             commands,
             models,

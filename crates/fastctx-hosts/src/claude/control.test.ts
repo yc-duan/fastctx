@@ -16,10 +16,11 @@ test('uses the public controls and request return types through the official eng
   const questions: any[] = []
   let requestAnswer: any = { kind: 'pass', reason: 'no watcher' }
   let cancelledQuestions = 0
-  on('mcp.connect', () => ({ value: { isConnected: false, server: 'fastctx' } }))
+  on('mcp.connect', () => ({ value: { isConnected: false, reason: 'disabled', message: 'fixture' } }))
   on('session.id', () => ({ value: 'control-fixture' }))
   on('session.cwd', () => ({ value: '/fixture' }))
   on('session.model', () => ({ value: model }))
+  on('session.messages', () => ({ value: [] }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.version', () => ({ value: { version: '2.1.294' } }))
   on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify(e.argv[1] === 'claude-control-owner' && !ownerAlive ? null : { pid: 123, token: 'lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
@@ -59,6 +60,10 @@ test('uses the public controls and request return types through the official eng
     return { text: e.command === 'panel' ? 'This command requires the Claude Code terminal' : e.command + ':' + e.args }
   })
   on('process.spawn', async function* (_, e, next) {
+    if (e.argv[1] === 'claude-session-policy') {
+      yield { stream: 'stdout', text: JSON.stringify({ lent: false, model: null, effort: null }) }
+      return { value: { code: 0, signal: null } }
+    }
     if (e.argv[1] === 'claude-control-guard') {
       const text = JSON.stringify({ process: { pid: 124, token: 'activation' }, parent: { pid: 123, token: 'lifetime' } }) + '\n'
       yield { stream: 'stdout', text: text.slice(0, 5) }
@@ -73,7 +78,7 @@ test('uses the public controls and request return types through the official eng
     yield { stream: 'stdout', text: text.slice(7) }
     return { value: { code: 0, signal: null } }
   })
-  on('classic.PermissionRequest', () => ({}))
+  on('tool.check', () => ({ decision: 'ask' }))
   on('tool.call', async (_, e, next) => {
     if (e.tool === 'permission-tool') {
       const decision = await $.classic.PermissionRequest({ tool_name: e.tool, tool_input: { path: '/file' } })
@@ -108,8 +113,9 @@ test('uses the public controls and request return types through the official eng
   expect(offers.commands.some((command: any) => command.source === 'plugin')).toBe(false)
   expect((await invoke({ do: 'command', name: 'panel', args: '' })).error).toContain('background-safe')
   expect((await invoke({ do: 'command', name: 'bad', args: '' })).error).toContain('background-safe')
-  expect((await invoke({ do: 'model', model: 'sonnet', effort: 'high' })).error).toContain('no background-safe')
-  expect((await invoke({ do: 'model', model: 'sonnet', effort: null })).ok.said).toBe('Current model: sonnet')
+  expect((await invoke({ do: 'model', model: 'sonnet', effort: 'high' })).ok).toEqual({ kind: 'selected', model: 'sonnet', effort: 'high' })
+  expect(model).toBe('opus')
+  expect((await invoke({ do: 'model', model: 'sonnet', effort: null })).ok.model).toBe('sonnet')
   expect(commands).toEqual([])
   expect((await invoke({ do: 'rename', name: '新名字' })).ok.said).toBe('rename:新名字')
   expect((await invoke({ do: 'rename', name: '新名字' })).ok.kind).toBe('reported')
@@ -133,12 +139,12 @@ test('uses the public controls and request return types through the official eng
   expect(cancelledQuestions).toBe(1)
   expect(questions[1].native_wait).toBe(true)
   expect(questions[1].params.questions).toEqual([question])
-  requestAnswer = { kind: 'answer', answer: { decision: { behavior: 'allow', updatedInput: { path: '/other' } } } }
-  const permission = await $.tool.call({ tool: 'permission-tool', tool_use_id: 'p1', path: '/file' })
-  expect(permission.result).toEqual(requestAnswer.answer)
-  expect(questions[2].request).toBe('classic.PermissionRequest')
+  requestAnswer = { kind: 'answer', answer: { decision: 'allow' } }
+  const permission = await $.tool.check({ tool: 'permission-tool', tool_use_id: 'p1', input: { path: '/file' } })
+  expect(permission).toEqual(requestAnswer.answer)
+  expect(questions[2].request).toBe('tool.check')
   expect(questions[0].key).not.toBe(questions[1].key)
   await $.turn.complete({ turnId: 'turn-1', answer: '', reason: 'answer', isAborted: false, durationMs: 0 })
-  await $.session.end({ sessionId: 'control-fixture', reason: 'exit', resume: { id: 'control-fixture' } })
+  await $.session.end({ sessionId: 'control-fixture', reason: 'prompt_input_exit', resume: { id: 'control-fixture' } })
   expect(files.has(directory + '/closed/' + host.instance + '.json')).toBe(true)
 })

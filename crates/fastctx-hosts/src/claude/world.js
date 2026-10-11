@@ -61,6 +61,9 @@ async function removed($, fresh = false) {
 
 __FASTCTX_CONTROLS__
 __FASTCTX_COMMANDS__
+__FASTCTX_SELECTION__
+__FASTCTX_REWIND__
+__FASTCTX_OBSERVATIONS__
 
 // /clear may replace even the same session ID. Keep the old object alive for
 // its timers, queued writes and late turn/tool results; never reset it in place.
@@ -528,6 +531,7 @@ async function startSession($, context) {
   await $.fs.write(context.dir + '/receipts/.created', '')
   await $.fs.write(context.dir + '/session.json', JSON.stringify(registration))
   context.registration = registration
+  await observeModels($, context)
   // What already waits when the session starts again is handed over, not
   // skipped: a closed session's answers are what it should see on return.
   context.timer = $.clock.every(LOOK_MS, () => look($, context))
@@ -565,7 +569,15 @@ async function startTurn($, context, e, next) {
 
 async function completeTurn($, context, e, next) {
   await completeControlTurn($, e)
-  if (e.agentId !== undefined) return next(e)
+  if (e.agentId !== undefined) {
+    const reported = agentReports(reports($, context), e.agentId)
+    await agentPresentation(context, e.agentId).end(reported, e.turnId)
+    await reported.event('session', { happened: { event: 'turn_ended', turn: e.turnId,
+      end: { how: e.isAborted ? 'interrupted' : e.reason === 'error' || e.reason === 'refusal' ? 'failed' : 'completed',
+        reason: e.reason, duration_ms: e.durationMs, last_message: e.answer, error: null } } })
+    await observeAgents($, context)
+    return next(e)
+  }
   await context.shown.end(reports($, context), e.turnId)
   if (context.turn === e.turnId) { context.busy = false; context.turn = null }
   const completed = event($, context, 'turn_complete', {
@@ -717,7 +729,12 @@ export function register(on) {
       return await stream.result
     }
     const context = registry.turns.get(e.turnId) || await session($, registry, await $.session.id())
-    return yield* context.shown.step(reports($, context), e, next)
+    await sessionPolicy($, context)
+    const input = await controlStep($, e)
+    const base = reports($, context)
+    const shown = e.agentId === undefined ? context.shown : agentPresentation(context, e.agentId)
+    const reported = e.agentId === undefined ? base : agentReports(base, e.agentId)
+    return yield* shown.step(reported, input, next)
   })
   on('tool.call', async ($, e, next) => {
     if (await removed($)) return next(e)
@@ -729,21 +746,92 @@ export function register(on) {
         return { deny: 'The fastctx plugin could not tell fastctx which session made this call, so it did not run: ' + error }
       }
     }
-    return context.shown.call(reports($, context), e, (input) => controlCall($, input, next))
+    const shown = e.agentId === undefined ? context.shown : agentPresentation(context, e.agentId)
+    const reported = e.agentId === undefined ? reports($, context) : agentReports(reports($, context), e.agentId)
+    return shown.call(reported, e, (input) => controlCall($, input, next))
   })
-  on('classic.PermissionRequest', async ($, e, next) => {
+  on('tool.check', async ($, e, next) => {
     if (await removed($)) return next(e)
     return controlPermission($, e, next)
   })
   on('session.append', async ($, e, next) => {
     if (await removed($)) return next(e)
     const context = await route($, registry, 'session.append', e)
-    return context.shown.append(reports($, context), e, next)
+    const state = e.agentId === undefined ? await controlBegin($, sessions) : null
+    if (state !== null && state.checkpoints.full !== true) await controlCheckpoint($, state, null, true)
+    if (state !== null && e.door === 'prompt' && state.busy === false) {
+      state.promptCheckpoint = await controlCheckpoint($, state, null, true)
+      state.promptUuid = state.lastUuid
+    }
+    const shown = e.agentId === undefined ? context.shown : agentPresentation(context, e.agentId)
+    const reported = e.agentId === undefined ? reports($, context) : agentReports(reports($, context), e.agentId)
+    const result = await shown.append(reported, e, next)
+    if (state !== null && result.deny === undefined && ['user', 'assistant', 'attachment', 'system'].includes(result.message.type)) {
+      state.lastRawUuid = result.uuid
+      state.checkpoints.last_raw_uuid = result.uuid
+    }
+    if (state !== null && result.deny === undefined && ['user', 'assistant'].includes(result.message.type)) {
+      if (await trackCheckpoint($, state, result)) state.lastUuid = result.uuid
+      if (!state.busy && state.completedTurn !== undefined && e.door !== 'prompt') {
+        await controlCheckpoint($, state, state.completedTurn, false)
+      }
+    }
+    return result
   })
   on('session.compact', async ($, e, next) => {
     if (await removed($)) return next(e)
     const context = await route($, registry, 'session.compact', e)
-    return context.shown.compact(reports($, context), e, next)
+    return context.shown.compact(reports($, context), e, (input) => controlCompaction($, input, next))
+  })
+  on('prompt.section', async ($, e, next) => {
+    if (await removed($)) return next(e)
+    if (!['env_info_simple', 'env_info_static'].includes(e.name)) return next(e)
+    const context = await session($, registry, await $.session.id())
+    return (await sessionPolicy($, context)).lent ? { text: null } : next(e)
+  })
+  on('classic.PostModelSwitch', async ($, e, next) => {
+    if (await removed($)) return next(e)
+    await controlModelSwitch($, e)
+    const context = await session($, registry, await $.session.id())
+    const reported = e.agent_id === undefined ? reports($, context) : agentReports(reports($, context), e.agent_id)
+    await reported.event('session', { happened: { event: 'changed', turn: null, change: {
+      kind: 'model_switch', from_model: e.from_model, to_model: e.to_model, source: e.source, requested_model: e.requested_model, raw: e } } })
+    return next(e)
+  })
+  on('classic.Elicitation', async ($, e, next) => {
+    if (await removed($)) return next(e)
+    await startControls($)
+    // Classic mod results cannot carry action/content. The official command
+    // hook under next publishes the answerable request with that contract.
+    return next(e)
+  })
+  on('command.describe', async ($, e, next) => {
+    const result = await next(e)
+    if (await removed($)) return result
+    const id = await $.session.id()
+    if (!commandDescriptions.has(id)) commandDescriptions.set(id, new Map())
+    const descriptions = commandDescriptions.get(id)
+    if (!controlSame(descriptions.get(e.command), result)) {
+      descriptions.set(e.command, result)
+      const context = registry.sessions.get(id)
+      if (context?.observe !== undefined) context.observe({ event: 'changed', turn: null, change: { kind: 'commands_changed' } })
+    }
+    return result
+  })
+  on('classic.SubagentStart', async ($, e, next) => {
+    if (await removed($)) return next(e)
+    await observeAgents($, await session($, registry, await $.session.id()))
+    return next(e)
+  })
+  on('classic.SubagentStop', async ($, e, next) => {
+    if (await removed($)) return next(e)
+    await observeAgents($, await session($, registry, await $.session.id()))
+    return next(e)
+  })
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    if (await removed($)) return next(e)
+    await observeTitle($, await session($, registry, await $.session.id()), e)
+    return next(e)
   })
   on('session.measure', async ($, e, next) => {
     if (await removed($)) return next(e)
@@ -776,6 +864,7 @@ export function register(on) {
     await worldTools($, registry)
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
     await transcript($, context, e.transcript_path)
+    await observeTitle($, context, e)
     // What this process already read of the account's limits, shown at once;
     // usage() asks Anthropic nothing. It says nothing of when they were read,
     // so the node keeps only what a measure reports.

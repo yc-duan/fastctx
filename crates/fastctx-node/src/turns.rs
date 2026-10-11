@@ -65,6 +65,11 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
     if let Happened::Titled { title } = &event.happened {
         node.residents.change_now(&node.world, id, |now| now.title = Some(title.clone()))?;
     }
+    if let Happened::Changed { change: SessionChange::ModelResponse { usage: Some(usage), .. }, .. } = &event.happened
+        && let Some(session) = &about.session
+    {
+        node.residents.set_session(&node.world, id, session, Some(usage.model.clone()), None)?;
+    }
     if let Happened::Changed { turn, change } = &event.happened
         && let Some(report) = presentation_health(change)
     {

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The background-safe command/argument/result contract of this mod.
-pub const COMMAND_CONTRACT: u32 = 1;
+pub const COMMAND_CONTRACT: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Host {
@@ -165,6 +165,17 @@ pub fn active(directory: &Path, host: &Host) -> io::Result<bool> {
 pub fn validate_answer(question: &Question, answer: &Value) -> Result<(), String> {
     let object = answer.as_object().ok_or("a Claude answer must be an object")?;
     match question.request.as_str() {
+        "tool.check" => {
+            if object.keys().any(|key| !["decision", "reason"].contains(&key.as_str()))
+                || !matches!(object.get("decision").and_then(Value::as_str), Some("allow" | "deny"))
+                || object.get("reason").is_some_and(|value| !value.is_string())
+            {
+                return Err("tool.check takes {decision:allow|deny,reason?:string}".into());
+            }
+            if object["decision"] == "allow" && question.params["ceiling"] == "ask" {
+                return Err("this tool requires the host's own approval under the organization's ceiling".into());
+            }
+        }
         "classic.PermissionRequest" => {
             if object.keys().any(|key| key != "decision") {
                 return Err("PermissionRequest takes {decision:{behavior,...}}".into());

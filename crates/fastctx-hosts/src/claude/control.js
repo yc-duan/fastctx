@@ -67,14 +67,20 @@ async function controlOpen($, sessions, sessionId) {
     const identity = JSON.parse(header)
     const host = {
       session: sessionId, process: identity.process, parent: identity.parent,
-      command_contract: 1,
+      command_contract: 2,
       // Persisted before polling: even a reload in the same clock tick or
       // after a clock rollback gets a different answer address.
       instance: String(Math.max(Date.now(), Number(prior?.instance ?? 0) + 1)),
     }
     const state = { directory, host, closed: false, busy: false, turn: null, looking: false,
+      selection: files.includes('selection.json') ? JSON.parse(await $.fs.read(directory + '/selection.json')) : {},
+      routing: files.includes('routing.json') ? JSON.parse(await $.fs.read(directory + '/routing.json')) : null,
+      checkpoints: files.includes('checkpoints.json') ? await readReport($, directory + '/checkpoints') : { messages: [], turns: {}, full: false, uuids: [] },
+      rewind: null, compacting: false, automaticModel: false,
       sequence: 0, calls: new Map(), replies: new Map(), handled: new Set(), pending: new Map(), timer: null, guard }
     const closed = await controlNames($, directory + '/closed')
+    state.lastUuid = state.checkpoints.last_uuid ?? undefined
+    state.lastRawUuid = state.checkpoints.last_raw_uuid ?? undefined
     if (files.includes('activity.json') && prior && !closed.includes(prior.instance + '.json') && controlSame(prior.parent, host.parent)) {
       const controlActivity = JSON.parse(await $.fs.read(directory + '/activity.json'))
       state.turn = controlActivity.turn
@@ -169,18 +175,20 @@ async function controlExecute($, state, control) {
   if (control.do === 'offers') {
     const commands = await controlCatalog($, state)
     const rows = await $.config.list()
-    const modelRow = rows.find((row) => row.key === 'model')
-    const usage = await $.session.usage()
+    const usage = await $.session.usage({ breakdown: 'summary' })
     const controls = ['command']
-    if (state.busy === false) controls.push('compact')
-    if (modelRow !== undefined) controls.push('model')
+    if (state.busy === false) controls.push('compact', 'rewind')
+    controls.push('model', 'agents', 'agent_messages')
     if (commands.some((command) => command.name === 'rename')) controls.push('rename')
     return {
+      checkpoints: Object.entries(state.checkpoints.turns).map(([turn, point]) => ({ turn,
+        rewind: point.before > 0 && point.before_uuid != null, fork: point.after > 0 && point.after_uuid != null })),
+      history_limits: { files_restored: false, compacted_turns_reachable: false, empty_prefix_allowed: false, complete_prefix: state.checkpoints.full === true },
       controls, commands: commands.map((command) => ({ name: command.name, description: command.description,
-        args: command.args, arguments: command.arguments, source: command.source })),
-      models: (modelRow?.options ?? []).map((id) => ({ id, name: null, description: null,
-        efforts: [], default_effort: null, default: id === 'default', service_tiers: [], default_service_tier: null })),
-      model: await $.session.model(), effort: null, service_tier: null,
+        args: command.args, argument_forms: command.argument_forms, arguments: command.arguments, source: command.source })),
+      models: modelOffers(rows),
+      model: state.selection.model ?? await $.session.model(), effort: state.selection.effort ?? (typeof state.observedEffort === 'string' ? state.observedEffort : null), service_tier: null,
+      automatic_model: state.automaticModel ? state.routedModel ?? state.routing?.model ?? null : state.routing?.model ?? null,
       usage: {
         context: usage.context.tokens === undefined ? null : { used: usage.context.tokens, window: usage.context.window },
         limits: usage.rateLimits.map((limit) => ({ name: limit.kind, used_percent: limit.percentUsed, resets_at: limit.resetsAt ?? null })),
@@ -199,12 +207,62 @@ async function controlExecute($, state, control) {
     return controlCommand($, state, { name: 'rename', args: control.name })
   }
   if (control.do === 'model') {
-    if (control.effort !== null && control.effort !== undefined) {
-      throw new Error('Claude Code exposes no background-safe write of ordinary reasoning effort; its command may require terminal confirmation')
-    }
-    if (control.model !== null && control.model !== undefined) return controlSetModel($, control.model)
+    if (control.model != null || control.effort != null) return controlSelection($, state, control.model, control.effort)
     const offers = await controlExecute($, state, { do: 'offers' })
-    return { kind: 'model_menu', models: offers.models, model: offers.model, effort: null, service_tier: null }
+    return { kind: 'model_menu', models: offers.models, model: offers.model, effort: offers.effort, service_tier: null }
+  }
+  if (control.do === 'rewind') return controlRewind($, state, control)
+  if (control.do === 'selection') return { kind: 'selected', model: state.selection.model ?? null, effort: state.selection.effort ?? null }
+  if (control.do === 'checkpoint') {
+    if (state.busy !== false) throw new Error('Claude Code can fork from a turn only between turns')
+    if (control.through === state.completedTurn) await controlCheckpoint($, state, control.through, false)
+    const count = state.checkpoints.turns[control.through]?.after
+    if (count === undefined) throw new Error('this turn has no retained Claude message checkpoint')
+    if (state.checkpoints.full !== true) throw new Error('this session has no fully observed message prefix')
+    return { hashes: state.checkpoints.messages.slice(0, count), retained_until: state.checkpoints.turns[control.through].after_uuid }
+  }
+  if (control.do === 'checkpoint_export') return state.checkpoints.full === true ? state.checkpoints : null
+  if (control.do === 'checkpoint_import') {
+    const current = await $.session.messages()
+    const hashes = await messageFingerprints(current)
+    const expected = control.checkpoints.messages
+    const expectedTail = current.length >= 4096 ? expected.slice(-hashes.length) : expected
+    if (hashes.length !== expectedTail.length || !hashes.every((hash, index) => expectedTail[index] === hash)) throw new Error('the fork does not carry the same retained message context')
+    const policy = $.process.spawn({ argv: [FASTCTX, 'claude-session-policy', WORLD, state.host.session, '--messages', String(expected.length)],
+      input: JSON.stringify({ tail: current.map(messageProjection) }) })
+    let stdout = '', stderr = ''
+    for await (const piece of policy) { if (piece.stream === 'stdout') stdout += piece.text; else stderr += piece.text }
+    if ((await policy.result).code !== 0) throw new Error('reading the fork context: ' + stderr)
+    const observed = JSON.parse(stdout)
+    if (observed.context_uuids == null || observed.context_uuids.length !== expected.length) throw new Error('the fork has not persisted its retained context')
+    state.checkpoints = control.checkpoints
+    for (const point of Object.values(state.checkpoints.turns)) {
+      point.before_uuid = point.before > 0 ? observed.context_uuids[point.before - 1] : null
+      point.after_uuid = point.after > 0 ? observed.context_uuids[point.after - 1] : null
+    }
+    state.lastUuid = observed.last_uuid
+    state.lastRawUuid = observed.context_tail
+    state.checkpoints.last_uuid = state.lastUuid
+    state.checkpoints.last_raw_uuid = state.lastRawUuid
+    state.checkpoints.uuids = observed.context_uuids
+    await saveCheckpoints($, state)
+    return { kind: 'done', said: null }
+  }
+  if (control.do === 'rebased') {
+    state.lastUuid = control.last_uuid
+    state.lastRawUuid = control.context_tail
+    state.checkpoints.uuids = control.uuids
+    state.checkpoints.last_uuid = state.lastUuid
+    state.checkpoints.last_raw_uuid = state.lastRawUuid
+    delete state.checkpoints.compacted_parent
+    await saveCheckpoints($, state)
+    return { kind: 'done', said: null }
+  }
+  if (control.do === 'agents') return { kind: 'agents', agents: await $.agent.list() }
+  if (control.do === 'agent_messages') {
+    const messages = await $.session.messages({ agentId: control.agent_id, as: 'api' })
+    if (!Array.isArray(messages)) return { kind: 'refused', said: messages.deny }
+    return { kind: 'agent_messages', agent_id: control.agent_id, messages, recent_only: true }
   }
   throw new Error('Claude Code has no mod control for ' + control.do)
 }
@@ -244,7 +302,16 @@ async function startControlTurn($, e) {
     if (state === null) return
     state.busy = true
     state.turn = e.turnId
+    state.engineTurn = e.turnId
+    state.engineModel = undefined
+    state.automaticModel = state.routing !== null
+    state.routedModel = state.routing?.model
     turns.set(e.turnId, state)
+    if (state.promptCheckpoint !== undefined && state.promptCheckpoint !== null) {
+      state.checkpoints.turns[e.turnId] = { before: state.promptCheckpoint, before_uuid: state.promptUuid ?? null }
+      delete state.promptCheckpoint
+      await saveCheckpoints($, state)
+    }
     await controlWrite($, state.directory + '/activity.json', { instance: state.host.instance, turn: state.turn })
 }
 
@@ -252,6 +319,8 @@ async function completeControlTurn($, e) {
     if (e.agentId !== undefined) return
     const state = turns.get(e.turnId) ?? [...sessions.values()].find((entry) => entry.turn === e.turnId)
     if (state) {
+      state.completedTurn = e.turnId
+      await controlCheckpoint($, state, e.turnId, false)
       await controlWrite($, state.directory + '/ended/' + encodeURIComponent(e.turnId) + '.json', { instance: state.host.instance })
       if (state.turn === e.turnId) {
         state.busy = false
@@ -300,13 +369,11 @@ async function controlCall($, e, next) {
 async function controlPermission($, e, next) {
     const state = await controlBegin($, sessions)
     if (state === null) return next(e)
-    // This event has no tool_use_id. Only a unique live match can be
-    // invalidated when the native surface wins the permission race. An
-    // ambiguous request stays with Claude Code's own permission UI.
-    // Inputs may have been rewritten by an inner hook, so they cannot
-    // identify the invocation when the same tool is running in parallel.
-    const matches = [...state.calls.values()].filter((call) => call.tool === e.tool_name && call.agentId === e.agent_id)
-    if (matches.length !== 1) return next(e)
-    const reply = await controlQuestion($, state, 'classic.PermissionRequest', e, matches[0])
-    return reply.kind === 'answer' ? reply.answer : next(e)
+    const verdict = await next(e)
+    if (verdict.decision !== 'ask' || e.tool_use_id === undefined || e.ceiling === 'ask') return verdict
+    const call = state.calls.get(e.tool_use_id) ?? { tool: e.tool, agentId: e.agentId, requests: [] }
+    try {
+      const reply = await controlQuestion($, state, 'tool.check', { ...e, verdict }, call)
+      return reply.kind === 'answer' ? reply.answer : verdict
+    } finally { await controlCancelCall($, state, call) }
 }

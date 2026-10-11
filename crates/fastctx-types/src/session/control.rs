@@ -27,8 +27,8 @@ pub enum Control {
     },
     /// Compacts the conversation now. Between turns only.
     Compact,
-    /// The model and reasoning effort from the next turn on; what is `None`
-    /// stays as it is.
+    /// The next eligible request's model and effort; what is `None` stays as
+    /// it is. Codex applies this when a new turn starts.
     Model { model: Option<String>, effort: Option<String> },
     /// Names the conversation.
     Rename { name: String },
@@ -39,6 +39,10 @@ pub enum Control {
     /// Drops the turn `from` and every turn after it from the conversation.
     /// Files the turns changed stay as they are.
     Rewind { from: String },
+    /// The host's native agents, separate from World residents.
+    Agents,
+    /// The recent public messages of a native agent, identified by its host id.
+    AgentMessages { agent_id: String },
     /// Answers a request the session waits on the user for, as its host
     /// reported it (`SessionChange::Request`): `request` is the request's
     /// opaque reply address, `answer` what the host's contract takes.
@@ -56,18 +60,48 @@ pub enum ControlKind {
     Fork,
     Rewind,
     Answer,
+    Agents,
+    AgentMessages,
 }
 
 /// What came of a `Control`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Controlled {
+    /// A saved request override, without changing the user's host defaults.
+    Selected {
+        model: Option<String>,
+        effort: Option<String>,
+    },
+    /// A context prefix was retained. These limitations are part of the result.
+    Rewound {
+        from: Option<String>,
+        retained_messages: u64,
+        files_restored: bool,
+        compacted_turns_reachable: bool,
+    },
+    Agents {
+        agents: Vec<super::HostAgent>,
+    },
+    AgentMessages {
+        agent_id: String,
+        messages: Vec<Value>,
+        recent_only: bool,
+    },
+    /// Claude's tool-less completion over its own last request prefix.
+    SideAnswer {
+        reply: Value,
+    },
     /// A confirmed action; `said` is what the host answered in words, when
     /// it did. Merely finishing an invocation is `Reported`, a veto `Refused`.
-    Done { said: Option<String> },
+    Done {
+        said: Option<String>,
+    },
     /// The host completed the invocation but supplied no success/failure
     /// contract. Its words must be shown without a success assertion.
-    Reported { said: Option<String> },
+    Reported {
+        said: Option<String>,
+    },
     /// A structured host refusal, with the host's words unchanged.
     Refused {
         said: String,
@@ -78,14 +112,32 @@ pub enum Controlled {
     },
     /// Open the model selector with this catalog and the next World turn's
     /// selections. This is a UI request, not a command's textual output.
-    ModelMenu { models: Vec<ModelOffer>, model: Option<String>, effort: Option<String>, service_tier: Option<String> },
+    ModelMenu {
+        models: Vec<ModelOffer>,
+        model: Option<String>,
+        effort: Option<String>,
+        service_tier: Option<String>,
+    },
     /// The fork, a resident of its own.
-    Forked { resident: Address },
+    Forked {
+        resident: Address,
+    },
+    /// The new resident exists, but retaining the requested prefix failed.
+    ForkIncomplete {
+        resident: Address,
+        why: String,
+    },
 }
 
 /// What a conversation offers now, asked before its menus are shown.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Offers {
+    /// Exact turn boundaries observed by hosts that need a message checkpoint.
+    /// None means this host uses its own turn addressing rather than checkpoints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoints: Option<Vec<TurnCheckpoint>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_limits: Option<HistoryLimits>,
     /// The controls this session takes.
     pub controls: Vec<ControlKind>,
     /// Its own commands, as its host lists them now.
@@ -97,6 +149,9 @@ pub struct Offers {
     /// or the latest host-reported defaults when no choice was made.
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// The host's automatic route while the saved model override is suspended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automatic_model: Option<String>,
     /// Selected service tier for the next World turn, or the host's report
     /// without a World choice. Catalog defaults do not mean a tier is active.
     #[serde(default)]
@@ -107,12 +162,30 @@ pub struct Offers {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnCheckpoint {
+    pub turn: String,
+    pub rewind: bool,
+    pub fork: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryLimits {
+    pub files_restored: bool,
+    pub compacted_turns_reachable: bool,
+    pub empty_prefix_allowed: bool,
+    pub complete_prefix: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandOffer {
     /// Without the slash.
     pub name: String,
     pub description: String,
     /// What it takes after its name, as the host hints it.
     pub args: Option<String>,
+    /// Background argument forms, separate from the host's unrestricted hint.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub argument_forms: Vec<String>,
     /// Whether arguments are accepted or required. Older catalogs without
     /// this field make no requirement; keep their arguments optional.
     #[serde(default)]

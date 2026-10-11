@@ -27,6 +27,8 @@ pub mod attachments;
 pub mod control;
 mod details;
 pub use details::*;
+mod host;
+pub use host::*;
 
 /// One thing that happened in a session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,7 +141,11 @@ impl Happened {
             self,
             Happened::Began { .. }
                 | Happened::Changed {
-                    change: SessionChange::Composer { .. } | SessionChange::ComposerFailed { .. },
+                    change: SessionChange::Composer { .. }
+                        | SessionChange::ComposerFailed { .. }
+                        | SessionChange::CommandsChanged
+                        | SessionChange::AgentEvent { .. }
+                        | SessionChange::Agents { .. },
                     ..
                 }
                 | Happened::Grew { .. }

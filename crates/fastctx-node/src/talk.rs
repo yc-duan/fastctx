@@ -212,7 +212,18 @@ pub async fn watch_here(
         // Claude Code's own record of the session, placed in the turns the
         // World saw, which the World's record says.
         _ if about.host.agent.as_str() == "claude" => {
-            let recorded = recorded(&directory)?;
+            let mut recorded = recorded(&directory)?;
+            let removed: std::collections::HashSet<_> = recorded
+                .iter()
+                .flat_map(|event| match &event.happened {
+                    fastctx_types::session::Happened::Changed {
+                        change: fastctx_types::session::SessionChange::HistoryCut { removed_turns },
+                        ..
+                    } => removed_turns.clone(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            recorded.retain(|event| turn_of(&event.happened).is_none_or(|turn| !removed.contains(turn)));
             let hosted = crate::claude::history::hosted(node, resident, &recorded).await;
             (recorded, Some(hosted))
         }
