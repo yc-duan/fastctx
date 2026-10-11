@@ -202,12 +202,22 @@ fn finish(_app: &AppHandle, everything: bool) -> Result<(), String> {
     let identity = fastctx_platform::current_identity().map_err(|error| error.to_string())?;
     let quote = |text: &str| format!("'{}'", text.replace('\'', "''"));
     let path = uninstaller.to_str().ok_or("World's uninstaller path is not Unicode")?;
+    // World's WebView2 processes outlive it by a moment and hold the
+    // application data a complete removal deletes, so the uninstaller waits
+    // for every process World started, found by parent and by having started
+    // after World, as well as for World itself.
     let script = format!(
-        "$ErrorActionPreference='Stop'; $p=Get-Process -Id {} -ErrorAction SilentlyContinue; if ($null -ne $p -and $p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -eq {}) {{ $p.WaitForExit() }}; & {} /S /FASTCTXKERNELDONE {}",
-        identity.pid,
-        quote(&identity.token),
-        quote(path),
-        if everything { "/FASTCTXEVERYTHING" } else { "" }
+        "$ErrorActionPreference='Stop'; $born=[DateTime]::FromFileTimeUtc([long]{token}); \
+         $all=@(Get-CimInstance Win32_Process); $tree=@({pid}); \
+         for ($i=0; $i -lt $tree.Count; $i++) {{ $tree += @($all | Where-Object {{ $_.ParentProcessId -eq $tree[$i] -and $_.CreationDate.ToUniversalTime() -ge $born }} | ForEach-Object {{ [int]$_.ProcessId }}) }}; \
+         $p=Get-Process -Id {pid} -ErrorAction SilentlyContinue; \
+         if ($null -ne $p -and $p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -eq {token}) {{ $p.WaitForExit() }}; \
+         @($tree | Select-Object -Skip 1 | ForEach-Object {{ Get-Process -Id $_ -ErrorAction SilentlyContinue }} | Where-Object {{ $_.StartTime.ToUniversalTime() -ge $born }}) | ForEach-Object {{ $_.WaitForExit() }}; \
+         & {path} /S /FASTCTXKERNELDONE {everything}",
+        pid = identity.pid,
+        token = quote(&identity.token),
+        path = quote(path),
+        everything = if everything { "/FASTCTXEVERYTHING" } else { "" }
     );
     let mut command = Command::new("powershell.exe");
     command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
