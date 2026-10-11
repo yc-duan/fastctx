@@ -68,16 +68,6 @@
   display: none;
 }
 
-/* What using another's agent opens: said once, quietly, over the input. */
-.new-talk-warn {
-  max-width: var(--column);
-  margin: 0 auto var(--space-2);
-  padding: 0 var(--space-4);
-  font-size: var(--size-small);
-  line-height: var(--leading-ui);
-  color: var(--accent);
-}
-
 /* What the words go to: the agent, the machine it works on, the project,
    each a quiet label that opens its choices. */
 .talk-context {
@@ -130,7 +120,7 @@
   text-overflow: ellipsis;
 }
 
-.talk-chip.lent .talk-chip-sub {
+.talk-chip.lent .talk-chip-sub:not(.who) {
   color: var(--accent);
 }
 

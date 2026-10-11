@@ -83,15 +83,10 @@ export interface NewTalkWords {
   /** Why a lent agent is asked no machine to work on: the hover of its
    *  lent mark. */
   lentWorks(owner: string): string;
-  /** The first use of an agent on another's machine: what it lets that
-   *  machine do; `everything` for the super administrator. */
-  reaches(owner: string, machine: string, everything: boolean): string;
   /** An agent lent to the account, by whom. */
   lentBy(owner: string): string;
-  /** Where a lent agent's files other than images go. */
-  filesOn: string;
-  /** The hover of the files row's label. */
-  filesOnWhat: string;
+  /** A lent agent was given files other than images, and no machine of
+   *  the user's can take them. */
   noFilePlace: string;
   project: string;
   /** The project label when the conversation begins in none. */
@@ -138,15 +133,9 @@ export const zhNewTalk: NewTalkWords = {
   account: "账号",
   worksOn: "工作机器",
   livesHere: "所在机器",
-  lentWorks: (owner) => `借自 ${owner}，在你的机器上工作，不接触 ${owner} 的电脑`,
-  reaches: (owner, machine, everything) =>
-    everything
-      ? `首次使用后，${machine} 上的智能体可访问本服务器的所有机器，${owner} 也将能访问。可在账号页撤销。`
-      : `首次使用后，${machine} 上的智能体可访问你的机器，${owner} 也将能访问。可在账号页撤销。`,
-  lentBy: (owner) => `借自 ${owner}`,
-  filesOn: "文件存放",
-  filesOnWhat: "图片留在智能体所在机器，其他文件存放到所选机器",
-  noFilePlace: "没有可存放文件的机器",
+  lentWorks: (owner) => `来自 ${owner}，在你的机器上工作，不接触 ${owner} 的电脑`,
+  lentBy: (owner) => `来自 ${owner}`,
+  noFilePlace: "没有能放文件的机器",
   project: "项目",
   outsideProject: "不在项目里",
   here: "本机",
@@ -184,15 +173,9 @@ export const enNewTalk: NewTalkWords = {
   account: "Account",
   worksOn: "Works on",
   livesHere: "where it lives",
-  lentWorks: (owner) => `Lent by ${owner}; works on your machines, never on ${owner}'s computer`,
-  reaches: (owner, machine, everything) =>
-    everything
-      ? `After first use, agents on ${machine} can access every machine on this server, and so can ${owner}. Revoke anytime on the Account page.`
-      : `After first use, agents on ${machine} can access your machines, and so can ${owner}. Revoke anytime on the Account page.`,
-  lentBy: (owner) => `lent by ${owner}`,
-  filesOn: "Files to",
-  filesOnWhat: "Images stay with the agent; other files go to the machine you choose",
-  noFilePlace: "No machine to store files",
+  lentWorks: (owner) => `From ${owner}; works on your machines, never on ${owner}'s computer`,
+  lentBy: (owner) => `from ${owner}`,
+  noFilePlace: "No machine can take the files",
   project: "Project",
   outsideProject: "No project",
   here: "this computer",
@@ -694,7 +677,7 @@ export const zhDetails: DetailsWords = {
   colleagues: "调用的模型",
   worksOn: "工作机器",
   worksOnLives: "所在机器",
-  lentBy: "借自",
+  lentBy: "来自",
   worksLent: "每条命令指定",
   worksOnThere: (machine) => machine,
   changeWorksOn: "更改",
@@ -760,7 +743,7 @@ export const enDetails: DetailsWords = {
   colleagues: "Models it called",
   worksOn: "Works on",
   worksOnLives: "its own machine",
-  lentBy: "Lent by",
+  lentBy: "From",
   worksLent: "chosen per command",
   worksOnThere: (machine) => machine,
   changeWorksOn: "Change",

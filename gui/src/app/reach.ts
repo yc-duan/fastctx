@@ -256,6 +256,15 @@ export function filePlaces(world: WorldNow | null, login: Login): Machine[] {
   return machinesOf(world).filter((machine) => (machine.here ? owns(machine, login) : rightsOn(machine, login).hands));
 }
 
+/** Where files other than images go for a lent agent, which works on no
+ *  machine of its own: the machine in front of the user, where it can take
+ *  them; else the first of the account's own that is online; else the first
+ *  online it may work on. The model is told where they are. */
+export function fileHome(world: WorldNow | null, login: Login): string | null {
+  const places = filePlaces(world, login).filter((machine) => machine.here || machine.online !== false);
+  return (places.find((machine) => machine.here) ?? places.find((machine) => owns(machine, login)) ?? places[0])?.written ?? null;
+}
+
 /** One agent's login on a machine, as the new conversation names it. */
 export function loginKey(machine: string, agent: string, home: string | null): string {
   return `${machine}|${agent}|${home ?? ""}`;

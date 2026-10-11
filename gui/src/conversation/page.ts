@@ -14,7 +14,7 @@ import { SendQueue, type Queued } from "./queue";
 import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
 import type { ComposerUpdated } from "../world/composer";
 import { NodeQueue } from "./node-queue";
-import { NodeTray, type FilesOnChoosing } from "./node-tray";
+import { NodeTray, type LentFiles } from "./node-tray";
 import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
@@ -104,9 +104,8 @@ export interface PageOptions {
      *  them so; returns how to stop listening. */
     drops?(on: { over(over: boolean): void; dropped(paths: string[]): void }): () => void;
     /** For an agent lent to the user, which has no machine it works on:
-     *  the user's machines its files other than images may go to, the one
-     *  to go to first, and what the choice says. */
-    filesOn?: FilesOnChoosing;
+     *  the machine of the user's its files other than images go to. */
+    filesOn?: LentFiles;
   };
   /** Files on the agent's machine, found as the user types `@` and a few
    *  letters; the one chosen goes into the words as its path. */
@@ -186,7 +185,6 @@ export class ConversationPage {
           <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
-          <div class="composer-files-on" hidden></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
@@ -435,8 +433,8 @@ export class ConversationPage {
     this.unbindShared = bindComposer(this.input, session.draft);
     if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
     const say = (why: string) => this.say(why, why, true);
-    const choosing = this.options.attach?.filesOn ?? null;
-    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say, choosing, (text, attachments, sending) => {
+    const lentFiles = this.options.attach?.filesOn ?? null;
+    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say, lentFiles, (text, attachments, sending) => {
       const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
       const key = this.options.conversation.sending(text, this.options.here || null, shown);
       this.update();
@@ -444,15 +442,13 @@ export class ConversationPage {
     });
     this.queue.element.replaceWith(this.nodeQueue.element);
     if (this.options.attach && this.tray) {
-      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, choosing);
+      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, lentFiles);
       this.tray.element.replaceWith(this.nodeTray.element);
-      this.element.querySelector(".composer-files-on")!.replaceWith(this.nodeTray.chooser);
     }
     session.subscribe((state) => {
       this.sharedState = state;
       this.nodeQueue?.draw(state);
       this.nodeTray?.draw(state);
-      this.drawFilesOn();
       this.fit();
       this.drawAction();
     });
@@ -563,14 +559,14 @@ export class ConversationPage {
     }
     const session = this.session;
     const files = session ? (this.nodeTray?.files ?? 0) : (this.tray?.files ?? 0);
-    const choosing = files ? (this.options.attach?.filesOn?.places() ?? null) : null;
-    const filesOn = !choosing ? null : this.nodeTray ? this.nodeTray.chosen : this.filesOn;
-    if (choosing && !filesOn) {
-      this.say(this.options.attach!.filesOn!.label);
+    const lent = this.options.attach?.filesOn;
+    const placing = !!lent && files > 0 && lent.lent();
+    const filesOn = !placing ? null : this.nodeTray ? this.nodeTray.chosen : lent!.place();
+    if (placing && !filesOn) {
+      this.say(lent!.nowhere);
       return;
     }
     const attached = !session && this.tray?.count ? { ...this.tray.take(), filesOn } : { refs: [], shown: [], filesOn: null };
-    this.drawFilesOn();
     if (!text && !attached.refs.length && !(session && this.nodeTray?.count)) {
       if (this.options.conversation.moving()) this.options.stop();
       return;
@@ -784,8 +780,6 @@ export class ConversationPage {
     field.addEventListener("blur", () => finish(true));
   }
   private tray: AttachTray | null = null;
-  /** Where a lent agent's files other than images go, as written. */
-  private filesOn: string | null = null;
   private queue!: SendQueue;
   /** How many turns had ended when the last queued words were sent. */
   private released: number | null = null;
@@ -794,47 +788,11 @@ export class ConversationPage {
   private failed: "not_taken" | "unsure" | null = null;
   private stopDrops: (() => void) | null = null;
 
-  /** For a lent agent given files other than images: which of the user's
-   *  machines they go to, chosen where they wait. */
-  private drawFilesOn(): void {
-    // A shared input's tray draws the node's choice.
-    if (this.nodeTray) return;
-    const box = this.element.querySelector<HTMLElement>(".composer-files-on")!;
-    const choosing = this.options.attach?.filesOn;
-    const places = choosing && this.tray?.files ? choosing.places() : null;
-    if (!choosing || !places) {
-      box.hidden = true;
-      box.innerHTML = "";
-      return;
-    }
-    if (!places.some((place) => place.value === this.filesOn && !place.disabled)) {
-      const usual = choosing.usual();
-      this.filesOn = places.find((place) => place.value === usual && !place.disabled)?.value ?? places.find((place) => !place.disabled)?.value ?? null;
-    }
-    const html = `<span class="files-on-label" title="${escape(choosing.what)}">${escape(choosing.label)}</span><span class="choice-options">${places
-      .map(
-        (place) =>
-          `<button type="button" class="choice${place.value === this.filesOn ? " chosen" : ""}" aria-pressed="${place.value === this.filesOn}" data-files-on="${escape(place.value)}"${place.disabled ? " disabled" : ""}>${escape(place.label)}${place.note ? `<span class="choice-note">${escape(place.note)}</span>` : ""}</button>`,
-      )
-      .join("")}</span>`;
-    if (box.innerHTML !== html) box.innerHTML = html;
-    box.hidden = false;
-  }
-
   /** Files come with the words: picked with the paperclip, pasted, or
    *  dropped anywhere on the page. */
   private attaching(attach: NonNullable<PageOptions["attach"]>): void {
-    const tray = new AttachTray(attach.words, attach.seam, () => {
-      this.drawFilesOn();
-      this.drawAction();
-    });
+    const tray = new AttachTray(attach.words, attach.seam, () => this.drawAction());
     this.tray = tray;
-    this.element.querySelector(".composer-files-on")!.addEventListener("click", (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-files-on]");
-      if (!button || button.disabled) return;
-      this.filesOn = button.dataset.filesOn!;
-      this.drawFilesOn();
-    });
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
     const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
     const pick = this.element.querySelector<HTMLInputElement>(".composer-pick")!;

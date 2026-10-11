@@ -18,11 +18,9 @@
 // An agent lent to the user works on no machine of its own choosing: each
 // of its commands names one of the user's machines, so it is asked no
 // machine to work on, and the files attached for it, other than images, go
-// to a machine of the user's chosen as they are attached. The first time
-// the user is about to use an agent on a machine of another, what that
-// means is said before it begins: that machine may then reach the user's
-// machines (`world-network.md`). Which agents may call which models is the
-// model collaboration feature's, never a conversation's.
+// to a machine of the user's without asking (`fileHome`). Which agents may
+// call which models is the model collaboration feature's, never a
+// conversation's.
 //
 // Every machine is asked what agents it has each time the page is shown.
 // Files wait in the input while the agent and project are still being
@@ -45,12 +43,10 @@ import { accountOf, homeChoice, homeLabel, homesOf, installed, loggedOut, window
 import type { ConsentHome } from "./claude-consent";
 import {
   borrowedOf,
-  filePlaces,
+  fileHome,
   groupsOf,
-  isSuper,
   loginKey,
   loginLabel,
-  machineActsFor,
   machinesOf,
   openersOn,
   ownerOf,
@@ -191,7 +187,6 @@ export class NewTalk {
   private readonly form: HTMLFormElement;
   private readonly input: HTMLTextAreaElement;
   private readonly note: HTMLElement;
-  private readonly warn: HTMLElement;
   private readonly start: HTMLButtonElement;
   private readonly context: HTMLElement;
   private readonly pop: HTMLElement;
@@ -239,12 +234,10 @@ export class NewTalk {
         <h1 class="new-talk-title"></h1>
       </div>
       <footer class="composer-dock new-talk-dock">
-        <p class="new-talk-warn" hidden></p>
         <form class="composer new-talk-composer">
           <div class="composer-menus"><div class="talk-pop" role="dialog" hidden></div></div>
           <div class="talk-context"></div>
           <div class="composer-tray"></div>
-          <div class="composer-files-on" hidden></div>
           <textarea rows="1" enterkeyhint="send"></textarea>
           <div class="composer-row">
             <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
@@ -256,7 +249,6 @@ export class NewTalk {
     this.form = this.element.querySelector("form")!;
     this.input = this.element.querySelector("textarea")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
-    this.warn = this.element.querySelector<HTMLElement>(".new-talk-warn")!;
     this.start = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.context = this.element.querySelector<HTMLElement>(".talk-context")!;
     this.pop = this.element.querySelector<HTMLElement>(".talk-pop")!;
@@ -282,9 +274,11 @@ export class NewTalk {
     this.element.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && this.opened) {
         event.stopPropagation();
-        const label = this.context.querySelector<HTMLElement>(`[data-pop="${this.opened}"]`);
+        // The labels are drawn anew as the choices close: the one to go
+        // back to is found after.
+        const opened = this.opened;
         this.choose(null);
-        label?.focus();
+        this.context.querySelector<HTMLElement>(`[data-pop="${opened}"]`)?.focus();
       }
     });
     this.form.addEventListener("submit", (event) => {
@@ -365,8 +359,9 @@ export class NewTalk {
         },
       },
       () => {
-        // A file other than an image asks, for a lent agent, where it goes.
-        this.drawFilesOn();
+        // A file other than an image goes, for a lent agent, to a machine
+        // of the user's.
+        this.placeFiles();
         this.drawStart();
       },
       true,
@@ -718,10 +713,6 @@ export class NewTalk {
       case "works":
         this.worksOn = value || null;
         break;
-      case "files-on":
-        this.filesOn = value;
-        remember("files-on", value);
-        break;
       case "town":
         this.town = value || null;
         this.opened = null;
@@ -751,7 +742,6 @@ export class NewTalk {
     }
     const option = this.chosenOption(lines);
     const line = lines.find((one) => option && one.options.includes(option)) ?? null;
-    const lent = option?.lent ?? null;
     const lives = this.lives(world, option);
     const logins = this.openers(world, option);
     const login = logins.chosen;
@@ -778,12 +768,6 @@ export class NewTalk {
     this.drawContext(option, line, towns, world);
     this.drawPop(lines, logins, places, towns);
     this.drawModel();
-    // Using an agent on another's machine lets that machine reach the
-    // account's machines, from the first time on: said before it begins.
-    const owner = option ? (lent ? lent.owner : lives && login && !owns(lives, login) ? ownerOf(lives, login) : null) : null;
-    const reaching = !!option && !!login && !!owner && !machineActsFor(world, option.machine, login);
-    this.warn.hidden = !reaching;
-    this.warn.textContent = reaching && owner && login && option ? words.reaches(owner, option.written, isSuper(world, login)) : "";
     // What was sent went for another machine, agent or project: it is sent
     // again, to the one chosen now, when the conversation begins.
     if (this.draft && this.draft.for !== this.chosen()) {
@@ -792,15 +776,16 @@ export class NewTalk {
     }
     this.input.placeholder = words.say(option ? programName(option.agent) : null);
     this.input.setAttribute("aria-label", this.input.placeholder);
-    this.drawFilesOn();
+    this.placeFiles();
     this.drawStart();
   }
 
-  /** Above the input: the chosen agent's mark, drawn by hand, and the
-   *  place's name. The mark is drawn again only for another agent. */
+  /** Above the input: the chosen agent's mark, drawn by hand, and the name
+   *  of the project the words go to. The mark is drawn again only for
+   *  another agent. */
   private drawStage(option: Option | null, world: WorldNow | null): void {
     const { words } = this.options;
-    const town = this.options.town ? world?.towns.find((one) => one.town === this.options.town) : null;
+    const town = this.town ? world?.towns.find((one) => one.town === this.town) : null;
     const title = this.element.querySelector<HTMLElement>(".new-talk-title")!;
     const name = town?.record.name ?? words.title;
     if (title.textContent !== name) title.textContent = name;
@@ -914,35 +899,13 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
     this.models.update(offers);
   }
 
-  /** For a lent agent given files other than images: which of the user's
-   *  machines they go to. */
-  private drawFilesOn(): void {
-    const { words, store } = this.options;
-    const box = this.element.querySelector<HTMLElement>(".composer-files-on")!;
-    const world = store.world.peek();
+  /** For a lent agent given files other than images: the user's machine
+   *  they go to. */
+  private placeFiles(): void {
+    const world = this.options.store.world.peek();
     const option = this.chosenOption();
     const login = this.loginFor(world, option);
-    if (!option?.lent || !login || !(this.tray?.files ?? 0)) {
-      box.hidden = true;
-      box.innerHTML = "";
-      return;
-    }
-    const places = filePlaces(world, login);
-    const usual = [this.filesOn, remembered("files-on")].find((written) => written && places.some((machine) => machine.written === written));
-    this.filesOn = usual ?? places.find((machine) => machine.here)?.written ?? places.find((machine) => machine.online !== false)?.written ?? null;
-    const html = `<span title="${escape(words.filesOnWhat)}">${escape(words.filesOn)}</span>${
-      places.length
-        ? places
-            .map((machine) => {
-              const chosen = machine.written === this.filesOn;
-              const note = machine.here ? words.here : machine.online === false ? words.offline : "";
-              return `<button type="button" class="choice${chosen ? " chosen" : ""}" role="radio" aria-checked="${chosen}" data-choice="files-on" data-value="${escape(machine.written)}"${machine.online === false && !machine.here ? " disabled" : ""}>${escape(machine.written)}${note ? `<span class="choice-note">${escape(note)}</span>` : ""}</button>`;
-            })
-            .join("")
-        : `<span class="choice-none">${escape(words.noFilePlace)}</span>`
-    }`;
-    box.hidden = false;
-    if (box.innerHTML !== html) box.innerHTML = html;
+    this.filesOn = option?.lent && login && (this.tray?.files ?? 0) > 0 ? fileHome(world, login) : null;
   }
 
   private drawStart(): void {
@@ -952,6 +915,16 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
     const said = this.input.value.trim() !== "" || (this.tray?.count ?? 0) > 0;
     const filesNowhere = !!option?.lent && (this.tray?.files ?? 0) > 0 && !this.filesOn;
     this.start.disabled = this.busy || !option || !line || !this.startable(option, line) || !said || filesNowhere;
+    // No machine of the user's can take the files: said, as nothing else
+    // would say why it cannot begin.
+    const nowhere = this.options.words.noFilePlace;
+    if (filesNowhere && !this.busy) {
+      this.note.textContent = nowhere;
+      this.note.classList.add("refused");
+    } else if (this.note.textContent === nowhere) {
+      this.note.textContent = "";
+      this.note.classList.remove("refused");
+    }
   }
 
   /** Claude starts on a machine only once the user has let it work

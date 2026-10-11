@@ -324,7 +324,8 @@ export function specimenNow(two = false): { world: WorldNow; now: Date; lastVisi
  *  the desktop app with its models, Claude Code logged in; on this
  *  computer, a second Codex login for work, nearly spent, and a second
  *  Claude login that was logged out; on lab, Claude Code installed but not
- *  logged in; on render, another's, only the Claude lent to this account. */
+ *  logged in; on server, Claude Code logged in but not yet let to work
+ *  unasked; on render, another's, only the Claude lent to this account. */
 export function specimenAgents(machine: string, at: Date = new Date()): WorldAgents {
   const efforts = (names: string[]) => names.map((effort) => ({ effort, description: "" }));
   const now = at.getTime();
@@ -416,7 +417,9 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
     unattended: { kind: "known", value: false },
   };
   // A machine of another answers only with the logins lent to the asker.
-  const agents = machine === "desktop" ? [codex, claude, work, personal] : machine === "render" ? [claude] : [codex, claude];
+  const asks: AgentFacts = { ...claude, unattended: { kind: "known", value: false } };
+  const agents =
+    machine === "desktop" ? [codex, claude, work, personal] : machine === "render" ? [claude] : machine === "server" ? [codex, asks] : [codex, claude];
   return {
     machine,
     machines: [{ kind: "answered", reply: { machine, checked_at: at.toISOString(), elapsed_ms: 180, agents } }],

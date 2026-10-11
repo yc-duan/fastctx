@@ -9,7 +9,7 @@
 import type { ComposerSession, ComposerSessionState } from "./composer";
 import { bindComposer, type ComposerDocument } from "./composer";
 import type { AttachWords } from "./attach";
-import { NodeTray, type FilesOnChoosing } from "./node-tray";
+import { NodeTray, type LentFiles } from "./node-tray";
 import type { QueueWords } from "./queue";
 import type { Attachment } from "../world/attachments";
 import type { ComposerUpdated } from "../world/composer";
@@ -36,7 +36,7 @@ export class NodeQueue {
     private readonly session: ComposerSession,
     /** Something could not be done: said by the composer. */
     private readonly failed: (why: string) => void,
-    private readonly choosing: FilesOnChoosing | null = null,
+    private readonly lentFiles: LentFiles | null = null,
     /** A line sent at once: the page shows it below the turn's line until
      *  the session takes it in (walkthrough items 9, 10). */
     private readonly sentNow: ((text: string, attachments: readonly Attachment[], sending: Promise<ComposerUpdated>) => void) | null = null,
@@ -107,7 +107,7 @@ export class NodeQueue {
       field.className = "queue-edit";
       field.rows = 2;
       field.setAttribute("aria-label", this.words.edit);
-      const tray = this.attachWords ? new NodeTray(this.attachWords, this.session, document, this.failed, this.choosing) : null;
+      const tray = this.attachWords ? new NodeTray(this.attachWords, this.session, document, this.failed, this.lentFiles) : null;
       this.editing = { id, document, field, tray, unbind: bindComposer(field, document) };
       this.draw();
       field.focus();
@@ -216,7 +216,7 @@ export class NodeQueue {
       .map((item) => {
         const count = item.draft.attachments.length + item.draft.uploads.length;
         if (this.editing?.id === item.id) {
-          return `<li class="queue-row editing" data-key="${escape(item.id)}"><span class="queue-edit-slot"></span><span class="queue-tray-slot"></span><span class="queue-files-on-slot"></span><span class="queue-acts">${this.attachWords ? `<button class="icon-button" type="button" data-queue="pick" aria-label="${escape(this.attachWords.attach)}" title="${escape(this.attachWords.attach)}">${glyph("attach", 14)}</button><input class="queue-pick" type="file" multiple hidden>${
+          return `<li class="queue-row editing" data-key="${escape(item.id)}"><span class="queue-edit-slot"></span><span class="queue-tray-slot"></span><span class="queue-acts">${this.attachWords ? `<button class="icon-button" type="button" data-queue="pick" aria-label="${escape(this.attachWords.attach)}" title="${escape(this.attachWords.attach)}">${glyph("attach", 14)}</button><input class="queue-pick" type="file" multiple hidden>${
             // On a phone the camera is one tap away here too.
             matchMedia("(pointer: coarse)").matches
               ? `<button class="icon-button" type="button" data-queue="shot" aria-label="${escape(this.attachWords.photo)}" title="${escape(this.attachWords.photo)}">${glyph("camera", 14)}</button><input class="queue-shot queue-pick" type="file" accept="image/*" capture="environment" hidden>`
@@ -244,7 +244,6 @@ export class NodeQueue {
         this.element.querySelector(".queue-edit-slot")?.replaceWith(this.editing.field);
         if (this.editing.tray) {
           this.element.querySelector(".queue-tray-slot")?.replaceWith(this.editing.tray.element);
-          this.element.querySelector(".queue-files-on-slot")?.replaceWith(this.editing.tray.chooser);
         }
         for (const pick of this.element.querySelectorAll<HTMLInputElement>(".queue-pick")) {
           pick.addEventListener("change", () => {

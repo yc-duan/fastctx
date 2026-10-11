@@ -73,7 +73,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, zhAccount, zhAdmin, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
-import { borrowedBy, borrowedOf, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { borrowedBy, borrowedOf, fileHome, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import { Details, type Manage } from "./conversation/details";
 import { ComposerSession } from "./conversation/composer";
 import { attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
@@ -941,29 +941,20 @@ function liveTalk(address: Address): Page {
         },
       },
       drops: windowDrops,
-      filesOn: {
-        places: () => {
+      filesOn: (() => {
+        const lentAs = () => {
           const known = residentAt(store.world.peek(), address);
-          const lent = known ? borrowedBy(store.world.peek(), known) : null;
-          return lent
-            ? filePlaces(store.world.peek(), lent.login).map((machine) => ({
-                value: machine.written,
-                label: machine.written,
-                note: machine.here ? (english ? "this one" : "这台") : machine.online === false ? (english ? "offline" : "离线") : undefined,
-                disabled: !machine.here && machine.online === false,
-              }))
-            : null;
-        },
-        usual: () => {
-          try {
-            return localStorage.getItem("files-on");
-          } catch {
-            return null;
-          }
-        },
-        label: (english ? enNewTalk : zhNewTalk).filesOn,
-        what: (english ? enNewTalk : zhNewTalk).filesOnWhat,
-      },
+          return known ? borrowedBy(store.world.peek(), known) : null;
+        };
+        return {
+          lent: () => lentAs() !== null,
+          place: () => {
+            const lent = lentAs();
+            return lent ? fileHome(store.world.peek(), lent.login) : null;
+          },
+          nowhere: (english ? enNewTalk : zhNewTalk).noFilePlace,
+        };
+      })(),
     },
     details: detailsOf(address, async () => {
       const [found] = await look([address.resident]);
