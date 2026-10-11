@@ -1318,6 +1318,7 @@ function show(next: Place): void {
       page = new LoginPage({
         store,
         words: english ? enLogin : zhLogin,
+        ...(next.way ? { way: next.way } : {}),
         head,
         device: asDevice,
         setup: asDevice ? undefined : () => (live ? setupState() : Promise.reject(new Error("specimen"))),

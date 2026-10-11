@@ -1197,3 +1197,44 @@ a.details-job {
 .settings-device .facts {
   align-items: baseline;
 }
+
+/* In: the drawing, the line that says where, who, and the way in, held
+   together in the middle of the page. The drawing is a picture only. */
+.login-page.in .welcome {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.login-page.in .welcome-body {
+  width: min(560px, 100%);
+  margin: 0 auto;
+}
+
+.welcome-done .welcome-drawing {
+  height: clamp(200px, 30dvh, 300px);
+  margin-top: 0;
+  pointer-events: none;
+}
+
+.welcome-done-who {
+  font-family: var(--font-body, inherit);
+  letter-spacing: 0.02em;
+}
+
+.welcome-done-acts {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+
+.welcome-done-acts .sheet-go {
+  min-width: 160px;
+}
+
+.welcome-done .welcome-slips {
+  width: auto;
+  max-width: 100%;
+}
