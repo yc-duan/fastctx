@@ -106,7 +106,7 @@ export class RemoteWorld {
     this.body.removeEventListener("click", this.clicked);
     this.body.removeEventListener("change", this.changed);
     this.body.removeEventListener("submit", this.submitted);
-    if (this.made && !this.joined) void this.options.seams.close(this.made.session).catch(() => {});
+    if (this.made && !this.joined) void this.options.seams.close(this.made.session).catch((error: unknown) => console.warn("the session with the server could not be closed", error));
   }
 
   private readonly clicked = (event: Event): void => {
