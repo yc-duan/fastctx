@@ -238,7 +238,7 @@ test('World failures preserve native operations before and after initialization'
   const files = new Map<string, string>()
   let sessionId = 'unavailable-at-start'
   let unavailable = true
-  let tools = 0, compactions = 0
+  let tools = 0, compactions = 0, modelRequests = 0
   const classics: string[] = []
   on('mcp.connect', () => ({ value: { isConnected: false, reason: 'disabled', message: 'fixture' } }))
   on('session.id', () => ({ value: sessionId }))
@@ -281,6 +281,7 @@ test('World failures preserve native operations before and after initialization'
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('tool.call', () => { tools++; return { result: { native: true } } })
   on('turn.step', async function* (_, e) {
+    modelRequests++
     yield { kind: 'text', index: 0, text: 'native response' }
     return { turnId: e.turnId, index: e.index, answer: 'native response', toolUses: [], stopReason: 'end_turn', usage: null }
   })
@@ -311,9 +312,16 @@ test('World failures preserve native operations before and after initialization'
     expect((await $.prompt.section({ name: 'env_info_simple', text: 'native environment' })).text).toBe('native environment')
     const stream = $.turn.step({ turnId: sessionId, index: 0, model: 'native-fixture', messageCount: 1 })
     const pieces = []
-    for await (const piece of stream) pieces.push(piece)
+    // The testing kit returns a plain generator, unlike a hook's next stream.
+    // Reading its terminal value also verifies the native request's result.
+    let terminal = await stream.next()
+    while (!terminal.done) {
+      pieces.push(terminal.value)
+      terminal = await stream.next()
+    }
     expect(pieces).toEqual([{ kind: 'text', index: 0, text: 'native response' }])
-    expect((await stream.result).answer).toBe('native response')
+    expect(terminal.value).toEqual(expect.objectContaining({ turnId: sessionId, index: 0, answer: 'native response',
+      toolUses: [], stopReason: 'end_turn', usage: null }))
     await $.classic.Elicitation({ mcp_server_name: 'fixture', message: 'native form', mode: 'form', requested_schema: { type: 'object' } })
     await $.classic.SubagentStart({ agent_id: 'child', agent_type: 'Explore' })
     await $.classic.SubagentStop({ agent_id: 'child', agent_type: 'Explore', agent_transcript_path: '', stop_hook_active: false })
@@ -328,6 +336,7 @@ test('World failures preserve native operations before and after initialization'
   }
   expect(tools).toBe(2)
   expect(compactions).toBe(2)
+  expect(modelRequests).toBe(2)
   expect(stored.appended().length).toBe(2)
   expect(classics).toEqual(Array.from({ length: 2 }).flatMap(() => ['Elicitation', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'SessionStart', 'PostModelSwitch']))
   expect(lines.some((line) => line.includes('disk unavailable'))).toBe(true)
