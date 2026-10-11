@@ -81,7 +81,8 @@ export class ProjectPage {
   update(map: MapView, who: WorldWho, now: Date): void {
     const { words } = this.options;
     const residents = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => !r.removed);
-    const here = residents.filter((r) => r.here);
+    // Every conversation of the project, while it exists (walkthrough items 20, 22).
+    const here = residents;
     const jobs = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []));
     this.others = who.others;
     const record = map.record;

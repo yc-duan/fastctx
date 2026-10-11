@@ -145,7 +145,7 @@ export const zhHome: HomeWords = {
   unknownLink: "状态未知",
   here: (n) => `${n} 位在线`,
   journals: (n) => `${n} 份手记`,
-  jobsRunning: (n) => `${n} 个作业在跑`,
+  jobsRunning: (n) => `${n} 条后台命令在运行`,
   residents: (n) => `${n} 个智能体`,
   turnEnded: (who) => `${who} 回复完成`,
   turnFailed: (who, reason) => `${who} 出错：${reason}`,

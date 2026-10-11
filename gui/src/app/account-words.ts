@@ -412,19 +412,19 @@ export const zhMachines: MachinesWords = {
   actions: "操作",
   tookBack: (to) => `已收回 ${to}`,
   undo: "撤回",
-  reroute: "改连法",
+  reroute: "改连接方式",
   routeVia: (machine, relay) => `${machine} 改经 ${relay} 连接服务器`,
   routeDirect: (machine) => `${machine} 改为直连服务器`,
-  routeList: (relays) => (relays.length ? `地址单子：依次试 ${relays.join("、")}，最后是服务器` : "地址单子：只有服务器"),
+  routeList: (relays) => (relays.length ? `依次连接 ${relays.join("、")}，最后是服务器` : "只连服务器"),
   routeFailed: (machine, relay) => `${machine} 没能经 ${relay} 连上`,
   confirm: "确定",
   more: "细节",
-  beRelay: "当中转",
+  beRelay: "设为中转",
   stopRelay: "停止中转",
   relayTitle: (machine) => `让 ${machine} 当中转`,
   relayAddress: "对外地址",
   relayAddressWrong: "写成 地址:端口",
-  relayWhat: "这台机器在这个端口上把连接原样转给服务器，看不到也改不了里面的内容。Windows 上要在防火墙里放行这个端口，云服务器要在安全组里放行。",
+  relayWhat: "这台机器把这个端口收到的连接原样转给服务器，看不到内容。防火墙或安全组要放行这个端口。",
 };
 
 export const enMachines: MachinesWords = {
@@ -523,16 +523,16 @@ export const enMachines: MachinesWords = {
   reroute: "Change route",
   routeVia: (machine, relay) => `${machine} reaches the server through ${relay}`,
   routeDirect: (machine) => `${machine} reaches the server directly`,
-  routeList: (relays) => (relays.length ? `Address list: ${relays.join(", ")}, then the server` : "Address list: the server only"),
+  routeList: (relays) => (relays.length ? `Tries ${relays.join(", ")}, then the server` : "The server only"),
   routeFailed: (machine, relay) => `${machine} could not connect through ${relay}`,
   confirm: "Confirm",
   more: "Details",
-  beRelay: "Be a relay",
+  beRelay: "Make a relay",
   stopRelay: "Stop relaying",
   relayTitle: (machine) => `Make ${machine} a relay`,
   relayAddress: "Public address",
   relayAddressWrong: "Write it as address:port",
-  relayWhat: "This machine passes connections on this port to the server as they are; it can neither read nor change them. On Windows, allow the port in the firewall; on a cloud server, in its security group.",
+  relayWhat: "This machine passes connections on this port to the server unread. Allow the port in the firewall or security group.",
 };
 
 /** The sheets on a machine: whom its owner shares it with, whom it lends

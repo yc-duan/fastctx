@@ -311,7 +311,7 @@ export const zh: Words = {
     effort: "推理强度",
     requested: (effort) => `${effort}（请求）`,
     took: "用时",
-    tokens: "token",
+    tokens: "用量",
     spent: (input, cached, output, reasoning) =>
       [`输入 ${input.toLocaleString("zh-CN")}`, cached ? `缓存命中 ${cached.toLocaleString("zh-CN")}` : "", `输出 ${output.toLocaleString("zh-CN")}`, reasoning ? `其中推理 ${reasoning.toLocaleString("zh-CN")}` : ""]
         .filter(Boolean)
@@ -343,7 +343,7 @@ export const zh: Words = {
     rerouted: "OpenAI 把这一轮换到了另一个模型",
     tools_missing: "世界的工具没有接上",
     tool_server: "有一组工具没能启动",
-    warning: "宿主提醒了一件事",
+    warning: "有一条提醒",
     error: "这一轮出错了",
   },
   files: {
@@ -386,13 +386,13 @@ export const zh: Words = {
       : how === "uncertain"
         ? "不确定是否送到"
         : "等它下次用世界的工具时送到",
-  jobEnded: (job, machine) => `作业 ${job} 在 ${machine} 上结束`,
+  jobEnded: (_job, machine) => `后台命令在 ${machine} 上结束`,
   movedTo: (town) => `已移到项目 ${town}`,
   movedOut: "已移出项目",
   briefHanded: "项目说明",
-  deskFree: (who) => `${who} 本轮结束，Computer Use 已空闲`,
-  deskTaken: (who) => `${who} 正在使用 Computer Use，结束后会通知`,
-  deskOutside: "Computer Use 被世界之外的会话占用",
+  deskFree: (who) => `${who} 这一轮结束，屏幕空出来了`,
+  deskTaken: (who) => `${who} 正在操作屏幕，结束后会通知`,
+  deskOutside: "屏幕被世界之外的会话占着",
   ended: (how) =>
     endedIn(how, {
       exited: (code) => `退出码 ${code}`,
@@ -507,7 +507,7 @@ export const en: Words = {
     effort: "Effort",
     requested: (effort) => `${effort} (requested)`,
     took: "Took",
-    tokens: "Tokens",
+    tokens: "Usage",
     spent: (input, cached, output, reasoning) =>
       [`${input.toLocaleString("en")} in`, cached ? `${cached.toLocaleString("en")} cached` : "", `${output.toLocaleString("en")} out`, reasoning ? `${reasoning.toLocaleString("en")} reasoning` : ""]
         .filter(Boolean)
@@ -539,7 +539,7 @@ export const en: Words = {
     rerouted: "OpenAI moved this turn to another model",
     tools_missing: "The World's tools are not connected",
     tool_server: "A set of tools did not start",
-    warning: "The host raised something",
+    warning: "A notice",
     error: "This turn hit an error",
   },
   files: {
@@ -582,12 +582,12 @@ export const en: Words = {
       : how === "uncertain"
         ? "Not sure it arrived"
         : "Arrives when it next uses a World tool",
-  jobEnded: (job, machine) => `Job ${job} on ${machine} ended`,
+  jobEnded: (_job, machine) => `Background command on ${machine} ended`,
   movedTo: (town) => `Moved to project ${town}`,
   movedOut: "Removed from project",
   briefHanded: "Project brief",
-  deskFree: (who) => `${who}'s turn ended; Computer Use is free`,
-  deskTaken: (who) => `${who} is using Computer Use; you'll be notified when it's free`,
+  deskFree: (who) => `${who}'s turn ended; the screen is free`,
+  deskTaken: (who) => `${who} is using the screen; you'll be told when it's free`,
   deskOutside: "Computer Use is held by a session outside the World",
   ended: (how) =>
     endedIn(how, {

@@ -221,6 +221,8 @@ export class HomePage {
     let day = "";
     const items: string[] = [];
     for (const event of events) {
+      // Project memory is not wired in yet (walkthrough item 13).
+      if (event.kind === "journal") continue;
       const at = new Date(event.at);
       const thisDay = words.day(at);
       if (thisDay !== day && (day || thisDay !== words.day(this.now))) items.push(`<li class="day">${escape(thisDay)}</li>`);

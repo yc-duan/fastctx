@@ -58,7 +58,7 @@ export class LongText {
       const viewer = new TextViewer(label, [{ label, source: this.source }, ...others], words.english ? englishViewer : chineseViewer);
       viewer.open(this.viewport?.range.start ?? 0);
     });
-    this.viewport = new LineViewport(this.source, { label, limit: PREVIEW });
+    this.viewport = new LineViewport(this.source, { label, limit: PREVIEW, failed: (words.english ? englishViewer : chineseViewer).failed });
     this.box.append(this.viewport.element, corner);
     this.more.type = "button";
     this.more.className = "io-more";

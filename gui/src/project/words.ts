@@ -61,7 +61,7 @@ const then = (name: string) => (/[A-Za-z0-9)]$/.test(name) ? `${name} ` : name);
 
 export const zhProject: ProjectWords = {
   overview: "概览",
-  here: "进行中",
+  here: "对话",
   nobodyHere: "暂无对话",
   running: "运行中的作业",
   ownerLeft: "启动者已离开",
@@ -72,7 +72,7 @@ export const zhProject: ProjectWords = {
   decisionsUnreadable: failure(zhProblems, "无法读取定论"),
   places: "位置",
   noPlaces: "暂无位置",
-  hereTab: "进行中",
+  hereTab: "对话",
   placesTab: "位置",
   opened: (by, on, day) => `${then(by)}创建于 ${on} · ${day}`,
   you: "你",
@@ -108,7 +108,7 @@ export const zhProject: ProjectWords = {
 
 export const enProject: ProjectWords = {
   overview: "Overview",
-  here: "Active",
+  here: "Conversations",
   nobodyHere: "No conversations",
   running: "Running jobs",
   ownerLeft: "starter has left",
@@ -119,7 +119,7 @@ export const enProject: ProjectWords = {
   decisionsUnreadable: failure(enProblems, "Couldn't read decisions"),
   places: "Locations",
   noPlaces: "No locations yet",
-  hereTab: "Active",
+  hereTab: "Conversations",
   placesTab: "Places",
   opened: (by, on, day) => `Created by ${by} on ${on} · ${day}`,
   you: "you",

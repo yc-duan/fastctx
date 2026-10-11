@@ -378,7 +378,7 @@ struct Project {
 async fn project(shell: tauri::State<'_, Shell>, town: String) -> Result<Project, String> {
     let town = TownName::try_from(town).map_err(|error| error.to_string())?;
     let world = shell.world();
-    let (map, who) = tokio::join!(world.map(Some(town.clone())), world.who(Some(town), false));
+    let (map, who) = tokio::join!(world.map(Some(town.clone())), world.who(Some(town), true));
     Ok(Project { map: map.map_err(|error| error.to_string())?, who: who.map_err(|error| error.to_string())? })
 }
 

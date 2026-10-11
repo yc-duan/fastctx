@@ -391,16 +391,11 @@ export class LoginPage implements Page {
     }
   }
 
-  /** In and nothing left to decide: straight on to the World, whose
-   *  drawing shows this computer arriving. A World made here stops to
-   *  offer the next device. */
+  /** In: the drawing shows this device arriving in its place, with one
+   *  line and the way in (`world-gui.md`, 登录或新建成功之后). A World made
+   *  here also offers the next device. */
   private async arrived(): Promise<void> {
     await this.refreshSetup();
-    const wanting = this.wanting();
-    if (!this.created && !wanting.kept) {
-      this.options.enter();
-      return;
-    }
     this.element.classList.add("in");
     this.step = "done";
     this.draw();
