@@ -8,8 +8,13 @@
 //! shown as `number<TAB>line`. Images are written in the iTerm2 terminal
 //! protocol, which `run` turns back into images.
 
+mod config_outline;
 mod decode;
+mod definitions;
+mod explore;
+mod javascript;
 mod office;
+mod outline;
 mod pdf;
 mod text;
 
@@ -56,6 +61,18 @@ pub struct Options {
     /// Inside a World `run`, whose first line already names the machine and
     /// whose answer holds the view beside its own notes.
     pub in_run: bool,
+}
+
+impl Options {
+    fn exploring(&self) -> bool {
+        self.lines.is_none()
+            && self.chars.is_none()
+            && self.pages.is_none()
+            && self.sheet.is_none()
+            && self.sheet_index.is_none()
+            && self.range.is_none()
+            && !self.master
+    }
 }
 
 /// The observations retained even when another requested file fails.

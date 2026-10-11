@@ -24,6 +24,7 @@ fastctx-types = { path = "../fastctx-types" }
 getrandom = { version = "0.3", features = ["std"] }
 jiff.workspace = true
 memchr = "2"
+regex-lite = "0.1"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

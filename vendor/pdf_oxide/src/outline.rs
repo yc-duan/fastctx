@@ -2,6 +2,7 @@
 //!
 //! Provides access to the PDF document outline, also known as bookmarks,
 //! which allow users to navigate a PDF document.
+//! Modified by fastctx: stream bookmarks and resolve page references once.
 
 use crate::document::PdfDocument;
 use crate::error::{Error, Result};
@@ -32,6 +33,172 @@ pub enum Destination {
 }
 
 impl PdfDocument {
+    /// Visit bookmarks in document order without constructing an outline tree.
+    /// Page indices are zero-based; unresolved destinations are `None`.
+    /// Cyclic bookmark or destination references return an error.
+    pub fn visit_outline(&self, mut visit: impl FnMut(&str, Option<usize>, usize) -> Result<()>) -> Result<()> {
+        use std::collections::{HashMap, HashSet};
+        let catalog = self.catalog()?;
+        let Some(outlines) = catalog.as_dict().and_then(|d| d.get("Outlines")) else {
+            return Ok(());
+        };
+        let outlines = match outlines {
+            Object::Reference(r) => self.load_object(*r)?,
+            other => other.clone(),
+        };
+        let Some(first) = outlines.as_dict().and_then(|d| d.get("First")).and_then(Object::as_reference) else {
+            return Ok(());
+        };
+        let pages: HashMap<_, _> = self.all_page_refs()?.into_iter().enumerate().map(|(i, r)| (r, i)).collect();
+        let named = self.outline_names(&catalog, &pages)?;
+        let mut stack = vec![(first, 0usize)];
+        let mut visited = HashSet::new();
+        while let Some((reference, level)) = stack.pop() {
+            if !visited.insert(reference) {
+                return Err(Error::InvalidPdf("cyclic bookmark references".into()));
+            }
+            let object = self.load_object(reference)?;
+            let dict = object.as_dict().ok_or_else(|| Error::InvalidPdf("bookmark is not a dictionary".into()))?;
+            let title = dict
+                .get("Title")
+                .map(|title| match title {
+                    Object::Reference(r) => self.load_object(*r),
+                    other => Ok(other.clone()),
+                })
+                .transpose()?;
+            let title = title
+                .as_ref()
+                .and_then(Object::as_string)
+                .map(crate::optional_content::decode_pdf_text_string)
+                .unwrap_or_else(|| "(title unavailable)".into());
+            let action = dict
+                .get("A")
+                .map(|a| match a {
+                    Object::Reference(r) => self.load_object(*r),
+                    other => Ok(other.clone()),
+                })
+                .transpose()?;
+            let mut destination = dict.get("Dest").cloned().or_else(|| {
+                action
+                    .as_ref()
+                    .and_then(Object::as_dict)
+                    .filter(|a| a.get("S").and_then(Object::as_name) == Some("GoTo"))
+                    .and_then(|a| a.get("D"))
+                    .cloned()
+            });
+            let mut destinations = HashSet::new();
+            let page = loop {
+                match destination {
+                    Some(Object::Reference(r)) => {
+                        if !destinations.insert(r) {
+                            return Err(Error::InvalidPdf("cyclic bookmark destination".into()));
+                        }
+                        destination = Some(self.load_object(r)?);
+                    }
+                    Some(Object::String(ref name)) => {
+                        break named.get(name).copied().flatten();
+                    }
+                    Some(Object::Name(ref name)) => {
+                        break named.get(name.as_bytes()).copied().flatten();
+                    }
+                    Some(Object::Array(ref array)) => {
+                        break array.first().and_then(Object::as_reference).and_then(|r| pages.get(&r)).copied();
+                    }
+                    _ => break None,
+                }
+            };
+            visit(&title, page, level)?;
+            if let Some(next) = dict.get("Next").and_then(Object::as_reference) {
+                stack.push((next, level));
+            }
+            if let Some(child) = dict.get("First").and_then(Object::as_reference) {
+                stack.push((child, level + 1));
+            }
+        }
+        Ok(())
+    }
+
+    fn outline_names(
+        &self,
+        catalog: &Object,
+        pages: &std::collections::HashMap<crate::object::ObjectRef, usize>,
+    ) -> Result<std::collections::HashMap<Vec<u8>, Option<usize>>> {
+        use std::collections::{HashMap, HashSet};
+        let mut result = HashMap::new();
+        let Some(catalog) = catalog.as_dict() else {
+            return Ok(result);
+        };
+        let resolve = |object: &Object| match object {
+            Object::Reference(reference) => self.load_object(*reference),
+            object => Ok(object.clone()),
+        };
+        let page = |value: &Object| -> Result<Option<usize>> {
+            let mut value = value.clone();
+            let mut seen = HashSet::new();
+            loop {
+                match value {
+                    Object::Reference(reference) => {
+                        if !seen.insert(reference) {
+                            return Err(Error::InvalidPdf("cyclic named destination".into()));
+                        }
+                        value = self.load_object(reference)?;
+                    }
+                    Object::Dictionary(ref dictionary) if dictionary.contains_key("D") => {
+                        value = dictionary["D"].clone()
+                    }
+                    Object::Array(ref array) => {
+                        return Ok(array.first().and_then(Object::as_reference).and_then(|r| pages.get(&r)).copied())
+                    }
+                    _ => return Ok(None),
+                }
+            }
+        };
+        if let Some(dests) = catalog.get("Dests") {
+            let dests = resolve(dests)?;
+            if let Some(dictionary) = dests.as_dict() {
+                for (name, value) in dictionary {
+                    result.insert(name.as_bytes().to_vec(), page(value)?);
+                }
+            }
+        }
+        let names = catalog.get("Names").map(resolve).transpose()?;
+        let Some(root) = names.as_ref().and_then(Object::as_dict).and_then(|d| d.get("Dests")) else {
+            return Ok(result);
+        };
+        let mut stack = vec![root.clone()];
+        let mut seen = HashSet::new();
+        while let Some(node) = stack.pop() {
+            if node.as_reference().is_some_and(|reference| !seen.insert(reference)) {
+                return Err(Error::InvalidPdf("cyclic destination name tree".into()));
+            }
+            let node = resolve(&node)?;
+            let dictionary = node
+                .as_dict()
+                .ok_or_else(|| Error::InvalidPdf("destination name tree node is not a dictionary".into()))?;
+            if let Some(names) = dictionary.get("Names") {
+                let names = resolve(names)?;
+                let values =
+                    names.as_array().ok_or_else(|| Error::InvalidPdf("destination names are not an array".into()))?;
+                if !values.len().is_multiple_of(2) {
+                    return Err(Error::InvalidPdf("unpaired destination name".into()));
+                }
+                for pair in values.chunks_exact(2) {
+                    let name = pair[0]
+                        .as_string()
+                        .ok_or_else(|| Error::InvalidPdf("destination name is not a string".into()))?;
+                    result.entry(name.to_vec()).or_insert(page(&pair[1])?);
+                }
+            }
+            if let Some(kids) = dictionary.get("Kids") {
+                let kids = resolve(kids)?;
+                let children =
+                    kids.as_array().ok_or_else(|| Error::InvalidPdf("destination children are not an array".into()))?;
+                stack.extend(children.iter().rev().cloned());
+            }
+        }
+        Ok(result)
+    }
+
     /// Get the document outline (bookmarks) if present.
     ///
     /// Returns a hierarchical structure of bookmarks that can be used

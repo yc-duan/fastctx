@@ -41,7 +41,12 @@ pub(super) fn look(
         note.partial = true;
         return Ok((note, None));
     }
-    let content = match fastctx_office::read(file, format, &selection, budget - overhead) {
+    let read = if options.exploring() {
+        fastctx_office::explore(file, format, budget - overhead, super::explore::WHOLE.saturating_sub(overhead))
+    } else {
+        fastctx_office::read(file, format, &selection, budget - overhead)
+    };
+    let content = match read {
         Ok(content) => content,
         Err(error) => {
             return Ok((

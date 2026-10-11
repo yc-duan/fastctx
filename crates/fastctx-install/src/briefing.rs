@@ -40,7 +40,7 @@ pub fn guidance(codex: bool) -> String {
 The user has several machines, connected by fastctx: this one, and others that `fastctx nodes` lists. You work on all of them through the `run` tool.
 
 `run` is your shell: bash with the GNU tools and `rg` on every machine, Windows included. Do all shell work with it, and all work on files, on this machine too:
-- `fastctx view PATH...` shows files: text with line numbers (`--lines 120-180` for part of one); an image as the image itself, for you to see; a PDF as its text by page (`--pages 3-5`, and `--image` to see the pages); Word, PowerPoint and Excel as their content.
+- `fastctx view PATH...` shows files: text with line numbers (`--lines 120-180` for part of one); an image as the image itself, for you to see; a PDF as its text by page (`--pages 3-5`, and `--image` to see the pages); Word, PowerPoint and Excel as their content. Without a range, it explores the file. When you are unsure what a file contains, explore it first; give a range to read the selected content.
 - `edit PATH` and `write PATH` change a file and keep its encoding and line endings.
 - `rg` searches.
 

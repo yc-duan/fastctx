@@ -85,6 +85,13 @@ impl Document {
         self.pages
     }
 
+    /// Visit document bookmarks in order. Pages are zero-based; a missing
+    /// destination is `None`. Bookmark parsing failures are returned.
+    /// Callbacks hold the text-reader lock and must not re-enter this document.
+    pub fn outline(&self, visit: impl FnMut(&str, Option<usize>, usize)) -> Result<(), String> {
+        engine(|| self.text_reader.outline(&self.path, visit))
+    }
+
     /// Extract one page, including invisible OCR text. This does not perform OCR.
     /// Calls on the same document share parsed fonts and serialize extraction;
     /// decoded page content is released before returning.
