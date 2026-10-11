@@ -457,6 +457,937 @@
       "next_before": null
     }
   ],
+  "run_facts": {
+    "calls": [
+      {
+        "machine": "laptop",
+        "state": {
+          "kind": "ended",
+          "status": {
+            "code": 0
+          }
+        },
+        "job": "j-abc123",
+        "output": {
+          "machine": "laptop",
+          "path": "/tmp/output.log",
+          "bytes": 90000,
+          "lines": 4000,
+          "cut": true
+        },
+        "visited": [
+          [
+            "gpu",
+            "j-def456"
+          ]
+        ],
+        "writes": [
+          {
+            "id": "00112233445566778899aabbccddeeff-0",
+            "machine": "gpu",
+            "path": "/work/file-0.txt",
+            "kind": "added",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-0.jsonl"
+            },
+            "note": {
+              "kind": "text",
+              "command": "write",
+              "text": "=== write /work/file on gpu (created) ===\n"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-1",
+            "machine": "gpu",
+            "path": "/work/file-1.txt",
+            "kind": "modified",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-1.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-2",
+            "machine": "gpu",
+            "path": "/work/file-2.txt",
+            "kind": "deleted",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-2.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          }
+        ],
+        "spans": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "piece": {
+              "kind": "text",
+              "first_line": 1,
+              "text": "a World note\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "text",
+              "first_line": 2,
+              "text": "program output\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "part_of_line",
+              "line": 3,
+              "from": 2,
+              "to": 4,
+              "of": 20,
+              "text": "😀中x"
+            }
+          },
+          {
+            "piece": {
+              "kind": "omitted",
+              "first_line": 4,
+              "last_line": 3998
+            }
+          },
+          {
+            "piece": {
+              "kind": "image",
+              "image": 0,
+              "mime": "image/png",
+              "width": 8,
+              "height": 9
+            }
+          },
+          {
+            "piece": {
+              "kind": "unreadable",
+              "line": 4000,
+              "reason": "broken graphic"
+            }
+          }
+        ],
+        "notes": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "from": 0,
+            "to": 42
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "state": {
+          "kind": "running"
+        },
+        "job": null,
+        "output": null,
+        "visited": [
+          [
+            "gpu",
+            "j-def456"
+          ]
+        ],
+        "writes": [
+          {
+            "id": "00112233445566778899aabbccddeeff-0",
+            "machine": "gpu",
+            "path": "/work/file-0.txt",
+            "kind": "added",
+            "added": null,
+            "removed": null,
+            "unavailable": "undecodable bytes",
+            "diff": null,
+            "note": {
+              "kind": "text",
+              "command": "write",
+              "text": "=== write /work/file on gpu (created) ===\n"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-1",
+            "machine": "gpu",
+            "path": "/work/file-1.txt",
+            "kind": "modified",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-1.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-2",
+            "machine": "gpu",
+            "path": "/work/file-2.txt",
+            "kind": "deleted",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-2.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          }
+        ],
+        "spans": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "piece": {
+              "kind": "text",
+              "first_line": 1,
+              "text": "a World note\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "text",
+              "first_line": 2,
+              "text": "program output\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "part_of_line",
+              "line": 3,
+              "from": 2,
+              "to": 4,
+              "of": 20,
+              "text": "😀中x"
+            }
+          },
+          {
+            "piece": {
+              "kind": "omitted",
+              "first_line": 4,
+              "last_line": 3998
+            }
+          },
+          {
+            "piece": {
+              "kind": "image",
+              "image": 0,
+              "mime": "image/png",
+              "width": 8,
+              "height": 9
+            }
+          },
+          {
+            "piece": {
+              "kind": "unreadable",
+              "line": 4000,
+              "reason": "broken graphic"
+            }
+          }
+        ],
+        "notes": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "from": 0,
+            "to": 42
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "state": {
+          "kind": "exited",
+          "status": {
+            "code": 7
+          },
+          "remaining": 1
+        },
+        "job": null,
+        "output": null,
+        "visited": [
+          [
+            "gpu",
+            "j-def456"
+          ]
+        ],
+        "writes": [
+          {
+            "id": "00112233445566778899aabbccddeeff-0",
+            "machine": "gpu",
+            "path": "/work/file-0.txt",
+            "kind": "added",
+            "added": null,
+            "removed": null,
+            "unavailable": "undecodable bytes",
+            "diff": null,
+            "note": {
+              "kind": "text",
+              "command": "write",
+              "text": "=== write /work/file on gpu (created) ===\n"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-1",
+            "machine": "gpu",
+            "path": "/work/file-1.txt",
+            "kind": "modified",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-1.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-2",
+            "machine": "gpu",
+            "path": "/work/file-2.txt",
+            "kind": "deleted",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-2.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          }
+        ],
+        "spans": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "piece": {
+              "kind": "text",
+              "first_line": 1,
+              "text": "a World note\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "text",
+              "first_line": 2,
+              "text": "program output\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "part_of_line",
+              "line": 3,
+              "from": 2,
+              "to": 4,
+              "of": 20,
+              "text": "😀中x"
+            }
+          },
+          {
+            "piece": {
+              "kind": "omitted",
+              "first_line": 4,
+              "last_line": 3998
+            }
+          },
+          {
+            "piece": {
+              "kind": "image",
+              "image": 0,
+              "mime": "image/png",
+              "width": 8,
+              "height": 9
+            }
+          },
+          {
+            "piece": {
+              "kind": "unreadable",
+              "line": 4000,
+              "reason": "broken graphic"
+            }
+          }
+        ],
+        "notes": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "from": 0,
+            "to": 42
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "state": {
+          "kind": "stopped"
+        },
+        "job": null,
+        "output": null,
+        "visited": [
+          [
+            "gpu",
+            "j-def456"
+          ]
+        ],
+        "writes": [
+          {
+            "id": "00112233445566778899aabbccddeeff-0",
+            "machine": "gpu",
+            "path": "/work/file-0.txt",
+            "kind": "added",
+            "added": null,
+            "removed": null,
+            "unavailable": "undecodable bytes",
+            "diff": null,
+            "note": {
+              "kind": "text",
+              "command": "write",
+              "text": "=== write /work/file on gpu (created) ===\n"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-1",
+            "machine": "gpu",
+            "path": "/work/file-1.txt",
+            "kind": "modified",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-1.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-2",
+            "machine": "gpu",
+            "path": "/work/file-2.txt",
+            "kind": "deleted",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-2.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          }
+        ],
+        "spans": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "piece": {
+              "kind": "text",
+              "first_line": 1,
+              "text": "a World note\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "text",
+              "first_line": 2,
+              "text": "program output\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "part_of_line",
+              "line": 3,
+              "from": 2,
+              "to": 4,
+              "of": 20,
+              "text": "😀中x"
+            }
+          },
+          {
+            "piece": {
+              "kind": "omitted",
+              "first_line": 4,
+              "last_line": 3998
+            }
+          },
+          {
+            "piece": {
+              "kind": "image",
+              "image": 0,
+              "mime": "image/png",
+              "width": 8,
+              "height": 9
+            }
+          },
+          {
+            "piece": {
+              "kind": "unreadable",
+              "line": 4000,
+              "reason": "broken graphic"
+            }
+          }
+        ],
+        "notes": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "from": 0,
+            "to": 42
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "state": {
+          "kind": "interrupted",
+          "reason": "supervisor ended"
+        },
+        "job": null,
+        "output": null,
+        "visited": [
+          [
+            "gpu",
+            "j-def456"
+          ]
+        ],
+        "writes": [
+          {
+            "id": "00112233445566778899aabbccddeeff-0",
+            "machine": "gpu",
+            "path": "/work/file-0.txt",
+            "kind": "added",
+            "added": null,
+            "removed": null,
+            "unavailable": "undecodable bytes",
+            "diff": null,
+            "note": {
+              "kind": "text",
+              "command": "write",
+              "text": "=== write /work/file on gpu (created) ===\n"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-1",
+            "machine": "gpu",
+            "path": "/work/file-1.txt",
+            "kind": "modified",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-1.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-2",
+            "machine": "gpu",
+            "path": "/work/file-2.txt",
+            "kind": "deleted",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-2.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          }
+        ],
+        "spans": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "piece": {
+              "kind": "text",
+              "first_line": 1,
+              "text": "a World note\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "text",
+              "first_line": 2,
+              "text": "program output\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "part_of_line",
+              "line": 3,
+              "from": 2,
+              "to": 4,
+              "of": 20,
+              "text": "😀中x"
+            }
+          },
+          {
+            "piece": {
+              "kind": "omitted",
+              "first_line": 4,
+              "last_line": 3998
+            }
+          },
+          {
+            "piece": {
+              "kind": "image",
+              "image": 0,
+              "mime": "image/png",
+              "width": 8,
+              "height": 9
+            }
+          },
+          {
+            "piece": {
+              "kind": "unreadable",
+              "line": 4000,
+              "reason": "broken graphic"
+            }
+          }
+        ],
+        "notes": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "from": 0,
+            "to": 42
+          }
+        ]
+      },
+      {
+        "machine": "laptop",
+        "state": {
+          "kind": "failed",
+          "error": "could not launch"
+        },
+        "job": null,
+        "output": null,
+        "visited": [
+          [
+            "gpu",
+            "j-def456"
+          ]
+        ],
+        "writes": [
+          {
+            "id": "00112233445566778899aabbccddeeff-0",
+            "machine": "gpu",
+            "path": "/work/file-0.txt",
+            "kind": "added",
+            "added": null,
+            "removed": null,
+            "unavailable": "undecodable bytes",
+            "diff": null,
+            "note": {
+              "kind": "text",
+              "command": "write",
+              "text": "=== write /work/file on gpu (created) ===\n"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-1",
+            "machine": "gpu",
+            "path": "/work/file-1.txt",
+            "kind": "modified",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-1.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-2",
+            "machine": "gpu",
+            "path": "/work/file-2.txt",
+            "kind": "deleted",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-2.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          }
+        ],
+        "spans": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "piece": {
+              "kind": "text",
+              "first_line": 1,
+              "text": "a World note\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "text",
+              "first_line": 2,
+              "text": "program output\n"
+            }
+          },
+          {
+            "piece": {
+              "kind": "part_of_line",
+              "line": 3,
+              "from": 2,
+              "to": 4,
+              "of": 20,
+              "text": "😀中x"
+            }
+          },
+          {
+            "piece": {
+              "kind": "omitted",
+              "first_line": 4,
+              "last_line": 3998
+            }
+          },
+          {
+            "piece": {
+              "kind": "image",
+              "image": 0,
+              "mime": "image/png",
+              "width": 8,
+              "height": 9
+            }
+          },
+          {
+            "piece": {
+              "kind": "unreadable",
+              "line": 4000,
+              "reason": "broken graphic"
+            }
+          }
+        ],
+        "notes": [
+          {
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            },
+            "from": 0,
+            "to": 42
+          }
+        ]
+      }
+    ],
+    "diff": [
+      {
+        "kind": "hunk",
+        "before": 1,
+        "after": 1,
+        "text": "",
+        "ending": ""
+      },
+      {
+        "kind": "context",
+        "before": 1,
+        "after": 1,
+        "text": "same",
+        "ending": "\n"
+      },
+      {
+        "kind": "removed",
+        "before": 2,
+        "after": null,
+        "text": "before",
+        "ending": "\r\n"
+      },
+      {
+        "kind": "added",
+        "before": null,
+        "after": 2,
+        "text": "after",
+        "ending": ""
+      }
+    ],
+    "updates": [
+      {
+        "call_id": "host-call-1",
+        "primary": true,
+        "output": {
+          "machine": "laptop",
+          "path": "/tmp/output.log",
+          "bytes": 90000,
+          "lines": 4000,
+          "cut": true
+        },
+        "visited": [
+          [
+            "gpu",
+            "j-def456"
+          ]
+        ],
+        "machine": "laptop",
+        "job": "j-abc123",
+        "sequence": 2,
+        "state": {
+          "kind": "running"
+        },
+        "writes": [
+          {
+            "id": "00112233445566778899aabbccddeeff-0",
+            "machine": "gpu",
+            "path": "/work/file-0.txt",
+            "kind": "added",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-0.jsonl"
+            },
+            "note": {
+              "kind": "text",
+              "command": "write",
+              "text": "=== write /work/file on gpu (created) ===\n"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-1",
+            "machine": "gpu",
+            "path": "/work/file-1.txt",
+            "kind": "modified",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-1.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          },
+          {
+            "id": "00112233445566778899aabbccddeeff-2",
+            "machine": "gpu",
+            "path": "/work/file-2.txt",
+            "kind": "deleted",
+            "added": 1,
+            "removed": 1,
+            "diff": {
+              "machine": "gpu",
+              "path": "/tmp/diff-2.jsonl"
+            },
+            "note": {
+              "kind": "same",
+              "fact": "00112233445566778899aabbccddeeff-0"
+            }
+          }
+        ]
+      }
+    ],
+    "projected_reads": [
+      {
+        "start": 3,
+        "lines": [
+          "😀 note"
+        ],
+        "notes": [
+          {
+            "line": 3,
+            "from": 3,
+            "to": 7,
+            "note": {
+              "command": "write",
+              "write": "00112233445566778899aabbccddeeff"
+            }
+          }
+        ]
+      }
+    ],
+    "parts": [
+      {
+        "line": 3,
+        "text": "😀 ",
+        "ended": false
+      },
+      {
+        "line": 3,
+        "text": "note",
+        "ended": true,
+        "note": {
+          "command": "write",
+          "write": "00112233445566778899aabbccddeeff"
+        }
+      }
+    ],
+    "open_errors": [
+      {
+        "message": "the output job is no longer retained",
+        "code": "output_not_retained"
+      },
+      {
+        "message": "the source does not exist",
+        "code": "source_missing"
+      },
+      {
+        "message": "the connection broke"
+      }
+    ]
+  },
   "accounts": {
     "replies": [
       {
@@ -1918,6 +2849,143 @@
             "source": "host"
           },
           "kind": "tool",
+          "run": {
+            "machine": "laptop",
+            "state": {
+              "kind": "ended",
+              "status": {
+                "code": 0
+              }
+            },
+            "job": "j-abc123",
+            "output": {
+              "machine": "laptop",
+              "path": "/tmp/output.log",
+              "bytes": 90000,
+              "lines": 4000,
+              "cut": true
+            },
+            "visited": [
+              [
+                "gpu",
+                "j-def456"
+              ]
+            ],
+            "writes": [
+              {
+                "id": "00112233445566778899aabbccddeeff-0",
+                "machine": "gpu",
+                "path": "/work/file-0.txt",
+                "kind": "added",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-0.jsonl"
+                },
+                "note": {
+                  "kind": "text",
+                  "command": "write",
+                  "text": "=== write /work/file on gpu (created) ===\n"
+                }
+              },
+              {
+                "id": "00112233445566778899aabbccddeeff-1",
+                "machine": "gpu",
+                "path": "/work/file-1.txt",
+                "kind": "modified",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-1.jsonl"
+                },
+                "note": {
+                  "kind": "same",
+                  "fact": "00112233445566778899aabbccddeeff-0"
+                }
+              },
+              {
+                "id": "00112233445566778899aabbccddeeff-2",
+                "machine": "gpu",
+                "path": "/work/file-2.txt",
+                "kind": "deleted",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-2.jsonl"
+                },
+                "note": {
+                  "kind": "same",
+                  "fact": "00112233445566778899aabbccddeeff-0"
+                }
+              }
+            ],
+            "spans": [
+              {
+                "note": {
+                  "command": "write",
+                  "write": "00112233445566778899aabbccddeeff"
+                },
+                "piece": {
+                  "kind": "text",
+                  "first_line": 1,
+                  "text": "a World note\n"
+                }
+              },
+              {
+                "piece": {
+                  "kind": "text",
+                  "first_line": 2,
+                  "text": "program output\n"
+                }
+              },
+              {
+                "piece": {
+                  "kind": "part_of_line",
+                  "line": 3,
+                  "from": 2,
+                  "to": 4,
+                  "of": 20,
+                  "text": "😀中x"
+                }
+              },
+              {
+                "piece": {
+                  "kind": "omitted",
+                  "first_line": 4,
+                  "last_line": 3998
+                }
+              },
+              {
+                "piece": {
+                  "kind": "image",
+                  "image": 0,
+                  "mime": "image/png",
+                  "width": 8,
+                  "height": 9
+                }
+              },
+              {
+                "piece": {
+                  "kind": "unreadable",
+                  "line": 4000,
+                  "reason": "broken graphic"
+                }
+              }
+            ],
+            "notes": [
+              {
+                "note": {
+                  "command": "write",
+                  "write": "00112233445566778899aabbccddeeff"
+                },
+                "from": 0,
+                "to": 42
+              }
+            ]
+          },
           "name": "tool-1",
           "server": "tools",
           "machine": "desktop",
@@ -1982,6 +3050,143 @@
             "source": "host"
           },
           "kind": "tool",
+          "run": {
+            "machine": "laptop",
+            "state": {
+              "kind": "ended",
+              "status": {
+                "code": 0
+              }
+            },
+            "job": "j-abc123",
+            "output": {
+              "machine": "laptop",
+              "path": "/tmp/output.log",
+              "bytes": 90000,
+              "lines": 4000,
+              "cut": true
+            },
+            "visited": [
+              [
+                "gpu",
+                "j-def456"
+              ]
+            ],
+            "writes": [
+              {
+                "id": "00112233445566778899aabbccddeeff-0",
+                "machine": "gpu",
+                "path": "/work/file-0.txt",
+                "kind": "added",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-0.jsonl"
+                },
+                "note": {
+                  "kind": "text",
+                  "command": "write",
+                  "text": "=== write /work/file on gpu (created) ===\n"
+                }
+              },
+              {
+                "id": "00112233445566778899aabbccddeeff-1",
+                "machine": "gpu",
+                "path": "/work/file-1.txt",
+                "kind": "modified",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-1.jsonl"
+                },
+                "note": {
+                  "kind": "same",
+                  "fact": "00112233445566778899aabbccddeeff-0"
+                }
+              },
+              {
+                "id": "00112233445566778899aabbccddeeff-2",
+                "machine": "gpu",
+                "path": "/work/file-2.txt",
+                "kind": "deleted",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-2.jsonl"
+                },
+                "note": {
+                  "kind": "same",
+                  "fact": "00112233445566778899aabbccddeeff-0"
+                }
+              }
+            ],
+            "spans": [
+              {
+                "note": {
+                  "command": "write",
+                  "write": "00112233445566778899aabbccddeeff"
+                },
+                "piece": {
+                  "kind": "text",
+                  "first_line": 1,
+                  "text": "a World note\n"
+                }
+              },
+              {
+                "piece": {
+                  "kind": "text",
+                  "first_line": 2,
+                  "text": "program output\n"
+                }
+              },
+              {
+                "piece": {
+                  "kind": "part_of_line",
+                  "line": 3,
+                  "from": 2,
+                  "to": 4,
+                  "of": 20,
+                  "text": "😀中x"
+                }
+              },
+              {
+                "piece": {
+                  "kind": "omitted",
+                  "first_line": 4,
+                  "last_line": 3998
+                }
+              },
+              {
+                "piece": {
+                  "kind": "image",
+                  "image": 0,
+                  "mime": "image/png",
+                  "width": 8,
+                  "height": 9
+                }
+              },
+              {
+                "piece": {
+                  "kind": "unreadable",
+                  "line": 4000,
+                  "reason": "broken graphic"
+                }
+              }
+            ],
+            "notes": [
+              {
+                "note": {
+                  "command": "write",
+                  "write": "00112233445566778899aabbccddeeff"
+                },
+                "from": 0,
+                "to": 42
+              }
+            ]
+          },
           "name": "tool-1",
           "server": "tools",
           "machine": "desktop",
@@ -2046,6 +3251,143 @@
             "source": "host"
           },
           "kind": "tool",
+          "run": {
+            "machine": "laptop",
+            "state": {
+              "kind": "ended",
+              "status": {
+                "code": 0
+              }
+            },
+            "job": "j-abc123",
+            "output": {
+              "machine": "laptop",
+              "path": "/tmp/output.log",
+              "bytes": 90000,
+              "lines": 4000,
+              "cut": true
+            },
+            "visited": [
+              [
+                "gpu",
+                "j-def456"
+              ]
+            ],
+            "writes": [
+              {
+                "id": "00112233445566778899aabbccddeeff-0",
+                "machine": "gpu",
+                "path": "/work/file-0.txt",
+                "kind": "added",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-0.jsonl"
+                },
+                "note": {
+                  "kind": "text",
+                  "command": "write",
+                  "text": "=== write /work/file on gpu (created) ===\n"
+                }
+              },
+              {
+                "id": "00112233445566778899aabbccddeeff-1",
+                "machine": "gpu",
+                "path": "/work/file-1.txt",
+                "kind": "modified",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-1.jsonl"
+                },
+                "note": {
+                  "kind": "same",
+                  "fact": "00112233445566778899aabbccddeeff-0"
+                }
+              },
+              {
+                "id": "00112233445566778899aabbccddeeff-2",
+                "machine": "gpu",
+                "path": "/work/file-2.txt",
+                "kind": "deleted",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-2.jsonl"
+                },
+                "note": {
+                  "kind": "same",
+                  "fact": "00112233445566778899aabbccddeeff-0"
+                }
+              }
+            ],
+            "spans": [
+              {
+                "note": {
+                  "command": "write",
+                  "write": "00112233445566778899aabbccddeeff"
+                },
+                "piece": {
+                  "kind": "text",
+                  "first_line": 1,
+                  "text": "a World note\n"
+                }
+              },
+              {
+                "piece": {
+                  "kind": "text",
+                  "first_line": 2,
+                  "text": "program output\n"
+                }
+              },
+              {
+                "piece": {
+                  "kind": "part_of_line",
+                  "line": 3,
+                  "from": 2,
+                  "to": 4,
+                  "of": 20,
+                  "text": "😀中x"
+                }
+              },
+              {
+                "piece": {
+                  "kind": "omitted",
+                  "first_line": 4,
+                  "last_line": 3998
+                }
+              },
+              {
+                "piece": {
+                  "kind": "image",
+                  "image": 0,
+                  "mime": "image/png",
+                  "width": 8,
+                  "height": 9
+                }
+              },
+              {
+                "piece": {
+                  "kind": "unreadable",
+                  "line": 4000,
+                  "reason": "broken graphic"
+                }
+              }
+            ],
+            "notes": [
+              {
+                "note": {
+                  "command": "write",
+                  "write": "00112233445566778899aabbccddeeff"
+                },
+                "from": 0,
+                "to": 42
+              }
+            ]
+          },
           "name": "tool-1",
           "server": "tools",
           "machine": "desktop",
@@ -3456,13 +4798,96 @@
         "event": "changed",
         "turn": "turn-1",
         "change": {
-          "kind": "history_changed"
+          "kind": "run_facts_updated",
+          "call_id": "host-call-1",
+          "update": {
+            "call_id": "host-call-1",
+            "primary": true,
+            "output": {
+              "machine": "laptop",
+              "path": "/tmp/output.log",
+              "bytes": 90000,
+              "lines": 4000,
+              "cut": true
+            },
+            "visited": [
+              [
+                "gpu",
+                "j-def456"
+              ]
+            ],
+            "machine": "laptop",
+            "job": "j-abc123",
+            "sequence": 2,
+            "state": {
+              "kind": "running"
+            },
+            "writes": [
+              {
+                "id": "00112233445566778899aabbccddeeff-0",
+                "machine": "gpu",
+                "path": "/work/file-0.txt",
+                "kind": "added",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-0.jsonl"
+                },
+                "note": {
+                  "kind": "text",
+                  "command": "write",
+                  "text": "=== write /work/file on gpu (created) ===\n"
+                }
+              },
+              {
+                "id": "00112233445566778899aabbccddeeff-1",
+                "machine": "gpu",
+                "path": "/work/file-1.txt",
+                "kind": "modified",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-1.jsonl"
+                },
+                "note": {
+                  "kind": "same",
+                  "fact": "00112233445566778899aabbccddeeff-0"
+                }
+              },
+              {
+                "id": "00112233445566778899aabbccddeeff-2",
+                "machine": "gpu",
+                "path": "/work/file-2.txt",
+                "kind": "deleted",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-2.jsonl"
+                },
+                "note": {
+                  "kind": "same",
+                  "fact": "00112233445566778899aabbccddeeff-0"
+                }
+              }
+            ]
+          }
         }
       },
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
         "turn": null,
+        "change": {
+          "kind": "history_changed"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
         "change": {
           "kind": "forked",
           "source": {
@@ -3476,7 +4901,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "forked",
           "source": {
@@ -3490,7 +4915,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "diff",
           "diff": "-before\n+after\n"
@@ -3499,7 +4924,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "terminal",
           "item": "tool-1",
@@ -3510,7 +4935,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "usage",
           "usage": {
@@ -3521,7 +4946,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "status",
           "status": "idle"
@@ -3530,7 +4955,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "status",
           "status": {
@@ -3542,7 +4967,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "status",
           "status": null,
@@ -3552,7 +4977,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "metadata",
           "metadata": [
@@ -3566,7 +4991,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "lifecycle",
           "state": "loaded"
@@ -3575,7 +5000,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "goal",
           "goal": null
@@ -3584,7 +5009,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "hook",
           "run": {
@@ -3595,7 +5020,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "approval_review",
           "review": {
@@ -3607,7 +5032,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "approval_review",
           "review": null,
@@ -3617,7 +5042,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "strict_review",
           "notice": "review"
@@ -3626,7 +5051,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "safety",
           "buffering": {
@@ -3637,7 +5062,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "safety",
           "buffering": {
@@ -3648,7 +5073,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "safety",
           "buffering": {
@@ -3659,7 +5084,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "safety",
           "buffering": null
@@ -3668,7 +5093,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "rerouted",
           "from": "model-a",
@@ -3679,7 +5104,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "verification",
           "verifications": [
@@ -3693,7 +5118,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "error",
           "error": {
@@ -3705,7 +5130,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "error",
           "error": {
@@ -3717,7 +5142,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "error",
           "error": {
@@ -3729,7 +5154,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "error",
           "error": null,
@@ -3739,7 +5164,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "warning",
           "text": "warning"
@@ -3748,7 +5173,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "settings",
           "settings": {
@@ -3759,7 +5184,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "environment",
           "environment": {
@@ -3771,7 +5196,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "environment",
           "environment": null,
@@ -3781,7 +5206,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "queue"
         }
@@ -3789,7 +5214,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "tool_server",
           "server": "tools",
@@ -3803,7 +5228,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "tool_server",
           "server": "tools",
@@ -3817,7 +5242,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "tool_server",
           "server": "tools",
@@ -3829,7 +5254,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "tool_server",
           "server": "tools",
@@ -3841,7 +5266,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "attachment",
           "attachment": {
@@ -3852,7 +5277,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "request",
           "id": 42,
@@ -3865,7 +5290,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "request",
           "id": {
@@ -3882,7 +5307,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "request",
           "id": "request-1",
@@ -3893,7 +5318,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "resolved",
           "id": "request-1",
@@ -3903,7 +5328,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": "turn-1",
+        "turn": null,
         "change": {
           "kind": "resolved",
           "id": null,
@@ -3913,7 +5338,7 @@
       {
         "at": "2026-10-04T12:06:07.123456789Z",
         "event": "changed",
-        "turn": null,
+        "turn": "turn-1",
         "change": {
           "kind": "voice",
           "event": "started",
@@ -4189,6 +5614,87 @@
       }
     ],
     "health_cases": [
+      {
+        "change": {
+          "kind": "run_facts_updated",
+          "call_id": "host-call-1",
+          "update": {
+            "call_id": "host-call-1",
+            "primary": true,
+            "output": {
+              "machine": "laptop",
+              "path": "/tmp/output.log",
+              "bytes": 90000,
+              "lines": 4000,
+              "cut": true
+            },
+            "visited": [
+              [
+                "gpu",
+                "j-def456"
+              ]
+            ],
+            "machine": "laptop",
+            "job": "j-abc123",
+            "sequence": 2,
+            "state": {
+              "kind": "running"
+            },
+            "writes": [
+              {
+                "id": "00112233445566778899aabbccddeeff-0",
+                "machine": "gpu",
+                "path": "/work/file-0.txt",
+                "kind": "added",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-0.jsonl"
+                },
+                "note": {
+                  "kind": "text",
+                  "command": "write",
+                  "text": "=== write /work/file on gpu (created) ===\n"
+                }
+              },
+              {
+                "id": "00112233445566778899aabbccddeeff-1",
+                "machine": "gpu",
+                "path": "/work/file-1.txt",
+                "kind": "modified",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-1.jsonl"
+                },
+                "note": {
+                  "kind": "same",
+                  "fact": "00112233445566778899aabbccddeeff-0"
+                }
+              },
+              {
+                "id": "00112233445566778899aabbccddeeff-2",
+                "machine": "gpu",
+                "path": "/work/file-2.txt",
+                "kind": "deleted",
+                "added": 1,
+                "removed": 1,
+                "diff": {
+                  "machine": "gpu",
+                  "path": "/tmp/diff-2.jsonl"
+                },
+                "note": {
+                  "kind": "same",
+                  "fact": "00112233445566778899aabbccddeeff-0"
+                }
+              }
+            ]
+          }
+        },
+        "health": null
+      },
       {
         "change": {
           "kind": "history_changed"
