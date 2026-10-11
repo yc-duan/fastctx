@@ -90,7 +90,13 @@ fn install(code: String, name: Option<MachineName>) -> anyhow::Result<()> {
             quote(&installed),
             service.uid
         );
-        let status = Command::new("sudo")
+        let mut sudo = Command::new("sudo");
+        // Without a terminal, as over SSH from the app, sudo's password is the
+        // line on standard input.
+        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            sudo.args(["-S", "-p", ""]);
+        }
+        let status = sudo
             .arg(&installed)
             .args(&arguments)
             .stdin(Stdio::inherit())

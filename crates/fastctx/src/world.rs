@@ -454,13 +454,40 @@ fn keep_hub(dir: &std::path::Path) -> anyhow::Result<bool> {
         Kept::Declined => anyhow::bail!("administrator rights were declined; the hub is made but not running"),
         Kept::Command(command) => {
             eprintln!("Its service needs administrator rights: {command}");
-            Ok(false)
+            sudo_hub(&places, dir)
         }
         Kept::Unsupported => {
             eprintln!("This system has no service for it.");
             Ok(false)
         }
     }
+}
+
+/// Installs the hub's service through sudo, as `server install` does the
+/// node's: asked at the terminal, or without one read from standard input.
+#[cfg(unix)]
+fn sudo_hub(places: &fastctx_install::apply::Places, dir: &std::path::Path) -> anyhow::Result<bool> {
+    use std::io::IsTerminal as _;
+    let (executable, _) = fastctx_install::apply::place_executable(places)?;
+    let mut sudo = std::process::Command::new("sudo");
+    if !std::io::stdin().is_terminal() {
+        sudo.args(["-S", "-p", ""]);
+    }
+    let status = sudo
+        .arg(&executable)
+        .args(["service", "hub", "install", "--dir"])
+        .arg(dir)
+        .arg("--executable")
+        .arg(&executable)
+        .status()
+        .map_err(|error| anyhow::anyhow!("starting sudo for the hub's service: {error}"))?;
+    anyhow::ensure!(status.success(), "sudo service registration failed ({status}); run the command above to finish");
+    Ok(true)
+}
+
+#[cfg(not(unix))]
+fn sudo_hub(_: &fastctx_install::apply::Places, _: &std::path::Path) -> anyhow::Result<bool> {
+    Ok(false)
 }
 
 /// Makes `change` as `account`, on `hub` or the one hub; a token, when it
