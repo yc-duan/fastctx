@@ -100,6 +100,7 @@ import { specimenMachineLog } from "./specimen/machine-log";
 import type { RemoteSeams } from "./app/remote-world";
 import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
 import { RemoteLines } from "./world/remote-lines";
+import { specimenLines } from "./specimen/run-facts";
 import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
 import { showPathNotice } from "./app/path-notice";
@@ -782,6 +783,7 @@ function specimenTalk(address: Address): Page {
     stop() {},
     stopJob: async () => {},
     jobOutput: async (job) => specimenOutput(job.command),
+    lines: async (_machine, path) => specimenLines(path),
   });
   // What it started that still runs, as the specimen World lists it.
   const runningJobs = effect(() => {
@@ -970,6 +972,7 @@ function liveTalk(address: Address): Page {
     },
     stopJob: (job, machine) => stopJob(job, machine),
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
+    lines: (machine, path, decoding) => RemoteLines.open(machine, path, decoding),
   });
   let watchId: number | null = null;
   let left = false;

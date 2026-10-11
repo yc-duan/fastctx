@@ -11,7 +11,7 @@
 .lv-track { position: relative; min-width: 100%; }
 .lv-line { position: absolute; left: 0; min-width: 100%; width: max-content; display: flex; align-items: baseline; white-space: pre; padding-right: var(--space-4); }
 .lv-fold .lv-line { padding-right: calc(44px + var(--space-4)); }
-.lv-number { flex: none; width: 8ch; padding-right: 1ch; text-align: right; color: var(--text-3); user-select: none; }
+.lv-number { flex: none; width: calc(var(--line-digits, 7) * 1ch + 1ch); padding-right: 1ch; text-align: right; color: var(--text-3); user-select: none; font-variant-numeric: tabular-nums; }
 .lv-text { white-space: pre; tab-size: 4; unicode-bidi: plaintext; }
 .lv-text mark { background: var(--selection); color: inherit; }
 .lv-status { position: absolute; left: 0; top: 0; width: fit-content; color: var(--text-2); background: var(--surface-code); }

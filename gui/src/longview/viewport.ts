@@ -1,6 +1,13 @@
 import type { LineMatch, LineSource } from "./source";
 import { chainTouch } from "./touch";
 
+/** Draws one row from its line, for lines that carry more than their text
+ *  (a diff row's kind and numbers, an output line's place in the whole).
+ *  The row comes bare, its class reset to `lv-line`; `match` holds UTF-16
+ *  offsets into `line` to mark, and a `mark` the painter puts in the row is
+ *  scrolled into view. */
+export type LinePaint = (row: HTMLElement, line: string, index: number, match: { start: number; end: number } | null) => void;
+
 export interface LineViewportOptions {
   label: string;
   /** Limits a preview without changing the source's identity. */
@@ -8,6 +15,7 @@ export interface LineViewportOptions {
   follow?: boolean;
   loading?: string;
   failed?: string | ((error: unknown) => string);
+  paint?: LinePaint;
 }
 
 /** Fixed-height logical lines; native horizontal scrolling preserves shaping,
@@ -65,7 +73,7 @@ export class LineViewport {
     if (!Number.isSafeInteger(length) || length < 0) throw new RangeError("source length must be a nonnegative safe integer");
     return Math.min(length, this.options.limit ?? Infinity);
   }
-  get rowHeight(): number { return this.lineHeight || parseFloat(getComputedStyle(this.element).lineHeight); }
+  get rowHeight(): number { return this.lineHeight || Math.round(parseFloat(getComputedStyle(this.element).lineHeight)); }
   get ready(): Promise<void> {
     return (async () => { do { await this.pending; } while (this.requestRange); })();
   }
@@ -110,7 +118,9 @@ export class LineViewport {
   private resize(): void {
     if (this.destroyed || this.element.clientHeight === 0) return;
     const top = this.lastTop;
-    this.lineHeight = parseFloat(getComputedStyle(this.element).lineHeight);
+    // Rows step by whole pixels: each row's top is exactly the one above's
+    // bottom, so tinted rows meet without a seam at any display scale.
+    this.lineHeight = Math.round(parseFloat(getComputedStyle(this.element).lineHeight));
     if (!(this.lineHeight > 0)) throw new Error("line-height must resolve to pixels");
     if (this.width !== this.element.clientWidth) {
       this.width = this.element.clientWidth;
@@ -183,37 +193,47 @@ export class LineViewport {
     for (const [index, row] of this.rows) {
       if (index < this.first || index >= this.end) { row.remove(); this.rows.delete(index); }
     }
+    const paint = this.options.paint;
     for (let index = this.first; index < this.end; index++) {
       let row = this.rows.get(index);
       if (!row) {
         row = document.createElement("div");
         row.className = "lv-line";
         row.dataset.line = String(index);
-        const number = document.createElement("span");
-        number.className = "lv-number";
-        number.textContent = String(index + 1);
-        number.setAttribute("aria-hidden", "true");
-        const text = document.createElement("span");
-        text.className = "lv-text";
-        row.append(number, text);
+        if (!paint) {
+          const number = document.createElement("span");
+          number.className = "lv-number";
+          number.textContent = String(index + 1);
+          number.setAttribute("aria-hidden", "true");
+          const text = document.createElement("span");
+          text.className = "lv-text";
+          row.append(number, text);
+        }
         this.rows.set(index, row);
         this.track.append(row);
       }
       row.style.top = `${this.element.scrollTop + index * this.lineHeight - this.top}px`;
       row.style.height = `${this.lineHeight}px`;
-      const text = row.lastElementChild as HTMLElement;
       const value = this.cache.get(index) ?? "";
-      const matchKey = this.match?.line === index ? `${this.match.start}:${this.match.end}` : "";
-      const painted = this.painted.get(text);
-      if (painted?.value !== value || painted.match !== matchKey) {
-        this.painted.set(text, { value, match: matchKey });
-        if (this.match?.line === index) {
-          const mark = document.createElement("mark");
-          mark.textContent = value.slice(this.match.start, this.match.end);
-          text.replaceChildren(value.slice(0, this.match.start), mark, value.slice(this.match.end));
-          mark.scrollIntoView({ block: "nearest", inline: "nearest" });
-        } else text.textContent = value;
+      const match = this.match?.line === index ? { start: this.match.start, end: this.match.end } : null;
+      const matchKey = match ? `${match.start}:${match.end}` : "";
+      const painted = this.painted.get(row);
+      if (painted?.value === value && painted.match === matchKey) continue;
+      this.painted.set(row, { value, match: matchKey });
+      if (paint) {
+        row.className = "lv-line";
+        row.replaceChildren();
+        paint(row, value, index, match);
+        row.querySelector("mark")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        continue;
       }
+      const text = row.lastElementChild as HTMLElement;
+      if (match) {
+        const mark = document.createElement("mark");
+        mark.textContent = value.slice(match.start, match.end);
+        text.replaceChildren(value.slice(0, match.start), mark, value.slice(match.end));
+        mark.scrollIntoView({ block: "nearest", inline: "nearest" });
+      } else text.textContent = value;
     }
     this.maximumWidth = Math.max(this.maximumWidth, ...Array.from(this.rows.values(), (row) => row.scrollWidth));
     this.track.style.width = `${Math.max(this.width, this.maximumWidth)}px`;

@@ -7,6 +7,7 @@ import type { QueueWords } from "./conversation/queue";
 // produce is never translated.
 
 import type { FindWords } from "./conversation/find";
+import type { OutputWords } from "./conversation/run-output";
 import { enQuestions, zhQuestions, type QuestionWords } from "./conversation/question-card";
 
 export type Tense = "running" | "done" | "failed";
@@ -104,6 +105,17 @@ export interface Words {
   unchangedLines(n: number): string;
   /** Long text opened full screen. */
   fullScreen: string;
+  /** What a command printed and what a write changed, opened under their
+   *  rows: what was left out of what the model got, the whole output on
+   *  its machine beside it, and what is said when either is gone. */
+  output: OutputWords & {
+    modelCopy: string;
+    whole: string;
+    wholeGone: string;
+    diffGone: string;
+    reading: string;
+    readFailed: string;
+  };
   /** How long something took: "1 分 12 秒". */
   took(ms: number): string;
   /** What a turn took, under its info mark: the model and effort the host
@@ -312,6 +324,17 @@ export const zh: Words = {
   moreLines: (n) => `+ ${n.toLocaleString("zh-CN")} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
   fullScreen: "整屏查看",
+  output: {
+    linesLeftOut: (n) => `⋯ 省略 ${n.toLocaleString("zh-CN")} 行`,
+    charsLeftOut: (n) => `⋯ 省略 ${n.toLocaleString("zh-CN")} 个字符`,
+    unreadable: "此行无法显示",
+    modelCopy: "模型拿到的",
+    whole: "完整输出",
+    wholeGone: "完整输出已不在那台机器上",
+    diffGone: "改动的细节已不在那台机器上",
+    reading: "读取中…",
+    readFailed: "读取失败",
+  },
   turnInfo: {
     model: "模型",
     effort: "推理强度",
@@ -511,6 +534,17 @@ export const en: Words = {
   moreLines: (n) => `+ ${n.toLocaleString("en")} more line${n === 1 ? "" : "s"}`,
   unchangedLines: (n) => `${n} unchanged lines`,
   fullScreen: "Full screen",
+  output: {
+    linesLeftOut: (n) => `⋯ ${n.toLocaleString("en")} line${n === 1 ? "" : "s"} left out`,
+    charsLeftOut: (n) => `⋯ ${n.toLocaleString("en")} character${n === 1 ? "" : "s"} left out`,
+    unreadable: "This line can't be shown",
+    modelCopy: "What the model got",
+    whole: "Full output",
+    wholeGone: "The full output is no longer on that machine",
+    diffGone: "This change's details are no longer on that machine",
+    reading: "Reading…",
+    readFailed: "Couldn't read it",
+  },
   turnInfo: {
     model: "Model",
     effort: "Effort",

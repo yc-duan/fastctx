@@ -10,7 +10,6 @@
 // that differ, the rest as context, since that is what the change did.
 
 import hljs from "highlight.js/lib/common";
-import { escape } from "./prose";
 
 export interface DiffRow {
   kind: "add" | "del" | "same" | "gap";
@@ -164,28 +163,10 @@ const languages: Record<string, string> = {
   html: "xml", xml: "xml", svg: "xml", sql: "sql", swift: "swift", md: "markdown", rb: "ruby", php: "php", lua: "lua",
 };
 
-function language(path: string): string | null {
+export function language(path: string): string | null {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   const name = languages[ext];
   return name && hljs.getLanguage(name) ? name : null;
-}
-
-export function renderRows(rows: DiffRow[], path: string, unchanged: (n: number) => string): string {
-  const lang = language(path);
-  const html: string[] = [];
-  for (const row of rows) {
-    if (row.kind === "gap") {
-      const said = row.hidden ? ` ${escape(unchanged(row.hidden))}` : "";
-      html.push(`<div class="diff-gap">⋯${said}</div>`);
-      continue;
-    }
-    const code = lang ? hljs.highlight(row.text, { language: lang, ignoreIllegals: true }).value : escape(row.text);
-    const sign = row.kind === "add" ? "+" : row.kind === "del" ? "−" : " ";
-    html.push(
-      `<div class="diff-row diff-${row.kind}"><span class="diff-num">${row.old ?? ""}</span><span class="diff-num">${row.new ?? ""}</span><span class="diff-sign">${sign}</span><code class="diff-code">${code || " "}</code></div>`,
-    );
-  }
-  return html.join("");
 }
 
 /** Whether any row knows its place in the file. */

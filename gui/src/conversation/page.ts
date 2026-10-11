@@ -7,6 +7,7 @@ import type { Words } from "../words";
 import type { Control, Controlled, Offers } from "../world/control";
 import type { Attachment } from "../world/attachments";
 import type { AttachmentSource } from "../world/files";
+import type { Decoding } from "../world/remote-lines";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { SendQueue, type Queued } from "./queue";
@@ -125,6 +126,9 @@ export interface PageOptions {
   /** A job's output as lines from the machine running it, read as it
    *  grows. */
   jobOutput?: ((job: Job) => Promise<OutputLines>) | undefined;
+  /** Lines of a file or a job's output on the machine holding them: what a
+   *  write changed, a command's whole output. */
+  lines?: ((machine: string, path: string, decoding: Decoding) => Promise<OutputLines>) | undefined;
 }
 
 export class ConversationPage {
@@ -281,6 +285,7 @@ export class ConversationPage {
         settled: () => this.update(),
       },
       turnAct: controls && ((act, turn, words, kept) => this.turnAct(act, turn, words, kept)),
+      lines: options.lines,
     });
     if (options.opening) {
       new FileLinks(main, {

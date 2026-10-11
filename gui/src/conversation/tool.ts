@@ -5,9 +5,11 @@
 // count that cannot be read from it is not guessed.
 
 import type { Change, Tool } from "../world/events";
+import type { WriteFact } from "../world/run-facts";
 import type { Act, Tally, Tense, Words } from "../words";
 import type { Use } from "./model";
 import { counts } from "./diff";
+import { writeNote } from "./run-output";
 
 export type Glyph = "read" | "edit" | "command" | "search" | "image" | "colleague" | "web" | "tasks" | "tool";
 
@@ -141,6 +143,23 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
   }
 }
 
+/** One file a run wrote, as its own row: made, changed or removed, and the
+ *  lines it added and took away where they could be counted. */
+export function writeHeadline(write: WriteFact, words: Words): Headline {
+  const act: Act = write.kind === "added" ? "create" : write.kind === "deleted" ? "delete" : "edit";
+  return { glyph: "edit", action: words.act(act, "done"), object: basename(write.path), title: write.path, added: write.added, removed: write.removed };
+}
+
+/** Whether a run did nothing but write files, and ended well: its writes'
+ *  rows say all it did, so it has no row of its own. */
+export function onlyWrites(tool: Tool): boolean {
+  const run = tool.run;
+  if (tool.does.as !== "command" || !run?.writes.length) return false;
+  const state = run.state;
+  if (state.kind !== "ended" || !("code" in state.status) || state.status.code !== 0) return false;
+  return run.spans.every((span) => writeNote(span.note, run.writes));
+}
+
 function edits(changes: Change[], say: (act: Act) => string): Headline {
   let added = 0;
   let removed = 0;
@@ -207,6 +226,10 @@ export function groupHeading(
     if (ended && (ended.use === "failed" || ended.use === "declined")) tally.failed += 1;
     switch (tool.does.as) {
       case "command": {
+        // Each file a run wrote counts as a file changed; a run that did
+        // nothing else is not also a command run.
+        tally.edited += tool.run?.writes.length ?? 0;
+        if (onlyWrites(tool)) break;
         const viewed = viewing(tool.does.command);
         if (viewed) tally.read += viewed.length;
         else tally.ran += 1;

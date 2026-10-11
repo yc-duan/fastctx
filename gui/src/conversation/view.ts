@@ -18,6 +18,8 @@
 import type { Content, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
 import { STOPPED_BY_USER } from "../world/events";
 import type { Attachment } from "../world/attachments";
+import type { Decoding } from "../world/remote-lines";
+import type { RunFacts, WriteFact } from "../world/run-facts";
 import type { JsonValue } from "../world/wire";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
@@ -25,13 +27,15 @@ import { glyph } from "./glyphs";
 import { effortLabel } from "./effort-slider";
 import { visible, withheld, type Activity, type Conversation, type Entry, type SendState, type ShownAttachment } from "./model";
 import { escape, plain, render } from "./prose";
-import { counts, numbered, parse, renderRows } from "./diff";
-import { headline, groupHeading, tenseOf } from "./tool";
+import { counts, numbered, parse } from "./diff";
+import { DiffLines, RemoteDiff, diffPaint, memoryDiff } from "./diff-lines";
+import { headline, groupHeading, onlyWrites, tenseOf, writeHeadline } from "./tool";
 import { drawDiagrams } from "./diagrams";
 import { readTold, worldSaid, type WorldSaid } from "./told";
 import { detailOf } from "../app/problem";
 import { AnchorLayout, AnchoredHeight } from "../longview";
-import { LongText } from "./long-text";
+import { FEW, LongText, type LongLines, type LongTextWords, type OtherSource } from "./long-text";
+import { Said, WholeOutput, outputPaint, shownOutput, type OpenedLines } from "./run-output";
 import { replyOf } from "./async-ask";
 import { chosenIn, drawQuestions, type QuestionWords } from "./question-card";
 
@@ -69,7 +73,20 @@ export interface Context {
    *  same again, or to fork from `turn`; offered only where the
    *  conversation takes it. */
   turnAct?: ((act: "rewind" | "regenerate" | "fork", turn: string, words: string | null, kept: Attachment[]) => void) | undefined;
+  /** Lines of a file or a job's output on the machine holding them, read a
+   *  screen at a time: a write's change, a command's whole output. */
+  lines?: ((machine: MachineName, path: string, decoding: Decoding) => Promise<OpenedLines>) | undefined;
 }
+
+/** A row on the page and what it is drawn from. */
+interface Row {
+  key: string;
+  signature: string;
+  html(): string;
+}
+
+/** A write's row is keyed by its run's row and the write. */
+const WRITE = "~";
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 type AskEntry = Extract<Entry, { kind: "ask" }>;
@@ -92,6 +109,9 @@ export class ConversationView {
   private stretches = new Map<string, Stretch>();
   /** Long texts open under rows, by row, to be let go when the row is. */
   private longs = new Map<string, LongText[]>();
+  /** What else a row holds open on another machine (lines being read),
+   *  let go with it. */
+  private closers = new Map<string, (() => void)[]>();
   private motions = new WeakMap<HTMLElement, AnchoredHeight>();
   /** Rows already on the page once; only rows new to a live conversation
    *  make an entrance. */
@@ -243,7 +263,7 @@ export class ConversationView {
       case "prose":
         return `${entry.key}p${entry.version}${entry.writing ? "w" : ""}`;
       case "tool":
-        return `${entry.key}t${entry.tool.status}${entry.ended?.use ?? "-"}${entry.tool.output.length}${this.conversation.agentOf(entry) ? `a${this.conversation.agentStamp}` : ""}`;
+        return `${entry.key}t${entry.tool.status}${entry.ended?.use ?? "-"}${entry.tool.output.length}${runStamp(entry.tool.run)}${this.conversation.agentOf(entry) ? `a${this.conversation.agentStamp}` : ""}`;
       default:
         return entry.key;
     }
@@ -702,24 +722,23 @@ export class ConversationView {
       this.stretches.set(group.key, stretch);
     }
     this.heading(stretch, group);
-    const members = group.members.filter(visible);
+    const rows = group.members.filter(visible).flatMap((member) => this.rowsOf(member));
     const present = new Set<string>();
     let previous: HTMLElement | null = null;
-    for (const member of members) {
-      present.add(member.key);
-      const signature = this.memberSignature(member);
-      let drawn = stretch.drawn.get(member.key);
-      if (!drawn || drawn.signature !== signature) {
+    for (const row of rows) {
+      present.add(row.key);
+      let drawn = stretch.drawn.get(row.key);
+      if (!drawn || drawn.signature !== row.signature) {
         const holder = document.createElement("div");
-        holder.innerHTML = this.member(member);
+        holder.innerHTML = row.html();
         const fresh = holder.firstElementChild as HTMLElement;
         if (drawn) {
-          this.letGo(member.key);
+          this.letGo(row.key);
           drawn.element.replaceWith(fresh);
         }
-        if (this.openRows.has(member.key)) this.fill(member.key, fresh);
-        drawn = { signature, element: fresh };
-        stretch.drawn.set(member.key, drawn);
+        if (this.openRows.has(row.key)) this.fill(row.key, fresh);
+        drawn = { signature: row.signature, element: fresh };
+        stretch.drawn.set(row.key, drawn);
       }
       const want: Element | null = previous ? previous.nextElementSibling : stretch.rows.firstElementChild;
       if (want !== drawn.element) {
@@ -770,6 +789,10 @@ export class ConversationView {
       let added = 0;
       let removed = 0;
       for (const tool of tools) {
+        for (const write of tool.tool.run?.writes ?? []) {
+          added += write.added ?? 0;
+          removed += write.removed ?? 0;
+        }
         if (tool.tool.does.as !== "edit") continue;
         for (const change of tool.tool.does.changes) {
           const counted = counts(change.diff);
@@ -852,6 +875,43 @@ export class ConversationView {
       time.textContent = "";
     }
     return true;
+  }
+
+  /** The rows a member stands for: a run's writes have one each, after its
+   *  own, which a run that did nothing but write does not have. */
+  private rowsOf(member: Entry): Row[] {
+    const own: Row = { key: member.key, signature: this.memberSignature(member), html: () => this.member(member) };
+    const writes = member.kind === "tool" ? (member.tool.run?.writes ?? []) : [];
+    if (!writes.length || member.kind !== "tool") return [own];
+    return [
+      ...(onlyWrites(member.tool) ? [] : [own]),
+      ...writes.map((write) => {
+        const key = `${member.key}${WRITE}${write.id}`;
+        return { key, signature: `${key}${write.added}${write.removed}${write.diff ? "d" : ""}`, html: () => this.writeRow(key, write) };
+      }),
+    ];
+  }
+
+  /** A file a run wrote: made, changed or removed, its lines added and
+   *  taken away beside its name, the machine where it was not here; opened,
+   *  the change with its line numbers. */
+  private writeRow(key: string, write: WriteFact): string {
+    const enter = this.settled && !this.seen.has(key) ? " entering" : "";
+    this.seen.add(key);
+    const { words } = this.context;
+    const line = writeHeadline(write, words);
+    const open = this.openRows.has(key);
+    const expandable = write.diff !== null;
+    const stats =
+      line.added !== null && line.removed !== null
+        ? `<span class="row-stats"><span class="add">+${line.added}</span><span class="del">−${line.removed}</span></span>`
+        : "";
+    const elsewhere = write.machine !== this.context.residentMachine ? `<span class="row-machine">${escape(words.on(write.machine))}</span>` : "";
+    const chevron = expandable ? `<span class="row-chevron">${glyph("chevron", 16)}</span>` : "";
+    const fold = expandable ? `<div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>` : "";
+    // A change that could not be read line by line says why on hover.
+    const why = write.unavailable ? ` title="${escape(write.unavailable)}"` : "";
+    return `<div class="row row-tool row-done${enter}" data-row="${key}"><span class="rail">${glyph(line.glyph)}</span><button class="row-line" type="button" ${expandable ? `data-open="${key}"` : "disabled"} aria-expanded="${open}"${why}><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object" title="${escape(write.path)}">${escape(line.object ?? "")}</span><span class="row-meta">${stats}${elsewhere}${chevron}</span></span></button>${fold}</div>`;
   }
 
   private member(entry: Entry): string {
@@ -941,9 +1001,80 @@ export class ConversationView {
     return given || tool.output.length > 0;
   }
 
-  private longWords() {
+  private longWords(): LongTextWords {
     const { words, english } = this.context;
-    return { more: words.moreLines, less: words.showLess, full: words.fullScreen, english };
+    return {
+      more: words.moreLines,
+      less: words.showLess,
+      full: words.fullScreen,
+      english,
+      failed: (error) => (error instanceof Said ? error.message : words.output.readFailed),
+    };
+  }
+
+  /** A change as rows to read: its numbers, its sign, its text. */
+  private diffText(lines: readonly string[] | RemoteDiff, path: string, numberedRows: boolean): LongText {
+    return new LongText(
+      {
+        lines,
+        ...(Array.isArray(lines) ? { source: new DiffLines(lines as readonly string[]) } : {}),
+        paint: diffPaint(path, this.context.words.unchangedLines),
+        kind: numberedRows ? "diff" : "diff unnumbered",
+      },
+      path,
+      this.layout,
+      this.longWords(),
+    );
+  }
+
+  /** What a write changed, read from the machine that keeps it: a few rows
+   *  are read whole and shown outright, more are read a screen at a time. */
+  private fillWrite(key: string, write: WriteFact, into: HTMLElement): void {
+    const diff = write.diff;
+    const lines = this.context.lines;
+    if (!diff || !lines) return;
+    const { words } = this.context;
+    const note = document.createElement("p");
+    note.className = "io-note";
+    note.textContent = words.output.reading;
+    into.append(note);
+    const request = new AbortController();
+    const held: { raw: OpenedLines | null } = { raw: null };
+    const close = () => {
+      const raw = held.raw;
+      held.raw = null;
+      if (raw) void raw.close().catch((error: unknown) => console.warn("a change's lines could not be let go", error));
+    };
+    this.closers.set(key, [
+      () => {
+        request.abort();
+        close();
+      },
+    ]);
+    void (async () => {
+      try {
+        held.raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });
+        if (request.signal.aborted) return close();
+        const remote = await RemoteDiff.open(held.raw, request.signal);
+        let long: LongText;
+        if (remote.extent.length <= FEW) {
+          const rows = [...(await remote.read(0, remote.extent.length, request.signal))];
+          close();
+          long = this.diffText(rows, write.path, true);
+        } else long = this.diffText(remote, write.path, true);
+        if (request.signal.aborted) {
+          long.destroy();
+          return close();
+        }
+        this.longs.set(key, [long]);
+        note.replaceWith(long.element);
+      } catch (error) {
+        if (request.signal.aborted) return;
+        close();
+        note.textContent = gone(error) ? words.output.diffGone : words.output.readFailed;
+        note.title = detailOf(error);
+      }
+    })();
   }
 
   /** Fills what opens under a row or a notice: a change as a diff, a
@@ -954,6 +1085,13 @@ export class ConversationView {
     if (!content) return;
     this.letGo(key);
     content.replaceChildren();
+    const split = key.indexOf(WRITE);
+    if (split !== -1) {
+      const owner = this.conversation.entries.find((candidate) => candidate.key === key.slice(0, split));
+      const write = owner?.kind === "tool" ? owner.tool.run?.writes.find((one) => one.id === key.slice(split + 1)) : undefined;
+      if (write) this.fillWrite(key, write, content);
+      return;
+    }
     const entry = this.conversation.entries.find((candidate) => candidate.key === key);
     if (!entry) return;
     if (entry.kind === "heard") {
@@ -968,16 +1106,30 @@ export class ConversationView {
     const { words } = this.context;
     const { tool } = entry;
     if (tool.does.as === "edit") {
-      content.innerHTML = tool.does.changes
-        .map((change) => {
-          const rows = parse(change.diff);
-          const place = numbered(rows) ? "" : " unnumbered";
-          return `<div class="surface diff"><div class="surface-head"><span class="surface-title" title="${escape(change.path)}">${escape(change.path)}</span></div><div class="diff-rows${place}">${renderRows(rows, change.path, words.unchangedLines)}</div></div>`;
-        })
-        .join("");
+      // One file's change needs no name above it: its row has said it.
+      const several = tool.does.changes.length > 1;
+      const longs: LongText[] = [];
+      for (const change of tool.does.changes) {
+        const rows = parse(change.diff);
+        const long = this.diffText(memoryDiff(rows).lines, change.path, numbered(rows));
+        longs.push(long);
+        if (several) {
+          const head = document.createElement("p");
+          head.className = "diff-path";
+          head.title = change.path;
+          head.textContent = change.path;
+          content.append(head);
+        }
+        content.append(long.element);
+      }
+      this.longs.set(key, longs);
       return;
     }
-    const output = textOf(tool.output);
+    // A World run says what the model got as facts: its own output, apart
+    // from what its writes printed of themselves, which their rows show.
+    const run = tool.does.as === "command" && tool.status !== "running" ? tool.run : undefined;
+    const shown = run ? shownOutput(run.spans, run.writes, words.output) : null;
+    const output = run ? "" : textOf(tool.output);
     const images = imagesOf(tool.output);
     const given =
       tool.does.as === "command"
@@ -988,7 +1140,8 @@ export class ConversationView {
     const surface = document.createElement("div");
     surface.className = "surface io";
     const longs: LongText[] = [];
-    const part = (label: string, text: string, extra = "") => {
+    const closers: (() => void)[] = [];
+    const part = (label: string, text: string | LongLines, extra = "") => {
       const holder = document.createElement("div");
       holder.className = "io-part";
       holder.innerHTML = `<span class="io-label">${label}</span>`;
@@ -1003,6 +1156,26 @@ export class ConversationView {
       holder.append(out);
       surface.append(holder);
     };
+    // What the model got, and beside it in the full-screen view the whole
+    // output on its machine, where the model got less than the whole.
+    let printed: string | LongLines = output;
+    if (run && shown) {
+      const others: OtherSource[] = [];
+      const kept = run.output;
+      const going = stillGoing(run.state);
+      if (kept && run.job && this.context.lines && (kept.cut || going)) {
+        const open = this.context.lines;
+        const job = run.job;
+        const whole = new WholeOutput(
+          () => open(kept.machine, kept.path, { kind: "output", job }),
+          { length: kept.lines, complete: !going },
+          (error) => new Said(gone(error) ? words.output.wholeGone : words.output.readFailed, detailOf(error)),
+        );
+        others.push({ label: words.output.whole, source: whole, close: () => whole.close() });
+        closers.push(() => whole.close());
+      }
+      printed = { lines: shown.lines, ...(shown.cut ? { paint: outputPaint(shown) } : {}), name: words.output.modelCopy, others };
+    }
     // How a command ended, under what it wrote.
     const ending =
       tool.does.as === "command" && tool.does.job
@@ -1011,15 +1184,18 @@ export class ConversationView {
           ? `<p class="io-end${tool.does.exit === 0 ? "" : " nonzero"}">${escape(words.exited(tool.does.exit))}</p>`
           : "";
     if (given) part("IN", given);
-    if (output || images || ending) part("OUT", output, images + ending);
+    if (printed || images || ending) part("OUT", printed, images + ending);
     content.append(surface);
     this.longs.set(key, longs);
+    this.closers.set(key, closers);
   }
 
   /** Lets go of what a row held open. */
   private letGo(key: string): void {
     for (const long of this.longs.get(key) ?? []) long.destroy();
     this.longs.delete(key);
+    for (const close of this.closers.get(key) ?? []) close();
+    this.closers.delete(key);
   }
 
   private motionOf(box: HTMLElement): AnchoredHeight {
@@ -1145,6 +1321,24 @@ export class ConversationView {
       if (done && !open) this.letGo(key);
     });
   }
+}
+
+/** What of a run's facts its row shows, so that the row is drawn again when
+ *  they change. */
+function runStamp(run: RunFacts | undefined): string {
+  return run ? `r${run.state.kind}${run.spans.length}${run.writes.length}${run.output?.lines ?? ""}` : "";
+}
+
+/** Whether what a run started still runs, its output still growing. */
+function stillGoing(state: RunFacts["state"]): boolean {
+  return state.kind === "running" || (state.kind === "exited" && state.remaining > 0);
+}
+
+/** Whether a machine said that what was asked for is no longer there, as
+ *  the node's failure codes it. */
+function gone(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
+  return code === "source_missing" || code === "original_gone" || code === "output_not_retained";
 }
 
 function textOf(output: Content[]): string {

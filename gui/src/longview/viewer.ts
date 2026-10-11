@@ -1,7 +1,7 @@
 import type { LineCursor, LineMatch, LineSource } from "./source";
-import { LineViewport } from "./viewport";
+import { LineViewport, type LinePaint } from "./viewport";
 
-export interface ViewerSource { label: string; source: LineSource; }
+export interface ViewerSource { label: string; source: LineSource; paint?: LinePaint; }
 export interface ViewerWords {
   close: string; search: string; next: string; previous: string;
   line: string; go: string; searching: string; notFound: string;
@@ -122,8 +122,8 @@ export class TextViewer {
     this.viewport?.destroy();
     this.match = null;
     this.message.textContent = "";
-    const { source } = this.sources[this.selection];
-    this.viewport = new LineViewport(source, { label: this.title, failed: this.words.failed });
+    const { source, paint } = this.sources[this.selection];
+    this.viewport = new LineViewport(source, { label: this.title, failed: this.words.failed, ...(paint ? { paint } : {}) });
     this.body.replaceChildren(this.viewport.element);
     const count = (): void => { this.count.textContent = `${source.extent.length.toLocaleString()}${source.extent.complete ? "" : "+"}`; };
     count();

@@ -694,39 +694,71 @@
   text-align: left;
 }
 
-/* A change: a row a line, wrapped rather than scrolled. Added and removed
-   lines are tinted whole, with a bar at the edge. */
+/* A change: a row a line, its two numbers and its sign before it; added
+   and removed lines tinted whole, with a bar at the edge. A few rows wrap
+   in the page's flow; more scroll in their box, a row a line. The number
+   columns widen to the largest number drawn (`--diff-digits`). */
 
-.diff-rows {
-  max-height: calc(var(--size-code) * var(--leading-code) * 24);
-  overflow-y: auto;
+.long-text.diff {
+  border-radius: var(--radius-m);
+  background: var(--surface-code);
   padding: var(--space-1) 0;
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-code);
-  line-height: var(--leading-code);
-  scrollbar-width: thin;
+  overflow: hidden;
 }
 
-.diff-row {
+.long-text.diff + .diff-path,
+.long-text.diff + .long-text.diff {
+  margin-top: var(--space-2);
+}
+
+/* Tinted rows run to the box's edge. */
+.long-text.diff .lv-viewport {
+  scrollbar-gutter: auto;
+}
+
+.long-text.diff .io-more {
+  margin: var(--space-1) 0 0 var(--space-3);
+}
+
+.diff-path {
+  margin: 0 0 var(--space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.long-text.diff .lv-line {
+  --diff-number: calc(var(--diff-digits, 2) * 1ch + 1.6ch);
+}
+
+.lv-line.diff-row {
   display: grid;
-  grid-template-columns: 3.2ch 3.2ch 2ch minmax(0, 1fr);
-  padding-right: var(--space-3);
+  grid-template-columns: var(--diff-number) var(--diff-number) 2.4ch max-content;
+  align-items: baseline;
 }
 
-.diff-rows.unnumbered .diff-row {
+.long-static > .lv-line.diff-row {
+  grid-template-columns: var(--diff-number) var(--diff-number) 2.4ch minmax(0, 1fr);
+}
+
+.long-text.diff.unnumbered .lv-line.diff-row {
+  grid-template-columns: 2.4ch max-content;
+}
+
+.long-text.diff.unnumbered .long-static > .lv-line.diff-row {
   grid-template-columns: 2.4ch minmax(0, 1fr);
 }
 
-.diff-rows.unnumbered .diff-num {
+.long-text.diff.unnumbered .diff-num {
   display: none;
 }
 
-.diff-rows.unnumbered .diff-gap {
-  padding-left: 2.4ch;
-}
-
 .diff-num {
+  padding-right: 0.6ch;
   text-align: right;
   color: var(--text-3);
   opacity: 0.7;
@@ -741,8 +773,14 @@
 }
 
 .diff-code {
-  white-space: pre-wrap;
+  white-space: inherit;
   overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+.diff-code mark {
+  background: var(--selection);
+  color: inherit;
 }
 
 .diff-add {
@@ -763,12 +801,56 @@
   color: var(--del-fg);
 }
 
-.diff-gap {
-  padding: 2px 0 2px calc(6.4ch + 2ch);
+.lv-line.diff-gap {
+  align-items: center;
+  padding-left: calc(var(--diff-number) * 2 + 2.4ch);
   color: var(--text-3);
   font-family: var(--font-reading);
   font-size: var(--size-small);
   background: var(--surface-code-2);
+}
+
+.long-text.diff.unnumbered .lv-line.diff-gap {
+  padding-left: 2.4ch;
+}
+
+/* Lines drawn by their owner in the page's flow, few enough to be shown
+   outright: they wrap rather than scroll. */
+.long-static {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+}
+
+.long-static > .lv-line {
+  position: static;
+  width: auto;
+  white-space: pre-wrap;
+  padding-right: var(--space-3);
+}
+
+.long-static .lv-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Where the model was not given part of an output: one quiet line in its
+   place, the voice of the World's own notices. */
+.lv-line.lv-gap .lv-text {
+  font-family: var(--font-reading);
+  font-style: italic;
+  font-size: 0.92em;
+  color: var(--text-3);
+}
+
+/* Said in place of what could not be read, or while it is being read. */
+.io-note {
+  margin: 0;
+  padding: var(--space-1) 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
 }
 
 /* Words in and out of a tool. */

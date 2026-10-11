@@ -3,22 +3,61 @@
 // it grows upward, into a box of at most half the conversation's height
 // that draws only the lines in view and scrolls inside; the button then
 // reads "− 收起". The box's corner opens the whole of it full screen, to
-// search and to go to a line. Short text is simply shown.
+// search and to go to a line, beside any other source of it (a command's
+// whole output on its machine). Short text is simply shown.
 
 import { glyph } from "./glyphs";
-import { AnchoredHeight, LineViewport, MemoryLines, TextViewer, chineseViewer, englishViewer, type AnchorLayout, type LineSource, type ViewerSource } from "../longview";
+import {
+  AnchoredHeight,
+  LineViewport,
+  MemoryLines,
+  TextViewer,
+  chineseViewer,
+  englishViewer,
+  type AnchorLayout,
+  type LinePaint,
+  type LineSource,
+  type ViewerSource,
+  type ViewerWords,
+} from "../longview";
 
 export interface LongTextWords {
   more(lines: number): string;
   less: string;
   full: string;
   english: boolean;
+  /** Why lines could not be read, said plainly; the error goes on hover. */
+  failed?: (error: unknown) => string;
+}
+
+/** Another source of the same thing for the full-screen view; it is let go
+ *  when the view closes. */
+export interface OtherSource extends ViewerSource {
+  close?(): void;
+}
+
+export interface LongLines {
+  /** Lines known here are shown outright when they are few; a source is
+   *  always read into its box. */
+  lines: readonly string[] | LineSource;
+  /** The lines known here as a source, where it searches them as they read
+   *  rather than as they are held. */
+  source?: LineSource;
+  /** Draws a line itself, for lines that say more than their text. */
+  paint?: LinePaint;
+  /** What these lines are called beside the others in the full-screen view. */
+  name?: string;
+  others?: readonly OtherSource[];
+  /** A class the lines' holder takes, for how they read (a diff). */
+  kind?: string;
 }
 
 /** Lines shown before the rest is asked for, and how many more lines are
  *  shown outright rather than behind a button for them. */
 const PREVIEW = 12;
 const SLACK = 2;
+/** Lines few enough to be shown outright. */
+export const FEW = PREVIEW + SLACK;
 
 export class LongText {
   readonly element = document.createElement("div");
@@ -28,25 +67,24 @@ export class LongText {
   private full = false;
   private readonly more = document.createElement("button");
   private readonly box = document.createElement("div");
+  private unsubscribe: () => void = () => {};
 
   constructor(
-    text: string,
+    content: string | LongLines,
     label: string,
     private readonly layout: AnchorLayout,
     private readonly words: LongTextWords,
-    /** Further sources for the full-screen view, the whole output among them. */
-    others: readonly ViewerSource[] = [],
   ) {
-    const lines = text.replace(/\n$/, "").split("\n");
-    this.source = new MemoryLines(lines, true);
-    this.element.className = "long-text";
-    if (lines.length <= PREVIEW + SLACK && !others.length) {
-      const pre = document.createElement("pre");
-      pre.className = "io-text";
-      pre.textContent = lines.join("\n");
-      this.element.append(pre);
+    const given: LongLines = typeof content === "string" ? { lines: content.replace(/\n$/, "").split("\n") } : content;
+    const others = given.others ?? [];
+    const lines = Array.isArray(given.lines) ? (given.lines as readonly string[]) : null;
+    this.source = given.source ?? (lines ? new MemoryLines(lines, true) : (given.lines as LineSource));
+    this.element.className = `long-text${given.kind ? ` ${given.kind}` : ""}`;
+    if (lines && lines.length <= FEW && !others.length) {
+      this.element.append(given.paint ? painted(lines, given.paint) : plainText(lines));
       return;
     }
+    const viewerWords: ViewerWords = { ...(words.english ? englishViewer : chineseViewer), ...(words.failed ? { failed: words.failed } : {}) };
     this.box.className = "long-text-box";
     const corner = document.createElement("button");
     corner.type = "button";
@@ -55,10 +93,19 @@ export class LongText {
     corner.setAttribute("aria-label", words.full);
     corner.innerHTML = glyph("expand", 15);
     corner.addEventListener("click", () => {
-      const viewer = new TextViewer(label, [{ label, source: this.source }, ...others], words.english ? englishViewer : chineseViewer);
+      const first: ViewerSource = { label: given.name ?? label, source: this.source, ...(given.paint ? { paint: given.paint } : {}) };
+      const viewer = new TextViewer(label, [first, ...others], viewerWords);
+      viewer.element.addEventListener("close", () => {
+        for (const other of others) other.close?.();
+      });
       viewer.open(this.viewport?.range.start ?? 0);
     });
-    this.viewport = new LineViewport(this.source, { label, limit: PREVIEW, failed: (words.english ? englishViewer : chineseViewer).failed });
+    this.viewport = new LineViewport(this.source, {
+      label,
+      limit: PREVIEW,
+      failed: viewerWords.failed,
+      ...(given.paint ? { paint: given.paint } : {}),
+    });
     this.box.append(this.viewport.element, corner);
     this.more.type = "button";
     this.more.className = "io-more";
@@ -66,6 +113,13 @@ export class LongText {
     this.element.append(this.box, this.more);
     this.motion = new AnchoredHeight(this.box, layout);
     this.label_();
+    // A source read from elsewhere may grow while it is shown.
+    if (!lines) {
+      this.unsubscribe = this.source.subscribe(() => {
+        this.label_();
+        if (!this.full) this.settle();
+      });
+    }
     queueMicrotask(() => this.settle());
   }
 
@@ -112,7 +166,29 @@ export class LongText {
   }
 
   destroy(): void {
+    this.unsubscribe();
     this.motion?.destroy();
     this.viewport?.destroy();
   }
+}
+
+function plainText(lines: readonly string[]): HTMLElement {
+  const pre = document.createElement("pre");
+  pre.className = "io-text";
+  pre.textContent = lines.join("\n");
+  return pre;
+}
+
+/** Few lines drawn by their painter, in the page's flow: they wrap rather
+ *  than scroll. */
+function painted(lines: readonly string[], paint: LinePaint): HTMLElement {
+  const holder = document.createElement("div");
+  holder.className = "long-static";
+  lines.forEach((line, index) => {
+    const row = document.createElement("div");
+    row.className = "lv-line";
+    holder.append(row);
+    paint(row, line, index, null);
+  });
+  return holder;
 }

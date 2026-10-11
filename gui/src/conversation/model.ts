@@ -6,6 +6,7 @@
 import type { Health, MachineName, Notice, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
 import type { Attachment, AttachmentSource } from "../world/attachments";
 import type { JsonValue } from "../world/wire";
+import type { JobFacts, RunFacts } from "../world/run-facts";
 import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
 import { readReply, type AsyncQuestion } from "./async-ask";
@@ -140,6 +141,7 @@ export class Conversation {
     const waiting = this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting");
     this.entries = [];
     this.stretches.clear();
+    this.sequences.clear();
     this.stale = false;
     this.running.clear();
     this.began.clear();
@@ -344,6 +346,10 @@ export class Conversation {
           this.offersChanged = true;
           return;
         }
+        if (change.kind === "run_facts_updated") {
+          this.runFacts(change.update);
+          return;
+        }
         const health = changeHealth(change);
         if (health) this.health(health);
         return;
@@ -457,12 +463,39 @@ export class Conversation {
       return;
     }
     if (shown.kind === "tool" && fresh.kind === "tool") {
-      shown.tool = fresh.tool;
+      // Facts gathered while it ran stand until the item brings its own.
+      shown.tool = fresh.tool.run || !shown.tool.run ? fresh.tool : { ...fresh.tool, run: shown.tool.run };
       shown.ended = fresh.ended;
       return;
     }
     const index = this.entries.indexOf(shown);
     this.entries[index] = { ...fresh, key: shown.key };
+  }
+
+  /** What a run's jobs told while it ran, by job: the latest of each. */
+  private sequences = new Map<string, number>();
+
+  /** Facts a run's job told while it ran: files it wrote, how it stands,
+   *  where its output is. Writes join those already known; how the run
+   *  stands is its own job's to say, the latest word kept. */
+  private runFacts(update: JobFacts): void {
+    const entry = [...this.entries].reverse().find((candidate): candidate is Extract<Entry, { kind: "tool" }> => candidate.kind === "tool" && candidate.item === update.call_id);
+    if (!entry) return;
+    const job = `${update.call_id}|${update.machine}|${update.job}`;
+    const fresh = update.sequence > (this.sequences.get(job) ?? -1);
+    if (fresh) this.sequences.set(job, update.sequence);
+    const run: RunFacts = entry.tool.run
+      ? { ...entry.tool.run, writes: [...entry.tool.run.writes], visited: [...entry.tool.run.visited] }
+      : { machine: update.machine, state: update.state ?? { kind: "running" }, job: update.job, output: update.output, visited: [], writes: [], spans: [] };
+    if (update.primary && fresh) {
+      run.machine = update.machine;
+      run.job = update.job;
+      if (update.state) run.state = update.state;
+      if (update.output) run.output = update.output;
+    }
+    for (const visit of update.visited) if (!run.visited.some(([machine, job]) => machine === visit[0] && job === visit[1])) run.visited.push(visit);
+    for (const write of update.writes) if (!run.writes.some((known) => known.id === write.id)) run.writes.push(write);
+    entry.tool = { ...entry.tool, run };
   }
 
   /** Answers the user sent to the questions of `item`, by question. */

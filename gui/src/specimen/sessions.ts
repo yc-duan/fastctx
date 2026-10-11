@@ -4,6 +4,7 @@
 
 import type { Attachment } from "../world/attachments";
 import type { Content, Does, Item, Notice, SessionEvent, Speaker, Tool, TurnFacts, UserImage } from "../world/events";
+import { cut, hunk, leftOut, noted, printed, put, ran, same, wrote } from "./run-facts";
 
 export interface Specimen {
   title: string;
@@ -74,7 +75,8 @@ class Script {
     this.events.push({ at: this.at(1), event: "finished", turn, item });
   }
 
-  tool(turn: string, tool: Partial<Tool> & { name: string; does: Does }, after = 2, running = false): void {
+  /** Returns the item's id, which facts told while it runs name. */
+  tool(turn: string, tool: Partial<Tool> & { name: string; does: Does }, after = 2, running = false): string {
     const full: Tool = {
       server: "fastctx",
       machine: null,
@@ -92,8 +94,9 @@ class Script {
       turn,
       item: { id, started_at: began, kind: "tool", ...full, status: "running", output: [] },
     });
-    if (running) return;
+    if (running) return id;
     this.events.push({ at: this.at(Math.max(1, (full.duration_ms ?? 800) / 1000)), event: "finished", turn, item: { id, kind: "tool", ...full } });
+    return id;
   }
 
   ended(turn: string, how: string, reason: string | null = null, after = 1, took?: { ms: number; facts: TurnFacts }): void {
@@ -114,31 +117,19 @@ const text = (value: string): Content[] => [{ type: "text", text: value }];
 
 const user: Speaker = { kind: "user", machine: "desktop" };
 
+/** A World run as its host reports it, the model's text in its output and
+ *  the World's facts beside it; a run still going has none yet. */
 function run(command: string, head: string, body: string, extra: Partial<Tool> = {}, node?: string): Partial<Tool> & { name: string; does: Does } {
   const exit = /exited (\d+)/.exec(head);
   const job = /; (j-[0-9a-z]+)\)/.exec(head);
+  const facts = exit ? ran(node ?? "laptop", `j-${(command.length * 7919).toString(16).padStart(6, "0").slice(-6)}`, { kind: "ended", status: { code: Number(exit[1]) } }, body ? [printed(1, `${body}\n`)] : []) : undefined;
   return {
     name: "run",
     machine: node ?? "laptop",
     input: node ? { command, node } : { command },
     output: text(`${head}\n${body}`),
     does: { as: "command", command, cwd: null, exit: exit ? Number(exit[1]) : null, job: job ? job[1] : null },
-    ...extra,
-  };
-}
-
-function edit(path: string, before: string, after: string, extra: Partial<Tool> = {}): Partial<Tool> & { name: string; does: Does } {
-  const lines = (mark: string, value: string) =>
-    value
-      .split("\n")
-      .map((line) => `${mark}${line}`)
-      .join("\n");
-  return {
-    name: "edit",
-    machine: "laptop",
-    input: { file_path: path, old_string: before, new_string: after },
-    output: text(`=== edit on laptop (${path}: 1 replacement) ===`),
-    does: { as: "edit", changes: [{ path, how: "updated", diff: `${lines("-", before)}\n${lines("+", after)}\n` }] },
+    ...(facts ? { run: facts } : {}),
     ...extra,
   };
 }
@@ -171,67 +162,147 @@ function claude(): Specimen {
       { duration_ms: 120 },
     ),
   );
+  // The whole test run printed four thousand lines; the model got its
+  // first and last lines, the rest stays in its log on lab.
+  const testHead = [
+    "   Compiling ctrl v0.4.1 (/srv/mark50/ctrl)",
+    "    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.91s",
+    "     Running unittests src/lib.rs (target/debug/deps/ctrl-5b1f0e2a9c4d7781)",
+    "",
+    "running 42 tests",
+    ...Array.from({ length: 9 }, (_, n) => `test fixed::tests::case_${String(n + 1).padStart(3, "0")} ... ok`),
+  ];
+  const testTail = [
+    "failures:",
+    "",
+    "---- fixed::tests::step_response stdout ----",
+    "thread 'fixed::tests::step_response' panicked at ctrl/src/fixed.rs:131:9:",
+    "assertion `left == right` failed: settled at 0.9612, wanted 1.0000 ± 0.002",
+    "  left: 0.9612",
+    " right: 1.0000",
+    "",
+    "failures:",
+    "    fixed::tests::step_response",
+    "",
+    "test result: FAILED. 41 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out",
+    "",
+    "error: test failed, to rerun pass `-p ctrl --lib`",
+  ];
+  const testLines = 4000;
   s.tool(
     "t1",
     run(
-      "cd /srv/mark50 && cargo test -p ctrl step_response 2>&1 | tail -12",
+      "cd /srv/mark50 && cargo test -p ctrl 2>&1",
       "=== run on lab (exited 101) ===",
-      [
-        "running 1 test",
-        "test fixed::tests::step_response ... FAILED",
-        "",
-        "failures:",
-        "",
-        "---- fixed::tests::step_response stdout ----",
-        "thread 'fixed::tests::step_response' panicked at ctrl/src/fixed.rs:131:9:",
-        "assertion `left == right` failed: settled at 0.9612, wanted 1.0000 ± 0.002",
-        "  left: 0.9612",
-        " right: 1.0000",
-        "",
-        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 41 filtered out",
-      ].join("\n"),
-      { duration_ms: 9400 },
+      `${testHead.join("\n")}\n=== lines 15-3986 of 4000 not shown ===\n${testTail.join("\n")}\n=== all of its output is in /home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-p0q1r2.log ===`,
+      {
+        duration_ms: 9400,
+        run: ran(
+          "lab",
+          "j-p0q1r2",
+          { kind: "ended", status: { code: 101 } },
+          [printed(1, `${testHead.join("\n")}\n`), leftOut(15, testLines - testTail.length), printed(testLines - testTail.length + 1, `${testTail.join("\n")}\n`)],
+          [],
+          {
+            lines: testLines,
+            cut: true,
+            make: () => [
+              ...testHead,
+              ...Array.from({ length: testLines - testHead.length - testTail.length }, (_, n) => `test fixed::tests::case_${String(n + 10).padStart(4, "0")} ... ok`),
+              ...testTail,
+            ],
+          },
+        ),
+      },
       "lab",
     ),
   );
   s.say("t1", "thinking", "", 3);
+  // One run that only wrote: its writes are its rows.
+  const vectors = [
+    "// Step-response vectors recorded on lab, 2026-10-04: input, expected output.",
+    "pub const STEP: [(i32, i32); 640] = [",
+    ...Array.from({ length: 640 }, (_, n) => `    (${n * 65_536}, ${Math.round(65_536 * (1 - Math.exp(-n / 90)))}),`),
+    "];",
+  ];
   s.tool(
     "t1",
-    edit(
-      "/home/me/mark50/src/ctrl/fixed.rs",
+    run(
       [
-        "    pub fn step(&mut self, error: Q16, dt: Q16) -> Q16 {",
-        "        let p = self.kp * error;",
+        "edit /home/me/mark50/src/ctrl/fixed.rs <<'EOF'",
+        "<<<<<<< SEARCH",
+        "    integral: Q16,",
+        "=======",
+        "    integral: Q32,",
+        ">>>>>>> REPLACE",
+        "<<<<<<< SEARCH",
         "        self.integral += error * dt;",
         "        let i = self.ki * self.integral;",
-        "        let d = self.kd * (error - self.last) / dt;",
-      ].join("\n"),
-      [
-        "    pub fn step(&mut self, error: Q16, dt: Q16) -> Q16 {",
-        "        let p = self.kp * error;",
+        "=======",
         "        // Accumulate in Q32: a slow error is otherwise lost to rounding.",
         "        self.integral = self.integral.saturating_add(error.widen() * dt.widen());",
         "        let i = (self.ki.widen() * self.integral).narrow();",
-        "        let d = self.kd * (error - self.last) / dt;",
+        ">>>>>>> REPLACE",
+        "EOF",
+        "write /home/me/mark50/src/ctrl/tests/step_vectors.rs <<'EOF'",
+        ...vectors.slice(0, 4),
+        "…",
+        "EOF",
       ].join("\n"),
+      "=== run on laptop (exited 0) ===",
+      "=== edit /home/me/mark50/src/ctrl/fixed.rs (2 changes) ===\n=== write /home/me/mark50/src/ctrl/tests/step_vectors.rs (created) ===",
+      {
+        duration_ms: 140,
+        run: ran(
+          "laptop",
+          "j-e41c07",
+          { kind: "ended", status: { code: 0 } },
+          [
+            noted("edit", "7c1e2a90", 1, "=== edit /home/me/mark50/src/ctrl/fixed.rs (2 changes) ===\n"),
+            noted("write", "9b04f1d3", 2, "=== write /home/me/mark50/src/ctrl/tests/step_vectors.rs (created) ===\n"),
+          ],
+          [
+            wrote("7c1e2a90", 0, "laptop", "/home/me/mark50/src/ctrl/fixed.rs", "modified", [
+              hunk(12, 12),
+              same(12, 12, "    ki: Q16,"),
+              same(13, 13, "    kd: Q16,"),
+              cut(14, "    integral: Q16,"),
+              put(14, "    integral: Q32,"),
+              same(15, 15, "    last: Q16,"),
+              same(16, 16, "}"),
+              hunk(39, 39),
+              same(39, 39, "    pub fn step(&mut self, error: Q16, dt: Q16) -> Q16 {"),
+              same(40, 40, "        let p = self.kp * error;"),
+              cut(41, "        self.integral += error * dt;"),
+              cut(42, "        let i = self.ki * self.integral;"),
+              put(41, "        // Accumulate in Q32: a slow error is otherwise lost to rounding."),
+              put(42, "        self.integral = self.integral.saturating_add(error.widen() * dt.widen());"),
+              put(43, "        let i = (self.ki.widen() * self.integral).narrow();"),
+              same(43, 44, "        let d = self.kd * (error - self.last) / dt;"),
+              same(44, 45, "        self.last = error;"),
+            ]),
+            wrote("9b04f1d3", 0, "laptop", "/home/me/mark50/src/ctrl/tests/step_vectors.rs", "added", [hunk(1, 1), ...vectors.map((line, n) => put(n + 1, line))]),
+          ],
+        ),
+      },
     ),
   );
-  s.tool(
-    "t1",
-    edit(
-      "/home/me/mark50/src/ctrl/fixed.rs",
-      "    integral: Q16,",
-      "    integral: Q32,",
-    ),
-    1,
-  );
+  const goingLog = [
+    "   Compiling ctrl v0.4.1 (/srv/mark50/ctrl)",
+    "   Compiling joints v0.4.1 (/srv/mark50/joints)",
+    "    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.20s",
+    "     Running unittests src/lib.rs (target/debug/deps/joints-0c9e4b21d7f3a556)",
+  ];
   s.tool(
     "t1",
     run(
       "cd /srv/mark50 && cargo test --workspace",
       "=== run on lab (still running after 15s; j-k3x9a2) ===",
-      "   Compiling ctrl v0.4.1 (/srv/mark50/ctrl)\n   Compiling joints v0.4.1 (/srv/mark50/joints)\n=== output continues in lab /home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log; you'll be told when it ends ===",
-      { duration_ms: 15000 },
+      "   Compiling ctrl v0.4.1 (/srv/mark50/ctrl)\n   Compiling joints v0.4.1 (/srv/mark50/joints)\n=== j-k3x9a2 goes on in the background; all of its output is in /home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log ===",
+      {
+        duration_ms: 15000,
+        run: ran("lab", "j-k3x9a2", { kind: "running" }, [printed(1, `${goingLog.slice(0, 2).join("\n")}\n`)], [], { lines: 2, cut: false, make: () => [...goingLog] }),
+      },
       "lab",
     ),
   );
@@ -349,18 +420,12 @@ let i = (self.ki.widen() * self.integral).narrow();
   );
   s.started("t3");
   s.say("t3", "thinking", "", 2);
-  s.tool(
-    "t3",
-    edit(
-      "/home/me/mark50/src/ctrl/q16.rs",
-      "    pub fn narrow(self) -> Q16 {\n        Q16((self.0 >> 16) as i32)\n    }",
-      "    pub fn narrow(self) -> Q16 {\n        Q16((self.0 >> 16).clamp(i32::MIN as i64, i32::MAX as i64) as i32)\n    }",
-    ),
-  );
-  s.tool(
+  // A run under way that has already written: its write is told while it
+  // runs, and has its row before the run answers.
+  const fixing = s.tool(
     "t3",
     run(
-      "cd /srv/mark50 && git fetch laptop colleague/q16-edge && cargo test -p ctrl overflow_repro",
+      "on laptop edit /home/me/mark50/src/ctrl/q16.rs <<'EOF'\n<<<<<<< SEARCH\n        Q16((self.0 >> 16) as i32)\n=======\n        Q16((self.0 >> 16).clamp(i32::MIN as i64, i32::MAX as i64) as i32)\n>>>>>>> REPLACE\nEOF\ncd /srv/mark50 && git fetch laptop colleague/q16-edge && cargo test -p ctrl overflow_repro",
       "",
       "",
       {},
@@ -369,6 +434,35 @@ let i = (self.ki.widen() * self.integral).narrow();
     2,
     true,
   );
+  s.push({
+    event: "changed",
+    turn: "t3",
+    change: {
+      kind: "run_facts_updated",
+      call_id: fixing,
+      update: {
+        call_id: fixing,
+        primary: false,
+        output: null,
+        visited: [["laptop", "j-5d20aa"]],
+        machine: "laptop",
+        job: "j-5d20aa",
+        sequence: 1,
+        state: null,
+        writes: [
+          wrote("c3a81f02", 0, "laptop", "/home/me/mark50/src/ctrl/q16.rs", "modified", [
+            hunk(21, 21),
+            same(21, 21, "    /// Back to Q16, keeping the integer part."),
+            same(22, 22, "    pub fn narrow(self) -> Q16 {"),
+            cut(23, "        Q16((self.0 >> 16) as i32)"),
+            put(23, "        Q16((self.0 >> 16).clamp(i32::MIN as i64, i32::MAX as i64) as i32)"),
+            same(24, 24, "    }"),
+            same(25, 25, "}"),
+          ]),
+        ],
+      },
+    },
+  });
 
   return {
     title: "ctrl 的 step_response",
