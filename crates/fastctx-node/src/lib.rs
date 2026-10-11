@@ -16,6 +16,7 @@ mod agents;
 mod around;
 mod asked;
 mod attach;
+mod attachment_files;
 mod attachments;
 mod claude;
 pub mod claude_request;

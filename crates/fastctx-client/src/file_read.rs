@@ -9,6 +9,17 @@ use fastctx_types::{Call, MachineName, Reply};
 use crate::{CallError, Client, Error, World};
 
 impl World {
+    /// Stream the verified original or the picture retained by its host.
+    pub async fn read_attachment(
+        &self,
+        attachment: impl Into<fastctx_types::attachments::AttachmentSource>,
+    ) -> Result<Reading, Error> {
+        let attachment = attachment.into();
+        if let Some(device) = self.device() {
+            return Reading::open(Source::Device(device.read_attachment(attachment).await?)).await;
+        }
+        self.connect().await?.read_attachment(attachment).await
+    }
     /// Opens a file on `machine` (this node when absent) as the user. A
     /// device has no local node and must name the machine holding the file.
     /// Consume `Reading::next` through its terminal result; bytes handed
@@ -22,6 +33,18 @@ impl World {
 }
 
 impl Client {
+    pub async fn read_attachment(
+        mut self,
+        attachment: fastctx_types::attachments::AttachmentSource,
+    ) -> Result<Reading, Error> {
+        self.next += 1;
+        let id = self.next;
+        self.connection
+            .send(&crate::to_json(&ClientFrame::Call { id, call: Call::ReadAttachment { attachment } }))
+            .await
+            .map_err(CallError::Broken)?;
+        Reading::open(Source::Local { client: self, id }).await
+    }
     /// Starts an exclusive byte stream on this connection.
     pub async fn read_file(mut self, machine: Option<MachineName>, request: ReadFileRequest) -> Result<Reading, Error> {
         self.next += 1;

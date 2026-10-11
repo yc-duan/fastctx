@@ -98,8 +98,11 @@ pub enum Call {
         request: crate::thumbnail::ThumbnailRequest,
     },
     AttachmentThumbnail {
-        attachment: crate::attachments::Attachment,
+        attachment: crate::attachments::AttachmentSource,
         max: u32,
+    },
+    ReadAttachment {
+        attachment: crate::attachments::AttachmentSource,
     },
     Lines {
         machine: Option<MachineName>,

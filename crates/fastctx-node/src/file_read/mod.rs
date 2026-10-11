@@ -49,5 +49,42 @@ fn start(node: Arc<Node>, acting: Acting, machine: Option<MachineName>, request:
     receiver
 }
 
+struct Cancel(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl Drop for Cancel {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+fn start_attachment(node: Arc<Node>, attachment: fastctx_types::attachments::AttachmentSource) -> Receiver {
+    let (sender, receiver) = mpsc::channel(1);
+    tokio::spawn(async move {
+        let cancel = Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        tokio::select! {
+            () = sender.closed() => {},
+            result = async {
+                let machine = attachment.owner().machine.clone();
+                if machine != node.machine() {
+                    let speakers = node.speakers(&Acting::Here, &(&machine).into(), Purpose::Agents).map_err(|error| Failure::new(error.to_string()))?;
+                    let mut refused = None;
+                    for (link,account) in speakers {
+                        match fastctx_net::file_read::read_attachment(&link,machine.clone(),account,attachment.clone(),&sender).await {
+                            Err(error) if error.not_run => refused = Some(error),
+                            result => return result,
+                        }
+                    }
+                    return Err(refused.expect("speakers names at least one account"));
+                }
+                let file = crate::attachment_files::resolve(&node, attachment, cancel.0.clone()).await?;
+                let request = ReadFileRequest { path: crate::world::native(&file.path), range: FileRange::All };
+                Ok(local::read_attachment(node.machine(), request, Some(file.description.clone()), Some(file.snapshot.clone()), &sender).await)
+            } => { let _ = sender.send(result.map(Part::Finished)).await; }
+        }
+    });
+    receiver
+}
+
 pub(super) use ipc::serve as serve_local;
+pub(super) use ipc::serve_attachment as serve_attachment_local;
 pub(super) use remote::serve;
+pub(super) use remote::serve_attachment;

@@ -11607,6 +11607,69 @@
   "attachments": {
     "calls": [
       {
+        "call": "read_attachment",
+        "attachment": {
+          "id": "attachment-ab12",
+          "owner": {
+            "machine": "laptop",
+            "resident": "codex-ab12"
+          },
+          "town": "world",
+          "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+          "name": "截图.png",
+          "media_type": "image/png",
+          "size": 3145728,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "call": "attachment_thumbnail",
+        "attachment": {
+          "id": "attachment-ab12",
+          "owner": {
+            "machine": "laptop",
+            "resident": "codex-ab12"
+          },
+          "town": "world",
+          "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+          "name": "截图.png",
+          "media_type": "image/png",
+          "size": 3145728,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "max": 96
+      },
+      {
+        "call": "read_attachment",
+        "attachment": {
+          "owner": {
+            "machine": "laptop",
+            "resident": "codex-ab12"
+          },
+          "host_image": {
+            "host": "codex",
+            "turn": "turn-1",
+            "message": 0,
+            "image": 1
+          }
+        }
+      },
+      {
+        "call": "attachment_thumbnail",
+        "attachment": {
+          "owner": {
+            "machine": "laptop",
+            "resident": "claude-ab12"
+          },
+          "host_image": {
+            "host": "claude",
+            "message": "message-uuid",
+            "image": 0
+          }
+        },
+        "max": 96
+      },
+      {
         "call": "upload",
         "target": {
           "kind": "resident",
@@ -11744,9 +11807,74 @@
           }
         ],
         "notes": []
+      },
+      {
+        "kind": "reply",
+        "id": 17,
+        "reply": {
+          "Err": {
+            "message": "the original is gone and its host record holds no recoverable copy",
+            "code": "original_gone"
+          }
+        }
+      },
+      {
+        "kind": "file_read",
+        "id": 17,
+        "part": {
+          "kind": "opened",
+          "info": {
+            "machine": "laptop",
+            "path": "/private/cache/image.jpg",
+            "file": {
+              "size": 2048,
+              "modified": "2026-10-04T12:00:00Z"
+            },
+            "offset": 0,
+            "length": 2048,
+            "attachment": {
+              "name": "截图.jpg",
+              "media_type": "image/jpeg",
+              "source": "host_record"
+            }
+          }
+        }
       }
     ],
     "remote_calls": [
+      {
+        "call": "read_attachment",
+        "attachment": {
+          "id": "attachment-ab12",
+          "owner": {
+            "machine": "laptop",
+            "resident": "codex-ab12"
+          },
+          "town": "world",
+          "path": "C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png",
+          "name": "截图.png",
+          "media_type": "image/png",
+          "size": 3145728,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "read": 17
+      },
+      {
+        "call": "attachment_thumbnail",
+        "attachment": {
+          "owner": {
+            "machine": "laptop",
+            "resident": "codex-ab12"
+          },
+          "host_image": {
+            "host": "codex",
+            "turn": "turn-1",
+            "message": 0,
+            "image": 1
+          }
+        },
+        "max": 96
+      },
       {
         "call": "upload",
         "target": {

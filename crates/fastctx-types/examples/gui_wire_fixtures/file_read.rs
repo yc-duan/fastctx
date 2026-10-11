@@ -58,6 +58,7 @@ pub fn fixtures() -> Fixtures {
             id: 1,
             part: FileReadPart::Opened {
                 info: FileReadInfo {
+                    attachment: None,
                     machine,
                     path: "/srv/中文 项目/output.bin".into(),
                     file,

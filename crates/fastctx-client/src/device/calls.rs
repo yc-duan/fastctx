@@ -24,7 +24,7 @@ impl Device {
         let here = || self.state().name.unwrap_or_else(|| MachineName::try_from("device").expect("a valid name"));
         match call {
             Call::AttachmentThumbnail { attachment, max } => {
-                let machine = attachment.owner.machine.clone();
+                let machine = attachment.owner().machine.clone();
                 return Ok((Reply::Thumbnail(self.thumbnail_attachment(attachment, max).await?), machine));
             }
             Call::Login { hub, account, password, name, .. } => {

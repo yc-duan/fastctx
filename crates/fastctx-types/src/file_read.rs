@@ -38,6 +38,8 @@ pub struct FileReadInfo {
     pub file: FileMetadata,
     pub offset: u64,
     pub length: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<crate::attachments::AttachmentFile>,
 }
 
 /// A successful read: all selected bytes arrived and the file's identity,

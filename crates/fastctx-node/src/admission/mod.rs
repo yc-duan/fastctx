@@ -82,8 +82,8 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     let here = node.machine();
     // Nothing of a call turned away here ran.
     let refuse = |why: String| Failure::not_run(format!("{here} refused {}: {why}", caller.machine));
-    if let RemoteCall::AttachmentThumbnail { attachment, .. } = call
-        && attachment.owner.machine != here
+    if let RemoteCall::AttachmentThumbnail { attachment, .. } | RemoteCall::ReadAttachment { attachment, .. } = call
+        && attachment.owner().machine != here
     {
         return Err(refuse("the attachment names a different holding machine".into()));
     }
@@ -103,7 +103,11 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     }
     let hands = view.rights(&caller.account, &here).hands;
     let resident = resident_of(call).or(match call {
-        RemoteCall::AttachmentThumbnail { attachment, .. } if !hands => Some(&attachment.owner.resident),
+        RemoteCall::AttachmentThumbnail { attachment, .. } | RemoteCall::ReadAttachment { attachment, .. }
+            if !hands =>
+        {
+            Some(&attachment.owner().resident)
+        }
         _ => None,
     });
     if let Some(resident) = resident {

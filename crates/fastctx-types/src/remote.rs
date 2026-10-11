@@ -145,8 +145,12 @@ pub enum RemoteCall {
         request: crate::thumbnail::ThumbnailRequest,
     },
     AttachmentThumbnail {
-        attachment: crate::attachments::Attachment,
+        attachment: crate::attachments::AttachmentSource,
         max: u32,
+    },
+    ReadAttachment {
+        attachment: crate::attachments::AttachmentSource,
+        read: u64,
     },
     Lines {
         request: crate::lines::Request,
@@ -336,6 +340,7 @@ impl RemoteCall {
             | RemoteCall::Homes { .. } => Purpose::Hands,
             RemoteCall::Composer { .. }
             | RemoteCall::AttachmentThumbnail { .. }
+            | RemoteCall::ReadAttachment { .. }
             | RemoteCall::Ask { .. }
             | RemoteCall::Talk { .. }
             | RemoteCall::Watch { .. }

@@ -51,6 +51,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::ReadFile { .. }
             | RemoteCall::Thumbnail { .. }
             | RemoteCall::AttachmentThumbnail { .. }
+            | RemoteCall::ReadAttachment { .. }
             | RemoteCall::Lines { .. }
             | RemoteCall::ReadLines { .. }
             | RemoteCall::Upload { .. }

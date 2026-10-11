@@ -22,6 +22,8 @@ pub(crate) mod control;
 mod fork;
 mod fork_history;
 pub(crate) mod history;
+mod image_records;
+pub(crate) use image_records::paths as image_records;
 pub mod management;
 pub(crate) mod pairing;
 mod process;

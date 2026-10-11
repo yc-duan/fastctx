@@ -20,6 +20,26 @@ pub(crate) async fn serve(
     writer: &mut FrameWriter,
 ) -> std::io::Result<()> {
     let mut parts = super::start(node.clone(), acting, machine, request);
+    send(&mut parts, id, reader, writer).await
+}
+
+pub(crate) async fn serve_attachment(
+    node: &Arc<Node>,
+    attachment: fastctx_types::attachments::AttachmentSource,
+    id: u64,
+    reader: &mut FrameReader,
+    writer: &mut FrameWriter,
+) -> std::io::Result<()> {
+    let mut parts = super::start_attachment(node.clone(), attachment);
+    send(&mut parts, id, reader, writer).await
+}
+
+async fn send(
+    parts: &mut super::Receiver,
+    id: u64,
+    reader: &mut FrameReader,
+    writer: &mut FrameWriter,
+) -> std::io::Result<()> {
     let reply = loop {
         let part = tokio::select! {
             part = parts.recv() => part,

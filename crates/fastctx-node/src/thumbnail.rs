@@ -55,10 +55,10 @@ pub(crate) async fn call(
 
 pub(crate) async fn attachment(
     node: &Arc<crate::Node>,
-    attachment: fastctx_types::attachments::Attachment,
+    attachment: fastctx_types::attachments::AttachmentSource,
     max: u32,
 ) -> Result<Thumbnail, Failure> {
-    let machine = attachment.owner.machine.clone();
+    let machine = attachment.owner().machine.clone();
     if machine != node.machine() {
         return match node
             .call_with_stream(
@@ -81,7 +81,7 @@ pub(crate) async fn attachment(
 async fn here(
     node: &Arc<crate::Node>,
     mut request: ThumbnailRequest,
-    attachment: Option<fastctx_types::attachments::Attachment>,
+    attachment: Option<fastctx_types::attachments::AttachmentSource>,
 ) -> Result<Thumbnail, Failure> {
     let _guard = DECODING.clone().lock_owned().await;
     let program = node.fastctx.clone();
@@ -89,15 +89,15 @@ async fn here(
     let cancelled = Cancel(Arc::new(AtomicBool::new(false)));
     let cancel = cancelled.0.clone();
     let max = request.max;
+    let uploaded = match attachment {
+        Some(attachment) => Some(crate::attachment_files::resolve(&node, attachment, cancel.clone()).await?),
+        None => None,
+    };
+    if let Some(uploaded) = &uploaded {
+        request.path = crate::world::native(&uploaded.path);
+    }
+    let expected = uploaded.as_ref().map(|uploaded| uploaded.snapshot.clone());
     let (path, before, budget) = tokio::task::spawn_blocking(move || {
-        let uploaded = if let Some(attachment) = attachment {
-            let (path, snapshot) = crate::attachments::verified_original(&node, &attachment, &cancel)
-                .map_err(|error| error.to_string())?;
-            request.path = path;
-            Some(snapshot)
-        } else {
-            None
-        };
         let path = fastctx_platform::local_path(&request.path).map_err(|error| error.to_string())?;
         if !path.is_absolute() {
             return Err("the image path must be absolute".to_string());
@@ -108,7 +108,7 @@ async fn here(
             return Err("the image must be an ordinary file".to_string());
         }
         let before = fastctx_platform::file_read::snapshot(&file, &metadata).map_err(|error| error.to_string())?;
-        if uploaded.as_ref().is_some_and(|uploaded| *uploaded != before) {
+        if expected.as_ref().is_some_and(|uploaded| *uploaded != before) {
             return Err("the uploaded original changed before decoding".to_string());
         }
         let (width, height) = dimensions(&mut file, &cancel)?;

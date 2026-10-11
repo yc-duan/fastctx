@@ -286,6 +286,13 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             let acting = fastctx_types::access::Acting::Here;
             return crate::file_read::serve_local(node, acting, machine, request, id, &mut reader, &mut writer).await;
         }
+        if let Call::ReadAttachment { attachment } = call {
+            if let Err(failure) = users_voice(node, &hello.peer) {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                return writer.drain().await;
+            }
+            return crate::file_read::serve_attachment_local(node, attachment, id, &mut reader, &mut writer).await;
+        }
         if let Call::ReadLines { machine, request } = call {
             if let Err(error) = users_voice(node, &hello.peer) {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
@@ -769,6 +776,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
         Call::On { .. } => Err(Failure::new("an on is answered as it goes, not at once")),
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
+        Call::ReadAttachment { .. } => Err(Failure::new("an attachment read is answered as a byte stream")),
         Call::ReadLines { .. } => Err(Failure::new("logical rows are answered as a text stream")),
         Call::Thumbnail { machine, request } => {
             users_voice(node, peer)?;
