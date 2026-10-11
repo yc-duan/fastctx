@@ -11,6 +11,8 @@ use std::process::{Command, Stdio};
 
 use fastctx_types::uninstall::{Event, Left, Plan, Result as Outcome};
 
+use crate::installer_lines::say;
+
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// How the removal the uninstaller asked for came out.
@@ -52,10 +54,10 @@ pub(crate) fn at_package_uninstall(everything: bool) -> Result<Removed, String> 
     let mut removed = Removed::AsAsked;
     let mut plan = plan(everything)?;
     if everything && let Some(hub) = &plan.hub {
-        println!(
+        say(&format!(
             "This computer is the server of the world {}. Removing everything here would end that world for every computer in it; that is done only inside World, where the world's name is typed to confirm. The data stays; the rest of World is removed.",
             hub.name
-        );
+        ));
         removed = Removed::KeptForHub;
         plan = self::plan(false)?;
     }
@@ -86,11 +88,11 @@ pub(crate) fn at_package_uninstall(everything: bool) -> Result<Removed, String> 
                     Outcome::Failed => "Failed",
                     Outcome::Skipped => "Skipped",
                 };
-                println!(
+                say(&format!(
                     "{mark}: {what}{}{}",
                     location.map(|location| format!(" ({location})")).unwrap_or_default(),
                     why.map(|why| format!(": {why}")).unwrap_or_default()
-                );
+                ));
                 if result == Outcome::Done {
                     done.insert(step);
                 } else {
@@ -124,7 +126,7 @@ pub(crate) fn finish_checkpoint() -> Result<(), String> {
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         match serde_json::from_str::<Event>(line) {
             Ok(Event::Finished { left }) => say_left(&left),
-            _ => println!("{line}"),
+            _ => say(line),
         }
     }
     if !output.status.success() {
@@ -137,13 +139,13 @@ fn say_left(left: &[Left]) {
     if left.is_empty() {
         return;
     }
-    println!("Left on this computer:");
+    say("Left on this computer:");
     for item in left {
-        println!(
+        say(&format!(
             "  {}{}: {}",
             item.what,
             item.location.as_deref().map(|location| format!(" ({location})")).unwrap_or_default(),
             item.why
-        );
+        ));
     }
 }

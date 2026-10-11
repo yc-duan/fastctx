@@ -106,9 +106,9 @@ pub fn uninstall() -> Result<(), String> {
         // A removal run where no one is signed in to a desktop (remotely, or
         // unattended) has no notification platform to ask. What World showed
         // stays in the history Windows keeps for this user, and is said.
-        Err(error) if error.code().0 == WPN_E_PLATFORM_UNAVAILABLE => println!(
+        Err(error) if error.code().0 == WPN_E_PLATFORM_UNAVAILABLE => crate::installer_lines::say(&format!(
             "Left on this computer: notifications World showed stay in Windows' notification history, which cannot be reached from this session ({error})"
-        ),
+        )),
         Err(error) => return Err(error.to_string()),
     }
     if has_shortcut {

@@ -39,12 +39,21 @@ pub enum Action {
     Package,
 }
 
-pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<Request> {
+pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Result<Request> {
     installation.validate()?;
+    // Of the application's possible data directories, only those that are
+    // there are planned for or named among what stays.
+    let mut present = Vec::new();
+    for directory in std::mem::take(&mut installation.application_dirs) {
+        if directory.try_exists()? {
+            present.push(directory);
+        }
+    }
+    installation.application_dirs = present;
     if let Some(mut request) = crate::read::<Request>(&installation.marker())?
         // A removal that keeps the data, finished or cut short, gives way to
         // a complete one, planned afresh from what is on this computer now.
-        && !(everything && !request.plan.everything)
+        && (request.plan.everything || !everything)
     {
         anyhow::ensure!(
             request.plan.everything == everything,

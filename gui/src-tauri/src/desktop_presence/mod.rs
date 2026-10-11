@@ -180,7 +180,7 @@ pub fn enter() -> Result<Option<Instance>, String> {
                 CoUninitialize();
             }
             if let Err(error) = result {
-                eprintln!("{error}");
+                crate::installer_lines::complain(&error);
                 std::process::exit(1);
             }
             Ok(None)
@@ -189,7 +189,7 @@ pub fn enter() -> Result<Option<Instance>, String> {
         // installation goes on; World offers what is missing when it opens.
         [command] if command == "--after-install" => {
             if let Err(error) = crate::setup::after_install() {
-                eprintln!("preparing this computer for World: {error}");
+                crate::installer_lines::complain(&format!("preparing this computer for World: {error}"));
                 std::process::exit(1);
             }
             Ok(None)
@@ -208,14 +208,14 @@ pub fn enter() -> Result<Option<Instance>, String> {
                 Ok(crate::package_removal::Removed::AsAsked) => Ok(None),
                 Ok(crate::package_removal::Removed::KeptForHub) => std::process::exit(10),
                 Err(error) => {
-                    eprintln!("{error}");
+                    crate::installer_lines::complain(&error);
                     std::process::exit(1);
                 }
             }
         }
         [command] if command == "--uninstall-finish" => {
             if let Err(error) = crate::package_removal::finish_checkpoint() {
-                eprintln!("{error}");
+                crate::installer_lines::complain(&error);
                 std::process::exit(1);
             }
             Ok(None)

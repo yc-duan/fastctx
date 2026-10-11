@@ -200,7 +200,7 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
         (&left.kind, &left.location, &left.why).cmp(&(&right.kind, &right.location, &right.why))
     });
     progress.retained.dedup();
-    let mut left = remaining(&request, &progress);
+    let mut left = remaining(&request, &progress, &places);
     let hosts_withdrawn = request
         .steps
         .iter()
@@ -383,7 +383,7 @@ pub(crate) fn application_data(directories: &[std::path::PathBuf]) -> anyhow::Re
     Ok(left)
 }
 
-fn remaining(request: &Request, progress: &Progress) -> Vec<Left> {
+fn remaining(request: &Request, progress: &Progress, places: &apply::Places) -> Vec<Left> {
     let mut left = progress.retained.clone();
     for item in &request.plan.keeps {
         left.push(Left { kind: item.kind.clone(), what: item.what.clone(), location: item.location.clone(),
@@ -405,9 +405,23 @@ fn remaining(request: &Request, progress: &Progress) -> Vec<Left> {
         if let Action::Trust { home, .. } | Action::Host(apply::Integration { host: apply::Host::Claude, home, .. }) =
             &step.action
         {
-            let entry = Left { kind: "claude-permission".into(), what: "skipDangerousModePermissionPrompt".into(), location: Some(home.join("settings.json").display().to_string()), why: "No evidence of the value before World changed it is recorded; the user's permission is left unchanged.".into() };
-            if !left.contains(&entry) {
-                left.push(entry);
+            // Named only where the settings give it: a login World never
+            // asked has nothing of it to report.
+            let why = match apply::claude_consent_at(places, home) {
+                Ok(false) => None,
+                Ok(true) => Some("No evidence of the value before World changed it is recorded; the user's permission is left unchanged.".to_owned()),
+                Err(error) => Some(format!("Whether it is set could not be read: {error}")),
+            };
+            if let Some(why) = why {
+                let entry = Left {
+                    kind: "claude-permission".into(),
+                    what: "skipDangerousModePermissionPrompt".into(),
+                    location: Some(home.join("settings.json").display().to_string()),
+                    why,
+                };
+                if !left.contains(&entry) {
+                    left.push(entry);
+                }
             }
         }
         if matches!(step.action, Action::Application | Action::Package) {
