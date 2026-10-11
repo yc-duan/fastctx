@@ -99,7 +99,7 @@ import { enProject, zhProject } from "./project/words";
 import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens, type Specimen } from "./specimen/sessions";
-import { playLater, streamSpecimen } from "./specimen/streams";
+import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
 import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
 import { specimenRemote } from "./specimen/remote";
 import { specimenMachineLog } from "./specimen/machine-log";
@@ -761,6 +761,21 @@ function specimenTalk(address: Address): KeepablePage {
   const seed = seeds.get(talkKey(address));
   seeds.delete(talkKey(address));
   if (seed) conversation.sending(seed.text, sample.here, seed.attached);
+  // `?answer`: the specimen agent answers what is sent to it.
+  if (params.has("answer")) {
+    const sending = conversation.sending.bind(conversation);
+    let turns = 0;
+    conversation.sending = (text, here, attached) => {
+      const key = sending(text, here, attached);
+      turns += 1;
+      playTimed(answering(text, `answer-${turns}`), (event) => {
+        conversation.event(event);
+        page.update();
+        return true;
+      });
+      return key;
+    };
+  }
   const known = residentsOf(specimen.world).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
   const page = new ConversationPage({
     words,
@@ -811,7 +826,7 @@ function specimenTalk(address: Address): KeepablePage {
     // The shared input kept in the page; `?queued` puts two in its queue.
     composer: () =>
       ComposerSession.open(address, {
-        transport: specimenComposer(address, () => conversation.busy(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : []),
+        transport: specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : []),
       }),
     files: { words: composerWords.files, find: specimenFiles },
     details: detailsOf(address, async () =>

@@ -449,8 +449,16 @@ export class ConversationView {
     if (slot.acts!.innerHTML !== acts) slot.acts!.innerHTML = acts;
   }
 
+  /** The session is no longer followed: whether its model still works is
+   *  not known, and the line says nothing. */
+  unfollowed(): void {
+    this.followed = false;
+  }
+  private followed = true;
+
   /** What the line at the foot says, or null when no turn is under way. */
   private lineSays(blocks: readonly Block[]): LineSays | null {
+    if (!this.followed) return null;
     const conversation = this.conversation;
     const waiting = conversation.waiting();
     const busy = conversation.busy();

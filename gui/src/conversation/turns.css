@@ -652,7 +652,7 @@
 }
 
 /* A conversation that could not begin: said under its first words, in the
-   clay of what went wrong, with the reason as it was given beneath, to be
+   colour of what went wrong, with the reason as it was given beneath, to be
    read and copied. */
 .start-failed {
   margin-top: calc(-1 * var(--space-1));
@@ -669,7 +669,7 @@
   right: 0;
   top: 0;
   height: 8px;
-  background: var(--pen-clay);
+  background: var(--wrong);
   opacity: 0.5;
   -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
   mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
@@ -679,7 +679,7 @@
   margin: 0;
   font-family: var(--font-reading);
   font-style: italic;
-  color: var(--pen-clay);
+  color: var(--wrong);
 }
 
 .start-failed-why {

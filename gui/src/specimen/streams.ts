@@ -235,3 +235,45 @@ export function playLater(events: SessionEvent[], rate: number, take: (event: Se
   };
   setTimeout(tick, 1500);
 }
+
+/** A specimen agent answering words sent to it, at a model's pace: it takes
+ *  them into a turn, thinks, runs a command and answers, then the turn
+ *  ends. */
+export function answering(text: string, turn: string): SessionEvent[] {
+  const clock = new Clock(Date.now() + 900);
+  const thought = `${turn}-think`;
+  const ran = `${turn}-run`;
+  const said = `${turn}-say`;
+  const thinking = "**看一眼限幅**\n\n先读 joints/limits.rs，看限幅在哪里收窄。";
+  const answer = "看过了：`joints/limits.rs` 里的限幅只做比较、不累加，Q16 的舍入不会积起来，不用改。";
+  const events: SessionEvent[] = [
+    { at: clock.next(0), event: "heard", delivery: null, turn, from: user, text },
+    { at: clock.next(200), event: "turn_started", turn },
+    { at: clock.next(500), event: "began", turn, item: { id: thought, kind: "thinking", text: "" } as Item },
+    ...pieces(thinking).map((piece): SessionEvent => ({ at: clock.next(30), event: "grew", turn, item: thought, part: "text", text: piece })),
+    { at: clock.next(100), event: "finished", turn, item: { id: thought, kind: "thinking", text: thinking } as Item },
+    ...tool(clock, turn, ran, 3),
+    { at: clock.next(100), event: "began", turn, item: { id: said, kind: "message", text: "" } as Item },
+    ...pieces(answer).map((piece): SessionEvent => ({ at: clock.next(30), event: "grew", turn, item: said, part: "text", text: piece })),
+    { at: clock.next(100), event: "finished", turn, item: { id: said, kind: "message", text: answer } as Item },
+    { at: clock.next(600), event: "turn_ended", turn, end: { how: "completed", reason: null, duration_ms: 6000, last_message: answer } },
+  ];
+  return events;
+}
+
+/** Plays events at the times they carry. */
+export function playTimed(events: SessionEvent[], take: (event: SessionEvent) => boolean): void {
+  let index = 0;
+  const next = () => {
+    const event = events[index];
+    if (!event) return;
+    const due = Date.parse(event.at) - Date.now();
+    if (due > 0) {
+      setTimeout(next, due);
+      return;
+    }
+    index += 1;
+    if (take(event)) next();
+  };
+  next();
+}

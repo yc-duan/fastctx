@@ -1272,6 +1272,7 @@ export class ConversationPage {
   /** The watch on the session is over: what is shown stays, and the bar
    *  says it is no longer live. */
   lost(why: string | null): void {
+    this.view.unfollowed();
     this.gone = this.options.words.watchEnded(why);
     this.goneWhy = why ?? "";
     this.interrupted = false;
