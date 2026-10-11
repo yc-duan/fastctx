@@ -3541,6 +3541,16 @@
           "how": "completed",
           "reason": null,
           "duration_ms": null,
+          "facts": {
+            "tokens": {
+              "host": "codex",
+              "input_tokens": 18446744073709551615,
+              "cached_input_tokens": 0,
+              "output_tokens": 0,
+              "reasoning_output_tokens": 0,
+              "total_tokens": 18446744073709551615
+            }
+          },
           "last_message": null
         }
       },
@@ -3553,6 +3563,29 @@
           "reason": "reason",
           "error": null,
           "duration_ms": 0,
+          "facts": {
+            "models": [
+              "response-model-a",
+              "response-model-b"
+            ],
+            "efforts": [
+              {
+                "kind": "requested",
+                "value": "low"
+              },
+              {
+                "kind": "requested",
+                "value": 42
+              }
+            ],
+            "tokens": {
+              "host": "claude",
+              "input_tokens": 15,
+              "cache_read_input_tokens": 20,
+              "cache_creation_input_tokens": 30,
+              "output_tokens": 40
+            }
+          },
           "last_message": "last message"
         }
       },

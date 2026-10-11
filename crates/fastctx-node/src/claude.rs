@@ -27,6 +27,7 @@ pub(crate) mod pairing;
 mod process;
 mod rewind;
 mod titles;
+pub(crate) mod turn_facts;
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -655,6 +656,7 @@ async fn ended_for_process(
             None => "its Claude Code conversation ended".to_string(),
         };
         let end = fastctx_types::session::TurnEnd {
+            facts: None,
             error: None,
             how: fastctx_types::session::TurnHow::Interrupted,
             reason: Some(why),

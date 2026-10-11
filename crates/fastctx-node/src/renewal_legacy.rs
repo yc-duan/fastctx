@@ -57,6 +57,15 @@ pub(crate) fn call(protocol: u32, peer: &Peer, call: &Call) -> bool {
 
 pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
     if protocol <= 10
+        && let Reply::Notices { notices, .. } = reply
+    {
+        for delivery in notices {
+            if let Notice::Answer { end, .. } = &mut delivery.notice {
+                end.facts = None;
+            }
+        }
+    }
+    if protocol <= 10
         && let Reply::Machines { collab, .. } = reply
     {
         *collab = None;

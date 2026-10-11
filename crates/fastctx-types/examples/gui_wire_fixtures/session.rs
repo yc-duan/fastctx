@@ -298,6 +298,34 @@ pub fn fixtures() -> Fixtures {
         events.push(event(Happened::TurnEnded {
             turn: format!("turn-{i}"),
             end: TurnEnd {
+                facts: match i {
+                    0 => Some(Box::new(TurnFacts {
+                        models: vec![],
+                        efforts: vec![],
+                        tokens: Some(TurnTokens::Codex {
+                            input_tokens: u64::MAX,
+                            cached_input_tokens: 0,
+                            cache_write_input_tokens: None,
+                            output_tokens: 0,
+                            reasoning_output_tokens: 0,
+                            total_tokens: u64::MAX,
+                        }),
+                    })),
+                    1 => Some(Box::new(TurnFacts {
+                        models: vec!["response-model-a".into(), "response-model-b".into()],
+                        efforts: vec![
+                            TurnEffort::Requested { value: json!("low") },
+                            TurnEffort::Requested { value: json!(42) },
+                        ],
+                        tokens: Some(TurnTokens::Claude {
+                            input_tokens: 15,
+                            cache_read_input_tokens: 20,
+                            cache_creation_input_tokens: 30,
+                            output_tokens: 40,
+                        }),
+                    })),
+                    _ => None,
+                },
                 how,
                 reason: (i != 0).then(|| "reason".into()),
                 duration_ms: (i != 0).then_some(0),

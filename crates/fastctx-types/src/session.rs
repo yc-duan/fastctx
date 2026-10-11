@@ -29,6 +29,8 @@ mod details;
 pub use details::*;
 mod host;
 pub use host::*;
+mod turn_facts;
+pub use turn_facts::*;
 
 /// One thing that happened in a session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,6 +382,9 @@ pub struct TurnEnd {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<serde_json::Value>,
     pub duration_ms: Option<u64>,
+    /// Observations belonging to this turn, never filled from user choices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facts: Option<Box<TurnFacts>>,
     /// The agent's last message in the turn, verbatim: what goes back to
     /// whoever is owed the turn's end.
     pub last_message: Option<String>,

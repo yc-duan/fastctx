@@ -81,7 +81,10 @@ def replies(fixtures):
     for how in ["completed", "failed", "interrupted", "provider-other"]:
         notices.append({"kind": "answer", "colleague": ADDRESS, "label": "task", "turn": "turn-1",
                         "end": {"how": how, "reason": "reason", "error": {"code": "err", "from": {"kind": "page"}, "owner": {"page": "opaque host detail"}},
-                                "duration_ms": 123, "last_message": "answer"}})
+                                "duration_ms": 123, "last_message": "answer",
+                                "facts": {"models": ["reported-model"], "efforts": [{"kind": "requested", "value": "low"}],
+                                          "tokens": {"host": "claude", "input_tokens": 10, "output_tokens": 20,
+                                                     "cache_read_input_tokens": 30, "cache_creation_input_tokens": 40}}}})
     for kind in ["reconnecting", "safety", "rerouted", "tools_missing", "tool_server", "warning", "error"]:
         notices.append({"kind": "health", "colleague": ADDRESS, "label": "task", "health": {"kind": kind, "text": kind}})
     for speaker in [{"kind": "user", "machine": "desktop"}, {"kind": "resident", "address": ADDRESS},
@@ -203,6 +206,7 @@ def samples(root):
             case["attached"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "attached"
             # The World's facts are its words before protocol 11.
             case["world"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "world"
+            case["turn_facts"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "answer"
             # Hub-by-hub nodes have no shape before protocol 8 and are said as text.
             case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and reply["controlled"]["kind"] in ["reported", "refused", "model_menu"] and protocol < 10)
             yield case

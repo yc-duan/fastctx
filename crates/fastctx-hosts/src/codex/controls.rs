@@ -216,6 +216,12 @@ impl CodexHost {
         let mut state = self.lock();
         let entry = state.threads.entry(thread.into()).or_default();
         match method {
+            "model/rerouted" => {
+                if let (Some(turn), Some(model)) = (params["turnId"].as_str(), params["toModel"].as_str()) {
+                    entry.accounting.rerouted(turn, model);
+                }
+            }
+            "thread/reverted" => entry.accounting.reloaded(),
             "thread/started" => entry.metadata = metadata(&params["thread"]),
             "thread/tokenUsage/updated" => entry.usage = Some(params["tokenUsage"].clone()),
             "thread/settings/updated" => {

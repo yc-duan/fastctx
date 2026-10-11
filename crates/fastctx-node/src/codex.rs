@@ -274,14 +274,17 @@ async fn drain(node: &Arc<Node>, thread: &str) {
                     Err(error) => Err(error),
                 }
             }
-            HostEvent::Gone { how, turns } => {
+            HostEvent::Gone { how, turns, facts } => {
                 let mut result = Ok(());
-                for (_, turn) in turns {
+                for (thread, turn) in turns {
+                    let facts =
+                        facts.iter().find(|(t, id, _)| t == &thread && id == &turn).map(|(_, _, facts)| facts.clone());
                     let event = SessionEvent {
                         at: jiff::Timestamp::now(),
                         happened: fastctx_types::session::Happened::TurnEnded {
                             turn,
                             end: fastctx_types::session::TurnEnd {
+                                facts: facts.map(Box::new),
                                 error: None,
                                 how: fastctx_types::session::TurnHow::Interrupted,
                                 reason: Some(format!("its app-server stopped ({how})")),
@@ -387,10 +390,14 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
                     }
                     continue;
                 }
-                HostEvent::Gone { how, turns } => turns
+                HostEvent::Gone { how, turns, facts } => turns
                     .into_iter()
                     .map(|(thread, turn)| {
-                        (thread.clone(), HostEvent::Gone { how: how.clone(), turns: vec![(thread, turn)] })
+                        let observed = facts.iter().filter(|(t, id, _)| t == &thread && id == &turn).cloned().collect();
+                        (
+                            thread.clone(),
+                            HostEvent::Gone { how: how.clone(), turns: vec![(thread, turn)], facts: observed },
+                        )
                     })
                     .collect(),
                 event @ (HostEvent::Happened { .. } | HostEvent::Desk { .. } | HostEvent::Unloaded { .. }) => {

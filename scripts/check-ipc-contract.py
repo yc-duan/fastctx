@@ -133,7 +133,11 @@ def verify(reader):
                     expected["reply"]["Ok"].pop("consumed")
                 if case.get("collaboration"):
                     expected["reply"]["Ok"].pop("collab")
+                if case.get("turn_facts"):
+                    expected["reply"]["Ok"]["notices"][0]["notice"]["end"].pop("facts")
                 assert wire == expected, (case, answer)
+            if case.get("turn_facts"):
+                assert "facts" not in wire["reply"]["Ok"]["notices"][0]["notice"]["end"], (case, answer)
             if case.get("attached") and case["protocol"] >= 6:
                 assert wire["reply"]["Ok"]["notices"] == case["value"]["reply"]["Ok"]["notices"]
     print(f"PASS: {len(corpus)} historical request/reply checks against protocols {', '.join(map(str, REVISIONS))}")
