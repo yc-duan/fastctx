@@ -128,7 +128,7 @@ pub enum Notice {
         last: Option<LastLines>,
         /// Who stopped it and why, when someone did.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        stop: Option<crate::run::StopRequest>,
+        stop: Option<Box<crate::run::StopRequest>>,
     },
     /// A turn of a colleague ended, which the resident's words went into or
     /// which it asked for: its last message, verbatim.

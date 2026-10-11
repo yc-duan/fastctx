@@ -186,7 +186,7 @@ impl Held {
                         output: record.output.clone(),
                         stderr: record.stderr.clone(),
                         last: None,
-                        stop: record.stop.as_ref().map(|stop| stop.request.clone()),
+                        stop: record.stop.as_ref().map(|stop| Box::new(stop.request.clone())),
                     };
                     let account =
                         record.on.as_ref().and_then(|on| on.account.clone()).or_else(|| record.account.clone());
