@@ -3,6 +3,7 @@
 
 import type { Glyph } from "./tool";
 
+export type GlyphName = Named;
 type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "stop" | "send" | "attach" | "camera" | "file" | Frame;
 
 /** The frame's own glyphs: the sidebar, new conversations, settings, and
@@ -85,6 +86,9 @@ const paths: Record<Named, string> = {
   camera: '<path d="M3.75 7.5a1 1 0 0 1 1-1h2.1l1.2-1.75h3.9l1.2 1.75h2.1a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H4.75a1 1 0 0 1-1-1z"/><circle cx="10" cy="10.75" r="2.6"/>',
 };
 
+/** A glyph at its nominal `size`; the interface draws every glyph at that
+ *  size times one scale (`--icon-scale` in the design tokens), so the set
+ *  grows together and keeps its proportions. */
 export function glyph(name: keyof typeof paths, size = 20): string {
-  return `<svg class="glyph" width="${size}" height="${size}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
+  return `<svg class="glyph" width="${size}" height="${size}" style="--glyph:${size}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 }

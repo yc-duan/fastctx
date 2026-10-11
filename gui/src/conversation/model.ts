@@ -168,10 +168,13 @@ export class Conversation {
         // carry the head note the World wrapped them in.
         const user = event.from ? null : userWords(event.text);
         const heard = user ? { ...event, from: { kind: "user" as const, machine: user.machine }, text: user.body } : event;
-        // Words sent from here are now heard: they keep their place.
+        // Words sent from here are now heard: they keep their place. The
+        // bubble shows them without the blank lines around them, while a
+        // shared input sends them as typed (a phone's Enter adds a line).
         if (heard.from?.kind === "user") {
+          const said = heard.text.trim();
           const sent = this.entries.find(
-            (entry) => entry.kind === "heard" && entry.sending !== undefined && entry.text === heard.text,
+            (entry) => entry.kind === "heard" && entry.sending !== undefined && entry.text.trim() === said,
           );
           if (sent && sent.kind === "heard") {
             delete sent.sending;
@@ -185,7 +188,7 @@ export class Conversation {
           }
         }
         const known = this.entries.some(
-          (entry) => entry.kind === "heard" && entry.text === heard.text && heard.turn !== null && entry.turn === heard.turn,
+          (entry) => entry.kind === "heard" && entry.text.trim() === heard.text.trim() && heard.turn !== null && entry.turn === heard.turn,
         );
         const reply = heard.from?.kind === "user" ? readReply(heard.text) : null;
         if (reply) this.answered(reply.item, reply.answers);

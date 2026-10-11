@@ -18,7 +18,7 @@ interface Stroke {
 
 /** A mark of an agent or a device, inside a drawing. */
 interface Mark {
-  name: "claude" | "codex" | "desktop" | "server";
+  name: "claude" | "codex" | "desktop" | "server" | "phone" | "check";
   at: Point;
   size: number;
 }
@@ -122,12 +122,86 @@ function collaboration(): Frame[] {
   return [one, two, three, four];
 }
 
+/** A phone, upright, its screen's top edge at `y`. */
+function phone(at: Point, random: () => number): string[] {
+  const [x, y] = at;
+  return [
+    ruled([x, y], [x + 46, y], 1.5, random),
+    ruled([x + 46, y], [x + 46, y + 82], 1.5, random),
+    ruled([x + 46, y + 82], [x, y + 82], 1.5, random),
+    ruled([x, y + 82], [x, y], 1.5, random),
+    ruled([x + 18, y + 75], [x + 28, y + 75], 1.2, random),
+  ];
+}
+
+/** A computer's screen on its stand. */
+function computer(at: Point, random: () => number): string[] {
+  const [x, y] = at;
+  return [
+    ruled([x, y], [x + 70, y], 1.5, random),
+    ruled([x + 70, y], [x + 70, y + 48], 1.5, random),
+    ruled([x + 70, y + 48], [x, y + 48], 1.5, random),
+    ruled([x, y + 48], [x, y], 1.5, random),
+    ruled([x + 35, y + 48], [x + 35, y + 60], 1.4, random),
+    ruled([x + 22, y + 61], [x + 48, y + 61], 1.4, random),
+  ];
+}
+
+/** The four frames of 「对话」: the phone in the hand, the agent at home. */
+function conversations(): Frame[] {
+  const random = seeded("conversations");
+  const ink = (d: string) => ({ d, ink: "ink" as const });
+  const graphite = (d: string) => ({ d, ink: "graphite" as const });
+  // The phone in your hand, the agent on the computer at home.
+  const one: Frame = {
+    strokes: [...phone([24, 30], random).map(ink), ...computer([132, 36], random).map(graphite), ...ticks(quadratic([76, 70], [104, 50], [128, 62], 3), 7, 5, 1.3, random).map(graphite)],
+    marks: [{ name: "claude", at: [158, 51], size: 18 }],
+  };
+  // You say a line; it writes back word by word.
+  const two: Frame = {
+    strokes: [
+      ...phone([24, 30], random).map(ink),
+      ...bubble([34, 40], 30, 14, random, "right").map(ink),
+      { d: scribble([38, 47], 20, random), ink: "ink" },
+      ...computer([132, 36], random).map(graphite),
+      { d: scribble([140, 48], 52, random), ink: "graphite" },
+      { d: scribble([140, 57], 40, random), ink: "graphite" },
+      { d: scribble([140, 66], 22, random), ink: "clay" },
+    ],
+    marks: [],
+  };
+  // It needs your word: it finds your phone.
+  const three: Frame = {
+    strokes: [
+      ...phone([24, 30], random).map(ink),
+      ...computer([132, 36], random).map(graphite),
+      ...arrow([128, 54], [100, 28], [74, 50], random, false),
+      { d: blot([47, 58], 6, random), ink: "clay" },
+    ],
+    marks: [{ name: "claude", at: [158, 51], size: 18 }],
+  };
+  // You were away; one look shows what happened.
+  const four: Frame = {
+    strokes: [
+      ...phone([86, 26], random).map(ink),
+      { d: scribble([94, 40], 28, random), ink: "graphite" },
+      { d: scribble([94, 52], 22, random), ink: "graphite" },
+      { d: scribble([94, 64], 26, random), ink: "graphite" },
+      { d: scribble([94, 76], 18, random), ink: "graphite" },
+      { d: outline([[126, 38], [130, 42], [137, 33]], 2, random, { pressure: 0.3, taper: 0.2 }), ink: "clay" },
+      { d: outline([[126, 62], [130, 66], [137, 57]], 2, random, { pressure: 0.3, taper: 0.2 }), ink: "clay" },
+    ],
+    marks: [],
+  };
+  return [one, two, three, four];
+}
+
 const STROKE_MS = 90;
 const FRAME_GAP_MS = 380;
 
-/** The frames of a feature, drawn in order; `quiet` draws them at once. */
-export function storyboard(captions: readonly string[], label: string): string {
-  const frames = collaboration();
+/** The frames of a feature, drawn in order. */
+export function storyboard(feature: "collaboration" | "conversations", captions: readonly string[], label: string): string {
+  const frames = feature === "conversations" ? conversations() : collaboration();
   let start = 0;
   const html = frames.map((frame, index) => {
     const strokes = frame.strokes

@@ -712,3 +712,251 @@ html.framed .page-head {
   color: var(--text-3);
   font-size: var(--size-small);
 }
+
+/* The network shown, at the top of the sidebar: its server's name, which
+   opens every network this device is in. */
+.sidebar-head {
+  position: relative;
+}
+
+.network-switch {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  height: 34px;
+  margin-left: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  letter-spacing: 0.01em;
+  color: var(--text-strong);
+  transition: background-color var(--hover) ease;
+}
+
+.network-switch:hover,
+.network-switch[aria-expanded="true"] {
+  background: var(--hairline);
+}
+
+.network-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.network-switch .glyph {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--fold) var(--fold-easing);
+}
+
+.network-switch[aria-expanded="true"] .glyph {
+  transform: rotate(180deg);
+}
+
+.network-pop {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: var(--space-2);
+  right: var(--space-2);
+  z-index: 20;
+  padding: var(--space-2);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  animation: network-drop var(--fold) var(--fold-easing) both;
+}
+
+.network-pop.popover-leaving {
+  animation: network-lift var(--fold) var(--fold-easing) both;
+}
+
+@keyframes network-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes network-lift {
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.network-rows {
+  margin: 0 0 var(--space-1);
+  padding: 0;
+  list-style: none;
+}
+
+.network-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.network-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-s);
+  text-align: left;
+}
+
+.network-pick:hover {
+  background: var(--hairline);
+}
+
+.network-pick .glyph {
+  flex: none;
+  color: var(--accent);
+}
+
+.network-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.network-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong);
+}
+
+.network-row-note {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.network-dot {
+  flex: none;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: var(--radius-full);
+  background: var(--text-3);
+  opacity: 0.5;
+  vertical-align: middle;
+}
+
+.network-dot.online {
+  background: var(--pen-sage);
+  opacity: 1;
+}
+
+.network-ways {
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--hairline);
+}
+
+.network-way {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 38px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  text-decoration: none;
+}
+
+.network-way:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .network-pop,
+  .network-pop.popover-leaving {
+    animation: none;
+  }
+}
+
+/* A network's own page: what a server is, drawn; then the facts. */
+.network-body {
+  padding: var(--space-5) var(--space-6) var(--space-7);
+}
+
+.network-figure {
+  max-width: 420px;
+  margin: 0 0 var(--space-5);
+}
+
+.network-drawing {
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.network-drawing .nf-line {
+  fill: var(--pen-graphite);
+}
+
+.network-drawing .nf-ring {
+  fill: var(--text-2);
+}
+
+.network-drawing .nf-hub {
+  fill: var(--pen-clay);
+}
+
+.network-drawing .nf-mark {
+  color: var(--text-2);
+}
+
+.network-figure figcaption {
+  margin-top: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.network-facts {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 560px;
+  margin: 0 0 var(--space-5);
+}
+
+.network-facts > div {
+  display: grid;
+  grid-template-columns: 8em minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.network-facts dt {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.network-facts dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.network-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.text-button.danger-text:hover {
+  color: var(--wrong);
+}

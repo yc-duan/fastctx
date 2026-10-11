@@ -36,6 +36,8 @@ import { AgentsPage } from "./app/agents";
 import { enAgents, zhAgents } from "./app/agents-words";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
+import { NetworkPage, enNetwork, zhNetwork } from "./app/network-page";
+import { deviceFeatures } from "./app/device-features";
 import { enFeatures, zhFeatures } from "./app/features-words";
 import { accountOf, enHomes, homeChoice, homeLabel, homesOf, installed, loggedOut, zhHomes } from "./app/agent-homes";
 import { Tokens } from "./app/tokens";
@@ -1226,6 +1228,9 @@ function when(at: Date, now: Date): string {
 }
 
 function show(next: Place): void {
+  // The front page belongs to 「对话」: without it, the interface opens on
+  // the agents (`world-gui.md`, 界面的结构).
+  if (next.kind === "home" && !deviceFeatures.conversations.peek()) next = { kind: "agents", machine: null };
   place = next;
   let page: Page;
   switch (next.kind) {
@@ -1313,6 +1318,7 @@ function show(next: Place): void {
       page = new LoginPage({
         store,
         words: english ? enLogin : zhLogin,
+        ...(next.way ? { way: next.way } : {}),
         head,
         device: asDevice,
         setup: asDevice ? undefined : () => (live ? setupState() : Promise.reject(new Error("specimen"))),
@@ -1344,11 +1350,21 @@ function show(next: Place): void {
         },
         enter() {
           welcomed.now();
-          location.hash = link({ kind: "home" });
+          location.hash = asDevice && !deviceFeatures.conversations.peek() ? link({ kind: "feature", feature: "conversations" }) : link({ kind: "home" });
         },
       });
       break;
     }
+    case "network":
+      page = new NetworkPage({
+        store,
+        words: english ? enNetwork : zhNetwork,
+        hub: next.hub,
+        head,
+        change,
+        confirm: accountConfirm,
+      });
+      break;
     case "account":
       page = new AccountPage({
         store,
@@ -1552,27 +1568,26 @@ const welcomed = {
 };
 
 if (live) {
-  // Decided once, on the World's first answer.
+  // A computer is useful on its own: it opens on its agents and is never
+  // sent to join a network (`world-gui.md`, 账号、机器、共享与借出). Only
+  // when fastctx is not on it yet is the way on to put it there.
   let decided = false;
-  effect(() => {
-    const world = store.world.get();
-    if (!world || decided) return;
-    decided = true;
-    if (!loginsOf(world.accounts).length && !welcomed.read() && place.kind === "home") location.hash = link({ kind: "login" });
-  });
-  // A computer the World cannot be asked on at all, before any answer: when
-  // fastctx is not on it yet, the way on is to put it there.
   effect(() => {
     const trouble = store.trouble.get();
     if (!trouble || decided || store.world.peek()) return;
     decided = true;
     void setupState()
       .then((setup) => {
-        if (!setup.installed && place.kind === "home") location.hash = link({ kind: "login" });
+        if (!setup.installed && (place.kind === "home" || place.kind === "agents")) location.hash = link({ kind: "login" });
       })
       .catch(() => {});
   });
 }
+// The front page comes and goes with 「对话」: the place shown follows.
+effect(() => {
+  const talking = deviceFeatures.conversations.get();
+  if (!talking && place.kind === "home") show({ kind: "agents", machine: null });
+});
 
 installPens();
 installHints();

@@ -6,6 +6,7 @@
 // take it for a failure. A row whose output is open stays until it is
 // closed, also after its command ends.
 
+import { Popover } from "./popover";
 import { LineViewport, type LineSource } from "../longview";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
@@ -55,27 +56,27 @@ interface Row {
 
 export class JobsPanel {
   private readonly rows = new Map<string, Row>();
+  private readonly popover: Popover;
   private readonly list: HTMLUListElement;
 
   constructor(
     private readonly button: HTMLButtonElement,
-    private readonly pop: HTMLElement,
+    pop: HTMLElement,
     private readonly options: JobsPanelOptions,
   ) {
     pop.innerHTML = `<p class="jobs-title">${escape(options.words.title)}</p><ul class="jobs-list"></ul>`;
     this.list = pop.querySelector("ul")!;
-    button.addEventListener("click", () => this.show(pop.hidden));
-    document.addEventListener("pointerdown", (event) => {
-      if (!pop.hidden && !pop.contains(event.target as Node) && !button.contains(event.target as Node)) this.show(false);
+    // Closed, rows of ended commands are let go with their output.
+    this.popover = new Popover(pop, button, () => {
+      for (const row of [...this.rows.values()]) if (row.ended) this.remove(row);
     });
+    button.addEventListener("click", () => this.popover.toggle());
     pop.addEventListener("click", (event) => void this.act(event));
   }
 
   private show(shown: boolean): void {
-    this.pop.hidden = !shown;
-    this.button.setAttribute("aria-expanded", String(shown));
-    // Closed, rows of ended commands are let go with their output.
-    if (!shown) for (const row of [...this.rows.values()]) if (row.ended) this.remove(row);
+    if (shown) this.popover.show();
+    else this.popover.hide();
   }
 
   update(jobs: Job[], now: Date): void {

@@ -65,6 +65,8 @@ export interface ModelOffer {
   default: boolean;
   service_tiers: ServiceTierOffer[];
   default_service_tier: string | null;
+  /** The model's context window in tokens, when known. */
+  context_window?: number | null;
 }
 
 /** A speed tier a model offers, such as Codex's Fast. */

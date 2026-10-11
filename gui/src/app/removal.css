@@ -274,3 +274,19 @@
     stroke-dashoffset: 0;
   }
 }
+
+/* The uninstall dialog: wide enough for its two slips side by side, and
+   tall content scrolls inside it rather than past the screen. */
+.removal-sheet {
+  margin-top: 8vh;
+}
+
+.removal-sheet .sheet-body {
+  width: min(760px, 100vw - 32px);
+  max-height: 84vh;
+  overflow-y: auto;
+}
+
+.settings-uninstall {
+  margin-left: calc(-1 * var(--space-2));
+}

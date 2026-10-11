@@ -74,6 +74,7 @@ impl CodexHost {
                             .collect::<Result<_, String>>()?,
                     },
                     default_service_tier: model["defaultServiceTier"].as_str().map(str::to_string),
+                    context_window: None,
                 })
             })
             .collect()

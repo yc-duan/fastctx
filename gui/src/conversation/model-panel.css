@@ -401,3 +401,64 @@ button.job-what:hover .job-command {
   width: 6px;
   height: 6px;
 }
+
+/* Nothing in the panel is text to select: a drag on the slider must not
+   paint the labels around it. */
+.model-panel {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Settling away, the way it rose; on a phone the sheet sinks. */
+.model-panel.popover-leaving,
+.jobs-pop.popover-leaving {
+  animation: panel-settle var(--fold) var(--fold-easing) both;
+}
+
+@keyframes panel-settle {
+  to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (max-width: 760px) {
+  .model-panel.popover-leaving,
+  .jobs-pop.popover-leaving {
+    animation-name: sheet-sink;
+  }
+
+  .composer-dock:has(.popover-leaving)::after {
+    animation: sheet-scrim-out var(--fold) ease both;
+  }
+}
+
+@keyframes sheet-sink {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes sheet-scrim-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* A model this conversation has outgrown: quieter, with a small mark. */
+.model-list .model-too-long {
+  color: var(--text-3);
+}
+
+.model-mark {
+  display: inline-flex;
+  color: var(--text-3);
+}
+
+.model-mark .glyph {
+  color: var(--text-3);
+}
+
+.effort-slider.dragging {
+  cursor: grabbing;
+}
