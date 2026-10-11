@@ -21,6 +21,7 @@ mod data;
 mod ledger;
 mod log;
 mod login;
+mod machine_log;
 mod manage;
 pub mod relay;
 mod releases;
@@ -89,7 +90,14 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         opened: Timestamp::now(),
         collab: None,
     });
-    book.passwords.insert(new.admin, Bytes(record));
+    book.passwords.insert(new.admin.clone(), Bytes(record));
+    book.machine_log.push(
+        &book.directory,
+        &[],
+        fastctx_types::machine_log::Actor { account: None, authenticated: false, member: None, peer: None },
+        fastctx_types::machine_log::Action::OpenAccount { name: new.admin },
+        fastctx_types::machine_log::Outcome::Done,
+    )?;
     let hub = HubFile {
         id: fastctx_net::ids::new_hub_id()?,
         name: new.name,
@@ -111,6 +119,14 @@ pub fn reset_password(dir: &Path, account: &AccountName, password: &str) -> anyh
     }
     let secrets = HubSecrets::from_bytes(&std::fs::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
     store.book.passwords.insert(account.clone(), Bytes(password_record(&secrets, account, password)?));
+    let directory = store.book.directory.clone();
+    store.book.machine_log.push(
+        &directory,
+        &[],
+        fastctx_types::machine_log::Actor { account: None, authenticated: false, member: None, peer: None },
+        fastctx_types::machine_log::Action::PasswordFinish { target: account.clone() },
+        fastctx_types::machine_log::Outcome::Done,
+    )?;
     store.save_book()?;
     Ok(())
 }
@@ -148,6 +164,7 @@ pub(crate) struct Hub {
     limits: Mutex<login::Limits>,
     next: AtomicU64,
     log: log::Log,
+    machine_log_changed: tokio::sync::Notify,
 }
 
 /// A member's open control connection.
@@ -219,6 +236,7 @@ impl Hub {
     /// The directory changed, or who is online did: every member is told to
     /// look again, and what lost the standing it was allowed under ends.
     fn changed(&self) {
+        self.machine_log_changed.notify_one();
         let outs: Vec<mpsc::UnboundedSender<Out>> =
             self.sessions().values().map(|session| session.out.clone()).collect();
         for out in outs {
@@ -265,6 +283,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
         limits: Mutex::new(login::Limits::default()),
         next: AtomicU64::new(0),
         log,
+        machine_log_changed: tokio::sync::Notify::new(),
     });
     loop {
         tokio::select! {
@@ -280,6 +299,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
                 }
             },
             () = shutdown_signal() => break,
+            expired = machine_log::expire(&hub) => expired?,
         }
     }
     hub.log.line(format_args!("shutting down"));

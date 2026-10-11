@@ -324,6 +324,9 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    /// Machine-layer history visible to this member in `account`, newest
+    /// first and strictly before the cursor when supplied.
+    MachineLog { account: AccountName, before: Option<u64> },
     /// Linux archives and the hub's actual TLS certificate. Without opt-in,
     /// both architecture digests must be present, as older callers require.
     KernelRelease {
@@ -462,6 +465,9 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    MachineLog {
+        page: fastctx_types::machine_log::Page,
+    },
     CollabWritten {
         version: u64,
     },

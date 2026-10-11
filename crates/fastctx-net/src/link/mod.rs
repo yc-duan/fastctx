@@ -18,6 +18,7 @@ mod collab;
 mod kernel;
 mod ledger;
 mod letters;
+mod machine_log;
 mod outgoing;
 mod session;
 pub mod state;

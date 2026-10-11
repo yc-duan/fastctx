@@ -43,7 +43,9 @@ import type { AccountChange, AccountsReply } from "../src/world/accounts";
 import type { ConnectionState } from "../src/world/device";
 import type { Choices } from "../src/world/bridge";
 import type { ComposerSnapshot, ComposerMutation, ComposerUpdated } from "../src/world/composer";
+import type { MachineLogPage } from "../src/world/machine-log";
 export const fixture = ${json.trimEnd()} satisfies {
+  machine_log: MachineLogPage[];
   composer: { snapshots: ComposerSnapshot[]; mutations: ComposerMutation[]; updated: ComposerUpdated };
   // Accounts as the interface reads and changes them, the device's
   // standing, and what the user chose for a new conversation.

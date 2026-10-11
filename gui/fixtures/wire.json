@@ -1,4 +1,462 @@
 {
+  "machine_log": [
+    {
+      "records": [
+        {
+          "id": 24,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "collab",
+            "version": 2
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 23,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "share",
+            "machine": "laptop",
+            "to": "bo",
+            "shared": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 22,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "lend",
+            "machine": "laptop",
+            "to": "bo",
+            "agent": "codex",
+            "home": "/home/me/agent",
+            "lent": false
+          },
+          "outcome": {
+            "kind": "refused",
+            "reason": "the machine is another account's"
+          }
+        },
+        {
+          "id": 21,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "stop_acting",
+            "machine": "laptop"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 20,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "relays",
+            "machine": "laptop",
+            "relays": [
+              {
+                "label": "relay",
+                "addresses": [
+                  "203.0.113.20:7444"
+                ]
+              }
+            ]
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 19,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "relay_at",
+            "machine": "laptop",
+            "addresses": []
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 18,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "remove",
+            "name": "laptop",
+            "reason": "retired"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 17,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "logout"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 16,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "token",
+            "register": false,
+            "name": null,
+            "kind": "phone",
+            "expires": "2026-10-10T12:00:00Z"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 15,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "password_start",
+            "target": "ada"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 14,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "password_finish",
+            "target": "ada"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 13,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": null,
+            "authenticated": false,
+            "member": null,
+            "peer": "203.0.113.10:4567"
+          },
+          "action": {
+            "change": "open_account",
+            "name": "bo"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 12,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "set_account",
+            "name": "bo",
+            "locked": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 11,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "transfer",
+            "to": "bo"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 10,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "delete_account",
+            "name": "bo"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 9,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "settings",
+            "self_registration": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 8,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "open_project",
+            "town": "t-0123456789abcdef",
+            "name": "research"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 7,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "share_project",
+            "town": "t-0123456789abcdef",
+            "name": "research",
+            "with": "bo",
+            "shared": true
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 6,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "move_project",
+            "town": "t-0123456789abcdef",
+            "name": null,
+            "to": "bo"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 5,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "joined",
+            "name": "laptop",
+            "kind": "computer",
+            "registered": true,
+            "via": "password"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 4,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "joined",
+            "name": "laptop",
+            "kind": "web",
+            "registered": false,
+            "via": "token"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 3,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "allow_acting",
+            "machine": "laptop",
+            "agent": "claude",
+            "home": null
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 2,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "acting_stopped",
+            "machine": "laptop",
+            "account": "ada"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 1,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "left",
+            "name": "laptop",
+            "account": "ada",
+            "kind": "computer",
+            "unregistered": true,
+            "reason": "logged out"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        }
+      ],
+      "next_before": 1
+    },
+    {
+      "records": [],
+      "next_before": null
+    }
+  ],
   "accounts": {
     "replies": [
       {

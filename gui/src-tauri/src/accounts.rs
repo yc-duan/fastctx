@@ -116,6 +116,18 @@ pub(crate) async fn accounts(shell: tauri::State<'_, Shell>) -> Result<AccountsR
     shell.world().accounts().await.map_err(|error| error.to_string())
 }
 
+/// Machine changes visible in the selected account, newest first.
+#[fastctx_gui_command::command]
+pub(crate) async fn machine_log(
+    shell: tauri::State<'_, Shell>,
+    hub_name: String,
+    account_name: String,
+    before: Option<u64>,
+) -> Result<fastctx_types::machine_log::Page, String> {
+    let hub = HubName::try_from(hub_name).map_err(|error| error.to_string())?;
+    shell.world().machine_log(hub, account(account_name)?, before).await.map_err(|error| error.to_string())
+}
+
 /// Makes `change` as `account` at the hub named `hub`, or the one hub;
 /// returns a token when it made one.
 #[fastctx_gui_command::command]

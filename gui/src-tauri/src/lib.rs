@@ -864,6 +864,7 @@ pub fn run() {
             accounts::login_token,
             accounts::open_account,
             accounts::accounts,
+            accounts::machine_log,
             collab::collab_read,
             collab::collab_write,
             accounts::account_change,

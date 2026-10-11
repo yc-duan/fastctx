@@ -18,6 +18,7 @@ use fastctx_net::login::HubSecrets;
 use fastctx_net::sign::{Bytes, Domain, PublicKey, Signature};
 use fastctx_net::wire::{Down, Joining, Refusal, SILENCE, Up};
 use fastctx_types::AccountName;
+use fastctx_types::machine_log::{Action, Actor, LoginMethod, Outcome};
 use jiff::Timestamp;
 use tokio::time::Instant;
 
@@ -135,7 +136,7 @@ pub(crate) async fn with_password(
         return;
     }
     hub.limits.lock().expect("never poisoned").succeeded(&account, peer.ip());
-    let outcome = proved(&member, &binding).and_then(|()| join(&hub, &account, &member, member.register, None));
+    let outcome = proved(&member, &binding).and_then(|()| join(&hub, peer, &account, &member, member.register, None));
     logged_in(&hub, &mut socket, peer, &account, outcome).await;
 }
 
@@ -159,18 +160,42 @@ pub(crate) async fn with_token(
             store.book.tokens.iter().find(|record| record.key == token).cloned()
         };
         let record = record.ok_or("the hub knows no such token; it may have been taken back")?;
-        match record.used_by {
-            Some(used) if used != member.key => return Err("the token was used already".to_string()),
-            Some(_) => {}
-            None if record.expires <= Timestamp::now() => return Err("the token has expired".to_string()),
-            None => {}
+        let refused = match record.used_by {
+            Some(used) if used != member.key => Some("the token was used already"),
+            None if record.expires <= Timestamp::now() => Some("the token has expired"),
+            _ => None,
+        };
+        if let Some(reason) = refused {
+            let mut store = hub.store();
+            let directory = store.book.directory.clone();
+            crate::machine_log::keep(
+                &mut store,
+                &directory,
+                Actor {
+                    account: Some(record.account.clone()),
+                    authenticated: directory
+                        .by_key(&member.key)
+                        .is_some_and(|known| known.logins.contains(&record.account)),
+                    member: directory.by_key(&member.key).map(|member| member.name.clone()),
+                    peer: Some(peer),
+                },
+                Action::Joined {
+                    name: record.name.clone().unwrap_or_else(|| member.name.clone()),
+                    kind: record.kind,
+                    registered: record.register,
+                    via: LoginMethod::Token,
+                },
+                Outcome::Refused { reason: reason.to_string() },
+            )?;
+            hub.machine_log_changed.notify_one();
+            return Err(reason.to_string());
         }
         let joining = Joining {
             name: record.name.clone().unwrap_or_else(|| member.name.clone()),
             kind: record.kind,
             ..member.clone()
         };
-        let name = join(&hub, &record.account, &joining, record.register, Some(&token))?;
+        let name = join(&hub, peer, &record.account, &joining, record.register, Some(&token))?;
         Ok((record.account, name))
     })();
     match outcome {
@@ -201,12 +226,17 @@ pub(crate) async fn open_account(
         }
     };
     if let Some(reason) = refused {
+        let reason =
+            record_opening(&hub, peer, &account, Outcome::Refused { reason: reason.clone() }).err().unwrap_or(reason);
         refuse(&mut socket, Refusal::Login { reason }).await;
         return;
     }
     let response = match hub.secrets.register_start(&account, &request) {
         Ok(response) => response,
         Err(reason) => {
+            let reason = record_opening(&hub, peer, &account, Outcome::Refused { reason: reason.clone() })
+                .err()
+                .unwrap_or(reason);
             refuse(&mut socket, Refusal::Login { reason }).await;
             return;
         }
@@ -228,6 +258,7 @@ pub(crate) async fn open_account(
     };
     let outcome = HubSecrets::register_finish(&upload).and_then(|record| {
         let mut store = hub.store();
+        let before = store.book.clone();
         if store.book.directory.account(&account).is_some() {
             return Err(format!("the account {account} exists already"));
         }
@@ -239,7 +270,18 @@ pub(crate) async fn open_account(
             collab: None,
         });
         store.book.passwords.insert(account.clone(), Bytes(record));
-        store.save_book().map_err(|error| format!("the hub could not keep the account: {error}"))
+        let actor = Actor { account: None, authenticated: false, member: None, peer: Some(peer) };
+        if let Err(reason) = crate::machine_log::keep(
+            &mut store,
+            &before.directory,
+            actor,
+            Action::OpenAccount { name: account.clone() },
+            Outcome::Done,
+        ) {
+            store.book = before;
+            return Err(reason);
+        }
+        Ok(())
     });
     match outcome {
         Ok(()) => {
@@ -248,8 +290,27 @@ pub(crate) async fn open_account(
             let _ = futures_util::SinkExt::close(&mut socket).await;
             hub.changed();
         }
-        Err(reason) => refuse(&mut socket, Refusal::Login { reason }).await,
+        Err(reason) => {
+            let reason = record_opening(&hub, peer, &account, Outcome::Refused { reason: reason.clone() })
+                .err()
+                .unwrap_or(reason);
+            refuse(&mut socket, Refusal::Login { reason }).await;
+        }
     }
+}
+
+fn record_opening(hub: &Hub, peer: SocketAddr, account: &AccountName, outcome: Outcome) -> Result<(), String> {
+    let mut store = hub.store();
+    let directory = store.book.directory.clone();
+    let result = crate::machine_log::keep(
+        &mut store,
+        &directory,
+        Actor { account: None, authenticated: false, member: None, peer: Some(peer) },
+        Action::OpenAccount { name: account.clone() },
+        outcome,
+    );
+    hub.machine_log_changed.notify_one();
+    result
 }
 
 /// Whether the joining device holds the key it names, on this connection.
@@ -265,6 +326,7 @@ fn proved(member: &Joining, binding: &[u8; 32]) -> Result<(), String> {
 /// if any, is marked used by it. Returns its name on the hub.
 fn join(
     hub: &Hub,
+    peer: SocketAddr,
     account: &AccountName,
     joining: &Joining,
     register: bool,
@@ -272,49 +334,86 @@ fn join(
 ) -> Result<fastctx_types::MachineName, String> {
     let name = {
         let mut store = hub.store();
-        let found = store.book.directory.account(account).cloned();
-        let found = found.ok_or_else(|| format!("there is no account {account}"))?;
-        if found.locked {
-            return Err(format!("the account {account} is locked"));
-        }
-        let directory = &mut store.book.directory;
-        let name = match directory.members.iter_mut().find(|member| member.key == joining.key) {
-            Some(member) => {
-                member.logins.insert(account.clone());
-                if register && member.home.is_none() && member.kind.is_computer() {
-                    member.home = Some(account.clone());
-                }
-                member.name.clone()
+        let before = store.book.clone();
+        let result = (|| {
+            let found = store.book.directory.account(account).cloned();
+            let found = found.ok_or_else(|| format!("there is no account {account}"))?;
+            if found.locked {
+                return Err(format!("the account {account} is locked"));
             }
-            None => {
-                if directory.member(&joining.name).is_some() {
-                    return Err(format!("the name {} is taken on this hub; log in under another", joining.name));
+            let directory = &mut store.book.directory;
+            let name = match directory.members.iter_mut().find(|member| member.key == joining.key) {
+                Some(member) => {
+                    member.logins.insert(account.clone());
+                    if register && member.home.is_none() && member.kind.is_computer() {
+                        member.home = Some(account.clone());
+                    }
+                    member.name.clone()
                 }
-                let home = (register && joining.kind.is_computer()).then(|| account.clone());
-                directory.members.push(Member {
-                    name: joining.name.clone(),
-                    key: joining.key,
-                    kind: joining.kind,
-                    logins: [account.clone()].into(),
-                    home,
-                    relays: Vec::new(),
-                    relay_at: Vec::new(),
-                    added: Timestamp::now(),
-                    online: false,
-                    since: None,
-                    through: None,
-                });
-                joining.name.clone()
+                None => {
+                    if directory.member(&joining.name).is_some() {
+                        return Err(format!("the name {} is taken on this hub; log in under another", joining.name));
+                    }
+                    let home = (register && joining.kind.is_computer()).then(|| account.clone());
+                    directory.members.push(Member {
+                        name: joining.name.clone(),
+                        key: joining.key,
+                        kind: joining.kind,
+                        logins: [account.clone()].into(),
+                        home,
+                        relays: Vec::new(),
+                        relay_at: Vec::new(),
+                        added: Timestamp::now(),
+                        online: false,
+                        since: None,
+                        through: None,
+                    });
+                    joining.name.clone()
+                }
+            };
+            store.book.removed.retain(|removed| removed.key != joining.key);
+            if let Some(token) = token
+                && let Some(record) = store.book.tokens.iter_mut().find(|record| record.key == *token)
+            {
+                record.used_by = Some(joining.key);
+            }
+            Ok(name)
+        })();
+        let (name, outcome) = match &result {
+            Ok(name) => (name.clone(), Outcome::Done),
+            Err(reason) => {
+                store.book = before.clone();
+                (joining.name.clone(), Outcome::Refused { reason: reason.clone() })
             }
         };
-        store.book.removed.retain(|removed| removed.key != joining.key);
-        if let Some(token) = token
-            && let Some(record) = store.book.tokens.iter_mut().find(|record| record.key == *token)
-        {
-            record.used_by = Some(joining.key);
+        let actor = Actor {
+            account: Some(account.clone()),
+            authenticated: true,
+            member: store.book.directory.by_key(&joining.key).map(|member| member.name.clone()),
+            peer: Some(peer),
+        };
+        let registered = store.book.directory.member(&name).is_some_and(|member| member.home.as_ref() == Some(account));
+        let action = Action::Joined {
+            name: name.clone(),
+            kind: store.book.directory.member(&name).map_or(joining.kind, |member| member.kind),
+            registered,
+            via: if token.is_some() { LoginMethod::Token } else { LoginMethod::Password },
+        };
+        // Reconnecting a control session never reaches this path. A repeated
+        // password login with no membership change is not a new arrival.
+        if token.is_some() || result.is_err() || before.directory != store.book.directory {
+            let mut scope = before.directory.clone();
+            if let Some(member) = store.book.directory.member(&name) {
+                scope.members.retain(|current| current.key != member.key);
+                scope.members.push(member.clone());
+            }
+            if let Err(reason) = crate::machine_log::keep(&mut store, &scope, actor, action, outcome) {
+                store.book = before;
+                return Err(reason);
+            }
+            hub.machine_log_changed.notify_one();
         }
-        store.save_book().map_err(|error| format!("the hub could not keep the login: {error}"))?;
-        name
+        result?
     };
     hub.changed();
     Ok(name)

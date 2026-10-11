@@ -829,6 +829,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::world::change(node, hub.as_ref(), &account, change).await.map(|token| Reply::Changed { token })
         }
         Call::Accounts => Ok(Reply::Accounts(crate::world::accounts(node))),
+        Call::MachineLog { hub, account, before } => {
+            users_voice(node, peer)?;
+            crate::world::hub_link(node, Some(&hub))?
+                .machine_log(&account, before)
+                .await
+                .map(Reply::MachineLog)
+                .map_err(Failure::new)
+        }
         Call::ServerCommand { hub, account, name, expires } => {
             users_voice(node, peer)?;
             crate::server_invitation::command(node, hub.as_ref(), &account, name, expires)

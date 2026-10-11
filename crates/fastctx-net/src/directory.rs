@@ -378,6 +378,9 @@ impl Directory {
 /// One member's view of its hub's directory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View {
+    /// Whether this hub supports `Question::MachineLog`. Older hubs omit it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub machine_log: bool,
     pub hub: HubId,
     pub hub_name: HubName,
     /// The member this view is for.
@@ -392,7 +395,7 @@ pub struct View {
 impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
-        Self { hub, hub_name, me, self_registration: false, directory: Directory::default() }
+        Self { machine_log: false, hub, hub_name, me, self_registration: false, directory: Directory::default() }
     }
 
     pub fn me(&self) -> Option<&Member> {
