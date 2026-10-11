@@ -75,6 +75,8 @@ export class FileLinks {
     menu.className = `file-menu${sheet ? " as-sheet" : ""}`;
     menu.setAttribute("role", "menu");
     menu.innerHTML = [
+      // Where the file is, said where a pointer cannot rest on the link.
+      `<p class="file-menu-where mono">${escape(machine === here ? naturalPath(path) : words.on(machine, naturalPath(path)))}</p>`,
       machine === here && reveal ? `<button class="file-menu-item" type="button" role="menuitem" data-file-act="reveal">${glyph("folder", 16)}<span>${escape(words.reveal)}</span></button>` : "",
       `<button class="file-menu-item" type="button" role="menuitem" data-file-act="copy">${glyph("copy", 16)}<span>${escape(words.copyPath)}</span></button>`,
     ].join("");

@@ -365,6 +365,18 @@ button.job-what:hover .job-command {
     border-radius: var(--radius-l) var(--radius-l) 0 0;
     animation-name: sheet-rise;
   }
+
+  /* On a phone a command's output is read over the whole screen. */
+  .jobs-pop:has(.job-output) {
+    top: 0;
+    max-height: none;
+    padding-top: calc(var(--space-3) + env(safe-area-inset-top));
+    border-radius: 0;
+  }
+
+  .jobs-pop:has(.job-output) .job-output .lv-viewport {
+    height: calc(100dvh - 160px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1683,6 +1683,17 @@ a.bubble-file:hover {
   box-shadow: var(--shadow-pop);
 }
 
+.file-menu-where {
+  max-width: 28em;
+  margin: 0;
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--size-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .file-menu-item {
   display: flex;
   align-items: center;
