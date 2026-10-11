@@ -12,6 +12,7 @@ publish = false
 # The password stretching of OPAQUE logins (`crate::login`).
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 base64 = "0.22"
+bytes = "1"
 ed25519-dalek = "3.0.0"
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
@@ -31,7 +32,7 @@ serde_json.workspace = true
 sha2 = "0.10"
 socket2 = { version = "0.6.5", features = ["all"] }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 zeroize = { version = "1.8", features = ["serde"] }

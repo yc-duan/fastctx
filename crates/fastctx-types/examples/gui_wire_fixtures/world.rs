@@ -246,13 +246,14 @@ fn nodes() -> Vec<NodesReply> {
         Route::Proxy { proxy: "http://proxy.example.test:8080".into() },
         Route::System,
     ] {
-        links.push(LinkState::Online { since: at(), hub: "hub.example.test".into(), relay: None, route });
+        links.push(LinkState::Online { since: at(), hub: "hub.example.test".into(), through: None, route, ms: None });
     }
     links.push(LinkState::Online {
         since: at(),
         hub: "203.0.113.5:7444".into(),
-        relay: Some("la".parse().unwrap()),
+        through: Some("server".parse().unwrap()),
         route: Route::System,
+        ms: Some(41),
     });
     let facts = |name: &str, os: &str, lifetime: bool| MachineFacts {
         name: name.parse().unwrap(),
@@ -307,7 +308,9 @@ fn nodes() -> Vec<NodesReply> {
                         written: if i == 1 { "lab.home".into() } else { "lab".into() },
                         online: None,
                         since: None,
-                        through: Some("la".into()),
+                        through: Some("server".into()),
+                        allows_direct: false,
+                        path: Some(fastctx_types::world::Path::Hub { why: None }),
                         facts: Ok(facts("lab", "linux", false)),
                         owner: Some("grace".parse().unwrap()),
                         rights: vec![(me.clone(), agents)],
@@ -318,7 +321,27 @@ fn nodes() -> Vec<NodesReply> {
                         online: Some(false),
                         since: Some(at()),
                         through: None,
+                        allows_direct: false,
+                        path: None,
                         facts: Err("offline".into()),
+                        owner: Some(me.clone()),
+                        rights: vec![(me.clone(), all)],
+                    },
+                    Node {
+                        name: "server".parse().unwrap(),
+                        written: "server".into(),
+                        online: Some(true),
+                        since: Some(at()),
+                        through: None,
+                        allows_direct: true,
+                        path: Some(if i == 2 {
+                            fastctx_types::world::Path::Hub {
+                                why: Some("203.0.113.20:7444: no answer within 30 s".into()),
+                            }
+                        } else {
+                            fastctx_types::world::Path::Direct { ms: Some(41) }
+                        }),
+                        facts: Ok(facts("server", "linux", false)),
                         owner: Some(me.clone()),
                         rights: vec![(me.clone(), all)],
                     },

@@ -9,7 +9,8 @@ fn main() {
     let hub: fastctx_types::HubName = "home".parse().expect("fixture hub");
     let account: fastctx_types::AccountName = "ada".parse().expect("fixture account");
     let local = ConnectionState { mode: ConnectionMode::Local, device: None };
-    let unjoined = ConnectionState { mode: ConnectionMode::Device, device: Some(DeviceState { name: None, hubs: Vec::new() }) };
+    let unjoined =
+        ConnectionState { mode: ConnectionMode::Device, device: Some(DeviceState { name: None, hubs: Vec::new() }) };
     let connected = ConnectionState {
         mode: ConnectionMode::Device,
         device: Some(DeviceState {
@@ -19,8 +20,9 @@ fn main() {
                 link: LinkState::Online {
                     since: "2026-10-04T12:00:00Z".parse().expect("fixture time"),
                     hub: "192.0.2.1:7443".into(),
-                    relay: None,
+                    through: None,
                     route: Route::System,
+                    ms: None,
                 },
                 logins: vec![account.clone()],
             }],

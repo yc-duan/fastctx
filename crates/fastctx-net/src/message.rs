@@ -70,3 +70,33 @@ impl From<LetterId> for String {
         id.0
     }
 }
+
+/// The resident a call from `from` asks the machine it goes to to work for,
+/// when it names one: a hop of an `on`, a run handed over to where its
+/// resident works, a colleague asked, a file placed. The hub notes it, for
+/// the letters that later tell that resident what came of the work.
+pub fn worked_for(from: &fastctx_types::MachineName, call: &RemoteCall) -> Option<fastctx_types::Address> {
+    let address = |resident: &fastctx_types::ResidentId| fastctx_types::Address {
+        machine: from.clone(),
+        resident: resident.clone(),
+    };
+    match call {
+        RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } => Some(origin.resident.clone()),
+        RemoteCall::Run { resident, .. } | RemoteCall::Place { resident, .. } => Some(address(resident)),
+        RemoteCall::Ask { asker, .. } => Some(address(asker)),
+        _ => None,
+    }
+}
+
+/// The agent's login a call starts a session of, if it starts one: a
+/// session opened for the user, or a colleague asked; none is the agent's
+/// default login there.
+pub fn login_asked(call: &RemoteCall) -> Option<(fastctx_types::AgentName, Option<std::path::PathBuf>)> {
+    match call {
+        RemoteCall::Open { agent, home, .. } => Some((agent.clone(), home.clone())),
+        RemoteCall::Ask { started, .. } => {
+            Some((started.callee.login.agent.clone(), started.callee.login.home.clone()))
+        }
+        _ => None,
+    }
+}

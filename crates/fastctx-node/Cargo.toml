@@ -20,7 +20,6 @@ fastctx-hands = { path = "../fastctx-hands" }
 fastctx-client = { path = "../fastctx-client" }
 fastctx-file-search = { path = "../fastctx-file-search" }
 fastctx-hosts = { path = "../fastctx-hosts" }
-fastctx-hub = { path = "../fastctx-hub" }
 fastctx-install = { path = "../fastctx-install" }
 fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }

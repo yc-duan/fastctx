@@ -4,8 +4,8 @@
 //! themselves.
 
 use clap::{Args, Subcommand};
-use fastctx_types::accounts::{AccountChange, AccountsReply, MemberKind, Relay};
-use fastctx_types::world::{HubNodes, LinkState, NodesReply};
+use fastctx_types::accounts::{AccountChange, AccountsReply, MemberKind};
+use fastctx_types::world::{HubNodes, LinkState, NodesReply, Path};
 use fastctx_types::{AccountName, Call, HubName, MachineName, Reply};
 use jiff::{SignedDuration, Timestamp};
 
@@ -118,28 +118,20 @@ pub struct RemoveArgs {
 }
 
 #[derive(Args)]
-pub struct RelaysArgs {
-    /// One of the account's machines.
+pub struct DirectArgs {
+    /// The machine other machines are to connect to directly.
     machine: MachineName,
-    /// A relay it connects through, as LABEL=HOST:PORT; give it once for
-    /// each, in the order it tries them. The hub comes after them; with
-    /// none, it connects straight to the hub.
-    #[arg(long = "via")]
-    via: Vec<String>,
+    /// An address other machines reach it at, as IP or IP:PORT; give it once
+    /// for each. Without any, the addresses it may be reached at are listed.
+    #[arg(long = "at", conflicts_with = "off")]
+    at: Vec<String>,
+    /// Other machines no longer connect to it directly.
+    #[arg(long)]
+    off: bool,
     #[arg(long = "as")]
     account: Option<AccountName>,
     #[arg(long)]
     hub: Option<HubName>,
-}
-
-#[derive(Args)]
-pub struct RelayArgs {
-    /// Where it listens, as IP:PORT.
-    #[arg(long)]
-    listen: std::net::SocketAddr,
-    /// The hub it forwards to, as host:port; give it once for each address.
-    #[arg(long = "hub", required = true)]
-    hub: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -316,36 +308,56 @@ pub fn remove(args: RemoveArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn relays(args: RelaysArgs) -> anyhow::Result<()> {
-    let account = account_or_owner(args.hub.as_ref(), args.account, Some(&args.machine))?;
-    let runtime = runtime()?;
-    let mut relays = Vec::new();
-    for via in &args.via {
-        let (label, address) =
-            via.split_once('=').ok_or_else(|| anyhow::anyhow!("write each relay as LABEL=HOST:PORT, not {via}"))?;
-        let addresses = runtime.block_on(fastctx_client::hub_addresses(address)).map_err(anyhow::Error::msg)?;
-        relays.push(Relay { label: label.to_string(), addresses });
+pub fn direct(args: DirectArgs) -> anyhow::Result<()> {
+    let account = account_or_owner(args.hub.as_ref(), args.account, None)?;
+    if args.off {
+        self::change(args.hub, account, AccountChange::Direct { machine: args.machine.clone(), at: Vec::new() })?;
+        println!("other machines no longer connect to {} directly", args.machine);
+        return Ok(());
     }
-    let said = if relays.is_empty() {
-        "straight to the hub".to_string()
-    } else {
-        format!(
-            "through {}, then the hub",
-            relays.iter().map(|relay| relay.label.as_str()).collect::<Vec<_>>().join(", then ")
-        )
-    };
-    self::change(args.hub, account, AccountChange::Relays { machine: args.machine.clone(), relays })?;
-    println!("{} connects {said} from now on", args.machine);
+    if args.at.is_empty() {
+        let Reply::Accounts(reply) = call(Call::Accounts)? else { anyhow::bail!("the node answered something else") };
+        let member = reply
+            .hubs
+            .iter()
+            .filter(|seen| args.hub.as_ref().is_none_or(|hub| seen.name == *hub))
+            .find_map(|seen| seen.members.iter().find(|member| member.name == args.machine))
+            .ok_or_else(|| anyhow::anyhow!("there is no machine {} on the hubs this computer is on", args.machine))?;
+        let reach = member.reach.clone().unwrap_or_default();
+        let mut text = format!("{} may be reached at:\n", args.machine);
+        if let Some(seen) = reach.seen {
+            text.push_str(&format!("  {seen}  (where the hub sees it)\n"));
+        }
+        for address in &reach.interfaces {
+            text.push_str(&format!("  {address}  (one of its network cards)\n"));
+        }
+        if reach.seen.is_none() && reach.interfaces.is_empty() {
+            text.push_str("  nothing is known: it is offline, or this account is not the network's administrator\n");
+        }
+        print!("{text}");
+        anyhow::bail!(
+            "choose with --at ADDRESS[:PORT]; the port is {} when none is given",
+            fastctx_net::peer::DEFAULT_PORT
+        );
+    }
+    let mut at = Vec::new();
+    for text in &args.at {
+        let address = match text.parse::<std::net::SocketAddr>() {
+            Ok(address) => address,
+            Err(_) => std::net::SocketAddr::new(
+                text.parse().map_err(|_| anyhow::anyhow!("{text} is not an IP address, with or without a port"))?,
+                fastctx_net::peer::DEFAULT_PORT,
+            ),
+        };
+        at.push(address);
+    }
+    self::change(args.hub, account, AccountChange::Direct { machine: args.machine.clone(), at: at.clone() })?;
+    let list = at.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+    println!("other machines connect to {} directly at {list}", args.machine);
+    for address in at.iter().filter(|address| fastctx_net::peer::local_only(&address.ip())) {
+        println!("{address} is reached only on its own network; the hub could not check it from where it is");
+    }
     Ok(())
-}
-
-pub fn relay(args: RelayArgs) -> anyhow::Result<()> {
-    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    let mut hub = Vec::new();
-    for address in &args.hub {
-        hub.extend(runtime.block_on(fastctx_client::hub_addresses(address)).map_err(anyhow::Error::msg)?);
-    }
-    runtime.block_on(fastctx_hub::relay::run(args.listen, hub))
 }
 
 pub fn accounts() -> anyhow::Result<()> {
@@ -548,13 +560,13 @@ fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
 fn link(link: &LinkState, now: Timestamp) -> String {
     // A model names machines and never needs where the hub or any machine
     // is on the network: in a script run for an agent the link says only
-    // whether it is up, for how long, and through which relay.
+    // whether it is up, for how long, and through which machine.
     if std::env::var_os("FASTCTX_RESIDENT").is_some() {
         return match link {
             LinkState::Alone => "not connected".to_string(),
-            LinkState::Online { since, relay: None, .. } => format!("connected for {}", age(*since, now)),
-            LinkState::Online { since, relay: Some(relay), .. } => {
-                format!("connected through the relay {relay}, for {}", age(*since, now))
+            LinkState::Online { since, through: None, .. } => format!("connected for {}", age(*since, now)),
+            LinkState::Online { since, through: Some(through), .. } => {
+                format!("connected through {through}, for {}", age(*since, now))
             }
             LinkState::Connecting { since, .. } => format!("not connected to the hub for {}", age(*since, now)),
             LinkState::Stopped { reason } => format!("the hub removed this computer: {reason}"),
@@ -562,11 +574,11 @@ fn link(link: &LinkState, now: Timestamp) -> String {
     }
     match link {
         LinkState::Alone => "not connected".to_string(),
-        LinkState::Online { since, hub, relay: None, route } => {
-            format!("connected to the hub at {hub}, {route}, for {}", age(*since, now))
+        LinkState::Online { since, hub, through: None, route, ms } => {
+            format!("connected to the hub at {hub}, {route}, for {}{}", age(*since, now), round_trip(*ms))
         }
-        LinkState::Online { since, hub, relay: Some(relay), route } => {
-            format!("connected through the relay {relay} at {hub}, {route}, for {}", age(*since, now))
+        LinkState::Online { since, hub, through: Some(through), route, ms } => {
+            format!("connected through {through} at {hub}, {route}, for {}{}", age(*since, now), round_trip(*ms))
         }
         LinkState::Connecting { last_error: None, .. } => "connecting to the hub".to_string(),
         LinkState::Connecting { since, last_error: Some(error) } => {
@@ -590,7 +602,13 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
     text
 }
 
+/// A round trip as a person reads it after a line's state.
+fn round_trip(ms: Option<u32>) -> String {
+    ms.map(|ms| format!(", {ms} ms round trip")).unwrap_or_default()
+}
+
 fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
+    let resident = std::env::var_os("FASTCTX_RESIDENT").is_some();
     let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
     let home = hub.home.as_ref().map(|home| format!("; registered under {home}")).unwrap_or_default();
     let mut text = format!("\n--- hub {} ({}) · logged in to {logins}{home}\n", hub.name, link(&hub.link, now));
@@ -603,7 +621,14 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
             (Some(false), None) => "offline".to_string(),
             (None, _) => "not known".to_string(),
         };
-        let through = node.through.as_ref().map(|relay| format!(" · through {relay}")).unwrap_or_default();
+        let through = node.through.as_ref().map(|through| format!(" · through {through}")).unwrap_or_default();
+        // How this computer's calls to it go: which way, never where.
+        let path = match &node.path {
+            Some(Path::Direct { .. }) if resident => " · direct".to_string(),
+            Some(Path::Direct { ms }) => format!(" · direct{}", round_trip(*ms)),
+            Some(Path::Hub { why: Some(why) }) if !resident => format!(" · no direct link: {why}"),
+            _ => String::new(),
+        };
         let owner = node.owner.as_ref().map(|owner| format!(" · {owner}'s")).unwrap_or_default();
         let rights: Vec<String> = node
             .rights
@@ -620,7 +645,11 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
             Err(_) if node.online == Some(false) => String::new(),
             Err(error) => format!("  not known: {error}"),
         };
-        text.push_str(&format!("{:width$}  {state}{through}{owner} · {}{facts}\n", node.written, rights.join("; ")));
+        text.push_str(&format!(
+            "{:width$}  {state}{through}{path}{owner} · {}{facts}\n",
+            node.written,
+            rights.join("; ")
+        ));
         if let Ok(facts) = &node.facts
             && let Some(warning) = facts.node_lifetime.as_ref().and_then(|lifetime| lifetime.warning())
         {

@@ -1,11 +1,13 @@
 //! What this machine says to others: calls, and letters.
 //!
-//! A call goes to the hub in an envelope naming the account it is for and
-//! what it asks of the receiver, and comes back as an answer. A call too
-//! large for a control message carries its bytes over a data connection; a
-//! call with a data connection opens this machine's end of it, the source,
-//! and hands it to the caller's feed once the other end is there. A letter
-//! waits in the outbox until the hub holds it.
+//! A call goes in an envelope naming the account it is for and what it asks
+//! of the receiver, and comes back as an answer: over the direct link with
+//! the receiver when there is one, else through the hub. A call too large
+//! for a control message carries its bytes over a data connection; a call
+//! with a data connection opens this machine's end of it, the source, and
+//! hands it to the caller's feed once the other end is there. A letter
+//! waits in the outbox until the hub holds it: letters always go through
+//! the hub, which keeps them for machines that are away.
 
 use std::io;
 use std::sync::Arc;
@@ -15,11 +17,51 @@ use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
 use fastctx_types::{AccountName, MachineName};
 use tokio::sync::{mpsc, oneshot};
 
-use super::{CallEvent, CallFailure, Connection, Feed, Inner, Waiter};
-use crate::data::Stream;
+use super::direct::{DataWay, PeerConn, Worked};
+use super::{CallEvent, CallFailure, CallOn, Connection, Feed, Inner, Waiter};
+use crate::data::{Endpoint, Stream};
 use crate::envelope::{Envelope, Kind};
 use crate::message::{Body, LetterBody, LetterId};
 use crate::wire::{self, CallStatus, Carried, End, Ticket, Up};
+
+/// What a call goes out on.
+#[derive(Clone)]
+pub(super) enum Via {
+    Hub(Connection),
+    Peer(Arc<PeerConn>),
+}
+
+impl Via {
+    fn on(&self) -> CallOn {
+        match self {
+            Via::Hub(connection) => CallOn::Hub(connection.generation),
+            Via::Peer(conn) => conn.on(),
+        }
+    }
+
+    fn send_call(&self, id: u64, message: Envelope) -> Result<(), ()> {
+        match self {
+            Via::Hub(connection) => connection.up.send(Up::Call { id, message }),
+            Via::Peer(conn) => conn.send(crate::peer::Frame::Call { id, message }),
+        }
+    }
+
+    /// Tells the hub the caller gave up the call `id`. Over a direct link
+    /// an answer nobody waits for is dropped where it arrives.
+    fn cancel(&self, id: u64) {
+        if let Via::Hub(connection) = self {
+            let _ = connection.up.send(Up::Cancel { id });
+        }
+    }
+
+    /// Where the data connections of a call made over it go.
+    fn endpoint(&self, inner: &Arc<Inner>) -> Endpoint {
+        match self {
+            Via::Hub(_) => inner.data_endpoint(),
+            Via::Peer(conn) => Endpoint::Peer(DataWay::new(inner.clone(), conn.clone(), None)),
+        }
+    }
+}
 
 /// What a call does beside waiting for its answer.
 enum Side {
@@ -42,8 +84,24 @@ impl Inner {
         if *to == self.membership.name {
             return Err(CallFailure::Unreachable { name: to.clone(), reason: "it is this machine".to_string() });
         }
-        let Some(connection) = self.connected().await else {
-            return Err(CallFailure::NotConnected { reason: self.not_connected() });
+        // A phone links directly with a machine only while it has calls to
+        // it; the first goes through the hub while the link comes up.
+        let _demand = self.demand(to);
+        let via = match self.direct_link_for(to, account, &call) {
+            Some(conn) => {
+                if let Some(resident) = crate::message::worked_for(&self.membership.name, &call) {
+                    self.direct.note_worked(Worked { to: to.clone(), account: account.clone(), purpose, resident });
+                    if self.connection().is_some() && self.view().direct_links {
+                        let inner = self.clone();
+                        tokio::spawn(async move { super::session::tell_worked(&inner).await });
+                    }
+                }
+                Via::Peer(conn)
+            }
+            None => match self.connected().await {
+                Some(connection) => Via::Hub(connection),
+                None => return Err(CallFailure::NotConnected { reason: self.not_connected() }),
+            },
         };
         let n = self.number(to)?;
         let ticket = || -> Result<Ticket, CallFailure> {
@@ -68,9 +126,9 @@ impl Inner {
             let ticket = ticket()?;
             let message = envelope(&Body::StreamCall { call }, Some(ticket.clone()));
             let (opened, opening) = oneshot::channel();
-            let inner = self.clone();
+            let (inner, endpoint) = (self.clone(), via.endpoint(self));
             let task = tokio::spawn(async move {
-                let _ = opened.send(Stream::open(&inner.data_endpoint(), &inner.key, ticket.stream, End::Source).await);
+                let _ = opened.send(Stream::open(&endpoint, &inner.key, ticket.stream, End::Source).await);
             });
             (message, Side::Opening(task, opening))
         } else {
@@ -89,18 +147,16 @@ impl Inner {
                     sha256: crate::sign::Digest(crate::sign::sha256(&bytes)),
                 };
                 let message = envelope(&Body::LargeCall { carried }, Some(ticket.clone()));
-                let (inner, name) = (self.clone(), to.clone());
+                let (inner, name, endpoint) = (self.clone(), to.clone(), via.endpoint(self));
                 let task = tokio::spawn(async move {
-                    if let Err(error) =
-                        crate::data::source(&inner.data_endpoint(), &inner.key, ticket.stream, &bytes).await
-                    {
+                    if let Err(error) = crate::data::source(&endpoint, &inner.key, ticket.stream, &bytes).await {
                         inner.node.log(format!("sending a large call to {name}: {error}"));
                     }
                 });
                 (message, Side::Sending(task))
             }
         };
-        let reply = self.route(&connection, to, n, message, side, &mut feed).await?;
+        let reply = self.route(&via, to, n, message, side, &mut feed).await?;
         let broken = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
         match reply.kind {
             Kind::Refused => {
@@ -109,7 +165,7 @@ impl Inner {
             }
             Kind::Answer => match reply.body::<Body>() {
                 Ok(Body::Answer { result }) => Ok(result),
-                Ok(Body::LargeAnswer { carried }) => self.fetch(to, &reply, &carried).await.map_err(|reason| {
+                Ok(Body::LargeAnswer { carried }) => self.fetch(&via, to, &reply, &carried).await.map_err(|reason| {
                     broken(format!("its answer was too large for a message, and fetching it failed: {reason}"))
                 }),
                 Ok(_) => Err(broken("what came back is not an answer".to_string())),
@@ -123,7 +179,7 @@ impl Inner {
     /// envelope that answers it.
     async fn route(
         self: &Arc<Self>,
-        connection: &Connection,
+        via: &Via,
         to: &MachineName,
         n: u64,
         message: Envelope,
@@ -132,23 +188,25 @@ impl Inner {
     ) -> Result<Envelope, CallFailure> {
         let id = self.next_id();
         let (events, mut received) = mpsc::unbounded_channel();
-        self.calls.lock().expect("never poisoned").insert(id, Waiter { events });
+        self.calls.lock().expect("never poisoned").insert(id, Waiter { events, on: via.on() });
         let (sending, mut opening) = match side {
             Side::None => (None, None),
             Side::Sending(task) => (Some(task), None),
             Side::Opening(task, opened) => (Some(task), Some(opened)),
         };
-        let mut waiting = Waiting {
-            inner: self.clone(),
-            id,
-            connection: connection.clone(),
-            answered: false,
-            sending,
-            feeding: None,
-        };
+        let mut waiting =
+            Waiting { inner: self.clone(), id, via: via.clone(), answered: false, sending, feeding: None };
         let result = async {
-            if connection.up.send(Up::Call { id, message }).is_err() {
-                return Err(CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() });
+            if via.send_call(id, message).is_err() {
+                return Err(match via {
+                    Via::Hub(_) => {
+                        CallFailure::NotConnected { reason: "the connection to the hub just ended".to_string() }
+                    }
+                    Via::Peer(_) => CallFailure::Unreachable {
+                        name: to.clone(),
+                        reason: "the direct link with it just ended".to_string(),
+                    },
+                });
             }
             // Once queued to the connection, the call may have reached its
             // target even if the hub's Delivered status never reached us.
@@ -247,12 +305,18 @@ impl Inner {
 
     /// Takes a large answer `to` sends over the data connection its answer
     /// names.
-    async fn fetch(&self, to: &MachineName, answer: &Envelope, carried: &Carried) -> Result<RemoteResult, String> {
+    async fn fetch(
+        self: &Arc<Self>,
+        via: &Via,
+        to: &MachineName,
+        answer: &Envelope,
+        carried: &Carried,
+    ) -> Result<RemoteResult, String> {
         let ticket = answer.stream.as_ref().ok_or("the answer names no data connection")?;
         if ticket.source != *to || ticket.sink != self.membership.name || ticket.stream != carried.stream {
             return Err(format!("its data connection is for {} to {}", ticket.source, ticket.sink));
         }
-        let bytes = crate::data::sink(&self.data_endpoint(), &self.key, carried).await?;
+        let bytes = crate::data::sink(&via.endpoint(self), &self.key, carried).await?;
         serde_json::from_slice(&bytes).map_err(|error| format!("the answer cannot be read: {error}"))
     }
 
@@ -330,7 +394,7 @@ impl Inner {
 struct Waiting {
     inner: Arc<Inner>,
     id: u64,
-    connection: Connection,
+    via: Via,
     answered: bool,
     sending: Option<tokio::task::JoinHandle<()>>,
     feeding: Option<tokio::task::JoinHandle<()>>,
@@ -343,7 +407,7 @@ impl Drop for Waiting {
         }
         self.inner.calls.lock().expect("never poisoned").remove(&self.id);
         if !self.answered {
-            let _ = self.connection.up.send(Up::Cancel { id: self.id });
+            self.via.cancel(self.id);
         }
     }
 }

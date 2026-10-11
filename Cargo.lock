@@ -1253,6 +1253,7 @@ dependencies = [
  "fastctx-hands",
  "fastctx-hub",
  "fastctx-install",
+ "fastctx-net",
  "fastctx-node",
  "fastctx-platform",
  "fastctx-ripgrep",
@@ -1417,6 +1418,7 @@ version = "1.0.0"
 dependencies = [
  "argon2",
  "base64 0.22.1",
+ "bytes",
  "ed25519-dalek",
  "fastctx-platform",
  "fastctx-types",
@@ -1453,7 +1455,6 @@ dependencies = [
  "fastctx-file-search",
  "fastctx-hands",
  "fastctx-hosts",
- "fastctx-hub",
  "fastctx-install",
  "fastctx-net",
  "fastctx-platform",

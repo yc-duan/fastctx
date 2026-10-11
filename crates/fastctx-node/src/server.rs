@@ -1216,6 +1216,8 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
             let online = refreshed.is_ok().then_some(machine.online);
             let written = node.written(&link, &machine.name).to_string();
             let unknown = refreshed.as_ref().err().cloned();
+            let allows_direct = !machine.direct.is_empty();
+            let path = Some(link.path_to(&machine.name));
             let (link, name, since, through, owner) =
                 (link.clone(), machine.name.clone(), machine.since, machine.through.clone(), machine.home.clone());
             asks.push(tokio::spawn(async move {
@@ -1232,7 +1234,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
                     Some(false) => Err("it is offline".to_string()),
                     None => Err(format!("the hub could not be asked: {}", unknown.unwrap_or_default())),
                 };
-                NodeView { name, written, online, since, through, facts, owner, rights }
+                NodeView { name, written, online, since, through, allows_direct, path, facts, owner, rights }
             }));
         }
         let mut machines = Vec::new();

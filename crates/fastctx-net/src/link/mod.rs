@@ -1,20 +1,25 @@
 //! A machine's link to one hub, held by its node.
 //!
 //! The link keeps one control connection to the hub open for as long as the
-//! node runs, connecting again whenever it drops, through the relays its
-//! view lists and then the hub itself. Over it the node calls other
-//! machines and answers their calls, sends letters and takes the letters
-//! kept for it, and asks the hub for its view of the directory and to make
-//! changes for an account. Everything another machine says is checked here
-//! against the view before the node sees it: that it is for this machine,
-//! and that the directory lets the sender say it for the account it names
-//! (`crate::directory`). The node checks again what each call asks.
+//! node runs, connecting again whenever it drops: by its own line, and when
+//! that is down through a machine that allows direct connections and
+//! forwards the hub's bytes. Over it the node calls other machines and
+//! answers their calls, sends letters and takes the letters kept for it,
+//! and asks the hub for its view of the directory and to make changes for
+//! an account. With the machines that allow direct connections it keeps
+//! direct links besides (`direct`), and calls between the two go over those
+//! while they are up. Everything another machine says is checked here
+//! against the view before the node sees it, whichever way it came: that it
+//! is for this machine, and that the directory lets the sender say it for
+//! the account it names (`crate::directory`). The node checks again what
+//! each call asks.
 
 mod accounts;
 mod answering;
 mod calls;
 mod changes;
 mod collab;
+mod direct;
 mod kernel;
 mod ledger;
 mod letters;
@@ -29,7 +34,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use fastctx_types::access::{Purpose, TownId};
 use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
@@ -38,11 +43,13 @@ use jiff::Timestamp;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::data::{Endpoint, Stream};
+use crate::dial::Upstream;
 use crate::directory::View;
 use crate::envelope::{Envelope, Kind};
 use crate::message::LetterId;
 use crate::sign::{Domain, PublicKey, SecretKey, Signed};
 use crate::wire::{CallStatus, Change, Question, Told};
+pub use direct::DataWay;
 pub use ledger::{Page, PageItem};
 use state::{Counter, LettersFile};
 pub use state::{Membership, NetDir};
@@ -86,6 +93,14 @@ pub trait Node: Send + Sync + 'static {
     /// This machine's view of the directory may have changed: the link has
     /// just asked the hub.
     fn directory_changed(&self) {}
+    /// Lets other computers reach this machine at TCP `port` through its own
+    /// firewall, as far as the World does that, and says what it knows of
+    /// that firewall: this machine takes direct connections there
+    /// (`crate::peer`). It may block.
+    fn open_port(&self, port: u16) -> Result<crate::wire::Firewall, String> {
+        let _ = port;
+        Ok(crate::wire::Firewall::Unknown { why: "this device does not look at its firewall".to_string() })
+    }
     fn log(&self, line: String);
 }
 
@@ -94,9 +109,10 @@ pub trait Node: Send + Sync + 'static {
 pub enum Status {
     /// Not connected; trying. `last_error` says why the last try failed.
     Connecting { since: Timestamp, last_error: Option<String> },
-    /// Connected at `address`, to the hub or through the relay `relay`;
-    /// `route` says the way the connection leaves this machine.
-    Online { since: Timestamp, address: SocketAddr, relay: Option<String>, route: fastctx_types::world::Route },
+    /// Connected at `address`, to the hub or through the machine `through`
+    /// that forwards to it; `route` says the way the connection leaves this
+    /// machine.
+    Online { since: Timestamp, address: SocketAddr, through: Option<String>, route: fastctx_types::world::Route },
     /// The hub removed this machine, or the link was stopped locally.
     /// Other refusals remain retryable.
     Stopped { reason: String },
@@ -140,28 +156,31 @@ fn offline_for(last_seen: Timestamp) -> String {
     format!(" for {span}")
 }
 
-/// A way to the hub: through a relay, or to the hub itself.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Upstream {
-    /// The relay's label; `None` for the hub.
-    pub relay: Option<String>,
-    pub addresses: Vec<SocketAddr>,
-}
-
-impl std::fmt::Display for Upstream {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.relay {
-            Some(label) => write!(f, "the relay {label}"),
-            None => f.write_str("the hub"),
-        }
-    }
-}
-
 pub struct Link {
     inner: Arc<Inner>,
 }
 
+/// What a call went out on, so the end of that connection ends only the
+/// calls on it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CallOn {
+    /// The control connection to the hub of this generation.
+    Hub(u64),
+    /// The direct link with that machine, of this generation.
+    Peer(MachineName, u64),
+}
+
+/// Where a call another machine made is answered.
+pub(crate) enum Replier {
+    /// Through the hub, which numbered the call.
+    Hub(outgoing::Outgoing, u64),
+    /// Over the direct link it came on, numbered by its caller.
+    Peer(Arc<direct::PeerConn>, u64),
+}
+
 pub(crate) struct Inner {
+    /// This link itself, for what it starts that outlives a call.
+    this: Weak<Inner>,
     dir: NetDir,
     membership: Membership,
     key: SecretKey,
@@ -183,6 +202,13 @@ pub(crate) struct Inner {
     reconnect: Notify,
     /// Woken when the ways to the hub this machine should connect by changed.
     rerouted: Notify,
+    /// Counts the changes of this machine's network the link noticed; the
+    /// direct links dial again at once on each.
+    network: watch::Sender<u64>,
+    /// The round trip to the hub, as last measured.
+    hub_ms: Mutex<Option<u32>>,
+    /// The direct links (`direct`).
+    direct: direct::Direct,
     /// The task that keeps the connection.
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -200,7 +226,6 @@ pub(crate) struct Connection {
     generation: u64,
     up: outgoing::Outgoing,
     upstream: Upstream,
-    address: SocketAddr,
     /// The ways this machine tried, through the one it is on.
     tried: Vec<Upstream>,
 }
@@ -208,6 +233,7 @@ pub(crate) struct Connection {
 /// A call waiting for what answers it.
 pub(crate) struct Waiter {
     events: mpsc::UnboundedSender<CallEvent>,
+    on: CallOn,
 }
 
 pub(crate) enum CallEvent {
@@ -269,7 +295,8 @@ impl Link {
             Err(error) => return Err(error),
         };
         let (status, _) = watch::channel(Status::Connecting { since: Timestamp::now(), last_error: None });
-        let inner = Arc::new(Inner {
+        let inner = Arc::new_cyclic(|this| Inner {
+            this: this.clone(),
             dir,
             membership,
             key,
@@ -286,8 +313,15 @@ impl Link {
             outbox_changed: Notify::new(),
             reconnect: Notify::new(),
             rerouted: Notify::new(),
+            network: watch::channel(0).0,
+            hub_ms: Mutex::new(None),
+            direct: direct::Direct::default(),
             task: Mutex::new(None),
         });
+        // A machine that allows direct connections takes them from the
+        // roster it last had, before it reaches the hub, and whether or not
+        // it does.
+        inner.follow_view();
         let task = tokio::spawn(session::run(inner.clone(), changes));
         *inner.task.lock().expect("never poisoned") = Some(task);
         Ok(Self { inner })
@@ -310,6 +344,7 @@ impl Link {
         if let Some(task) = self.inner.task.lock().expect("never poisoned").take() {
             task.abort();
         }
+        self.inner.direct.stop();
         *self.inner.connection.lock().expect("never poisoned") = None;
         self.inner.status.send_replace(Status::Stopped { reason: "the link was stopped".to_string() });
     }
@@ -334,6 +369,36 @@ impl Link {
         self.inner.view()
     }
 
+    /// This machine's direct links with machines on this hub, as they stand.
+    pub fn direct_links(&self) -> Vec<fastctx_types::accounts::LinkSeen> {
+        self.inner.direct.seen()
+    }
+
+    /// Whether this machine listens for direct connections now, and why not
+    /// when it should; `None` when it does not allow them.
+    pub fn listening(&self) -> Option<Result<(), String>> {
+        self.inner.direct.listening()
+    }
+
+    /// The round trip to the hub, as last measured.
+    pub fn hub_ms(&self) -> Option<u32> {
+        *self.inner.hub_ms.lock().expect("never poisoned")
+    }
+
+    /// How this machine's calls to `machine` go now: over a direct link, or
+    /// through the hub, and then why there is no direct link when it allows
+    /// direct connections.
+    pub fn path_to(&self, machine: &MachineName) -> fastctx_types::world::Path {
+        if let Some(conn) = self.inner.direct.link(machine) {
+            return fastctx_types::world::Path::Direct { ms: conn.ms() };
+        }
+        let allows = self.inner.view().member(machine).is_some_and(|member| !member.direct.is_empty());
+        let why = allows
+            .then(|| self.inner.direct.seen().into_iter().find(|link| link.peer == *machine).and_then(|link| link.why))
+            .flatten();
+        fastctx_types::world::Path::Hub { why }
+    }
+
     /// The hub's short name, as the hub last said it.
     pub fn hub_name(&self) -> fastctx_types::HubName {
         self.inner.view().hub_name.clone()
@@ -342,11 +407,6 @@ impl Link {
     /// Asks the hub for this machine's view again.
     pub async fn refresh(&self) -> Result<(), String> {
         self.inner.refresh().await
-    }
-
-    /// Where a data connection of this machine goes.
-    pub fn data_endpoint(&self) -> Endpoint {
-        self.inner.data_endpoint()
     }
 
     /// Proves this machine is on the connection whose TLS exporter is
@@ -442,38 +502,52 @@ impl Inner {
         self.connection.lock().expect("never poisoned").clone()
     }
 
-    /// The ways to the hub, in order: the relays this machine's view lists
-    /// for it, then the hub itself.
-    fn upstreams(&self) -> Vec<Upstream> {
-        let view = self.view();
-        let mut upstreams: Vec<Upstream> = view
-            .me()
-            .map(|me| {
-                me.relays
-                    .iter()
-                    .map(|relay| Upstream { relay: Some(relay.label.clone()), addresses: relay.addresses.clone() })
-                    .collect()
-            })
-            .unwrap_or_default();
-        upstreams.push(Upstream { relay: None, addresses: self.membership.addresses.clone() });
-        upstreams
+    /// How this machine's lines go, for the hub.
+    fn paths(&self) -> crate::directory::Paths {
+        crate::directory::Paths { hub_ms: *self.hub_ms.lock().expect("never poisoned"), links: self.direct.seen() }
     }
 
-    /// Where a data connection goes: the address the control connection is
-    /// on, then every other way.
+    /// The hub's addresses as this machine knows them. Everything that dials
+    /// the hub by this machine's own line reads them here.
+    pub(crate) fn hub_addresses(&self) -> Vec<SocketAddr> {
+        self.membership.addresses.clone()
+    }
+
+    /// The ways to the hub, in order: this machine's own line, then through
+    /// each machine that allows direct connections, in the hub's order.
+    fn upstreams(&self) -> Vec<Upstream> {
+        let view = self.view();
+        let forwarders = view.forwarders.iter().filter(|forwarder| forwarder.name != self.membership.name).cloned();
+        std::iter::once(Upstream::Hub(self.hub_addresses())).chain(forwarders.map(Upstream::Through)).collect()
+    }
+
+    /// Where a data connection through the hub goes: the way the control
+    /// connection is on, then every other.
     fn data_endpoint(&self) -> Endpoint {
-        let mut addresses = Vec::new();
+        let mut upstreams = Vec::new();
         if let Some(connection) = self.connection() {
-            addresses.push(connection.address);
+            upstreams.push(connection.upstream);
         }
         for upstream in self.upstreams() {
-            for address in upstream.addresses {
-                if !addresses.contains(&address) {
-                    addresses.push(address);
-                }
+            if !upstreams.contains(&upstream) {
+                upstreams.push(upstream);
             }
         }
-        Endpoint { addresses, cert: self.membership.cert }
+        Endpoint::Hub { upstreams, hub: self.membership.id.clone(), cert: self.membership.cert }
+    }
+
+    /// Hands `event` to the call `id` made on `on`.
+    fn call_event(&self, on: &CallOn, id: u64, event: CallEvent) {
+        if let Some(waiter) = self.calls.lock().expect("never poisoned").get(&id).filter(|waiter| waiter.on == *on) {
+            let _ = waiter.events.send(event);
+        }
+    }
+
+    /// Tells every call made on `on` that it ended, and why.
+    fn fail_calls_on(&self, on: &CallOn, reason: &str) {
+        for waiter in self.calls.lock().expect("never poisoned").values().filter(|waiter| waiter.on == *on) {
+            let _ = waiter.events.send(CallEvent::Disconnected(reason.to_string()));
+        }
     }
 
     /// Ends the connection when the way it is on is no longer one to
@@ -556,6 +630,9 @@ impl Inner {
         if changed {
             state::write(&self.dir.view(), &*view).map_err(|error| format!("keeping the view: {error}"))?;
             *self.view.lock().expect("never poisoned") = Arc::from(view);
+            if let Some(this) = self.this.upgrade() {
+                this.follow_view();
+            }
         }
         self.reroute_if_changed();
         Ok(())

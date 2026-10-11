@@ -13,17 +13,20 @@
 //! what passes through it, as MeshCentral's server does, and is to be
 //! guarded as the most important machine there is.
 //!
-//! A relay (`relay`) only forwards the hub's port: the TLS between a
-//! machine and the hub passes through it whole.
+//! A machine the super administrator allowed direct connections to takes
+//! them itself (`direct`): what passes between it and the machines linked
+//! with it does not come here, and a machine whose own line is down reaches
+//! the hub through it, the TLS between that machine and the hub passing
+//! through it whole.
 
 mod control;
 mod data;
+mod direct;
 mod ledger;
 mod log;
 mod login;
 mod machine_log;
 mod manage;
-pub mod relay;
 mod releases;
 mod store;
 pub mod third;
@@ -157,6 +160,8 @@ pub(crate) struct Hub {
     /// The pin of the hub's certificate, written into tokens.
     pin: CertPin,
     sessions: Mutex<HashMap<MachineName, Session>>,
+    /// The checks of machines' direct addresses under way (`direct`).
+    trials: Mutex<direct::Trials>,
     calls: Mutex<HashMap<u64, control::Pending>>,
     data: Mutex<data::Pairing>,
     /// Taken after `store` when both are held.
@@ -172,8 +177,17 @@ pub(crate) struct Session {
     generation: u64,
     out: mpsc::UnboundedSender<Out>,
     since: Timestamp,
-    /// The relay the member came through, as it said.
+    /// Where the connection comes from: the member, or the machine that
+    /// forwards it here.
+    peer: SocketAddr,
+    /// The machine the member came through, as it said.
     through: Option<String>,
+    /// Whether the member can take direct connections, as it said.
+    direct: bool,
+    /// The addresses of its network cards, as it said.
+    interfaces: Vec<std::net::IpAddr>,
+    /// How its lines go, as it last said.
+    paths: Option<fastctx_net::directory::Paths>,
 }
 
 pub(crate) enum Out {
@@ -227,10 +241,36 @@ impl Hub {
             .sessions()
             .iter()
             .map(|(name, session)| {
-                (name.clone(), views::Presence { since: Some(session.since), through: session.through.clone() })
+                let seen = session.through.is_none().then(|| session.peer.ip());
+                let presence = views::Presence {
+                    since: Some(session.since),
+                    through: session.through.clone(),
+                    reach: fastctx_net::directory::Reach { seen, interfaces: session.interfaces.clone() },
+                    paths: session.paths.clone(),
+                };
+                (name.clone(), presence)
             })
             .collect();
-        views::view_for(&self.store(), &presence, name)
+        let trial = self.trial_of(name);
+        views::view_for(&self.store(), &presence, name, trial)
+    }
+
+    /// Resolves once `name`'s session ends, at once when it has none.
+    async fn gone(&self, name: &MachineName) {
+        let out = self.sessions().get(name).map(|session| session.out.clone());
+        if let Some(out) = out {
+            out.closed().await;
+        }
+    }
+
+    /// Who is connected, or how they connect, changed: every member is told
+    /// to look again.
+    fn presence_changed(&self) {
+        let outs: Vec<mpsc::UnboundedSender<Out>> =
+            self.sessions().values().map(|session| session.out.clone()).collect();
+        for out in outs {
+            let _ = out.send(Out::Frame(Down::DirectoryChanged));
+        }
     }
 
     /// The directory changed, or who is online did: every member is told to
@@ -277,6 +317,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
         secrets,
         pin: certificate.pin(),
         sessions: Mutex::new(HashMap::new()),
+        trials: Mutex::new(direct::Trials::default()),
         calls: Mutex::new(HashMap::new()),
         data: Mutex::new(data::Pairing::default()),
         ledgers: Mutex::new(ledgers),
@@ -351,8 +392,9 @@ pub(crate) async fn connected(
         return;
     }
     match (path.as_str(), intent) {
-        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through }) => {
-            control::session(hub, socket, peer, binding, key, proof, letters, through).await;
+        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through, direct, interfaces }) => {
+            let said = control::Said { through, direct, interfaces };
+            control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
         (wire::CONTROL_PATH, Intent::Login { account, request }) => {
             login::with_password(hub, socket, peer, binding, account, request).await;

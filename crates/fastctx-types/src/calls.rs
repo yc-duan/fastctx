@@ -408,10 +408,6 @@ pub enum Reply {
         version: u64,
     },
     ComposerUploaded(Box<crate::composer::UploadResult>),
-    /// Where the machine relays now; nowhere when it stopped.
-    Relaying {
-        relays_at: Vec<String>,
-    },
     Composer(Box<crate::composer::Updated>),
     Page {
         view: Box<crate::pages::PageView>,

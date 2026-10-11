@@ -58,15 +58,18 @@ pub enum LinkState {
         since: Timestamp,
         last_error: Option<String>,
     },
-    /// Connected at the address `hub`: the hub's, or the relay `relay`'s
-    /// when it connects through one; the connection leaves this machine by
-    /// `route`.
+    /// Connected at the address `hub`: the hub's, or, when its own line is
+    /// down, the address of the machine `through` that forwards to the
+    /// hub; the connection leaves this machine by `route`.
     Online {
         since: Timestamp,
         hub: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        relay: Option<String>,
+        through: Option<String>,
         route: Route,
+        /// The round trip to the hub in milliseconds, as last measured.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ms: Option<u32>,
     },
     /// The hub removed this computer.
     Stopped {
@@ -97,6 +100,24 @@ impl std::fmt::Display for Route {
             Route::System => f.write_str("along the system's routes"),
         }
     }
+}
+
+/// How this computer's calls to a machine go.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Path {
+    /// Over a direct link between the two, unseen by the hub; `ms` is its
+    /// round trip as last measured.
+    Direct {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ms: Option<u32>,
+    },
+    /// Through the hub; `why`, when the machine allows direct connections,
+    /// says why there is no direct link now.
+    Hub {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        why: Option<String>,
+    },
 }
 
 /// `fastctx nodes`: this computer's links, and every machine its accounts
@@ -131,9 +152,16 @@ pub struct Node {
     pub online: Option<bool>,
     /// When it connected, if online; when it was last seen, if not.
     pub since: Option<Timestamp>,
-    /// The relay it is connected through.
+    /// The machine it reaches the hub through, when its own line is down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<String>,
+    /// Whether the network's administrator allowed direct connections to
+    /// it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allows_direct: bool,
+    /// How this computer's calls to it go now; `None` from an older node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<Path>,
     /// What the machine said of itself just now, or why it could not be
     /// asked.
     pub facts: Result<MachineFacts, String>,

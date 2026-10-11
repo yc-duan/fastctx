@@ -197,18 +197,25 @@ impl Store {
     /// The directory as kept; one kept in the shape before sharing and
     /// lending (`crate::upgrade`) is kept again in today's, after a copy of
     /// it as it was is left beside it, which going back to the earlier
-    /// fastctx needs. What changed is said too, and kept beside it.
+    /// fastctx needs. What changed is said too, and kept beside it. The
+    /// relays a directory kept before direct connections replaced them are
+    /// taken out, and the directory kept again without them.
     fn read_book(dir: &Path) -> io::Result<(Book, Vec<String>)> {
         let path = Self::directory_file(dir);
         let raw: serde_json::Value = read(&path)?;
-        let (upgraded, said) = crate::upgrade::upgrade(raw);
+        let (mut upgraded, mut said) = crate::upgrade::upgrade(raw);
+        let shaped = !said.is_empty();
+        let relays = crate::upgrade::drop_relays(&mut upgraded);
         let book: Book = serde_json::from_value(upgraded)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
-        if !said.is_empty() {
+        if shaped {
             let before = dir.join("directory.before-sharing.json");
             if !before.exists() {
                 publish_new(&before, &std::fs::read(&path)?, Permissions::Private)?;
             }
+        }
+        said.extend(relays);
+        if !said.is_empty() {
             publish(&path, &json(&book)?, Permissions::Private)?;
             let mut notes = said.join("\n");
             notes.push('\n');

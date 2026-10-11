@@ -363,12 +363,13 @@ fn join(
                         kind: joining.kind,
                         logins: [account.clone()].into(),
                         home,
-                        relays: Vec::new(),
-                        relay_at: Vec::new(),
+                        direct: Vec::new(),
                         added: Timestamp::now(),
                         online: false,
                         since: None,
                         through: None,
+                        reach: None,
+                        paths: None,
                     });
                     joining.name.clone()
                 }

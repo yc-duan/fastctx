@@ -739,15 +739,15 @@ impl Words {
         }
     }
 
-    pub fn link_online(&self, hub: &str, relay: Option<&str>, route: &Route, since: &str) -> String {
-        if let Some(relay) = relay {
+    pub fn link_online(&self, hub: &str, through: Option<&str>, route: &Route, since: &str) -> String {
+        if let Some(through) = through {
             return match (self.lang, route) {
-                (Lang::Zh, Route::Local) => format!("经本机中转 {relay} · {since} 起"),
-                (Lang::Zh, Route::Card { name }) => format!("经中转 {relay}（{hub}）· 网卡「{name}」· {since} 起"),
-                (Lang::Zh, Route::Proxy { proxy }) => format!("经中转 {relay}（{hub}）· 代理 {proxy} · {since} 起"),
-                (Lang::Zh, Route::System) => format!("经中转 {relay}（{hub}）· {since} 起"),
-                (Lang::En, Route::Local) => format!("via local relay {relay} · since {since}"),
-                (Lang::En, route) => format!("via relay {relay} ({hub}) · {route} · since {since}"),
+                (Lang::Zh, Route::Local) => format!("经本机的 {through} · {since} 起"),
+                (Lang::Zh, Route::Card { name }) => format!("经 {through}（{hub}）· 网卡「{name}」· {since} 起"),
+                (Lang::Zh, Route::Proxy { proxy }) => format!("经 {through}（{hub}）· 代理 {proxy} · {since} 起"),
+                (Lang::Zh, Route::System) => format!("经 {through}（{hub}）· {since} 起"),
+                (Lang::En, Route::Local) => format!("through {through} on this machine · since {since}"),
+                (Lang::En, route) => format!("through {through} ({hub}) · {route} · since {since}"),
             };
         }
         match (self.lang, route) {

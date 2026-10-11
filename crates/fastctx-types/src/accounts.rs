@@ -4,7 +4,7 @@
 //! that act for an account, devices, tokens and passwords, and the super
 //! administrator's accounts.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use jiff::Timestamp;
@@ -46,12 +46,57 @@ pub enum Level {
     Member,
 }
 
-/// A relay a machine connects through: a port forwarded to the hub.
+/// A relay a machine connected through before direct connections replaced
+/// relays: a port forwarded to the hub. Only change records made then
+/// still name one.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Relay {
     /// What the user called it, such as the machine it runs on.
     pub label: String,
     pub addresses: Vec<SocketAddr>,
+}
+
+/// What the network's administrator chooses a machine's direct address
+/// from (`world-network.md`, 直连): the addresses of its own network cards,
+/// and the one the hub sees its connection come from.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reach {
+    /// The address the hub sees it at; none while it reaches the hub
+    /// through another machine, whose address that would be.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seen: Option<IpAddr>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interfaces: Vec<IpAddr>,
+}
+
+/// How a machine's lines go, as it last told the hub.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Paths {
+    /// The round trip of its line to the hub, in milliseconds, as last
+    /// measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_ms: Option<u32>,
+    /// Its direct links, and those that fell back to the hub.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<LinkSeen>,
+}
+
+/// A machine's direct link with another.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkSeen {
+    pub peer: MachineName,
+    /// Whether it is up; when not, what goes between the two goes through
+    /// the hub.
+    pub up: bool,
+    /// While it is up, its round trip in milliseconds as last measured;
+    /// `None` before the first one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ms: Option<u32>,
+    /// When it came up or went down.
+    pub since: Timestamp,
+    /// Why it is down, or why the last try to bring it up failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// A change made as an account. The same as the hub takes them, except
@@ -82,15 +127,12 @@ pub enum AccountChange {
     StopActing {
         machine: MachineName,
     },
-    Relays {
+    /// Allows direct connections to `machine` at `at`, the super
+    /// administrator's change: the hub tries them from outside first, and
+    /// they count only when that works. None, no longer.
+    Direct {
         machine: MachineName,
-        relays: Vec<Relay>,
-    },
-    /// Makes `machine`, one of the account's own, a relay others may
-    /// connect through, reached at `addresses`; none, no longer.
-    RelayAt {
-        machine: MachineName,
-        addresses: Vec<SocketAddr>,
+        at: Vec<SocketAddr>,
     },
     Remove {
         name: MachineName,
@@ -177,6 +219,10 @@ pub struct HubAccounts {
     /// not yet shown to the user.
     #[serde(default)]
     pub arrivals: Vec<Arrival>,
+    /// This computer's direct links with the machines there, as it holds
+    /// them now.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<LinkSeen>,
 }
 
 /// A device that logged in to an account, or a machine registered under
@@ -205,16 +251,23 @@ pub struct MemberSeen {
     pub logins: Vec<AccountName>,
     /// The account it is registered under, when it is a machine.
     pub home: Option<AccountName>,
-    pub relays: Vec<Relay>,
-    /// Where it relays to the hub for others, when it is a relay.
+    /// Where other machines connect to it directly, when the network's
+    /// administrator allowed that.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub relay_at: Vec<SocketAddr>,
+    pub direct: Vec<SocketAddr>,
     pub added: Timestamp,
     pub online: bool,
     /// When it connected, when online; when it was last connected, when not.
     pub since: Option<Timestamp>,
-    /// The relay it is connected through.
+    /// The machine it reaches the hub through, when its own line is down.
     pub through: Option<String>,
+    /// What its direct address may be chosen from, for the super
+    /// administrator, while it is online.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<Reach>,
+    /// How its lines go, as it last said, while it is online.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Paths>,
     /// The start of its key, to tell two devices of one name apart.
     pub key: String,
 }

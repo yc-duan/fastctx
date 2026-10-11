@@ -32,6 +32,9 @@ pub enum Domain {
     FileRead,
     /// An entry of a project's shared ledger, as its author wrote it.
     Ledger,
+    /// A machine proving to another, on a direct link between them, that it
+    /// holds its key, bound to one TLS connection.
+    Peer,
 }
 
 impl Domain {
@@ -41,6 +44,7 @@ impl Domain {
             Domain::Event => "event",
             Domain::FileRead => "file-read",
             Domain::Ledger => "ledger",
+            Domain::Peer => "peer",
         }
     }
 }

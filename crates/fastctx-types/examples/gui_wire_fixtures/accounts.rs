@@ -19,7 +19,13 @@ fn at() -> Timestamp {
 }
 
 fn online() -> LinkState {
-    LinkState::Online { since: at(), hub: "203.0.113.10:7443".into(), relay: Some("la".into()), route: Route::Local }
+    LinkState::Online {
+        since: at(),
+        hub: "203.0.113.20:7444".into(),
+        through: Some("server".into()),
+        route: Route::Local,
+        ms: Some(38),
+    }
 }
 
 fn hub() -> HubAccounts {
@@ -41,25 +47,62 @@ fn hub() -> HubAccounts {
                 kind: MemberKind::Computer,
                 logins: vec!["ada".parse().unwrap()],
                 home: Some("ada".parse().unwrap()),
-                relays: vec![Relay { label: "la".into(), addresses: vec!["203.0.113.20:7444".parse().unwrap()] }],
-                relay_at: vec![],
+                direct: vec![],
                 added: at(),
                 online: true,
                 since: Some(at()),
-                through: Some("la".into()),
+                through: Some("server".into()),
+                reach: Some(Reach {
+                    seen: None,
+                    interfaces: vec!["192.168.1.20".parse().unwrap(), "fd00::20".parse().unwrap()],
+                }),
+                paths: Some(Paths {
+                    hub_ms: Some(38),
+                    links: vec![LinkSeen {
+                        peer: "server".parse().unwrap(),
+                        up: true,
+                        ms: Some(41),
+                        since: at(),
+                        why: None,
+                    }],
+                }),
                 key: "5be1fcee".into(),
+            },
+            MemberSeen {
+                name: "server".parse().unwrap(),
+                kind: MemberKind::Computer,
+                logins: vec!["ada".parse().unwrap()],
+                home: Some("ada".parse().unwrap()),
+                direct: vec!["203.0.113.20:7444".parse().unwrap()],
+                added: at(),
+                online: true,
+                since: Some(at()),
+                through: None,
+                reach: Some(Reach { seen: Some("203.0.113.20".parse().unwrap()), interfaces: vec![] }),
+                paths: Some(Paths {
+                    hub_ms: Some(160),
+                    links: vec![LinkSeen {
+                        peer: "laptop".parse().unwrap(),
+                        up: false,
+                        ms: None,
+                        since: at(),
+                        why: Some("203.0.113.20:7444: no answer within 30 s".into()),
+                    }],
+                }),
+                key: "71c0de55".into(),
             },
             MemberSeen {
                 name: "pixel".parse().unwrap(),
                 kind: MemberKind::Phone,
                 logins: vec!["ada".parse().unwrap()],
                 home: None,
-                relays: vec![],
-                relay_at: vec![],
+                direct: vec![],
                 added: at(),
                 online: false,
                 since: None,
                 through: None,
+                reach: None,
+                paths: None,
                 key: "4f2a91aa".into(),
             },
         ],
@@ -91,6 +134,7 @@ fn hub() -> HubAccounts {
             device: true,
             noticed_at: at(),
         }],
+        links: vec![LinkSeen { peer: "server".parse().unwrap(), up: true, ms: Some(41), since: at(), why: None }],
     }
 }
 
@@ -112,11 +156,11 @@ pub fn fixtures() -> Fixtures {
                 lent: true,
             },
             AccountChange::StopActing { machine: "gpu".parse().unwrap() },
-            AccountChange::Relays {
-                machine: machine(),
-                relays: vec![Relay { label: "la".into(), addresses: vec!["203.0.113.20:7444".parse().unwrap()] }],
+            AccountChange::Direct {
+                machine: "server".parse().unwrap(),
+                at: vec!["203.0.113.20:7444".parse().unwrap()],
             },
-            AccountChange::RelayAt { machine: machine(), addresses: vec!["203.0.113.20:7444".parse().unwrap()] },
+            AccountChange::Direct { machine: "server".parse().unwrap(), at: vec![] },
             AccountChange::Remove { name: "pixel".parse().unwrap(), reason: "lost".into() },
             AccountChange::Logout,
             AccountChange::Token {

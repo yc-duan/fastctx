@@ -372,7 +372,8 @@ fn nodes(now: Timestamp) -> NodesReply {
             link: LinkState::Online {
                 since: ago(now, 300),
                 hub: "203.0.113.10:7443".into(),
-                relay: None,
+                through: None,
+                ms: None,
                 route: Route::Card { name: "Ethernet".into() },
             },
             logins: vec!["me".parse().expect("an account")],
