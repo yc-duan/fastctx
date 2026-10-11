@@ -452,6 +452,11 @@ export class Conversation {
     return key;
   }
 
+  /** Words shown as being sent that went into the queue instead. */
+  unsend(key: string): void {
+    this.entries = this.entries.filter((entry) => entry.key !== key);
+  }
+
   /** What became of words being sent: they are kept, with how they stand,
    *  until the session hears them. */
   sent(key: string, state: SendState): void {

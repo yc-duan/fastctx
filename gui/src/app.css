@@ -942,12 +942,13 @@ button.composer-context[hidden] {
   box-shadow: 0 2px 0 -1px var(--accent);
 }
 
-/* Words said while the agent works: a small list above the composer, the
-   next to go first, each with what can be done to it. */
+/* Words said while the agent works: a block of their own above the input,
+   one line each, the next to go first, each with what can be done to it. */
 .send-queue {
-  margin: 0 0 var(--space-2);
+  max-width: var(--column);
+  margin: 0 auto var(--space-2);
+  padding: 2px 0;
   border-radius: var(--radius-m);
-  background: var(--bg);
   background: var(--fill);
   font-size: var(--size-small);
 }
@@ -982,7 +983,38 @@ button.composer-context[hidden] {
   gap: var(--space-1);
   min-height: 34px;
   padding: 2px var(--space-2) 2px 2px;
-  border-top: 1px solid var(--divider);
+}
+
+.queue-row.wrong .queue-text {
+  color: var(--wrong);
+}
+
+.queue-row.unsure .queue-text {
+  padding-left: var(--space-3);
+  color: var(--text-3);
+}
+
+.queue-state {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.queue-row .attach-tray {
+  flex: 1 1 100%;
+  margin: var(--space-1) 0 0;
+}
+
+@media (pointer: coarse) {
+  .queue-row {
+    min-height: 44px;
+  }
+
+  .queue-acts .icon-button,
+  .queue-acts .text-button {
+    min-height: 40px;
+    min-width: 40px;
+  }
 }
 
 .queue-row.dragging {

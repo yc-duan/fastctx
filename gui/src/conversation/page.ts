@@ -9,6 +9,9 @@ import type { Attachment } from "../world/attachments";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { SendQueue, type Queued } from "./queue";
+import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
+import { NodeQueue } from "./node-queue";
+import { NodeTray } from "./node-tray";
 import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
@@ -73,6 +76,10 @@ export interface PageOptions {
   };
   /** Where the words being written are kept between visits. */
   draftKey?: string;
+  /** The input shared by every device with this conversation open, its
+   *  words and queue kept by the node of the agent's machine; where it
+   *  cannot be opened (a node of an older version), the page keeps its own. */
+  composer?: () => Promise<ComposerSession>;
   /** Attaching files to the words, where the World can carry them. */
   attach?: {
     words: AttachWords;
@@ -154,10 +161,10 @@ export class ConversationPage {
       <div class="talk-scroller scroller"><div class="conversation"></div></div>
       <footer class="composer-dock">
         <p class="composer-gone" hidden></p>
+        <div class="composer-queue"></div>
         <form class="composer">
           <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
-          <div class="composer-queue"></div>
           <div class="composer-tray"></div>
           <div class="composer-files-on" hidden></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
@@ -228,6 +235,7 @@ export class ConversationPage {
       if (inside) this.context.focus({ preventScroll: true });
     });
     if (options.attach) this.attaching(options.attach);
+    if (options.composer) void this.share(options.composer);
     const controls = options.controls;
     this.view = new ConversationView(main, options.conversation, {
       words,
@@ -335,8 +343,105 @@ export class ConversationPage {
   leave(): void {
     clearTimeout(this.looking);
     this.looking = -1;
+    this.left = true;
     document.removeEventListener("keydown", this.findKey);
     this.stopDrops?.();
+    this.unbindShared?.();
+    void this.session?.close();
+  }
+
+  private left = false;
+  /** The node's shared input, once open. */
+  private session: ComposerSession | null = null;
+  private sharedState: ComposerSessionState | null = null;
+  private unbindShared: (() => void) | null = null;
+  private nodeQueue: NodeQueue | null = null;
+  private nodeTray: NodeTray | null = null;
+
+  /** Opens the shared input: the words typed here before it opened go into
+   *  it, the queue and what is attached become the node's. */
+  private async share(open: () => Promise<ComposerSession>): Promise<void> {
+    let session: ComposerSession;
+    try {
+      session = await open();
+    } catch (error) {
+      console.warn("the shared input could not be opened; this page keeps its own", error);
+      return;
+    }
+    if (this.left) {
+      void session.close();
+      return;
+    }
+    this.session = session;
+    const typed = this.input.value;
+    const caret = this.input.selectionStart ?? typed.length;
+    try {
+      if (this.options.draftKey) localStorage.removeItem(this.options.draftKey);
+    } catch {
+      // Nothing was kept here.
+    }
+    this.unbindShared = bindComposer(this.input, session.draft);
+    if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
+    const say = (why: string) => this.say(why, why, true);
+    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say);
+    this.queue.element.replaceWith(this.nodeQueue.element);
+    if (this.options.attach && this.tray) {
+      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say);
+      this.tray.element.replaceWith(this.nodeTray.element);
+    }
+    session.subscribe((state) => {
+      this.sharedState = state;
+      this.nodeQueue?.draw(state);
+      this.nodeTray?.draw(state);
+      this.drawFilesOn();
+      this.fit();
+      this.drawAction();
+    });
+  }
+
+  /** Puts words into the input as if typed, so the shared input has them. */
+  private setWords(value: string, caret = value.length): void {
+    this.input.value = value;
+    this.input.setSelectionRange(caret, caret);
+    this.input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  private attachFiles(files: Iterable<File>): void {
+    if (this.nodeTray) this.nodeTray.addFiles(files);
+    else this.tray?.addFiles(files);
+  }
+
+  private attachPaths(paths: string[]): void {
+    if (this.nodeTray) this.nodeTray.addPaths(paths);
+    else this.tray?.addPaths(paths);
+  }
+
+  /** Sends the shared words: the node sends them now, or queues them while
+   *  a turn is under way. What goes now is shown at once. */
+  private sendShared(session: ComposerSession, text: string): void {
+    const { conversation, here } = this.options;
+    const draft = this.sharedState?.composer;
+    const queued = conversation.busy() || !!draft?.queue.length || !!draft?.awaiting_turn;
+    const shown = (draft?.draft.attachments ?? []).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
+    const key = queued ? null : conversation.sending(text, here || null, shown);
+    this.update();
+    session.send().then(
+      (updated) => {
+        if (!key) return;
+        const landed = updated.landed;
+        if (!landed) conversation.unsend(key);
+        else if (landed.kind === "waiting" || landed.kind === "sent" || landed.kind === "uncertain") {
+          conversation.sent(key, { state: "landed", how: landed.kind, machine: this.options.someone.machine, why: "why" in landed ? landed.why : null });
+        }
+        this.update();
+      },
+      (error: unknown) => {
+        const why = error instanceof Error ? error.message : String(error);
+        if (key) conversation.sent(key, { state: "failed", why });
+        else this.say(this.options.words.notSent(why), why, true);
+        this.update();
+      },
+    );
   }
 
   private toggleDetails(open: boolean): void {
@@ -372,19 +477,21 @@ export class ConversationPage {
 
   private submit(): void {
     const text = this.input.value.trim();
-    if (this.tray?.sending) {
+    if (!this.session && this.tray?.sending) {
       this.say(this.options.attach!.words.wait);
       return;
     }
-    const choosing = this.tray?.files ? (this.options.attach?.filesOn?.places() ?? null) : null;
+    const session = this.session;
+    const files = session ? (this.nodeTray?.files ?? 0) : (this.tray?.files ?? 0);
+    const choosing = files ? (this.options.attach?.filesOn?.places() ?? null) : null;
     const filesOn = choosing ? this.filesOn : null;
     if (choosing && !filesOn) {
       this.say(this.options.attach!.filesOn!.label);
       return;
     }
-    const attached = this.tray?.count ? { ...this.tray.take(), filesOn } : { refs: [], shown: [], filesOn: null };
+    const attached = !session && this.tray?.count ? { ...this.tray.take(), filesOn } : { refs: [], shown: [], filesOn: null };
     this.drawFilesOn();
-    if (!text && !attached.refs.length) {
+    if (!text && !attached.refs.length && !(session && this.nodeTray?.count)) {
       if (this.options.conversation.moving()) this.options.stop();
       return;
     }
@@ -407,11 +514,16 @@ export class ConversationPage {
         return;
       }
     }
-    this.clear();
     // What the last command did is behind the conversation now.
     this.say("");
     this.hideSaid();
     this.following = true;
+    if (session) {
+      this.commandMenu?.hide();
+      this.sendShared(session, text);
+      return;
+    }
+    this.clear();
     // While a turn is under way, or a queued one is on its way, words wait
     // their turn instead of cutting into it.
     if (this.options.conversation.busy() || this.released !== null) {
@@ -427,6 +539,8 @@ export class ConversationPage {
   /** Sends what waits: the first, once a turn has ended as it should and
    *  nothing else is on its way; a turn stopped or failed holds them. */
   private releaseQueued(): void {
+    // The node releases what waits in a shared input.
+    if (this.session) return;
     const conversation = this.options.conversation;
     // The one sent last is on its way until a turn after it has ended.
     if (this.released !== null && conversation.ended() > this.released) this.released = null;
@@ -459,7 +573,8 @@ export class ConversationPage {
   }
 
   private clear(): void {
-    this.input.value = "";
+    if (this.session) this.setWords("");
+    else this.input.value = "";
     this.fit();
     this.keepDraft();
     this.commandMenu?.hide();
@@ -501,7 +616,7 @@ export class ConversationPage {
   }
 
   private keepDraft(): void {
-    if (!this.options.draftKey) return;
+    if (!this.options.draftKey || this.session) return;
     try {
       if (this.input.value) localStorage.setItem(this.options.draftKey, this.input.value);
       else localStorage.removeItem(this.options.draftKey);
@@ -515,7 +630,8 @@ export class ConversationPage {
     this.commandMenu = new Menu<MenuCommand>("commands", (command) => commandRow(command), (command) => {
       this.commandMenu!.hide();
       if (command.arguments === "required" || (command.arguments === "optional" && !command.control)) {
-        this.input.value = `/${command.name} `;
+        if (this.session) this.setWords(`/${command.name} `);
+        else this.input.value = `/${command.name} `;
         this.input.focus();
         this.drawAction();
         if (command.args) this.say(usageOf(command));
@@ -602,7 +718,7 @@ export class ConversationPage {
   private drawFilesOn(): void {
     const box = this.element.querySelector<HTMLElement>(".composer-files-on")!;
     const choosing = this.options.attach?.filesOn;
-    const places = choosing && this.tray?.files ? choosing.places() : null;
+    const places = choosing && (this.session ? this.nodeTray?.files : this.tray?.files) ? choosing.places() : null;
     if (!choosing || !places) {
       box.hidden = true;
       box.innerHTML = "";
@@ -645,7 +761,7 @@ export class ConversationPage {
     button.title = attach.words.attach;
     button.addEventListener("click", () => pick.click());
     pick.addEventListener("change", () => {
-      if (pick.files) tray.addFiles(pick.files);
+      if (pick.files) this.attachFiles(pick.files);
       pick.value = "";
       this.input.focus();
     });
@@ -660,7 +776,7 @@ export class ConversationPage {
       photo.title = attach.words.photo;
       photo.addEventListener("click", () => shot.click());
       shot.addEventListener("change", () => {
-        if (shot.files) tray.addFiles(shot.files);
+        if (shot.files) this.attachFiles(shot.files);
         shot.value = "";
         this.input.focus();
       });
@@ -670,7 +786,7 @@ export class ConversationPage {
       if (!files.length) return;
       // Pasted files are attached; pasted words still go into the words.
       if (!event.clipboardData?.getData("text/plain")) event.preventDefault();
-      tray.addFiles(files);
+      this.attachFiles(files);
     });
     const veil = document.createElement("div");
     veil.className = "drop-veil";
@@ -697,7 +813,7 @@ export class ConversationPage {
       veil.hidden = true;
       if (!event.dataTransfer?.files.length) return;
       event.preventDefault();
-      tray.addFiles(event.dataTransfer.files);
+      this.attachFiles(event.dataTransfer.files);
     });
     this.stopDrops =
       attach.drops?.({
@@ -707,7 +823,7 @@ export class ConversationPage {
         dropped: (paths) => {
           veil.hidden = true;
           // A sheet open over the conversation takes what is dropped on it.
-          if (this.element.isConnected && !document.querySelector("dialog[open]")) tray.addPaths(paths);
+          if (this.element.isConnected && !document.querySelector("dialog[open]")) this.attachPaths(paths);
         },
       }) ?? null;
   }
@@ -804,9 +920,12 @@ export class ConversationPage {
               return;
             }
             if (words !== null && !this.input.value.trim()) {
-              this.input.value = words;
+              if (this.session) this.setWords(words);
+              else this.input.value = words;
               // What came with the words comes back with them.
-              if (kept.length && this.tray && !this.tray.count) this.tray.restore(kept);
+              if (this.session && kept.length && !this.nodeTray?.count) {
+                for (const attachment of kept) void this.session.attach(attachment as Attachment).catch((error: unknown) => this.say(String(error)));
+              } else if (kept.length && this.tray && !this.tray.count) this.tray.restore(kept);
               this.fit();
               this.drawAction();
               this.keepDraft();
@@ -845,9 +964,13 @@ export class ConversationPage {
       const at = mentionAt(this.input.value, caret);
       if (!at) return;
       const put = mentioned(file);
-      this.input.value = this.input.value.slice(0, at.from) + put + this.input.value.slice(caret);
+      const value = this.input.value.slice(0, at.from) + put + this.input.value.slice(caret);
       const end = at.from + put.length;
-      this.input.setSelectionRange(end, end);
+      if (this.session) this.setWords(value, end);
+      else {
+        this.input.value = value;
+        this.input.setSelectionRange(end, end);
+      }
       this.fit();
       this.drawAction();
       this.keepDraft();
@@ -1194,11 +1317,12 @@ export class ConversationPage {
 
   private drawAction(): void {
     const { words, conversation } = this.options;
-    const typed = this.input.value.trim() !== "" || (this.tray?.count ?? 0) > 0;
+    const typed = this.input.value.trim() !== "" || ((this.session ? this.nodeTray?.count : this.tray?.count) ?? 0) > 0;
     const busy = conversation.busy();
     const stop = !typed && busy;
     this.action.innerHTML = glyph(stop ? "stop" : "send", 18);
-    const label = stop ? words.stop : typed && (busy || this.released !== null) ? words.queue.queue : words.send;
+    const waits = busy || this.released !== null || !!this.sharedState?.composer.queue.length;
+    const label = stop ? words.stop : typed && waits ? words.queue.queue : words.send;
     this.action.setAttribute("aria-label", label);
     this.action.title = label;
     this.action.classList.toggle("stop", stop);

@@ -73,6 +73,8 @@ import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, z
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
 import { borrowedBy, borrowedOf, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import { Details, type Manage } from "./conversation/details";
+import { ComposerSession } from "./conversation/composer";
+import { specimenComposer } from "./specimen/composer";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/model";
 import { ConversationPage, type Someone } from "./conversation/page";
@@ -694,6 +696,11 @@ function specimenTalk(address: Address): Page {
       },
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
+    // The shared input kept in the page; `?queued` puts two in its queue.
+    composer: () =>
+      ComposerSession.open(address, {
+        transport: specimenComposer(address, () => conversation.busy(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : []),
+      }),
     files: { words: composerWords.files, find: specimenFiles },
     details: detailsOf(address, async () =>
       known
@@ -800,6 +807,7 @@ function liveTalk(address: Address): Page {
       open: openOutside,
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
+    composer: () => ComposerSession.open(address),
     files: {
       words: composerWords.files,
       find: (query) => search.find(query).then((files) => files.map((file) => ({ path: file.path, relative: file.relative }))),

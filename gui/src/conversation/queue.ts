@@ -33,6 +33,14 @@ export interface QueueWords {
   empty: string;
   /** The composer's button when words would wait. */
   queue: string;
+  /** Above the queue when the node holds it; its reason is the hover. */
+  paused: string;
+  /** Closing a queued one being changed: its changes are already kept. */
+  done: string;
+  /** Beside one the node is sending now. */
+  sending: string;
+  /** Beside one another device is changing. */
+  editingElsewhere: string;
 }
 
 /** Why the queue waits on the user: the last turn was stopped or failed;
