@@ -120,7 +120,7 @@ export class Pictures {
   }
 
   /** A picture of `max` pixels, asked of the machine holding it once. */
-  made_(picture: Picture, max: number): Promise<string> | null {
+  sized(picture: Picture, max: number): Promise<string> | null {
     const key = picture.attachment ? `a:${picture.attachment.sha256}:${max}` : picture.path ? `f:${picture.machine}:${picture.path}:${max}` : null;
     if (!key) return null;
     let made = this.made.get(key);
@@ -137,7 +137,7 @@ export class Pictures {
 
   private async draw(image: HTMLImageElement): Promise<void> {
     const picture = this.pictureOf(image);
-    const made = this.made_(picture, SMALL);
+    const made = this.sized(picture, SMALL);
     if (!made) return;
     try {
       image.src = await made;
@@ -286,9 +286,10 @@ class PictureViewer {
     }
     this.place(picture.element.src, shown);
     const screen = Math.round(Math.max(screen_.width, screen_.height) * devicePixelRatio);
-    void this.maker.made_(picture, screen)?.then(
+    // Without the larger one the picture stays as the page had it.
+    void this.maker.sized(picture, screen)?.then(
       (larger) => this.place(larger, shown),
-      () => {},
+      (error: unknown) => console.warn("a larger picture could not be had", error),
     );
   }
 
