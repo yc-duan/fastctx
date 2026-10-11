@@ -232,11 +232,15 @@ impl Inner {
             }
             listen::follow(self, listening.get_or_insert_with(Listening::default), &wanted)
         };
+        // Each check the hub makes is answered once: a check ended is
+        // forgotten, so the same addresses checked again are answered again.
         let trial = view.trial.clone();
-        let report = !trial.is_empty() && *self.direct.reported.lock().expect("never poisoned") != trial;
-        if !trial.is_empty() {
-            *self.direct.reported.lock().expect("never poisoned") = trial.clone();
-        }
+        let report = {
+            let mut reported = self.direct.reported.lock().expect("never poisoned");
+            let report = !trial.is_empty() && *reported != trial;
+            *reported = trial.clone();
+            report
+        };
         if !started && !report {
             return;
         }

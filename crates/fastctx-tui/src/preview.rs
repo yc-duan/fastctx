@@ -359,6 +359,8 @@ fn nodes(now: Timestamp) -> NodesReply {
         online: Some(online),
         since: Some(ago(now, since)),
         through: None,
+        allows_direct: false,
+        path: None,
         facts,
         owner: Some("me".parse().expect("an account")),
         rights: vec![("me".parse().expect("an account"), fastctx_types::access::Rights { hands: true, agents: true })],

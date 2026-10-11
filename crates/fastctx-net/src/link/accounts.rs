@@ -38,6 +38,14 @@ impl Link {
             AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
             AccountChange::Lend { machine, to, agent, home, lent } => Change::Lend { machine, to, agent, home, lent },
             AccountChange::StopActing { machine } => Change::StopActing { machine },
+            // An older hub would not read the change, and would end the
+            // connection that asked it.
+            AccountChange::Direct { .. } if !self.view().direct_links => {
+                return Err(format!(
+                    "the hub {} runs an older fastctx that does not take direct connections",
+                    self.hub_name()
+                ));
+            }
             AccountChange::Direct { machine, at } => Change::Direct { machine, at },
             AccountChange::Remove { name, reason } => Change::Remove { name, reason },
             AccountChange::Logout => Change::Logout,
