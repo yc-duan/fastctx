@@ -6,9 +6,7 @@ use fastctx_types::run_facts::{DisplayPiece, OutputNote, OutputSpan};
 use std::collections::BTreeMap;
 use std::io::{self, Read};
 
-#[path = "remap.rs"]
-mod mapping;
-pub use mapping::remap;
+pub use super::remap::remap;
 
 #[derive(Clone)]
 struct Portion {

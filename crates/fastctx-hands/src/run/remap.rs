@@ -1,6 +1,6 @@
 //! Preserve source coordinates and omissions when the complete answer is fitted.
 
-use super::super::present::ModelSpan;
+use super::present::ModelSpan;
 use crate::answer::Kept;
 use fastctx_types::run_facts::{DisplayPiece, OutputNote, OutputSpan};
 use std::collections::{BTreeMap, BTreeSet};

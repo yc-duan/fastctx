@@ -24,6 +24,7 @@ pub mod projection;
 mod queue;
 pub mod record;
 mod records;
+mod remap;
 pub mod shell;
 pub mod supervisor;
 pub mod terminal;
