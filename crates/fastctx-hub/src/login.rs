@@ -109,6 +109,7 @@ pub(crate) async fn with_password(
     let (response, state) = match hub.secrets.login_start(&account, record.as_deref(), &request, &binding) {
         Ok(started) => started,
         Err(reason) => {
+            hub.log.line(format_args!("{peer}: a login to {account} could not start: {reason}"));
             refuse(&mut socket, Refusal::Login { reason }).await;
             return;
         }
@@ -126,6 +127,7 @@ pub(crate) async fn with_password(
         }
         _ => {
             let reason = "a login goes on with its last message".to_string();
+            hub.log.line(format_args!("{peer}: a login to {account} did not finish: {reason}"));
             refuse(&mut socket, Refusal::Broken { reason }).await;
             return;
         }

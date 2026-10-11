@@ -341,6 +341,7 @@ pub(crate) async fn connected(
     peer: SocketAddr,
 ) {
     let Up::Hello { protocol, version, intent } = hello else {
+        hub.log.line(format_args!("{peer}: refused a connection on {path} whose first frame was not a hello"));
         refuse(&mut socket, Refusal::Broken { reason: "the first frame must be a hello".to_string() }).await;
         return;
     };
@@ -370,6 +371,7 @@ pub(crate) async fn connected(
             data::end(hub, socket, binding, key, proof, stream, end).await;
         }
         _ => {
+            hub.log.line(format_args!("{peer}: refused a hello that is not said on {path}"));
             refuse(&mut socket, Refusal::Broken { reason: format!("that is not said on {path}") }).await;
         }
     }

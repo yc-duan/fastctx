@@ -47,6 +47,7 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
     let mut failures: u32 = 0;
     loop {
         let mut online_since = None;
+        let started = Instant::now();
         let ended = tokio::select! {
             ended = connect(&inner, &mut online_since) => ended,
             changed = changed(&inner, &mut changes) => {
@@ -73,16 +74,31 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
                     failures = 0;
                 }
                 failures = failures.saturating_add(1);
-                if was_online || failures == 1 {
-                    inner.node.log(format!("the link to the hub is down: {reason}"));
-                }
                 let since = match &*inner.status.borrow() {
                     Status::Connecting { since, .. } if !was_online => *since,
                     _ => Timestamp::now(),
                 };
+                let wait = dial::backoff(failures);
+                // Every try leaves a line: which ways it took and why each
+                // failed, how long it took and when the next one is, so a
+                // long absence shows whether the machine kept trying.
+                let next = if wait.is_zero() {
+                    "trying again at once".to_string()
+                } else {
+                    format!("trying again in {:.1} s", wait.as_secs_f64())
+                };
+                if was_online {
+                    inner.node.log(format!("the link to the hub is down: {reason}; {next}"));
+                } else {
+                    inner.node.log(format!(
+                        "connecting to the hub failed (try {failures}, offline since {}, the try took {:.1} s): {reason}; {next}",
+                        since.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        started.elapsed().as_secs_f64(),
+                    ));
+                }
                 inner.status.send_replace(Status::Connecting { since, last_error: Some(reason) });
                 tokio::select! {
-                    _ = tokio::time::sleep(dial::backoff(failures)) => {},
+                    _ = tokio::time::sleep(wait) => {},
                     changed = changed(&inner, &mut changes) => {
                         reconnect(&inner, changed.expect("watching network and resume notifications"));
                         failures = 0;
