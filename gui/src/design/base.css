@@ -1,8 +1,8 @@
 /* The page, and what an agent writes as it reads. Values come from the
    tokens; the reading itself follows incipit's typesetting, measured there
    on real conversations: paragraph rhythm at 1.68, headings parted by face
-   and space, book-style tables, inline code in the body face, formulas at
-   the classical TeX scale. */
+   and space, book-style tables, code in the code face, formulas at the
+   classical TeX scale. */
 
 *,
 *::before,
@@ -43,6 +43,16 @@ body {
   text-autospace: normal;
   text-spacing-trim: normal;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Code is in the World's code face wherever it appears; the browser's own
+   monospace (a Song face on Chinese systems) never shows. */
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
 }
 
 ::selection {
@@ -222,10 +232,10 @@ button:disabled {
   background-color: var(--accent-wash);
 }
 
-/* Inline code reads in the body face: a name in a sentence, not a chip. */
+/* Inline code reads in the code face, a little smaller so it sits level
+   with the words around it; a name in a sentence, not a chip. */
 .prose :not(pre) > code {
-  font-family: inherit;
-  font-size: inherit;
+  font-size: 0.9em;
   padding: 0 0.08em;
 }
 
