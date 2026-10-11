@@ -57,7 +57,11 @@ fn render(reply: &RunReply, project: bool) -> (Vec<Content>, Vec<ModelSpan>) {
                 } else {
                     format!("lines {first_line}-{last_line}")
                 };
-                answer.output_line(&format!("=== {lines} of {} not shown ===", output.lines));
+                answer.output_omitted(
+                    &format!("=== {lines} of {} not shown ===", output.lines),
+                    *first_line,
+                    *last_line,
+                );
             }
             OutputPiece::Image { mime, width, height, base64 } => {
                 let caption = format!("(image {width}x{height}, {mime}) ===");
@@ -189,6 +193,21 @@ impl Answer {
         self.line(text);
         let (_, to) = self.position();
         if let Some(span) = self.sources.pop_front() {
+            self.regions.push(ModelSpan { block, bytes: Some(from..to), span });
+        }
+    }
+
+    fn output_omitted(&mut self, text: &str, first: u64, last: u64) {
+        let (block, from) = self.position();
+        self.line(text);
+        let (_, to) = self.position();
+        while self.sources.front().is_some_and(|span| {
+            matches!(span.piece,
+                fastctx_types::run_facts::DisplayPiece::Omitted { first_line, last_line }
+                if first_line >= first && last_line <= last
+            )
+        }) {
+            let span = self.sources.pop_front().expect("omitted source");
             self.regions.push(ModelSpan { block, bytes: Some(from..to), span });
         }
     }

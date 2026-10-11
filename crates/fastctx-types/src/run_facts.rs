@@ -102,6 +102,8 @@ pub enum DisplayPiece {
     },
     PartOfLine {
         line: u64,
+        /// One-based character coordinates, excluding the line ending. A retained
+        /// newline with no retained text has an empty range: from == to + 1.
         from: u64,
         to: u64,
         of: u64,

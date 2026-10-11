@@ -16,6 +16,7 @@ pub(super) struct Pieces {
     tail: VecDeque<OutputPiece>,
     tail_cost: usize,
     partial: Option<OutputPiece>,
+    next_line: Option<u64>,
 }
 
 impl Pieces {
@@ -27,6 +28,7 @@ impl Pieces {
         }
     }
     fn push_raw(&mut self, piece: OutputPiece) {
+        self.next_line = None;
         let cost = lower_cost(&piece);
         if self.head_cost < BUDGET {
             self.head_cost += cost;
@@ -37,7 +39,7 @@ impl Pieces {
             self.trim();
         }
     }
-    pub fn text(&mut self, line: u64, text: &str) {
+    pub fn text(&mut self, mut line: u64, text: &str) {
         let mut text = text;
         while !text.is_empty() {
             let mut end = text.len().min(bytes(BUDGET));
@@ -45,12 +47,14 @@ impl Pieces {
                 end -= 1;
             }
             self.text_part(line, &text[..end]);
+            line += memchr::memchr_iter(b'\n', &text.as_bytes()[..end]).count() as u64;
             text = &text[end..];
         }
     }
     fn text_part(&mut self, line: u64, text: &str) {
         if self.head_cost < BUDGET {
             if let Some(OutputPiece::Text { text: open, .. }) = self.head.last_mut()
+                && self.next_line == Some(line)
                 && open.len() + text.len() <= bytes(BUDGET)
             {
                 let before = open.len() / 4;
@@ -60,6 +64,7 @@ impl Pieces {
                 self.push_raw(OutputPiece::Text { first_line: line, text: text.to_string() });
             }
         } else if let Some(OutputPiece::Text { text: open, .. }) = self.tail.back_mut()
+            && self.next_line == Some(line)
             && open.len() + text.len() <= bytes(BUDGET)
         {
             let before = open.len() / 4;
@@ -69,6 +74,7 @@ impl Pieces {
         } else {
             self.push_raw(OutputPiece::Text { first_line: line, text: text.to_string() });
         }
+        self.next_line = Some(line + memchr::memchr_iter(b'\n', text.as_bytes()).count() as u64);
     }
     fn trim(&mut self) {
         while let Some(first) = self.tail.front() {
