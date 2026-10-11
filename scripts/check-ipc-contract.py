@@ -108,7 +108,7 @@ def verify(reader):
     answers = [json.loads(line) for line in process.stdout.splitlines()]
     assert len(answers) == len(corpus), (len(answers), len(corpus))
     for case, answer in zip(corpus, answers):
-        if case["mode"] == "request":
+        if case["mode"] in ("request", "current_request"):
             assert answer["admitted"] == case["admitted"], (case, answer)
         elif case["mode"] == "welcome":
             # The node's lifetime is read from protocol 8 on; older readers drop it.

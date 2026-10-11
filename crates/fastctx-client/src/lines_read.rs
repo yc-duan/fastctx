@@ -1,12 +1,18 @@
 //! Assemble only requested rows; the holding machine sends bounded pieces.
 
 use crate::{CallError, Error, World};
-use fastctx_types::{Call, MachineName, Reply};
 use fastctx_types::ipc::{ClientFrame, NodeFrame};
 use fastctx_types::lines::{Part, Reply as LinesReply, Result as Answer};
+use fastctx_types::{Call, MachineName, Reply};
 
 impl World {
-    pub(crate) async fn read_lines(&self, machine: MachineName, source: String, start: u64, count: u64) -> Result<LinesReply, Error> {
+    pub(crate) async fn read_lines(
+        &self,
+        machine: MachineName,
+        source: String,
+        start: u64,
+        count: u64,
+    ) -> Result<LinesReply, Error> {
         let mut rows = Rows { start, count, lines: Vec::new(), pending: String::new() };
         let reply = if let Some(device) = self.device() {
             let mut reading = device.read_lines(machine, source, start, count)?;
@@ -20,15 +26,31 @@ impl World {
             let mut client = self.connect().await?;
             client.next += 1;
             let id = client.next;
-            client.connection.send(&crate::to_json(&ClientFrame::Call { id, call: Call::ReadLines { machine: Some(machine), request: fastctx_types::lines::ReadRequest { source, start, count } } }))
-                .await.map_err(CallError::Broken)?;
+            client
+                .connection
+                .send(&crate::to_json(&ClientFrame::Call {
+                    id,
+                    call: Call::ReadLines {
+                        machine: Some(machine),
+                        request: fastctx_types::lines::ReadRequest { source, start, count },
+                    },
+                }))
+                .await
+                .map_err(CallError::Broken)?;
             loop {
-                let frame = client.connection.recv().await.map_err(CallError::Broken)?.ok_or_else(|| broken("line read ended before completion"))?;
+                let frame = client
+                    .connection
+                    .recv()
+                    .await
+                    .map_err(CallError::Broken)?
+                    .ok_or_else(|| broken("line read ended before completion"))?;
                 let frame: NodeFrame = serde_json::from_slice(&frame).map_err(|error| broken(&error.to_string()))?;
                 match frame {
                     NodeFrame::LinesRead { id: answered, part } if answered == id => rows.push(part)?,
                     NodeFrame::Reply { id: answered, reply } if answered == id => {
-                        let Reply::Lines(reply) = reply.map_err(CallError::Failed)? else { return Err(broken("expected line-read completion")) };
+                        let Reply::Lines(reply) = reply.map_err(CallError::Failed)? else {
+                            return Err(broken("expected line-read completion"));
+                        };
                         break reply;
                     }
                     _ => return Err(broken("unexpected line-read frame")),
@@ -57,7 +79,9 @@ impl Rows {
         Ok(())
     }
     fn finish(self, mut reply: LinesReply) -> Result<LinesReply, Error> {
-        if reply.result != (Answer::ReadComplete { start: self.start, count: self.lines.len() as u64 }) || !self.pending.is_empty() {
+        if reply.result != (Answer::ReadComplete { start: self.start, count: self.lines.len() as u64 })
+            || !self.pending.is_empty()
+        {
             return Err(broken("line completion disagrees with the received rows"));
         }
         reply.result = Answer::Lines { start: self.start, lines: self.lines };

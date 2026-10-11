@@ -82,6 +82,11 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     let here = node.machine();
     // Nothing of a call turned away here ran.
     let refuse = |why: String| Failure::not_run(format!("{here} refused {}: {why}", caller.machine));
+    if let RemoteCall::AttachmentThumbnail { attachment, .. } = call
+        && attachment.owner.machine != here
+    {
+        return Err(refuse("the attachment names a different holding machine".into()));
+    }
     let view = link.view();
     view.admits(&caller.machine, &caller.account, &here, call.purpose()).map_err(refuse)?;
     crate::devices::admit(&view, &caller.machine, call)?;

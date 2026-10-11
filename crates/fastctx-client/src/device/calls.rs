@@ -16,8 +16,17 @@ use crate::Error;
 
 impl Device {
     pub(crate) async fn call(self: &Arc<Self>, call: Call) -> Result<(Reply, MachineName), Error> {
+        // Nested transport futures otherwise share the caller's small stack.
+        Box::pin(self.call_inner(call)).await
+    }
+
+    async fn call_inner(self: &Arc<Self>, call: Call) -> Result<(Reply, MachineName), Error> {
         let here = || self.state().name.unwrap_or_else(|| MachineName::try_from("device").expect("a valid name"));
         match call {
+            Call::AttachmentThumbnail { attachment, max } => {
+                let machine = attachment.owner.machine.clone();
+                return Ok((Reply::Thumbnail(self.thumbnail_attachment(attachment, max).await?), machine));
+            }
             Call::Login { hub, account, password, name, .. } => {
                 let joined = self.login(hub, account, password, name).await?;
                 let name = joined.name.clone();
@@ -80,9 +89,6 @@ impl Device {
             Call::Thumbnail { machine, request } => {
                 let machine = machine.ok_or_else(|| failed("choose the machine holding the image"))?;
                 (machine, RemoteCall::Thumbnail { request }, None)
-            }
-            Call::AttachmentThumbnail { attachment, max } => {
-                (attachment.owner.machine.clone(), RemoteCall::AttachmentThumbnail { attachment, max }, None)
             }
             Call::Lines { machine, request } => {
                 let machine = machine.ok_or_else(|| failed("choose the machine holding the text file"))?;
@@ -168,8 +174,16 @@ impl Device {
             }
             None => session.account_for(&machine, purpose)?,
         };
-        let answer =
-            session.link.call(&machine, &account, purpose, remote.clone()).await.map_err(failed)?.map_err(failed)?;
+        let answer = if matches!(
+            &remote,
+            RemoteCall::Thumbnail { .. } | RemoteCall::AttachmentThumbnail { .. } | RemoteCall::Lines { .. }
+        ) {
+            fastctx_net::cancellable::call(&session.link, &machine, &account, remote.clone()).await
+        } else {
+            session.link.call(&machine, &account, purpose, remote.clone()).await
+        }
+        .map_err(failed)?
+        .map_err(failed)?;
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),

@@ -48,7 +48,7 @@ pub(crate) enum Change {
     Error { message: String },
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn lines_open(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
@@ -119,7 +119,7 @@ async fn request(shell: &Shell, machine_name: String, request_id: String, reques
     task.await.map_err(|error| error.to_string())?.map(|reply| reply.result).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn lines_read(
     shell: tauri::State<'_, Shell>,
     machine_name: String,
@@ -134,7 +134,7 @@ pub(crate) async fn lines_read(
     }
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn lines_find(
     shell: tauri::State<'_, Shell>,
     machine_name: String,
@@ -150,7 +150,7 @@ pub(crate) async fn lines_find(
     }
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 pub(crate) async fn lines_close(
     shell: tauri::State<'_, Shell>,
     machine_name: String,

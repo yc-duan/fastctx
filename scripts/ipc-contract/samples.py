@@ -187,6 +187,15 @@ def page_identity(value):
 def samples(root):
     fixtures = json.loads((root / "gui/fixtures/wire.json").read_text(encoding="utf-8"))
     for protocol in [5, 6, 7, 8, 9, 10]:
+        # New GUI reads are parsed by today's node and refused before use
+        # on the frozen tool-adapter path; old clients cannot encode them.
+        for call in [
+            {"call": "thumbnail", "machine": "laptop", "request": {"path": "C:/a.png", "max": 96}},
+            {"call": "lines", "machine": "laptop", "request": {"kind": "open", "path": "C:/a.txt", "decoding": {"kind": "file", "encoding": None}}},
+            {"call": "read_lines", "machine": "laptop", "request": {"source": "line-source", "start": 0, "count": 5}},
+        ]:
+            yield {"mode": "current_request", "protocol": protocol, "peer": PEER, "admitted": False,
+                   "value": {"kind": "call", "id": 37, "call": call}}
         for lifetime in [None, fixtures["world"]["nodes"][0]["facts"]["node_lifetime"]]:
             welcome = {"kind": "accepted", "machine": "desktop", "version": "1.0.0"}
             if lifetime is not None:

@@ -162,7 +162,15 @@ impl Index {
                 ordinal += 1;
             }
             number = Some(current_number);
-            row = Some(Row { start: group_start, end, ordinal, codec: 0, state: [0; 3], terminated, literal: group_literal });
+            row = Some(Row {
+                start: group_start,
+                end,
+                ordinal,
+                codec: 0,
+                state: [0; 3],
+                terminated,
+                literal: group_literal,
+            });
         }
         if let Some(row) = row {
             self.push(row)?;
@@ -211,7 +219,13 @@ impl Index {
     }
 
     /// Deliver requested rows in bounded UTF-8 pieces without collecting them.
-    pub fn visit(&mut self, start: u64, count: u64, cancelled: &AtomicBool, mut emit: impl FnMut(u64, String, bool) -> Result<(), String>) -> Result<u64, String> {
+    pub fn visit(
+        &mut self,
+        start: u64,
+        count: u64,
+        cancelled: &AtomicBool,
+        mut emit: impl FnMut(u64, String, bool) -> Result<(), String>,
+    ) -> Result<u64, String> {
         let end = start.saturating_add(count).min(self.length);
         for line in start..end {
             check(cancelled)?;
@@ -311,7 +325,9 @@ impl Index {
 
     fn text(&mut self, number: u64, cancelled: &AtomicBool) -> Result<Bytes, String> {
         let row = self.row(number)?;
-        if self.file_cursor != Some(row.start) { self.file.seek(SeekFrom::Start(row.start)).map_err(err)?; }
+        if self.file_cursor != Some(row.start) {
+            self.file.seek(SeekFrom::Start(row.start)).map_err(err)?;
+        }
         let mut raw = Spool::default();
         let mut input = (&mut self.file).take(row.end - row.start);
         let mut buffer = [0; BLOCK];

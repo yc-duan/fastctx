@@ -6,7 +6,13 @@ use fastctx_types::{
 };
 
 impl super::Device {
-    pub(crate) fn read_lines(&self, machine: MachineName, source: String, start: u64, count: u64) -> Result<Reading, Error> {
+    pub(crate) fn read_lines(
+        &self,
+        machine: MachineName,
+        source: String,
+        start: u64,
+        count: u64,
+    ) -> Result<Reading, Error> {
         let session = self.reaching(&machine)?;
         let account = session.account_for(&machine, Purpose::Hands)?;
         let (sender, parts) = tokio::sync::mpsc::channel(1);
@@ -40,10 +46,15 @@ pub(crate) struct Reading {
 }
 impl Reading {
     pub(crate) async fn next(&mut self) -> Result<fastctx_net::lines_read::Received, Error> {
-        self.parts.recv().await.ok_or_else(|| super::failed("line reader stopped before completion"))?
+        self.parts
+            .recv()
+            .await
+            .ok_or_else(|| super::failed("line reader stopped before completion"))?
             .map_err(|error| crate::CallError::Failed(error).into())
     }
 }
 impl Drop for Reading {
-    fn drop(&mut self) { self.task.abort(); }
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }

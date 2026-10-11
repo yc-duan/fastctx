@@ -34,7 +34,7 @@ class WorldPlugin(activity: Activity) : Plugin(activity) {
     @Command fun openFile(invoke: Invoke) = answer(invoke) {
         val context = current()
         val file = File(invoke.getArgs().getString("path")).canonicalFile
-        require(file.isFile && file.toPath().startsWith(context.cacheDir.canonicalFile.toPath())) {
+        require(file.isFile && file.path.startsWith(context.cacheDir.canonicalPath + File.separator)) {
             "The file must be in World's cache"
         }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)

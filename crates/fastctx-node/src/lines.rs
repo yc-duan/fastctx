@@ -254,7 +254,13 @@ pub(crate) async fn call(
 ) -> std::result::Result<Reply, Failure> {
     if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
         return match node
-            .call(&Acting::Here, &(&machine).into(), Purpose::Hands, RemoteCall::Lines { request })
+            .call_with_stream(
+                &Acting::Here,
+                &(&machine).into(),
+                Purpose::Hands,
+                RemoteCall::Lines { request },
+                fastctx_net::cancellable::feed,
+            )
             .await
             .map_err(failed)??
         {

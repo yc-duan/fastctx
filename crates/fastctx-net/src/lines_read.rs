@@ -31,7 +31,13 @@ pub enum Content {
     Finished { start: u64, count: u64 },
 }
 
-pub async fn read(link: &Arc<Link>, machine: MachineName, account: AccountName, request: fastctx_types::lines::ReadRequest, sender: &Sender) -> Result<Reply, Failure> {
+pub async fn read(
+    link: &Arc<Link>,
+    machine: MachineName,
+    account: AccountName,
+    request: fastctx_types::lines::ReadRequest,
+    sender: &Sender,
+) -> Result<Reply, Failure> {
     let source = request.source.clone();
     let read = u64::from_le_bytes(crate::sign::random::<8>().map_err(|error| Failure::new(error.to_string()))?);
     let (complete, completed) = oneshot::channel();
@@ -47,7 +53,9 @@ pub async fn read(link: &Arc<Link>, machine: MachineName, account: AccountName, 
                 }
                 n += 1;
                 match piece.part {
-                    Content::Text { part } => sender.send(Ok(Received::Text(part))).await.map_err(|error| error.to_string())?,
+                    Content::Text { part } => {
+                        sender.send(Ok(Received::Text(part))).await.map_err(|error| error.to_string())?
+                    }
                     Content::Finished { start, count } => {
                         let _ = complete.send((start, count));
                         return stream.done().await;
@@ -56,13 +64,18 @@ pub async fn read(link: &Arc<Link>, machine: MachineName, account: AccountName, 
             }
         })
     });
-    let reply = link.call_with_stream(&machine, &account, Purpose::Hands, RemoteCall::ReadLines { request, read }, feed)
-        .await.map_err(|error| Failure::new(error.to_string()))??;
+    let reply = link
+        .call_with_stream(&machine, &account, Purpose::Hands, RemoteCall::ReadLines { request, read }, feed)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))??;
     let RemoteReply::Lines(reply) = reply else {
         return Err(Failure::new("expected a line-read completion"));
     };
-    let (returned_start, returned_count) = completed.await.map_err(|_| Failure::new("the line read ended without its signed completion"))?;
-    if reply.machine != machine || reply.result != (Answer::ReadComplete { start: returned_start, count: returned_count }) {
+    let (returned_start, returned_count) =
+        completed.await.map_err(|_| Failure::new("the line read ended without its signed completion"))?;
+    if reply.machine != machine
+        || reply.result != (Answer::ReadComplete { start: returned_start, count: returned_count })
+    {
         return Err(Failure::new("the line read's completion disagrees with its control reply"));
     }
     Ok(reply)

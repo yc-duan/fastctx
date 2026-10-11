@@ -66,7 +66,9 @@ impl World {
         };
         let closing = matches!(request, Request::Close { .. });
         if !self.line_sources.lock().expect("line sources").held.contains_key(&(machine.clone(), source.clone())) {
-            if closing { return Ok(LinesReply { machine, result: Answer::Closed }); }
+            if closing {
+                return Ok(LinesReply { machine, result: Answer::Closed });
+            }
             return Err(Error::Other("this World does not own the line source".into()));
         }
         let id = source.clone();

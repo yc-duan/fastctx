@@ -14,8 +14,8 @@ use fastctx_net::data::Stream;
 use fastctx_net::link::Feed;
 use fastctx_platform::FileLock;
 use fastctx_platform::ipc::FrameReader;
-use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
 use fastctx_types::access::{Acting, Purpose, Written};
+use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
@@ -431,14 +431,26 @@ fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Res
 
 /// Locate an immutable original from its recorded receipt, including when
 /// the resident's directory was archived. No client path selects a file.
-pub(crate) fn verified_original(node: &Node, attachment: &Attachment, cancelled: &std::sync::atomic::AtomicBool) -> Result<(String, fastctx_platform::file_read::Snapshot), Failure> {
+pub(crate) fn verified_original(
+    node: &Node,
+    attachment: &Attachment,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<(String, fastctx_platform::file_read::Snapshot), Failure> {
     let kept = kept_here(node, &attachment.owner.resident, attachment)?;
-    let leaf = std::path::Path::new(&kept.path).file_name().ok_or_else(|| failure("the stored upload has no filename"))?;
-    let path = node.world.resident(kept.town.as_ref(), &kept.owner.resident).path()
-        .join("attachments").join(kept.id.as_str()).join(leaf);
+    let leaf =
+        std::path::Path::new(&kept.path).file_name().ok_or_else(|| failure("the stored upload has no filename"))?;
+    let path = node
+        .world
+        .resident(kept.town.as_ref(), &kept.owner.resident)
+        .path()
+        .join("attachments")
+        .join(kept.id.as_str())
+        .join(leaf);
     let file = fastctx_platform::file_read::open(&path).map_err(failure)?;
     let metadata = file.metadata().map_err(failure)?;
-    if !metadata.is_file() || metadata.len() != kept.file.size { return Err(failure("the uploaded original changed")); }
+    if !metadata.is_file() || metadata.len() != kept.file.size {
+        return Err(failure("the uploaded original changed"));
+    }
     let before = fastctx_platform::file_read::snapshot(&file, &metadata).map_err(failure)?;
     let mut reading = (&file).take(before.size);
     let mut hash = Sha256::new();
@@ -449,8 +461,11 @@ pub(crate) fn verified_original(node: &Node, attachment: &Attachment, cancelled:
             return Err(failure("attachment thumbnail was cancelled"));
         }
         let bytes = reading.read(&mut buffer).map_err(failure)?;
-        if bytes == 0 { break; }
-        hash.update(&buffer[..bytes]); received += bytes as u64;
+        if bytes == 0 {
+            break;
+        }
+        hash.update(&buffer[..bytes]);
+        received += bytes as u64;
     }
     let after = fastctx_platform::file_read::snapshot(&file, &file.metadata().map_err(failure)?).map_err(failure)?;
     if before != after || received != kept.file.size || format!("{:x}", hash.finalize()) != kept.file.sha256 {
@@ -558,10 +573,13 @@ async fn send_placed(
             })
         })
     };
-    let refused = |why: String| Failure::new(format!("{} goes to {works_on} and did not get there: {why}", kept.file.name));
+    let refused =
+        |why: String| Failure::new(format!("{} goes to {works_on} and did not get there: {why}", kept.file.name));
     let mine = Address { machine: works_on.name.clone(), resident: resident.clone() };
     match node.call_with_stream(acting, works_on, Purpose::Hands, call, feed).await {
-        Ok(Ok(RemoteReply::Uploaded(placed))) if placed.id == kept.id && placed.file == kept.file && placed.owner == mine => {
+        Ok(Ok(RemoteReply::Uploaded(placed)))
+            if placed.id == kept.id && placed.file == kept.file && placed.owner == mine =>
+        {
             Ok(placed)
         }
         Ok(Ok(_)) => Err(refused(format!("{works_on} answered something other than the file kept there"))),
@@ -573,13 +591,13 @@ async fn send_placed(
 /// Sends the `size` bytes of the file at `path`, and only those: a file
 /// shorter than when it was checked is not sent short.
 async fn send_bytes(stream: &mut Stream, path: &Path, size: u64) -> Result<(), String> {
-    let mut file =
-        tokio::fs::File::open(path).await.map_err(|error| format!("opening {}: {error}", path.display()))?;
+    let mut file = tokio::fs::File::open(path).await.map_err(|error| format!("opening {}: {error}", path.display()))?;
     let mut buffer = vec![0u8; UPLOAD_CHUNK];
     let mut left = size;
     while left > 0 {
         let want = (buffer.len() as u64).min(left) as usize;
-        let read = file.read(&mut buffer[..want]).await.map_err(|error| format!("reading {}: {error}", path.display()))?;
+        let read =
+            file.read(&mut buffer[..want]).await.map_err(|error| format!("reading {}: {error}", path.display()))?;
         if read == 0 {
             return Err(format!("{} is shorter than when it was attached", path.display()));
         }

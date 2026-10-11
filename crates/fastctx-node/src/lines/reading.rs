@@ -3,18 +3,31 @@
 use super::{Cancel, Node, failed, observe, refresh};
 use fastctx_net::lines_read::{Content, Piece, Received, Sender};
 use fastctx_platform::ipc::{FrameReader, FrameWriter};
+use fastctx_types::MachineName;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::{Failure, NodeFrame};
 use fastctx_types::lines::{Part, Reply, Result as Answer};
 use fastctx_types::remote::RemoteReply;
-use fastctx_types::MachineName;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
-async fn here(node: &Arc<Node>, from: MachineName, source: String, start: u64, count: u64, sender: &Sender) -> Result<Reply, Failure> {
+async fn here(
+    node: &Arc<Node>,
+    from: MachineName,
+    source: String,
+    start: u64,
+    count: u64,
+    sender: &Sender,
+) -> Result<Reply, Failure> {
     let key = (from, source);
-    let source = node.line_sources.0.lock().expect("line sources").get(&key).cloned()
+    let source = node
+        .line_sources
+        .0
+        .lock()
+        .expect("line sources")
+        .get(&key)
+        .cloned()
         .ok_or_else(|| failed("line source is closed or belongs to another caller"))?;
     refresh(source.clone()).await?;
     let cancelled = Cancel::default();
@@ -36,15 +49,27 @@ async fn here(node: &Arc<Node>, from: MachineName, source: String, start: u64, c
         })?;
         let snapshot = observe(&source.path)?;
         if source.job_record.is_none() && snapshot != state.snapshot
-            || !snapshot.same_file(&state.snapshot) || snapshot.size < state.snapshot.size {
+            || !snapshot.same_file(&state.snapshot)
+            || snapshot.size < state.snapshot.size
+        {
             return Err("the text source changed during reading".to_string());
         }
         Ok::<_, String>(count)
-    }).await.map_err(failed)?.map_err(failed)?;
+    })
+    .await
+    .map_err(failed)?
+    .map_err(failed)?;
     Ok(Reply { machine: node.machine(), result: Answer::ReadComplete { start, count: read_count } })
 }
 
-fn start(node: Arc<Node>, from: MachineName, machine: Option<MachineName>, source: String, start: u64, count: u64) -> mpsc::Receiver<Result<Received, Failure>> {
+fn start(
+    node: Arc<Node>,
+    from: MachineName,
+    machine: Option<MachineName>,
+    source: String,
+    start: u64,
+    count: u64,
+) -> mpsc::Receiver<Result<Received, Failure>> {
     let (sender, receiver) = mpsc::channel(1);
     tokio::spawn(async move {
         tokio::select! {
@@ -62,13 +87,22 @@ fn start(node: Arc<Node>, from: MachineName, machine: Option<MachineName>, sourc
     receiver
 }
 
-pub(crate) async fn local(node: &Arc<Node>, machine: Option<MachineName>, request: fastctx_types::lines::ReadRequest, id: u64, reader: &mut FrameReader, writer: &mut FrameWriter) -> std::io::Result<()> {
+pub(crate) async fn local(
+    node: &Arc<Node>,
+    machine: Option<MachineName>,
+    request: fastctx_types::lines::ReadRequest,
+    id: u64,
+    reader: &mut FrameReader,
+    writer: &mut FrameWriter,
+) -> std::io::Result<()> {
     let fastctx_types::lines::ReadRequest { source, start: start_line, count } = request;
     let mut parts = start(node.clone(), node.machine(), machine, source, start_line, count);
     let reply = loop {
         let part = tokio::select! { part = parts.recv() => part, _ = reader.recv() => return Ok(()) };
         match part {
-            Some(Ok(Received::Text(part))) => writer.send(&serde_json::to_vec(&NodeFrame::LinesRead { id, part }).expect("line piece")).await?,
+            Some(Ok(Received::Text(part))) => {
+                writer.send(&serde_json::to_vec(&NodeFrame::LinesRead { id, part }).expect("line piece")).await?
+            }
             Some(Ok(Received::Finished(reply))) => break Ok(fastctx_types::Reply::Lines(reply)),
             Some(Err(error)) => break Err(error),
             None => break Err(failed("the line reader stopped without a result")),
@@ -78,7 +112,14 @@ pub(crate) async fn local(node: &Arc<Node>, machine: Option<MachineName>, reques
     writer.drain().await
 }
 
-pub(crate) async fn remote(node: &Arc<Node>, link: &Arc<fastctx_net::link::Link>, from: MachineName, request: fastctx_types::lines::ReadRequest, read: u64, mut stream: fastctx_net::data::Stream) -> Result<RemoteReply, Failure> {
+pub(crate) async fn remote(
+    node: &Arc<Node>,
+    link: &Arc<fastctx_net::link::Link>,
+    from: MachineName,
+    request: fastctx_types::lines::ReadRequest,
+    read: u64,
+    mut stream: fastctx_net::data::Stream,
+) -> Result<RemoteReply, Failure> {
     let fastctx_types::lines::ReadRequest { source, start: start_line, count } = request;
     let mut parts = start(node.clone(), from, None, source.clone(), start_line, count);
     let mut n = 0;
@@ -93,7 +134,12 @@ pub(crate) async fn remote(node: &Arc<Node>, link: &Arc<fastctx_net::link::Link>
             Some(Err(error)) => return Err(error),
             None => return Err(failed("the line reader stopped without a result")),
         };
-        stream.say(&link.sign(fastctx_net::sign::Domain::Event, &Piece { read, n, source: source.clone(), part: content })).await.map_err(failed)?;
+        stream
+            .say(
+                &link.sign(fastctx_net::sign::Domain::Event, &Piece { read, n, source: source.clone(), part: content }),
+            )
+            .await
+            .map_err(failed)?;
         if let Some(reply) = terminal {
             stream.finish().await.map_err(failed)?;
             return Ok(RemoteReply::Lines(reply));

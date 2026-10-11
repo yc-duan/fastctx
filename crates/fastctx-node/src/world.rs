@@ -441,6 +441,34 @@ impl fastctx_net::link::Node for Handler {
             let from = caller.machine.clone();
             let acting = Acting::one(hub.clone(), caller.account.clone());
             let machine = node.machine();
+            if matches!(
+                &call,
+                RemoteCall::Thumbnail { .. }
+                    | RemoteCall::AttachmentThumbnail { .. }
+                    | RemoteCall::Lines {
+                        request: fastctx_types::lines::Request::Find { .. }
+                            | fastctx_types::lines::Request::Changed { .. }
+                            | fastctx_types::lines::Request::Close { .. }
+                    }
+            ) {
+                let mut stream =
+                    stream.ok_or_else(|| Failure::new("a cancellable read requires its data connection"))?;
+                let reading = async {
+                    match call {
+                        RemoteCall::Thumbnail { request } => {
+                            crate::thumbnail::call(&node, None, request).await.map(RemoteReply::Thumbnail)
+                        }
+                        RemoteCall::AttachmentThumbnail { attachment, max } => {
+                            crate::thumbnail::attachment(&node, attachment, max).await.map(RemoteReply::Thumbnail)
+                        }
+                        RemoteCall::Lines { request } => {
+                            crate::lines::call(&node, from, None, request).await.map(RemoteReply::Lines)
+                        }
+                        _ => unreachable!("cancellable reads"),
+                    }
+                };
+                return tokio::select! { result = reading => result, () = stream.closed() => Err(Failure::new("the read's caller disconnected")) };
+            }
             match call {
                 RemoteCall::PageAction { source, action } => crate::pages::actions::answer(&node, source, action)
                     .await

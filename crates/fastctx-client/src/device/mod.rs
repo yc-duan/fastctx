@@ -9,6 +9,7 @@ pub(crate) mod file_read;
 mod file_search;
 mod lines;
 mod store;
+mod thumbnail;
 mod upload;
 pub(crate) mod watch;
 

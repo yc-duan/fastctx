@@ -571,7 +571,7 @@ async fn read_bytes(
 }
 
 /// Streams an original file into this device's cache for an external app.
-#[tauri::command]
+#[fastctx_gui_command::command]
 async fn fetch_file(
     app: tauri::AppHandle,
     shell: tauri::State<'_, Shell>,
@@ -582,7 +582,7 @@ async fn fetch_file(
     local_files::fetch(&shell.world(), machine(machine_name)?, path, &cache).await
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 async fn thumbnail(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
@@ -596,7 +596,7 @@ async fn thumbnail(
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 async fn thumbnail_attachment(
     shell: tauri::State<'_, Shell>,
     attachment: fastctx_types::attachments::Attachment,
@@ -605,7 +605,7 @@ async fn thumbnail_attachment(
     shell.world().thumbnail_attachment(attachment, max).await.map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 async fn open_local(app: tauri::AppHandle, path: String) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
@@ -618,7 +618,7 @@ async fn open_local(app: tauri::AppHandle, path: String) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
+#[fastctx_gui_command::command]
 async fn reveal(app: tauri::AppHandle, path: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt as _;
     app.opener().reveal_item_in_dir(path).map_err(|error| error.to_string())

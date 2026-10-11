@@ -36,7 +36,13 @@ pub(crate) async fn call(
 ) -> Result<Thumbnail, Failure> {
     if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
         return match node
-            .call(&Acting::Here, &(&machine).into(), Purpose::Hands, RemoteCall::Thumbnail { request })
+            .call_with_stream(
+                &Acting::Here,
+                &(&machine).into(),
+                Purpose::Hands,
+                RemoteCall::Thumbnail { request },
+                fastctx_net::cancellable::feed,
+            )
             .await
             .map_err(|error| Failure::new(error.to_string()))??
         {
@@ -55,11 +61,12 @@ pub(crate) async fn attachment(
     let machine = attachment.owner.machine.clone();
     if machine != node.machine() {
         return match node
-            .call(
+            .call_with_stream(
                 &Acting::Here,
                 &(&machine).into(),
                 Purpose::Agents,
                 RemoteCall::AttachmentThumbnail { attachment, max },
+                fastctx_net::cancellable::feed,
             )
             .await
             .map_err(|error| Failure::new(error.to_string()))??
@@ -84,8 +91,8 @@ async fn here(
     let max = request.max;
     let (path, before, budget) = tokio::task::spawn_blocking(move || {
         let uploaded = if let Some(attachment) = attachment {
-            let (path, snapshot) =
-                crate::attachments::verified_original(&node, &attachment, &cancel).map_err(|error| error.to_string())?;
+            let (path, snapshot) = crate::attachments::verified_original(&node, &attachment, &cancel)
+                .map_err(|error| error.to_string())?;
             request.path = path;
             Some(snapshot)
         } else {
@@ -104,7 +111,7 @@ async fn here(
         if uploaded.as_ref().is_some_and(|uploaded| *uploaded != before) {
             return Err("the uploaded original changed before decoding".to_string());
         }
-        let (width, height) = dimensions(&mut file)?;
+        let (width, height) = dimensions(&mut file, &cancel)?;
         let budget = allowance(width, height, request.max, before.size)?;
         // OS, resident host, node and decoder each receive one quarter of RAM.
         // Requests decode one at a time, including callers on other machines.
@@ -119,11 +126,13 @@ async fn here(
     .await
     .map_err(|error| Failure::new(error.to_string()))?
     .map_err(Failure::new)?;
-    let args = ["thumbnail-worker".into(), path.as_os_str().to_owned(), max.to_string().into(), budget.to_string().into()];
+    let args =
+        ["thumbnail-worker".into(), path.as_os_str().to_owned(), max.to_string().into(), budget.to_string().into()];
     let borrowed: Vec<_> = args.iter().map(|arg| arg.as_os_str()).collect();
     let cwd = path.parent().ok_or_else(|| Failure::new("the image has no parent directory"))?;
-    let mut child = fastctx_platform::child::Child::spawn(&program, &borrowed, cwd, &std::env::vars_os().collect::<Vec<_>>())
-        .map_err(|error| Failure::new(error.to_string()))?;
+    let mut child =
+        fastctx_platform::child::Child::spawn(&program, &borrowed, cwd, &std::env::vars_os().collect::<Vec<_>>())
+            .map_err(|error| Failure::new(error.to_string()))?;
     drop(child.stdin.take());
     let mut stdout = child.stdout.take().expect("worker stdout");
     let mut stderr = child.stderr.take().expect("worker stderr");
@@ -140,8 +149,8 @@ async fn here(
         stderr.read_to_end(&mut bytes).map(|_| bytes)
     });
     let waiting = tokio::task::spawn_blocking(move || child.wait());
-    let (output, errors, status) = tokio::try_join!(reading, errors, waiting)
-        .map_err(|error| Failure::new(error.to_string()))?;
+    let (output, errors, status) =
+        tokio::try_join!(reading, errors, waiting).map_err(|error| Failure::new(error.to_string()))?;
     let status = status.map_err(|error| Failure::new(error.to_string()))?;
     let errors = errors.map_err(|error| Failure::new(error.to_string()))?;
     let output = output.map_err(|error| Failure::new(error.to_string()))?;
@@ -149,15 +158,18 @@ async fn here(
         return Err(Failure::new(format!("image decoder ended with {status}: {}", String::from_utf8_lossy(&errors))));
     }
     let current = fastctx_platform::file_read::open(&path).map_err(|error| Failure::new(error.to_string()))?;
-    let after = fastctx_platform::file_read::snapshot(&current, &current.metadata().map_err(|error| Failure::new(error.to_string()))?)
-        .map_err(|error| Failure::new(error.to_string()))?;
+    let after = fastctx_platform::file_read::snapshot(
+        &current,
+        &current.metadata().map_err(|error| Failure::new(error.to_string()))?,
+    )
+    .map_err(|error| Failure::new(error.to_string()))?;
     if before != after {
         return Err(Failure::new("the image changed while decoding"));
     }
     serde_json::from_slice(&output).map_err(|error| Failure::new(format!("invalid thumbnail result: {error}")))
 }
 
-fn dimensions(file: &mut std::fs::File) -> Result<(u32, u32), String> {
+fn dimensions(file: &mut std::fs::File, cancelled: &AtomicBool) -> Result<(u32, u32), String> {
     let mut header = [0; 32];
     let read = file.read(&mut header).map_err(|error| error.to_string())?;
     if let Some((_, width, height)) = fastctx_hands::image::sniff(&header[..read]) {
@@ -166,6 +178,9 @@ fn dimensions(file: &mut std::fs::File) -> Result<(u32, u32), String> {
     if header[..read].starts_with(b"\xff\xd8") {
         file.seek(SeekFrom::Start(2)).map_err(|error| error.to_string())?;
         loop {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err("thumbnail was cancelled".into());
+            }
             let mut marker = [0; 2];
             file.read_exact(&mut marker).map_err(|error| error.to_string())?;
             if marker[0] != 0xff {

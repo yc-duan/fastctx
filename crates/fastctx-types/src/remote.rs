@@ -145,7 +145,10 @@ pub enum RemoteCall {
     Lines {
         request: crate::lines::Request,
     },
-    ReadLines { request: crate::lines::ReadRequest, read: u64 },
+    ReadLines {
+        request: crate::lines::ReadRequest,
+        read: u64,
+    },
     FindFiles {
         request: crate::file_search::FileSearchRequest,
     },

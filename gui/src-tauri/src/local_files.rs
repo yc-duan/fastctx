@@ -21,6 +21,11 @@ pub async fn fetch(world: &World, machine: Option<MachineName>, path: String, ca
     let directory =
         tempfile::Builder::new().prefix("world-file-").tempdir_in(cache).map_err(|error| error.to_string())?;
     let local = directory.path().join(name);
+    if local.parent() != Some(directory.path())
+        || cfg!(windows) && local.file_name().is_some_and(|name| name.to_string_lossy().contains(':'))
+    {
+        return Err("the original filename cannot be used as a cache filename on this device".into());
+    }
     let mut file = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
