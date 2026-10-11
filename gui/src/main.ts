@@ -138,6 +138,7 @@ import {
   remoteClose,
   remoteHub,
   remoteJoin,
+  remoteOpen,
   remoteProbe,
   retentionRead,
   retentionWrite,
@@ -341,6 +342,7 @@ const change = async (login: Login, made: AccountChange): Promise<void> => {
 const remoteSeams: RemoteSeams = {
   probe: remoteProbe,
   hub: remoteHub,
+  open: remoteOpen,
   join: remoteJoin,
   close: remoteClose,
   login: (address, admin, password, name) => login(address, admin, password, true, name),
@@ -369,6 +371,21 @@ const tokens = new Tokens({
   server: (login, name, hours) =>
     live ? serverCommand(login.hubName, login.account, name, hours) : Promise.resolve("echo 'Specimen: no real token or download'"),
   when: (at) => when(at, new Date()),
+  // Over SSH only from a computer: a phone carries no Linux program.
+  remote:
+    live && !onComputer()
+      ? undefined
+      : {
+          seams: live ? remoteSeams : specimenRemote(),
+          words: english ? enLogin : zhLogin,
+          token: (login, machine) =>
+            live
+              ? accountChange(login.hubName, login.account, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString() }).then(
+                  (token) => token ?? Promise.reject(new Error("the hub made no token")),
+                )
+              : Promise.resolve("FX5SPECIMEN"),
+          added: () => void store.refresh(),
+        },
 });
 
 const journalForm = new JournalForm({

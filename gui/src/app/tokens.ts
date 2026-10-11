@@ -3,15 +3,17 @@
 // its password, so the sheet shows the first two to copy. A phone scans a
 // QR code holding a one-time login, valid an hour; a Linux host without a
 // screen runs one line holding such a login, so no password ends up in
-// its shell's history. Neither is shown again.
+// its shell's history. Neither is shown again. From a computer a Linux host
+// is added over SSH as well, as a World is made on one (`remote-world.ts`).
 
 import qrcode from "qrcode-generator";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Login } from "../world/accounts";
-import type { TokenWords } from "./account-words";
+import type { LoginWords, TokenWords } from "./account-words";
 import { Sheet } from "./confirm";
 import { plainly } from "./problem";
+import { RemoteWorld, type RemoteSeams } from "./remote-world";
 
 export type TokenKind = "computer" | "phone" | "server";
 
@@ -25,6 +27,9 @@ export interface TokensOptions {
   server(login: Login, name: string | null, hours: number): Promise<string>;
   /** A moment as the interface says it. */
   when(at: Date): string;
+  /** Adding a Linux host over SSH, where this device can: a code that
+   *  registers it as `login`'s machine `machine`, made once it is reached. */
+  remote?: { seams: RemoteSeams; words: LoginWords; token(login: Login, machine: string): Promise<string>; added(): void } | undefined;
 }
 
 const validity = [1, 24, 72];
@@ -54,6 +59,9 @@ export class Tokens {
   private readonly sheet = new Sheet("device-sheet token-sheet");
   private login: Login | null = null;
   private kind: TokenKind = "computer";
+  /** How a Linux host comes in: over SSH from here, or by its line. */
+  private way: "ssh" | "line" = "ssh";
+  private ssh: RemoteWorld | null = null;
   private hours = 1;
   /** Whether a way in was given this time the sheet was open. */
   private given = false;
@@ -62,6 +70,8 @@ export class Tokens {
   constructor(private readonly options: TokensOptions) {
     const { body } = this.sheet;
     this.sheet.dialog.addEventListener("close", () => {
+      this.ssh?.leave();
+      this.ssh = null;
       // The computer's way in is the address and account shown: given once
       // the sheet closes on it.
       const given = this.given || this.kind === "computer";
@@ -73,6 +83,18 @@ export class Tokens {
       const kind = target.closest<HTMLButtonElement>("[data-kind]");
       if (kind) {
         this.kind = kind.dataset.kind as TokenKind;
+        this.draw();
+        return;
+      }
+      const way = target.closest<HTMLButtonElement>("[data-server-way]");
+      if (way) {
+        this.way = way.dataset.serverWay as "ssh" | "line";
+        this.draw();
+        return;
+      }
+      // The SSH form's way back is to the line.
+      if (target.closest(".device-remote [data-way=choose]")) {
+        this.way = "line";
         this.draw();
         return;
       }
@@ -98,6 +120,8 @@ export class Tokens {
     });
     body.addEventListener("submit", (event) => {
       event.preventDefault();
+      // Over SSH, the flow in the sheet takes the submission.
+      if (this.ssh) return this.ssh.submit();
       void this.make();
     });
   }
@@ -108,6 +132,7 @@ export class Tokens {
     this.closed?.(this.given);
     this.login = login;
     this.kind = kind;
+    this.way = "ssh";
     this.given = false;
     this.draw();
     this.sheet.show();
@@ -132,8 +157,14 @@ export class Tokens {
         )
         .join("")}</div>`;
     const kinds: TokenKind[] = ["computer", "phone", "server"];
+    this.ssh?.leave();
+    this.ssh = null;
+    const remote = this.options.remote;
+    const ssh = this.kind === "server" && !!remote && this.way === "ssh";
+    const ways = this.kind === "server" && remote ? choices(words.title, "data-server-way", ["ssh", "line"], this.way, (way) => words.ways[way as "ssh" | "line"]) : "";
     let body: string;
-    if (this.kind === "computer") {
+    if (ssh) body = `<div class="device-remote"></div>`;
+    else if (this.kind === "computer") {
       // Joined from that computer's own World with the account's password.
       const address = this.options.addresses(login).join("  ");
       body = `<dl class="facts device-facts">
@@ -156,7 +187,27 @@ export class Tokens {
     this.sheet.body.innerHTML = `
       ${this.sheet.head(words.title, words.close)}
       ${choices(words.title, "data-kind", kinds, this.kind, (kind) => words.kinds[kind as TokenKind])}
+      ${ways}
       <div class="device-body">${body}</div>`;
+    const place = this.sheet.body.querySelector<HTMLElement>(".device-remote");
+    if (ssh && remote && place) {
+      this.ssh = new RemoteWorld(place, {
+        words: remote.words,
+        seams: remote.seams,
+        name: () => null,
+        back: words.ways.line,
+        adding: {
+          token: (machine) => remote.token(login, machine),
+          added: (machine) => {
+            this.given = true;
+            this.ssh?.leave();
+            this.ssh = null;
+            place.innerHTML = `<p class="device-added">${escape(words.added(machine))}</p>`;
+            remote.added();
+          },
+        },
+      });
+    }
   }
 
   private async make(): Promise<void> {

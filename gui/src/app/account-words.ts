@@ -43,7 +43,11 @@ export interface LoginWords {
   sshUnreachable: string;
   sudoWrong: string;
   notLinux: string;
-  notX86: string;
+  /** The server's architecture is neither x86_64 nor aarch64. */
+  notArch: string;
+  /** Adding a server to an existing World over SSH. */
+  addGo: string;
+  adding: string;
   remoteSteps: Record<"connect" | "check" | "upload" | "hub" | "login" | "join", string>;
   another: string;
   hub: string;
@@ -130,7 +134,9 @@ export const zhLogin: LoginWords = {
   sshUnreachable: "连不上这台服务器的 SSH 端口",
   sudoWrong: "sudo 密码不对",
   notLinux: "这台服务器不是 Linux",
-  notX86: "这台服务器不是 x86_64，World 只带了 x86_64 的程序",
+  notArch: "这台服务器的架构不受支持，只支持 x86_64 与 aarch64",
+  addGo: "添加",
+  adding: "正在添加…",
   remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建世界", login: "这台电脑登录", join: "服务器加入" },
   another: "登录其他账号",
   hub: "服务器地址",
@@ -207,7 +213,9 @@ export const enLogin: LoginWords = {
   sshUnreachable: "Can't reach this server's SSH port",
   sudoWrong: "Wrong sudo password",
   notLinux: "This server isn't Linux",
-  notX86: "This server isn't x86_64; World carries the program for x86_64 only",
+  notArch: "This server's architecture isn't supported; only x86_64 and aarch64 are",
+  addGo: "Add",
+  adding: "Adding…",
   remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Make the World", login: "Sign this computer in", join: "Add the server" },
   another: "Log in to another account",
   hub: "Server address",
@@ -1029,6 +1037,10 @@ export const enAccount: AccountWords = {
 export interface TokenWords {
   title: string;
   kinds: Record<"computer" | "phone" | "server", string>;
+  /** A Linux host joins over SSH from here, or by the line it runs. */
+  ways: Record<"ssh" | "line", string>;
+  /** A server added over SSH. */
+  added(machine: string): string;
   hub: string;
   account: string;
   name: string;
@@ -1051,6 +1063,8 @@ export interface TokenWords {
 export const zhToken: TokenWords = {
   title: "添加设备",
   kinds: { computer: "电脑", phone: "手机", server: "Linux 主机" },
+  ways: { ssh: "经 SSH", line: "一行命令" },
+  added: (machine) => `${machine} 已加入`,
   hub: "服务器地址",
   account: "账号",
   name: "主机名称",
@@ -1073,6 +1087,8 @@ export const zhToken: TokenWords = {
 export const enToken: TokenWords = {
   title: "Add a device",
   kinds: { computer: "Computer", phone: "Phone", server: "Linux host" },
+  ways: { ssh: "Over SSH", line: "One command" },
+  added: (machine) => `${machine} joined`,
   hub: "Server address",
   account: "Account",
   name: "Host name",

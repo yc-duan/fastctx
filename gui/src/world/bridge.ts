@@ -14,7 +14,7 @@ import type { ConnectionState } from "./device";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { AccountChange, AccountsReply, HubAccount } from "./accounts";
-import type { RemoteHub, RemoteKey, RemoteStep } from "../app/remote-world";
+import type { RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
 export function inShell(): boolean {
@@ -475,6 +475,12 @@ export function remoteHub(request: RemoteHub, step: (step: RemoteStep) => void):
   const steps = new Channel<RemoteStep>();
   steps.onmessage = step;
   return invoke("remote_hub", { request, steps });
+}
+
+export function remoteOpen(server: RemoteServer, step: (step: RemoteStep) => void): Promise<{ session: number; hostname: string }> {
+  const steps = new Channel<RemoteStep>();
+  steps.onmessage = step;
+  return invoke("remote_open", { server, steps });
 }
 
 export function remoteJoin(session: number, token: string, step: (step: RemoteStep) => void): Promise<void> {

@@ -17,6 +17,10 @@ export function specimenRemote(): RemoteSeams {
       await steps(["connect", "check", "upload", "hub"], step);
       return { session: 1, address: `203.0.113.20:${request.hubPort}`, hostname: "hz-light-01" };
     },
+    open: async (_server, step) => {
+      await steps(["connect", "check", "upload"], step);
+      return { session: 2, hostname: "gz-cvm-07" };
+    },
     join: async (_session, _token, step) => steps(["join"], step),
     close: async () => {},
     login: async (_address, admin) => {

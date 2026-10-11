@@ -1,11 +1,13 @@
-// Making a World on a server, from this computer, over SSH (`world-gui.md`,
-// 新建): the server's address and how to sign in to it, the fingerprint it
-// shows the first time, then the World's name, its administrator and port.
-// The program this app carries goes up to the server, the server becomes
-// the World's hub as a service, this computer signs in as its administrator,
-// and the server joins as one of its machines. Each step is ticked as it is
-// done; one that fails says which and why, and the steps already done are
-// not done again. Nothing typed here is kept.
+// Making a World on a server, or adding a server to a World, from this
+// computer over SSH (`world-gui.md`, 新建 and 添加设备): the server's address
+// and how to sign in to it, the fingerprint it shows the first time, then,
+// for a new World, its name, its administrator and port. The program this
+// app carries for the server's architecture goes up to it; the server
+// becomes the World's hub as a service and this computer signs in as its
+// administrator, or, for a World there is, a code is made for it; and the
+// server joins as one of its machines. Each step is ticked as it is done;
+// one that fails says which and why, and the steps already done are not
+// done again. Nothing typed here is kept.
 
 import { escape } from "../conversation/prose";
 import type { LoggedIn } from "../world/bridge";
@@ -24,7 +26,7 @@ export interface RemoteKey {
   known: "known" | "unknown" | "changed";
 }
 
-export interface RemoteHub {
+export interface RemoteServer {
   host: string;
   port: number;
   user: string;
@@ -34,6 +36,9 @@ export interface RemoteHub {
   fingerprint: string;
   /** The password sudo asks for, where the user is not root. */
   sudo: string | null;
+}
+
+export interface RemoteHub extends RemoteServer {
   world: string;
   admin: string;
   password: string;
@@ -47,6 +52,9 @@ export interface RemoteSeams {
   /** Connects, checks the system, uploads the program and makes the hub;
    *  the session stays open for the server to join. */
   hub(request: RemoteHub, step: (step: RemoteStep) => void): Promise<{ session: number; address: string; hostname: string }>;
+  /** Connects, checks the system and uploads the program, for a World there
+   *  is; the session stays open for the server to join. */
+  open(server: RemoteServer, step: (step: RemoteStep) => void): Promise<{ session: number; hostname: string }>;
   join(session: number, token: string, step: (step: RemoteStep) => void): Promise<void>;
   close(session: number): Promise<void>;
   /** This computer signs in to the World just made, as its administrator. */
@@ -80,6 +88,7 @@ export class RemoteWorld {
   private progress: Progress[] = [];
   /** Steps already done stay done when the person tries again. */
   private made: { session: number; address: string; hostname: string } | null = null;
+  private opened: { session: number; hostname: string } | null = null;
   private signedIn: LoggedIn | null = null;
   private joined = false;
   private busy = false;
@@ -93,7 +102,11 @@ export class RemoteWorld {
       name(): string | null;
       /** The way back to the ways in. */
       back: string;
-      done(loggedIn: LoggedIn): void;
+      done?(loggedIn: LoggedIn): void;
+      /** Adding the server to a World there is, instead of making one: a
+       *  code for it to join with, by the name it will have, and word once
+       *  it has. */
+      adding?: { token(machine: string): Promise<string>; added(machine: string): void };
     },
   ) {
     body.addEventListener("click", this.clicked);
@@ -102,11 +115,17 @@ export class RemoteWorld {
     this.draw();
   }
 
+  /** The enclosing form was submitted: the step this one is on goes on. */
+  submit(): void {
+    void this.next();
+  }
+
   leave(): void {
     this.body.removeEventListener("click", this.clicked);
     this.body.removeEventListener("change", this.changed);
     this.body.removeEventListener("submit", this.submitted);
-    if (this.made && !this.joined) void this.options.seams.close(this.made.session).catch((error: unknown) => console.warn("the session with the server could not be closed", error));
+    const open = this.made ?? this.opened;
+    if (open && !this.joined) void this.options.seams.close(open.session).catch((error: unknown) => console.warn("the session with the server could not be closed", error));
   }
 
   private readonly clicked = (event: Event): void => {
@@ -152,6 +171,10 @@ export class RemoteWorld {
 
   private draw(): void {
     const { words } = this.options;
+    // Within another form, as the sheet that adds a device, a form of its
+    // own would be dropped: there it is a block, and the sheet hands its
+    // submission on (`submit`).
+    const form = this.options.adding ? "div" : "form";
     const foot = (go: string, back = `<button class="text-button login-way" type="button" data-way="choose">${escape(this.options.back)}</button>`) =>
       `<p class="sheet-note" role="alert" hidden></p><footer class="welcome-foot"><span class="login-ways">${back}</span><button class="sheet-go" type="submit">${escape(go)}</button></footer>`;
     const field = (name: string, label: string, attributes: string, value: string) =>
@@ -159,8 +182,8 @@ export class RemoteWorld {
     switch (this.stage) {
       case "server": {
         const password = this.typed.by === "password";
-        this.body.innerHTML = `<form class="welcome-form remote-form" autocomplete="off">
-          <h2 class="welcome-form-title">${escape(words.remote)}</h2>
+        this.body.innerHTML = `<${form} class="welcome-form remote-form" autocomplete="off">
+          ${this.options.adding ? "" : `<h2 class="welcome-form-title">${escape(words.remote)}</h2>`}
           <div class="field-pair remote-address">
             ${field("host", words.server, 'class="mono" required spellcheck="false" autocapitalize="off" placeholder="203.0.113.20"', this.typed.host)}
             ${field("sshPort", words.sshPort, 'class="mono" inputmode="numeric" pattern="[0-9]{1,5}" required', this.typed.sshPort)}
@@ -177,23 +200,36 @@ export class RemoteWorld {
                  <label class="field"><span class="field-label">${escape(words.keyPassword)}</span><input name="passphrase" type="password" autocomplete="off" value="${escape(this.secret.passphrase)}"></label>`
           }
           ${foot(words.next)}
-        </form>`;
+        </${form}>`;
         break;
       }
       case "key": {
         const shown = this.shown!;
-        this.body.innerHTML = `<form class="welcome-form remote-form">
+        this.body.innerHTML = `<${form} class="welcome-form remote-form">
           <h2 class="welcome-form-title">${escape(words.firstTime)}</h2>
           <p class="remote-fingerprint mono" title="${escape(words.fingerprintWhat)}">${escape(shown.fingerprint)}</p>
           <p class="field-hint mono">${escape(shown.address)}</p>
           ${foot(words.trust, `<button class="text-button login-way" type="button" data-remote="key-back">${escape(words.back)}</button>`)}
-        </form>`;
+        </${form}>`;
         break;
       }
       case "world":
       case "making": {
         const making = this.stage === "making";
-        this.body.innerHTML = `<form class="welcome-form remote-form" autocomplete="off">
+        if (this.options.adding) {
+          // A World there is: nothing to name, only sudo's password where
+          // the server wants one.
+          this.body.innerHTML = `<${form} class="welcome-form remote-form" autocomplete="off">
+            <p class="remote-host mono">${escape(this.typed.user)}@${escape(this.typed.host)}</p>
+            ${this.wantsSudo ? `<label class="field"><span class="field-label">${escape(words.sudoPassword)}</span><input name="sudo" type="password" required autocomplete="off" value="${escape(this.secret.sudo)}"></label>` : ""}
+            <ol class="removal-list remote-steps"${this.progress.length ? "" : " hidden"}></ol>
+            ${foot(making ? words.adding : words.addGo)}
+          </${form}>`;
+          this.drawSteps();
+          if (making) this.body.querySelector<HTMLButtonElement>(".sheet-go")!.disabled = true;
+          break;
+        }
+        this.body.innerHTML = `<${form} class="welcome-form remote-form" autocomplete="off">
           <h2 class="welcome-form-title">${escape(words.remote)} · <span class="mono">${escape(this.typed.host)}</span></h2>
           <div class="field-pair">
             ${field("world", words.worldName, `class="mono" required spellcheck="false" autocapitalize="off" pattern="${hubRule}" placeholder="home"`, this.typed.world)}
@@ -207,7 +243,7 @@ export class RemoteWorld {
           ${this.wantsSudo ? `<label class="field"><span class="field-label">${escape(words.sudoPassword)}</span><input name="sudo" type="password" required autocomplete="off" value="${escape(this.secret.sudo)}"></label>` : ""}
           <ol class="removal-list remote-steps"${this.progress.length ? "" : " hidden"}></ol>
           ${foot(making ? words.creating : words.createGo)}
-        </form>`;
+        </${form}>`;
         this.drawSteps();
         if (making) this.body.querySelector<HTMLButtonElement>(".sheet-go")!.disabled = true;
         break;
@@ -222,13 +258,20 @@ export class RemoteWorld {
     const { words } = this.options;
     list.hidden = !this.progress.length;
     // The pencil ticks of the removal list: a step under way is a faint
-    // dot until it is done.
-    list.innerHTML = this.progress
-      .map(
-        (one) =>
-          `<li${one.state === "doing" ? "" : ` data-result="${one.state}"`}><span class="removal-mark" aria-hidden="true">${mark(one.state === "doing" ? null : one.state)}</span><span class="removal-what">${escape(words.remoteSteps[one.step])}</span></li>`,
-      )
-      .join("");
+    // dot until it is done. Only a step that changed is drawn again, so a
+    // tick drawn once is not drawn over each time the next step begins.
+    this.progress.forEach((one, index) => {
+      const state = one.state === "doing" ? "" : one.state;
+      const shown = list.children[index] as HTMLElement | undefined;
+      if (shown?.dataset.step === one.step && (shown.dataset.result ?? "") === state) return;
+      const item = document.createElement("li");
+      item.dataset.step = one.step;
+      if (state) item.dataset.result = state;
+      item.innerHTML = `<span class="removal-mark" aria-hidden="true">${mark(state ? (state as "done" | "failed") : null)}</span><span class="removal-what">${escape(words.remoteSteps[one.step])}</span>`;
+      if (shown) shown.replaceWith(item);
+      else list.append(item);
+    });
+    while (list.children.length > this.progress.length) list.lastElementChild!.remove();
   }
 
   private mark(step: Progress["step"], state: Progress["state"]): void {
@@ -287,6 +330,7 @@ export class RemoteWorld {
       return;
     }
     if (this.stage !== "world") return;
+    if (this.options.adding) return this.add(this.options.adding);
     const { password, again } = this.secret;
     const world = this.typed.world.trim();
     const admin = this.typed.admin.trim();
@@ -326,7 +370,7 @@ export class RemoteWorld {
       }
       this.mark("join", "done");
       this.busy = false;
-      this.options.done(this.signedIn);
+      this.options.done?.(this.signedIn);
     } catch (error) {
       this.busy = false;
       const failed = this.progress.find((one) => one.state === "doing");
@@ -342,7 +386,52 @@ export class RemoteWorld {
       this.note(said, detail || message);
     }
   }
+  /** A server added to a World there is: signed in to, checked, the
+   *  program up; then a code by the name it will have, and it joins. */
+  private async add(adding: { token(machine: string): Promise<string>; added(machine: string): void }): Promise<void> {
+    const { words, seams } = this.options;
+    const auth = this.auth()!;
+    this.busy = true;
+    this.stage = "making";
+    this.draw();
+    try {
+      const step = (one: RemoteStep) => this.mark(one, "doing");
+      this.opened ??= await seams.open(
+        {
+          host: this.typed.host.trim(),
+          port: Number(this.typed.sshPort),
+          user: this.typed.user.trim(),
+          auth,
+          fingerprint: this.shown!.fingerprint,
+          sudo: this.secret.sudo || (auth.kind === "password" ? auth.password : null),
+        },
+        step,
+      );
+      const machine = serverName(this.opened.hostname);
+      if (!this.joined) {
+        this.mark("join", "doing");
+        const token = await adding.token(machine);
+        await seams.join(this.opened.session, token, step);
+        this.joined = true;
+      }
+      this.mark("join", "done");
+      this.busy = false;
+      adding.added(machine);
+    } catch (error) {
+      this.busy = false;
+      const failed = this.progress.find((one) => one.state === "doing");
+      if (failed) failed.state = "failed";
+      const message = error instanceof Error ? error.message : String(error);
+      const sudoWrong = /incorrect password attempt|Sorry, try again/.test(message);
+      if (message.includes(SUDO_WANTED) || sudoWrong) this.wantsSudo = true;
+      this.stage = "world";
+      this.draw();
+      const { text, detail } = plainly(error, words.problems);
+      this.note(sshSaid(message, words, sudoWrong) ?? text, detail || message);
+    }
+  }
 }
+
 
 /** The server's name in the World: its own host name as the World writes
  *  names, or `server` where that cannot be. */
@@ -365,7 +454,7 @@ function sshSaid(message: string, words: LoginWords, sudoWrong: boolean): string
   if (/showed another key than the one confirmed/.test(message)) return words.fingerprintChanged;
   if (/did not accept .* with this password or key|reading the key file/.test(message)) return words.sshRefused;
   if (/^reaching \S+: /.test(message)) return words.sshUnreachable;
-  if (/carries the program for x86_64 only/.test(message)) return words.notX86;
+  if (/fastctx runs on x86_64 and aarch64 Linux/.test(message)) return words.notArch;
   if (/, not Linux$/.test(message)) return words.notLinux;
   return null;
 }

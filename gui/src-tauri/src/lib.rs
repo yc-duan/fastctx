@@ -850,6 +850,8 @@ pub fn run() {
             #[cfg(desktop)]
             remote_world::remote_hub,
             #[cfg(desktop)]
+            remote_world::remote_open,
+            #[cfg(desktop)]
             remote_world::remote_join,
             #[cfg(desktop)]
             remote_world::remote_close,

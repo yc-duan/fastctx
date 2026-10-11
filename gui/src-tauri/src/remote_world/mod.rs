@@ -1,8 +1,9 @@
-//! Making a World on a server, from this computer, over SSH (`world-gui.md`,
-//! 新建; walkthrough 「走查准备时发现的」 4): the page's commands over the
-//! SSH work in `ssh.rs`. The program that goes up is the x86_64 Linux archive
-//! the installer carries next to the app; the session stays open between
-//! making the hub and the server joining.
+//! Making a World on a server, or adding a server to a World, from this
+//! computer over SSH (`world-gui.md`, 新建 and 添加设备; walkthrough
+//! 「走查准备时发现的」 4): the page's commands over the SSH work in
+//! `ssh.rs`. The program that goes up is the Linux archive for the server's
+//! architecture the installer carries next to the app; the session stays
+//! open until the server has joined.
 
 mod ssh;
 
@@ -11,14 +12,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use fastctx_types::kernel::X86_64_ARCHIVE;
 use serde::Serialize;
 use tauri::Manager as _;
 use tauri::ipc::Channel;
 
-pub(crate) use ssh::{Probed, Request};
+pub(crate) use ssh::{Probed, Request, Server};
 
-/// The sessions kept open between making the hub and the server joining.
+/// The sessions kept open until the server has joined.
 #[derive(Default)]
 pub(crate) struct Sessions {
     next: AtomicU64,
@@ -48,11 +48,34 @@ pub(crate) async fn remote_hub(
     request: Request,
     steps: Channel<&'static str>,
 ) -> Result<Made, String> {
-    let archive = carried(&app)?;
-    let (remote, made) = ssh::make_hub(&request, &archive, |name| steps.send(name).map_err(|error| error.to_string())).await?;
+    let (remote, made) = ssh::make_hub(&request, &carried(&app)?, |name| steps.send(name).map_err(|error| error.to_string())).await?;
+    Ok(Made { session: keep(&sessions, remote), address: made.address, hostname: made.hostname })
+}
+
+/// A server for an existing World: signs in, checks it and uploads the
+/// program; the session stays open for it to join with a code made next.
+#[fastctx_gui_command::command]
+pub(crate) async fn remote_open(
+    app: tauri::AppHandle,
+    sessions: tauri::State<'_, Sessions>,
+    server: Server,
+    steps: Channel<&'static str>,
+) -> Result<Opened, String> {
+    let remote = ssh::open(&server, &carried(&app)?, &|name| steps.send(name).map_err(|error| error.to_string())).await?;
+    let hostname = remote.hostname().to_string();
+    Ok(Opened { session: keep(&sessions, remote), hostname })
+}
+
+#[derive(Serialize)]
+pub(crate) struct Opened {
+    session: u64,
+    hostname: String,
+}
+
+fn keep(sessions: &Sessions, remote: ssh::Remote) -> u64 {
     let session = sessions.next.fetch_add(1, Ordering::Relaxed);
     sessions.open.lock().expect("never poisoned").insert(session, Arc::new(remote));
-    Ok(Made { session, address: made.address, hostname: made.hostname })
+    session
 }
 
 /// Installs the server as one of the World's machines with `token`, then
@@ -81,11 +104,8 @@ async fn close(sessions: &Sessions, session: u64) -> Result<(), String> {
     remote.close().await
 }
 
-/// The Linux program the installer carries next to the app.
+/// Where the Linux programs the installer carries are, one for each
+/// architecture.
 fn carried(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let path = app.path().resource_dir().map_err(|error| error.to_string())?.join("linux").join(X86_64_ARCHIVE);
-    if !path.is_file() {
-        return Err(format!("this app carries no Linux program ({} is missing)", path.display()));
-    }
-    Ok(path)
+    Ok(app.path().resource_dir().map_err(|error| error.to_string())?.join("linux"))
 }

@@ -1096,3 +1096,25 @@ a.details-job {
 .remote-steps {
   margin: var(--space-2) 0 0;
 }
+
+/* The server being added, above its steps. */
+.remote-host {
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+/* How a Linux host comes in, under which device it is. */
+.token-sheet .choice-options + .choice-options {
+  margin-top: var(--space-2);
+}
+
+.device-remote {
+  margin-top: var(--space-3);
+}
+
+.device-added {
+  margin: var(--space-3) 0;
+  font-size: var(--size-ui);
+  color: var(--text);
+}

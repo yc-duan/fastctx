@@ -6,7 +6,8 @@
     ],
     "createUpdaterArtifacts": true,
     "resources": {
-      "linux/fastctx-x86_64-unknown-linux-gnu.tar.gz": "linux/fastctx-x86_64-unknown-linux-gnu.tar.gz"
+      "linux/fastctx-x86_64-unknown-linux-gnu.tar.gz": "linux/fastctx-x86_64-unknown-linux-gnu.tar.gz",
+      "linux/fastctx-aarch64-unknown-linux-gnu.tar.gz": "linux/fastctx-aarch64-unknown-linux-gnu.tar.gz"
     }
   }
 }
