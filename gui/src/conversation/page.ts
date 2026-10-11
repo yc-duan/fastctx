@@ -11,7 +11,7 @@ import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./
 import { SendQueue, type Queued } from "./queue";
 import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
 import { NodeQueue } from "./node-queue";
-import { NodeTray } from "./node-tray";
+import { NodeTray, type FilesOnChoosing } from "./node-tray";
 import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
@@ -90,7 +90,7 @@ export interface PageOptions {
     /** For an agent lent to the user, which has no machine it works on:
      *  the user's machines its files other than images may go to, the one
      *  to go to first, and what the choice says. */
-    filesOn?: { places(): { value: string; label: string; note?: string | undefined; disabled?: boolean }[] | null; usual(): string | null; label: string; what: string };
+    filesOn?: FilesOnChoosing;
   };
   /** Files on the agent's machine, found as the user types `@` and a few
    *  letters; the one chosen goes into the words as its path. */
@@ -398,11 +398,13 @@ export class ConversationPage {
     this.unbindShared = bindComposer(this.input, session.draft);
     if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
     const say = (why: string) => this.say(why, why, true);
-    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say);
+    const choosing = this.options.attach?.filesOn ?? null;
+    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say, choosing);
     this.queue.element.replaceWith(this.nodeQueue.element);
     if (this.options.attach && this.tray) {
-      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say);
+      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, choosing);
       this.tray.element.replaceWith(this.nodeTray.element);
+      this.element.querySelector(".composer-files-on")!.replaceWith(this.nodeTray.chooser);
     }
     session.subscribe((state) => {
       this.sharedState = state;
@@ -499,7 +501,7 @@ export class ConversationPage {
     const session = this.session;
     const files = session ? (this.nodeTray?.files ?? 0) : (this.tray?.files ?? 0);
     const choosing = files ? (this.options.attach?.filesOn?.places() ?? null) : null;
-    const filesOn = choosing ? this.filesOn : null;
+    const filesOn = !choosing ? null : this.nodeTray ? this.nodeTray.chosen : this.filesOn;
     if (choosing && !filesOn) {
       this.say(this.options.attach!.filesOn!.label);
       return;
@@ -535,6 +537,7 @@ export class ConversationPage {
     this.following = true;
     if (session) {
       this.commandMenu?.hide();
+      this.nodeTray?.settle();
       this.sendShared(session, text);
       return;
     }
@@ -731,9 +734,11 @@ export class ConversationPage {
   /** For a lent agent given files other than images: which of the user's
    *  machines they go to, chosen where they wait. */
   private drawFilesOn(): void {
+    // A shared input's tray draws the node's choice.
+    if (this.nodeTray) return;
     const box = this.element.querySelector<HTMLElement>(".composer-files-on")!;
     const choosing = this.options.attach?.filesOn;
-    const places = choosing && (this.session ? this.nodeTray?.files : this.tray?.files) ? choosing.places() : null;
+    const places = choosing && this.tray?.files ? choosing.places() : null;
     if (!choosing || !places) {
       box.hidden = true;
       box.innerHTML = "";

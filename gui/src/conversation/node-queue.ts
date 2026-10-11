@@ -9,7 +9,7 @@
 import type { ComposerSession, ComposerSessionState } from "./composer";
 import { bindComposer, type ComposerDocument } from "./composer";
 import type { AttachWords } from "./attach";
-import { NodeTray } from "./node-tray";
+import { NodeTray, type FilesOnChoosing } from "./node-tray";
 import type { QueueWords } from "./queue";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
@@ -34,6 +34,7 @@ export class NodeQueue {
     private readonly session: ComposerSession,
     /** Something could not be done: said by the composer. */
     private readonly failed: (why: string) => void,
+    private readonly choosing: FilesOnChoosing | null = null,
   ) {
     this.element = document.createElement("div");
     this.element.className = "send-queue";
@@ -93,7 +94,7 @@ export class NodeQueue {
       field.className = "queue-edit";
       field.rows = 2;
       field.setAttribute("aria-label", this.words.edit);
-      const tray = this.attachWords ? new NodeTray(this.attachWords, this.session, document, this.failed) : null;
+      const tray = this.attachWords ? new NodeTray(this.attachWords, this.session, document, this.failed, this.choosing) : null;
       this.editing = { id, document, field, tray, unbind: bindComposer(field, document) };
       this.draw();
       field.focus();
@@ -107,6 +108,7 @@ export class NodeQueue {
     if (!editing) return;
     try {
       editing.unbind();
+      editing.tray?.settle();
       await this.session.finishEditing(editing.document);
       if (this.editing === editing) this.editing = null;
       this.draw();
@@ -201,7 +203,7 @@ export class NodeQueue {
       .map((item) => {
         const count = item.draft.attachments.length + item.draft.uploads.length;
         if (this.editing?.id === item.id) {
-          return `<li class="queue-row editing" data-key="${escape(item.id)}"><span class="queue-edit-slot"></span><span class="queue-tray-slot"></span><span class="queue-acts">${this.attachWords ? `<button class="icon-button" type="button" data-queue="pick" aria-label="${escape(this.attachWords.attach)}" title="${escape(this.attachWords.attach)}">${glyph("attach", 14)}</button><input class="queue-pick" type="file" multiple hidden>` : ""}<button class="text-button" type="button" data-queue="done">${escape(words.done)}</button></span></li>`;
+          return `<li class="queue-row editing" data-key="${escape(item.id)}"><span class="queue-edit-slot"></span><span class="queue-tray-slot"></span><span class="queue-files-on-slot"></span><span class="queue-acts">${this.attachWords ? `<button class="icon-button" type="button" data-queue="pick" aria-label="${escape(this.attachWords.attach)}" title="${escape(this.attachWords.attach)}">${glyph("attach", 14)}</button><input class="queue-pick" type="file" multiple hidden>` : ""}<button class="text-button" type="button" data-queue="done">${escape(words.done)}</button></span></li>`;
         }
         const state = item.sending ? ` <span class="queue-state">${escape(words.sending)}</span>` : item.editing ? ` <span class="queue-state">${escape(words.editingElsewhere)}</span>` : "";
         const wrong = item.error ? ` title="${escape(item.error)}"` : "";
@@ -222,7 +224,10 @@ export class NodeQueue {
       this.element.innerHTML = html;
       if (this.editing) {
         this.element.querySelector(".queue-edit-slot")?.replaceWith(this.editing.field);
-        if (this.editing.tray) this.element.querySelector(".queue-tray-slot")?.replaceWith(this.editing.tray.element);
+        if (this.editing.tray) {
+          this.element.querySelector(".queue-tray-slot")?.replaceWith(this.editing.tray.element);
+          this.element.querySelector(".queue-files-on-slot")?.replaceWith(this.editing.tray.chooser);
+        }
         const pick = this.element.querySelector<HTMLInputElement>(".queue-pick");
         pick?.addEventListener("change", () => {
           if (pick.files && this.editing) this.editing.tray?.addFiles(pick.files);

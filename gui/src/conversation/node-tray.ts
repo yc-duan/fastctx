@@ -4,6 +4,11 @@
 // attached, and any device can take one out. What this device is still
 // sending, before the node lists it, is shown too, with its picture where
 // the page holds the bytes.
+//
+// For an agent lent to the user, files other than images go to one of the
+// user's machines (`world-run.md`, 借来的智能体没有「这里」). The node keeps
+// that choice with the words, so every device shows the same one; until
+// someone picks, the usual machine is shown and goes with the words.
 
 import type { ComposerSession, ComposerSessionState } from "./composer";
 import type { ComposerDocument } from "./composer";
@@ -20,13 +25,27 @@ interface Sending {
   preview: string | null;
 }
 
+/** For an agent lent to the user, which has no machine it works on: the
+ *  machines its files other than images may go to, as written in the
+ *  World, or null when it is not lent. */
+export interface FilesOnChoosing {
+  places(): { value: string; label: string; note?: string | undefined; disabled?: boolean }[] | null;
+  usual(): string | null;
+  label: string;
+  what: string;
+}
+
 export class NodeTray {
   readonly element: HTMLUListElement;
+  /** Where the files other than images go, for a lent agent. */
+  readonly chooser: HTMLElement;
   /** What this device started sending, by its upload's operation. */
   private readonly sending = new Map<string, Sending>();
   /** Pictures of the files this device attached, by name and size. */
   private readonly previews = new Map<string, string>();
   private state: ComposerSessionState | null = null;
+  /** The machine picked here, until the node has it. */
+  private picked: string | null = null;
 
   constructor(
     private readonly words: AttachWords,
@@ -34,7 +53,15 @@ export class NodeTray {
     private readonly document: ComposerDocument,
     /** Something could not be attached or taken out: said by the composer. */
     private readonly failed: (why: string) => void,
+    private readonly choosing: FilesOnChoosing | null = null,
   ) {
+    this.chooser = window.document.createElement("div");
+    this.chooser.className = "composer-files-on";
+    this.chooser.hidden = true;
+    this.chooser.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-files-on]");
+      if (button && !button.disabled) this.choose(button.dataset.filesOn!);
+    });
     this.element = window.document.createElement("ul");
     this.element.className = "attach-tray";
     this.element.hidden = true;
@@ -78,6 +105,65 @@ export class NodeTray {
   get files(): number {
     const draft = this.draft();
     return (draft?.attachments ?? []).filter((one) => !one.media_type.startsWith("image/") && !IMAGE.test(one.name)).length;
+  }
+
+  /** The machines to choose from: only when files other than images go
+   *  with words to a lent agent. */
+  private places() {
+    return this.choosing && this.files ? this.choosing.places() : null;
+  }
+
+  /** Where the files other than images go: the one picked, or kept with
+   *  the words, while it can take them; otherwise the usual one. Null when
+   *  there is nothing to choose, or nowhere to put them. */
+  get chosen(): string | null {
+    const places = this.places();
+    if (!places) return null;
+    const open = (value: string | null) => value !== null && places.some((place) => place.value === value && !place.disabled);
+    const kept = this.picked ?? this.draft()?.files_on ?? null;
+    if (open(kept)) return kept;
+    const usual = this.choosing!.usual();
+    return open(usual) ? usual : (places.find((place) => !place.disabled)?.value ?? null);
+  }
+
+  /** Gives the node the machine shown, when it does not have it yet: just
+   *  before the words are sent, so a choice nobody made is not written for
+   *  every device to see. */
+  settle(): void {
+    const chosen = this.chosen;
+    if (chosen !== null && chosen !== (this.draft()?.files_on ?? null)) this.choose(chosen);
+  }
+
+  private choose(machine: string): void {
+    this.picked = machine;
+    this.drawChooser();
+    const cleared = () => {
+      if (this.picked === machine) this.picked = null;
+      this.drawChooser();
+    };
+    this.session.setFilesOn(machine, this.document).then(cleared, (error: unknown) => {
+      cleared();
+      this.failed(String(error instanceof Error ? error.message : error));
+    });
+  }
+
+  private drawChooser(): void {
+    const places = this.places();
+    if (!places) {
+      this.chooser.hidden = true;
+      this.chooser.innerHTML = "";
+      return;
+    }
+    const { label, what } = this.choosing!;
+    const chosen = this.chosen;
+    const html = `<span class="files-on-label" title="${escape(what)}">${escape(label)}</span><span class="choice-options">${places
+      .map(
+        (place) =>
+          `<button type="button" class="choice${place.value === chosen ? " chosen" : ""}" aria-pressed="${place.value === chosen}" data-files-on="${escape(place.value)}"${place.disabled ? " disabled" : ""}>${escape(place.label)}${place.note ? `<span class="choice-note">${escape(place.note)}</span>` : ""}</button>`,
+      )
+      .join("")}</span>`;
+    if (this.chooser.innerHTML !== html) this.chooser.innerHTML = html;
+    this.chooser.hidden = false;
   }
 
   addFiles(files: Iterable<File>): void {
@@ -142,5 +228,6 @@ export class NodeTray {
     this.element.hidden = rows.length === 0;
     const html = rows.join("");
     if (this.element.innerHTML !== html) this.element.innerHTML = html;
+    this.drawChooser();
   }
 }

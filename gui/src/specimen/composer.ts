@@ -12,7 +12,7 @@ import type { Address } from "../world/wire";
 const scalars = (text: string) => [...text];
 
 function empty(epoch: number): ComposerDraft {
-  return { epoch, text: "", characters: [], attachments: [], uploads: [] };
+  return { epoch, text: "", characters: [], attachments: [], uploads: [], files_on: null };
 }
 
 export function specimenComposer(who: Address, busy: () => boolean, queued: string[] = []): ComposerTransport {
@@ -75,6 +75,8 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
           return Promise.resolve(changed(withDraft(mutation.target, (draft) => ({ ...draft, attachments: [...draft.attachments, mutation.attachment] }))));
         case "detach":
           return Promise.resolve(changed(withDraft(mutation.target, (draft) => ({ ...draft, attachments: draft.attachments.filter((one) => one.id !== mutation.attachment) }))));
+        case "files_on":
+          return Promise.resolve(changed(withDraft(mutation.target, (draft) => ({ ...draft, files_on: mutation.files_on }))));
         case "send": {
           if (mutation.epoch !== snapshot.draft.epoch) return Promise.reject(new Error("this draft was already sent; keep your local edit and apply it to the new epoch"));
           const next = empty(snapshot.draft.epoch + 1);
