@@ -90,25 +90,7 @@ pub(crate) fn read(
             }
             let value = sheet.rows.get(row as usize).and_then(|r| r.get(col as usize)).unwrap_or(&CellValue::Empty);
             let xf = sheet.xf.get(row as usize).and_then(|r| r.get(col as usize)).copied().unwrap_or(0);
-            let cache = match formulas.string_cache((row, col)) {
-                Some(Ok(text)) => quoted(text),
-                Some(Err(reason)) => format!("(cached value unavailable: {})", quoted(reason)),
-                None => match value {
-                    CellValue::String(s) => quoted(s),
-                    CellValue::Empty => "(no cached value)".into(),
-                    CellValue::Bool(v) => v.to_string(),
-                    CellValue::Error(_) => format!("error {}", value.as_text()),
-                    CellValue::Number(n) => {
-                        let (id, format) = source.number_format(xf)?;
-                        crate::number::saved(&n.to_string(), *n, format, Some(id), source.date1904)
-                    }
-                },
-            };
-            let value = match formulas.formula((row, col)) {
-                Some(Ok(formula)) => format!("{} → {cache}", crate::output::formula(&formula)),
-                Some(Err(error)) => format!("(formula unavailable: {}) → {cache}", quoted(&format!("{error:#}"))),
-                None => cache,
-            };
+            let value = format_cell(value, xf, &formulas, &source, (row, col))?;
             if !out.cell(
                 address.row,
                 &address.to_string(),
@@ -132,4 +114,32 @@ pub(crate) fn read(
     }
     out.facts(spreadsheet::workbook_facts(workbook.sheets.len(), first, last, selected.is_some() || out.stopped()));
     Ok(())
+}
+
+pub(crate) fn format_cell(
+    value: &CellValue,
+    xf: u16,
+    formulas: &crate::biff::Sheet<'_>,
+    source: &crate::biff::Workbook,
+    (row, col): (u16, u16),
+) -> Result<String> {
+    let cache = match formulas.string_cache((row, col)) {
+        Some(Ok(text)) => quoted(text),
+        Some(Err(reason)) => format!("(cached value unavailable: {})", quoted(reason)),
+        None => match value {
+            CellValue::String(s) => quoted(s),
+            CellValue::Empty => "(no cached value)".into(),
+            CellValue::Bool(v) => v.to_string(),
+            CellValue::Error(_) => format!("error {}", value.as_text()),
+            CellValue::Number(n) => {
+                let (id, format) = source.number_format(xf)?;
+                crate::number::saved(&n.to_string(), *n, format, Some(id), source.date1904)
+            }
+        },
+    };
+    Ok(match formulas.formula((row, col)) {
+        Some(Ok(formula)) => format!("{} → {cache}", crate::output::formula(&formula)),
+        Some(Err(error)) => format!("(formula unavailable: {}) → {cache}", quoted(&format!("{error:#}"))),
+        None => cache,
+    })
 }

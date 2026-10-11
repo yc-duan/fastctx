@@ -74,7 +74,7 @@ fn pdf_view_contract() {
     content.extend_from_slice(b"ET");
     std::fs::write(&path, pdf(200, &content)).unwrap();
     let mut output = Vec::new();
-    view(&[path], &Options::default(), &mut output).unwrap();
+    view(&[path], &Options { pages: Some((1, 200)), ..Options::default() }, &mut output).unwrap();
     let text = String::from_utf8(output).unwrap();
     assert!(units(&text) <= BUDGET);
     // The budget ends inside a page or between pages; either way the rest

@@ -201,7 +201,7 @@ The most seconds to wait for the script; the call answers as soon as it ends. 15
 
 const RUN_FILES: &str = "\
 Files:
-- `fastctx view PATH...` shows files, each as its kind is read: text with line numbers; an image as the image itself, for you to see; a PDF as its text, page by page; Word, PowerPoint and Excel as their content, with Excel cells by address. It shows a lot at once, so give it all the files you need in one call rather than one by one; read the ones the work needs, not everything in sight. When not all of it fits, it says what was shown and what was not. Use it for any file you need to look at:
+- `fastctx view PATH...` shows files, each as its kind is read: text with line numbers; an image as the image itself, for you to see; a PDF as its text, page by page; Word, PowerPoint and Excel as their content, with Excel cells by address. Without a range, it explores the file. When you are unsure what a file contains, explore it first; give a range to read the selected content. It shows a lot at once, so give it all the files you need in one call rather than one by one; read the ones the work needs, not everything in sight. When not all of it fits, it says what was shown and what was not. Use it for any file you need to look at:
     fastctx view /srv/app/src/main.rs /srv/app/README.md
     fastctx view --lines 120-180 /srv/app/src/main.rs
     fastctx view C:/Users/me/Pictures/chart.png

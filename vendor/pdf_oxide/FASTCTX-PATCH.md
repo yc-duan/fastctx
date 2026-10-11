@@ -67,3 +67,7 @@ points are removed from `src/ffi.rs`, `src/python.rs`, and `src/wasm.rs`, and th
 stale conversion example in `src/document.rs` is removed. PDF/A, PDF/UA and
 PDF/X validators remain available. Fastctx uses only PDF reading and rendering;
 its extraction, rendering and Office implementations are unchanged.
+
+## Bookmark exploration
+
+`outline.rs` adds `visit_outline`: an iterative bookmark visitor that retains no title tree, detects cyclic references, and indexes page references and named destinations once for the entire outline. The existing `get_outline` API remains unchanged.

@@ -45,13 +45,21 @@ pub fn look(
     };
     file.rewind()?;
     let mut stream = Hashed { reader: file, hash: Sha256::new() };
-    let mut reader = Reader::new(budget_for_body(path, options, budget), options.lines, options.chars);
+    let mut reader = Reader::new(
+        budget_for_body(path, options, budget).min(if options.exploring() { super::explore::WHOLE } else { budget }),
+        options.lines,
+        options.chars,
+    );
+    let mut exploring = options.exploring().then(|| super::explore::Exploring::new(path));
     let mut labels = std::collections::BTreeSet::new();
     let mut readonly = false;
     let mut previous = None;
     let mut first = None;
     let mut first_shown = None;
     if let Err(facts) = visit(&mut stream, &plan, |line| {
+        if let Some(exploring) = &mut exploring {
+            exploring.begin_line(line.bytes.end as u64 == metadata.len());
+        }
         // A line of ASCII reads alike in every encoding that keeps ASCII,
         // so only the others say which encoding a file uses.
         let ascii = line.text.is_ascii().map_err(|e| e.to_string())?;
@@ -81,6 +89,13 @@ pub fn look(
         if label.is_some() {
             previous = label;
         }
+        if let Some(exploring) = &mut exploring {
+            if let Some(issue) = &line.issue {
+                exploring.note(&format!("[the next line is shown as bytes and cannot be edited: {issue}]"));
+            } else if let Some(label) = label {
+                exploring.note(&format!("[from here: {label}{}]", doubt(line.basis)));
+            }
+        }
         if line.issue.is_some() {
             let ending = if line.text.ends_with(b"\r\n").map_err(|e| e.to_string())? {
                 "\r\n"
@@ -89,11 +104,18 @@ pub fn look(
             } else {
                 ""
             };
-            reader.take(&format!("{}{ending}", excerpt(&content(&line.text)?)?));
+            let text = format!("{}{ending}", excerpt(&content(&line.text)?)?);
+            reader.take(&text);
+            if let Some(exploring) = &mut exploring {
+                exploring.take(&text);
+            }
         } else {
             line.text
                 .utf8(|text| {
                     reader.take(text);
+                    if let Some(exploring) = &mut exploring {
+                        exploring.take(text);
+                    }
                     Ok(())
                 })
                 .map_err(|e| e.to_string())?;
@@ -129,6 +151,33 @@ pub fn look(
         facts.push_str("some lines shown as bytes; ");
     }
     facts.push_str(&line_endings(read.crlf, read.lf));
+    let mut section = section(path, options, &read, &facts);
+    let large = exploring.as_ref().is_some_and(|exploring| !exploring.fits(path, options, &facts, read.total_lines));
+    if let Some(exploring) = exploring
+        && large
+    {
+        section = exploring.finish(path, options, budget, &read, &facts);
+    }
+    let whole = read.shown_lines == read.total_lines
+        && read.cut.is_none()
+        && options.chars.is_none()
+        && !section.partial
+        && !large;
+    let seen = Seen {
+        path: path.to_string_lossy().into_owned(),
+        at: Timestamp::now(),
+        sha256: (!options.exploring() || whole).then(|| hex(&read_hash)),
+        size: metadata.len(),
+        modified: metadata.modified().ok().and_then(|time| Timestamp::try_from(time).ok()),
+        encoding: if readonly || labels.len() > 1 { None } else { labels.first().map(|label| (*label).into()) },
+        encoding_selection: options.encoding.clone(),
+    };
+    let shown = section.shown;
+    Ok((section, shown.then_some(seen)))
+}
+
+pub(super) fn section(path: &Path, options: &Options, read: &Read, encoding_facts: &str) -> Section {
+    let mut facts = encoding_facts.to_owned();
     let total = read.total_lines;
     let whole = read.shown_lines == read.total_lines && read.cut.is_none() && options.chars.is_none();
     match (&read.cut, read.shown_lines) {
@@ -156,29 +205,16 @@ pub fn look(
     }
     let mut text = format!("{}\n", head(path, options, &facts));
     text.push_str(&read.body);
-    if let Some(rest) = rest(&read, options) {
+    if let Some(rest) = rest(read, options) {
         text.push_str(&rest);
     }
     let cost = text.len();
-    let seen = Seen {
-        path: path.to_string_lossy().into_owned(),
-        at: Timestamp::now(),
-        // Selection was validated against every byte, including undisplayed lines.
-        sha256: Some(hex(&read_hash)),
-        size: metadata.len(),
-        modified: metadata.modified().ok().and_then(|time| Timestamp::try_from(time).ok()),
-        encoding: if readonly || labels.len() > 1 { None } else { labels.first().map(|label| (*label).into()) },
-        encoding_selection: options.encoding.clone(),
-    };
     let shown = read.shown_lines > 0 || read.cut.is_some() || read.total_lines == 0;
-    Ok((
-        Section { text, cost, shown, partial: read.cut.is_some() || read.out_of_budget, failed: false },
-        shown.then_some(seen),
-    ))
+    Section { text, cost, shown, partial: read.cut.is_some() || read.out_of_budget, failed: false }
 }
 
 /// Which characters of a line too long to show were shown.
-fn cut_facts(cut: &Cut) -> String {
+pub(super) fn cut_facts(cut: &Cut) -> String {
     format!("line {}: characters {}-{} of {} shown", cut.line, cut.from, cut.to, cut.length)
 }
 
@@ -252,21 +288,21 @@ fn line_endings(crlf: u64, lf: u64) -> String {
 
 /// The part of a line shown when the line does not fit, in characters as
 /// shown, counting from 1.
-struct Cut {
-    line: u64,
-    from: u64,
-    to: u64,
-    length: u64,
+pub(super) struct Cut {
+    pub line: u64,
+    pub from: u64,
+    pub to: u64,
+    pub length: u64,
 }
 
-struct Read {
-    body: String,
+pub(super) struct Read {
+    pub body: String,
     first_shown: u64,
-    shown_lines: u64,
-    total_lines: u64,
+    pub shown_lines: u64,
+    pub total_lines: u64,
     /// Characters of the last line shown.
     last_length: u64,
-    cut: Option<Cut>,
+    pub cut: Option<Cut>,
     /// The budget ran out before the range did, at a line boundary.
     out_of_budget: bool,
     /// Lines read that end in CRLF, and in a bare LF.
@@ -300,10 +336,11 @@ pub(super) struct Reader {
     out_of_budget: bool,
     crlf: u64,
     lf: u64,
+    preview: bool,
 }
 
 impl Reader {
-    fn new(budget: usize, range: Option<(u64, u64)>, chars: Option<(u64, u64)>) -> Self {
+    pub(super) fn new(budget: usize, range: Option<(u64, u64)>, chars: Option<(u64, u64)>) -> Self {
         Self {
             budget,
             range,
@@ -323,7 +360,12 @@ impl Reader {
             out_of_budget: false,
             crlf: 0,
             lf: 0,
+            preview: false,
         }
+    }
+
+    pub(super) fn preview(budget: usize) -> Self {
+        Self { preview: true, ..Self::new(budget, None, None) }
     }
 
     pub(super) fn take(&mut self, text: &str) {
@@ -359,8 +401,19 @@ impl Reader {
         }
     }
 
-    fn note(&mut self, note: &str) {
+    pub(super) fn note(&mut self, note: &str) {
         self.pending_note = format!("{note}\n");
+    }
+
+    pub(super) fn prefix_filled(&self) -> bool {
+        self.cut.is_some() || self.out_of_budget || self.line.len() > self.budget.saturating_sub(self.body_cost)
+    }
+
+    pub(super) fn cut_line(&self) -> Option<u64> {
+        self.cut
+            .as_ref()
+            .map(|cut| cut.line)
+            .or_else(|| (self.line.len() > self.budget.saturating_sub(self.body_cost)).then_some(self.number))
     }
 
     fn show_note(&mut self) {
@@ -428,9 +481,9 @@ impl Reader {
                 self.show_note();
                 let line = std::mem::take(&mut self.line);
                 self.show(&line);
-            } else if self.shown_lines == 0 && self.body_cost + note_cost + digits + 6 < self.budget {
+            } else if (self.shown_lines == 0 || self.preview) && self.body_cost + note_cost + digits + 6 < self.budget {
                 self.show_note();
-                // Not even one whole line fits: show its start.
+                // A preview can end inside any line; explicit reads retain their line window.
                 let room = self.budget - (self.body_cost + digits + 2);
                 let shown = crate::answer::prefix(&self.line, room);
                 let from = self.chars.map_or(1, |(from, _)| from);
@@ -463,7 +516,7 @@ impl Reader {
         self.last_length = self.position;
     }
 
-    fn finish(mut self) -> Read {
+    pub(super) fn finish(mut self) -> Read {
         if self.line_ends_with_cr {
             self.extend_line("\r");
             self.line_ends_with_cr = false;

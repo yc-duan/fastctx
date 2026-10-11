@@ -44,7 +44,9 @@ struct SheetFacts {
     arrays: crate::arrays::Arrays,
 }
 
-pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<Content> {
+pub(crate) fn read(file: File, selection: &Selection, budget: usize, exploration: Option<usize>) -> Result<Content> {
+    let exploring = exploration.is_some();
+    let whole_budget = exploration.unwrap_or(budget);
     let mut zip = package::open(file)?;
     let root = office_oxide::core::relationships::Relationships::parse(&package::bytes(&mut zip, "_rels/.rels")?)?;
     let workbook_path =
@@ -69,7 +71,18 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
         None => None,
     };
     let selected = selected_sheet(&workbook.sheets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), selection)?;
-    let mut out = Output::new(budget);
+    let mut out = if exploring && budget >= whole_budget { Output::probe(whole_budget) } else { Output::new(budget) };
+    let notes = format!(
+        "=== sheet 1 ({} not shown) ===\n=== sheets 2-{} (0 of {} shown) ===\n",
+        crate::output::count(u64::MAX, "cell"),
+        workbook.sheets.len(),
+        crate::output::count(u64::MAX, "cell")
+    );
+    let head_budget = crate::explore::head_budget(budget, "sheets", notes.len());
+    let mut head = Output::new(head_budget);
+    head.reserve_facts(crate::spreadsheet::workbook_reserve());
+    let mut catalogue = crate::explore::Catalogue::all(budget);
+    let (mut first_cells, mut other_cells) = (0, 0);
     out.reserve_facts(crate::spreadsheet::workbook_reserve());
     let (mut first, mut last) = (0, 0);
     for (index, sheet) in workbook.sheets.iter().enumerate() {
@@ -78,6 +91,14 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
         }
         let rel = rels.get_by_id(&sheet.rel_id).context("missing worksheet relationship")?;
         if !matches!(rel.rel_type.as_str(), rel_types::WORKSHEET | rel_types::MACROSHEET | rel_types::INTL_MACROSHEET) {
+            if exploring {
+                catalogue.push(format!(
+                    "=== sheet {} {} ({} content not shown) ===\n",
+                    index + 1,
+                    quoted(&sheet.name),
+                    rel.rel_type.rsplit('/').next().unwrap_or(&rel.rel_type)
+                ));
+            }
             if !out.line(
                 "",
                 &format!(
@@ -88,6 +109,9 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
                 ),
                 &format!("the rest starts at sheet {}", index + 1),
             ) {
+                if exploring {
+                    continue;
+                }
                 break;
             }
             if first == 0 {
@@ -98,6 +122,7 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
         }
         let part = package::target(&workbook_path, rel)?;
         let mut facts = SheetFacts::default();
+        let mut preview_rows = crate::explore::Rows::default();
         let mut previous = None;
         let mut ordered = true;
         scan(
@@ -110,6 +135,9 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
                 previous = Some(position);
                 if cell.has_content() {
                     facts.metrics.include(&address);
+                    if exploring && index == 0 {
+                        preview_rows.include(address.row);
+                    }
                 }
                 if cell.formula_kind == "shared" && cell.formula.as_ref().is_some_and(|f| !f.is_empty()) {
                     let id = cell.shared.context("shared formula has no index")?;
@@ -135,6 +163,11 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
             // records. Count their union without expanding a rectangular grid.
             facts.arrays.lookup().get(&CellRef { row: 1_048_575, col: 16_383 })?;
             for (range, _) in &facts.arrays.groups {
+                if exploring && index == 0 {
+                    for row in (range.first.row..=range.last.row).take(crate::explore::ENTRIES) {
+                        preview_rows.include(row);
+                    }
+                }
                 facts.metrics.cells +=
                     u64::from(range.last.row - range.first.row + 1) * u64::from(range.last.col - range.first.col + 1);
                 facts.metrics.extend(&range.first);
@@ -159,13 +192,65 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
             facts.metrics.extend(&range.first);
             facts.metrics.extend(&range.last);
         }
+        if exploring {
+            if index == 0 {
+                first_cells = facts.metrics.cells;
+            } else {
+                other_cells += facts.metrics.cells;
+            }
+            let extent =
+                facts.metrics.bounds.as_ref().map_or("empty, ".into(), |r| format!("{}:{}, ", r.first, r.last));
+            let state = match sheet.state {
+                SheetState::Visible => "",
+                SheetState::Hidden => "; hidden",
+                SheetState::VeryHidden => "; very hidden",
+            };
+            catalogue.push(format!(
+                "=== sheet {} {} ({extent}{}{state}) ===\n",
+                index + 1,
+                quoted(&sheet.name),
+                crate::output::count(facts.metrics.cells, "cell")
+            ));
+            if out.stopped() {
+                continue;
+            }
+        }
         let Some(header) = out.header(
             &format!("sheet {} {}", index + 1, quoted(&sheet.name)),
             &crate::spreadsheet::sheet_reserve(),
             &format!("the rest starts at sheet {}", index + 1),
         ) else {
+            if exploring {
+                continue;
+            }
             break;
         };
+        let head_header = if exploring && index == 0 {
+            head.header(
+                &format!("sheet 1 {}", quoted(&sheet.name)),
+                &crate::spreadsheet::sheet_reserve(),
+                "the rest starts at sheet 1",
+            )
+        } else {
+            None
+        };
+        if head_header.is_some() {
+            for merge in &facts.merges {
+                if preview_rows.intersects(&merge.parse()?) {
+                    head.line("", &format!("merged {merge}"), &format!("the rest starts at sheet 1, merged {merge}"));
+                }
+            }
+            for (range, _) in &facts.arrays.groups {
+                if !preview_rows.intersects(range) {
+                    continue;
+                }
+                head.line(
+                    "",
+                    &format!("array {}:{}", range.first, range.last),
+                    &format!("the rest starts at sheet 1, array {}:{}", range.first, range.last),
+                );
+            }
+        }
         if first == 0 {
             first = index + 1;
         }
@@ -194,9 +279,23 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
             }
         }
         let (mut shown, mut through) = (0, None);
+        let (mut head_shown, mut head_through) = (0, None);
+        let (mut head_rows, mut head_row) = (0, None);
         if !out.stopped() {
             let mut array_cells = facts.arrays.cells(selection.range.as_ref());
             let mut emit = |address: CellRef, value: &str| {
+                if exploring && index == 0 && !head.stopped() {
+                    if head_row != Some(address.row) {
+                        head_rows += 1;
+                        head_row = Some(address.row);
+                    }
+                    if head_rows <= crate::explore::ENTRIES
+                        && head.cell(address.row, &address.to_string(), value, &resume(index, &address, None))
+                    {
+                        head_shown += 1;
+                        head_through = Some(address.clone());
+                    }
+                }
                 if !out.cell(
                     address.row,
                     &address.to_string(),
@@ -270,7 +369,11 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
             SheetState::VeryHidden => metric.push_str("; very hidden"),
         }
         out.update_header(header, &metric);
-        if out.stopped() {
+        if let Some(header) = head_header {
+            let facts = facts.metrics.facts(None, head_shown, head_through.as_ref());
+            head.update_header(header, &facts);
+        }
+        if out.stopped() && !exploring {
             break;
         }
     }
@@ -280,7 +383,34 @@ pub(crate) fn read(file: File, selection: &Selection, budget: usize) -> Result<C
         last,
         selected.is_some() || out.stopped(),
     ));
-    Ok(out.finish())
+    let whole = out.finish();
+    if !exploring || !whole.stopped && whole.facts.len() + whole.text.len() <= whole_budget {
+        return Ok(whole);
+    }
+    head.facts(crate::spreadsheet::workbook_facts(workbook.sheets.len(), 1, 1, true));
+    let unseen = first_cells.saturating_sub(head.cell_count());
+    let mut head = head.finish();
+    if unseen > 0 {
+        crate::explore::append_note(
+            &mut head,
+            &format!("=== sheet 1 ({} not shown) ===\n", crate::output::count(unseen, "cell")),
+            budget,
+        );
+    }
+    if other_cells > 0 {
+        crate::explore::append_note(
+            &mut head,
+            &format!(
+                "=== sheets 2-{} (0 of {} shown) ===\n",
+                workbook.sheets.len(),
+                crate::output::count(other_cells, "cell")
+            ),
+            budget,
+        );
+    }
+    catalogue.append(&mut head, "sheets", budget);
+    head.stopped = (head_budget < crate::explore::HEAD && head.stopped) || head.text.is_empty();
+    Ok(head)
 }
 
 fn formula_value(formula: Result<String>, cache: &str) -> String {

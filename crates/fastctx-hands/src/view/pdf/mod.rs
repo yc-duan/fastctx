@@ -40,6 +40,81 @@ pub(super) fn look(
 }
 
 fn read(path: &Path, options: &Options, budget: usize, document: &Document) -> Section {
+    if options.exploring() {
+        return explore(path, options, budget, document);
+    }
+    read_selected(path, options, budget, document)
+}
+
+fn explore(path: &Path, options: &Options, budget: usize, document: &Document) -> Section {
+    let n = u64::MAX;
+    let spare = format!(
+        "=== page {n} (line {n}: characters 1-{n} of {n} shown; remaining selected content not shown) ===\n"
+    )
+    .len()
+        + format!(
+            "=== page {n} (lines 1-{n} of {n}; line {n}: characters 1-{n} of {n} shown; remaining text not shown) ===\n"
+        )
+        .len();
+    let whole = read_selected(path, options, budget.min(super::explore::WHOLE + spare), document);
+    if !whole.partial && whole.cost <= super::explore::WHOLE {
+        return whole;
+    }
+    let total = document.page_count() as u64;
+    let mut first = options.clone();
+    first.pages = Some((1, 2));
+    let mut sample = super::explore::Sample::new();
+    let outline = document.outline(|title, page, level| {
+        let title = super::text::visible(title);
+        sample.push(super::explore::Entry {
+            number: page.map_or(0, |page| page as u64 + 1),
+            from: 1,
+            length: title.chars().count() as u64,
+            text: if title.len() <= super::explore::WHOLE { title } else { String::new() },
+            note: format!(
+                "{} (level {})",
+                page.map_or("page unknown".into(), |page| format!("page {}", page + 1)),
+                level + 1
+            ),
+        });
+    });
+    let mut bookmarks = String::new();
+    let mut failed = false;
+    let mut shown = false;
+    match outline {
+        Ok(()) => {
+            let longest = format!("=== bookmarks ({n} of {n} entries shown) ===\n", n = u64::MAX);
+            let room = budget
+                .min(super::explore::WHOLE - super::explore::HEAD - super::explore::TAIL)
+                .saturating_sub(longest.len());
+            let (total, entries) = sample.finish(room);
+            let header = if total == 0 {
+                "=== bookmarks (none) ===\n".into()
+            } else {
+                format!("=== bookmarks ({} of {total} entries shown) ===\n", entries.len())
+            };
+            bookmarks.push_str(&header);
+            shown |= !entries.is_empty();
+            for entry in entries {
+                bookmarks.push_str(&format!("{}\t{}\n", entry.note, entry.text));
+            }
+        }
+        Err(reason) => {
+            bookmarks.push_str(&format!("=== bookmarks (not shown: {}) ===\n", super::text::visible(&reason)));
+            failed = true;
+        }
+    }
+    let omitted = if total > 2 { format!("=== pages 3-{total} (not shown) ===\n") } else { String::new() };
+    let head_budget = budget.saturating_sub(bookmarks.len() + omitted.len());
+    let mut section = read_selected(path, &first, head_budget, document);
+    section.append_note(&omitted);
+    section.append_note(&bookmarks);
+    section.failed |= failed;
+    section.shown |= shown;
+    section
+}
+
+fn read_selected(path: &Path, options: &Options, budget: usize, document: &Document) -> Section {
     let total = document.page_count() as u64;
     let pages = super::plural(total, "page", "pages");
     let (first, asked_last) = options.pages.unwrap_or((1, total));

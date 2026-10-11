@@ -11,6 +11,27 @@ pub(super) struct TextReader {
 }
 
 impl TextReader {
+    pub(super) fn outline(&self, path: &Path, mut visit: impl FnMut(&str, Option<usize>, usize)) -> Result<(), String> {
+        let mut document = self.document.lock().expect("PDF reader lock");
+        let result = super::engine(|| {
+            if document.is_none() {
+                *document = Some(PdfDocument::open_readonly(path).map_err(|error| error.to_string())?);
+            }
+            document
+                .as_ref()
+                .unwrap()
+                .visit_outline(|title, page, level| {
+                    visit(title, page, level);
+                    Ok(())
+                })
+                .map_err(|error| error.to_string())
+        });
+        if result.is_err() {
+            *document = None;
+        }
+        result
+    }
+
     pub(super) fn read(&self, path: &Path, index: usize, page: &Page<'_>) -> Result<super::TextPage, String> {
         let mut document = self.document.lock().expect("page panics are caught while holding the reader lock");
         let result = super::engine(|| {

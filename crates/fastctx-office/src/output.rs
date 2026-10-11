@@ -10,6 +10,7 @@ pub(crate) struct Output {
     facts_room: usize,
     open_row: Option<u32>,
     cut: Option<(usize, usize)>,
+    cells: u64,
 }
 pub(crate) struct Header {
     offset: usize,
@@ -45,6 +46,16 @@ impl Lines {
     }
 }
 impl Output {
+    pub fn probe(budget: usize) -> Self {
+        let plain = Self::new(budget);
+        // A complete output must not be rejected merely because a stopping
+        // location or the longest possible facts were reserved but never used.
+        let extra = plain.stop_room
+            + line_reserve().len()
+            + crate::spreadsheet::sheet_reserve().len()
+            + crate::spreadsheet::workbook_reserve();
+        Self::new(budget.saturating_add(extra))
+    }
     pub fn new(budget: usize) -> Self {
         // Counter widths and Excel's grid bound the longest continuation.
         // Reserve it once so a later long line cannot erase earlier output
@@ -75,6 +86,7 @@ impl Output {
             facts_room: 0,
             open_row: None,
             cut: None,
+            cells: 0,
         }
     }
     pub fn reserve_facts(&mut self, room: usize) {
@@ -161,6 +173,7 @@ impl Output {
         }
         self.text.push_str(&text);
         self.left -= cost;
+        self.cells += 1;
         true
     }
     pub fn end_row(&mut self) {
@@ -207,6 +220,9 @@ impl Output {
     }
     pub fn stopped(&self) -> bool {
         self.stopped
+    }
+    pub fn cell_count(&self) -> u64 {
+        self.cells
     }
     pub fn finish(mut self) -> Content {
         self.end_row();
