@@ -78,7 +78,19 @@ export interface TurnEnd {
   reason: string | null;
   error?: JsonValue;
   duration_ms: number | null;
+  facts?: TurnFacts;
   last_message: string | null;
+}
+
+/** Host observations only; omitted fields have no reported value. */
+export interface TurnFacts {
+  models?: string[];
+  efforts?: ({ kind: "actual" | "requested"; value: JsonValue })[];
+  tokens?:
+    | { host: "codex"; input_tokens: number; cached_input_tokens: number; cache_write_input_tokens?: number;
+        output_tokens: number; reasoning_output_tokens: number; total_tokens: number }
+    | { host: "claude"; input_tokens: number; cache_read_input_tokens: number;
+        cache_creation_input_tokens: number; output_tokens: number };
 }
 
 export type StepStatus = "done" | "doing" | "pending";

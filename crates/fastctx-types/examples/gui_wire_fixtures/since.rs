@@ -65,6 +65,7 @@ pub fn fixtures() -> Fixtures {
             resident: resident.clone(),
             turn: "turn-1".into(),
             end: TurnEnd {
+                facts: None,
                 how,
                 reason: Some("Host's exact reason 世界".into()),
                 error: None,
@@ -77,7 +78,14 @@ pub fn fixtures() -> Fixtures {
     kinds.push(SinceKind::TurnEnded {
         resident: resident.clone(),
         turn: String::new(),
-        end: TurnEnd { how: TurnHow::Failed, reason: None, error: None, duration_ms: None, last_message: None },
+        end: TurnEnd {
+            facts: None,
+            how: TurnHow::Failed,
+            reason: None,
+            error: None,
+            duration_ms: None,
+            last_message: None,
+        },
         readers: None,
     });
     for how in [

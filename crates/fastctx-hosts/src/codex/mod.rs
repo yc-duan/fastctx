@@ -13,6 +13,8 @@
 //! `environments: []` disables the thread's own shell and file editing.
 
 mod account;
+mod accounting;
+pub use accounting::recorded_turn_facts;
 mod agents;
 mod answers;
 mod cache;
@@ -210,6 +212,8 @@ pub enum HostEvent {
     Gone {
         how: String,
         turns: Vec<(String, String)>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        facts: Vec<(String, String, fastctx_types::session::TurnFacts)>,
     },
 }
 
@@ -284,6 +288,8 @@ impl Drop for StateGuard<'_> {
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 struct Thread {
+    #[serde(default)]
+    accounting: accounting::Accounting,
     selection: controls::Selection,
     model: Option<String>,
     effort: Option<String>,
@@ -411,6 +417,7 @@ impl CodexHost {
         entry.loaded = current;
         entry.subscribed = current;
         entry.created_here = true;
+        entry.accounting.empty_thread();
         entry.model = model.clone();
         entry.effort = answer.get("reasoningEffort").and_then(Value::as_str).map(str::to_string);
         entry.service_tier = answer.get("serviceTier").and_then(Value::as_str).map(str::to_string);
@@ -829,7 +836,7 @@ impl CodexHost {
         summary: Option<String>,
         error: Option<Value>,
     ) {
-        let last_message = {
+        let (last_message, facts) = {
             let mut state = self.lock();
             let entry = state.threads.entry(thread.to_string()).or_default();
             // One end a turn: a second report of it changes nothing.
@@ -847,9 +854,9 @@ impl CodexHost {
                 Some((said_in, _)) if said_in == turn => entry.last_message.take().map(|(_, text)| text),
                 _ => None,
             };
-            summary.or(said)
+            (summary.or(said), entry.accounting.ended(turn))
         };
-        let end = TurnEnd { error, how, reason, duration_ms, last_message };
+        let end = TurnEnd { facts: facts.map(Box::new), error, how, reason, duration_ms, last_message };
         self.emit(thread, at, Happened::TurnEnded { turn: turn.to_string(), end });
     }
 
@@ -914,6 +921,7 @@ impl CodexHost {
                         entry.last_message = None;
                     }
                     entry.started.insert(turn.clone());
+                    entry.accounting.started(&turn);
                 }
                 let at = seconds(params.pointer("/turn/startedAt"));
                 self.emit(&thread, at, Happened::TurnStarted { turn });
@@ -1054,6 +1062,12 @@ impl CodexHost {
                 self.emit(&thread, at, Happened::Steps { turn, steps, note: text("/explanation") });
             }
             "thread/tokenUsage/updated" => {
+                self.lock()
+                    .threads
+                    .entry(thread.clone())
+                    .or_default()
+                    .accounting
+                    .usage(params.get("turnId").and_then(Value::as_str), &params["tokenUsage"]);
                 let Some(used) = params.pointer("/tokenUsage/last/totalTokens").and_then(Value::as_u64) else { return };
                 let window = params.pointer("/tokenUsage/modelContextWindow").and_then(Value::as_u64);
                 self.emit(&thread, at, Happened::Context { used, window });
@@ -1198,7 +1212,7 @@ impl CodexHost {
     /// end with it, and every thread is resumed with its next words.
     fn exited(&self, server: &Arc<AppServer>, how: String) {
         let _generation = self.generation.lock().expect("never poisoned");
-        let (turns, unloaded) = {
+        let (turns, unloaded, facts) = {
             let mut state = self.lock();
             if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, server)) {
                 // One replaced on purpose exits after its successor may have
@@ -1209,6 +1223,7 @@ impl CodexHost {
             self.resolve_requests(&mut state, "the app-server stopped; its requests are no longer answerable");
             state.server = None;
             let mut turns = Vec::new();
+            let mut facts = Vec::new();
             for (thread, entry) in &mut state.threads {
                 entry.loaded = false;
                 entry.requests.clear();
@@ -1217,6 +1232,9 @@ impl CodexHost {
                     self.finished.insert(thread, &turn);
                     entry.unsettled.insert(turn.clone());
                     entry.last_message = None;
+                    if let Some(observed) = entry.accounting.ended(&turn) {
+                        facts.push((thread.clone(), turn.clone(), observed));
+                    }
                     turns.push((thread.clone(), turn));
                 }
                 entry.started.clear();
@@ -1224,10 +1242,10 @@ impl CodexHost {
                 entry.item_starts.clear();
                 entry.last_message = None;
             }
-            (turns, state.threads.keys().cloned().collect::<Vec<_>>())
+            (turns, state.threads.keys().cloned().collect::<Vec<_>>(), facts)
         };
         (self.log)(format!("the Codex app-server stopped ({how})"));
-        let _ = self.events.send(HostEvent::Gone { how, turns });
+        let _ = self.events.send(HostEvent::Gone { how, turns, facts });
         for thread in unloaded {
             let _ = self.events.send(HostEvent::Unloaded { thread });
         }

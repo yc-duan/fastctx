@@ -37,6 +37,9 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
         return Err(std::io::Error::other("unknown resident"));
     };
     let directory = node.world.resident(town.as_ref(), id);
+    if about.host.agent.as_str() == "claude" {
+        crate::claude::turn_facts::observe(&directory, &event.happened)?;
+    }
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
         &event.happened
     {
@@ -188,12 +191,25 @@ async fn finish_at(
     node: &Arc<Node>,
     id: &ResidentId,
     turn: &str,
-    end: TurnEnd,
+    mut end: TurnEnd,
     additional: &[Address],
     ended_at: Option<Timestamp>,
 ) -> std::io::Result<()> {
     let Some((about, town)) = node.residents.about(id) else { return Ok(()) };
     let directory = node.world.resident(town.as_ref(), id);
+    if about.host.agent.as_str() == "claude" && end.facts.is_none() {
+        end.facts = crate::claude::turn_facts::finish(&directory, turn)?.map(Box::new);
+    }
+    if about.host.agent.as_str() == "codex" && end.facts.is_none() && !matches!(end.how, TurnHow::Completed) {
+        // Recovery is exceptional; normal host completions carry their facts
+        // without reading the conversation's accumulated event record.
+        let events = crate::delivery::history(&directory)?;
+        let initially_empty = about.world_started
+            && !events
+                .iter()
+                .any(|event| matches!(event.happened, Happened::Changed { change: SessionChange::Forked { .. }, .. }));
+        end.facts = fastctx_hosts::codex::recorded_turn_facts(&events, turn, initially_empty).map(Box::new);
+    }
     let mut readers = node.residents.readers(id, turn);
     readers.extend_from_slice(additional);
     let accepted: Vec<_> = crate::delivery::handovers(&directory)?
@@ -204,6 +220,9 @@ async fn finish_at(
         readers.extend(handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()));
     }
     let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at)?;
+    if about.host.agent.as_str() == "claude" {
+        crate::claude::turn_facts::settled(&directory, turn)?;
+    }
     keep_answers(node, id, &about.origin, &directory, turn, turn, &finished.end, &finished.readers).await?;
     let (pay_node, pay_id, pay_directory) = (node.clone(), id.clone(), directory.clone());
     tokio::spawn(async move { pay(&pay_node, &pay_id, &pay_directory).await });
@@ -414,7 +433,7 @@ pub async fn unresolved(
     if handover.inputs.iter().all(|input| accepted.contains(&input.delivery.id)) {
         return Ok(());
     }
-    let end = TurnEnd { error: None, how, reason: Some(why), duration_ms: None, last_message: None };
+    let end = TurnEnd { facts: None, error: None, how, reason: Some(why), duration_ms: None, last_message: None };
     crate::delivery::unresolved(directory, handover, end)?;
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     let readers: std::collections::BTreeSet<Address> = handover
@@ -540,8 +559,14 @@ fn health_event(
 
 /// A turn stopped because something stopped under it.
 pub async fn stopped(node: &Arc<Node>, id: &ResidentId, turn: &str, reason: String) {
-    let end =
-        TurnEnd { error: None, how: TurnHow::Interrupted, reason: Some(reason), duration_ms: None, last_message: None };
+    let end = TurnEnd {
+        facts: None,
+        error: None,
+        how: TurnHow::Interrupted,
+        reason: Some(reason),
+        duration_ms: None,
+        last_message: None,
+    };
     ended(node, id, turn, end).await;
 }
 

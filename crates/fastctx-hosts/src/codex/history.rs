@@ -106,6 +106,7 @@ pub(super) async fn read(server: &AppServer, thread: &str, running: Option<&str>
                         happened: Happened::TurnEnded {
                             turn: turn.into(),
                             end: TurnEnd {
+                                facts: None,
                                 error: entry.get("error").filter(|e| !e.is_null()).cloned(),
                                 how: turn_how(entry.get("status").and_then(Value::as_str)),
                                 reason: entry.pointer("/error/message").and_then(Value::as_str).map(str::to_string),
@@ -256,6 +257,7 @@ pub(super) fn project(answer: &Value, running: Option<&str>) -> Vec<SessionEvent
             continue;
         }
         let end = TurnEnd {
+            facts: None,
             error: turn.get("error").filter(|e| !e.is_null()).cloned(),
             how: turn_how(status),
             reason: turn.pointer("/error/message").and_then(Value::as_str).map(str::to_string),
