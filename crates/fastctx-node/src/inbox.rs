@@ -361,7 +361,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record: &JobRecord) -> io::Result<(
                 std::path::Path::new(&record.output),
                 record.stderr.as_deref().map(Path::new),
             )?,
-            stop: record.stop.as_ref().map(|stop| stop.request.clone()),
+            stop: record.stop.as_ref().map(|stop| Box::new(stop.request.clone())),
         };
         match publish_new(&notice_path, &json(&notice)?, Permissions::Private) {
             Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
