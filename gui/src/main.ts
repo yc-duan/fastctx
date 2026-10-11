@@ -1154,6 +1154,7 @@ function show(next: Place): void {
         when,
         change,
         invite: (login) => tokens.open(login),
+        talk: (machine) => newTalk.open(null, null, machine),
         confirm: accountConfirm,
       });
       break;

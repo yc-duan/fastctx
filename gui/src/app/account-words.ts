@@ -284,6 +284,19 @@ export interface MachinesWords {
   /** On its own, logged in nowhere. */
   alone: string;
   logIn: string;
+  /** The drawing as a canvas: what it is to a screen reader, its corner
+   *  controls, the dashed ring that adds a machine and what it says while
+   *  one is on its way, and what floats beside one chosen. */
+  map: string;
+  zoomOut: string;
+  zoomIn: string;
+  fit: string;
+  scale: string;
+  addMachine: string;
+  waitingJoin: string;
+  details: string;
+  closeDetails: string;
+  actions: string;
 }
 
 export const zhMachines: MachinesWords = {
@@ -367,6 +380,16 @@ export const zhMachines: MachinesWords = {
   talk: "新对话",
   alone: "未加入世界",
   logIn: "加入",
+  map: "世界图：拖动平移，Ctrl 加滚轮缩放，Tab 逐台选中",
+  zoomOut: "缩小",
+  zoomIn: "放大",
+  fit: "看全",
+  scale: "比例",
+  addMachine: "添加机器",
+  waitingJoin: "等待加入",
+  details: "详情",
+  closeDetails: "收起详情",
+  actions: "操作",
 };
 
 export const enMachines: MachinesWords = {
@@ -450,6 +473,16 @@ export const enMachines: MachinesWords = {
   talk: "New conversation",
   alone: "Not in a World",
   logIn: "Join",
+  map: "World map: drag to pan, Ctrl and the wheel to zoom, Tab to each machine",
+  zoomOut: "Zoom out",
+  zoomIn: "Zoom in",
+  fit: "Fit",
+  scale: "Scale",
+  addMachine: "Add a machine",
+  waitingJoin: "Waiting to join",
+  details: "Details",
+  closeDetails: "Hide details",
+  actions: "Actions",
 };
 
 /** The sheets on a machine: whom its owner shares it with, whom it lends

@@ -55,9 +55,19 @@ export class Tokens {
   private login: Login | null = null;
   private kind: TokenKind = "computer";
   private hours = 1;
+  /** Whether a way in was given this time the sheet was open. */
+  private given = false;
+  private closed: ((given: boolean) => void) | null = null;
 
   constructor(private readonly options: TokensOptions) {
     const { body } = this.sheet;
+    this.sheet.dialog.addEventListener("close", () => {
+      // The computer's way in is the address and account shown: given once
+      // the sheet closes on it.
+      const given = this.given || this.kind === "computer";
+      this.closed?.(given);
+      this.closed = null;
+    });
     body.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
       const kind = target.closest<HTMLButtonElement>("[data-kind]");
@@ -92,13 +102,19 @@ export class Tokens {
     });
   }
 
-  /** Opens the sheet for `login`, on `kind`. */
-  open(login: Login, kind: TokenKind = "computer"): void {
+  /** Opens the sheet for `login`, on `kind`; once it closes, whether a way
+   *  in was given: a code or a command made, or a computer's shown. */
+  open(login: Login, kind: TokenKind = "computer"): Promise<boolean> {
+    this.closed?.(this.given);
     this.login = login;
     this.kind = kind;
+    this.given = false;
     this.draw();
     this.sheet.show();
     this.sheet.body.querySelector<HTMLElement>(".choice.chosen")?.focus();
+    return new Promise((resolve) => {
+      this.closed = resolve;
+    });
   }
 
   private copy(text: string): string {
@@ -159,6 +175,7 @@ export class Tokens {
     go.textContent = words.making;
     try {
       const made = kind === "server" ? await this.options.server(login, name, hours) : await this.options.token(login, "phone", false, null, hours);
+      this.given = true;
       const until = words.until(this.options.when(new Date(Date.now() + hours * 3_600_000)));
       const shown =
         kind === "phone"

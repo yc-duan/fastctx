@@ -129,7 +129,7 @@ export class MapCanvas {
     this.resize = new ResizeObserver(() => {
       this.rect = this.element.getBoundingClientRect();
       this.camera.resize(this.element.clientWidth, this.element.clientHeight);
-      if (this.fitOnResize) this.camera.fit(this.bounds, 76);
+      if (this.fitOnResize) this.camera.fit(this.bounds, this.fitPadding());
       this.measure();
       this.schedule();
     });
@@ -227,7 +227,7 @@ export class MapCanvas {
   }
   pan(dx: number, dy: number): void { this.fitOnResize = false; this.camera.pan(dx, dy); this.schedule(); }
   zoom(factor: number, at?: Point): void { this.fitOnResize = false; this.camera.zoom(factor, at); this.schedule(); }
-  fit(): void { this.fitOnResize = true; this.camera.fit(this.bounds, 76); this.schedule(); }
+  fit(): void { this.fitOnResize = true; this.camera.fit(this.bounds, this.fitPadding()); this.schedule(); }
   /** Use after directly changing the camera, or changing CSS font metrics. */
   refresh(): void { this.measure(); this.schedule(); }
   dispose(): void {
@@ -237,6 +237,11 @@ export class MapCanvas {
     this.abort.abort();
     this.resize.disconnect();
     cancelAnimationFrame(this.animation);
+  }
+  /** Room left round the world when it is fitted: a tenth of the shorter
+   *  side, from 24 to 76 pixels, so a phone's drawing is not shrunk away. */
+  private fitPadding(): number {
+    return Math.max(24, Math.min(76, Math.min(this.camera.view.width, this.camera.view.height) * 0.1));
   }
   private measure(): void {
     const visibility = new Map([...this.buttons.values()].map(e => [e.label, e.label.hidden]));

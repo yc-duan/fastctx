@@ -1,8 +1,9 @@
-/* The machines page: the account's World drawn by hand, and beside it
-   what is known of the one pointed at. On a wide screen the drawing fills
-   the left and the panel stands at the right; on a narrow one the drawing
-   sits above and the panel scrolls under it. Nothing is outlined: the
-   panel is a quiet fill, each login on it a slip of paper laid on that. */
+/* The machines page: the account's World drawn by hand on a canvas that
+   moves under the hand, and, when asked for, what is known of the one
+   chosen. On a wide screen the drawing fills the page and the panel opens
+   at its right; on a phone it rises from below. Nothing is outlined: the
+   panel is a quiet fill, each login on it a slip of paper laid on that;
+   what floats beside a ring is a small solid disc. */
 
 .machines-page {
   container: machines / inline-size;
@@ -11,10 +12,286 @@
 .machines-layout {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  display: flex;
   gap: var(--space-4);
   padding: 0 var(--gutter) var(--gutter);
+}
+
+.machines-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 300px;
+  border-radius: var(--radius-l);
+  overflow: hidden;
+}
+
+.machines-layout > .machine-panel {
+  flex: 0 0 min(380px, 42%);
+  position: relative;
+  overflow-y: auto;
+}
+
+.machines-canvas.alone .machine-map {
+  opacity: 0.5;
+}
+
+/* The drawing: graph paper that moves with it, a fine line every step and
+   a firmer one every fourth (their size and offset follow the camera). */
+.machines-canvas .machine-map {
+  --canvas-ink: var(--text);
+  --canvas-selection: var(--accent);
+  --canvas-paper: var(--bg);
+  --paper-step: 32px;
+  --paper-x: 0px;
+  --paper-y: 0px;
+}
+
+/* The paper fades out toward the edges, as the front page's drawing does. */
+.machines-canvas .machine-map::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--pen-graphite) 10%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--pen-graphite) 10%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--pen-graphite) 20%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--pen-graphite) 20%, transparent) 1px, transparent 1px);
+  background-size:
+    var(--paper-step) var(--paper-step),
+    var(--paper-step) var(--paper-step),
+    calc(var(--paper-step) * 4) calc(var(--paper-step) * 4),
+    calc(var(--paper-step) * 4) calc(var(--paper-step) * 4);
+  background-position: var(--paper-x) var(--paper-y);
+  mask-image: radial-gradient(ellipse 70% 72% at 50% 50%, black 45%, transparent 100%);
+}
+
+.machine-map .canvas-ink {
+  mix-blend-mode: var(--pen-blend);
+}
+
+/* The ring chosen is circled in clay by the drawing, not outlined. */
+.machine-map .canvas-object[aria-pressed="true"],
+.machine-map .canvas-object[data-valid="true"],
+.machine-map .canvas-object[data-target="true"] {
+  box-shadow: none;
+}
+
+.machine-map .canvas-object {
+  transition: background-color var(--hover) ease;
+}
+
+.machine-map .canvas-object:hover,
+.machine-map .canvas-object[data-pointed="true"] {
+  background: color-mix(in srgb, var(--fill) 70%, transparent);
+}
+
+.machine-map .canvas-name {
+  padding: 1px 6px;
+  border-radius: var(--radius-s);
+  /* The paper shows through a little, so a line passing under a name does
+     not run through its letters. */
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  font-family: var(--font-emphasis);
+  font-size: var(--size-ui);
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.machine-map .canvas-name[data-label^="hub:"] {
+  font-family: var(--font-reading);
+  font-size: var(--size-small);
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+
+.machine-map .canvas-name[data-label^="add:"] {
+  font-family: var(--font-reading);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.machine-map .canvas-controls {
+  border-radius: var(--radius-m);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  color: var(--text-2);
+}
+
+/* Drawn live over the ink: the clay circle round the one chosen, drawn in
+   as a hand circles a word; the circle round one just come; strokes moving
+   along a line something works on. */
+.map-live {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.map-live .clay path {
+  fill: var(--pen-clay);
+}
+
+.map-live .chosen {
+  animation: paper-in 0.35s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.map-live .arrived {
+  animation: arrived 1.4s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.map-live .flow {
+  fill: none;
+  stroke: var(--pen-clay);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-dasharray: 3 14 6 11;
+  animation: pen-flow 2.8s linear infinite;
+}
+
+@keyframes paper-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The dash pattern above is 34 long: one length a cycle moves it on. */
+@keyframes pen-flow {
+  to {
+    stroke-dashoffset: -34;
+  }
+}
+
+@keyframes arrived {
+  0% {
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+
+/* What can be done to the one chosen, floating round it. */
+.map-acts {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.map-act {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-2);
+  pointer-events: auto;
+  cursor: pointer;
+  animation: paper-in 0.2s ease both;
+}
+
+.map-act:hover,
+.map-act:focus-visible {
+  color: var(--text-strong);
+  background: var(--fill-strong);
+}
+
+.map-act.danger:hover,
+.map-act.danger:focus-visible {
+  color: var(--wrong);
+}
+
+/* The menu of the right button, or of a long press. */
+.map-menu {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 11em;
+  padding: var(--space-1);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.map-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--size-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.map-menu-item:hover,
+.map-menu-item:focus-visible {
+  outline: 0;
+  color: var(--text-strong);
+  background: var(--fill);
+}
+
+.map-menu-item.danger:hover,
+.map-menu-item.danger:focus-visible {
+  color: var(--wrong);
+}
+
+/* On a phone the menu rises from below, half the screen at most. */
+.map-menu.as-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  z-index: 20;
+  max-height: 60dvh;
+  padding: var(--space-3) var(--space-3) calc(var(--space-4) + env(safe-area-inset-bottom));
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  animation: map-sheet-rise 0.22s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+.map-menu.as-sheet .map-menu-item {
+  min-height: 48px;
+}
+
+@keyframes map-sheet-rise {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@media (pointer: coarse) {
+  .map-act {
+    width: 44px;
+    height: 44px;
+  }
+
+  .map-menu-item {
+    min-height: 44px;
+  }
+}
+
+.machines-layout .panel-close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
 }
 
 /* The drawing, as the front page's, but every hub and machine is a
@@ -456,20 +733,23 @@
    left. */
 @container machines (max-width: 860px) {
   .machines-layout {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(240px, 40dvh) minmax(0, 1fr);
     gap: var(--space-2);
     padding: 0 var(--space-4) var(--space-4);
   }
 
-  .network-map {
-    min-height: 0;
+  /* What is known of the one chosen rises from below, over the drawing. */
+  .machines-layout > .machine-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 15;
+    max-height: 60dvh;
+    padding: var(--space-4) var(--space-4) calc(var(--space-5) + env(safe-area-inset-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+    box-shadow: var(--shadow-pop);
+    animation: map-sheet-rise 0.24s cubic-bezier(0.33, 1, 0.68, 1) both;
   }
-
-  .machine-panel {
-    padding: var(--space-4);
-  }
-
 }
 
 /* A phone's page: the names alone, a size smaller. */
@@ -484,6 +764,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .map-live .flow,
+  .map-live .chosen,
+  .map-live .arrived,
+  .map-act,
+  .map-menu.as-sheet,
+  .machines-layout > .machine-panel,
   .network-map .flow,
   .map-drawing.arriving .paper,
   .map-drawing.arriving .ink,

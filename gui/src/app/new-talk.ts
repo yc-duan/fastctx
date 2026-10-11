@@ -181,6 +181,8 @@ export class NewTalk {
   private readonly start: HTMLButtonElement;
   /** The login chosen, by its key; the one used last where none is. */
   private pick: string | null = remembered("pick");
+  /** A machine whose logins come first, when the panel was opened from it. */
+  private machine: string | null = null;
   private town: string | null = null;
   private model: string | null = null;
   private effort: string | null = null;
@@ -416,8 +418,11 @@ export class NewTalk {
 
   /** Opens the sheet; `town` is the project to begin in, when opened from
    *  one, and `pick` the login to begin with, when one was chosen. */
-  open(town: string | null = null, pick: string | null = null): void {
+  /** Opens the panel; `pick` is a login to start with, `machine` one whose
+   *  logins come first when that is not given or cannot begin. */
+  open(town: string | null = null, pick: string | null = null, machine: string | null = null): void {
     if (pick) this.pick = pick;
+    this.machine = machine;
     this.choosing = false;
     this.town = town;
     this.model = null;
@@ -667,7 +672,8 @@ export class NewTalk {
     if (!can(this.pick)) {
       const here = lines.find((line) => line.here);
       const agent = remembered("agent");
-      const usual = here?.options.find((option) => option.agent === agent && can(option.key)) ?? here?.options.find((option) => can(option.key));
+      const there = this.machine ? all.find(({ option }) => option.written === this.machine && can(option.key))?.option : undefined;
+      const usual = there ?? here?.options.find((option) => option.agent === agent && can(option.key)) ?? here?.options.find((option) => can(option.key));
       // While machines are still answering, a choice made is kept.
       if (!this.askingAll || !all.some(({ option }) => option.key === this.pick)) {
         this.pick = usual?.key ?? all.find(({ option, line }) => this.startable(option, line))?.option.key ?? this.pick;
