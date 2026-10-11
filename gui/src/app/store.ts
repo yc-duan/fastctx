@@ -37,10 +37,18 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
 
   if (!live) {
     const shown = specimen();
+    remember(shown.world);
     world.set(shown.world);
     clock.set(shown.now);
     return { live, world, trouble, clock, unanswered, refresh: async () => {} };
   }
+
+  recall();
+  // Kept as the window goes out of view or closes, not on every answer.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") keep();
+  });
+  window.addEventListener("pagehide", keep);
 
   let timer = 0;
   let asking: Promise<void> | null = null;
@@ -50,6 +58,7 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
     const counting = window.setInterval(() => unanswered.set(Math.floor((Date.now() - began) / 1000)), 1000);
     asking = worldNow()
       .then((now) => {
+        remember(now);
         world.set(now);
         trouble.set(null);
       })
@@ -72,6 +81,54 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   document.addEventListener("visibilitychange", () => void loop());
   void loop();
   return { live, world, trouble, clock, unanswered, refresh: ask };
+}
+
+/** What each machine last answered with about its residents. A machine
+ *  away keeps its conversations listed: one not removed is always listed
+ *  (`world-gui.md`). Kept in this device's storage as well, so a window
+ *  opened while the machine is away lists them too. */
+const lastAnswered = new Map<string, ResidentNow[]>();
+const unreached = new WeakSet<ResidentNow>();
+const keptKey = "fastctx.last-answered";
+
+function remember(world: WorldNow): void {
+  for (const machine of world.who.machines) {
+    if (machine.kind === "answered") lastAnswered.set(machine.reply.machine, machine.reply.residents);
+  }
+}
+
+function recall(): void {
+  try {
+    const kept = JSON.parse(localStorage.getItem(keptKey) ?? "{}") as Record<string, ResidentNow[]>;
+    for (const [machine, residents] of Object.entries(kept)) if (Array.isArray(residents)) lastAnswered.set(machine, residents);
+  } catch {
+    // Storage may be unavailable or hold something else; the list then
+    // starts from what the machines answer.
+  }
+}
+
+function keep(): void {
+  try {
+    localStorage.setItem(keptKey, JSON.stringify(Object.fromEntries(lastAnswered)));
+  } catch {
+    // Not kept: the list starts from what the machines answer next time.
+  }
+}
+
+/** The residents of machines that did not answer this time, as they last
+ *  answered: listed, marked as out of reach, never taken for live. */
+export function unreachedOf(world: WorldNow | null): ResidentNow[] {
+  return (world?.who.machines ?? []).flatMap((machine) => {
+    if (machine.kind === "answered") return [];
+    const residents = (lastAnswered.get(machine.machine) ?? []).filter((r) => !r.removed);
+    for (const r of residents) unreached.add(r);
+    return residents;
+  });
+}
+
+/** Whether a resident is one its machine did not answer for this time. */
+export function isUnreached(r: ResidentNow): boolean {
+  return unreached.has(r);
 }
 
 /** Every resident each machine answered with that is still in the World;

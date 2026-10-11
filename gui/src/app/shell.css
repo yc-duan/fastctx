@@ -401,6 +401,13 @@ body {
   color: var(--text-strong);
 }
 
+/* A conversation whose machine is away: listed as it last was, quieter. */
+.talk-row.mark-away .talk-name,
+.talk-row.mark-away .talk-host,
+.talk-row.mark-away .talk-device {
+  color: var(--text-3);
+}
+
 .talk-state {
   display: grid;
   place-items: center;
@@ -437,6 +444,12 @@ body {
 .mark.mark-busy {
   box-shadow: inset 0 0 0 1.8px var(--accent);
   animation: pulse 1.6s ease-in-out infinite;
+}
+
+.mark.mark-away {
+  width: 6px;
+  height: 6px;
+  box-shadow: inset 0 0 0 1.4px var(--text-3);
 }
 
 .mark.mark-idle {

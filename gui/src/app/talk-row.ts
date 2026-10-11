@@ -12,23 +12,26 @@ import { agentName, osName, titleOf } from "../world/names";
 import type { MachineFacts, ResidentNow } from "../world/world";
 import { link, type Place } from "./places";
 import { machinesOf } from "./reach";
-import { residentsOf } from "./store";
+import { isUnreached, residentsOf, unreachedOf } from "./store";
 
 export interface TalkRowWords {
   /** "Claude · laptop". */
   someone(agent: string, machine: string): string;
   busy(lasted: string): string;
   waiting: string;
+  /** Its machine is away: the conversation is listed as it last was. */
+  offline: string;
   span(ms: number): string;
   /** The kind of device, for a screen reader: "laptop". */
   device(form: "desktop" | "laptop" | "server"): string;
 }
 
-/** The conversations of the World a list shows: every one not removed, the
- *  ones asked in to help another left out, since they hang under the one
- *  that asked them. Most recently stirred first. */
+/** The conversations of the World a list shows: every one not removed,
+ *  those on a machine away as it last answered, the ones asked in to help
+ *  another left out, since they hang under the one that asked them. Most
+ *  recently stirred first. */
 export function conversationsOf(world: WorldNow | null): ResidentNow[] {
-  return byRecent(residentsOf(world).filter((r) => r.about.origin.kind !== "colleague"));
+  return byRecent([...residentsOf(world), ...unreachedOf(world)].filter((r) => r.about.origin.kind !== "colleague"));
 }
 
 export function byRecent(residents: ResidentNow[]): ResidentNow[] {
@@ -49,10 +52,12 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
   const agent = agentName(r.about.host.agent);
   const someone = words.someone(agent, r.about.machine);
   const name = titleOf(r) ?? someone;
-  const waiting = !!r.now?.waiting_for_user;
-  const busy = r.now?.activity === "busy";
-  const state = waiting ? words.waiting : busy ? words.busy(words.span(now.getTime() - Date.parse(r.now!.since))) : "";
-  const kind = waiting ? "mark-ask" : busy ? "mark-busy" : "";
+  // What a machine away last said of a conversation is not said as now.
+  const away = isUnreached(r);
+  const waiting = !away && !!r.now?.waiting_for_user;
+  const busy = !away && r.now?.activity === "busy";
+  const state = away ? words.offline : waiting ? words.waiting : busy ? words.busy(words.span(now.getTime() - Date.parse(r.now!.since))) : "";
+  const kind = away ? "mark-away" : waiting ? "mark-ask" : busy ? "mark-busy" : "";
   const host = r.about.host.agent === "claude" || r.about.host.agent === "codex" ? glyph(r.about.host.agent, 16) : glyph("agents", 16);
   const known = facts.get(r.about.machine);
   // A node too old to say what it is runs on a computer more often than not.
