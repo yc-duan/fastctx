@@ -78,15 +78,26 @@ pub struct OnSizes {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum OnWord {
+    WriteFact {
+        fact: Box<crate::run_facts::WriteFact>,
+    },
     /// The complete package could not start a job. Its sender acknowledges
     /// this before the control reply closes the accompanying data stream.
-    Refused { failure: crate::ipc::Failure },
+    Refused {
+        failure: crate::ipc::Failure,
+    },
     /// The job started, as `job`.
-    Started { job: JobId },
+    Started {
+        job: JobId,
+    },
     /// `bytes` bytes of standard output follow.
-    Out { bytes: u64 },
+    Out {
+        bytes: u64,
+    },
     /// `bytes` bytes of standard error follow.
-    Err { bytes: u64 },
+    Err {
+        bytes: u64,
+    },
     /// Nothing new for a while: the connection still stands. Said every
     /// `STILL_EVERY` while the job is quiet.
     Still,
@@ -162,6 +173,8 @@ pub const SILENT_FOR: std::time::Duration = std::time::Duration::from_secs(30);
 /// Where an `on` was sent from, as the machine running it records it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnOrigin {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
     /// The resident that wrote the `on`, at the machine it lives on; the
     /// job is recorded under it however many machines it passed through.
     pub resident: Address,

@@ -937,6 +937,7 @@ pub fn run() {
             fetch_attachment,
             line_reading::lines_open,
             line_reading::lines_read,
+            line_reading::lines_read_projected,
             line_reading::lines_find,
             line_reading::lines_close,
             line_reading::cancel_line_request,

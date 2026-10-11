@@ -2,7 +2,7 @@
 
 use crate::{CallError, Error, World};
 use fastctx_types::ipc::{ClientFrame, NodeFrame};
-use fastctx_types::lines::{Part, Reply as LinesReply, Result as Answer};
+use fastctx_types::lines::{LineNote, Part, Reply as LinesReply, Result as Answer};
 use fastctx_types::{Call, MachineName, Reply};
 
 impl World {
@@ -13,7 +13,7 @@ impl World {
         start: u64,
         count: u64,
     ) -> Result<LinesReply, Error> {
-        let mut rows = Rows { start, count, lines: Vec::new(), pending: String::new() };
+        let mut rows = Rows { start, count, lines: Vec::new(), pending: String::new(), notes: Vec::new(), units: 0 };
         let reply = if let Some(device) = self.device() {
             let mut reading = device.read_lines(machine, source, start, count)?;
             loop {
@@ -66,15 +66,31 @@ struct Rows {
     count: u64,
     lines: Vec<String>,
     pending: String,
+    notes: Vec<LineNote>,
+    units: u64,
 }
 impl Rows {
     fn push(&mut self, part: Part) -> Result<(), Error> {
         if self.lines.len() as u64 >= self.count || part.line != self.start + self.lines.len() as u64 {
             return Err(broken("line piece is outside the requested range or out of order"));
         }
+        let end = self.units + part.text.encode_utf16().count() as u64;
+        if let Some(note) = part.note.filter(|_| end > self.units) {
+            if let Some(last) = self.notes.last_mut()
+                && last.line == part.line
+                && last.to == self.units
+                && last.note == note
+            {
+                last.to = end;
+            } else {
+                self.notes.push(LineNote { line: part.line, from: self.units, to: end, note });
+            }
+        }
+        self.units = end;
         self.pending.push_str(&part.text);
         if part.ended {
             self.lines.push(std::mem::take(&mut self.pending));
+            self.units = 0;
         }
         Ok(())
     }
@@ -84,7 +100,7 @@ impl Rows {
         {
             return Err(broken("line completion disagrees with the received rows"));
         }
-        reply.result = Answer::Lines { start: self.start, lines: self.lines };
+        reply.result = Answer::Lines { start: self.start, lines: self.lines, notes: self.notes };
         Ok(reply)
     }
 }

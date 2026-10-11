@@ -52,12 +52,29 @@ pub enum Request {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Result {
-    Opened { source: String, path: String, extent: Extent },
-    Lines { start: u64, lines: Vec<String> },
-    Found { found: Option<Match> },
-    Changed { extent: Extent, first_changed_line: u64 },
+    Opened {
+        source: String,
+        path: String,
+        extent: Extent,
+    },
+    Lines {
+        start: u64,
+        lines: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        notes: Vec<LineNote>,
+    },
+    Found {
+        found: Option<Match>,
+    },
+    Changed {
+        extent: Extent,
+        first_changed_line: u64,
+    },
     Closed,
-    ReadComplete { start: u64, count: u64 },
+    ReadComplete {
+        start: u64,
+        count: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +82,25 @@ pub struct Part {
     pub line: u64,
     pub text: String,
     pub ended: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<crate::run_facts::OutputNote>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineNote {
+    pub line: u64,
+    /// UTF-16 offsets in the returned logical row, end exclusive.
+    pub from: u64,
+    pub to: u64,
+    pub note: crate::run_facts::OutputNote,
+}
+
+/// The projected viewport returned to the app; text stays canonical.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectedLines {
+    pub start: u64,
+    pub lines: Vec<String>,
+    pub notes: Vec<LineNote>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

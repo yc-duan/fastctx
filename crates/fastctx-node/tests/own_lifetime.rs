@@ -140,7 +140,7 @@ fn exercise() -> anyhow::Result<()> {
             machine: &machine,
             owner: &owner.clone().into(),
             town: None,
-            request: &RunRequest { script, cwd: Some(display(&root)), writes_off: false, wait: None },
+            request: &RunRequest { call_id: None, script, cwd: Some(display(&root)), writes_off: false, wait: None },
             home: &root,
             executable: &old_program,
             environment: &environment,

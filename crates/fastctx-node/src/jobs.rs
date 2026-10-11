@@ -49,6 +49,12 @@ impl Jobs {
         let record = read(&path).await.inspect_err(|_| {
             crate::inbox::retry_job(node, &path);
         })?;
+        let writes = if record.end.is_some() {
+            crate::run_facts::writes(&path).map_err(|error| failure("reading write facts", error))?
+        } else {
+            Vec::new()
+        };
+        crate::run_facts::update_job(node, &path, writes).map_err(|error| failure("updating call facts", error))?;
         crate::inbox::tell_if_ended(node, &record).await.map_err(|error| {
             crate::inbox::retry_job(node, &path);
             failure("telling the job's end", error)
@@ -56,6 +62,10 @@ impl Jobs {
     }
 
     /// Listens for changes to jobs' records: each change names its job.
+    pub(crate) fn notify(&self, job: JobId) {
+        let _ = self.changes.send(job);
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<JobId> {
         self.changes.subscribe()
     }
@@ -104,6 +114,8 @@ impl Jobs {
                 }
             })?;
             crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());
+            crate::run_facts::update_job(&registering, &launched.record, Vec::new())
+                .map_err(|error| failure("updating call facts", error))?;
             Ok(launched)
         })
         .await
@@ -221,8 +233,25 @@ impl Jobs {
                 .map_err(|error| failure("reading completion receipts", error))?;
         }
         let consumed = (!consumed.is_empty()).then(|| Box::new(consumed));
-        let reply =
-            RunReply { machine: machine.clone(), job: launched.job, state, output, visited, answered, consumed };
+        let mut reply = RunReply {
+            run: None,
+            machine: machine.clone(),
+            job: launched.job,
+            state,
+            output,
+            visited,
+            answered,
+            consumed,
+        };
+        if record.call_id.is_some() {
+            let mut facts = crate::run_facts::assemble(&reply, &launched.record)
+                .map_err(|error| failure("recording run facts", error))?;
+            if matches!(reply.state, RunState::Ended { .. }) && !facts.output.as_ref().is_some_and(|output| output.cut)
+            {
+                facts.output = None;
+            }
+            reply.run = Some(Box::new(facts));
+        }
         Ok((reply, record))
     }
 }
@@ -279,10 +308,18 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
             .map(|delivery| delivery.at)
             .unwrap_or_else(Timestamp::now);
     retain_scratch(path, delivered)?;
+    match std::fs::remove_dir_all(path.with_extension("writes")) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
     // The record goes last: a log without one would be found by nobody.
     let mut files = vec![
         PathBuf::from(&record.output),
         path.with_extension("sh"),
+        path.with_extension("wait-taken"),
+        path.with_extension("facts-state"),
+        path.with_extension("facts-pending"),
+        path.with_extension("writes.jsonl"),
         record::lock_path(path),
         path.with_extension("on"),
         path.with_extension("waited"),
@@ -398,7 +435,7 @@ fn settled(record: &JobRecord) -> bool {
             && record.remaining.is_some_and(|n| n > 0))
 }
 
-fn state(record: &JobRecord) -> RunState {
+pub(crate) fn state(record: &JobRecord) -> RunState {
     match (&record.end, &record.exit) {
         (Some(Ended { how: EndedHow::Failed { error }, .. }), _) => RunState::Failed { error: error.clone() },
         (Some(Ended { how: EndedHow::Stopped, .. }), _) => RunState::Stopped,
@@ -523,7 +560,7 @@ fn short(command: &str) -> String {
 }
 
 /// The machines a job's `on`s went to, as `on` noted them beside it.
-fn visited(jobs: &Path, job: &JobId) -> Vec<(fastctx_types::MachineName, JobId)> {
+pub(crate) fn visited(jobs: &Path, job: &JobId) -> Vec<(fastctx_types::MachineName, JobId)> {
     let Ok(text) = std::fs::read_to_string(jobs.join(format!("{job}.on"))) else { return Vec::new() };
     text.lines()
         .filter_map(|line| {

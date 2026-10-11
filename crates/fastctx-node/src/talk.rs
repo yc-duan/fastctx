@@ -230,6 +230,9 @@ pub async fn watch_here(
         _ => (recorded(&directory)?, None),
     };
     let mut history = history(recorded, hosted, about.host.agent.as_str());
+    for event in &mut history {
+        crate::run_facts::attach(&directory, event).map_err(|error| Failure::new(error.to_string()))?;
+    }
     if about.world_started
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session

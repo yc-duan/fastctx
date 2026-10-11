@@ -86,6 +86,8 @@ impl ChangeKind {
 /// deletion separately; repeated patch sections retain their execution order.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FileChange {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<Box<crate::run_facts::WriteFact>>,
     pub path: PathBuf,
     pub kind: ChangeKind,
     pub before_hash: Option<String>,
@@ -100,6 +102,8 @@ pub struct FileChange {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WriteResult {
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub note_prefix: usize,
     pub text: String,
     pub changes: Vec<FileChange>,
     pub changed_since_seen: Vec<PathBuf>,
@@ -108,13 +112,15 @@ pub struct WriteResult {
 /// Patch failures keep earlier commits. No rollback can overwrite a later writer.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WriteError {
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub note_prefix: usize,
     pub message: String,
     pub changes: Vec<FileChange>,
 }
 
 impl From<String> for WriteError {
     fn from(message: String) -> Self {
-        Self { message, changes: Vec::new() }
+        Self { message, changes: Vec::new(), note_prefix: 0 }
     }
 }
 
@@ -131,3 +137,7 @@ impl std::fmt::Display for WriteError {
     }
 }
 impl std::error::Error for WriteError {}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}

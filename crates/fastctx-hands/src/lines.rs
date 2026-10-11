@@ -1,5 +1,7 @@
 //! A disposable on-disk index of original ranges and decoding checkpoints.
 
+mod projection;
+
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};

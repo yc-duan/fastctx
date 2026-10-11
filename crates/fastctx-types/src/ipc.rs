@@ -125,6 +125,10 @@ pub struct Failure {
 #[serde(rename_all = "snake_case")]
 pub enum FailureCode {
     OriginalGone,
+    /// The job is absent; this does not distinguish expiry from earlier collection.
+    OutputNotRetained,
+    /// The holding machine observed that the requested source does not exist.
+    SourceMissing,
 }
 
 impl Failure {
@@ -143,4 +147,13 @@ impl Failure {
             code: Some(FailureCode::OriginalGone),
         }
     }
+
+    pub fn output_not_retained(message: impl Into<String>) -> Self {
+        Self { message: message.into(), not_run: false, code: Some(FailureCode::OutputNotRetained) }
+    }
+
+    pub fn source_missing(message: impl Into<String>) -> Self {
+        Self { message: message.into(), not_run: false, code: Some(FailureCode::SourceMissing) }
+    }
 }
+

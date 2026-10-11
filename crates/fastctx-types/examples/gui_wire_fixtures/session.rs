@@ -35,6 +35,10 @@ fn item(id: &str, what: What) -> Item {
 
 fn changes() -> Vec<SessionChange> {
     vec![
+        SessionChange::RunFactsUpdated {
+            call_id: "host-call-1".into(),
+            update: Box::new(super::run_facts::fixtures().updates[0].clone()),
+        },
         SessionChange::HistoryChanged,
         SessionChange::Forked { source: address(), thread: "source-thread".into(), through: None },
         SessionChange::Forked {
@@ -143,6 +147,7 @@ fn tools() -> Vec<Tool> {
     does.into_iter()
         .enumerate()
         .map(|(i, does)| Tool {
+            run: (i == 1).then(|| Box::new(super::run_facts::example())),
             name: format!("tool-{i}"),
             server: (i != 0).then(|| "tools".into()),
             machine: (i != 0).then(|| "desktop".parse().unwrap()),

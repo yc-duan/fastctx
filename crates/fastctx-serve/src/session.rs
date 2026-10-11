@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use fastctx_client::{CallError, Client};
-use fastctx_hands::run::{Content, present};
+use fastctx_hands::run::Content;
 use fastctx_hands::told;
 use fastctx_types::ipc::Peer;
 use fastctx_types::layout::WorldDir;
@@ -132,6 +132,40 @@ impl Session {
     }
 
     pub async fn run(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
+        let mut answer = self.run_answer(arguments, meta).await;
+        let call_id = meta
+            .and_then(|meta| meta.get("claudecode/toolUseId").or_else(|| meta.get("callId")))
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty());
+        if answer.is_error
+            && let Some(id) = call_id
+        {
+            let recorded = async {
+                let whereabouts = self.whereabouts(meta).await?;
+                let mut client = self.client(meta).await?;
+                let error = answer
+                    .content
+                    .iter()
+                    .filter_map(|part| match part {
+                        Content::Text(text) => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                client
+                    .call(Call::RecordRunFailure { resident: whereabouts.resident, call_id: id.into(), error })
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+            .await;
+            if let Err(error) = recorded {
+                answer.follow(format!("recording tool call facts: {error}"));
+            }
+        }
+        answer
+    }
+
+    async fn run_answer(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
         let command = match arguments.get("command") {
             Some(Value::String(command)) => command.clone(),
             // Some hosts drop or reshape what the model wrote (#34); saying
@@ -185,8 +219,15 @@ impl Session {
         let reply = async {
             let mut client = self.client(meta).await?;
             let call = Call::Run {
+                call_id: meta.and_then(|meta| {
+                    meta.get("claudecode/toolUseId")
+                        .or_else(|| meta.get("callId"))
+                        .and_then(Value::as_str)
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_string)
+                }),
                 resident: whereabouts.resident.clone(),
-                request: RunRequest { script: command, cwd, writes_off: self.writes_off, wait },
+                request: RunRequest { call_id: None, script: command, cwd, writes_off: self.writes_off, wait },
                 node: None,
             };
             client.call(call).await.map_err(|error| error.to_string())
@@ -197,16 +238,36 @@ impl Session {
             _ => None,
         };
         let mut answer = match reply {
-            Ok(Reply::Run(reply)) => Answer {
-                content: present(&reply),
-                is_error: false,
-                receipt: None,
-                source: Some(format!(
-                    "{} {}",
-                    reply.machine,
-                    fastctx_hands::run::present::display_path(&reply.output.log)
-                )),
-                shown: shown_whole(&reply).then(|| reply.job.clone()),
+            Ok(Reply::Run(reply)) => {
+                let (content, regions) = fastctx_hands::run::present::projected(&reply);
+                let call_id = meta
+                    .and_then(|meta| meta.get("claudecode/toolUseId").or_else(|| meta.get("callId")))
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty());
+                let facts = call_id.zip(reply.run.clone()).map(|(id, facts)| crate::answer::FactView {
+                    resident: whereabouts.resident.clone(),
+                    call_id: id.to_string(),
+                    facts,
+                    regions,
+                    full_output: fastctx_types::run_facts::OutputRef {
+                        machine: reply.machine.clone(),
+                        path: reply.output.log.clone(),
+                        bytes: reply.output.bytes,
+                        lines: reply.output.lines,
+                        cut: false,
+                    },
+                });
+                Answer {
+                    facts,
+                    content,
+                    is_error: false,
+                    receipt: None,
+                    source: Some(format!(
+                        "{} {}",
+                        reply.machine,
+                        fastctx_hands::run::present::display_path(&reply.output.log)
+                    )),
+                    shown: shown_whole(&reply).then(|| reply.job.clone()),
                 completed: (!matches!(
                     reply.state,
                     fastctx_types::run::RunState::Running | fastctx_types::run::RunState::Exited { .. }
@@ -216,7 +277,9 @@ impl Session {
                     job: reply.job.clone(),
                     output: reply.output.log.clone(),
                 }),
-            },
+
+                }
+            }
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
             Err(error) => Answer::error(format!("=== run (not run) ===\n{error}")),
         };
@@ -246,7 +309,7 @@ impl Session {
         };
         let reply = async {
             let mut client = self.client(meta).await?;
-            let call = Call::Write { resident: Some(whereabouts.resident.clone()), op, node, town: None };
+            let call = Call::Write { job: None, resident: Some(whereabouts.resident.clone()), op, node, town: None };
             client.call(call).await.map_err(|error| error.to_string())
         }
         .await;
@@ -291,6 +354,7 @@ impl Session {
         .await;
         let mut answer = match reply {
             Ok(Reply::Asked { colleague }) => Answer {
+                facts: None,
                 content: vec![Content::Text(format!(
                     "=== colleague {} on {} (started) ===\nIts last message of each turn will be delivered to you. See what it is doing: fastctx w {}",
                     colleague.resident, colleague.machine, colleague.resident
@@ -354,6 +418,7 @@ impl Session {
                     Landed::Handed { .. } => "handed to its session, which takes it at its next step".to_string(),
                 };
                 Answer {
+                    facts: None,
                     content: vec![Content::Text(format!(
                         "=== message to {} on {} ({how}) ===\nThe last message of the turn it goes into will be delivered to you.",
                         to.resident, to.machine
@@ -577,7 +642,7 @@ impl Session {
         }
     }
 
-    async fn client(&self, meta: Option<&Value>) -> Result<Client, String> {
+    pub(crate) async fn client(&self, meta: Option<&Value>) -> Result<Client, String> {
         self.client_for(self.host(meta)?).await
     }
 

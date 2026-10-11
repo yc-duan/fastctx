@@ -48,9 +48,21 @@ pub enum Call {
     /// Run a script for a resident of this machine, on this machine or on
     /// the machine `node` names.
     Run {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        call_id: Option<String>,
         resident: ResidentId,
         request: RunRequest,
         node: Option<MachineName>,
+    },
+    StoreRunFacts {
+        resident: ResidentId,
+        call_id: String,
+        facts: Box<crate::run_facts::RunFacts>,
+    },
+    RecordRunFailure {
+        resident: ResidentId,
+        call_id: String,
+        error: String,
     },
     /// Runs part of a script on another machine for `resident`, which may
     /// live elsewhere when this script is itself an `on` (`world-run.md`).
@@ -64,6 +76,8 @@ pub enum Call {
     /// Writes for an MCP resident, or for the command's peer when `resident`
     /// is absent. Commands write here; their shell supplies a visitor's town.
     Write {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        job: Option<crate::JobId>,
         resident: Option<ResidentId>,
         op: WriteOp,
         node: Option<MachineName>,

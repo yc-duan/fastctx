@@ -116,6 +116,7 @@ mod tests {
 
     fn render(pieces: Vec<OutputPiece>) -> Vec<Content> {
         present(&RunReply {
+            run: None,
             consumed: None,
             machine: "probe".try_into().unwrap(),
             job: "j-aaaaaa".try_into().unwrap(),

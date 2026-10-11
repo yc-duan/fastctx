@@ -13,6 +13,7 @@ mod blocks;
 mod document;
 mod edit;
 mod excerpts;
+mod facts;
 mod patch;
 mod path;
 mod storage;
@@ -31,6 +32,7 @@ use std::path::PathBuf;
 pub struct Writer {
     world: PathBuf,
     node: String,
+    capture: Option<facts::Capture>,
 }
 
 impl Writer {
@@ -39,27 +41,67 @@ impl Writer {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "World directory must be absolute"));
         }
         std::fs::create_dir_all(world.path())?;
-        Ok(Self { world: canonical_path(world.path())?, node: node.into() })
+        Ok(Self { world: canonical_path(world.path())?, node: node.into(), capture: None })
+    }
+
+    pub fn with_facts(mut self, directory: PathBuf, machine: fastctx_types::MachineName) -> io::Result<Self> {
+        self.capture = Some(facts::Capture::new(directory, machine)?);
+        Ok(self)
     }
 
     pub fn edit(&self, request: EditRequest, seen: &SeenFiles) -> Result<WriteResult, WriteError> {
         let _lock = self.lock().map_err(|error| self.failure("edit", error))?;
-        edit::edit(self, request, seen).map_err(|error| self.failure("edit", error))
+        edit::edit(self, request, seen)
+            .map(|result| self.noted(result, "edit"))
+            .map_err(|error| self.failure("edit", error))
     }
 
     pub fn edit_blocks(&self, request: EditBlocksRequest, seen: &SeenFiles) -> Result<WriteResult, WriteError> {
         let _lock = self.lock().map_err(|error| self.failure("edit", error))?;
-        edit::edit_blocks(self, request, seen).map_err(|error| self.failure("edit", error))
+        edit::edit_blocks(self, request, seen)
+            .map(|result| self.noted(result, "edit"))
+            .map_err(|error| self.failure("edit", error))
     }
 
     pub fn write(&self, request: WriteRequest, seen: &SeenFiles) -> Result<WriteResult, WriteError> {
         let _lock = self.lock().map_err(|error| self.failure("write", error))?;
-        edit::write(self, request, seen).map_err(|error| self.failure("write", error))
+        edit::write(self, request, seen)
+            .map(|result| self.noted(result, "write"))
+            .map_err(|error| self.failure("write", error))
     }
 
     pub fn apply_patch(&self, request: ApplyPatchRequest, seen: &SeenFiles) -> Result<WriteResult, WriteError> {
         let _lock = self.lock().map_err(|error| self.failure("apply_patch", error))?;
-        patch::apply_patch(self, request, seen).map_err(|error| self.failure("apply_patch", error))
+        patch::apply_patch(self, request, seen)
+            .map(|result| self.noted(result, "apply_patch"))
+            .map_err(|error| self.failure("apply_patch", error))
+    }
+
+    fn noted(&self, mut result: WriteResult, operation: &str) -> WriteResult {
+        use fastctx_types::run_facts::{NoteCommand, WriteNote};
+        let command = match operation {
+            "edit" => NoteCommand::Edit,
+            "write" => NoteCommand::Write,
+            "apply_patch" => NoteCommand::ApplyPatch,
+            _ => unreachable!(),
+        };
+        // CLI success is writeln!(stdout, result.text). Edit excerpts follow the note.
+        let text = if result.note_prefix == result.text.len() {
+            format!("{}\n", result.text)
+        } else {
+            result.text[..result.note_prefix].to_string()
+        };
+        let first = result.changes.iter().find_map(|change| change.fact.as_ref().map(|fact| fact.id.clone()));
+        for change in &mut result.changes {
+            if let Some(fact) = &mut change.fact {
+                fact.note = Some(if first.as_ref() == Some(&fact.id) {
+                    WriteNote::Text { command, text: text.clone() }
+                } else {
+                    WriteNote::Same { fact: first.clone().expect("the operation's first fact") }
+                });
+            }
+        }
+        result
     }
 
     fn lock(&self) -> Result<FileLock, WriteError> {
@@ -83,7 +125,9 @@ impl Writer {
             0 => "failed; nothing changed".to_string(),
             n => format!("failed after {}", counted(n)),
         };
-        error.message = format!("=== {operation} on {} ({state}) ===\n{}", self.node, error.message);
+        let note = format!("=== {operation} on {} ({state}) ===\n", self.node);
+        error.note_prefix = note.len();
+        error.message = format!("{note}{}", error.message);
         error
     }
 }

@@ -92,6 +92,7 @@ export type OutputPiece =
   | { kind: "unreadable"; line: number; reason: string };
 
 export interface RunReply {
+  run?: import("./run-facts").RunFacts;
   machine: MachineName;
   job: string;
   state: RunState;

@@ -41,7 +41,7 @@ pub(super) fn apply_patch(
             for path in &stale {
                 message.push_str(&format!("\n{} changed since you last viewed it.", path.display()));
             }
-            return Err(WriteError { message, changes });
+            return Err(WriteError { note_prefix: 0, message, changes });
         }
         match hunk {
             Hunk::AddFile { .. } => added.push(hunk.path().to_path_buf()),
@@ -62,7 +62,7 @@ pub(super) fn apply_patch(
             path.display()
         ));
     }
-    Ok(WriteResult { text, changes, changed_since_seen: stale })
+    Ok(WriteResult { note_prefix: text.len(), text, changes, changed_since_seen: stale })
 }
 
 fn normalize_paths(hunk: &mut Hunk) -> Result<(), String> {
@@ -105,7 +105,11 @@ fn apply_hunk(
             target.publish(
                 before.as_ref(),
                 &after,
-                PublishedEncoding { label: Some(label), selection: selection.as_deref() },
+                PublishedEncoding {
+                    before_selection: selection.as_deref(),
+                    label: Some(label),
+                    selection: selection.as_deref(),
+                },
                 writer,
                 changes,
             )?;
@@ -115,7 +119,7 @@ fn apply_hunk(
         Hunk::DeleteFile { path } => {
             let target = Target::new(path, writer)?;
             let before = target.required()?;
-            target.delete(&before, writer, changes)?;
+            target.delete(&before, target.encoding(&before, seen)?, writer, changes)?;
             seen.remove(&target.resolved);
             Ok(())
         }
@@ -141,10 +145,16 @@ fn apply_hunk(
                 }
                 destination.create_parent(writer)?;
                 source.verify(Some(&before), writer)?;
+                let before_selection =
+                    overwritten.as_ref().map(|before| destination.encoding(before, seen)).transpose()?.flatten();
                 destination.publish(
                     overwritten.as_ref(),
                     &after,
-                    PublishedEncoding { label: Some(document.label()), selection: selection.as_deref() },
+                    PublishedEncoding {
+                        before_selection,
+                        label: Some(document.label()),
+                        selection: selection.as_deref(),
+                    },
                     writer,
                     changes,
                 )?;
@@ -158,16 +168,20 @@ fn apply_hunk(
                             path.display()
                         ));
                     }
-                    source.delete(&current, writer, changes)?;
+                    source.delete(&current, selection.as_deref(), writer, changes)?;
                 } else {
-                    source.delete(&before, writer, changes)?;
+                    source.delete(&before, selection.as_deref(), writer, changes)?;
                 }
                 seen.remove(&source.resolved);
             } else {
                 source.publish(
                     Some(&before),
                     &after,
-                    PublishedEncoding { label: Some(document.label()), selection: selection.as_deref() },
+                    PublishedEncoding {
+                        before_selection: selection.as_deref(),
+                        label: Some(document.label()),
+                        selection: selection.as_deref(),
+                    },
                     writer,
                     changes,
                 )?;

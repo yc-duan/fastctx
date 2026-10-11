@@ -43,11 +43,22 @@ async fn here(
     let sender = sender.clone();
     let read_count = tokio::task::spawn_blocking(move || {
         let mut state = source.state.lock().expect("line source");
-        let index = state.index.as_mut().ok_or_else(|| "line source closed".to_string())?;
-        let count = index.visit(start, count, &cancel, |line, text, ended| {
-            sender.blocking_send(Ok(Received::Text(Part { line, text, ended }))).map_err(|error| error.to_string())
-        })?;
-        let snapshot = observe(&source.path)?;
+        let super::State { index, projection, .. } = &mut *state;
+        let index = index.as_mut().ok_or_else(|| "line source closed".to_string())?;
+        let count = if let Some(projection) = projection {
+            index.visit_projected(start, count, &cancel, projection, |line, text, ended, note| {
+                sender
+                    .blocking_send(Ok(Received::Text(Part { line, text, ended, note })))
+                    .map_err(|error| error.to_string())
+            })?
+        } else {
+            index.visit(start, count, &cancel, |line, text, ended| {
+                sender
+                    .blocking_send(Ok(Received::Text(Part { line, text, ended, note: None })))
+                    .map_err(|error| error.to_string())
+            })?
+        };
+        let snapshot = observe(&source.path).map_err(|error| error.to_string())?;
         if source.job_record.is_none() && snapshot != state.snapshot
             || !snapshot.same_file(&state.snapshot)
             || snapshot.size < state.snapshot.size

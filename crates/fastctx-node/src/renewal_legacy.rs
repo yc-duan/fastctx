@@ -14,7 +14,8 @@ use std::borrow::Cow;
 mod page_identity;
 
 pub(crate) fn enabled(protocol: u32, peer: &Peer) -> bool {
-    (protocol == 10 && matches!(peer, Peer::Command { .. })) || (matches!(protocol, 5..=10) && self::peer(peer))
+    (protocol == 10 && matches!(peer, Peer::Command { .. }))
+        || (protocol < fastctx_types::ipc::PROTOCOL && matches!(protocol, 5..=11) && self::peer(peer))
 }
 
 pub(crate) fn peer(peer: &Peer) -> bool {
@@ -74,6 +75,26 @@ pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
         && let Reply::Machines { collab, .. } = reply
     {
         *collab = None;
+    }
+    if protocol <= 11 {
+        if let Reply::Run(run) = reply {
+            run.run = None;
+        }
+        if let Reply::Written { outcome } = reply {
+            let changes = match outcome {
+                Ok(result) => {
+                    result.note_prefix = 0;
+                    &mut result.changes
+                }
+                Err(error) => {
+                    error.note_prefix = 0;
+                    &mut error.changes
+                }
+            };
+            for change in changes {
+                change.fact = None;
+            }
+        }
     }
     // The World's own facts became a notice of their own in protocol 11;
     // before it they were the World's words, which is what the model reads.

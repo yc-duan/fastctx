@@ -120,7 +120,10 @@ fn consenter_may(node: &Node, by: &MachineName, action: &PageInvocation, town: &
     if refusals.len() < accounts.len() {
         return Ok(());
     }
-    Err(Failure::new(format!("the consent was written by {by}, and {by} may not do this itself: {}", refusals.join("; "))))
+    Err(Failure::new(format!(
+        "the consent was written by {by}, and {by} may not do this itself: {}",
+        refusals.join("; ")
+    )))
 }
 
 /// A page action another machine relayed here: done once this machine has
@@ -140,7 +143,8 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             }
             let town = Some(source.town.clone());
             let owner = fastctx_types::run::JobOwner::Page { page: source };
-            let request = fastctx_types::run::RunRequest { script, cwd: None, writes_off: false, wait: None };
+            let request =
+                fastctx_types::run::RunRequest { call_id: None, script, cwd: None, writes_off: false, wait: None };
             let (reply, _) = node.jobs.run(node, owner, town, request, None).await?;
             Ok(PageResult::Run(reply))
         }

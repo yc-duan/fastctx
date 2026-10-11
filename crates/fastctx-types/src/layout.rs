@@ -202,6 +202,10 @@ pub struct ResidentDir {
 }
 
 impl ResidentDir {
+    pub fn calls(&self) -> PathBuf {
+        self.path.join("calls")
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }

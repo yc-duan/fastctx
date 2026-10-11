@@ -7,6 +7,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 pub(super) struct PublishedEncoding<'a> {
+    pub before_selection: Option<&'a str>,
     pub label: Option<&'a str>,
     pub selection: Option<&'a str>,
 }
@@ -148,11 +149,26 @@ impl Target {
         writer: &Writer,
         changes: &mut Vec<FileChange>,
     ) -> Result<(), String> {
+        let fact = writer
+            .capture
+            .as_ref()
+            .map(|capture| {
+                capture.prepare(
+                    &self.requested,
+                    before.map(|snapshot| snapshot.bytes.as_slice()),
+                    Some(after),
+                    encoding.before_selection,
+                    encoding.selection,
+                    changes.len(),
+                )
+            })
+            .transpose()?;
         let result = publish_checked(&self.resolved, after, Permissions::KeepExisting, before.is_some(), || {
             self.verify(before, writer).map_err(io::Error::other)
         });
         if result.as_ref().map_or_else(|failure| failure.published, |_| true) {
             changes.push(FileChange {
+                fact,
                 path: self.requested.clone(),
                 kind: if before.is_some() { ChangeKind::Modified } else { ChangeKind::Added },
                 before_hash: before.map(|s| content_hash(&s.bytes)),
@@ -160,6 +176,8 @@ impl Target {
                 encoding: encoding.label.map(str::to_owned),
                 encoding_selection: encoding.selection.map(str::to_owned),
             });
+        } else if let Some(diff) = fact.and_then(|fact| fact.diff) {
+            fs::remove_file(diff.path).map_err(|error| error.to_string())?;
         }
         result.map_err(|failure| {
             if failure.published {
@@ -170,10 +188,29 @@ impl Target {
         })
     }
 
-    pub fn delete(&self, before: &Snapshot, writer: &Writer, changes: &mut Vec<FileChange>) -> Result<(), String> {
-        self.verify(Some(before), writer)?;
-        fs::remove_file(&self.requested).map_err(|e| error(&self.requested, e))?;
+    pub fn delete(
+        &self,
+        before: &Snapshot,
+        selection: Option<&str>,
+        writer: &Writer,
+        changes: &mut Vec<FileChange>,
+    ) -> Result<(), String> {
+        let fact = writer
+            .capture
+            .as_ref()
+            .map(|capture| capture.prepare(&self.requested, Some(&before.bytes), None, selection, None, changes.len()))
+            .transpose()?;
+        let result = self
+            .verify(Some(before), writer)
+            .and_then(|()| fs::remove_file(&self.requested).map_err(|e| error(&self.requested, e)));
+        if let Err(error) = result {
+            if let Some(diff) = fact.and_then(|fact| fact.diff) {
+                fs::remove_file(diff.path).map_err(|error| error.to_string())?;
+            }
+            return Err(error);
+        }
         changes.push(FileChange {
+            fact,
             path: self.requested.clone(),
             kind: ChangeKind::Deleted,
             before_hash: Some(content_hash(&before.bytes)),

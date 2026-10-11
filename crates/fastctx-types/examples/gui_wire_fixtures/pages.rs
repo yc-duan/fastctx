@@ -107,6 +107,7 @@ pub fn fixtures() -> Fixtures {
         .collect();
     let results = vec![
         PageResult::Run(RunReply {
+            run: None,
             consumed: None,
             machine: machine.clone(),
             job: "j-abc123".parse().unwrap(),

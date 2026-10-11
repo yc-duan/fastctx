@@ -36,9 +36,13 @@ mod world;
 #[path = "gui_wire_fixtures/management.rs"]
 mod management;
 
+#[path = "gui_wire_fixtures/run_facts.rs"]
+mod run_facts;
+
 #[derive(Serialize)]
 struct Fixtures {
     machine_log: Vec<fastctx_types::machine_log::Page>,
+    run_facts: run_facts::Fixtures,
     accounts: accounts::Fixtures,
     pages: pages::Fixtures,
     session: session::Fixtures,
@@ -58,6 +62,7 @@ struct Fixtures {
 fn main() {
     let fixtures = Fixtures {
         machine_log: machine_log::fixtures(),
+        run_facts: run_facts::fixtures(),
         accounts: accounts::fixtures(),
         pages: pages::fixtures(),
         session: session::fixtures(),

@@ -27,9 +27,29 @@ pub fn write_here(
     town: Option<&TownName>,
     op: WriteOp,
 ) -> io::Result<WriteOutcome> {
+    write_job(world, here, owner, town, op, None)
+}
+
+pub(crate) fn write_job(
+    world: &WorldDir,
+    here: &MachineName,
+    owner: &Address,
+    town: Option<&TownName>,
+    op: WriteOp,
+    job: Option<&fastctx_types::JobId>,
+) -> io::Result<WriteOutcome> {
     let directory = world.owner(here, town, owner);
     let seen = load_seen(&directory.seen())?;
-    let writer = Writer::new(world, here.as_str())?;
+    let mut writer = Writer::new(world, here.as_str())?;
+    if let Some(job) = job {
+        let record: fastctx_types::run::JobRecord = serde_json::from_slice(&std::fs::read(directory.job_record(job))?)?;
+        if record.owner.resident() != Some(owner) || record.end.is_some() {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "write does not belong to an active job"));
+        }
+        if record.call_id.is_some() {
+            writer = writer.with_facts(directory.out().join(format!("{job}.tmp")).join("diffs"), here.clone())?;
+        }
+    }
     let outcome = match op {
         WriteOp::Edit(request) => writer.edit(request, &seen),
         WriteOp::EditBlocks(request) => writer.edit_blocks(request, &seen),
@@ -40,6 +60,13 @@ pub fn write_here(
         Ok(result) => &result.changes,
         Err(error) => &error.changes,
     };
+    if let Some(job) = job {
+        for change in changes {
+            if let Some(fact) = &change.fact {
+                crate::run_facts::write(&directory.job_record(job).with_extension("writes"), fact)?;
+            }
+        }
+    }
     let written: Vec<Seen> =
         changes.iter().map(seen_after).collect::<io::Result<Vec<_>>>()?.into_iter().flatten().collect();
     if !written.is_empty() {

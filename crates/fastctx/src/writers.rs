@@ -76,6 +76,7 @@ fn input() -> anyhow::Result<String> {
 }
 
 fn execute(op: WriteOp) -> anyhow::Result<ExitCode> {
+    let job = std::env::var("FASTCTX_JOB").ok().map(|job| job.parse()).transpose()?;
     let world = WorldDir::under(&fastctx_platform::fastctx_root()?);
     let peer = fastctx_client::command_peer();
     // An invalid stamped identity must not fall through to a host-session hint.
@@ -93,7 +94,7 @@ fn execute(op: WriteOp) -> anyhow::Result<ExitCode> {
         .transpose()?;
     let reply = tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let mut client = Client::connect(&world, peer).await?;
-        anyhow::Ok(client.call(Call::Write { resident: None, op, node: None, town }).await?)
+        anyhow::Ok(client.call(Call::Write { job, resident: None, op, node: None, town }).await?)
     })?;
     match reply {
         Reply::Written { outcome: Ok(result) } => {

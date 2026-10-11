@@ -17,7 +17,25 @@ pub enum Content {
 }
 
 pub fn present(reply: &RunReply) -> Vec<Content> {
+    render(reply, false).0
+}
+
+#[derive(Clone, Debug)]
+pub struct ModelSpan {
+    pub block: usize,
+    pub bytes: Option<std::ops::Range<usize>>,
+    pub span: fastctx_types::run_facts::OutputSpan,
+}
+
+pub fn projected(reply: &RunReply) -> (Vec<Content>, Vec<ModelSpan>) {
+    render(reply, true)
+}
+
+fn render(reply: &RunReply, project: bool) -> (Vec<Content>, Vec<ModelSpan>) {
     let mut answer = Answer::default();
+    if project && let Some(facts) = &reply.run {
+        answer.sources.extend(facts.spans.clone());
+    }
     answer.line(&format!("=== run on {} ({}) ===", reply.machine, facts(reply)));
     let output = &reply.output;
     let log = display_path(&output.log);
@@ -26,11 +44,11 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
     let mut partial = false;
     for piece in &output.pieces {
         match piece {
-            OutputPiece::Text { text, .. } => answer.text(text),
+            OutputPiece::Text { text, .. } => answer.output_text(text),
             OutputPiece::PartOfLine { line, from, to, of, text } => {
                 partial = true;
                 answer.line(&format!("=== line {line}: characters {from}-{to} of {of} ==="));
-                answer.text(text);
+                answer.output_text(text);
             }
             OutputPiece::Omitted { first_line, last_line } => {
                 partial = true;
@@ -39,7 +57,7 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
                 } else {
                     format!("lines {first_line}-{last_line}")
                 };
-                answer.line(&format!("=== {lines} of {} not shown ===", output.lines));
+                answer.output_line(&format!("=== {lines} of {} not shown ===", output.lines));
             }
             OutputPiece::Image { mime, width, height, base64 } => {
                 let caption = format!("(image {width}x{height}, {mime}) ===");
@@ -50,7 +68,7 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
                 }
                 answer.image(mime, base64);
             }
-            OutputPiece::Unreadable { line, reason } => answer.line(&format!("=== line {line}: {reason} ===")),
+            OutputPiece::Unreadable { line, reason } => answer.output_line(&format!("=== line {line}: {reason} ===")),
         }
     }
     match &reply.state {
@@ -63,7 +81,7 @@ pub fn present(reply: &RunReply) -> Vec<Content> {
         _ if partial => answer.line(&format!("=== all of its output is in {log} ===")),
         _ => {}
     }
-    answer.finish()
+    (answer.blocks, answer.regions)
 }
 
 /// The facts for the first line.
@@ -132,9 +150,48 @@ pub fn display_path(path: &str) -> String {
 #[derive(Default)]
 struct Answer {
     blocks: Vec<Content>,
+    sources: std::collections::VecDeque<fastctx_types::run_facts::OutputSpan>,
+    regions: Vec<ModelSpan>,
 }
 
 impl Answer {
+    fn position(&self) -> (usize, usize) {
+        match self.blocks.last() {
+            Some(Content::Text(text)) => (self.blocks.len() - 1, text.len()),
+            _ => (self.blocks.len(), 0),
+        }
+    }
+
+    fn output_text(&mut self, text: &str) {
+        let (block, mut at) = self.position();
+        self.text(text);
+        let mut remaining = text.len();
+        while remaining > 0 {
+            let Some(source) = self.sources.pop_front() else { break };
+            let size = match &source.piece {
+                fastctx_types::run_facts::DisplayPiece::Text { text, .. }
+                | fastctx_types::run_facts::DisplayPiece::PartOfLine { text, .. } => text.len(),
+                _ => panic!("output projection differs from its model text"),
+            };
+            let take = size.min(remaining);
+            let span = super::projection::slice(&source, 0..take);
+            self.regions.push(ModelSpan { block, bytes: Some(at..at + take), span });
+            if take < size {
+                self.sources.push_front(super::projection::slice(&source, take..size));
+            }
+            at += take;
+            remaining -= take;
+        }
+    }
+
+    fn output_line(&mut self, text: &str) {
+        let (block, from) = self.position();
+        self.line(text);
+        let (_, to) = self.position();
+        if let Some(span) = self.sources.pop_front() {
+            self.regions.push(ModelSpan { block, bytes: Some(from..to), span });
+        }
+    }
     /// A head note on a line of its own.
     fn line(&mut self, note: &str) {
         if let Some(Content::Text(open)) = self.blocks.last()
@@ -155,10 +212,9 @@ impl Answer {
     }
 
     fn image(&mut self, mime: &str, base64: &str) {
+        if let Some(span) = self.sources.pop_front() {
+            self.regions.push(ModelSpan { block: self.blocks.len(), bytes: None, span });
+        }
         self.blocks.push(Content::Image { mime: mime.to_string(), base64: base64.to_string() });
-    }
-
-    fn finish(self) -> Vec<Content> {
-        self.blocks
     }
 }
