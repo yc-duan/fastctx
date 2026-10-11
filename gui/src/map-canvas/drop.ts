@@ -1,0 +1,28 @@
+import type { CanvasHandle, CanvasItem, Point } from "./types";
+
+export type ValidTarget = (handle: CanvasHandle, item: CanvasItem) => boolean;
+
+/** Resolve overlapping hit areas by distance to the drawn centre, not DOM order. */
+export function nearestItem(items: readonly CanvasItem[], screen: Point, project: (point: Point) => Point, scale: number): CanvasItem | null {
+  let nearest: CanvasItem | null = null;
+  let distance = Infinity;
+  for (const item of items) {
+    const p = project(item.point);
+    const d = Math.hypot(screen[0] - p[0], screen[1] - p[1]);
+    if (d <= Math.max(22, item.radius * scale) && d < distance) { nearest = item; distance = d; }
+  }
+  return nearest;
+}
+
+/** Validation belongs to the page. This same resolver serves pointer and keyboard
+ * drops, including a final revalidation at release when network facts have changed. */
+export class DropTargets {
+  constructor(private readonly valid: ValidTarget) {}
+  list(handle: CanvasHandle, items: readonly CanvasItem[]): CanvasItem[] { return items.filter(item => this.valid(handle, item)); }
+  at(handle: CanvasHandle, items: readonly CanvasItem[], screen: Point, project: (point: Point) => Point, scale: number): CanvasItem | null {
+    // Hit the actual nearest object first. An invalid object cannot expose a valid
+    // one behind it when hit areas overlap at distant zoom.
+    const nearest = nearestItem(items, screen, project, scale);
+    return nearest && this.valid(handle, nearest) ? nearest : null;
+  }
+}

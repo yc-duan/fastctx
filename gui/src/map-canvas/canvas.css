@@ -1,0 +1,55 @@
+.map-canvas {
+  --canvas-ink: currentColor;
+  --canvas-selection: currentColor;
+  --canvas-paper: transparent;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  user-select: none;
+  background: var(--canvas-paper);
+  cursor: grab;
+}
+.map-canvas[data-moving="true"] { cursor: grabbing; }
+.canvas-ink { position: absolute; transform-origin: 0 0; pointer-events: none; }
+.canvas-overlay, .canvas-hits, .canvas-names { position: absolute; inset: 0; pointer-events: none; }
+.canvas-object, .canvas-handle, .canvas-name { position: absolute; left: 0; top: 0; margin: 0; }
+.canvas-object, .canvas-handle {
+  pointer-events: auto;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  border-radius: 50%;
+  cursor: inherit;
+}
+.canvas-object:focus-visible, .canvas-handle:focus-visible { outline: 2px solid var(--canvas-selection); outline-offset: 3px; }
+.canvas-object[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--canvas-selection); }
+.canvas-object[data-valid="true"] { box-shadow: 0 0 0 1px var(--canvas-selection); }
+.canvas-object[data-target="true"] { box-shadow: 0 0 0 3px var(--canvas-selection); }
+.canvas-name {
+  color: var(--canvas-ink);
+  white-space: pre;
+  font: inherit;
+  font-size: 14px;
+  line-height: 19px;
+  text-align: center;
+}
+.canvas-name[hidden] { display: none; }
+.canvas-handle { width: 44px; height: 44px; font-size: 32px; cursor: crosshair; }
+.canvas-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  color: var(--canvas-ink);
+  background: var(--canvas-paper);
+  cursor: default;
+}
+.canvas-controls button { width: 44px; height: 44px; color: inherit; font: inherit; border: 0; background: transparent; cursor: pointer; }
+.canvas-controls output { min-width: 4em; text-align: center; font-size: 13px; }
+.canvas-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

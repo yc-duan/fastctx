@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Map canvas specimen</title>
+    <script type="module" src="/src/map-canvas/specimen.ts"></script>
+  </head>
+  <body>
+    <div class="canvas-specimen shell">
+      <header><strong>Map canvas</strong><label>World <select id="world"><option value="60">3 hubs · 60 machines</option><option value="crowded">1 hub · 60 machines</option><option value="small">2 hubs · 8 machines</option><option value="empty">Empty</option></select></label><button id="change" type="button">Add / remove</button></header>
+      <main id="map"></main>
+      <footer><span id="summary"></span><output id="result">Select a ring; drag a dot.</output><button id="measure" type="button">Measure</button></footer>
+    </div>
+  </body>
+</html>
