@@ -118,6 +118,12 @@ export class Sidebar {
     const world = store.world.peek();
     const place = this.options.place();
     const now = store.clock.peek();
+    // The new conversation outside any project is a place of its own.
+    const begin = this.element.querySelector<HTMLElement>(".new-talk");
+    const beginning = place.kind === "new" && place.town === null;
+    begin?.classList.toggle("current", beginning);
+    if (beginning) begin?.setAttribute("aria-current", "page");
+    else begin?.removeAttribute("aria-current");
     const talks = conversationsOf(world);
     const facts = factsByMachine(world);
     const waiting = talks.filter((r) => r.now?.waiting_for_user).length;

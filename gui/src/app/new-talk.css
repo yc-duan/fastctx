@@ -1,0 +1,315 @@
+/* A new conversation's page: in its quiet middle, the chosen agent's mark
+   drawn by hand and the place's name; at its foot, the input where a
+   conversation keeps it, with what the words go to above them. */
+
+.new-talk-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Its middle sits a little above the true centre, where the eye takes a
+   page's centre to be. */
+.new-talk-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--gutter) max(var(--space-8), 9vh);
+  text-align: center;
+}
+
+.new-talk-mark {
+  height: 52px;
+  color: var(--text-3);
+}
+
+.new-talk-mark svg {
+  width: 52px;
+  height: 52px;
+  overflow: visible;
+  stroke-width: 1.1;
+  filter: url(#pen-marker);
+}
+
+/* The mark is drawn once, a stroke at a time, when an agent is chosen. */
+.new-talk-mark svg :is(path, rect, circle) {
+  stroke-dasharray: 1;
+  animation: mark-draw 1100ms var(--fold-easing) both;
+}
+
+.new-talk-mark svg :is(path, rect, circle):nth-child(2) {
+  animation-delay: 320ms;
+}
+
+@keyframes mark-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+.new-talk-title {
+  margin: 0;
+  max-width: min(var(--column), 100%);
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: calc(var(--body-size) * 1.6);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
+/* Nothing scrolls beneath this input. */
+.new-talk-dock::before {
+  display: none;
+}
+
+/* What using another's agent opens: said once, quietly, over the input. */
+.new-talk-warn {
+  max-width: var(--column);
+  margin: 0 auto var(--space-2);
+  padding: 0 var(--space-4);
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--accent);
+}
+
+/* What the words go to: the agent, the machine it works on, the project,
+   each a quiet label that opens its choices. */
+.talk-context {
+  display: flex;
+  gap: 2px;
+  margin: calc(-1 * var(--space-1)) 0 var(--space-2) calc(-1 * var(--space-2));
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.talk-context::-webkit-scrollbar {
+  display: none;
+}
+
+.talk-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--size-small);
+  color: var(--text-2);
+  white-space: nowrap;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.talk-chip > .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.talk-chip-name {
+  color: var(--text);
+}
+
+.talk-chip-sub {
+  color: var(--text-3);
+}
+
+.talk-chip-sub::before {
+  content: "·";
+  margin-right: 6px;
+}
+
+.talk-chip-sub.who {
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.talk-chip.lent .talk-chip-sub {
+  color: var(--accent);
+}
+
+/* Where it works, when that is not where it lives: after an arrow of a
+   shell. */
+.talk-chip-works {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+}
+
+.talk-chip-works::before {
+  content: "→";
+  margin-right: 2px;
+  color: var(--text-3);
+}
+
+.talk-chip-works > .glyph {
+  color: var(--text-3);
+}
+
+.talk-chip.quiet .talk-chip-name,
+.talk-chip.empty .talk-chip-name {
+  color: var(--text-3);
+}
+
+/* A small arrow says the label opens. */
+.talk-chip > .glyph:last-child {
+  opacity: 0.7;
+}
+
+.talk-chip:hover,
+.talk-chip[aria-expanded="true"] {
+  background: var(--hairline);
+}
+
+/* A label's choices, risen over the input. */
+.talk-pop {
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: calc(100% + var(--space-2));
+  z-index: 6;
+  max-height: min(56dvh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  animation: panel-rise var(--fold) var(--fold-easing) both;
+}
+
+.talk-pop[data-pop="town"] {
+  right: auto;
+  width: min(320px, calc(100% - var(--space-6)));
+}
+
+.talk-pop .picker-line {
+  grid-template-columns: 8em minmax(0, 1fr);
+}
+
+.talk-pop .login-choice > .glyph {
+  flex: none;
+  align-self: center;
+  color: var(--text-3);
+}
+
+.talk-pop .login-choice.chosen > .glyph {
+  color: var(--accent);
+}
+
+/* The picker's own space below it is the room between it and these. */
+.pop-section {
+  margin-top: var(--space-1);
+}
+
+.pop-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 calc(-1 * var(--space-2));
+}
+
+.pop-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  text-align: left;
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.pop-row:hover:not(:disabled),
+.pop-row.chosen {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.pop-row:disabled {
+  color: var(--text-3);
+}
+
+.pop-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pop-row > .glyph {
+  flex: none;
+  color: var(--accent);
+}
+
+@media (max-width: 760px) {
+  .talk-pop,
+  .talk-pop[data-pop="town"] {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 72dvh;
+    padding: var(--space-4) var(--space-5) calc(var(--space-5) + env(safe-area-inset-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+    animation-name: sheet-rise;
+  }
+
+  .talk-pop .picker-line {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 4px;
+  }
+
+  .pop-row,
+  .talk-pop .choice {
+    min-height: 44px;
+    align-items: center;
+  }
+
+  /* Labels that do not fit on one line go on to the next; who is logged
+     in is said in the agent's choices only. */
+  .talk-context {
+    flex-wrap: wrap;
+  }
+
+  .talk-chip {
+    height: 34px;
+  }
+
+  .talk-chip-sub.who {
+    display: none;
+  }
+
+  /* As every sheet on a phone: a shade over the rest, a tap on it only
+     puts the sheet away. */
+  .new-talk-dock:has(.talk-pop:not([hidden]))::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+    background: rgba(0, 0, 0, 0.36);
+    animation: sheet-scrim var(--fold) ease both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-talk-mark svg :is(path, rect, circle),
+  .talk-pop {
+    animation: none;
+  }
+}
+
+/* The sidebar's way here, while it is the page shown. */
+.new-talk.current {
+  background: color-mix(in srgb, var(--accent-wash) 55%, var(--bg-elevated));
+}

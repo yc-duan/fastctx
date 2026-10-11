@@ -10,6 +10,8 @@ const features: Feature[] = ["collaboration", "memory"];
 export type Place =
   | { kind: "home" }
   | { kind: "talk"; address: Address }
+  /** Beginning a conversation, in a project or outside any. */
+  | { kind: "new"; town: string | null }
   | { kind: "project"; town: string }
   | { kind: "journal"; town: string; journal: string }
   /** A page of a project: a version of it, or the current one. */
@@ -42,6 +44,8 @@ export function link(place: Place): string {
       return "#/";
     case "talk":
       return `#/talk/${part(`${place.address.resident}@${place.address.machine}`)}`;
+    case "new":
+      return place.town === null ? "#/new" : `#/new/${part(place.town)}`;
     case "project":
       return `#/project/${part(place.town)}`;
     case "journal":
@@ -83,6 +87,8 @@ export function placeOf(hash: string): Place {
       if (at > 0) return { kind: "talk", address: { resident: name.slice(0, at), machine: name.slice(at + 1) } };
       break;
     }
+    case "new":
+      return { kind: "new", town: parts[1] || null };
     case "project":
       if (parts[1]) return { kind: "project", town: parts[1] };
       break;

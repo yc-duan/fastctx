@@ -1,45 +1,48 @@
-// Beginning a conversation (`world-gui.md`, 界面的结构): which agent, as
-// one of its logins, chosen among those the user holds, grouped as they hold
-// them: on their own machines, on machines of others they may work on
-// (shared with them, or a member's to a super administrator), and lent to
-// them by another account. Each says which program, on which machine, who
-// is logged in and how much of its usage is spent, as its own machine says.
-// Then the account it works for where more than one may open it there,
-// which model and how hard it thinks, which project, the machine it works
-// on (the one it lives on unless another is chosen, `world-run.md`, 这里),
-// and the first words. Which agents may call which models is the model
-// collaboration feature's, never a conversation's. An agent lent to the user works
-// on no machine of its own choosing: each of its commands names one of the
-// user's machines, so it is asked no machine to work on, and the files
-// attached for it, other than images, go to a machine of the user's chosen
-// as they are attached. The first time the user is about to use an agent
-// on a machine of another, what that means is said before it begins: that
-// machine may then reach the user's machines (`world-network.md`).
+// Beginning a conversation (`world-gui.md`, 界面的结构): a page of its own,
+// for a project's new conversation and for one outside any, each keeping
+// what was being written there until it is sent, however often the user
+// goes elsewhere and comes back.
 //
-// A sheet over the page, opened by the button in the sidebar or Ctrl+N; on
-// a phone it rises from the foot of the screen. Every machine is asked what
-// agents it has once each time the sheet opens. Once the agent is asked in,
-// its conversation opens and its first turn is watched from the start.
+// Its input stands where a conversation's does, the same box, so the
+// conversation it begins grows above the words without the page moving.
+// Above them, three small labels say what the words go to, and each opens
+// what it can be: which agent, as one of its logins, chosen among those the
+// user holds, grouped as they hold them (on their own machines, on machines
+// of others they may work on, lent to them by another account), each with
+// who is logged in and how much of its usage is spent, as its machine
+// says; the machine it works on, the one it lives on unless another is
+// chosen (`world-run.md`, 这里); and the project. The model and how hard it
+// thinks are the conversation's own chip and panel. Above the input, the
+// chosen agent's mark and the place's name; nothing more.
 //
-// Files may come with the first words. They wait in the sheet while the
-// agent and project are still being chosen, and go when the conversation is
-// begun: the first makes a place on the agent's machine for the agent about
-// to be asked in, the rest join it there, and the agent starts in that
-// place with all of them.
+// An agent lent to the user works on no machine of its own choosing: each
+// of its commands names one of the user's machines, so it is asked no
+// machine to work on, and the files attached for it, other than images, go
+// to a machine of the user's chosen as they are attached. The first time
+// the user is about to use an agent on a machine of another, what that
+// means is said before it begins: that machine may then reach the user's
+// machines (`world-network.md`). Which agents may call which models is the
+// model collaboration feature's, never a conversation's.
+//
+// Every machine is asked what agents it has each time the page is shown.
+// Files wait in the input while the agent and project are still being
+// chosen, and go when the conversation is begun: the first makes a place on
+// the agent's machine for the agent about to be asked in, the rest join it
+// there, and the agent starts in that place with all of them.
 
 import { AttachTray, type AttachSource, type AttachWords } from "../conversation/attach";
-import { EffortSlider, effortLabel } from "../conversation/effort-slider";
 import { glyph } from "../conversation/glyphs";
+import { ModelPanel, type ModelPanelWords } from "../conversation/model-panel";
 import { escape } from "../conversation/prose";
-import { redrawKeepingFocus } from "./focus";
 import type { HubAccount, Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
-import { accountOf, homeChoice, homeLabel, homesOf, installed, loggedOut, windowsShort, type HomeWords } from "./agent-homes";
-import type { ConsentHome } from "./claude-consent";
 import type { Attachment, UploadTarget } from "../world/attachments";
 import type { WorldNow } from "../world/bridge";
+import type { Offers } from "../world/control";
 import type { Address } from "../world/events";
+import { accountOf, homeChoice, homeLabel, homesOf, installed, loggedOut, windowsShort, type HomeWords } from "./agent-homes";
+import type { ConsentHome } from "./claude-consent";
 import {
   borrowedOf,
   filePlaces,
@@ -86,6 +89,11 @@ export interface NewTalkOptions {
   store: Store;
   words: NewTalkWords;
   homeWords: HomeWords;
+  modelWords: ModelPanelWords;
+  /** The head every page has. */
+  head(title: string): string;
+  /** The project the page begins conversations in; null outside any. */
+  town: string | null;
   /** What the machines' own programs say of the agents on them: one, or
    *  with null every machine reached. */
   agents(machine: string | null): Promise<WorldAgents>;
@@ -100,8 +108,8 @@ export interface NewTalkOptions {
     words: AttachWords;
     /** Carries one file to a machine for the conversation about to begin. */
     upload(machine: string, target: UploadTarget, source: AttachSource, progress: (sent: number) => void): Promise<Attachment>;
-    /** Files dropped onto the window, by path, where the shell gives them
-     *  so; returns how to stop listening. */
+    /** Files dropped onto the window, by path, where the shell gives
+     *  them so; returns how to stop listening. */
     drops?(on: { over(over: boolean): void; dropped(paths: string[]): void }): () => void;
   };
 }
@@ -144,8 +152,13 @@ interface Line {
   options: Option[];
 }
 
+/** What a label above the input opens. */
+type Pop = "agent" | "town";
+
 const agentsKnown = ["codex", "claude"];
 const programName = (agent: string) => (agent === "codex" ? "Codex" : agent === "claude" ? "Claude" : agent);
+const markOf = (agent: string) => (agent === "claude" ? "claude" : "codex");
+const coarse = () => matchMedia("(pointer: coarse)").matches;
 
 /** What is known of the agents on one machine. */
 type Asked = { state: "asking" } | { state: "known"; facts: AgentFacts[] } | { state: "unknown"; why: string } | { state: "offline" };
@@ -158,11 +171,12 @@ function remembered(key: string): string | null {
   }
 }
 
-function remember(key: string, value: string): void {
+function remember(key: string, value: string | null): void {
   try {
-    localStorage.setItem(key, value);
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
   } catch {
-    // Not kept: the next sheet starts from the usual choice.
+    // Not kept: the next page starts from the usual choice.
   }
 }
 
@@ -172,132 +186,168 @@ function usable(facts: AgentFacts): boolean {
   return installed(facts) && !loggedOut(facts);
 }
 
-
 export class NewTalk {
-  private readonly dialog: HTMLDialogElement;
+  readonly element: HTMLElement;
   private readonly form: HTMLFormElement;
   private readonly input: HTMLTextAreaElement;
   private readonly note: HTMLElement;
+  private readonly warn: HTMLElement;
   private readonly start: HTMLButtonElement;
+  private readonly context: HTMLElement;
+  private readonly pop: HTMLElement;
+  private readonly chip: HTMLButtonElement;
+  private readonly models: ModelPanel;
   /** The login chosen, by its key; the one used last where none is. */
   private pick: string | null = remembered("pick");
-  /** A machine whose logins come first, when the panel was opened from it. */
+  /** A machine whose logins come first, when the page was opened from it. */
   private machine: string | null = null;
-  private town: string | null = null;
+  private town: string | null;
   private model: string | null = null;
   private effort: string | null = null;
   /** The account chosen, as `hub/account`. */
   private account: string | null = remembered("account");
   /** Where it works, as written; null for the machine it lives on. */
   private worksOn: string | null = null;
-  /** How hard it thinks, drawn by hand as in a conversation. */
-  private readonly slider: EffortSlider;
   /** Where the files of a lent agent go, as written. */
   private filesOn: string | null = null;
   private asked = new Map<string, Asked>();
   /** Every machine is being asked about its agents. */
   private askingAll = false;
-  /** The logins are all shown to choose among; otherwise only the one
-   *  chosen, with a way to choose another. */
-  private choosing = false;
+  /** The label whose choices are open. */
+  private opened: Pop | null = null;
   private busy = false;
   private tray: AttachTray | null = null;
   /** The place on a machine the files sent so far went to, and for which
    *  machine, agent and project; another choice needs another place. */
   private draft: { resident: string; for: string } | null = null;
   private stopDrops: (() => void) | null = null;
+  /** The mark drawn last, so it is drawn again only for another agent. */
+  private marked = "";
+  /** Where the words being written are kept between visits. */
+  private readonly kept: string;
 
   constructor(private readonly options: NewTalkOptions) {
     const { words } = options;
-    this.dialog = document.createElement("dialog");
-    this.dialog.className = "sheet new-talk-sheet";
-    this.dialog.setAttribute("aria-label", words.title);
-    this.dialog.innerHTML = `
-      <form class="sheet-body" method="dialog">
-        <header class="sheet-head">
-          <h2 class="sheet-title">${escape(words.title)}</h2>
-          <button class="icon-button sheet-close" type="button" aria-label="${escape(words.cancel)}">${glyph("close", 18)}</button>
-        </header>
-        <div class="choices"></div>
-        <div class="first-words-box">
-          <div class="sheet-tray"></div>
-          <div class="files-on"></div>
-          <textarea class="first-words" rows="3" placeholder="${escape(words.firstWords)}" aria-label="${escape(words.firstWords)}"></textarea>
-        </div>
-        <p class="sheet-note" role="alert" hidden></p>
-        <footer class="sheet-foot">
-          <span class="sheet-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><span class="sheet-hint">${escape(words.hint)}</span></span>
-          <button class="sheet-go" type="submit">${escape(words.start)}</button>
-        </footer>
-      </form>`;
-    document.body.append(this.dialog);
-    this.form = this.dialog.querySelector("form")!;
-    this.input = this.dialog.querySelector("textarea")!;
-    this.note = this.dialog.querySelector<HTMLElement>(".sheet-note")!;
-    this.start = this.dialog.querySelector<HTMLButtonElement>(".sheet-go")!;
-    this.slider = new EffortSlider(words.effort, (effort) => {
-      this.effort = effort;
+    this.town = options.town;
+    this.kept = `new-draft:${options.town ?? ""}`;
+    this.element = document.createElement("div");
+    this.element.className = "new-talk-page";
+    this.element.innerHTML = `
+      ${options.head("")}
+      <div class="new-talk-stage">
+        <div class="new-talk-mark" aria-hidden="true"></div>
+        <h1 class="new-talk-title"></h1>
+      </div>
+      <footer class="composer-dock new-talk-dock">
+        <p class="new-talk-warn" hidden></p>
+        <form class="composer new-talk-composer">
+          <div class="composer-menus"><div class="talk-pop" role="dialog" hidden></div></div>
+          <div class="talk-context"></div>
+          <div class="composer-tray"></div>
+          <div class="composer-files-on" hidden></div>
+          <textarea rows="1" enterkeyhint="send"></textarea>
+          <div class="composer-row">
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
+            <span class="composer-note" aria-live="polite"></span>
+            <button class="composer-action" type="submit" aria-label="${escape(words.start)}" title="${escape(words.start)}">${glyph("send", 18)}</button>
+          </div>
+        </form>
+      </footer>`;
+    this.form = this.element.querySelector("form")!;
+    this.input = this.element.querySelector("textarea")!;
+    this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
+    this.warn = this.element.querySelector<HTMLElement>(".new-talk-warn")!;
+    this.start = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
+    this.context = this.element.querySelector<HTMLElement>(".talk-context")!;
+    this.pop = this.element.querySelector<HTMLElement>(".talk-pop")!;
+    this.chip = this.element.querySelector<HTMLButtonElement>(".composer-chip")!;
+    this.models = new ModelPanel(this.chip, options.modelWords, words.english, {
+      model: async (model, effort) => {
+        this.model = model;
+        this.effort = effort;
+        this.drawModel();
+      },
+      tier: async () => {},
     });
-    this.dialog.querySelector(".sheet-close")!.addEventListener("click", () => this.close());
-    // A click on the backdrop, outside the sheet, closes it.
-    this.dialog.addEventListener("click", (event) => {
-      if (event.target === this.dialog) this.close();
+    this.element.querySelector(".composer-menus")!.append(this.models.element);
+    this.input.value = remembered(this.kept) ?? "";
+    this.element.addEventListener("click", (event) => this.click(event));
+    // A choice open over the input goes away with a press anywhere else,
+    // or with Escape.
+    document.addEventListener("pointerdown", (event) => {
+      if (!this.opened || !this.element.isConnected) return;
+      const target = event.target as HTMLElement;
+      if (!this.pop.contains(target) && !target.closest("[data-pop]")) this.choose(null);
     });
-    this.dialog.addEventListener("click", (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-choice]");
-      if (!button || button.disabled || this.busy) return;
-      const value = button.dataset.value!;
-      switch (button.dataset.choice) {
-        case "expand":
-          this.choosing = !this.choosing;
-          break;
-        case "pick":
-          this.pick = value;
-          this.choosing = false;
-          this.worksOn = null;
-          this.model = null;
-          this.effort = null;
-          break;
-        case "account":
-          this.account = value;
-          this.worksOn = null;
-          break;
-        case "works":
-          this.worksOn = value || null;
-          break;
-        case "model":
-          this.model = value;
-          this.effort = null;
-          break;
-        case "files-on":
-          this.filesOn = value;
-          remember("files-on", value);
-          break;
-        default:
-          this.town = value || null;
+    this.element.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && this.opened) {
+        event.stopPropagation();
+        const label = this.context.querySelector<HTMLElement>(`[data-pop="${this.opened}"]`);
+        this.choose(null);
+        label?.focus();
       }
-      redrawKeepingFocus(this.dialog, () => this.draw());
     });
     this.form.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.submit();
     });
-    this.input.addEventListener("input", () => this.drawStart());
+    this.input.addEventListener("input", () => {
+      remember(this.kept, this.input.value || null);
+      this.fit();
+      this.drawStart();
+    });
     this.input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !matchMedia("(pointer: coarse)").matches) {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !coarse()) {
         event.preventDefault();
         void this.submit();
       }
     });
-    this.dialog.addEventListener("close", () => {
-      this.stopDrops?.();
-      this.stopDrops = null;
-    });
     if (options.attach) this.attaching(options.attach);
+    this.draw();
+  }
+
+  /** The page's name: the project's, or a new conversation's. */
+  get title(): string {
+    const { words, store } = this.options;
+    const town = this.options.town ? store.world.peek()?.towns.find((one) => one.town === this.options.town) : null;
+    return town ? `${words.title} · ${town.record.name}` : words.title;
+  }
+
+  /** The page is shown again: what each machine has is asked again, as a
+   *  program may have been installed, logged in or updated since; `pick`
+   *  is a login to begin with, `machine` one whose logins come first. */
+  show(pick: string | null = null, machine: string | null = null): void {
+    if (pick) this.pick = pick;
+    if (pick || machine) this.machine = machine;
+    this.note.textContent = "";
+    this.asked.clear();
+    this.askAll();
+    this.stopDrops?.();
+    this.stopDrops = this.listen();
+    this.draw();
+    queueMicrotask(() => {
+      this.fit();
+      if (!coarse()) this.input.focus({ preventScroll: true });
+    });
+  }
+
+  /** The page is left: it stops listening for files dropped on the window;
+   *  what was written and attached stays for when it is shown again. */
+  leave(): void {
+    this.stopDrops?.();
+    this.stopDrops = null;
+    this.choose(null);
+    this.models.hide();
+  }
+
+  private fit(): void {
+    this.input.style.height = "auto";
+    this.input.style.height = `${this.input.scrollHeight}px`;
+    this.input.style.overflowY = this.input.scrollHeight > this.input.clientHeight + 1 ? "auto" : "hidden";
   }
 
   /** Files come with the first words: picked with the paperclip, pasted,
-   *  or dropped onto the sheet. */
+   *  or dropped onto the page. */
   private attaching(attach: NonNullable<NewTalkOptions["attach"]>): void {
     const tray = new AttachTray(
       attach.words,
@@ -322,9 +372,9 @@ export class NewTalk {
       true,
     );
     this.tray = tray;
-    this.dialog.querySelector(".sheet-tray")!.replaceWith(tray.element);
-    const button = this.dialog.querySelector<HTMLButtonElement>(".composer-attach")!;
-    const pick = this.dialog.querySelector<HTMLInputElement>(".composer-pick")!;
+    this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
+    const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
+    const pick = this.element.querySelector<HTMLInputElement>(".composer-pick")!;
     button.hidden = false;
     button.innerHTML = glyph("attach", 18);
     button.setAttribute("aria-label", attach.words.attach);
@@ -336,9 +386,9 @@ export class NewTalk {
       this.input.focus();
     });
     // As in a conversation: the camera on a phone, nowhere else.
-    if (matchMedia("(pointer: coarse)").matches) {
-      const photo = this.dialog.querySelector<HTMLButtonElement>(".composer-photo")!;
-      const shot = this.dialog.querySelector<HTMLInputElement>(".composer-shot")!;
+    if (coarse()) {
+      const photo = this.element.querySelector<HTMLButtonElement>(".composer-photo")!;
+      const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
       photo.hidden = false;
       photo.innerHTML = glyph("camera", 18);
       photo.setAttribute("aria-label", attach.words.photo);
@@ -361,23 +411,23 @@ export class NewTalk {
     veil.className = "drop-veil";
     veil.hidden = true;
     veil.innerHTML = `<div class="drop-card">${glyph("attach", 22)}<span>${escape(this.options.words.dropHere)}</span></div>`;
-    this.form.append(veil);
-    // In a browser, files dragged over the sheet; in the shell, the window
-    // takes the drop and gives their paths, heard while the sheet is open.
+    this.element.append(veil);
+    // In a browser, files dragged over the page; in the shell, the window
+    // takes the drop and gives their paths, heard while the page is shown.
     let depth = 0;
-    this.form.addEventListener("dragenter", (event) => {
+    this.element.addEventListener("dragenter", (event) => {
       if (!event.dataTransfer?.types.includes("Files")) return;
       depth += 1;
       veil.hidden = false;
     });
-    this.form.addEventListener("dragleave", () => {
+    this.element.addEventListener("dragleave", () => {
       depth = Math.max(0, depth - 1);
       if (!depth) veil.hidden = true;
     });
-    this.form.addEventListener("dragover", (event) => {
+    this.element.addEventListener("dragover", (event) => {
       if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
     });
-    this.form.addEventListener("drop", (event) => {
+    this.element.addEventListener("drop", (event) => {
       depth = 0;
       veil.hidden = true;
       if (!event.dataTransfer?.files.length) return;
@@ -387,11 +437,11 @@ export class NewTalk {
     this.listen = () =>
       attach.drops?.({
         over: (over) => {
-          if (this.dialog.open) veil.hidden = !over;
+          if (this.element.isConnected) veil.hidden = !over;
         },
         dropped: (paths) => {
           veil.hidden = true;
-          if (this.dialog.open && !this.busy) tray.addPaths(paths);
+          if (this.element.isConnected && !this.busy) tray.addPaths(paths);
         },
       }) ?? null;
   }
@@ -416,36 +466,6 @@ export class NewTalk {
     return homesOf(this.known(option.machine) ?? [], option.agent).find((facts) => homeChoice(facts) === option.home) ?? null;
   }
 
-  /** Opens the sheet; `town` is the project to begin in, when opened from
-   *  one, and `pick` the login to begin with, when one was chosen. */
-  /** Opens the panel; `pick` is a login to start with, `machine` one whose
-   *  logins come first when that is not given or cannot begin. */
-  open(town: string | null = null, pick: string | null = null, machine: string | null = null): void {
-    if (pick) this.pick = pick;
-    this.machine = machine;
-    this.choosing = false;
-    this.town = town;
-    this.model = null;
-    this.effort = null;
-    this.worksOn = null;
-    this.note.hidden = true;
-    // What is on each machine is asked again each time: a program may have
-    // been installed, logged in or updated since.
-    this.asked.clear();
-    this.askAll();
-    this.draw();
-    if (!this.dialog.open) {
-      this.dialog.showModal();
-      this.stopDrops = this.listen();
-    }
-    this.input.focus();
-  }
-
-  close(): void {
-    if (this.busy) return;
-    this.dialog.close();
-  }
-
   /** Asks every machine reached what agents it has, at once. */
   private askAll(): void {
     this.askingAll = true;
@@ -465,7 +485,7 @@ export class NewTalk {
       })
       .finally(() => {
         this.askingAll = false;
-        if (this.dialog.open) this.draw();
+        this.draw();
       });
   }
 
@@ -563,7 +583,7 @@ export class NewTalk {
   }
 
   /** The models the chosen login's program lists. */
-  private models(option: Option | null): AgentModel[] {
+  private modelsOf(option: Option | null): AgentModel[] {
     const facts = this.factsOf(option);
     return facts?.models.kind === "known" ? facts.models.value : [];
   }
@@ -585,12 +605,20 @@ export class NewTalk {
     return { html, said };
   }
 
-  /** One login as a choice: the program; who is logged in where the
-   *  machine has several of its logins, or where it is lent; how much of
-   *  each window is spent; or why it cannot begin. Said whole to a screen
-   *  reader. */
+  /** Who is logged in to a login, where that tells it apart: the machine
+   *  has several of its agent's logins, or it is lent. */
+  private who(option: Option, line: Line): string | null {
+    const facts = this.factsOf(option);
+    if (!facts) return null;
+    const several = line.options.filter((other) => other.agent === option.agent).length > 1;
+    return several || option.lent ? (accountOf(facts).email ?? homeLabel(facts, this.options.homeWords)) : null;
+  }
+
+  /** One login as a choice: the program; who is logged in where that tells
+   *  it apart; how much of each window is spent; or why it cannot begin.
+   *  Said whole to a screen reader. */
   private optionChoice(option: Option, line: Line): string {
-    const { words, homeWords } = this.options;
+    const { words } = this.options;
     const asked = this.asked.get(option.machine);
     const facts = this.factsOf(option);
     const name = programName(option.agent);
@@ -605,34 +633,14 @@ export class NewTalk {
     else if (!facts) note = option.lent ? words.lentGone : words.notInstalled;
     else if (loggedOut(facts)) note = words.loggedOut;
     else {
-      const several = line.options.filter((other) => other.agent === option.agent).length > 1;
-      who = several || option.lent ? (accountOf(facts).email ?? homeLabel(facts, homeWords)) : null;
+      who = this.who(option, line);
       spent = this.spent(facts);
       consent = facts.unattended?.kind === "known" && !facts.unattended.value ? words.needsConsent : null;
     }
     const said = [name, who, spent?.said, consent, note].filter(Boolean).join(" · ");
-    const meter = spent ? spent.html : "";
     const startable = this.startable(option, line);
     const chosen = option.key === this.pick;
-    return `<button type="button" class="choice login-choice${chosen ? " chosen" : ""}" role="radio" aria-checked="${chosen}" aria-label="${escape(said)}" title="${escape(said)}" data-choice="pick" data-value="${escape(option.key)}"${startable ? "" : " disabled"}><span class="login-agent">${escape(name)}</span>${who ? `<span class="login-who">${escape(who)}</span>` : ""}${meter}${consent ? `<span class="choice-note caution">${escape(consent)}</span>` : ""}${note ? `<span class="choice-note">${escape(note)}</span>` : ""}</button>`;
-  }
-
-  /** The login chosen, in a line: the program, its machine and whose it
-   *  is, how much is spent; and the way to choose another. */
-  private chosenLine(option: Option, line: Line): string {
-    const { words } = this.options;
-    const facts = this.factsOf(option);
-    const spent = facts && !loggedOut(facts) ? this.spent(facts) : null;
-    const notes = [line.here ? words.here : "", option.lent ? words.lentBy(option.lent.owner ?? "") : line.owner && line.hold !== "mine" ? words.ownedBy(line.owner) : ""].filter(Boolean);
-    const lentWhy = option.lent ? words.lentWorks(option.lent.owner ?? "") : "";
-    const who = facts && (line.options.filter((other) => other.agent === option.agent).length > 1 || option.lent) ? (accountOf(facts).email ?? homeLabel(facts, this.options.homeWords)) : null;
-    return `<div class="choice-row agent-chosen">
-      <span class="choice-label">${escape(words.agent)}</span>
-      <div class="choice-options">
-        <span class="chosen-login${option.lent ? " lent" : ""}"${lentWhy ? ` title="${escape(lentWhy)}"` : ""}><span class="login-agent">${escape(programName(option.agent))}</span><span class="chosen-machine"><span class="dot" aria-hidden="true"></span>${escape(option.written)}</span>${notes.map((note) => `<span class="picker-note">${escape(note)}</span>`).join("")}${who ? `<span class="login-who">${escape(who)}</span>` : ""}${spent ? spent.html : ""}</span>
-        <button type="button" class="text-button quiet-button chosen-change" data-choice="expand" data-value="" aria-expanded="false">${escape(words.another)}</button>
-      </div>
-    </div>`;
+    return `<button type="button" class="choice login-choice${chosen ? " chosen" : ""}" role="radio" aria-checked="${chosen}" aria-label="${escape(said)}" title="${escape(said)}" data-choice="pick" data-value="${escape(option.key)}"${startable ? "" : " disabled"}>${glyph(markOf(option.agent), 14)}<span class="login-agent">${escape(name)}</span>${who ? `<span class="login-who">${escape(who)}</span>` : ""}${spent ? spent.html : ""}${consent ? `<span class="choice-note caution">${escape(consent)}</span>` : ""}${note ? `<span class="choice-note">${escape(note)}</span>` : ""}</button>`;
   }
 
   /** The agents the user may begin with, grouped as they hold them, a line
@@ -655,10 +663,72 @@ export class NewTalk {
       .filter((group) => group.lines.length)
       .map((group) => `<section class="picker-group picker-${group.hold}"><h3 class="picker-title">${escape(group.title)}</h3>${group.lines.map(machineLine).join("")}</section>`)
       .join("");
-    return `<div class="agent-picker" role="radiogroup" aria-label="${escape(words.agent)}">
-      <span class="choice-label picker-label">${escape(words.agent)}</span>
-      <div class="picker-groups">${body || `<span class="choice-none">${escape(words.noMachine)}</span>`}</div>
-    </div>`;
+    return `<div class="agent-picker" role="radiogroup" aria-label="${escape(words.agent)}"><div class="picker-groups">${body || `<span class="choice-none">${escape(words.noMachine)}</span>`}</div></div>`;
+  }
+
+  /** A short list to choose one from, the chosen one marked. */
+  private list(kind: Pop, label: string, choices: Choice[], chosen: string): string {
+    return `<div class="pop-list" role="radiogroup" aria-label="${escape(label)}">${choices
+      .map((choice) => {
+        const on = choice.value === chosen;
+        return `<button type="button" class="pop-row${on ? " chosen" : ""}" role="radio" aria-checked="${on}" data-choice="${kind}" data-value="${escape(choice.value)}"${choice.disabled ? " disabled" : ""}><span class="pop-label">${escape(choice.label)}</span>${choice.note ? `<span class="choice-note">${escape(choice.note)}</span>` : ""}${on ? glyph("check", 14) : ""}</button>`;
+      })
+      .join("")}</div>`;
+  }
+
+  /** A few answers as pills, as the logins above them are: the chosen one
+   *  washed in clay. */
+  private pills(kind: "works" | "account", label: string, choices: Choice[], chosen: string): string {
+    return `<div class="choice-options" role="radiogroup" aria-label="${escape(label)}">${choices
+      .map((choice) => {
+        const on = choice.value === chosen;
+        return `<button type="button" class="choice${on ? " chosen" : ""}" role="radio" aria-checked="${on}" data-choice="${kind}" data-value="${escape(choice.value)}"${choice.disabled ? " disabled" : ""}>${escape(choice.label)}${choice.note ? `<span class="choice-note">${escape(choice.note)}</span>` : ""}</button>`;
+      })
+      .join("")}</div>`;
+  }
+
+  /** Opens one label's choices, or with null closes what is open. */
+  private choose(pop: Pop | null): void {
+    this.opened = pop;
+    if (pop) this.models.hide();
+    this.draw();
+  }
+
+  private click(event: Event): void {
+    const target = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-pop], [data-choice]");
+    if (!target || target.disabled || this.busy) return;
+    if (target.dataset.pop) {
+      const pop = target.dataset.pop as Pop;
+      this.choose(this.opened === pop ? null : pop);
+      return;
+    }
+    const value = target.dataset.value ?? "";
+    switch (target.dataset.choice) {
+      case "pick":
+        this.pick = value;
+        this.worksOn = null;
+        this.model = null;
+        this.effort = null;
+        this.opened = null;
+        break;
+      case "account":
+        this.account = value;
+        this.worksOn = null;
+        break;
+      case "works":
+        this.worksOn = value || null;
+        break;
+      case "files-on":
+        this.filesOn = value;
+        remember("files-on", value);
+        break;
+      case "town":
+        this.town = value || null;
+        this.opened = null;
+        break;
+    }
+    this.draw();
+    if (!this.opened && !coarse()) this.input.focus({ preventScroll: true });
   }
 
   private draw(): void {
@@ -680,28 +750,139 @@ export class NewTalk {
       }
     }
     const option = this.chosenOption(lines);
+    const line = lines.find((one) => option && one.options.includes(option)) ?? null;
     const lent = option?.lent ?? null;
     const lives = this.lives(world, option);
     const logins = this.openers(world, option);
     const login = logins.chosen;
     // The projects of the account it works for that span where it lives.
-    const group = login ? groupsOf(world).find((group) => sameLogin(group.login, login)) : null;
+    const group = login ? groupsOf(world).find((one) => sameLogin(one.login, login)) : null;
     const towns: Choice[] = [
-      { value: "", label: words.noProject },
+      { value: "", label: words.outsideProject },
       ...(world?.towns ?? [])
         .filter((town) => !!option && town.record.machines.includes(option.machine) && (!group || group.towns.includes(town.town)))
         .map((town) => ({ value: town.town, label: town.record.name })),
     ];
-    if (this.town && !towns.some((choice) => choice.value === this.town)) this.town = null;
+    // A project the agent cannot work in is kept while the machines are
+    // still answering, and given up once they have.
+    if (this.town && !towns.some((choice) => choice.value === this.town) && !this.askingAll && option) this.town = null;
     const places: Choice[] = lives
       ? workPlaces(world, lives, login).map((machine) => ({
           value: machine.written === lives.written ? "" : machine.written,
-          label: machine.written === lives.written ? words.sameMachine : machine.written,
-          note: machine.written !== lives.written && machine.online === false ? words.offline : undefined,
+          label: machine.written,
+          note: machine.written === lives.written ? words.livesHere : machine.online === false ? words.offline : undefined,
         }))
       : [];
     if (this.worksOn && !places.some((choice) => choice.value === this.worksOn)) this.worksOn = null;
-    const models = this.models(option);
+    this.drawStage(option, world);
+    this.drawContext(option, line, towns, world);
+    this.drawPop(lines, logins, places, towns);
+    this.drawModel();
+    // Using an agent on another's machine lets that machine reach the
+    // account's machines, from the first time on: said before it begins.
+    const owner = option ? (lent ? lent.owner : lives && login && !owns(lives, login) ? ownerOf(lives, login) : null) : null;
+    const reaching = !!option && !!login && !!owner && !machineActsFor(world, option.machine, login);
+    this.warn.hidden = !reaching;
+    this.warn.textContent = reaching && owner && login && option ? words.reaches(owner, option.written, isSuper(world, login)) : "";
+    // What was sent went for another machine, agent or project: it is sent
+    // again, to the one chosen now, when the conversation begins.
+    if (this.draft && this.draft.for !== this.chosen()) {
+      this.draft = null;
+      this.tray?.reset();
+    }
+    this.input.placeholder = words.say(option ? programName(option.agent) : null);
+    this.input.setAttribute("aria-label", this.input.placeholder);
+    this.drawFilesOn();
+    this.drawStart();
+  }
+
+  /** Above the input: the chosen agent's mark, drawn by hand, and the
+   *  place's name. The mark is drawn again only for another agent. */
+  private drawStage(option: Option | null, world: WorldNow | null): void {
+    const { words } = this.options;
+    const town = this.options.town ? world?.towns.find((one) => one.town === this.options.town) : null;
+    const title = this.element.querySelector<HTMLElement>(".new-talk-title")!;
+    const name = town?.record.name ?? words.title;
+    if (title.textContent !== name) title.textContent = name;
+    const agent = option ? markOf(option.agent) : "";
+    if (agent === this.marked) return;
+    this.marked = agent;
+    const mark = this.element.querySelector<HTMLElement>(".new-talk-mark")!;
+    mark.innerHTML = agent ? glyph(agent, 48) : "";
+    for (const path of mark.querySelectorAll("path, rect, circle")) path.setAttribute("pathLength", "1");
+  }
+
+  /** The labels over the input: the agent, as its program and the machine
+   *  it lives on, and the machine it works on where that is another; the
+   *  project. Each opens its choices. */
+  private drawContext(option: Option | null, line: Line | null, towns: Choice[], world: WorldNow | null): void {
+    const { words } = this.options;
+    const label = (pop: Pop, mark: Parameters<typeof glyph>[0], body: string, title: string, extra = "") =>
+      `<button type="button" class="talk-chip${extra}" data-pop="${pop}" aria-haspopup="dialog" aria-expanded="${this.opened === pop}" title="${escape(title)}">${glyph(mark, 16)}${body}${glyph("chevron", 12)}</button>`;
+    const chips: string[] = [];
+    if (option && line) {
+      const who = this.who(option, line);
+      const asking = !this.factsOf(option) && this.askingAll;
+      const sub = option.lent ? words.lentBy(option.lent.owner ?? "") : option.written;
+      const works = !option.lent && this.worksOn ? this.worksOn : null;
+      const said = [programName(option.agent), sub, who, works ? `${words.worksOn} ${works}` : ""].filter(Boolean).join(" · ");
+      chips.push(
+        label(
+          "agent",
+          markOf(option.agent),
+          `<span class="talk-chip-name">${escape(programName(option.agent))}</span><span class="talk-chip-sub">${escape(sub)}</span>${who ? `<span class="talk-chip-sub who">${escape(who)}</span>` : ""}${works ? `<span class="talk-chip-works">${glyph("terminal", 14)}${escape(works)}</span>` : ""}${asking ? `<span class="talk-chip-sub">${escape(words.asking)}</span>` : ""}`,
+          option.lent ? `${said}
+${words.lentWorks(option.lent.owner ?? "")}` : said,
+          option.lent ? " lent" : "",
+        ),
+      );
+    } else {
+      chips.push(label("agent", "agents", `<span class="talk-chip-name">${escape(this.askingAll ? words.asking : words.agent)}</span>`, words.agent, " empty"));
+    }
+    if (towns.length > 1 || this.town) {
+      const name = this.town ? (world?.towns.find((one) => one.town === this.town)?.record.name ?? this.town) : words.outsideProject;
+      chips.push(label("town", "folder", `<span class="talk-chip-name">${escape(name)}</span>`, `${words.project} · ${name}`, this.town ? "" : " quiet"));
+    }
+    const html = chips.join("");
+    if (this.context.innerHTML !== html) this.context.innerHTML = html;
+  }
+
+  /** The choices of the label open, risen over the input; on a phone, a
+   *  sheet from the bottom. */
+  private drawPop(lines: Line[], logins: { all: Login[]; chosen: Login | null }, places: Choice[], towns: Choice[]): void {
+    const { words } = this.options;
+    const pop = this.pop;
+    let html = "";
+    if (this.opened === "agent") {
+      const account =
+        logins.all.length > 1
+          ? `<div class="pop-section"><h3 class="picker-title">${escape(words.account)}</h3>${this.pills(
+              "account",
+              words.account,
+              logins.all.map((one) => ({ value: `${one.hub}/${one.account}`, label: loginLabel(one) })),
+              logins.chosen ? `${logins.chosen.hub}/${logins.chosen.account}` : "",
+            )}</div>`
+          : "";
+      const works = places.length > 1 ? `<div class="pop-section"><h3 class="picker-title">${escape(words.worksOn)}</h3>${this.pills("works", words.worksOn, places, this.worksOn ?? "")}</div>` : "";
+      html = `${this.picker(lines)}${works}${account}`;
+    } else if (this.opened === "town") {
+      html = `<h3 class="picker-title">${escape(words.project)}</h3>${this.list("town", words.project, towns, this.town ?? "")}`;
+    }
+    pop.hidden = !this.opened;
+    pop.dataset.pop = this.opened ?? "";
+    if (pop.innerHTML !== html) {
+      const scroll = pop.scrollTop;
+      pop.innerHTML = html;
+      pop.scrollTop = scroll;
+    }
+  }
+
+  /** The model and effort, as the conversation's own chip and panel show
+   *  them: the chosen login's models, the one chosen last for this agent
+   *  or the program's default. */
+  private drawModel(): void {
+    const option = this.chosenOption();
+    const models = this.modelsOf(option);
     const agent = option?.agent ?? "";
     const model =
       models.find((m) => m.model === this.model) ??
@@ -711,103 +892,56 @@ export class NewTalk {
       null;
     this.model = model?.model ?? null;
     const efforts = model?.reasoning_efforts.map((e) => e.effort) ?? [];
-    const effort = [this.effort, remembered(`effort:${agent}`), model?.default_reasoning_effort].find((e) => e && efforts.includes(e)) ?? null;
-    this.effort = effort;
-    const row = (kind: string, label: string, choices: Choice[], chosen: string | null, hint = "") =>
-      `<div class="choice-row" role="radiogroup" aria-label="${escape(label)}">
-        <span class="choice-label"${hint ? ` title="${escape(hint)}"` : ""}>${escape(label)}</span>
-        <div class="choice-options">${
-          choices.length
-            ? choices
-                .map(
-                  (choice) =>
-                    `<button type="button" class="choice${choice.value === (chosen ?? "") ? " chosen" : ""}" role="radio" aria-checked="${choice.value === (chosen ?? "")}" data-choice="${kind}" data-value="${escape(choice.value)}"${choice.disabled ? " disabled" : ""}>${escape(choice.label)}${choice.note ? `<span class="choice-note">${escape(choice.note)}</span>` : ""}</button>`,
-                )
-                .join("")
-            : `<span class="choice-none">${escape(words.noMachine)}</span>`
-        }</div>
-      </div>`;
-    // Using an agent on another's machine lets that machine reach the
-    // account's machines, from the first time on: said before it begins.
-    const owner = option ? (lent ? lent.owner : lives && login && !owns(lives, login) ? ownerOf(lives, login) : null) : null;
-    const reaching = !!option && !!login && !!owner && !machineActsFor(world, option.machine, login);
-    // The one chosen, in a line, while the rest are not asked for; all of
-    // them while it is being chosen, or while none can begin.
-    const line = lines.find((one) => option && one.options.includes(option));
-    const folded = !this.choosing && !!option && !!line && this.startable(option, line);
-    const choices = this.dialog.querySelector(".choices")!;
-    choices.innerHTML = [
-      folded ? this.chosenLine(option!, line!) : this.picker(lines),
-      logins.all.length > 1
-        ? row(
-            "account",
-            words.account,
-            logins.all.map((one) => ({ value: `${one.hub}/${one.account}`, label: loginLabel(one) })),
-            login ? `${login.hub}/${login.account}` : null,
-          )
-        : "",
-      models.length
-        ? row(
-            "model",
-            words.model,
-            models.map((m) => ({ value: m.model, label: m.display_name, note: m.is_default ? words.defaultModel : undefined })),
-            this.model,
-          )
-        : "",
-      efforts.length > 1
-        ? `<div class="choice-row effort-row"><span class="choice-label">${escape(words.effort)}</span><div class="effort-place"></div></div>`
-        : "",
-      towns.length > 1 ? row("town", words.project, towns, this.town) : "",
-      !lent && places.length > 1 ? row("works", words.worksOn, places, this.worksOn ?? "") : "",
-      reaching && owner && login && option ? `<p class="choice-margin choice-warn">${escape(words.reaches(owner, option.written, isSuper(world, login)))}</p>` : "",
-    ].join("");
-    const place = choices.querySelector(".effort-place");
-    if (place) {
-      this.slider.set(
-        efforts.map((value) => ({ value, label: effortLabel(value, words.english) })),
-        this.effort,
-      );
-      place.replaceWith(this.slider.element);
-    }
-    // What was sent went for another machine, agent or project: it is sent
-    // again, to the one chosen now, when the conversation begins.
-    if (this.draft && this.draft.for !== this.chosen()) {
-      this.draft = null;
-      this.tray?.reset();
-    }
-    this.drawFilesOn();
-    this.drawStart();
+    this.effort = [this.effort, remembered(`effort:${agent}`), model?.default_reasoning_effort].find((e) => e && efforts.includes(e)) ?? null;
+    const offers: Offers = {
+      controls: models.length ? ["model"] : [],
+      commands: [],
+      models: models.map((m) => ({
+        id: m.model,
+        name: m.display_name,
+        description: m.description || null,
+        efforts: m.reasoning_efforts.map((e) => e.effort),
+        default_effort: m.default_reasoning_effort || null,
+        default: m.is_default,
+        service_tiers: [],
+        default_service_tier: null,
+      })),
+      model: this.model,
+      effort: this.effort,
+      service_tier: null,
+      usage: null,
+    };
+    this.models.update(offers);
   }
 
   /** For a lent agent given files other than images: which of the user's
    *  machines they go to. */
   private drawFilesOn(): void {
     const { words, store } = this.options;
-    const box = this.dialog.querySelector<HTMLElement>(".files-on")!;
+    const box = this.element.querySelector<HTMLElement>(".composer-files-on")!;
     const world = store.world.peek();
     const option = this.chosenOption();
     const login = this.loginFor(world, option);
     if (!option?.lent || !login || !(this.tray?.files ?? 0)) {
+      box.hidden = true;
       box.innerHTML = "";
       return;
     }
     const places = filePlaces(world, login);
     const usual = [this.filesOn, remembered("files-on")].find((written) => written && places.some((machine) => machine.written === written));
     this.filesOn = usual ?? places.find((machine) => machine.here)?.written ?? places.find((machine) => machine.online !== false)?.written ?? null;
-    const html = `<div class="choice-row files-row" role="radiogroup" aria-label="${escape(words.filesOn)}">
-      <span class="choice-label" title="${escape(words.filesOnWhat)}">${escape(words.filesOn)}</span>
-      <div class="choice-options">${
-        places.length
-          ? places
-              .map((machine) => {
-                const chosen = machine.written === this.filesOn;
-                const note = machine.here ? words.here : machine.online === false ? words.offline : "";
-                return `<button type="button" class="choice${chosen ? " chosen" : ""}" role="radio" aria-checked="${chosen}" data-choice="files-on" data-value="${escape(machine.written)}"${machine.online === false && !machine.here ? " disabled" : ""}>${escape(machine.written)}${note ? `<span class="choice-note">${escape(note)}</span>` : ""}</button>`;
-              })
-              .join("")
-          : `<span class="choice-none">${escape(words.noFilePlace)}</span>`
-      }</div>
-    </div>`;
+    const html = `<span title="${escape(words.filesOnWhat)}">${escape(words.filesOn)}</span>${
+      places.length
+        ? places
+            .map((machine) => {
+              const chosen = machine.written === this.filesOn;
+              const note = machine.here ? words.here : machine.online === false ? words.offline : "";
+              return `<button type="button" class="choice${chosen ? " chosen" : ""}" role="radio" aria-checked="${chosen}" data-choice="files-on" data-value="${escape(machine.written)}"${machine.online === false && !machine.here ? " disabled" : ""}>${escape(machine.written)}${note ? `<span class="choice-note">${escape(note)}</span>` : ""}</button>`;
+            })
+            .join("")
+        : `<span class="choice-none">${escape(words.noFilePlace)}</span>`
+    }`;
+    box.hidden = false;
     if (box.innerHTML !== html) box.innerHTML = html;
   }
 
@@ -840,8 +974,10 @@ export class NewTalk {
     if (this.busy || !option || this.start.disabled || (!text && !this.tray?.count)) return;
     if (option.agent === "claude" && !(await this.allowed(option))) return;
     this.busy = true;
+    this.choose(null);
     this.drawStart();
-    this.note.hidden = true;
+    this.note.classList.remove("refused");
+    this.note.title = "";
     remember("pick", option.key);
     remember("agent", option.agent);
     const world = this.options.store.world.peek();
@@ -852,14 +988,14 @@ export class NewTalk {
     const { words } = this.options;
     try {
       if (this.tray?.count) {
-        this.start.textContent = words.sendingFiles;
+        this.note.textContent = words.sendingFiles;
         try {
           await this.tray.sendAll();
         } catch (error) {
           throw new NotSent(String(error));
         }
       }
-      this.start.textContent = words.starting;
+      this.note.textContent = words.starting;
       const address = await this.options.begin({
         agent: option.agent,
         machine: option.machine,
@@ -873,20 +1009,23 @@ export class NewTalk {
         home: option.home,
         filesOn: option.lent && (this.tray?.files ?? 0) > 0 ? this.filesOn : null,
       });
+      // Begun: the page is empty again for the next conversation here.
       this.input.value = "";
+      remember(this.kept, null);
+      this.fit();
       this.tray?.take();
       this.draft = null;
+      this.town = this.options.town;
       this.busy = false;
-      this.dialog.close();
+      this.note.textContent = "";
       this.options.opened(address);
     } catch (error) {
       this.busy = false;
       const why = error instanceof Error ? error.message : String(error);
       this.note.textContent = error instanceof NotSent ? words.filesNotSent : words.notOpened(why);
       this.note.title = error instanceof NotSent ? "" : why;
-      this.note.hidden = false;
+      this.note.classList.add("refused");
     } finally {
-      this.start.textContent = this.options.words.start;
       this.drawStart();
     }
   }

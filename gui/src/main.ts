@@ -40,6 +40,8 @@ import { enFeatures, zhFeatures } from "./app/features-words";
 import { accountOf, enHomes, homeChoice, homeLabel, homesOf, installed, loggedOut, zhHomes } from "./app/agent-homes";
 import { Tokens } from "./app/tokens";
 import { NewTalk } from "./app/new-talk";
+import { enModelPanel, zhModelPanel } from "./conversation/model-panel";
+import "./app/new-talk.css";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
@@ -267,10 +269,39 @@ async function loginsOn(machine: string, agent: string) {
     }));
 }
 
-const newTalk = new NewTalk({
+/** The new-conversation pages, one for each project and one outside any:
+ *  each kept while the interface is open, so what was written there and
+ *  the files attached wait for the user to come back. */
+const newTalks = new Map<string, NewTalk>();
+/** A login or machine the next new-conversation page is opened for. */
+let newTalkFor: { pick: string | null; machine: string | null } | null = null;
+
+function newTalkOf(town: string | null): NewTalk {
+  const key = town ?? "";
+  let talk = newTalks.get(key);
+  if (!talk) {
+    talk = makeNewTalk(town);
+    newTalks.set(key, talk);
+  }
+  return talk;
+}
+
+/** Opens a new conversation's page, in `town` or outside any, for a login
+ *  (`pick`) or a machine when one was chosen where it was asked for. */
+function beginTalk(town: string | null = null, pick: string | null = null, machine: string | null = null): void {
+  newTalkFor = pick || machine ? { pick, machine } : null;
+  const there = link({ kind: "new", town });
+  if (location.hash === there) show(placeOf(there));
+  else location.hash = there;
+}
+
+const makeNewTalk = (town: string | null) => new NewTalk({
   store,
+  town,
+  head: (title) => head(title),
   words: english ? enNewTalk : zhNewTalk,
   homeWords: agentHomeWords,
+  modelWords: english ? enModelPanel : zhModelPanel,
   agents: (machine) => agentsOn(machine),
   async begin({ agent, machine, town, text, model, effort, attachments, account, worksOn, home, filesOn }) {
     if (!live) throw new Error(specimenSaid);
@@ -402,7 +433,7 @@ const journalForm = new JournalForm({
 const shell = new Shell({
   store,
   words: shellWords,
-  newTalk: () => newTalk.open(place.kind === "project" ? place.town : null),
+  newTalk: () => beginTalk(place.kind === "project" || place.kind === "new" ? place.town : null),
   newProject: (login) => projectForm.open(null, login),
 });
 document.getElementById("app")!.append(shell.element);
@@ -642,7 +673,7 @@ function home(): Page {
     lastVisit,
     link: talkLink,
     head: head(""),
-    newTalk: () => newTalk.open(),
+    newTalk: () => beginTalk(),
   });
   let away: Away | null = live ? null : specimen.away;
   // What happened while the reader was away is asked of every machine when
@@ -1090,7 +1121,7 @@ function projectPage(town: string): Page {
     head,
     newTalk: shellWords.newTalk,
     edit: shellWords.edit,
-    begin: (town) => newTalk.open(town),
+    begin: (town) => beginTalk(town),
     revise: (town, record) => projectForm.open({ town, record }),
     link: talkLink,
     pageWords,
@@ -1213,6 +1244,14 @@ function show(next: Place): void {
     case "talk":
       page = live ? liveTalk(next.address) : specimenTalk(next.address);
       break;
+    case "new": {
+      const talk = newTalkOf(next.town);
+      const chosen = newTalkFor;
+      newTalkFor = null;
+      talk.show(chosen?.pick ?? null, chosen?.machine ?? null);
+      page = { element: talk.element, title: talk.title, leave: () => talk.leave() };
+      break;
+    }
     case "project":
       page = projectPage(next.town);
       break;
@@ -1233,7 +1272,7 @@ function show(next: Place): void {
         when,
         change,
         invite: (login) => tokens.open(login),
-        talk: (machine) => newTalk.open(null, null, machine),
+        talk: (machine) => beginTalk(null, null, machine),
         confirm: accountConfirm,
         log: live ? machineLog : specimenMachineLog,
       });
@@ -1255,7 +1294,7 @@ function show(next: Place): void {
         },
         homes: (machine, change) => (live ? agentHomes(machine, change) : notLive()),
         change,
-        talkWith: (key) => newTalk.open(null, key),
+        talkWith: (key) => beginTalk(null, key),
         confirm: accountConfirm,
       });
       break;
@@ -1458,7 +1497,7 @@ new Palette({
       location.hash = link(to);
     };
     const items: PaletteItem[] = [
-      { group: paletteWords.actions, label: shellWords.newTalk, note: "Ctrl N", run: () => newTalk.open(place.kind === "project" ? place.town : null) },
+      { group: paletteWords.actions, label: shellWords.newTalk, note: "Ctrl N", run: () => beginTalk(place.kind === "project" || place.kind === "new" ? place.town : null) },
       { group: paletteWords.actions, label: shellWords.newProject, run: () => projectForm.open() },
       ...loginsOf(world?.accounts).map((login) => ({
         group: paletteWords.actions,
@@ -1565,7 +1604,7 @@ if (live) {
     else if (place.kind === "login") show(place);
   });
 }
-if (!live && params.get("s") === "new") newTalk.open();
+if (!live && params.get("s") === "new") beginTalk(params.get("town"));
 if (!live && params.get("s") === "new-project") projectForm.open();
 if (!live && params.get("s") === "invite") {
   const [first] = groupsOf(specimen.world);

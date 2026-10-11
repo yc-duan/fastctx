@@ -64,7 +64,6 @@ export interface NewTalkWords {
   /** Which agent, as one of its logins; and choosing another than the one
    *  chosen. */
   agent: string;
-  another: string;
   /** The agents' groups: on the user's own machines, on machines of
    *  others they may work on (all shared with them, or not), lent. */
   mine: string;
@@ -79,7 +78,8 @@ export interface NewTalkWords {
   /** Which account it works for. */
   account: string;
   worksOn: string;
-  sameMachine: string;
+  /** Beside the machine an agent lives on, among those it may work on. */
+  livesHere: string;
   /** Why a lent agent is asked no machine to work on: the hover of its
    *  lent mark. */
   lentWorks(owner: string): string;
@@ -94,7 +94,8 @@ export interface NewTalkWords {
   filesOnWhat: string;
   noFilePlace: string;
   project: string;
-  noProject: string;
+  /** The project label when the conversation begins in none. */
+  outsideProject: string;
   here: string;
   offline: string;
   noMachine: string;
@@ -109,8 +110,8 @@ export interface NewTalkWords {
   needsConsent: string;
   /** The consent sheet's button, when starting follows it. */
   allowAndStart: string;
-  firstWords: string;
-  hint: string;
+  /** The input's placeholder, for the program chosen. */
+  say(agent: string | null): string;
   start: string;
   starting: string;
   /** Said while what is attached goes to the machine, before the agent is
@@ -119,7 +120,6 @@ export interface NewTalkWords {
   /** Said over the sheet while files are dragged onto it. */
   dropHere: string;
   filesNotSent: string;
-  cancel: string;
   /** The conversation did not begin; the kernel's reason is its hover. */
   notOpened(why: string): string;
 }
@@ -128,7 +128,6 @@ export const zhNewTalk: NewTalkWords = {
   english: false,
   title: "新对话",
   agent: "智能体",
-  another: "更换",
   mine: "我的机器",
   others: (allShared) => (allShared ? "共享给我的" : "其他机器"),
   lent: "借给我的",
@@ -138,7 +137,7 @@ export const zhNewTalk: NewTalkWords = {
   onCredits: "使用 credits",
   account: "账号",
   worksOn: "工作机器",
-  sameMachine: "同一台",
+  livesHere: "所在机器",
   lentWorks: (owner) => `借自 ${owner}，在你的机器上工作，不接触 ${owner} 的电脑`,
   reaches: (owner, machine, everything) =>
     everything
@@ -149,7 +148,7 @@ export const zhNewTalk: NewTalkWords = {
   filesOnWhat: "图片留在智能体所在机器，其他文件存放到所选机器",
   noFilePlace: "没有可存放文件的机器",
   project: "项目",
-  noProject: "无",
+  outsideProject: "不在项目里",
   here: "本机",
   offline: "离线",
   noMachine: "没有在线的机器",
@@ -162,14 +161,12 @@ export const zhNewTalk: NewTalkWords = {
   loggedOut: "未登录",
   needsConsent: "需要授权",
   allowAndStart: "授权并开始",
-  firstWords: "输入第一条消息…",
-  hint: "Enter 发送 · Shift+Enter 换行",
+  say: (agent) => (agent ? `发消息给 ${agent}…` : "写下第一句话…"),
   start: "开始",
   starting: "正在启动…",
   sendingFiles: "正在上传文件…",
   dropHere: "拖放到这里",
   filesNotSent: "部分文件上传失败",
-  cancel: "关闭",
   notOpened: () => "启动失败",
 };
 
@@ -177,7 +174,6 @@ export const enNewTalk: NewTalkWords = {
   english: true,
   title: "New conversation",
   agent: "Agent",
-  another: "Change",
   mine: "My machines",
   others: (allShared) => (allShared ? "Shared with me" : "Other machines"),
   lent: "Lent to me",
@@ -187,7 +183,7 @@ export const enNewTalk: NewTalkWords = {
   onCredits: "on credits",
   account: "Account",
   worksOn: "Works on",
-  sameMachine: "Same machine",
+  livesHere: "where it lives",
   lentWorks: (owner) => `Lent by ${owner}; works on your machines, never on ${owner}'s computer`,
   reaches: (owner, machine, everything) =>
     everything
@@ -198,7 +194,7 @@ export const enNewTalk: NewTalkWords = {
   filesOnWhat: "Images stay with the agent; other files go to the machine you choose",
   noFilePlace: "No machine to store files",
   project: "Project",
-  noProject: "None",
+  outsideProject: "No project",
   here: "this computer",
   offline: "offline",
   noMachine: "No machines online",
@@ -211,14 +207,12 @@ export const enNewTalk: NewTalkWords = {
   loggedOut: "Not logged in",
   needsConsent: "Needs permission",
   allowAndStart: "Allow and start",
-  firstWords: "Write the first message…",
-  hint: "Enter to send · Shift+Enter for a new line",
+  say: (agent) => (agent ? `Message ${agent}…` : "Write the first words…"),
   start: "Start",
   starting: "Starting…",
   sendingFiles: "Uploading files…",
   dropHere: "Drop files here",
   filesNotSent: "Some files failed to upload",
-  cancel: "Close",
   notOpened: () => "Couldn't start",
 };
 

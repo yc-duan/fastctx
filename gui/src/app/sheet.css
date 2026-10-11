@@ -70,17 +70,6 @@
   color: var(--text-3);
 }
 
-/* The effort's label stands level with the slider's ruled line, which lies
-   13px above the slider's foot. */
-.effort-row {
-  align-items: end;
-}
-
-.effort-row .choice-label {
-  line-height: 20px;
-  margin-bottom: 3px;
-}
-
 .choice-options {
   display: flex;
   flex-wrap: wrap;
@@ -127,36 +116,6 @@
   color: var(--caution);
 }
 
-/* The first words, and above them what comes with them. */
-.first-words-box {
-  margin-top: var(--space-4);
-}
-
-.first-words-box .attach-tray {
-  margin-left: 0;
-}
-
-.first-words {
-  display: block;
-  width: 100%;
-  min-height: 6em;
-  margin: 0;
-  padding: var(--space-3) var(--space-4);
-  border: 0;
-  border-radius: var(--radius-m);
-  outline: 0;
-  resize: none;
-  background: var(--field);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--body-size);
-  line-height: var(--leading-prose);
-}
-
-.first-words::placeholder {
-  color: var(--text-3);
-}
-
 .sheet-note {
   margin: var(--space-2) 0 0;
   font-size: var(--size-small);
@@ -171,59 +130,13 @@
   margin-top: var(--space-4);
 }
 
-.sheet-hint {
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.sheet-tools {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.sheet-tools .composer-attach {
-  margin-left: -6px;
-}
-
-/* A drop over the sheet covers just the sheet. The sheet is as tall as
-   its choices, up to most of the screen; past that the choices scroll and
-   the first words stay in view. */
-.new-talk-sheet {
-  margin-top: 7vh;
-}
-
-.new-talk-sheet .sheet-body {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  width: min(660px, 100vw - 32px);
-  max-height: min(88dvh, 920px);
-}
-
-.new-talk-sheet .choices {
-  flex: 0 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  margin: 0 calc(-1 * var(--space-6));
-  padding: 0 var(--space-6);
-}
-
-/* Which agent, across the whole sheet since it is the choice the rest
-   follow from: the logins grouped as the user holds them, a small head
+/* Which agent, among a new conversation's choices: the logins grouped
+   as the user holds them, a small head
    ruled across for each group, then a line a machine: its name with a dot,
    and its logins as pills, each the program, who is logged in where that
    tells them apart, and how much of each usage window is spent. */
 .agent-picker {
   padding: var(--space-1) 0 var(--space-3);
-}
-
-.picker-label {
-  display: block;
-  margin-bottom: var(--space-2);
 }
 
 .picker-groups {
@@ -357,65 +270,11 @@
   color: var(--caution);
 }
 
-/* The login chosen, folded into a line: what it is and how much is spent,
-   on the clay wash of a chosen answer, and the way to choose another. */
-.chosen-login {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  min-height: 30px;
-  padding: 4px 14px;
-  border-radius: var(--radius-full);
-  background: var(--accent-wash);
-  color: var(--text-strong);
-  font-size: var(--size-ui);
-  line-height: var(--leading-ui);
-}
-
-.chosen-machine {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text);
-}
-
-.chosen-machine .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--text-2);
-}
-
-.chosen-login.lent .chosen-machine .dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.5px var(--accent);
-}
-
-.chosen-change {
-  align-self: center;
-}
-
 .choice-none.quiet {
   color: var(--text-3);
 }
 
-/* A margin note under the choices lines up with their answers. */
-.new-talk-sheet .choice-margin {
-  margin-left: calc(6.5em + var(--space-4));
-}
-
-.new-talk-sheet .agent-picker + .choice-row,
-.new-talk-sheet .agent-picker + .choice-margin {
-  margin-top: var(--space-1);
-}
-
-/* Where a lent agent's files go, under what waits to be sent. */
-.files-on .choice-row {
-  padding-top: var(--space-3);
-}
-
-/* The same choice in a conversation's composer, where words are written. */
+/* Where a lent agent's files go, in the input the words are written in. */
 .composer-files-on {
   display: flex;
   flex-wrap: wrap;
@@ -430,10 +289,6 @@
   min-height: 26px;
   padding: 2px 10px;
   font-size: var(--size-small);
-}
-
-.new-talk-sheet .drop-veil {
-  border-radius: var(--radius-l);
 }
 
 .sheet-go {
@@ -491,23 +346,6 @@
   .picker-line {
     grid-template-columns: minmax(0, 1fr);
     row-gap: 4px;
-  }
-
-  .new-talk-sheet {
-    margin-top: auto;
-  }
-
-  .new-talk-sheet .sheet-body {
-    width: 100%;
-    max-height: 92dvh;
-  }
-
-  .new-talk-sheet .choice-margin {
-    margin-left: 0;
-  }
-
-  .sheet-hint {
-    display: none;
   }
 }
 
