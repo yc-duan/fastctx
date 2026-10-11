@@ -39,9 +39,27 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
     fastctx_platform::ensure_private_dir(root)?;
     let lock = fastctx_platform::uninstall_gate::Gate::try_acquire(root)?
         .context("another uninstall is executing for this World")?;
-    publish(&request.installation.marker(), &request)?;
     let progress_file = root.join("uninstall-progress.json");
+    // A complete removal that replaces one keeping the data starts its own
+    // checkpoint: the earlier one names the steps of another plan.
+    if crate::read::<Request>(&request.installation.marker())?
+        .is_some_and(|previous| previous.plan.everything != request.plan.everything)
+    {
+        uninstall::delete_file(&progress_file)?;
+    }
+    publish(&request.installation.marker(), &request)?;
     let mut progress = crate::read::<Progress>(&progress_file)?.unwrap_or_default();
+    // Copies of the hosts' settings, which can carry a login's token, do not
+    // outlive a removal of either kind (`world-run.md`, apply).
+    progress.retained.retain(|left| left.kind != "settings-copies");
+    for problem in apply::settle(root) {
+        progress.retained.push(Left {
+            kind: "settings-copies".into(),
+            what: "Copies of host settings kept while an apply ran".into(),
+            location: Some(root.display().to_string()),
+            why: problem,
+        });
+    }
     if !request.plan.everything {
         let integrations = request
             .steps

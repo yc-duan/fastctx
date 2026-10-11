@@ -41,7 +41,11 @@ pub enum Action {
 
 pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<Request> {
     installation.validate()?;
-    if let Some(mut request) = crate::read::<Request>(&installation.marker())? {
+    if let Some(mut request) = crate::read::<Request>(&installation.marker())?
+        // A removal that keeps the data, finished or cut short, gives way to
+        // a complete one, planned afresh from what is on this computer now.
+        && !(everything && !request.plan.everything)
+    {
         anyhow::ensure!(
             request.plan.everything == everything,
             "an interrupted uninstall has a different mode; finish that mode first"
@@ -421,13 +425,6 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
             "user-files",
             "User file versions retained by host publication transactions",
             &location.display().to_string(),
-        ));
-    }
-    if root.join("claude-command-history").try_exists()? {
-        plan.keeps.push(keep(
-            "user-files",
-            "Original user settings versions retained around public Claude commands",
-            &root.join("claude-command-history").display().to_string(),
         ));
     }
     let programs = other_programs(&places, installation.application.as_deref())?;
