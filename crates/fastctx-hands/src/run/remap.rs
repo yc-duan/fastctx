@@ -124,7 +124,7 @@ pub fn remap(regions: &[ModelSpan], kept: &[Kept]) -> Vec<ModelSpan> {
                                 selected.start = selected.start.min(text.len());
                                 selected.end = selected.end.min(text.len());
                             }
-                            super::slice(&region.span, selected)
+                            super::projection::slice(&region.span, selected)
                         }
                         _ => region.span.clone(),
                     };
