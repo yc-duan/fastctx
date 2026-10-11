@@ -1,6 +1,6 @@
 //! The one line that installs fastctx on a Linux server and registers it as
 //! a machine of an account (`world-network.md`, 登录与入网): a token is made
-//! only after the hub showed it can hand out this release.
+//! only after the offered archives and bootstrap inputs have been checked.
 
 use std::sync::Arc;
 
