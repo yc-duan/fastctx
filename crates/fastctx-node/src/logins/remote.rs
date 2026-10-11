@@ -231,7 +231,11 @@ pub(crate) async fn answer(
                 .iter()
                 .chain(&side.candidates)
                 .find(|login| crate::homes::same_dir(&login.dir, &dir))
-                .filter(|login| may_see(view, asker, &agent, &login.dir, login.default))
+                // One lent a login sees it only while it is listed.
+                .filter(|login| {
+                    may_see(view, asker, &agent, &login.dir, login.default)
+                        && (asker.hands || login.integration == fastctx_types::agents::Integration::In)
+                })
                 .ok_or_else(|| {
                     Failure::not_run(format!("no {agent} login {} here is the account's to see", dir.display()))
                 })?;

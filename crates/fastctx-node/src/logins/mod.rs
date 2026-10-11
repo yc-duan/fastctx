@@ -106,7 +106,7 @@ fn dirs(node: &Node, context: &Context, kept: &kept::Kept, agent: &str) -> Resul
     }
     let added = kept::added(node).map_err(|error| Failure::new(format!("reading the added logins: {error}")))?;
     for one in added.into_iter().filter(|one| one.agent.as_str() == agent) {
-        let elsewhere = kept.of(agent).elsewhere.iter().any(|found| crate::homes::same_dir(&found.dir, &one.dir));
+        let elsewhere = found_elsewhere(kept, agent, &one.dir);
         add(one.dir, if elsewhere { Found::Elsewhere } else { Found::Added });
     }
     let integrations = apply::integrations(&context.places)
@@ -116,6 +116,20 @@ fn dirs(node: &Node, context: &Context, kept: &kept::Kept, agent: &str) -> Resul
         add(fastctx_hosts::inventory::plain(&integration.home), Found::Added);
     }
     Ok(dirs)
+}
+
+/// A path as the walk of the disks writes it. What the walk found is
+/// matched by its text alone: a directory taken up from it is named as the
+/// walk named it, and the walk does not follow links, so no path it wrote
+/// needs resolving.
+fn walk_key(path: &Path) -> String {
+    fastctx_hosts::inventory::walk::key(path)
+}
+
+/// Whether the walk of the disks found `dir` as `agent`'s.
+fn found_elsewhere(kept: &kept::Kept, agent: &str, dir: &Path) -> bool {
+    let wanted = walk_key(dir);
+    kept.of(agent).elsewhere.iter().any(|found| walk_key(&found.dir) == wanted)
 }
 
 /// Whether the World's tools are in the login `dir` of `host`.
@@ -217,13 +231,9 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 side.candidates.push(login);
             }
         }
-        side.elsewhere = kept
-            .of(agent)
-            .elsewhere
-            .iter()
-            .filter(|found| !dirs.iter().any(|(dir, _)| crate::homes::same_dir(dir, &found.dir)))
-            .cloned()
-            .collect();
+        let known: std::collections::HashSet<String> = dirs.iter().map(|(dir, _)| walk_key(dir)).collect();
+        side.elsewhere =
+            kept.of(agent).elsewhere.iter().filter(|found| !known.contains(&walk_key(&found.dir))).cloned().collect();
     }
     Ok(logins)
 }
@@ -315,8 +325,7 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
             let context = Context::of(&node)?;
             let kept =
                 kept::read(&node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
-            let elsewhere =
-                kept.of(agent.as_str()).elsewhere.iter().any(|found| crate::homes::same_dir(&found.dir, &dir));
+            let elsewhere = found_elsewhere(&kept, agent.as_str(), &dir);
             kept::add(&node, &agent, &dir)
                 .map_err(|error| Failure::new(format!("keeping the added login: {error}")))?;
             let default = crate::homes::same_dir(&dir, context.default_of(agent.as_str()));

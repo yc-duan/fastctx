@@ -85,7 +85,7 @@ mod imp {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod imp {
     use std::collections::BTreeSet;
     use std::io;
@@ -141,30 +141,41 @@ mod imp {
 
     pub fn lower_this_thread() -> io::Result<()> {
         // Linux keeps a niceness and a disk priority for each thread.
-        #[cfg(target_os = "linux")]
-        {
-            // SAFETY: gettid has no arguments and cannot fail.
-            let thread = unsafe { libc::syscall(libc::SYS_gettid) } as libc::id_t;
-            // SAFETY: setpriority of one thread, by its id.
-            if unsafe { libc::setpriority(libc::PRIO_PROCESS, thread, 19) } != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            /// `IOPRIO_WHO_PROCESS` and the idle class, shifted into place
-            /// as `linux/ioprio.h` defines them.
-            const WHO_PROCESS: libc::c_long = 1;
-            const IDLE: libc::c_long = 3 << 13;
-            // SAFETY: ioprio_set of one thread, by its id.
-            if unsafe { libc::syscall(libc::SYS_ioprio_set, WHO_PROCESS, thread as libc::c_long, IDLE) } != 0 {
-                return Err(io::Error::last_os_error());
-            }
+        // SAFETY: gettid has no arguments and cannot fail.
+        let thread = unsafe { libc::syscall(libc::SYS_gettid) } as libc::id_t;
+        // SAFETY: setpriority of one thread, by its id.
+        if unsafe { libc::setpriority(libc::PRIO_PROCESS, thread, 19) } != 0 {
+            return Err(io::Error::last_os_error());
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            // SAFETY: setpriority of this process.
-            if unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 19) } != 0 {
-                return Err(io::Error::last_os_error());
-            }
+        /// `IOPRIO_WHO_PROCESS` and the idle class, shifted into place as
+        /// `linux/ioprio.h` defines them.
+        const WHO_PROCESS: libc::c_long = 1;
+        const IDLE: libc::c_long = 3 << 13;
+        // SAFETY: ioprio_set of one thread, by its id.
+        if unsafe { libc::syscall(libc::SYS_ioprio_set, WHO_PROCESS, thread as libc::c_long, IDLE) } != 0 {
+            return Err(io::Error::last_os_error());
         }
         Ok(())
+    }
+}
+
+/// Elsewhere neither the disks nor a thread's own background priority are
+/// known to the World yet: a walk there fails, saying so, rather than walk
+/// at the priority of the whole node.
+#[cfg(not(any(windows, target_os = "linux")))]
+mod imp {
+    use std::io;
+    use std::path::PathBuf;
+
+    fn unsupported() -> io::Error {
+        io::Error::new(io::ErrorKind::Unsupported, "not on this operating system")
+    }
+
+    pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
+        Err(unsupported())
+    }
+
+    pub fn lower_this_thread() -> io::Result<()> {
+        Err(unsupported())
     }
 }

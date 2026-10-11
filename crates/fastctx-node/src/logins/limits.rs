@@ -75,7 +75,12 @@ pub(super) fn of(kept: &kept::Kept, dir: &Path) -> Fact<AgentLimits> {
 /// running one or one started for the reading; Claude Code reads its own
 /// only in a session at work, so nothing can be asked of it.
 pub(crate) async fn read(node: &Arc<Node>, agent: &AgentName, dir: &Path) -> Result<(), Failure> {
-    super::known(node, agent, dir)?;
+    {
+        let (node, agent, dir) = (node.clone(), agent.clone(), dir.to_path_buf());
+        tokio::task::spawn_blocking(move || super::known(&node, &agent, &dir))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))??;
+    }
     if agent.as_str() != "codex" {
         return Err(Failure::not_run(
             "Claude Code reads its limits only in a session at work; they are shown as its sessions last read them",

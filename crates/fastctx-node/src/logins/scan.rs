@@ -350,9 +350,20 @@ fn disks(node: &Arc<Node>, running: &Arc<Running>) -> Result<(), Failure> {
     kept::change(node, |kept| {
         for agent in AGENTS {
             let mut elsewhere: Vec<LooksLike> = Vec::new();
+            let mut seen: HashSet<String> = HashSet::new();
             for one in found.iter().filter(|one| one.agent == agent) {
-                if !elsewhere.iter().any(|known| crate::homes::same_dir(&known.dir, &one.dir)) {
+                if seen.insert(walk::key(&one.dir)) {
                     elsewhere.push(LooksLike { dir: one.dir.clone(), traces: one.traces.clone() });
+                }
+            }
+            // A walk the user stopped did not reach everywhere: what an
+            // earlier walk found there, and is still a directory, is still
+            // the best word on it.
+            if stopped {
+                for earlier in &kept.of(agent).elsewhere {
+                    if earlier.dir.is_dir() && seen.insert(walk::key(&earlier.dir)) {
+                        elsewhere.push(earlier.clone());
+                    }
                 }
             }
             elsewhere.sort_by(|a, b| a.dir.cmp(&b.dir));
