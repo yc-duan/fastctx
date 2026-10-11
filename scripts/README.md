@@ -89,8 +89,9 @@ requires reviewing that SDK inventory too.
 # Inviting a Linux server
 
 The desktop GUI can call `fastctx_install::server::command(Kernel, invitation,
-Source)`. `Kernel` supplies a stable version and the **archive** SHA-256 for
-both x86_64 and aarch64. The line selects by `uname -m`. `Source::GitHub` names
+Source)`. `Kernel` supplies a stable version and optional **archive** SHA-256
+values for x86_64 and aarch64. The line selects by `uname -m`; a missing digest
+produces an architecture-specific explanation before any download. `Source::GitHub` names
 the project's versioned release. `Source::Hub` supplies an HTTPS release
 directory and the base64 SHA-256 of the certificate's DER SubjectPublicKeyInfo;
 `certificate_pin(certificate_der)` computes that value from the issuer's public
@@ -125,8 +126,22 @@ actual reason. Agent hosts, login state and Claude/Codex setup are untouched.
 
 # Hosting the release in your World
 
-The root hub serves releases on its existing TLS port. Prepare a directory
-`<hub>/releases/v<version>/` containing these three copied regular files:
+The root hub serves releases on its existing TLS port. A Linux hub supplies
+its own running executable at its exact package version and architecture.
+The first authenticated release query makes one streaming gzip archive with
+the same four root members as the release chain: `fastctx` (mode 0755),
+`LICENSE-APACHE`, `NOTICE`, and `THIRD_PARTY_LICENSES.md` (mode 0644).
+The notices are those embedded in that executable. One compression worker
+uses gzip's fast setting and hashes compressed bytes as they are written.
+Concurrent queries share this result; downloads never compress or hash it.
+The archive and its small manifest occupy unlinked files on the hub's disk
+until the process exits, including on a crash. Restarting recomputes the
+archive from the running image; replacing the image leaves no old archive.
+Windows hubs generate no archive.
+
+Hand-placed archives take precedence independently for each architecture.
+Prepare `<hub>/releases/v<version>/` with either or both copied regular
+archives and their matching `SHA256SUMS`:
 
 - `fastctx-x86_64-unknown-linux-gnu.tar.gz`
 - `fastctx-aarch64-unknown-linux-gnu.tar.gz`
@@ -135,8 +150,9 @@ The root hub serves releases on its existing TLS port. Prepare a directory
 Use the packages built by the release chain above, with their matching
 `SHA256SUMS`. Preparing the files in a sibling staging directory and renaming
 the directory to `v<version>` makes publication one step. The hub need not
-restart. A complete manifest may also contain the other release platforms;
-the hub serves only the two Linux archives and the unchanged manifest.
+restart. A manifest may also contain the other release platforms. The hub
+serves the manual manifest unchanged; when none is placed, the generated
+manifest describes its own archive after the first release query.
 
 For example, on the hub machine:
 
@@ -153,22 +169,24 @@ Symbolic links, junctions, hard links, special files and directory indexes are
 not served. The public routes are only
 `/fastctx/releases/v<version>/<one of the three filenames>`. A download
 streams the named file without hashing it: the line that fetches it carries
-the archive digest and checks it. Both Linux archives must exist and match
-their manifest when a member asks for the release, which it does before
-making an invitation. File reads and hashing run independently of WebSocket heartbeats;
+the archive digest and checks it. Every available manual archive must match
+its manifest when a member asks for the release, before making an invitation.
+Missing architectures are represented by absent digests; malformed manifests,
+bad digests and I/O errors still fail the query. File reads, hashing and
+compression run independently of WebSocket heartbeats;
 the two World WebSocket paths retain their transport and frame semantics.
 An archive download has no time limit.
 
-The desktop bridge exposes `invite_server` with `name`, `hours`, and `scope`,
+The desktop bridge exposes `server_command` with `hubName`, `accountName`, `name`, and `hours`,
 returning a `String` containing the single installation line. TypeScript calls
-`inviteServer(name, hours, scope)`. The client's equivalent is
-`World::invite_server(name, expires, scope)`; local IPC uses
-`Call::InviteServer` and `Reply::ServerInvitation { command }`. User identity
+`serverCommand(hub, account, name, hours)`. The client's equivalent is
+`World::server_command(hub, account, name, expires)`; local IPC uses
+`Call::ServerCommand` and `Reply::ServerInvitation { command }`. User identity
 and the existing invitation authorization remain required.
 
-The node asks `Question::KernelRelease { version }` for its own package
+The node asks `Question::KernelRelease { version, allow_partial: true }` for its own package
 version. The root answers `Told::KernelRelease { release, certificate }`:
-the version and two archive SHA-256 values, plus the DER certificate actually
+the version and available archive SHA-256 values, plus the DER certificate actually
 loaded by that hub's TLS listener. Before computing the SPKI pin, the node
 compares that certificate's complete DER digest with its membership's pinned
 root certificate. The download directory uses the first root address in the
@@ -177,12 +195,13 @@ membership, even when the node is connected through a relay.
 `Ask`/`Told` follow the existing control routing through relays. No new
 signature or authorization scheme is introduced. The download itself goes to
 the membership's root address and curl checks the root's key on that TLS
-connection. These additive questions/calls keep network protocol 8 and local
-IPC protocol 6; existing calls retain their meaning. Server invitations need
-a hub and node that implement the new question/call.
+connection. Protocol numbers are unchanged. Missing `allow_partial` defaults
+to false, which requires both digests or returns the existing error channel.
+Complete replies serialize exactly as before. Old hubs ignore the new boolean
+and still return complete replies or their existing errors. New readers accept
+the old strings as optional digests. The local IPC request and reply are unchanged.
 
-Missing or invalid releases return the existing error channel. The message
-names every missing file and gives its hub directory and placement steps;
-checksum, manifest, file-type and I/O errors give their actual reason. No
-invitation is issued and no partial command is returned. The GUI displays
-that error in its invitation sheet and allows the person to try again.
+Unavailable architectures, including both on an empty Windows hub, produce a
+line that explains the missing architecture and the GitHub/manual-release
+alternatives. Invalid manual releases return the existing error channel before
+an invitation is issued, with their actual reason and placement directory.

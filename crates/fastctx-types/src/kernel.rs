@@ -7,12 +7,15 @@ pub const X86_64_ARCHIVE: &str = "fastctx-x86_64-unknown-linux-gnu.tar.gz";
 pub const AARCH64_ARCHIVE: &str = "fastctx-aarch64-unknown-linux-gnu.tar.gz";
 pub const SUMS: &str = "SHA256SUMS";
 
-/// The archive digests of one complete Linux release.
+/// Available Linux archive digests. Missing digests are sent only to callers
+/// that explicitly accept a partial release.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KernelRelease {
     pub version: String,
-    pub x86_64_sha256: String,
-    pub aarch64_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x86_64_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aarch64_sha256: Option<String>,
 }
 
 /// Stable versions are also single safe directory components.

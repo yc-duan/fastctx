@@ -1,6 +1,6 @@
 //! The one line that installs fastctx on a Linux server and registers it as
 //! a machine of an account (`world-network.md`, 登录与入网): a token is made
-//! only after the hub showed it can hand out this release.
+//! only after the offered archives and bootstrap inputs have been checked.
 
 use std::sync::Arc;
 
@@ -23,9 +23,14 @@ pub async fn command(
     let version = env!("CARGO_PKG_VERSION");
     let (release, certificate) = link.kernel_release(version).await.map_err(Failure::new)?;
     let pin = certificate_pin(&certificate).map_err(|error| Failure::new(error.to_string()))?;
-    let address = link.membership().addresses.first().ok_or_else(|| Failure::new("this membership has no hub address"))?;
+    let address =
+        link.membership().addresses.first().ok_or_else(|| Failure::new("this membership has no hub address"))?;
     let directory = format!("https://{address}{}/v{version}", fastctx_types::kernel::RELEASE_PATH);
-    let kernel = Kernel { version, x86_64_sha256: &release.x86_64_sha256, aarch64_sha256: &release.aarch64_sha256 };
+    let kernel = Kernel {
+        version,
+        x86_64_sha256: release.x86_64_sha256.as_deref(),
+        aarch64_sha256: release.aarch64_sha256.as_deref(),
+    };
     let source = Source::Hub { release_directory: &directory, spki_sha256: &pin };
     // Every input of the line is checked before a token is spent on it.
     line(kernel, "token", source).map_err(|error| Failure::new(error.to_string()))?;

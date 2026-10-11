@@ -324,8 +324,13 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
-    /// A complete Linux release and the hub's actual TLS certificate.
-    KernelRelease { version: String },
+    /// Linux archives and the hub's actual TLS certificate. Without opt-in,
+    /// both architecture digests must be present, as older callers require.
+    KernelRelease {
+        version: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        allow_partial: bool,
+    },
     /// This member's view of the directory.
     Directory,
     /// A change made as `account`, which must be logged in on the asking
