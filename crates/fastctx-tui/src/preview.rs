@@ -498,6 +498,7 @@ fn journal(now: Timestamp) -> JournalView {
 /// A tool use of the World's, on `machine` when it acted on another one.
 fn world_tool(name: &str, does: Does, status: ToolStatus, on: Option<&str>) -> What {
     What::Tool(Box::new(Tool {
+        run: None,
         name: name.into(),
         server: Some("fastctx".into()),
         machine: on.map(machine),

@@ -20,6 +20,7 @@ mod plain;
 pub mod preread;
 pub mod present;
 pub mod program;
+pub mod projection;
 mod queue;
 pub mod record;
 mod records;
@@ -29,6 +30,7 @@ pub mod terminal;
 mod unfinished;
 mod view_set;
 pub mod window;
+mod write_notes;
 
 use std::time::Duration;
 
@@ -37,7 +39,7 @@ pub use launch::{Launch, Launched, launch, launch_with_io};
 pub use present::{Content, present};
 
 /// How long a `run` call waits before its job goes on in the background,
-/// unless the resident asks for another wait (`world-run.md`, 一次调用等多久).
+/// unless the resident asks for another wait (`world-run.md`, ä¸€æ¬¡è°ƒç”¨ç­‰å¤šä¹…).
 pub const WAIT: Duration = Duration::from_secs(15);
 
 /// The longest wait a resident may ask for. Claude Code's own shell waits

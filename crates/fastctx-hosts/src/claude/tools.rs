@@ -24,7 +24,7 @@ pub fn tool(full_name: &str, input: Value, output: Vec<Content>, status: ToolSta
     } else {
         (Does::Call, None)
     };
-    Tool { name, server, machine, does, input, output, status, duration_ms }
+    Tool { run: None, name, server, machine, does, input, output, status, duration_ms }
 }
 
 /// Claude Code's own tools that do what a shell, an edit or a search does.

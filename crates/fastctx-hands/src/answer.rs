@@ -3,6 +3,81 @@
 use crate::run::Content;
 use crate::run::window::{IMAGE_COST, bytes, units};
 
+#[derive(Clone, Debug)]
+pub struct Kept {
+    pub source: usize,
+    pub output: usize,
+    pub bytes: Option<std::ops::Range<usize>>,
+}
+
+pub fn fit_mapped(content: &[Content], budget: usize, omission: &str) -> (Vec<Content>, Vec<Kept>) {
+    if cost(content) <= budget {
+        return (
+            content.to_vec(),
+            content
+                .iter()
+                .enumerate()
+                .map(|(index, block)| Kept {
+                    source: index,
+                    output: index,
+                    bytes: match block {
+                        Content::Text(text) => Some(0..text.len()),
+                        _ => None,
+                    },
+                })
+                .collect(),
+        );
+    }
+    let available = budget.checked_sub(units(omission)).expect("room for the source notice");
+    let header = first_line_cost(content);
+    let head = if header <= available { (available / 4).max(header) } else { available / 4 };
+    let (mut start, mut regions) = mapped_edge(content, head, false);
+    let (end, mut last) = mapped_edge(content, available - cost(&start), true);
+    start.push(Content::Text(omission.to_string()));
+    for region in &mut last {
+        region.output += start.len();
+    }
+    start.extend(end);
+    regions.extend(last);
+    (start, regions)
+}
+
+fn mapped_edge(content: &[Content], mut budget: usize, back: bool) -> (Vec<Content>, Vec<Kept>) {
+    let mut kept = Vec::new();
+    let mut regions = Vec::new();
+    let blocks: Box<dyn Iterator<Item = (usize, &Content)>> =
+        if back { Box::new(content.iter().enumerate().rev()) } else { Box::new(content.iter().enumerate()) };
+    for (index, block) in blocks {
+        let size = block_cost(block);
+        let bytes = match block {
+            Content::Text(text) if size > budget => {
+                let selected = if back { suffix(text, bytes(budget)) } else { prefix(text, bytes(budget)) };
+                if selected.is_empty() {
+                    break;
+                }
+                let from = if back { text.len() - selected.len() } else { 0 };
+                kept.push(Content::Text(selected.to_string()));
+                regions.push(Kept { source: index, output: 0, bytes: Some(from..from + selected.len()) });
+                break;
+            }
+            Content::Text(text) => Some(0..text.len()),
+            Content::Image { .. } if size > budget => break,
+            Content::Image { .. } => None,
+        };
+        kept.push(block.clone());
+        regions.push(Kept { source: index, output: 0, bytes });
+        budget -= size;
+    }
+    if back {
+        kept.reverse();
+        regions.reverse();
+    }
+    for (index, region) in regions.iter_mut().enumerate() {
+        region.output = index;
+    }
+    (kept, regions)
+}
+
 /// What the content costs, in the units Codex counts: each text block its
 /// UTF-8 bytes divided by four, rounded up, and each image its fixed cost.
 pub fn cost(content: &[Content]) -> usize {

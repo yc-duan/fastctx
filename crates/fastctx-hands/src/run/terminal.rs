@@ -82,6 +82,11 @@ pub struct Lines<R> {
     queued: Spool,
     ready: Option<Queue>,
     tracker: super::unfinished::Tracker,
+    read_bytes: u64,
+    string_start: u64,
+    matches: Option<Vec<(std::ops::Range<u64>, u64)>>,
+    text_tags: Vec<(std::ops::Range<usize>, u64)>,
+    tagged_records: Vec<Vec<(std::ops::Range<usize>, u64)>>,
 }
 
 impl<R: Read> Lines<R> {
@@ -119,8 +124,39 @@ impl<R: Read> Lines<R> {
             queued: Spool::default(),
             ready: None,
             tracker: Default::default(),
+            read_bytes: 0,
+            string_start: 0,
+            matches: None,
+            text_tags: Vec::new(),
+            tagged_records: Vec::new(),
         }
     }
+    pub fn position(&self) -> u64 {
+        self.read_bytes - (self.end - self.start) as u64
+    }
+
+    pub(crate) fn tagged_at(input: R, raw_start: u64, ranges: Vec<(std::ops::Range<u64>, u64)>) -> Self {
+        let mut lines = Self::new(input);
+        lines.matches = Some(ranges);
+        lines.read_bytes = raw_start;
+        lines
+    }
+
+    fn append_text(&mut self, bytes: &[u8], source: u64) -> io::Result<()> {
+        if let Some(ranges) = &self.matches {
+            let end = source + bytes.len() as u64;
+            let first = ranges.partition_point(|(range, _)| range.end <= source);
+            for (range, tag) in ranges[first..].iter().take_while(|(range, _)| range.start < end) {
+                self.text_tags.push((
+                    self.text.len() as usize + (range.start.max(source) - source) as usize
+                        ..self.text.len() as usize + (range.end.min(end) - source) as usize,
+                    *tag,
+                ));
+            }
+        }
+        self.text.write_all(bytes)
+    }
+
     pub fn next_line(&mut self) -> io::Result<Option<Line<'_>>> {
         let mut sequence = Spool::default();
         loop {
@@ -145,6 +181,7 @@ impl<R: Read> Lines<R> {
                     self.finish(std::mem::take(&mut sequence).finish())?;
                     continue;
                 }
+                self.read_bytes += read as u64;
                 self.start = 0;
                 self.end = read;
                 self.tracker.feed(&self.buffer[..read]);
@@ -154,6 +191,12 @@ impl<R: Read> Lines<R> {
                 && self.pending.len() == 0
                 && let Some(length) = memchr::memchr(b'\n', &self.buffer[self.start..self.end])
                 && let Some(row) = super::plain::text(&self.buffer[self.start..self.start + length])
+                && self.matches.as_ref().is_none_or(|ranges| {
+                    let start = self.position();
+                    let end = start + length as u64 + 1;
+                    let at = ranges.partition_point(|(range, _)| range.end <= start);
+                    ranges.get(at).is_none_or(|(range, _)| range.start >= end)
+                })
             {
                 let start = self.start;
                 self.start += length + 1;
@@ -178,7 +221,7 @@ impl<R: Read> Lines<R> {
                     graphics: 0,
                     parts: Parts::from_text(text),
                     decoding: Decoding::default(),
-                    view: self.view,
+                    view: if self.matches.is_some() { 0 } else { self.view },
                     newline: true,
                 }));
             }
@@ -196,7 +239,13 @@ impl<R: Read> Lines<R> {
                 self.raw_unterminated = bytes[span - 1] != b'\n';
                 self.raw_newlines += memchr::memchr_iter(b'\n', bytes).count() as u64;
                 if matches!(self.state, State::Normal) {
-                    self.text.write_all(bytes)?;
+                    let position = self.position();
+                    if self.matches.is_some() {
+                        let bytes = bytes.to_vec();
+                        self.append_text(&bytes, position)?;
+                    } else {
+                        self.text.write_all(bytes)?;
+                    }
                 } else {
                     sequence.write_all(bytes)?;
                 }
@@ -210,24 +259,29 @@ impl<R: Read> Lines<R> {
             match self.state {
                 State::Normal => match byte {
                     b'\n' => self.end_line(true)?,
-                    0x1b => self.state = State::Escape,
+                    0x1b => {
+                        self.string_start = self.position() - 1;
+                        self.string_start = self.position() - 1;
+                        self.state = State::Escape;
+                    }
                     _ => {
-                        self.text.write_all(&[byte])?;
+                        self.append_text(&[byte], self.position() - 1)?;
                     }
                 },
                 State::Escape => match byte {
                     b']' => self.state = State::String { apc: false, escape: false },
                     b'_' => self.state = State::String { apc: true, escape: false },
                     0x1b => {
-                        self.text.write_all(&[byte])?;
+                        self.append_text(&[byte], self.position() - 1)?;
+                        self.string_start = self.position() - 1;
                     }
                     _ => {
-                        self.text.write_all(&[0x1b])?;
+                        self.append_text(&[0x1b], self.position() - 2)?;
                         self.state = State::Normal;
                         if byte == b'\n' {
                             self.end_line(true)?;
                         } else {
-                            self.text.write_all(&[byte])?;
+                            self.append_text(&[byte], self.position() - 1)?;
                         }
                     }
                 },
@@ -240,7 +294,7 @@ impl<R: Read> Lines<R> {
                     }
                     0x18 | 0x1a => {
                         self.literal_string(apc, std::mem::take(&mut sequence).finish(), false)?;
-                        self.text.write_all(&[byte])?;
+                        self.append_text(&[byte], self.position() - 1)?;
                         self.state = State::Normal;
                     }
                     0x07 if !apc => {
@@ -282,7 +336,7 @@ impl<R: Read> Lines<R> {
             }
             self.literal_string(apc, sequence, escape)?;
         } else if matches!(self.state, State::Escape) {
-            self.text.write_all(&[0x1b])?;
+            self.append_text(&[0x1b], self.position() - 1)?;
         }
         if self.kitty.take().is_some() {
             self.unreadable("a kitty image whose last chunk never came".into())?;
@@ -296,12 +350,13 @@ impl<R: Read> Lines<R> {
         self.flush_text()?;
         let mut literal = Spool::default();
         literal.write_all(&[0x1b, if apc { b'_' } else { b']' }])?;
+        let mut source = self.string_start;
         for bytes in sequence.chunks() {
             for piece in bytes?.split_inclusive(|b| *b == b'\n') {
                 let newline = piece.ends_with(b"\n");
                 literal.write_all(&piece[..piece.len() - usize::from(newline)])?;
                 if newline {
-                    self.literal(std::mem::take(&mut literal).finish())?;
+                    source += self.literal(std::mem::take(&mut literal).finish(), source)? + 1;
                     self.end_line(true)?;
                 }
             }
@@ -309,14 +364,34 @@ impl<R: Read> Lines<R> {
         if escape {
             literal.write_all(&[0x1b])?;
         }
-        self.literal(literal.finish())
+        self.literal(literal.finish(), source)?;
+        Ok(())
     }
-    fn literal(&mut self, bytes: Bytes) -> io::Result<()> {
+    fn literal(&mut self, bytes: Bytes, source: u64) -> io::Result<u64> {
         if !bytes.is_empty() {
-            records::write(&mut self.pending, LITERAL, 0, 0, 0, &bytes)?;
+            let mut tags = Vec::new();
+            if let Some(ranges) = &self.matches {
+                let end = source + bytes.len() as u64;
+                let first = ranges.partition_point(|(range, _)| range.end <= source);
+                for (range, tag) in ranges[first..].iter().take_while(|(range, _)| range.start < end) {
+                    tags.push((
+                        (range.start.max(source) - source) as usize..(range.end.min(end) - source) as usize,
+                        *tag,
+                    ));
+                }
+            }
+            let id = self.save_tags(tags);
+            records::write(&mut self.pending, LITERAL, id, 0, 0, &bytes)?;
             self.pending_content = true;
         }
-        Ok(())
+        Ok(bytes.len() as u64)
+    }
+    fn save_tags(&mut self, tags: Vec<(std::ops::Range<usize>, u64)>) -> u64 {
+        if tags.is_empty() {
+            return 0;
+        }
+        self.tagged_records.push(tags);
+        self.tagged_records.len() as u64
     }
     fn close_string(&mut self, apc: bool, body: Bytes) -> io::Result<()> {
         self.flush_text()?;
@@ -376,7 +451,9 @@ impl<R: Read> Lines<R> {
     }
     fn flush_text(&mut self) -> io::Result<()> {
         if self.text.len() != 0 {
-            records::write(&mut self.pending, TEXT, 0, 0, 0, &std::mem::take(&mut self.text).finish())?;
+            let tags = std::mem::take(&mut self.text_tags);
+            let id = self.save_tags(tags);
+            records::write(&mut self.pending, TEXT, id, 0, 0, &std::mem::take(&mut self.text).finish())?;
             self.pending_content = true;
         }
         Ok(())
@@ -427,9 +504,13 @@ impl<R: Read> Lines<R> {
                 }
             }
         }
+        if self.matches.is_some() {
+            plain = false;
+            linear = false;
+        }
         let decoding = encoding.facts();
         let mut display = Display::default();
-        display.view = self.line_view;
+        display.view = if self.matches.is_some() { 0 } else { self.line_view };
         self.line_view = self.view;
         let mut fragments = Fragments::default();
         for record in Records::new(pending) {
@@ -442,6 +523,10 @@ impl<R: Read> Lines<R> {
                         super::linear::render(&record.payload, record.kind == LITERAL, |text| {
                             fragments.push(display.view, Part::Text(text.to_string()))
                         })?;
+                    } else if self.matches.is_some() {
+                        let tags =
+                            if record.a == 0 { &[][..] } else { self.tagged_records[record.a as usize - 1].as_slice() };
+                        encoding.render_tagged(&record.payload, record.kind == LITERAL, tags, &mut display)?;
                     } else {
                         encoding.render(&record.payload, record.kind == LITERAL, &mut display)?;
                     }
@@ -460,13 +545,18 @@ impl<R: Read> Lines<R> {
                     };
                     fragments.push(display.view, part)?;
                 }
-                VIEW => display.view = record.a,
+                VIEW if self.matches.is_none() => display.view = record.a,
+                VIEW => {}
                 BOUNDARY => {}
                 _ => return Err(io::Error::other("invalid terminal record")),
             }
         }
         display.take(|view, part| fragments.push(view, part))?;
-        fragments.finish(&mut self.queued, number, through, self.view, newline, decoding)
+        let ending_tag = self
+            .matches
+            .as_ref()
+            .map_or(self.view, |ranges| super::write_notes::tag(ranges, self.position().saturating_sub(1)));
+        fragments.finish(&mut self.queued, number, through, ending_tag, newline, decoding)
     }
 }
 
@@ -607,6 +697,85 @@ enum Encoding {
     Escaped,
 }
 impl Encoding {
+    /// Attribution is a separate replay. Its labels never enter model selection or decoding.
+    fn render_tagged(
+        &self,
+        bytes: &Bytes,
+        literal: bool,
+        tags: &[(std::ops::Range<usize>, u64)],
+        display: &mut Display,
+    ) -> io::Result<()> {
+        if matches!(self, Self::Utf8) {
+            return display.write_tagged(bytes, literal, tags);
+        }
+        // Keep decoder state across source boundaries; labels follow the bytes producing text.
+        let mut decoded = Spool::default();
+        let mut mapped = Vec::new();
+        let mut offset = 0usize;
+        let mut emit = |text: &str, source: usize| -> io::Result<()> {
+            let tag = super::display::source_tag(tags, source);
+            if tag != 0 && !text.is_empty() {
+                mapped.push((decoded.len() as usize..decoded.len() as usize + text.len(), tag));
+            }
+            decoded.write_all(text.as_bytes())
+        };
+        match self {
+            Self::Legacy(page) => {
+                let mut decoder = LegacyDecoder::new(*page)?;
+                for chunk in bytes.chunks() {
+                    for byte in chunk? {
+                        let text = decoder
+                            .feed(&[byte], false)
+                            .map_err(|_| io::Error::other("terminal source does not decode"))?;
+                        emit(&text, offset)?;
+                        offset += 1;
+                    }
+                }
+                let text = decoder.feed(&[], true).map_err(|_| io::Error::other("terminal source does not decode"))?;
+                emit(&text, offset.saturating_sub(1))?;
+            }
+            Self::Escaped => {
+                // This path shares the normal renderer, whose escaped ASCII has byte provenance.
+                let mut pending = Vec::new();
+                for chunk in bytes.chunks().chain(std::iter::once(Ok(Vec::new()))) {
+                    let chunk = chunk?;
+                    let end = chunk.is_empty();
+                    pending.extend_from_slice(&chunk);
+                    let mut at = 0;
+                    while at < pending.len() {
+                        let (good, bad) = match std::str::from_utf8(&pending[at..]) {
+                            Ok(text) => (text.len(), 0),
+                            Err(error) => (
+                                error.valid_up_to(),
+                                error.error_len().unwrap_or(if end {
+                                    pending.len() - at - error.valid_up_to()
+                                } else {
+                                    0
+                                }),
+                            ),
+                        };
+                        for character in std::str::from_utf8(&pending[at..at + good]).expect("valid prefix").chars() {
+                            emit(character.encode_utf8(&mut [0; 4]), offset + at)?;
+                            at += character.len_utf8();
+                        }
+                        for byte in &pending[at..at + bad] {
+                            emit(&format!(r"\x{byte:02X}"), offset + at)?;
+                            at += 1;
+                        }
+                        if bad == 0 {
+                            break;
+                        }
+                    }
+                    pending.drain(..at);
+                    offset += at;
+                }
+            }
+            Self::Utf8 => unreachable!(),
+        }
+        display.legacy = matches!(self, Self::Legacy(_));
+        display.write_tagged(&decoded.finish(), literal, &mapped)
+    }
+
     fn of(bytes: &Bytes) -> io::Result<(Self, bool)> {
         if bytes.as_slice().is_some_and(|bytes| std::str::from_utf8(bytes).is_ok()) {
             return Ok((Self::Utf8, true));

@@ -28,6 +28,8 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
         Letter::Fragment { .. } => return Ok(()),
         // Whose resident left is the sender's own.
         Letter::Left { .. } => return expect(purpose, Purpose::Echo),
+        Letter::JobFacts { to, update } if &update.machine == from => (to, Purpose::Echo),
+        Letter::JobFacts { .. } => return Err(format!("{from} sent job facts of another machine")),
         Letter::Speak { to, accounts, .. } => {
             also = accounts;
             (to, Purpose::Words)

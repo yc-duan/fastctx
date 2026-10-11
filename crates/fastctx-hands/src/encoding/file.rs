@@ -23,6 +23,9 @@ impl Plan {
         (codec.encode("\n").expect("newline"), codec.encode("\r\n").expect("CRLF"))
     }
 
+    pub(crate) fn is_utf8(&self) -> bool {
+        self.fixed.is_some_and(|codec| codec.label() == "UTF-8")
+    }
     pub fn inspect(reader: &mut impl Read, selection: Option<&str>) -> Result<Self, String> {
         evidence::inspect(reader, selection)
     }

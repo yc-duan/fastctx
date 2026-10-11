@@ -1,0 +1,82 @@
+import type { RunState } from "./pages";
+import type { MachineName } from "./wire";
+
+export interface OutputRef {
+  machine: MachineName;
+  path: string;
+  bytes: number;
+  lines: number;
+  cut: boolean;
+}
+
+/** UTF-8 JSON lines, one DiffLine per row, read through the line-source APIs. */
+export interface DiffRef { machine: MachineName; path: string }
+
+export interface DiffLine {
+  kind: "context" | "added" | "removed" | "hunk";
+  before: number | null;
+  after: number | null;
+  text: string;
+  ending: string;
+}
+
+export interface WriteFact {
+  id: string;
+  machine: MachineName;
+  path: string;
+  kind: "added" | "modified" | "deleted";
+  added: number | null;
+  removed: number | null;
+  unavailable?: string;
+  diff: DiffRef | null;
+  /** Exact UTF-8 stdout-note bytes; line ending is part of text. */
+  note?: WriteNote;
+}
+
+/** A multi-file operation keeps its one exact note once, then references that fact. */
+export type WriteNote =
+  | { kind: "text"; command: OutputNote["command"]; text: string }
+  | { kind: "same"; fact: string };
+
+export interface OutputNote {
+  command: "write" | "edit" | "apply_patch" | "view" | "nodes" | "accounts" | "who"
+    | "wait" | "stop" | "copy" | "project" | "journal" | "page" | "on" | "error";
+  /** The writer operation: matching WriteFact ids begin with this plus a hyphen. */
+  write?: string;
+}
+
+export type DisplayPiece =
+  | { kind: "text"; first_line: number; text: string }
+  | { kind: "part_of_line"; line: number; from: number; to: number; of: number; text: string }
+  | { kind: "omitted"; first_line: number; last_line: number }
+  | { kind: "image"; image: number; mime: string; width: number; height: number }
+  | { kind: "unreadable"; line: number; reason: string };
+
+export interface OutputSpan { note?: OutputNote; piece: DisplayPiece }
+
+/** All capture matches, including notes outside the model's selected window. */
+export interface OutputNoteMatch { note: OutputNote; from: number; to: number }
+
+export interface RunFacts {
+  machine: MachineName;
+  state: RunState;
+  job: string | null;
+  output: OutputRef | null;
+  visited: [MachineName, string][];
+  writes: WriteFact[];
+  spans: OutputSpan[];
+  /** Raw byte offsets, end exclusive; these are not decoded viewer coordinates. */
+  notes?: OutputNoteMatch[];
+}
+
+export interface JobFacts {
+  call_id: string;
+  primary: boolean;
+  output: OutputRef | null;
+  visited: [MachineName, string][];
+  machine: MachineName;
+  job: string;
+  sequence: number;
+  state: RunState | null;
+  writes: WriteFact[];
+}

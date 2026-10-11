@@ -143,7 +143,8 @@ impl Happened {
             self,
             Happened::Began { .. }
                 | Happened::Changed {
-                    change: SessionChange::Composer { .. }
+                    change: SessionChange::RunFactsUpdated { .. }
+                        | SessionChange::Composer { .. }
                         | SessionChange::ComposerFailed { .. }
                         | SessionChange::CommandsChanged
                         | SessionChange::AgentEvent { .. }
@@ -251,6 +252,8 @@ pub enum Part {
 /// A tool the agent used.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tool {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<Box<crate::run_facts::RunFacts>>,
     /// The tool as its host names it, without the server it belongs to:
     /// `run`, `apply_patch`, `Bash`, `js`.
     pub name: String,

@@ -18,9 +18,39 @@ pub(super) struct Display {
 
 impl Display {
     pub fn write(&mut self, text: &Bytes, literal: bool) -> io::Result<()> {
-        let mut chars = text.chars().peekable();
+        self.write_with_tags(text, literal, None)
+    }
+
+    pub fn write_tagged(
+        &mut self,
+        text: &Bytes,
+        literal: bool,
+        tags: &[(std::ops::Range<usize>, u64)],
+    ) -> io::Result<()> {
+        self.write_with_tags(text, literal, Some(tags))
+    }
+
+    fn write_with_tags(
+        &mut self,
+        text: &Bytes,
+        literal: bool,
+        tags: Option<&[(std::ops::Range<usize>, u64)]>,
+    ) -> io::Result<()> {
+        let position = std::cell::Cell::new(0usize);
+        let mut chars = text
+            .chars()
+            .map(|character| {
+                if let Ok(character) = character {
+                    position.set(position.get() + character.len_utf8());
+                }
+                character
+            })
+            .peekable();
         while let Some(c) = chars.next() {
             let c = c?;
+            if let Some(tags) = tags {
+                self.view = source_tag(tags, position.get() - c.len_utf8());
+            }
             if c != '\u{1b}' || literal {
                 self.character(c, literal)?;
                 continue;
@@ -313,4 +343,9 @@ impl Display {
         self.has_tabs = false;
         Ok(())
     }
+}
+
+pub(super) fn source_tag(tags: &[(std::ops::Range<usize>, u64)], byte: usize) -> u64 {
+    let at = tags.partition_point(|(range, _)| range.end <= byte);
+    tags.get(at).filter(|(range, _)| range.contains(&byte)).map_or(0, |(_, tag)| *tag)
 }

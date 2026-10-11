@@ -83,6 +83,17 @@ impl Pieces {
         Self(self.0.clone(), self.1.clone(), Arc::new(Mutex::new(context)))
     }
 
+    fn fact(&self, fact: &fastctx_types::run_facts::WriteFact) -> Result<(), String> {
+        let (node, parent) = {
+            let context = self.2.lock().expect("never poisoned");
+            (context.node.clone(), context.parent.clone())
+        };
+        if let Some(record) = parent {
+            crate::run_facts::write(&record.with_extension("writes"), fact).map_err(|error| error.to_string())?;
+            crate::run_facts::update_job(&node, &record, vec![fact.clone()]).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
     async fn send(&self, piece: Result<OnPiece, Failure>) -> Result<(), String> {
         if let Ok(OnPiece::Started { job, .. }) = &piece {
             self.2.lock().expect("never poisoned").job = Some(job.clone());
@@ -158,6 +169,14 @@ pub(crate) fn sent_for(node: &Node, job: Option<&JobId>) -> Option<fastctx_types
 /// the returned channel until its end or a failure; dropping the channel
 /// before the end stops the job.
 pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) -> Result<OnFollowing, Failure> {
+    origin.call_id = if let Some(job) = &request.job {
+        let path = node.world.owner(&node.machine(), origin.town.as_ref(), &origin.resident).job_record(job);
+        fastctx_hands::run::record::read(&path)
+            .map_err(|error| Failure::new(format!("reading the on's job: {error}")))?
+            .call_id
+    } else {
+        None
+    };
     origin.request = Some(crate::speech::new_id("on"));
     origin.follower = Some(node.machine());
     let (pieces, receiver) = mpsc::channel(QUEUED_PIECES);
@@ -506,6 +525,7 @@ fn feed(
                     () = pieces.closed() => return Err("the on that sent it left".to_string()),
                 };
                 match word {
+                    OnWord::WriteFact { fact } => pieces.fact(&fact)?,
                     OnWord::Refused { failure } => {
                         followed.lock().expect("never poisoned").refused = Some(failure);
                         return stream.say(&TAKEN).await;
@@ -1110,7 +1130,7 @@ async fn start(
         account: origin.account.clone(),
         piped,
     };
-    let request = RunRequest { script, cwd: None, writes_off, wait: None };
+    let request = RunRequest { call_id: origin.call_id.clone(), script, cwd: None, writes_off, wait: None };
     let owner = JobOwner::Resident(origin.resident.clone());
     let registration = Arc::new(Mutex::new(None));
     let launched = node
@@ -1193,6 +1213,15 @@ struct Handed {
 }
 
 impl Sink<'_> {
+    async fn facts(&mut self, facts: Vec<fastctx_types::run_facts::WriteFact>) -> Result<(), String> {
+        for fact in facts {
+            match self {
+                Sink::Stream(stream) => stream.say(&OnWord::WriteFact { fact: Box::new(fact) }).await?,
+                Sink::Local(pieces) => pieces.fact(&fact)?,
+            }
+        }
+        Ok(())
+    }
     async fn bytes(&mut self, error: bool, bytes: &[u8]) -> Result<(), String> {
         match self {
             Sink::Stream(stream) => {
@@ -1257,11 +1286,14 @@ async fn hand_over(
     sink: &mut Sink<'_>,
 ) -> Result<Handed, String> {
     let mut changes = node.jobs.subscribe();
+    let mut facts_cursor = 0;
     let mut quiet_since = Instant::now();
     loop {
         // The record first: whatever it says has ended had written its
         // last byte before, so reading the logs after it misses nothing.
         let record = crate::jobs::read(record_path).await.map_err(|failure| failure.message)?;
+        sink.facts(crate::run_facts::read_since(record_path, &mut facts_cursor).map_err(|error| error.to_string())?)
+            .await?;
         let errors = record.stderr.clone();
         let boundary = record.output_drained.filter(|_| record.end.is_none() && through(&record).is_some());
         // Output that went straight on is taken from here by another
@@ -1286,6 +1318,7 @@ async fn hand_over(
             continue;
         }
         if let Some(end) = through(&record) {
+            sink.facts(crate::run_facts::writes(record_path).map_err(|error| error.to_string())?).await?;
             // A letter goes only for an end nobody followed, and takes the
             // marker that it is owed: without one, the letter went.
             let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(job);

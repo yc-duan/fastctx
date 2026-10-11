@@ -4,6 +4,7 @@
 
 import type { Attachment } from "./attachments";
 import type { PageSource } from "./pages";
+import type { RunFacts } from "./run-facts";
 import type { EndedHow, ExitStatus } from "./since";
 import type { Address, JsonValue, MachineName, NoticeId, Timestamp } from "./wire";
 export type { Address, MachineName, ResidentId } from "./wire";
@@ -45,6 +46,7 @@ export type Content =
   | { type: "other"; block: JsonValue };
 
 export interface Tool {
+  run?: RunFacts;
   name: string;
   server: string | null;
   /** The machine it acted on, when the World's own tools say. */
@@ -122,6 +124,7 @@ export interface UserMessage {
 }
 
 export type SessionChange =
+  | { kind: "run_facts_updated"; call_id: string; update: import("./run-facts").JobFacts }
   | { kind: "history_changed" }
   | { kind: "forked"; source: Address; thread: string; through: string | null }
   | { kind: "diff"; diff: string }

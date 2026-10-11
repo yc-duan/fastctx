@@ -1,0 +1,177 @@
+//! Call facts survive their large artifacts and are attached by explicit host identity only.
+
+mod log;
+mod storage;
+mod updates;
+pub(crate) use storage::{begin as begin_for, discard_unlaunched, failed as failed_for, receive, record_failure};
+pub(crate) use updates::job as update_job;
+
+use crate::Node;
+use fastctx_platform::{Permissions, publish, publish_new};
+use fastctx_types::layout::ResidentDir;
+use fastctx_types::run::{OutputPiece, RunReply};
+use fastctx_types::run_facts::{OutputRef, RunFacts, WriteFact};
+use fastctx_types::session::{Happened, SessionEvent, What};
+use std::io;
+use std::path::Path;
+
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn write(directory: &Path, fact: &WriteFact) -> io::Result<()> {
+    let _writing = WRITING.lock().expect("write fact lock");
+    if fact.id.is_empty() || !fact.id.bytes().all(|byte| byte.is_ascii_hexdigit() || byte == b'-') {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid write fact identity"));
+    }
+    fastctx_platform::ensure_private_dir(directory)?;
+    let path = directory.join(format!("{}.json", fact.id));
+    let bytes = serde_json::to_vec(fact)?;
+    match publish_new(&path, &bytes, Permissions::Private) {
+        Ok(()) => {
+            let mut bytes = bytes;
+            bytes.push(b'\n');
+            log::append(&directory.with_extension("writes.jsonl"), &bytes)
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            if std::fs::read(path)? == bytes {
+                Ok(())
+            } else {
+                Err(io::Error::new(io::ErrorKind::InvalidData, "write fact identity changed"))
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+pub(crate) fn writes(record: &Path) -> io::Result<Vec<WriteFact>> {
+    let mut facts = read_since(record, &mut 0)?;
+    let known: std::collections::HashSet<_> = facts.iter().map(|fact| fact.id.clone()).collect();
+    let entries = match std::fs::read_dir(record.with_extension("writes")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(facts),
+        Err(error) => return Err(error),
+    };
+    let mut recovered = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path.file_stem().and_then(|name| name.to_str()).is_some_and(|id| known.contains(id)) {
+            continue;
+        }
+        recovered.push(serde_json::from_slice(&std::fs::read(path)?)?);
+    }
+    // A published fact survives an interrupted append; completed appends keep their order.
+    recovered.sort_by(|a: &WriteFact, b| a.id.cmp(&b.id));
+    facts.extend(recovered);
+    Ok(facts)
+}
+
+pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> {
+    let cut = reply
+        .output
+        .pieces
+        .iter()
+        .any(|piece| matches!(piece, OutputPiece::Omitted { .. } | OutputPiece::PartOfLine { .. }));
+    let writes = writes(record)?;
+    let (spans, notes) = fastctx_hands::run::projection::read_with_matches(&reply.output, &writes)?;
+    Ok(RunFacts {
+        machine: reply.machine.clone(),
+        state: reply.state.clone(),
+        job: Some(reply.job.clone()),
+        output: Some(OutputRef {
+            machine: reply.machine.clone(),
+            path: reply.output.log.clone(),
+            bytes: reply.output.bytes,
+            lines: reply.output.lines,
+            cut,
+        }),
+        visited: reply.visited.clone(),
+        writes,
+        spans,
+        notes,
+    })
+}
+
+fn path(directory: &ResidentDir, id: &str) -> std::path::PathBuf {
+    // Host ids are opaque input, never path components.
+    directory.calls().join(format!("{}.json", fastctx_hands::files::content_hash(id.as_bytes())))
+}
+
+pub(crate) fn keep(directory: &ResidentDir, id: &str, facts: &RunFacts) -> io::Result<()> {
+    storage::keep(directory, id, facts, false)
+}
+
+pub(crate) fn attach(directory: &ResidentDir, event: &mut SessionEvent) -> io::Result<()> {
+    let item = match &mut event.happened {
+        Happened::Began { item, .. } | Happened::Updated { item, .. } | Happened::Finished { item, .. } => item,
+        _ => return Ok(()),
+    };
+    let What::Tool(tool) = &mut item.what else { return Ok(()) };
+    if tool.name != "run"
+        || !tool.server.as_deref().is_some_and(|server| server == "fastctx" || server.ends_with("_fastctx"))
+    {
+        return Ok(());
+    }
+    let Some(facts) = storage::get(directory, &item.id)? else { return Ok(()) };
+    tool.machine = Some(facts.machine.clone());
+    if let fastctx_types::session::Does::Command { exit, job, .. } = &mut tool.does {
+        *exit = match &facts.state {
+            fastctx_types::run::RunState::Ended { status: fastctx_types::run::ExitStatus::Code(code) }
+            | fastctx_types::run::RunState::Exited { status: fastctx_types::run::ExitStatus::Code(code), .. } => {
+                Some(*code)
+            }
+            _ => None,
+        };
+        *job = if matches!(
+            facts.state,
+            fastctx_types::run::RunState::Running | fastctx_types::run::RunState::Exited { remaining: 1.., .. }
+        ) {
+            facts.job.as_ref().map(ToString::to_string)
+        } else {
+            None
+        };
+    }
+    tool.run = Some(Box::new(facts));
+    Ok(())
+}
+
+pub(crate) fn keep_for(
+    node: &Node,
+    resident: &fastctx_types::ResidentId,
+    id: &str,
+    facts: &RunFacts,
+) -> io::Result<()> {
+    let (_, town) = node.residents.about(resident).ok_or_else(|| io::Error::other("unknown resident"))?;
+    storage::keep(&node.world.resident(town.as_ref(), resident), id, facts, true)
+}
+
+pub(crate) fn keep_reply(
+    node: &Node,
+    resident: &fastctx_types::ResidentId,
+    id: &str,
+    facts: &RunFacts,
+) -> io::Result<()> {
+    let (_, town) = node.residents.about(resident).ok_or_else(|| io::Error::other("unknown resident"))?;
+    keep(&node.world.resident(town.as_ref(), resident), id, facts)
+}
+
+pub(crate) fn read_since(record: &Path, cursor: &mut u64) -> io::Result<Vec<WriteFact>> {
+    use std::io::{BufRead, Seek};
+    let mut file = match std::fs::File::open(record.with_extension("writes.jsonl")) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    file.seek(std::io::SeekFrom::Start(*cursor))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut facts = Vec::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader.read_line(&mut line)?;
+        if n == 0 || !line.ends_with('\n') {
+            break;
+        }
+        facts.push(serde_json::from_str(&line).map_err(io::Error::other)?);
+        *cursor += n as u64;
+    }
+    Ok(facts)
+}

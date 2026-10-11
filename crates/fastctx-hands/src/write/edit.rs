@@ -73,11 +73,11 @@ fn edit_file(
             .publish(
                 Some(&before),
                 after,
-                PublishedEncoding { label: document.label(), selection },
+                PublishedEncoding { before_selection: selection, label: document.label(), selection },
                 writer,
                 &mut changes,
             )
-            .map_err(|message| WriteError { message, changes: changes.clone() })?;
+            .map_err(|message| WriteError { note_prefix: 0, message, changes: changes.clone() })?;
     } else {
         ranges.clear();
     }
@@ -87,8 +87,17 @@ fn edit_file(
         text.push_str("\nThe file changed since you last viewed it; the edit matched its current contents.");
     }
     ranges.sort_unstable_by_key(|range| (range.start, range.end));
+    let mut note_prefix = text.len();
     text.push_str(&excerpts(&document.text, &ranges));
-    Ok(WriteResult { text, changes, changed_since_seen: if stale { vec![path.to_path_buf()] } else { Vec::new() } })
+    if text[note_prefix..].starts_with('\n') {
+        note_prefix += 1;
+    }
+    Ok(WriteResult {
+        note_prefix,
+        text,
+        changes,
+        changed_since_seen: if stale { vec![path.to_path_buf()] } else { Vec::new() },
+    })
 }
 
 fn replace(
@@ -232,12 +241,15 @@ pub(super) fn write(writer: &Writer, request: WriteRequest, seen: &SeenFiles) ->
     target.create_parent(writer)?;
     let mut changes = Vec::new();
     target
-        .publish(before.as_ref(), &after, PublishedEncoding { label: encoding, selection }, writer, &mut changes)
-        .map_err(|message| WriteError { message, changes: changes.clone() })?;
+        .publish(
+            before.as_ref(),
+            &after,
+            PublishedEncoding { before_selection: selection, label: encoding, selection },
+            writer,
+            &mut changes,
+        )
+        .map_err(|message| WriteError { note_prefix: 0, message, changes: changes.clone() })?;
     let outcome = if before.is_some() { "replaced" } else { "created" };
-    Ok(WriteResult {
-        text: writer.file_head("write", &request.file_path, outcome),
-        changes,
-        changed_since_seen: Vec::new(),
-    })
+    let text = writer.file_head("write", &request.file_path, outcome);
+    Ok(WriteResult { note_prefix: text.len(), text, changes, changed_since_seen: Vec::new() })
 }

@@ -29,7 +29,7 @@ use crate::speech::{self, Owed};
 
 /// Something a host reported about a resident's session.
 /// Applies a report before the source acknowledges or deletes it.
-pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> std::io::Result<()> {
+pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -> std::io::Result<()> {
     if matches!(&event.happened, Happened::Heard { text, message: Some(_), .. } if fastctx_hands::told::is_told(text)) {
         return Ok(());
     }
@@ -40,6 +40,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
     if about.host.agent.as_str() == "claude" {
         crate::claude::turn_facts::observe(&directory, &event.happened)?;
     }
+    crate::run_facts::attach(&directory, &mut event)?;
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
         &event.happened
     {

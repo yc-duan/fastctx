@@ -5,7 +5,6 @@
 //! answers (`world.md`, 位置诚实), so it reads them as what they do.
 
 use fastctx_types::MachineName;
-use fastctx_types::run::RunHead;
 use fastctx_types::session::{Change, ChangeHow, Content, Does};
 use serde_json::Value;
 
@@ -23,16 +22,14 @@ pub fn read(tool: &str, input: &Value, output: &[Content]) -> (Does, Option<Mach
         }
         _ => None,
     });
-    let machine = text("node").and_then(|node| node.parse().ok()).or_else(|| head.and_then(machine_of));
+    let machine = if tool == "run" {
+        None
+    } else {
+        text("node").and_then(|node| node.parse().ok()).or_else(|| head.and_then(machine_of))
+    };
     let does = match tool {
         "run" => {
-            let ran = head.and_then(RunHead::read);
-            Does::Command {
-                command: text("command").unwrap_or_default(),
-                cwd: text("cwd"),
-                exit: ran.as_ref().and_then(|ran| ran.exit),
-                job: ran.and_then(|ran| ran.job),
-            }
+            Does::Command { command: text("command").unwrap_or_default(), cwd: text("cwd"), exit: None, job: None }
         }
         "apply_patch" => Does::Edit { changes: patch_changes(&text("input").unwrap_or_default()) },
         "edit" => {

@@ -13,6 +13,8 @@ use crate::{Address, JobId, MachineName, ProcessIdentity, TownName};
 /// A resident's request to run a bash script.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
     /// The script exactly as the resident wrote it.
     pub script: String,
     /// Where it starts: an absolute path on the machine it runs on. Without
@@ -69,6 +71,8 @@ pub struct StopRequested {
 /// and a window onto its output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunReply {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<Box<crate::run_facts::RunFacts>>,
     /// Completion notices taken by waits of this owner on the executing node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consumed: Option<Box<Vec<crate::NoticeId>>>,
@@ -205,6 +209,8 @@ impl RunHead {
 /// The record of one job, kept at `jobs/<id>.json`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
     pub id: JobId,
     pub machine: MachineName,
     /// The resident or open page that started it, including its provenance.

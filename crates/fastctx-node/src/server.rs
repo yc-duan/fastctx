@@ -215,7 +215,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     let account = (resident.machine != node.machine())
                         .then(|| crate::on::sent_for(node, request.job.as_ref()))
                         .flatten();
-                    let origin = fastctx_types::on::OnOrigin { resident, town, request: None, follower: None, account };
+                    let origin = fastctx_types::on::OnOrigin {
+                        call_id: None,
+                        resident,
+                        town,
+                        request: None,
+                        follower: None,
+                        account,
+                    };
                     match crate::on::send(node, origin, request).await {
                         Err(failure) => Err(failure),
                         Ok(mut following) => loop {
@@ -639,21 +646,38 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
             Ok(Reply::Arrived(whereabouts))
         }
-        Call::Run { resident, request, node: target } => {
+        Call::Run { resident, request, node: target, call_id } => {
             let town = town_of(node, &resident)?;
-            run(node, resident, town, request, target).await.map(Reply::Run)
+            let reply = run(node, resident.clone(), town, request, target, call_id.as_deref()).await?;
+            Ok(Reply::Run(reply))
+        }
+        Call::StoreRunFacts { resident, call_id, facts } => {
+            if !matches!(peer, Peer::Session { .. }) {
+                return Err(Failure::new("tool call facts come from a session's adapter"));
+            }
+            crate::run_facts::keep_for(node, &resident, &call_id, &facts)
+                .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
+            Ok(Reply::Done)
+        }
+        Call::RecordRunFailure { resident, call_id, error } => {
+            if !matches!(peer, Peer::Session { .. }) {
+                return Err(Failure::new("tool call facts come from a session's adapter"));
+            }
+            crate::run_facts::record_failure(node, &resident, &call_id, &error)
+                .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
+            Ok(Reply::Done)
         }
         Call::Write { resident: Some(resident), op, node: target, .. } => {
             let town = town_of(node, &resident)?;
             write(node, resident, town, op, target).await.map(|outcome| Reply::Written { outcome })
         }
-        Call::Write { resident: None, op, node: target, town } => {
+        Call::Write { resident: None, op, node: target, town, job } => {
             if target.is_some() {
                 return Err(Failure::new(
                     "write commands run on this machine; run the command on the destination machine",
                 ));
             }
-            crate::write_command::write(node, peer, town, op).await.map(|outcome| Reply::Written { outcome })
+            crate::write_command::write(node, peer, town, op, job).await.map(|outcome| Reply::Written { outcome })
         }
         Call::JobChanged { job, owner, town } => node.jobs.changed(node, job, owner, town).await.map(|()| Reply::Done),
         Call::Saw { owner, town, seen } => {
@@ -922,8 +946,35 @@ async fn run(
     node: &Arc<Node>,
     resident: ResidentId,
     town: Option<TownName>,
-    request: RunRequest,
+    mut request: RunRequest,
     target: Option<MachineName>,
+    call_id: Option<&str>,
+) -> Result<RunReply, Failure> {
+    request.call_id = call_id.map(str::to_owned);
+    let (works_on, request) = crate::here::start(node, &resident, request);
+    let machine = works_on.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
+    if let Some(id) = call_id {
+        crate::run_facts::begin_for(node, &resident, id, machine)
+            .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
+    }
+    let result = run_started(node, resident.clone(), town, request, works_on, target, call_id).await;
+    if let Err(failure) = &result
+        && let Some(id) = call_id
+    {
+        crate::run_facts::failed_for(node, &resident, id, &failure.message)
+            .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
+    }
+    result
+}
+
+async fn run_started(
+    node: &Arc<Node>,
+    resident: ResidentId,
+    town: Option<TownName>,
+    request: RunRequest,
+    works_on: Option<fastctx_types::access::Written>,
+    target: Option<MachineName>,
+    call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
     let here = node.machine();
     if let Some(target) = target.filter(|target| *target != here) {
@@ -935,7 +986,7 @@ async fn run(
     let started_at = jiff::Timestamp::now();
     // A resident that works on another machine starts its scripts there,
     // and a script of one `on` goes where it names (`world-run.md`, 这里).
-    let reply = match crate::here::start(node, &resident, request) {
+    let reply = match (works_on, request) {
         (Some(works_on), request) => crate::here::run(node, &resident, town.clone(), request, &works_on).await?,
         (None, request) => {
             // An agent lent to another account may not work where it runs,
@@ -950,6 +1001,15 @@ async fn run(
             node.jobs.run(node, owner.into(), town.clone(), request, None).await?.0
         }
     };
+    if let Some(id) = call_id {
+        let kept = if let Some(facts) = &reply.run {
+            crate::run_facts::keep_reply(node, &resident, id, facts)
+        } else {
+            // An older executor supplied no facts; a pending launch is not its outcome.
+            crate::run_facts::discard_unlaunched(node, &resident, id)
+        };
+        kept.map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
+    }
     let action = crate::jobs::action(&reply, &script, started_at);
     let world = node.world.clone();
     blocking("recording the action", move || {

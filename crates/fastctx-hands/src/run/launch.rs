@@ -139,6 +139,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
     publish_new(&script, super::heredoc::mark_on_pipes(&launch.request.script).as_bytes(), Permissions::Private)
         .map_err(|error| failure("could not write the script", &error))?;
     let record = JobRecord {
+        call_id: launch.request.call_id.clone(),
         id: job.clone(),
         machine: launch.machine.clone(),
         owner: launch.owner.clone(),

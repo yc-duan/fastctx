@@ -285,6 +285,7 @@ fn tool(item: &Value, name: &str, server: Option<String>, does: Does) -> Used {
     };
     Used {
         tool: Tool {
+            run: None,
             name: name.to_string(),
             server,
             machine: None,

@@ -68,6 +68,10 @@ impl SessionChange {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionChange {
+    RunFactsUpdated {
+        call_id: String,
+        update: Box<crate::run_facts::JobFacts>,
+    },
     /// The request parameters handed to the host; effort can be normalized by it.
     ModelRequest {
         step: u64,

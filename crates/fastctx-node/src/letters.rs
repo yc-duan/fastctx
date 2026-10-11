@@ -23,7 +23,9 @@ fn purpose(letter: &Letter) -> Purpose {
         Letter::Notice { notice, .. } if matches!(**notice, Notice::Words { .. } | Notice::Attached { .. }) => {
             Purpose::Words
         }
-        Letter::Left { .. } | Letter::Fragment { .. } | Letter::Notice { .. } => Purpose::Echo,
+        Letter::Left { .. } | Letter::Fragment { .. } | Letter::Notice { .. } | Letter::JobFacts { .. } => {
+            Purpose::Echo
+        }
     }
 }
 
@@ -31,7 +33,8 @@ fn purpose(letter: &Letter) -> Purpose {
 /// not fit one message.
 pub fn send(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut letter: Letter) -> io::Result<()> {
     let purpose = purpose(&letter);
-    let (link, account) = node.speaking(acting, to, purpose).map_err(|failure| io::Error::other(failure.to_string()))?;
+    let (link, account) =
+        node.speaking(acting, to, purpose).map_err(|failure| io::Error::other(failure.to_string()))?;
     if let Letter::Speak { accounts, .. } = &mut letter {
         *accounts = node.accounts_on(&link, acting).into_iter().filter(|other| *other != account).collect();
     }

@@ -93,6 +93,7 @@ pub fn move_to(
     // These are active obligations and receipt identities, not town history.
     // Copy before publishing arrival; an interrupted move resumes from old.
     for name in [
+        "calls",
         "inbox",
         "outbox",
         "delivery-receipts",

@@ -48,6 +48,7 @@ pub async fn wait(node: &Arc<Node>, caller: Option<Address>, jobs: Vec<JobId>, p
             held.jobs.push((job.clone(), path.clone()));
             let owner = caller.as_ref().expect("checked owner");
             let origin = fastctx_types::on::OnOrigin {
+                call_id: None,
                 resident: owner.clone(),
                 town: record.town.clone(),
                 request: record.on.as_ref().and_then(|on| on.request.clone()),

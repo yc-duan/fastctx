@@ -272,7 +272,7 @@ pub(crate) async fn run(
         }
     };
     let reply = match answered {
-        Ok(Ok(RemoteReply::Run(reply))) => reply,
+        Ok(Ok(RemoteReply::Run(reply))) => *reply,
         Ok(Ok(_)) => return Err(Failure::new(format!("{} answered something other than a run", works_on.name))),
         // What went wrong there is said of that machine, where the script
         // was to start.
@@ -346,7 +346,7 @@ pub(crate) async fn serve(
 ) -> Result<RemoteReply, Failure> {
     let owner = Address { machine: from, resident };
     let (reply, _) = node.jobs.run(node, owner.into(), town, request, Some(account)).await?;
-    Ok(RemoteReply::Run(reply))
+    Ok(RemoteReply::Run(Box::new(reply)))
 }
 
 /// Words came for `resident` of `from`: its runs waiting here answer.

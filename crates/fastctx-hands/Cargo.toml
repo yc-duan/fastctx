@@ -23,8 +23,10 @@ fastctx-pdf = { path = "../fastctx-pdf" }
 fastctx-types = { path = "../fastctx-types" }
 getrandom = { version = "0.3", features = ["std"] }
 jiff.workspace = true
+imara-diff = { version = "0.2", default-features = false }
 memchr = "2"
 regex-lite = "0.1"
+aho-corasick = "1"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

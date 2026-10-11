@@ -174,6 +174,20 @@ async fn serve_session(
                     main.watch_tools(&output, params.get("_meta"));
                     match session.bound(&mut answer) {
                         Ok(()) => {
+                            if answer.facts.is_some() {
+                                let kept = match session.client(params.get("_meta")).await {
+                                    Ok(client) => answer.keep_facts(client).await.map_err(|error| error.to_string()),
+                                    Err(error) => Err(error),
+                                };
+                                if let Err(error) = kept {
+                                    output.send(&error_response(
+                                        &id,
+                                        -32603,
+                                        &format!("could not preserve call facts: {error}"),
+                                    ));
+                                    return id.to_string();
+                                }
+                            }
                             let response =
                                 protocol.response(&id, tools::result(&answer.content, answer.is_error), false);
                             let _ = output.send_answer(&response, answer).await;

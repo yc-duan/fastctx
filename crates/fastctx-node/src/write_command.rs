@@ -11,6 +11,7 @@ pub(crate) async fn write(
     peer: &Peer,
     town: Option<TownName>,
     op: WriteOp,
+    job: Option<fastctx_types::JobId>,
 ) -> Result<WriteOutcome, Failure> {
     let Caller::Resident(owner) = caller::of(node, peer)? else {
         return Err(Failure::new("edit and write work only inside a script run by the run tool"));
@@ -24,14 +25,30 @@ pub(crate) async fn write(
         town
     };
     let world = node.world.clone();
-    tokio::task::spawn_blocking(move || {
+    let record_path = job.as_ref().map(|job| node.world.owner(&here, town.as_ref(), &owner).job_record(job));
+    let result = tokio::task::spawn_blocking(move || {
         let at = jiff::Timestamp::now();
-        let outcome = crate::write::write_here(&world, &here, &owner, town.as_ref(), op.clone())?;
+        let outcome = crate::write::write_job(&world, &here, &owner, town.as_ref(), op.clone(), job.as_ref())?;
         let action = crate::write::action(&op, &outcome, &here, at);
-        crate::residents::record_owned_action(&world, &here, &owner, town.as_ref(), &action)?;
-        std::io::Result::Ok(outcome)
+        let recorded = crate::residents::record_owned_action(&world, &here, &owner, town.as_ref(), &action);
+        std::io::Result::Ok((outcome, recorded))
     })
     .await
     .map_err(|error| Failure::new(format!("writing: {error}")))?
-    .map_err(|error| Failure::new(format!("writing: {error}")))
+    .map_err(|error| Failure::new(format!("writing: {error}")))?;
+    let (outcome, recorded) = result;
+    if let Some(path) = record_path {
+        let changes = match &outcome {
+            Ok(result) => &result.changes,
+            Err(error) => &error.changes,
+        };
+        let facts = changes.iter().filter_map(|change| change.fact.as_deref().cloned()).collect();
+        crate::run_facts::update_job(node, &path, facts)
+            .map_err(|error| Failure::new(format!("updating call facts: {error}")))?;
+        let record = fastctx_hands::run::record::read(&path)
+            .map_err(|error| Failure::new(format!("reading the writing job: {error}")))?;
+        node.jobs.notify(record.id);
+    }
+    recorded.map_err(|error| Failure::new(format!("writing: {error}")))?;
+    Ok(outcome)
 }

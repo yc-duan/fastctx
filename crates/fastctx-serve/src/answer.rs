@@ -14,6 +14,7 @@ use fastctx_types::{Call, JobId, NoticeId, ResidentId};
 
 /// What a tool call answers. The writer owns its receipt until stdout is flushed.
 pub struct Answer {
+    pub facts: Option<FactView>,
     pub content: Vec<Content>,
     pub is_error: bool,
     pub receipt: Option<(Client, ResidentId, Vec<NoticeId>)>,
@@ -25,9 +26,44 @@ pub struct Answer {
     pub completed: Option<fastctx_types::run::CompletedJob>,
 }
 
+pub struct FactView {
+    pub resident: ResidentId,
+    pub call_id: String,
+    pub facts: Box<fastctx_types::run_facts::RunFacts>,
+    pub regions: Vec<fastctx_hands::run::present::ModelSpan>,
+    pub full_output: fastctx_types::run_facts::OutputRef,
+}
+
+impl Answer {
+    pub async fn keep_facts(&mut self, mut client: Client) -> Result<(), fastctx_client::CallError> {
+        if let Some(view) = &mut self.facts {
+            view.facts.spans = view.regions.iter().map(|region| region.span.clone()).collect();
+            client
+                .call(Call::StoreRunFacts {
+                    resident: view.resident.clone(),
+                    call_id: view.call_id.clone(),
+                    facts: view.facts.clone(),
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
+    fn fit(&mut self, budget: usize, note: &str) {
+        let (content, kept) = fastctx_hands::answer::fit_mapped(&self.content, budget, note);
+        self.content = content;
+        if let Some(view) = &mut self.facts {
+            view.regions = fastctx_hands::run::projection::remap(&view.regions, &kept);
+            view.full_output.cut = true;
+            view.facts.output = Some(view.full_output.clone());
+        }
+        self.shown = None;
+    }
+}
+
 impl Answer {
     pub fn text(text: String, is_error: bool) -> Self {
-        Self { content: vec![Content::Text(text)], is_error, receipt: None, source: None, shown: None, completed: None }
+        Self { facts: None, content: vec![Content::Text(text)], is_error, receipt: None, source: None, shown: None, completed: None }
     }
 
     pub fn error(text: String) -> Self {
@@ -58,8 +94,7 @@ impl Answer {
                 return Err(io::Error::other("full-output location exceeds the answer budget"));
             }
             source.keep()?;
-            self.content = fit(std::mem::take(&mut self.content), BUDGET, &source.note);
-            self.shown = None;
+            self.fit(BUDGET, &source.note);
         }
         Ok(())
     }
@@ -169,8 +204,7 @@ pub fn assemble(
     let budget = BUDGET - SEPARATOR - cost(&additions);
     if cost(&answer.content) > budget {
         source.keep()?;
-        answer.content = fit(std::mem::take(&mut answer.content), budget, &source.note);
-        answer.shown = None;
+        answer.fit(budget, &source.note);
     }
     if !additions.is_empty() {
         end_line(&mut answer.content);
