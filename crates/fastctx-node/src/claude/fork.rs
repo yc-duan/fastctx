@@ -95,7 +95,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
             reasoning_effort: selected_effort.as_deref(),
             lent,
         };
-        super::trust(&world, &env)?;
+        super::trust(&[world.as_path(), cwd.as_path()], &env)?;
         background::claude(&program, &background::fork_args(&source_session, &start), &cwd, &env)
     })
     .await

@@ -158,6 +158,13 @@ pub async fn replay(node: &Arc<Node>) {
     }
 }
 
+/// Publishes what the session's mod waits for before its system prompt and
+/// its first model request: whether it is lent, and its model and effort.
+/// It is published as soon as the session is identified, transcript or not:
+/// Claude Code may build the system prompt before the session-start hook
+/// that reports where the transcript is, so waiting for that would hold the
+/// first turn forever. The context fields come from the transcript when one
+/// is known; the mod's rewind and fork read the transcript themselves.
 fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Result<()> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| std::io::Error::other("unknown Claude resident"))?;
     let options = crate::session_options::read(node, resident).map_err(|error| std::io::Error::other(error.message))?;
@@ -165,9 +172,6 @@ fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Resu
     let registration =
         exchange::registration(directory)?.ok_or_else(|| std::io::Error::other("Claude registration is incomplete"))?;
     let transcript = exchange::transcript(directory)?;
-    if transcript.is_none() {
-        return Ok(());
-    }
     if let Some(prior) = claude::control::read::<serde_json::Value>(&path)?
         && prior["instance"] == serde_json::to_value(&registration.instance).map_err(std::io::Error::other)?
     {
@@ -1027,7 +1031,7 @@ async fn wake(
     // Not tried twice: a resume refused for trust may already have queued
     // the words.
     tokio::task::spawn_blocking(move || {
-        trust(&world, &env).and_then(|()| background::claude(&program, &args, &cwd, &env))
+        trust(&[world.as_path()], &env).and_then(|()| background::claude(&program, &args, &cwd, &env))
     })
     .await
     .map_err(|error| Failure::new(format!("waking the session: {error}")))?
@@ -1180,13 +1184,13 @@ pub async fn open_here(
             lent,
         };
         let args = background::start_args(&start);
-        trust(&world, &env)?;
+        trust(&[world.as_path(), cwd.as_path()], &env)?;
         match background::claude(&program, &args, &cwd, &env) {
             // A Claude Code that was running can write its state back over
             // the trust a moment after it was written; a new session refused
             // for exactly that was not created, so it is started once more.
             Err(why) if why.contains(background::UNTRUSTED) => {
-                trust(&world, &env)?;
+                trust(&[world.as_path(), cwd.as_path()], &env)?;
                 background::claude(&program, &args, &cwd, &env)
             }
             started => started,
@@ -1253,15 +1257,21 @@ fn check_plugin(node: &Node, plugin: &Path) {
     }
 }
 
-/// The World's directory, where every session the World starts stands, is
-/// trusted in Claude Code, so it starts sessions there without asking
-/// (`world-projects.md`): by the home the session starts with in `env`.
-fn trust(world: &Path, env: &[(OsString, OsString)]) -> Result<(), String> {
+/// The World's directories where its sessions stand are trusted in Claude
+/// Code, so it starts sessions there without asking (`world-projects.md`):
+/// by the home the session starts with in `env`. Each gets a record of its
+/// own. Claude Code finds trust by walking up from where a session stands,
+/// but it also writes an untrusted record of its own for each directory a
+/// session opens in, so the World does not lean on what a version reads
+/// past that.
+fn trust(directories: &[&Path], env: &[(OsString, OsString)]) -> Result<(), String> {
     let home =
         env.iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR")).map(|(_, value)| value.as_os_str());
-    claude::trust::ensure_trusted(world, home)
-        .map(|_| ())
-        .map_err(|error| format!("trusting {} in Claude Code: {error}", world.display()))
+    for directory in directories {
+        claude::trust::ensure_trusted(directory, home)
+            .map_err(|error| format!("trusting {} in Claude Code: {error}", directory.display()))?;
+    }
+    Ok(())
 }
 
 /// Settings for a background session the World starts: the host's limit on
