@@ -10,7 +10,7 @@
 
 .row > .fold-box {
   grid-column: 2 / -1;
-  grid-row: 2;
+  grid-row: 3;
 }
 
 .row > .fold-box > .fold-content > :first-child {
@@ -661,7 +661,9 @@
 
 /* Claude Code's own subagent, followed under the tool that started it. */
 .row-sub {
-  margin: -2px 0 2px 28px;
+  grid-column: 2 / -1;
+  grid-row: 2;
+  margin: -2px 0 2px;
   font-size: var(--size-small);
   font-style: italic;
   color: var(--text-3);

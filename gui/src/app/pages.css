@@ -1109,12 +1109,44 @@ a.details-job {
   margin-top: var(--space-2);
 }
 
-.device-remote {
-  margin-top: var(--space-3);
+/* What a choice gives stands a step below the choices. */
+.device-remote,
+.token-sheet .device-facts {
+  margin-top: var(--space-4);
+}
+
+/* A label, its value and the value's copy button read on one line: the
+   labels take only their own width, a long value folds within itself, and
+   the button keeps to its right. */
+.token-sheet .device-facts {
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+}
+
+.token-sheet .device-facts dd {
+  display: flex;
+  align-items: baseline;
+  column-gap: var(--space-2);
+}
+
+.token-sheet .device-facts dd > .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.token-sheet .device-facts dd > button {
+  flex: none;
 }
 
 .device-added {
   margin: var(--space-3) 0;
   font-size: var(--size-ui);
   color: var(--text);
+}
+
+/* A screen with no keyboard of its own has no use for its shortcuts. */
+@media (hover: none) and (pointer: coarse) {
+  .settings-keys {
+    display: none;
+  }
 }

@@ -88,9 +88,12 @@ function simpleWords(command: string): string[] | null {
  *  a name of its own goes by the name it came with. */
 export type Named = (path: string) => string | null;
 
-export function headline(tool: Tool, ended: { use: Use } | null, words: Words, named: Named = () => null): Headline {
+/** `steady` keeps the verb as it is once done, whatever the tool's state:
+ *  a row says how it stands by its mark and its colour, so that its verb
+ *  keeps one width. */
+export function headline(tool: Tool, ended: { use: Use } | null, words: Words, named: Named = () => null, steady = false): Headline {
   const tense = tenseOf(ended);
-  const say = (act: Act) => words.act(act, tense);
+  const say = (act: Act) => words.act(act, steady ? "done" : tense);
   const plain = { title: null, added: null, removed: null };
   switch (tool.does.as) {
     case "command": {
@@ -134,7 +137,7 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
         ...plain,
       };
     case "call":
-      return call(tool, tense, say, words);
+      return call(tool, steady ? "done" : tense, say, words);
   }
 }
 

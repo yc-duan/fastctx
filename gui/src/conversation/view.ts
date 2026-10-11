@@ -863,13 +863,13 @@ export class ConversationView {
     }
     if (entry.kind !== "tool") return `<div data-row="${entry.key}"></div>`;
     const { words } = this.context;
-    const line = headline(entry.tool, entry.ended, words, (path) => this.conversation.attachmentName(path));
+    const line = headline(entry.tool, entry.ended, words, (path) => this.conversation.attachmentName(path), true);
     const tense = tenseOf(entry.ended);
     const open = this.openRows.has(entry.key);
     const expandable = this.hasDetails(entry.tool);
     const elsewhere =
       entry.tool.machine && entry.tool.machine !== this.context.residentMachine
-        ? `<span class="row-machine">${escape(words.on(entry.tool.machine))}</span>`
+        ? `<span class="row-machine">${glyph("machine", 14)}${escape(words.on(entry.tool.machine))}</span>`
         : "";
     const stats =
       line.added !== null && line.removed !== null
@@ -891,7 +891,13 @@ export class ConversationView {
     // the one it takes now.
     const agent = this.conversation.agentOf(entry);
     const sub = agent ? `<div class="row-sub">${escape(words.subagent(agent.kind, agent.steps, tense === "running" ? agent.doing : null))}</div>` : "";
-    return `<div class="row row-tool row-${tense}${enter}" data-row="${entry.key}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${entry.key}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span>${object}${stats}${this.outcome(entry)}${elsewhere}${chevron}</button>${colleague}${sub}${fold}</div>`;
+    // What it did, on what, and on the right how it came out: the stretch's
+    // rows share their columns, so verbs, objects and outcomes each line up.
+    const meta = `<span class="row-meta">${stats}${this.outcome(entry, tense)}${elsewhere}${chevron}</span>`;
+    // Commands, paths, queries and addresses are set in the code face; a
+    // task given in words stays in the reading face.
+    const code = !["colleague", "tasks", "tool"].includes(line.glyph);
+    return `<div class="row row-tool row-${tense}${code ? " row-code" : ""}${enter}" data-row="${entry.key}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${entry.key}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest">${object}${meta}</span></button>${colleague}${sub}${fold}</div>`;
   }
 
   private thinking(entry: Extract<Entry, { kind: "prose" }>, enter: string): string {
@@ -903,20 +909,19 @@ export class ConversationView {
     // the host's: the row says the latest while it thinks, the first after.
     const titles = [...entry.text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]);
     const title = entry.writing ? titles[titles.length - 1] : titles[0];
-    const label = entry.writing ? words.thinking : empty ? words.thoughtWithheld : words.thought;
-    const said = title
-      ? `<span class="row-action">${escape(label)}</span><span class="row-object">${escape(title)}</span>`
-      : `<span class="row-action">${escape(label)}</span>`;
+    // One verb whatever its state, as the tools' rows have: what it was
+    // about, or that its words were not given, is what it was on.
+    const object = empty && !entry.writing ? words.thoughtHidden : title;
     const chevron = empty ? "" : `<span class="row-chevron">${glyph("chevron", 16)}</span>`;
     const fold = empty ? "" : `<div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>`;
-    return `<div class="row row-thinking${entry.writing ? " row-running" : ""}${empty ? " withheld" : ""}${enter}" data-row="${entry.key}"><span class="rail">${glyph("thinking")}</span><button class="row-line" type="button" ${empty ? "disabled" : `data-open="${entry.key}"`} aria-expanded="${open}">${said}${chevron}</button>${fold}</div>`;
+    return `<div class="row row-thinking${entry.writing ? " row-running" : ""}${empty ? " withheld" : ""}${enter}" data-row="${entry.key}"><span class="rail">${glyph("thinking")}</span><button class="row-line" type="button" ${empty ? "disabled" : `data-open="${entry.key}"`} aria-expanded="${open}"><span class="row-action">${escape(words.thought)}</span><span class="row-rest">${object ? `<span class="row-object">${escape(object)}</span>` : ""}<span class="row-meta">${chevron}</span></span></button>${fold}</div>`;
   }
 
-  private outcome(entry: ToolEntry): string {
+  private outcome(entry: ToolEntry, tense: string): string {
     const { words } = this.context;
     const { tool } = entry;
     if (tool.does.as === "command") {
-      if (tool.does.job) return `<span class="row-outcome went-on">${escape(words.wentOnAs(tool.does.job))}</span>`;
+      if (tool.does.job) return `<span class="row-outcome went-on" title="${escape(words.wentOnAs(tool.does.job))}">${escape(words.wentOn)}</span>`;
       if (tool.does.exit !== null && tool.does.exit !== 0) {
         return `<span class="row-outcome wrong">${escape(words.exited(tool.does.exit))}</span>`;
       }
@@ -929,7 +934,8 @@ export class ConversationView {
       case "declined":
         return `<span class="row-outcome wrong">${escape(words.declined)}</span>`;
       default:
-        return "";
+        // The verb no longer says it failed; the row says it in words too.
+        return tense === "failed" ? `<span class="row-outcome wrong">${escape(words.rowFailed)}</span>` : "";
     }
   }
 

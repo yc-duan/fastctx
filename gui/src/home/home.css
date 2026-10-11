@@ -309,16 +309,17 @@
 }
 
 /* What waits on the reader is marked as with a highlighter: one swash of
-   clay behind the line, the words sharp on top of it. */
-.someone.waiting {
+   clay behind its name's line, however many lines follow, the words sharp
+   on top of it. */
+.someone.waiting .someone-line:first-child {
   position: relative;
   isolation: isolate;
 }
 
-.someone.waiting::before {
+.someone.waiting .someone-line:first-child::before {
   content: "";
   position: absolute;
-  inset: 2px -4px;
+  inset: -3px -8px;
   z-index: -1;
   background: color-mix(in srgb, var(--pen-clay) var(--swash-strength), transparent);
   -webkit-mask: var(--pen-swash) center / 100% 100% no-repeat;
@@ -330,7 +331,7 @@
   background: none;
 }
 
-.someone.waiting:hover::before {
+.someone.waiting:hover .someone-line:first-child::before {
   background: color-mix(in srgb, var(--pen-clay) calc(var(--swash-strength) + 10%), transparent);
 }
 

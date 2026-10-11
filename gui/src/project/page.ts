@@ -8,6 +8,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { factRow } from "../design/fact-row";
 import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
 import { ownerResident, type MapView, type ProjectRecord, type ResidentNow, type RunningJob, type WhoFor, type WorldWho, type Writer } from "../world/world";
@@ -91,12 +92,9 @@ export class ProjectPage {
     this.title.textContent = record.name;
     const intro = `
       <p class="project-lede">${escape(record.what)}</p>
-      <p class="project-facts">${[
-        record.machines.join(" · "),
-        words.opened(this.writer(map.opened.by), map.opened.on, words.day(new Date(map.opened.at))),
-      ]
-        .map((fact) => `<span class="fact">${escape(fact)}</span>`)
-        .join(`<span class="sep">·</span>`)}</p>`;
+      <p class="project-facts">${factRow(
+        [...record.machines, words.opened(this.writer(map.opened.by), map.opened.on, words.day(new Date(map.opened.at)))].map(escape),
+      )}</p>`;
     const sections: [Tab, string, string][] = [
       [
         "here",

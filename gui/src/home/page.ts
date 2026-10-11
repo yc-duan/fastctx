@@ -11,6 +11,7 @@ import type { VersionMismatch } from "../world/renewal";
 import { fileLink } from "../app/places";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { factRow } from "../design/fact-row";
 import { redrawKeepingFocus } from "../app/focus";
 import type { Address } from "../world/events";
 import { ownerResident, type JobOwner, type ResidentNow, type RunningJob, type Writer } from "../world/world";
@@ -102,13 +103,7 @@ export class HomePage {
       words.machinesOnline(online, machines.length),
       words.agentsWorking(busy.length + waiting.length),
     ];
-    // A separator keeps to the fact before it, so no line starts with one.
-    const factsHtml = facts
-      .map(
-        (fact, index) =>
-          `<span class="fact">${escape(fact)}${index < facts.length - 1 ? `<span class="sep">·</span>` : ""}</span> `,
-      )
-      .join("");
+    const factsHtml = factRow(facts.map(escape));
 
     const presentHtml = [
       waiting.length

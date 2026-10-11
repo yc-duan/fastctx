@@ -393,12 +393,6 @@ a.text-button {
   color: var(--text-3);
 }
 
-/* A fact keeps together; a line breaks between facts. */
-.account-fact {
-  white-space: nowrap;
-}
-
-.account-device-facts .sep,
 .account-project .sep {
   margin: 0 6px;
 }

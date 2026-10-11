@@ -411,3 +411,29 @@ pre code {
   max-width: 100%;
   height: auto;
 }
+
+/* Facts in a row (`factRow`): the dot before each fact stands in the row's
+   left margin when the fact begins a line, where it is clipped. */
+.fact-row {
+  display: block;
+  overflow: hidden;
+}
+
+.fact-row-in {
+  display: flex;
+  flex-wrap: wrap;
+  margin-left: -0.9em;
+}
+
+.fact-row-item {
+  min-width: 0;
+}
+
+.fact-row-item::before {
+  content: "·";
+  display: inline-block;
+  width: 0.9em;
+  text-align: center;
+  color: var(--text-3);
+  font-style: normal;
+}

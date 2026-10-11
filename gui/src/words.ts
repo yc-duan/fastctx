@@ -50,6 +50,8 @@ export interface Words {
   thought: string;
   thinking: string;
   thoughtWithheld: string;
+  /** A thought's row where the host gave none of its words. */
+  thoughtHidden: string;
   plan: string;
   copyMessage: string;
   copyCode: string;
@@ -65,6 +67,9 @@ export interface Words {
   compacted: string;
   turn(how: string, reason: string | null): string | null;
   wentOnAs(job: string): string;
+  /** On a tool's row: it went on in the background; failed without a code. */
+  wentOn: string;
+  rowFailed: string;
   exited(code: number): string;
   cut: string;
   unknown: string;
@@ -185,14 +190,14 @@ const zhActs: Record<Act, [string, string, string]> = {
   delete: ["删除", "删除中", "删除失败"],
   move: ["移动", "移动中", "移动失败"],
   write: ["写入", "写入中", "写入失败"],
-  command: ["运行命令", "运行中", "命令失败"],
+  command: ["运行", "运行中", "命令失败"],
   search: ["搜索", "搜索中", "搜索失败"],
-  image: ["查看图片", "查看中", "查看失败"],
-  ask: ["调用模型", "调用中", "调用失败"],
-  message: ["给模型发消息", "发送中", "发送失败"],
-  fetch: ["获取网页", "获取中", "获取失败"],
+  image: ["看图", "查看中", "查看失败"],
+  ask: ["调用", "调用中", "调用失败"],
+  message: ["发送", "发送中", "发送失败"],
+  fetch: ["获取", "获取中", "获取失败"],
   websearch: ["网页搜索", "搜索中", "搜索失败"],
-  tasks: ["更新待办", "更新中", "更新失败"],
+  tasks: ["待办", "更新中", "更新失败"],
 };
 
 const enActs: Record<Act, [string, string, string]> = {
@@ -202,14 +207,14 @@ const enActs: Record<Act, [string, string, string]> = {
   delete: ["Deleted", "Deleting", "Delete Failed"],
   move: ["Moved", "Moving", "Move Failed"],
   write: ["Wrote", "Writing", "Write Failed"],
-  command: ["Ran command", "Running command", "Command Failed"],
+  command: ["Ran", "Running command", "Command Failed"],
   search: ["Searched", "Searching", "Search Failed"],
-  image: ["Viewed image", "Viewing image", "Image Failed"],
-  ask: ["Called a model", "Calling a model", "Call Failed"],
-  message: ["Wrote to a model", "Writing to a model", "Message Failed"],
+  image: ["Viewed", "Viewing image", "Image Failed"],
+  ask: ["Called", "Calling a model", "Call Failed"],
+  message: ["Sent", "Writing to a model", "Message Failed"],
   fetch: ["Fetched", "Fetching", "Fetch Failed"],
   websearch: ["Searched the web", "Searching the web", "Web search Failed"],
-  tasks: ["Updated tasks", "Updating tasks", "Tasks Failed"],
+  tasks: ["Tasks", "Updating tasks", "Tasks Failed"],
 };
 
 const index = (tense: Tense) => (tense === "done" ? 0 : tense === "running" ? 1 : 2);
@@ -254,6 +259,7 @@ export const zh: Words = {
   thought: "思考",
   thinking: "正在思考",
   thoughtWithheld: "思考内容未公开",
+  thoughtHidden: "内容未公开",
   plan: "计划",
   copyMessage: "复制",
   copyCode: "复制代码",
@@ -279,7 +285,9 @@ export const zh: Words = {
     return reason ? `${said}：${reason}` : said;
   },
   wentOnAs: (job) => `转入后台 ${job}`,
-  exited: (code) => `退出码 ${code}`,
+  wentOn: "后台",
+  rowFailed: "失败",
+  exited: (code) => `退出 ${code}`,
   cut: "本轮结束时仍在运行",
   unknown: "结果未知",
   declined: "已拒绝",
@@ -395,7 +403,7 @@ export const zh: Words = {
   deskOutside: "屏幕被世界之外的会话占着",
   ended: (how) =>
     endedIn(how, {
-      exited: (code) => `退出码 ${code}`,
+      exited: (code) => `退出 ${code}`,
       signal: (signal) => `被信号 ${signal} 结束`,
       stopped: "已停止",
       finished: "已完成",
@@ -450,6 +458,7 @@ export const en: Words = {
   thought: "Thought",
   thinking: "Thinking",
   thoughtWithheld: "Thinking not shared",
+  thoughtHidden: "not shared",
   plan: "Plan",
   copyMessage: "Copy",
   copyCode: "Copy code",
@@ -475,6 +484,8 @@ export const en: Words = {
     return reason ? `${said}: ${reason}` : said;
   },
   wentOnAs: (job) => `went on as ${job}`,
+  wentOn: "background",
+  rowFailed: "failed",
   exited: (code) => `exit ${code}`,
   cut: "still running when the turn ended",
   unknown: "outcome unknown",

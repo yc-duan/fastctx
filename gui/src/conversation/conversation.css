@@ -392,20 +392,36 @@
   padding-top: var(--space-1);
 }
 
-/* A row: a glyph in the rail, then the line. Rails are joined by a thin
-   line that breaks a little before each glyph. */
+/* A row: a glyph in the rail, then what it did, on what, and on the right
+   how it came out, then anything it links to. Rails are joined by a thin
+   line that breaks a little before each glyph.
+
+   A stretch's rows share the rail's and the verbs' columns: each row and
+   its line are subgrids of the stretch, so the verbs' column is as wide as
+   the widest verb there, in whatever language, and the objects start on
+   one line. The rest is each row's own: its object takes what its outcome
+   leaves, and the outcomes end on the right edge. */
+.rows {
+  display: grid;
+  grid-template-columns: calc(var(--rail-glyph) + var(--rail-gap)) max-content minmax(0, 1fr) auto;
+}
 
 .row {
   position: relative;
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: var(--rail-glyph) minmax(0, 1fr) auto;
-  column-gap: var(--rail-gap);
+  grid-template-columns: calc(var(--rail-glyph) + var(--rail-gap)) max-content minmax(0, 1fr) auto;
+}
+
+.rows > .row {
+  grid-template-columns: subgrid;
 }
 
 .row-link {
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 1;
   align-self: center;
+  margin-left: var(--space-2);
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -439,6 +455,7 @@
 .row > .rail {
   grid-column: 1;
   grid-row: 1;
+  width: var(--rail-glyph);
   height: var(--row-line);
   display: grid;
   place-items: center;
@@ -446,16 +463,18 @@
 }
 
 .row-line {
-  grid-column: 2;
+  grid-column: 2 / 4;
   grid-row: 1;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+  align-content: center;
   min-height: var(--row-line);
   min-width: 0;
   font-size: var(--size-ui);
   line-height: var(--leading-ui);
   color: var(--text-2);
+  text-align: left;
   border-radius: var(--radius-s);
   transition: color var(--hover) ease;
 }
@@ -465,11 +484,22 @@
 }
 
 .row-action {
-  flex: none;
+  grid-column: 1;
+  padding-right: var(--space-2);
   white-space: nowrap;
 }
 
+/* The object gives the line its baseline, which the verb shares; what
+   stands on the right is centred on the line. */
+.row-rest {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .row-object {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -478,12 +508,34 @@
   transition: color var(--hover) ease;
 }
 
+/* The code face stands taller than the reading face at one size. */
+.row-code .row-object {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+}
+
 .row-line:not(:disabled):hover .row-object {
   color: var(--text-2);
 }
 
 .row-line.static .row-object {
+  grid-column: 1 / -1;
   white-space: normal;
+}
+
+/* How it came out, at the right of the line: figures, an outcome, the
+   machine, the arrow; quiet, one size, ending on one edge. */
+.row-meta {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
 }
 
 .row-stats {
@@ -505,8 +557,7 @@
 .row-machine {
   flex: none;
   white-space: nowrap;
-  font-size: var(--size-small);
-  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 
 .row-outcome.wrong {
@@ -517,15 +568,21 @@
   color: var(--accent);
 }
 
-.row-machine::before {
-  content: "·";
-  margin-right: var(--space-2);
+.row-machine {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.row-machine .glyph {
+  align-self: center;
 }
 
 /* The arrow that opens a row appears only when it can be used. */
 .row-chevron {
   flex: none;
   display: inline-grid;
+  align-self: center;
   margin-left: calc(-1 * var(--space-1));
   color: var(--text-3);
   opacity: 0;
@@ -566,9 +623,11 @@
   display: none;
 }
 
-.row > .fold {
+/* A subagent's line under the row, then what the row holds. */
+.row > .fold,
+.row > .fold-box {
   grid-column: 2 / -1;
-  grid-row: 2;
+  grid-row: 3;
 }
 
 .row > .fold > .fold-inner > :first-child {
@@ -765,6 +824,17 @@
   color: var(--text-3);
   line-height: calc(var(--size-code) * var(--leading-code));
   user-select: none;
+}
+
+/* On a narrow screen the code has the whole width, its label above it. */
+@media (max-width: 600px) {
+  .io-part {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .io-label {
+    line-height: 1.6;
+  }
 }
 
 .io-text {

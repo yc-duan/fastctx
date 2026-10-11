@@ -12,6 +12,7 @@
 import { passwordProblem } from "./password";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { factRow } from "../design/fact-row";
 import { loginsOf, type AccountChange, type Arrival, type HubAccounts, type Login, type MemberSeen } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { AccountWords, MachinesWords } from "./account-words";
@@ -355,9 +356,7 @@ export class AccountPage implements Page {
       <span class="dot" aria-hidden="true"></span>
       <span class="account-device-text">
         <span class="account-device-name">${escape(device.name)}${here ? `<span class="tag">${escape(words.thisOne)}</span>` : ""}${machine ? `<span class="tag">${escape(words.machineTag)}</span>` : ""}</span>
-        <span class="account-device-facts">${[words.kinds[device.kind], words.added(when(device.added)), state, words.key(device.key)]
-          .map((fact) => `<span class="account-fact">${escape(fact)}</span>`)
-          .join(`<span class="sep">·</span>`)}</span>
+        ${factRow([words.kinds[device.kind], words.added(when(device.added)), state, words.key(device.key)].map(escape), "account-device-facts")}
       </span>
       ${here ? "" : `<button class="text-button quiet-button" type="button" data-act="remove-device" data-name="${escape(device.name)}" data-machine="${machine ? "1" : "0"}">${escape(words.removeDevice)}</button>`}
     </li>`;
