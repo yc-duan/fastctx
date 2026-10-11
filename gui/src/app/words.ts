@@ -709,7 +709,7 @@ export const zhDetails: DetailsWords = {
   actingFor: "所属账号",
   separator: "、",
   login: "登录",
-  running: "运行中的作业",
+  running: "运行中的命令",
   actions: (shown, total) => (shown < total ? `最近动作 ${shown}/${total}` : "动作"),
   noActions: "暂无动作",
   answers: "已交回",
@@ -733,7 +733,7 @@ export const zhDetails: DetailsWords = {
   left: "已移出项目",
   remove: "移除",
   removeTitle: (who) => `移除 ${who}？`,
-  removeWhat: "移除后不再显示，记录归档保留，运行中的作业不受影响。",
+  removeWhat: "移除后不再显示，记录归档保留，运行中的命令不受影响。",
   removeGo: "移除",
   removedButNot: "已移除，未完成：",
   unfinished: (stage, outcome) =>
@@ -915,7 +915,7 @@ export interface ConsentWords {
 export const zhConsent: ConsentWords = {
   title: (machine, account) => `允许 Claude${account ? `（${account}）` : ""}在 ${machine} 上自动运行？`,
   what: () =>
-    "Claude 将直接运行命令、修改文件、访问网络，不再逐项确认，等同于 Claude Code 的「Bypass permissions」。可随时在机器页撤销。",
+    "Claude 将直接运行命令、修改文件、访问网络，不再逐项确认，等同于 Claude Code 的「Bypass permissions」。可随时在智能体页撤销。",
   allow: "允许",
   withdrawTitle: (machine, account) => `撤销 Claude${account ? `（${account}）` : ""}在 ${machine} 上的授权？`,
   withdrawWhat: "撤销后，世界将无法在这台机器上启动 Claude，直到再次授权。",
@@ -928,7 +928,7 @@ export const zhConsent: ConsentWords = {
 export const enConsent: ConsentWords = {
   title: (machine, account) => `Allow Claude${account ? ` (${account})` : ""} to run unattended on ${machine}?`,
   what: () =>
-    "Claude will run commands, edit files and use the network without asking each time, the same as Claude Code's “Bypass permissions”. Revoke anytime on the Machines page.",
+    "Claude will run commands, edit files and use the network without asking each time, the same as Claude Code's “Bypass permissions”. Revoke anytime on the Agents page.",
   allow: "Allow",
   withdrawTitle: (machine, account) => `Revoke Claude's permission${account ? ` for ${account}` : ""} on ${machine}?`,
   withdrawWhat: "The World won't be able to start Claude on this machine until you allow it again.",
