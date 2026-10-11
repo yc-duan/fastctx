@@ -702,6 +702,15 @@
   color: transparent;
 }
 
+/* The conversation's region keeps room for its scroll bar from the start,
+   on both sides so the column stays centred: a conversation that comes to
+   overflow as a row opens (or stops as one closes) never shifts sideways
+   under the pointer. Where scroll bars float over the page, as on a phone,
+   there is nothing to keep. */
+.talk-scroller {
+  scrollbar-gutter: stable both-edges;
+}
+
 /* A block not yet drawn holds its room. */
 .transcript > .block.lazy {
   display: block;

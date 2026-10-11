@@ -430,7 +430,9 @@ export class Conversation {
         return;
       }
       case "delivery_uncertain":
-        this.add({ kind: "uncertain", key: `u:${event.delivery}`, stamp: 0, why: event.why });
+        // Told once for each delivery; a reading and the live event may
+        // both carry it.
+        if (!this.byKey.has(`u:${event.delivery}`)) this.add({ kind: "uncertain", key: `u:${event.delivery}`, stamp: 0, why: event.why });
         return;
       case "health":
         this.health(event.health);

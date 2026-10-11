@@ -284,8 +284,10 @@ export class ConversationView {
    *  the view, and how far its top is above that. */
   anchor(): { key: string; offset: number } | null {
     const top = this.context.scroller.getBoundingClientRect().top;
-    for (const slot of this.slots.values()) {
-      const box = slot.element.getBoundingClientRect();
+    for (const element of this.root.children) {
+      const slot = this.byElement.get(element as HTMLElement);
+      if (!slot) continue;
+      const box = element.getBoundingClientRect();
       if (box.bottom > top) return { key: slot.key, offset: top - box.top };
     }
     return null;
