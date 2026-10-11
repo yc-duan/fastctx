@@ -143,7 +143,7 @@ pub async fn watch(
                     let mut n = 0;
                     loop {
                         let signed = tokio::select! {
-                            signed = stream.hear::<fastctx_net::sign::Signed>() => signed?,
+                            signed = fastctx_net::watch_stream::receive(&mut stream) => signed?,
                             () = feeding.closed() => return Ok(()),
                         };
                         let piece: Piece = unseal(&links, &from, &signed).await?;
@@ -424,7 +424,7 @@ pub async fn serve_watch(
     loop {
         if let Some(watched) = next.take() {
             let signed = link.sign(Domain::Event, &Piece { watch, n, watched });
-            if stream.say(&signed).await.is_err() {
+            if fastctx_net::watch_stream::send(&mut stream, &signed).await.is_err() {
                 return Ok(RemoteReply::Watched);
             }
             n += 1;
