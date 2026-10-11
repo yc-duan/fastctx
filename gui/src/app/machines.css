@@ -987,6 +987,82 @@
     animation: map-sheet-rise 0.24s cubic-bezier(0.33, 1, 0.68, 1) both;
   }
 
+  /* Solid, so the drawing beneath does not show through. */
+  .machines-layout > .machine-panel {
+    padding-top: var(--space-5);
+    background: var(--bg-elevated);
+  }
+
+  /* The grip the sheet is pulled up or down by. */
+  .sheet-grip {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 88px;
+    height: 28px;
+    transform: translateX(-50%);
+    display: grid;
+    place-items: center;
+    touch-action: none;
+  }
+
+  .sheet-grip::before {
+    content: "";
+    width: 36px;
+    height: 4px;
+    border-radius: var(--radius-full);
+    background: var(--text-3);
+    opacity: 0.6;
+  }
+
+  /* The actions are a row in the sheet; the panel's own buttons for them
+     and the way to the agents would say them twice. */
+  .machine-panel .panel-acts,
+  .machine-panel .panel-agents {
+    display: none;
+  }
+
+  /* Pulled down, the sheet is the name and the actions. */
+  .machine-panel.peek .panel-facts,
+  .machine-panel.peek .panel-home,
+  .machine-panel.peek .panel-hubs,
+  .machine-panel.peek .panel-give,
+  .machine-panel.peek .panel-logins,
+  .machine-panel.peek .panel-said,
+  .machine-panel.peek .machine-agents,
+  .machine-panel.peek .machine-jobs {
+    display: none;
+  }
+
+  .sheet-acts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(52px, 1fr));
+    gap: 2px;
+    margin: var(--space-3) 0 var(--space-2);
+  }
+
+  .sheet-act {
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 5px;
+    min-height: 60px;
+    padding: var(--space-2) 2px;
+    border-radius: var(--radius-m);
+    color: var(--text-2);
+    font-size: var(--size-small);
+    white-space: nowrap;
+    background: none;
+  }
+
+  .sheet-act:active {
+    background: var(--hairline);
+  }
+
+  .sheet-act.danger {
+    color: var(--wrong);
+  }
+
   /* While the sheet is up the zoom bar would sit on it; two fingers zoom. */
   .machines-layout:has(> .machine-panel:not([hidden])) .canvas-controls {
     display: none;

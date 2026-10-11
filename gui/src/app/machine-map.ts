@@ -77,6 +77,9 @@ export const addKey = (hub: string) => `add:${hub}`;
 const LEVELS: [number, number] = [0.55, 1.2];
 const SVG = "http://www.w3.org/2000/svg";
 
+/** How long the drawing takes to glide to where it is brought. */
+const GLIDE_MS = 240;
+
 export class MachineMap {
   readonly element: HTMLElement;
   private readonly surface: MapCanvas;
@@ -175,6 +178,31 @@ export class MachineMap {
 
   fit(): void {
     this.surface.fit();
+  }
+
+  /** Measures the drawing again and draws a frame at its size. */
+  refresh(): void {
+    this.surface.refresh();
+  }
+
+  /** Moves the drawing by `dx`, `dy` screen pixels, smoothly unless the
+   *  system asks for less motion. */
+  glide(dx: number, dy: number): void {
+    if (Math.hypot(dx, dy) < 1) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      this.surface.pan(dx, dy);
+      return;
+    }
+    const start = performance.now();
+    let moved = 0;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / GLIDE_MS);
+      const eased = 1 - (1 - t) ** 3;
+      this.surface.pan(dx * (eased - moved), dy * (eased - moved));
+      moved = eased;
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   }
 
   dispose(): void {

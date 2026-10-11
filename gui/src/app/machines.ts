@@ -121,6 +121,18 @@ export class MachinesPage implements Page {
   /** The spot chosen, by its key on the map. */
   private selected: string | null;
   private detailsOpen: boolean;
+  /** On a narrow page the chosen one's sheet shows its name and actions;
+   *  pulled up, everything known of it. */
+  private grown = false;
+  /** When the sheet was last pulled, so the press that pulled it is not
+   *  also taken for a tap. */
+  private pulled = 0;
+  /** Redraws when the page turns narrow or wide: the sheet and what floats
+   *  beside the one chosen depend on it. */
+  private readonly resized: ResizeObserver;
+  /** The one to bring into view once the drawing has drawn its next
+   *  frame at its size: until then where it stands is not yet known. */
+  private bring: string | null = null;
   private menuFor: { key: string | null; at: Point; sheet: boolean } | null = null;
   private scale = 1;
   private note: { machine: string; text: string } | null = null;
@@ -169,6 +181,11 @@ export class MachinesPage implements Page {
         this.scale = frame.view.scale;
         this.level = frame.view.level;
         this.float();
+        if (this.bring && frame.view.height > 0) {
+          const key = this.bring;
+          this.bring = null;
+          this.bringIntoView(key);
+        }
       },
     });
     this.canvas.prepend(this.map.element);
@@ -187,6 +204,8 @@ export class MachinesPage implements Page {
       if (first) this.invite(first);
     });
     this.panel.addEventListener("click", (event) => this.click(event));
+    this.panel.addEventListener("click", (event) => this.clickAct(event));
+    this.panel.addEventListener("pointerdown", (event) => this.pull(event));
     this.acts.addEventListener("click", (event) => this.clickAct(event));
     this.menu.addEventListener("click", (event) => this.clickAct(event));
     this.tags.addEventListener("click", (event) => {
@@ -211,10 +230,23 @@ export class MachinesPage implements Page {
     });
     document.addEventListener("pointerdown", this.outside, true);
     this.stop = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
+    let narrow: boolean | null = null;
+    this.resized = new ResizeObserver(() => {
+      if (narrow === this.narrow()) return;
+      narrow = this.narrow();
+      this.redraw();
+      // Once the drawing has fitted itself to its new size.
+      if (narrow && this.selected) {
+        this.bring = this.selected;
+        this.map.refresh();
+      }
+    });
+    this.resized.observe(this.element);
   }
 
   leave(): void {
     this.stop();
+    this.resized.disconnect();
     if (this.undoing) clearTimeout(this.undoing.timer);
     document.removeEventListener("pointerdown", this.outside, true);
     this.map.dispose();
@@ -242,6 +274,11 @@ export class MachinesPage implements Page {
       case "unshare":
         if (login) void this.act(button, login, { change: "share", machine, to: button.dataset.to ?? "", shared: false });
         return;
+      case "unlend": {
+        const home = button.dataset.home ? { home: button.dataset.home } : {};
+        if (login) void this.act(button, login, { change: "lend", machine, to: button.dataset.to ?? "", agent: button.dataset.agent ?? "", ...home, lent: false });
+        return;
+      }
       case "invite":
         if (login) this.invite(login);
         return;
@@ -252,10 +289,56 @@ export class MachinesPage implements Page {
         if (login) this.remove(login, machine);
         return;
       case "close-details":
-        this.detailsOpen = false;
+        // On a narrow page the sheet is the choice itself.
+        if (this.narrow()) {
+          this.selected = null;
+          this.grown = false;
+        } else this.detailsOpen = false;
+        this.redraw();
+        return;
+      case "grow":
+        if (Date.now() - this.pulled < 400) return;
+        this.grown = !this.grown;
         this.redraw();
         return;
     }
+  }
+
+  /** Whether the page is narrow enough that what is known of the one
+   *  chosen rises as a sheet from below (`machines.css`, 860 pixels). */
+  private narrow(): boolean {
+    const width = this.element.clientWidth;
+    return width > 0 && width <= 860;
+  }
+
+  /** The sheet pulled by its grip: up shows everything, down shows less or
+   *  lets the choice go. */
+  private pull(event: PointerEvent): void {
+    if (!this.narrow() || !(event.target as HTMLElement).closest(".sheet-grip")) return;
+    const from = event.clientY;
+    const up = (ended: PointerEvent) => {
+      const dy = ended.clientY - from;
+      if (Math.abs(dy) < 24) return;
+      this.pulled = Date.now();
+      if (dy < 0) this.grown = true;
+      else if (this.grown) this.grown = false;
+      else this.selected = null;
+      this.redraw();
+    };
+    window.addEventListener("pointerup", up, { once: true });
+  }
+
+  /** On a narrow page the one chosen is brought to the middle of what the
+   *  sheet leaves of the drawing. */
+  private bringIntoView(key: string): void {
+    const at = this.map.screenOf(key);
+    if (!at || this.panel.hidden) return;
+    const box = this.canvas.getBoundingClientRect();
+    // The sheet stands on the bottom of the window; its height, not where
+    // it is while it still rises.
+    const top = document.documentElement.clientHeight - this.panel.offsetHeight;
+    const room = Math.max(0, Math.min(box.height, top - box.top));
+    this.map.glide(box.width / 2 - at[0], room / 2 - at[1]);
   }
 
   /** The hub or machine chosen on the drawing: its actions float beside it. */
@@ -271,7 +354,9 @@ export class MachinesPage implements Page {
     }
     this.selected = key;
     this.note = null;
+    this.grown = false;
     this.redraw();
+    if (key && this.narrow()) requestAnimationFrame(() => this.bringIntoView(key));
   }
 
   private details(key: string): void {
@@ -395,13 +480,22 @@ export class MachinesPage implements Page {
     if (this.selected && !spots.has(this.selected)) this.selected = null;
     this.drawMap(world);
     const spot = this.selected ? spots.get(this.selected) : undefined;
-    this.panel.hidden = !this.detailsOpen || !spot;
+    // On a narrow page nothing floats beside the one chosen: its sheet rises
+    // at once, its actions a row in it.
+    const narrow = this.narrow();
+    const open = !!spot && (narrow || this.detailsOpen);
+    this.panel.hidden = !open;
+    this.panel.classList.toggle("peek", narrow && !this.grown);
     const alone = !loginsOf(world.accounts).length && isComputer(world);
     this.canvas.classList.toggle("alone", alone);
+    const acts = narrow && this.selected ? this.sheetActs(this.selected, world) : "";
+    const grip = narrow
+      ? `<button class="sheet-grip" type="button" data-act="grow" aria-expanded="${this.grown}" aria-label="${escape(this.grown ? words.closeDetails : words.details)}"></button>`
+      : "";
     const html = alone
       ? `<p class="machines-alone">${escape(words.alone)} <a class="text-link" href="${link({ kind: "login" })}">${escape(words.logIn)}</a></p>`
-      : spot && this.detailsOpen
-        ? `<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world) : spot.kind === "lent" ? this.lentPanel(spot.lent, world, now) : this.machinePanel(spot.machine, world, now)}`
+      : spot && open
+        ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "lent" ? this.lentPanel(spot.lent, world, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
         : "";
     if (alone) this.panel.hidden = false;
     if (html !== this.drawn) {
@@ -478,6 +572,20 @@ export class MachinesPage implements Page {
       details,
       ...(owners.length && !spot.machine.here ? [{ act: "remove", label: words.remove, icon: "close" as const, danger: true }] : []),
     ];
+  }
+
+  /** The actions of the one chosen as a row in its sheet, each with its
+   *  name, large enough for a finger. */
+  private sheetActs(key: string, world: WorldNow): string {
+    const acts = this.actsOf(key, world, true).filter((act) => act.act !== "details");
+    return acts.length
+      ? `<div class="sheet-acts">${acts
+          .map(
+            (act) =>
+              `<button class="sheet-act${act.danger ? " danger" : ""}" type="button" data-map-act="${act.act}" data-key="${escape(key)}">${glyph(act.icon, 18)}<span>${escape(act.label)}</span></button>`,
+          )
+          .join("")}</div>`
+      : "";
   }
 
   /** The logins whose own a machine is: this computer's account on each
@@ -859,7 +967,9 @@ export class MachinesPage implements Page {
   private hang(): Bounds[] {
     const world = this.options.store.world.peek();
     this.given = world ? this.givenOf(world) : [];
-    const shown = this.level >= 1 ? this.given.map((given, index) => ({ given, index })).filter(({ given }) => given.key !== this.selected) : [];
+    // A narrow page has no room for them among the rings; there they are in
+    // the chosen one's sheet.
+    const shown = this.level >= 1 && !this.narrow() ? this.given.map((given, index) => ({ given, index })).filter(({ given }) => given.key !== this.selected) : [];
     const html = shown
       .map(
         ({ given, index }) =>
@@ -891,7 +1001,7 @@ export class MachinesPage implements Page {
   private float(): void {
     this.drawOrders();
     const world = this.options.store.world.peek();
-    const key = this.menuFor || this.cardFor ? null : this.selected;
+    const key = this.menuFor || this.cardFor || this.narrow() ? null : this.selected;
     const at = key ? this.map.screenOf(key) : null;
     const hung = this.hang();
     if (!world || !key || !at) {
@@ -1009,7 +1119,7 @@ export class MachinesPage implements Page {
   }
 
   /** What is known of a machine the account may work on. */
-  private machinePanel(machine: Machine, world: WorldNow, now: Date): string {
+  private machinePanel(machine: Machine, world: WorldNow, now: Date, acts = ""): string {
     const { words } = this.options;
     const logins = loginsOf(world.accounts);
     const owner = logins.find((login) => owns(machine, login)) ?? null;
@@ -1054,28 +1164,44 @@ export class MachinesPage implements Page {
           )}</div>`,
       )
       .join("");
-    const acts = owners.length
+    const own = owners.length
       ? `<div class="panel-acts" data-hub="${escape(owners[0]!.hub)}" data-account="${escape(owners[0]!.account)}">${this.button("relays", words.relays, "", glyph("relay", 14))}${machine.here ? "" : this.button("remove", words.remove, " data-danger", glyph("close", 14))}</div>`
       : "";
+    // Whom an agent on it is lent to, taken back here as on the agents page.
+    const lending = owners
+      .map((login) => {
+        const lends = (this.hubOf(login)?.lends ?? []).filter((lend) => lend.machine === machine.name);
+        if (!lends.length) return "";
+        const chips = lends
+          .map((lend) => {
+            const label = `${agentName(lend.agent)} · ${lend.account}`;
+            return `<span class="chip">${escape(label)}<button class="chip-x" type="button" data-act="unlend" data-to="${escape(lend.account)}" data-agent="${escape(lend.agent)}"${lend.home ? ` data-home="${escape(lend.home)}"` : ""} aria-label="${escape(words.takeBack(label))}" title="${escape(words.takeBack(label))}">${glyph("close", 12)}</button></span>`;
+          })
+          .join("");
+        return `<div class="panel-give" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}"><div class="given-row"><span class="given-label">${escape(words.lentTo)}</span>${chips}</div></div>`;
+      })
+      .join("");
     const note = this.note?.machine === machine.name ? `<p class="machine-note">${escape(this.note.text)}</p>` : "";
     const state = this.stateOf(machine.online, machine.since, machine.here, now);
     return `<article class="panel-machine" data-machine="${escape(machine.name)}">
       ${this.panelHead(machine.written, tags, state)}
+      ${acts}
       ${factLine ? `<p class="panel-facts">${factLine}</p>` : ""}
       ${facts ? `<p class="panel-home"><span>${escape(words.home)}</span><code>${escape(facts.home)}</code></p>` : ""}
       ${hubs ? `<ul class="panel-hubs">${hubs}</ul>` : ""}
       ${sharing}
+      ${lending}
       ${this.present(machine.name, world, viewer)}
       ${this.agentsLink(machine.written)}
       ${note}
-      ${acts}
+      ${own}
     </article>`;
   }
 
   /** What is known of a machine of another's an agent is lent on: whose
    *  it is, that it is no machine of the account's to work on, and the
    *  lent logins, each a way into a conversation. */
-  private lentPanel(lent: Borrowed[], world: WorldNow, now: Date): string {
+  private lentPanel(lent: Borrowed[], world: WorldNow, now: Date, acts = ""): string {
     const { words } = this.options;
     const first = lent[0]!;
     const reaching = machineActsFor(world, first.machine, first.login);
@@ -1083,6 +1209,7 @@ export class MachinesPage implements Page {
     const state = this.stateOf(first.online, first.since, false, now);
     return `<article class="panel-machine" data-machine="${escape(first.machine)}">
       ${this.panelHead(first.written, tags, state, true)}
+      ${acts}
       <p class="panel-said" title="${escape(words.borrowedSaid(first.owner ?? ""))}">${glyph("colleague", 14)}<span>${escape(words.borrowedNote)}</span></p>
       ${this.present(first.machine, world, first.login)}
       ${this.agentsLink(first.written)}
@@ -1097,7 +1224,7 @@ export class MachinesPage implements Page {
 
   /** What is known of a hub: how this computer reaches it, the account's
    *  level there, who its super administrator is, and its machines. */
-  private hubPanel(hub: HubAccounts, world: WorldNow): string {
+  private hubPanel(hub: HubAccounts, world: WorldNow, acts = ""): string {
     const { words } = this.options;
     const logins = loginsOf(world.accounts).filter((login) => login.hub === hub.hub);
     const state = { kind: hub.link.kind === "online" ? "online" : "offline", said: linkSaid(hub.link, words) || words.hubOff };
@@ -1116,6 +1243,7 @@ export class MachinesPage implements Page {
     const machines = hub.members.filter((member) => member.kind === "computer" && member.home).length;
     return `<article class="panel-hub-card">
       <header class="panel-head ${state.kind}"><span class="knot" aria-hidden="true"></span><h2 class="panel-title">${escape(words.hubTitle(hub.name))}</h2><span class="panel-state">${escape(state.said)}</span></header>
+      ${acts}
       <p class="panel-facts">${escape(words.hubMachines(machines))}</p>
       <ul class="panel-logins">${rows}</ul>
     </article>`;
