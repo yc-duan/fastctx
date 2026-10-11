@@ -110,7 +110,11 @@ impl CodexHost {
         let models = self.models(&server).await?;
         let fast_mode = self.read_config(thread).await?["config"]["features"]["fast_mode"] != false;
         let skills = self.skills(&server, thread).await?;
+        let read_at = jiff::Timestamp::now();
         let limits = server.request("account/rateLimits/read", json!({})).await;
+        if let Ok(answer) = &limits {
+            self.limits_heard(read_at, super::account::LimitsHow::Read(answer.clone()));
+        }
         let account_usage = match server.request("account/usage/read", json!({"threadId":thread})).await {
             Ok(usage) => usage,
             Err(error) => json!({"error":error}),

@@ -131,7 +131,7 @@ struct Effort {
     description: String,
 }
 
-async fn models(server: &AppServer) -> Result<Vec<AgentModel>, String> {
+pub(super) async fn models(server: &AppServer) -> Result<Vec<AgentModel>, String> {
     let mut models = Vec::new();
     let mut cursor = None::<String>;
     loop {

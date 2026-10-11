@@ -112,3 +112,33 @@ pub fn claude_login(
     let failed = format!("{} exited {} without a recognized login status", args.join(" "), answer.status);
     (Fact::failed(failed.clone()), Fact::failed(failed))
 }
+
+/// Claude Code's `auth status --json` for the home its environment names,
+/// as who is logged in and how: `authMethod` tells a `/login` subscription
+/// login (`claude.ai`) from a token in the environment (`oauth_token`),
+/// which names no account (2.1.294 and 2.1.296). It says a login is
+/// configured; it does not check that it still works.
+pub fn claude_identity(program: &Path, cwd: &Path, env: &[(OsString, OsString)]) -> Fact<fastctx_types::logins::Identity> {
+    let args = ["auth", "status", "--json"];
+    let answer = match output(program, &args, cwd, env) {
+        Ok(answer) => answer,
+        Err(error) => return Fact::failed(error),
+    };
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&answer.stdout) {
+        let text = |key: &str| value.get(key).and_then(serde_json::Value::as_str).map(str::to_string);
+        match (value.get("loggedIn").and_then(serde_json::Value::as_bool), answer.status.code()) {
+            (Some(true), Some(0)) => {
+                return Fact::known(fastctx_types::logins::Identity {
+                    logged_in: true,
+                    method: text("authMethod"),
+                    email: text("email"),
+                    organization: text("orgName"),
+                    plan: text("subscriptionType"),
+                });
+            }
+            (Some(false), Some(1)) => return Fact::known(fastctx_types::logins::Identity::default()),
+            _ => {}
+        }
+    }
+    Fact::failed(format!("{} exited {} without a recognized login status", args.join(" "), answer.status))
+}

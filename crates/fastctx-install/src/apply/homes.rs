@@ -138,6 +138,7 @@ impl Records {
             settings: claude.and_then(|record| record.settings.clone()),
             claude_tools: claude.and_then(|record| record.claude_tools.clone()),
             settings_created: claude.is_some_and(|record| record.settings_created),
+            consent: claude.and_then(|record| record.consent.clone()),
             created: self.created.clone(),
         };
         if let Some(receipt) = &mut record.codex {
@@ -170,6 +171,7 @@ impl Records {
                 receipt.settings = None;
                 receipt.claude_tools = None;
                 receipt.settings_created = false;
+                receipt.consent = None;
             }
             Host::Claude => receipt.codex = None,
         }
