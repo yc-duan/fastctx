@@ -222,6 +222,17 @@ pub fn prune_owned(root: &Path) -> Result<Vec<(PathBuf, io::Error)>, FileError> 
             }
         }
     }
+    // The empty archive container belongs to the World; any retained user
+    // versions keep it nonempty and prevent its removal.
+    if !crate::disk::is_link(
+        &fs::symlink_metadata(&history).map_err(|error| FileError::io(&history, "inspect retained versions", error))?,
+    ) {
+        match fs::remove_dir(&history) {
+            Ok(()) => {}
+            Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty) => {}
+            Err(error) => kept.push((history, error)),
+        }
+    }
     Ok(kept)
 }
 
