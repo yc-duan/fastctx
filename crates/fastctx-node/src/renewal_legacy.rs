@@ -96,6 +96,18 @@ pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
             }
         }
     }
+    // A callee may work for no account since protocol 12, on a computer in
+    // no network; an older adapter reads every callee's account as a name,
+    // so it is offered only those, and the colleague tools without any.
+    if protocol <= 11
+        && let Reply::Machines { collab, .. } = reply
+        && let Some(offered) = collab
+    {
+        offered.callees.retain(|callee| callee.account.is_some());
+        if offered.callees.is_empty() {
+            *collab = None;
+        }
+    }
     // The World's own facts became a notice of their own in protocol 11;
     // before it they were the World's words, which is what the model reads.
     if protocol <= 10

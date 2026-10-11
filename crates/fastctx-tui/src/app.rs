@@ -33,6 +33,9 @@ pub struct Ctx {
     pub breath: f32,
     /// Tenths of a second since the screen opened: what turns, turns by it.
     pub frame: u64,
+    /// The optional parts this computer's interfaces show, shared with its
+    /// graphical interface: all off until the node says otherwise.
+    pub features: fastctx_types::features::Features,
 }
 
 /// What a page wants after a key or an answer.
@@ -133,6 +136,10 @@ pub enum Job {
     },
     /// Take them out again.
     Unapply,
+    /// Turns the conversations in this computer's interfaces on or off.
+    Conversations {
+        on: bool,
+    },
     /// Put the World's tools into one login of an agent on this machine,
     /// `machine`, or take them out.
     ApplyHome {
@@ -285,7 +292,7 @@ pub struct App {
 
 impl App {
     pub fn new(look: Look, words: Words, root: Page) -> Self {
-        let ctx = Ctx { look, words, now: Timestamp::now(), breath: 0.0, frame: 0 };
+        let ctx = Ctx { look, words, now: Timestamp::now(), breath: 0.0, frame: 0, features: Default::default() };
         Self {
             ctx,
             pages: vec![(0, root)],
@@ -309,6 +316,17 @@ impl App {
     fn top(&mut self) -> (u64, &mut Page) {
         let (id, page) = self.pages.last_mut().expect("the World page is never left");
         (*id, page)
+    }
+
+    /// The interface's optional parts changed, here or in another of this
+    /// computer's interfaces. Without conversations, the pages that belong
+    /// to them close; what they started goes on.
+    pub fn features(&mut self, features: fastctx_types::features::Features) {
+        self.ctx.features = features;
+        if !features.conversations {
+            let mut first = true;
+            self.pages.retain(|(_, page)| std::mem::take(&mut first) || !page.of_conversations());
+        }
     }
 
     /// What the page on top keeps up to date with.
