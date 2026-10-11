@@ -92,6 +92,9 @@ export class Conversation {
   entries: Entry[] = [];
   context: { used: number; window: number | null } | null = null;
   title: string | null = null;
+  /** The model the host last answered with, where it says (Claude's
+   *  answers do): what the conversation shows, not the one chosen. */
+  answeredBy: string | null = null;
   /** Attachments by where the World keeps them, with the names they came
    *  with: the World stores each under a name of its own. */
   private attachments = new Map<string, string>();
@@ -286,8 +289,20 @@ export class Conversation {
           }
           return;
         }
-        if (change.kind === "history_changed") {
+        if (change.kind === "history_changed" || change.kind === "history_cut") {
           this.stale = true;
+          return;
+        }
+        if (change.kind === "model_response" && change.usage) {
+          this.answeredBy = change.usage.model;
+          return;
+        }
+        if (change.kind === "message_usage" && change.model) {
+          this.answeredBy = change.model;
+          return;
+        }
+        if (change.kind === "commands_changed") {
+          this.offersChanged = true;
           return;
         }
         const health = changeHealth(change);
@@ -450,6 +465,15 @@ export class Conversation {
       ...replyOf(text),
     });
     return key;
+  }
+
+  private offersChanged = false;
+
+  /** Whether what the conversation offers changed since last asked. */
+  takeOffersChanged(): boolean {
+    const changed = this.offersChanged;
+    this.offersChanged = false;
+    return changed;
   }
 
   /** Words shown as being sent that went into the queue instead. */

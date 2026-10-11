@@ -134,7 +134,42 @@ export type SessionChange =
   | { kind: "attachment"; attachment: JsonValue }
   | { kind: "request"; id: JsonValue; request: string; params: JsonValue }
   | { kind: "resolved"; id: JsonValue; resolution: JsonValue }
-  | { kind: "voice"; event: string; data: JsonValue };
+  | { kind: "voice"; event: string; data: JsonValue }
+  /** What a Claude session asked of the model, and what came back: keyed by
+   *  (turn, step); a later reading of one step replaces the earlier. */
+  | { kind: "model_request"; step: number; model: string; effort: JsonValue }
+  | { kind: "model_response"; step: number; usage: RequestUsage | null }
+  | { kind: "model_switch"; from_model: string; to_model: string; source: string; requested_model: string | null; raw: JsonValue }
+  | { kind: "message_usage"; items: string[]; response: string | null; model: string; api_error: boolean; usage: JsonValue }
+  /** The commands it offers changed: ask for them again. */
+  | { kind: "commands_changed" }
+  /** Claude Code's own subagents, and what one of them did. */
+  | { kind: "agents"; agents: HostAgent[] }
+  | { kind: "agent_event"; agent_id: string; happened: JsonValue }
+  /** Turns removed from the session's history, as a rewind did. */
+  | { kind: "history_cut"; removed_turns: string[] };
+
+/** What one model request used, as the host counted it. */
+export interface RequestUsage {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+}
+
+/** One of Claude Code's own subagents, as it lists them. */
+export interface HostAgent {
+  id: string;
+  description: string;
+  type: string;
+  status: string;
+  parentId?: string;
+  teammateId?: string;
+  spawnedBy?: string;
+  name?: string;
+  [other: string]: JsonValue | undefined;
+}
 
 /** What the World tells a resident, as facts (`fastctx_types::residents::Notice`):
  *  an interface shows these, never the words written for the model. */

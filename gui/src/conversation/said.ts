@@ -42,6 +42,8 @@ export function shownOf(name: string, control: Control, said: string | null, wor
       return { kind: "note", text: "" };
     case "fork":
     case "answer":
+    case "agents":
+    case "agent_messages":
       return null;
     case "command":
       if (control.path) return { kind: "note", text: words.skill(name) };

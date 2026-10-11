@@ -107,8 +107,10 @@ export type Ask =
   | { kind: "files"; item: string | null; reason: string | null; grantRoot: string | null; paths: string[]; decisions: Decision[] }
   /** A Claude tool asking leave to run, other than a command or a change. */
   | { kind: "tool"; tool: string; input: string; decisions: Decision[] }
-  /** Claude's plan, handed over for leave to leave plan mode. */
-  | { kind: "plan"; plan: string; path: string | null; decisions: Decision[] }
+  /** Claude's plan, handed over for leave to leave plan mode; `check`
+   *  when asked through the mod's tool check, which answers allow or deny
+   *  with a reason. */
+  | { kind: "plan"; plan: string; path: string | null; decisions: Decision[]; check?: boolean }
   /** Claude's answer carries its questions back exactly as they came. */
   | { kind: "questions"; questions: Question[]; asked: JsonValue | null }
   | { kind: "form"; server: string; message: string; fields: Field[] | null; host: Host }
@@ -185,6 +187,8 @@ export function readAsk(request: string, params: JsonValue, words: AskWords): As
     }
     case "classic.PermissionRequest":
       return claudePermission(p, words);
+    case "tool.check":
+      return claudeCheck(p, words);
     case "AskUserQuestion": {
       const questions = Array.isArray(p.questions) ? p.questions.map(object) : [];
       return {
@@ -258,6 +262,40 @@ function claudePermission(p: Record<string, JsonValue>, words: AskWords): Ask {
   const path = text(input.file_path) ?? text(input.notebook_path);
   if (path && ["Edit", "MultiEdit", "Write", "NotebookEdit"].includes(tool)) {
     return { kind: "files", item: null, reason: null, grantRoot: null, paths: [path], decisions };
+  }
+  return { kind: "tool", tool, input: JSON.stringify(input, null, 2), decisions };
+}
+
+/** Claude asking leave for a tool through the mod's tool check: allow or
+ *  deny, with the reason Claude Code's own check gave shown above. It
+ *  offers no rule to keep, as that check answers only for this call. */
+function claudeCheck(p: Record<string, JsonValue>, words: AskWords): Ask {
+  const tool = text(p.tool) ?? "";
+  const input = object(p.input ?? null);
+  const verdict = object(p.verdict ?? null);
+  const why = text(verdict.reason);
+  if (tool === "ExitPlanMode") {
+    return {
+      kind: "plan",
+      plan: text(input.plan) ?? "",
+      path: text(input.planFilePath),
+      check: true,
+      decisions: [
+        { value: "allow", label: words.planGo, settled: words.settledBy.planGo, tone: "yes" },
+        { value: "deny", label: words.planKeep, settled: words.settledBy.planKeep, tone: "no" },
+      ],
+    };
+  }
+  const decisions: Decision[] = [
+    { value: "allow", label: words.accept, settled: words.settledBy.accept, tone: "yes" },
+    { value: "deny", label: words.decline, settled: words.settledBy.decline, tone: "no" },
+  ];
+  if (tool === "Bash") {
+    return { kind: "command", command: text(input.command), cwd: null, reason: text(input.description) ?? why, stdin: false, network: null, decisions };
+  }
+  const path = text(input.file_path) ?? text(input.notebook_path);
+  if (path && ["Edit", "MultiEdit", "Write", "NotebookEdit"].includes(tool)) {
+    return { kind: "files", item: null, reason: why, grantRoot: null, paths: [path], decisions };
   }
   return { kind: "tool", tool, input: JSON.stringify(input, null, 2), decisions };
 }
@@ -541,8 +579,12 @@ export function answerOf(card: HTMLElement, ask: Ask, given: { decision?: number
     case "plan": {
       const decision = ask.decisions[given.decision ?? -1];
       if (!decision) return { missing: words.required };
-      const value = object(decision.value);
       const note = card.querySelector<HTMLTextAreaElement>(".ask-plan-note")?.value.trim() ?? "";
+      // The tool check carries what the plan should change as its reason.
+      if (ask.check) {
+        return { answer: decision.value === "deny" && note ? { decision: "deny", reason: note } : { decision: decision.value }, said: decision.settled };
+      }
+      const value = object(decision.value);
       // What the user wants changed goes back with keeping it planning.
       const answer = value.behavior === "deny" && value.interrupt === undefined && note ? { ...value, message: note } : value;
       return { answer: { decision: answer }, said: decision.settled };

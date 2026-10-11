@@ -993,6 +993,8 @@ export interface ComposerWords {
   reported(name: string): string;
   /** The host refused, in its words; it is left on `model`. */
   refusedOn(said: string, model: string): string;
+  /** The fork exists, but not all of the conversation came over; why is the hover. */
+  forkIncomplete: string;
   failed(why: string): string;
   context(percent: number, used: number, window: number): string;
   usage: {
@@ -1154,6 +1156,7 @@ export const zhComposer: ComposerWords = {
   done: (name) => `/${name} 已完成`,
   reported: (name) => `/${name} 已执行`,
   refusedOn: (said, model) => `${said}（当前模型 ${model}）`,
+  forkIncomplete: "已分叉，部分内容没带过去",
   failed: failure(zhProblems, "执行失败"),
   context: (percent, used, window) => `上下文 ${percent}%（${used.toLocaleString()} / ${window.toLocaleString()}）`,
   usage: {
@@ -1322,6 +1325,7 @@ export const enComposer: ComposerWords = {
   done: (name) => `/${name} done`,
   reported: (name) => `/${name} ran`,
   refusedOn: (said, model) => `${said} (now on ${model})`,
+  forkIncomplete: "Forked; part of it did not come over",
   failed: failure(enProblems, "Command failed"),
   context: (percent, used, window) => `Context ${percent}% (${used.toLocaleString()} / ${window.toLocaleString()})`,
   usage: {

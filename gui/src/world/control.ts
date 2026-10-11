@@ -11,7 +11,10 @@ export type Control =
   | { do: "rename"; name: string }
   | { do: "fork"; through: string | null }
   | { do: "rewind"; from: string }
-  | { do: "answer"; request: JsonValue; answer: JsonValue };
+  | { do: "answer"; request: JsonValue; answer: JsonValue }
+  /** Claude Code's own subagents, and the latest messages of one. */
+  | { do: "agents" }
+  | { do: "agent_messages"; agent_id: string };
 
 export type ControlKind = Control["do"];
 
@@ -25,7 +28,18 @@ export type Controlled =
   | { kind: "reported"; said: string | null }
   | { kind: "refused"; said: string; current_model?: string | null }
   | { kind: "model_menu"; models: ModelOffer[]; model: string | null; effort: string | null; service_tier: string | null }
-  | { kind: "forked"; resident: Address };
+  | { kind: "forked"; resident: Address }
+  /** The model and effort chosen for the next requests; what each request
+   *  really used comes with its answer. */
+  | { kind: "selected"; model: string | null; effort: string | null }
+  /** Back to before a turn; the files it changed stay as they are. */
+  | { kind: "rewound"; from: string | null; retained_messages: number; files_restored: boolean; compacted_turns_reachable: boolean }
+  | { kind: "agents"; agents: JsonValue[] }
+  | { kind: "agent_messages"; agent_id: string; messages: JsonValue[]; recent_only: boolean }
+  /** A question asked on the side (`/btw`) and its answer, as the host gave it. */
+  | { kind: "side_answer"; reply: JsonValue }
+  /** The fork exists, but not all of it was carried over. */
+  | { kind: "fork_incomplete"; resident: Address; why: string };
 
 /** Whether a command takes words after its name. */
 export type CommandArguments = "none" | "optional" | "required";
@@ -38,6 +52,8 @@ export interface CommandOffer {
   source: string | null;
   /** Passed back unchanged with the command, where the host has one. */
   path?: string;
+  /** The forms of its arguments a background session can carry out. */
+  argument_forms?: string[];
 }
 
 export interface ModelOffer {
@@ -74,4 +90,10 @@ export interface Offers {
   /** The tier the next turn runs at, when one is chosen or reported. */
   service_tier: string | null;
   usage: Usage | null;
+  /** The turns that can be gone back to or forked from, where the host
+   *  says which; every turn where it says nothing. */
+  checkpoints?: { turn: string; rewind: boolean; fork: boolean }[];
+  history_limits?: { files_restored: boolean; compacted_turns_reachable: boolean; empty_prefix_allowed: boolean; complete_prefix: boolean };
+  /** The host chose the model on its own for now, setting the choice aside. */
+  automatic_model?: string;
 }

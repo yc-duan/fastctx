@@ -18,7 +18,7 @@ import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from ".
 import type { Details } from "./details";
 import { glyph } from "./glyphs";
 import type { Conversation } from "./model";
-import { escape } from "./prose";
+import { escape, render } from "./prose";
 import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
 import { ConversationView } from "./view";
@@ -327,6 +327,9 @@ export class ConversationPage {
   update(): void {
     const follow = this.following;
     this.view.update();
+    this.drawTurnActs();
+    // The commands it offers changed (a plugin loaded, a description came).
+    if (this.options.conversation.takeOffersChanged()) void this.askOffers();
     this.finder.refresh();
     this.drawState();
     this.drawAction();
@@ -337,6 +340,18 @@ export class ConversationPage {
     if (this.wasMoving && !moving) void this.askOffers();
     this.wasMoving = moving;
     this.releaseQueued();
+  }
+
+  /** Going back to a turn or forking from it, only where the host says it
+   *  can: some turns cannot be reached again (one compacted away, the very
+   *  first of a conversation it cannot empty). */
+  private drawTurnActs(): void {
+    const checkpoints = this.offered?.checkpoints;
+    for (const button of this.element.querySelectorAll<HTMLElement>("[data-turn-act][data-turn]")) {
+      const act = button.dataset.turnAct === "fork" ? "fork" : "rewind";
+      const point = checkpoints?.find((one) => one.turn === button.dataset.turn);
+      button.hidden = !!checkpoints && !point?.[act];
+    }
   }
 
   /** Stops what the page keeps asking for. */
@@ -846,6 +861,7 @@ export class ConversationPage {
     // that turn: a host that cannot rewind (Claude) forks only the whole
     // conversation, from the command menu.
     transcript.classList.toggle("can-fork", can.has("fork") && can.has("rewind"));
+    this.drawTurnActs();
   }
 
   /** What the conversation has used, as its host says: its context, the
@@ -1050,6 +1066,20 @@ export class ConversationPage {
         controls.forked(done.resident);
         return true;
       }
+      // The fork exists but not all of it came over: it opens, and why is said.
+      if (done.kind === "fork_incomplete") {
+        this.say(words.forkIncomplete, done.why, true);
+        controls.forked(done.resident);
+        return true;
+      }
+      if (done.kind === "side_answer") {
+        const reply = done.reply !== null && typeof done.reply === "object" && !Array.isArray(done.reply) ? done.reply : {};
+        const text = typeof reply.text === "string" ? reply.text : JSON.stringify(done.reply, null, 2);
+        this.say("");
+        this.showSaid(`/${command.name}`, `<div class="prose">${render(text)}</div>`);
+        return true;
+      }
+      if (done.kind === "agents" || done.kind === "agent_messages") return true;
       if (done.kind === "model_menu") {
         this.say("");
         if (this.offered) this.offered = { ...this.offered, models: done.models, model: done.model, effort: done.effort, service_tier: done.service_tier };
@@ -1072,7 +1102,8 @@ export class ConversationPage {
         return true;
       }
       const model = what.do === "model" ? this.offered?.models.find((m) => m.id === what.model) : undefined;
-      const shown = shownOf(command.name, what.do === "model" && model ? { ...what, model: model.name ?? model.id } : what, done.said, words.said);
+      const said = done.kind === "done" ? done.said : null;
+      const shown = shownOf(command.name, what.do === "model" && model ? { ...what, model: model.name ?? model.id } : what, said, words.said);
       if (shown?.kind === "panel") {
         this.say("");
         this.showSaid(shown.title, shown.html);
@@ -1279,7 +1310,7 @@ export class ConversationPage {
       title ? `${someone.agent} · ${someone.machine}` : null,
       someone.lentBy ? words.lentBy(someone.lentBy) : someone.worksOn ? words.worksOn(someone.worksOn) : null,
       someone.project,
-      someone.model,
+      this.options.conversation.answeredBy ?? someone.model,
     ].filter(Boolean) as string[];
     const mark = waiting ? `<span class="ask-mark" aria-hidden="true"></span>` : working ? `<span class="pulse" aria-hidden="true"></span>` : "";
     // Waiting for the user is said in the accent; the rest stays quiet.
