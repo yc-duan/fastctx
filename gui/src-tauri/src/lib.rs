@@ -255,7 +255,7 @@ async fn watch(
     }
     .map_err(|error| error.to_string())?;
     #[cfg(target_os = "android")]
-    let (conversation, history) = android::watching::open(&world, resident.clone(), machine.clone()).await?;
+    let (conversation, history) = android::watching::open(&world, resident.clone(), machine.clone(), false).await?;
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
     #[cfg(target_os = "android")]
     let work = android::watching::stream(world, resident, machine, conversation, pieces);

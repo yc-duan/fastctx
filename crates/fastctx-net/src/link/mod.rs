@@ -370,16 +370,20 @@ impl Link {
     }
 
     /// What `signed` says, packed or not (`crate::history::unpack`), if the
-    /// member `from` signed it in `domain`.
-    pub async fn unseal_packed<T: serde::de::DeserializeOwned>(
+    /// member `from` signed it in `domain`. It is unpacked off the runtime's
+    /// threads: a long history's segments take seconds to unpack and read.
+    pub async fn unseal_packed<T: serde::de::DeserializeOwned + Send + 'static>(
         &self,
         from: &MachineName,
         domain: Domain,
         signed: &Signed,
     ) -> Result<T, String> {
         let key = self.inner.key_of(from).await.ok_or_else(|| format!("{from} is not a member of the hub"))?;
-        let bytes = signed.verified(&key, domain).map_err(|error| format!("what came from {from}: {error}"))?;
-        crate::history::unpack(bytes).map_err(|error| format!("what came from {from}: {error}"))
+        let bytes = signed.verified(&key, domain).map_err(|error| format!("what came from {from}: {error}"))?.to_vec();
+        tokio::task::spawn_blocking(move || crate::history::unpack(&bytes))
+            .await
+            .map_err(|error| format!("unpacking what came from {from}: {error}"))?
+            .map_err(|error| format!("what came from {from}: {error}"))
     }
 
     /// What `signed` says, if the member `from` signed it in `domain`.

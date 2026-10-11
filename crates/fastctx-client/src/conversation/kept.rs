@@ -43,9 +43,14 @@ pub(super) struct Keeping {
 }
 
 impl Keeping {
-    /// What is kept of the conversation at `address`: its latest part, when
-    /// any of it is kept, and what to tell its machine this device holds.
-    pub async fn open(cache: Arc<Cache>, address: Address) -> Result<(Self, Option<Vec<SessionEvent>>), Error> {
+    /// What is kept of the conversation at `address`: its latest part, or
+    /// all of it when `whole`, when any of it is kept; and what to tell its
+    /// machine this device holds.
+    pub async fn open(
+        cache: Arc<Cache>,
+        address: Address,
+        whole: bool,
+    ) -> Result<(Self, Option<Vec<SessionEvent>>), Error> {
         let entry = cache.entry(&address);
         let reading = entry.clone();
         let read = blocking(move || {
@@ -57,7 +62,7 @@ impl Keeping {
             }
             let mut first = index.layout.len();
             let mut events = 0;
-            while first > 0 && events < LATEST_EVENTS {
+            while first > 0 && (whole || events < LATEST_EVENTS) {
                 first -= 1;
                 events += index.events.get(first).copied().unwrap_or_default();
             }

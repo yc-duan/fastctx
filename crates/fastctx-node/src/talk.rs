@@ -503,7 +503,16 @@ pub async fn serve_watch(
         while let Some(watched) = next.pop_front() {
             let piece = Piece { watch, n, watched };
             let sent = if packed {
-                let signed = link.sign_bytes(Domain::Event, fastctx_net::history::pack(&piece));
+                // A history's segments take a while to pack (0.4 s for a
+                // long Claude session's 50 MB); they are packed off the
+                // runtime's threads, which serve everything else here.
+                let bytes = match piece.watched {
+                    Watched::Live { .. } => fastctx_net::history::pack(&piece),
+                    _ => tokio::task::spawn_blocking(move || fastctx_net::history::pack(&piece))
+                        .await
+                        .map_err(|error| Failure::new(format!("packing the history: {error}")))?,
+                };
+                let signed = link.sign_bytes(Domain::Event, bytes);
                 fastctx_net::watch_stream::send_bytes(&mut stream, &signed).await
             } else {
                 fastctx_net::watch_stream::send(&mut stream, &link.sign(Domain::Event, &piece)).await

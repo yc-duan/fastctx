@@ -98,10 +98,21 @@ impl Conversation {
     /// as [`Update::History`]. A machine that cannot be reached is said by
     /// the first update, once what is kept was shown.
     pub async fn open(world: &World, address: Address) -> Result<(Self, Vec<SessionEvent>), Error> {
+        Self::opening(world, address, false).await
+    }
+
+    /// Opens again a conversation an interface already shows, as when it
+    /// comes back to it: what is kept is given whole at once, so what is
+    /// shown never shrinks to its latest part on the way.
+    pub async fn reopen(world: &World, address: Address) -> Result<(Self, Vec<SessionEvent>), Error> {
+        Self::opening(world, address, true).await
+    }
+
+    async fn opening(world: &World, address: Address, whole: bool) -> Result<(Self, Vec<SessionEvent>), Error> {
         let Some(cache) = world.cache().cloned() else {
             return Self::watch(world, address.resident, Some(address.machine)).await;
         };
-        let (mut keeping, latest) = kept::Keeping::open(cache, address.clone()).await?;
+        let (mut keeping, latest) = kept::Keeping::open(cache, address.clone(), whole).await?;
         let watching = world.watch_held(address.resident.clone(), Some(address.machine.clone()), keeping.held()).await;
         if let Some(latest) = latest {
             let mut conversation = match watching {
