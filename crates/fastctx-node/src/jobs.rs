@@ -334,26 +334,6 @@ pub(crate) fn retain_scratch(path: &Path, delivered: Timestamp) -> std::io::Resu
     }
 }
 
-pub(crate) fn copy_output(path: &Path) -> std::io::Result<()> {
-    let job = match record::read(path) {
-        Ok(job) => job,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    if fastctx_hands::run::program::in_use(&job)? { return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "job processes still use its files")); }
-    if let Some(supervisor) = &job.supervisor { fastctx_platform::host_process::wait_for_exit(supervisor)?; }
-    let mut files = vec![PathBuf::from(job.output), path.with_extension("sh")];
-    files.extend(job.stderr.map(PathBuf::from));
-    if let Some(on) = job.on { files.push(PathBuf::from(on.state)); files.extend(job.stdin.map(PathBuf::from)); }
-    for file in files {
-        match std::fs::remove_file(file) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
-            _ => {},
-        }
-    }
-    Ok(())
-}
-
 /// Returns when words come for the resident `words` watches; never, when
 /// the job is nobody's here.
 async fn came(words: &mut Option<watch::Receiver<u64>>) {

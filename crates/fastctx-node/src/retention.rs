@@ -118,8 +118,6 @@ fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
         }
         let collected = if path.with_extension("delivered").try_exists()? {
             crate::job_watch::collect(node, &path)
-        } else if path.with_extension("copied").try_exists()? {
-            crate::jobs::copy_output(&path)
         } else { Ok(()) };
         match collected {
             Ok(()) => {}
@@ -179,9 +177,6 @@ fn collect_records(
                 let delivery = match fs::read(&marker) {
                     Ok(bytes) => serde_json::from_slice::<JobDelivery>(&bytes).map_err(io::Error::other)?,
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                        if path.with_extension("copied").try_exists()? && !program::in_use(&job)? && unfollowed(&path) {
-                            crate::jobs::copy_output(&path)?;
-                        }
                         let Some(delivery) = legacy_delivery(world, &path, &job)? else {
                             pending = true;
                             continue;
