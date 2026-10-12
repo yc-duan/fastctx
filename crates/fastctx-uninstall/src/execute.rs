@@ -39,9 +39,27 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
     fastctx_platform::ensure_private_dir(root)?;
     let lock = fastctx_platform::uninstall_gate::Gate::try_acquire(root)?
         .context("another uninstall is executing for this World")?;
-    publish(&request.installation.marker(), &request)?;
     let progress_file = root.join("uninstall-progress.json");
+    // A complete removal that replaces one keeping the data starts its own
+    // checkpoint: the earlier one names the steps of another plan.
+    if crate::read::<Request>(&request.installation.marker())?
+        .is_some_and(|previous| previous.plan.everything != request.plan.everything)
+    {
+        uninstall::delete_file(&progress_file)?;
+    }
+    publish(&request.installation.marker(), &request)?;
     let mut progress = crate::read::<Progress>(&progress_file)?.unwrap_or_default();
+    // Copies of the hosts' settings, which can carry a login's token, do not
+    // outlive a removal of either kind (`world-run.md`, apply).
+    progress.retained.retain(|left| left.kind != "settings-copies");
+    for problem in apply::settle(root) {
+        progress.retained.push(Left {
+            kind: "settings-copies".into(),
+            what: "Copies of host settings kept while an apply ran".into(),
+            location: Some(root.display().to_string()),
+            why: problem,
+        });
+    }
     if !request.plan.everything {
         let integrations = request
             .steps
@@ -166,7 +184,7 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
     }
     let mut retained = Vec::new();
     for left in std::mem::take(&mut progress.retained) {
-        if left.kind == "user-files"
+        if matches!(left.kind.as_str(), "user-files" | "unrecognized")
             && let Some(path) = left.location.as_deref().map(Path::new).filter(|path| path.is_absolute())
         {
             match std::fs::symlink_metadata(path) {
@@ -182,7 +200,7 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
         (&left.kind, &left.location, &left.why).cmp(&(&right.kind, &right.location, &right.why))
     });
     progress.retained.dedup();
-    let mut left = remaining(&request, &progress);
+    let mut left = remaining(&request, &progress, &places);
     let hosts_withdrawn = request
         .steps
         .iter()
@@ -255,11 +273,14 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
             {
                 continue;
             }
+            // The removal's own checkpoint and barrier are its records, not
+            // the user's files.
+            let records = entry.file_name() == "uninstalled.json" || entry.file_name() == "uninstall-progress.json";
             left.push(Left {
-                kind: "user-files".into(),
+                kind: if records { "removal-records" } else { "unremoved" }.into(),
                 what: "Remaining local directory entry".into(),
                 location: Some(entry.path().display().to_string()),
-                why: if entry.file_name() == "uninstalled.json" || entry.file_name() == "uninstall-progress.json" {
+                why: if records {
                     if !local_failure && request.installation.application_process.is_some() {
                         "The startup barrier remains until the application exits and its package takes over.".into()
                     } else {
@@ -365,7 +386,7 @@ pub(crate) fn application_data(directories: &[std::path::PathBuf]) -> anyhow::Re
     Ok(left)
 }
 
-fn remaining(request: &Request, progress: &Progress) -> Vec<Left> {
+fn remaining(request: &Request, progress: &Progress, places: &apply::Places) -> Vec<Left> {
     let mut left = progress.retained.clone();
     for item in &request.plan.keeps {
         left.push(Left { kind: item.kind.clone(), what: item.what.clone(), location: item.location.clone(),
@@ -387,9 +408,23 @@ fn remaining(request: &Request, progress: &Progress) -> Vec<Left> {
         if let Action::Trust { home, .. } | Action::Host(apply::Integration { host: apply::Host::Claude, home, .. }) =
             &step.action
         {
-            let entry = Left { kind: "claude-permission".into(), what: "skipDangerousModePermissionPrompt".into(), location: Some(home.join("settings.json").display().to_string()), why: "No evidence of the value before World changed it is recorded; the user's permission is left unchanged.".into() };
-            if !left.contains(&entry) {
-                left.push(entry);
+            // Named only where the settings give it: a login World never
+            // asked has nothing of it to report.
+            let why = match apply::claude_consent_at(places, home) {
+                Ok(false) => None,
+                Ok(true) => Some("No evidence of the value before World changed it is recorded; the user's permission is left unchanged.".to_owned()),
+                Err(error) => Some(format!("Whether it is set could not be read: {error}")),
+            };
+            if let Some(why) = why {
+                let entry = Left {
+                    kind: "claude-permission".into(),
+                    what: "skipDangerousModePermissionPrompt".into(),
+                    location: Some(home.join("settings.json").display().to_string()),
+                    why,
+                };
+                if !left.contains(&entry) {
+                    left.push(entry);
+                }
             }
         }
         if matches!(step.action, Action::Application | Action::Package) {
@@ -490,7 +525,7 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
             let programs = uninstall::remove_programs(&installation.root);
             for path in programs.left {
                 progress.retained.push(Left {
-                    kind: "user-files".into(),
+                    kind: "unrecognized".into(),
                     what: "Unrecognized addition to a program directory".into(),
                     location: Some(path.display().to_string()),
                     why: "It has no fastctx ownership record.".into(),
@@ -561,7 +596,7 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
                     }
                 } else {
                     progress.retained.push(Left {
-                        kind: "user-files".into(),
+                        kind: "unrecognized".into(),
                         what: "Unrecognized addition to the World directory".into(),
                         location: Some(entry.path().display().to_string()),
                         why: "It is not an owned World data path.".into(),
@@ -584,7 +619,7 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
             let data = uninstall::remove_application_data(path);
             for path in data.left {
                 progress.retained.push(Left {
-                    kind: "user-files".into(),
+                    kind: "unrecognized".into(),
                     what: "Unrecognized addition to the application data directory".into(),
                     location: Some(path.display().to_string()),
                     why: "It is not an owned application data path.".into(),
@@ -675,7 +710,7 @@ pub(crate) fn run_system_phase(request: &Request, early: bool, mut events: impl 
                                 left: paths
                                     .into_iter()
                                     .map(|path| Left {
-                                        kind: "user-files".into(),
+                                        kind: "unrecognized".into(),
                                         what: "Unrecognized addition to a service directory".into(),
                                         location: Some(path.display().to_string()),
                                         why: "It has no fastctx ownership record.".into(),

@@ -49,6 +49,7 @@ mod ledger;
 mod letters;
 mod lifetime;
 mod lines;
+mod loans;
 mod log;
 mod login_identity;
 mod logins;
@@ -476,6 +477,15 @@ pub async fn run_prepared(
     // still in use is touched (`world-upgrade.md`).
     let cleaning = node.clone();
     tokio::task::spawn_blocking(move || legacy(&cleaning));
+
+    // An apply cut short holds copies of the hosts' settings until it is
+    // finished; they go as soon as the node is up (`world-run.md`, apply).
+    let settling = node.clone();
+    tokio::task::spawn_blocking(move || {
+        for problem in fastctx_install::apply::settle(&settling.root) {
+            settling.log.line(format_args!("settling an interrupted apply: {problem}"));
+        }
+    });
 
     let identity = node.clone();
     tokio::task::spawn_blocking(move || login_identity::refresh(&identity));

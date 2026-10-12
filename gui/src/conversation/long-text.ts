@@ -148,6 +148,16 @@ export class LongText {
     this.box.style.height = `${height}px`;
   }
 
+  /** Brings a search hit beyond the preview into the existing line box. */
+  async reveal(line: number): Promise<void> {
+    if (!this.viewport) return;
+    if (line >= PREVIEW) await this.setFull(true);
+    this.settle();
+    this.viewport.setLimit(this.full ? undefined : PREVIEW);
+    this.viewport.jump(line);
+    await this.viewport.ready;
+  }
+
   private async setFull(full: boolean): Promise<void> {
     if (!this.viewport || !this.motion || this.full === full) return;
     this.full = full;

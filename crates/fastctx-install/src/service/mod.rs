@@ -18,13 +18,15 @@ use sha2::{Digest as _, Sha256};
 #[cfg(windows)]
 mod delegate;
 mod hub;
-mod keep;
-mod inventory;
 mod hub_registry;
+mod inventory;
+mod keep;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
 mod linux_watchdog;
+#[cfg(windows)]
+mod local_network;
 #[cfg(any(windows, target_os = "linux"))]
 mod transaction;
 
@@ -32,6 +34,8 @@ pub use hub::{keep_hub, keep_hub_at};
 pub use hub_registry::registered_hubs;
 pub use inventory::{Registration, registrations};
 pub use keep::{Kept, Released, keep_connected, stop_keeping};
+#[cfg(windows)]
+pub use local_network::{install_local_network, keep_local_network};
 #[cfg(windows)]
 #[path = "windows_guardian/mod.rs"]
 mod windows;

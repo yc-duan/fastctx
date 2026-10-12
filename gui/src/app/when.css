@@ -1,0 +1,217 @@
+/* A moment picked by hand (`when.ts`): the choice of none or one and how
+   long until it on the left; the month, and a column each of hours and
+   minutes, on the right. With no moment chosen the month waits dimmed. */
+.when {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "choice pick"
+    "said pick";
+  column-gap: var(--space-5);
+  row-gap: var(--space-2);
+  align-items: start;
+}
+
+.when-choice {
+  grid-area: choice;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.when-choice .choice {
+  align-items: center;
+}
+
+.when-choice .glyph {
+  flex: none;
+}
+
+.when-said {
+  grid-area: said;
+  margin: 0;
+  padding-left: 12px;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.when-pick {
+  grid-area: pick;
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+  transition: opacity var(--hover) ease;
+}
+
+.when:not(.open) .when-pick {
+  opacity: 0.5;
+}
+
+.when-month {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  margin-bottom: 4px;
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.when-month .icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.when-earlier .glyph {
+  transform: rotate(90deg);
+}
+
+.when-later .glyph {
+  transform: rotate(-90deg);
+}
+
+.when-days {
+  display: grid;
+  grid-template-columns: repeat(7, 34px);
+  grid-auto-rows: 32px;
+  gap: 2px;
+}
+
+.when-weekday {
+  display: grid;
+  place-items: center;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.when-day,
+.when-cell {
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  font-size: var(--size-ui);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.when-day:hover:not(:disabled),
+.when-cell:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--fill-strong);
+}
+
+.when-day.today {
+  color: var(--accent);
+}
+
+.when-day.chosen,
+.when-cell.chosen,
+.when-day.chosen:hover,
+.when-cell.chosen:hover {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+}
+
+.when-day:disabled,
+.when-cell:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Hours and minutes: as tall as the month, scrolled to what is chosen,
+   fading at the ends where more of them wait. */
+.when-time {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.when-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 46px;
+  height: calc(36px + 7 * 32px + 6 * 2px);
+  padding: 24px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  mask-image: linear-gradient(transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+
+.when-col::-webkit-scrollbar {
+  display: none;
+}
+
+.when-cell {
+  flex: none;
+  height: 32px;
+}
+
+.when-colon {
+  align-self: center;
+  color: var(--text-3);
+}
+
+/* On a phone: the choice, then the month across the sheet, then the hours
+   and the minutes each a strip to swipe along; with no moment chosen the
+   month is not there at all, so the sheet stays short. */
+@media (max-width: 760px) {
+  .when {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas:
+      "choice"
+      "said"
+      "pick";
+  }
+
+  .when-choice {
+    flex-direction: row;
+  }
+
+  .when-said {
+    padding-left: 0;
+  }
+
+  .when:not(.open) .when-pick {
+    display: none;
+  }
+
+  .when-pick {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .when-days {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-auto-rows: 38px;
+  }
+
+  .when-time {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .when-colon {
+    display: none;
+  }
+
+  .when-col {
+    flex-direction: row;
+    width: auto;
+    height: 38px;
+    padding: 0 24px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  }
+
+  .when-cell {
+    width: 44px;
+    height: 38px;
+  }
+}

@@ -1,10 +1,12 @@
 // The features (`world-gui.md`, 功能): a card for each, and each its own
-// page. A feature is off until turned on; off, its page is the drawing that
-// tells what it does and the button that turns it on; on, the drawing waits
-// folded at the top, to be watched again, and the settings are below.
+// page. A feature is off until turned on; off, its page is the film that
+// tells what it does, playing on a loop, and the button that turns it on
+// under it; on, a still of the film waits at the top, to be watched again
+// over the page, and the settings are below.
 //
-// 「对话」 is the first: talking with the agents in the interface, wherever
-// they are; it is kept per device and has no settings. Model collaboration:
+// The workbench is the first: the agents' work drawn step by step, agents
+// on other computers and in a phone; it is kept per device and has no
+// settings. Model collaboration:
 // for the whole account, which agents may hand a part of their work to a
 // GPT (callers), which GPTs they may hand it to (callees: a Codex login
 // each, its model and effort, the name and the line the calling model
@@ -28,7 +30,10 @@ import type { Page } from "./shell";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import { deviceFeatures } from "./device-features";
-import { storyboard } from "./storyboard";
+import { collaboration } from "../film/collaboration";
+import { Film } from "../film/film";
+import type { Built, Shape } from "../film/reel";
+import { workbench } from "../film/workbench";
 
 export interface FeaturesOptions {
   store: Store;
@@ -60,6 +65,10 @@ export class FeaturesPage implements Page {
   private saved = false;
   private known: Known[] = [];
   private sliders: EffortSlider[] = [];
+  /** The films on the page, stopped when it is drawn again or left. */
+  private films: Film[] = [];
+  /** Ends the film watched over the page, while one is. */
+  private unwatch: (() => void) | null = null;
 
   constructor(private readonly options: FeaturesOptions) {
     const { words, feature } = options;
@@ -80,6 +89,49 @@ export class FeaturesPage implements Page {
   leave(): void {
     this.stop();
     this.sliders = [];
+    this.dropFilms();
+    this.unwatch?.();
+  }
+
+  /** A film set into `holder`: playing, or `still` on its last frame. */
+  private film(holder: Element | null, make: (shape: Shape) => Built, label: string, still = false): void {
+    if (!holder) return;
+    const film = new Film(make, label, still);
+    this.films.push(film);
+    holder.replaceChildren(film.element);
+  }
+
+  private dropFilms(): void {
+    for (const film of this.films) film.destroy();
+    this.films = [];
+  }
+
+  /** The film over the page, playing, until the page behind is touched
+   *  or Escape is pressed. */
+  private watch(make: (shape: Shape) => Built, label: string): void {
+    this.unwatch?.();
+    const theater = document.createElement("div");
+    theater.className = "film-theater";
+    const shut = this.options.words.closeFilm;
+    theater.innerHTML = `<div class="film-theater-box"></div><button class="icon-button film-theater-close" type="button" aria-label="${escape(shut)}" title="${escape(shut)}">${glyph("close", 20)}</button>`;
+    const film = new Film(make, label);
+    theater.firstElementChild!.append(film.element);
+    const close = () => {
+      film.destroy();
+      theater.remove();
+      document.removeEventListener("keydown", key);
+      this.unwatch = null;
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    theater.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest(".film-stage") || target.closest(".film-theater-close")) close();
+    });
+    document.addEventListener("keydown", key);
+    document.body.append(theater);
+    this.unwatch = close;
   }
 
   /** Every feature, a card each. */
@@ -111,20 +163,24 @@ export class FeaturesPage implements Page {
       .catch(() => draw(false));
   }
 
-  /** 「对话」: its drawing and its switch; on, the drawing folds to the top. */
+  /** The workbench: its film and its switch; on, a still of the film
+   *  waits at the top. */
   private conversations(): void {
     const { words } = this.options;
+    const make = (shape: Shape) => workbench(words.conversations.film, shape);
+    const label = words.conversations.name;
+    this.replayFilm = () => this.watch(make, label);
     const draw = () => {
+      this.dropFilms();
       const on = deviceFeatures.conversations.peek();
-      const board = storyboard("conversations", words.conversations.frames, words.conversations.name);
+      this.body.classList.toggle("features-film", !on);
       this.body.innerHTML = on
-        ? `<div class="feature-top"><div class="storyboard-strip">${board.replace('class="storyboard"', 'class="storyboard folded"')}</div>
+        ? `<div class="feature-top"><button class="feature-still" type="button" data-act="replay" aria-label="${escape(words.replay)}"></button>
             <div class="feature-top-acts"><button class="text-button quiet-button" type="button" data-act="replay">${glyph("regenerate", 14)}<span>${escape(words.replay)}</span></button>
             <button class="text-button quiet-button" type="button" data-turn="0">${escape(words.turnOff)}</button></div></div>
             <p class="feature-quiet feature-after">${escape(words.conversations.after)}</p>`
-        : `<div class="feature-intro">${board}<button class="sheet-go feature-turn" type="button" data-turn="1">${escape(words.turnOn)}</button></div>`;
-      const intro = this.body.querySelector<HTMLElement>(".feature-intro .storyboard");
-      if (intro) drawAsSeen(intro);
+        : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1">${escape(words.turnOn)}</button></div>`;
+      this.film(this.body.querySelector(on ? ".feature-still" : ".feature-film"), make, label, on);
     };
     draw();
     this.body.addEventListener("click", (event) => {
@@ -139,7 +195,9 @@ export class FeaturesPage implements Page {
   }
 
   private collaboration(): void {
-    const { store } = this.options;
+    const { store, words } = this.options;
+    const make = (shape: Shape) => collaboration(words.collaboration.film, shape);
+    this.replayFilm = () => this.watch(make, words.collaboration.name);
     const logins = loginsOf(store.world.peek()?.accounts);
     this.account = logins[0] ?? null;
     this.draw();
@@ -318,19 +376,17 @@ export class FeaturesPage implements Page {
     this.draw();
   }
 
+  /** Watches the page's film again, over the page. */
+  private replayFilm: (() => void) | null = null;
+
   private replay(): void {
-    const board = this.body.querySelector<HTMLElement>(".storyboard");
-    if (!board) return;
-    board.classList.remove("folded");
-    const fresh = board.cloneNode(true) as HTMLElement;
-    board.replaceWith(fresh);
+    this.replayFilm?.();
   }
 
   private draw(): void {
     const { words } = this.options;
     const collab = this.draft;
     const on = !!collab?.on;
-    const board = storyboard("collaboration", words.collaboration.frames, words.collaboration.name);
     // What it gives the user: a ready text that teaches the calling model to
     // hand a part over in plain words, and nothing to operate by hand.
     const gives = `<ul class="feature-gives">${words.collaboration.gives
@@ -344,13 +400,18 @@ export class FeaturesPage implements Page {
           ? ""
           : `<button class="sheet-go feature-turn" type="button" data-act="turn" data-on="1">${escape(words.turnOn)}</button>`;
     const top = on
-      ? `<div class="feature-top"><div class="storyboard-strip">${board.replace('class="storyboard"', 'class="storyboard folded"')}</div>
+      ? `<div class="feature-top"><button class="feature-still" type="button" data-act="replay" aria-label="${escape(words.replay)}"></button>
           <div class="feature-top-acts"><button class="text-button quiet-button" type="button" data-act="replay">${glyph("regenerate", 14)}<span>${escape(words.replay)}</span></button>
           <button class="text-button quiet-button" type="button" data-act="turn" data-on="0">${escape(words.turnOff)}</button></div></div>`
-      : `<div class="feature-intro">${board}${gives}${turn}</div>`;
+      : `<div class="feature-intro with-gives"><div class="feature-film"></div>${gives}${turn}</div>`;
+    // The film keeps playing while the page around it is drawn again.
+    const playing = !on ? this.body.querySelector(".feature-intro .film") : null;
+    if (!playing) this.dropFilms();
+    this.body.classList.toggle("features-film", !on);
     this.body.innerHTML = top + (on && collab ? this.settings(collab) : "");
-    const intro = this.body.querySelector<HTMLElement>(".feature-intro .storyboard");
-    if (intro) drawAsSeen(intro);
+    const make = (shape: Shape) => collaboration(words.collaboration.film, shape);
+    if (playing) this.body.querySelector(".feature-film")?.replaceChildren(playing);
+    else this.film(this.body.querySelector(on ? ".feature-still" : ".feature-film"), make, words.collaboration.name, on);
     this.mountSliders();
     this.drawNow();
     this.drawSave();
@@ -453,47 +514,3 @@ export class FeaturesPage implements Page {
     problem.title = this.problem?.detail ?? "";
   }
 }
-
-/** Where the frames are a strip swiped one by one (a phone), each is drawn
- *  when it comes into view rather than all at once off screen: its strokes
- *  keep their order and pace, counted from its own first stroke. */
-function drawAsSeen(board: HTMLElement): void {
-  if (board.scrollWidth <= board.clientWidth + 1) return;
-  const frames = [...board.querySelectorAll<HTMLElement>(".sb-frame")];
-  for (const frame of frames) {
-    const timed = [...frame.querySelectorAll<HTMLElement | SVGElement>("[style*='animation-delay']")];
-    const delay = (element: HTMLElement | SVGElement) => parseFloat(element.style.animationDelay) || 0;
-    const first = Math.min(...timed.map(delay));
-    for (const element of timed) element.style.animationDelay = `${delay(element) - first}ms`;
-    frame.classList.add("waiting");
-  }
-  const seen = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries.filter((entry) => entry.isIntersecting)) {
-        entry.target.classList.remove("waiting");
-        seen.unobserve(entry.target);
-      }
-    },
-    { root: board, threshold: 0.6 },
-  );
-  for (const frame of frames) seen.observe(frame);
-  // It plays through by itself: each frame drawn, a moment to read it, the
-  // next slides in; a hand on the strip takes over from then on.
-  let held = false;
-  board.addEventListener("pointerdown", () => (held = true), { once: true });
-  for (const [index, frame] of frames.entries()) {
-    const next = frames[index + 1];
-    if (!next) break;
-    frame.querySelector("figcaption")?.addEventListener(
-      "animationend",
-      () =>
-        setTimeout(() => {
-          if (!held && board.isConnected) next.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-        }, READ_MS),
-      { once: true },
-    );
-  }
-}
-
-/** How long a drawn frame stays before the next slides in. */
-const READ_MS = 1400;

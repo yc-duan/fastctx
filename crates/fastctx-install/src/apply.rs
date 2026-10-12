@@ -39,6 +39,7 @@ pub mod kernel;
 mod preview;
 mod progress;
 mod recovery;
+mod settle;
 mod tools;
 mod withdrawn;
 pub use homes::Host;
@@ -46,6 +47,7 @@ pub use identity::forward_login_identity;
 pub use preview::preview;
 pub use progress::Progress;
 use progress::tell;
+pub use settle::settle;
 pub use tools::ToolCheck;
 pub use withdrawn::{Integration, integrations, read_withdrawn, remember_withdrawn, restore_withdrawn};
 
@@ -493,7 +495,6 @@ pub fn apply_reporting(
             }
         };
         report.commands.append(&mut host.ran);
-        report.preserved.append(&mut host.preserved);
 
         // Read only now: the plugin commands write Claude's settings.
         let edit = (|| {
@@ -654,7 +655,6 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
             let remaining =
                 plugins::unapply_managed(&mut host, &plan, previous.as_ref().map(|record| &record.receipt))?;
             report.commands.append(&mut host.ran);
-            report.preserved.append(&mut host.preserved);
             plugin_done = !remaining.has_work();
             plugin = Some((remaining, host));
         } else if previous.as_ref().is_some_and(|record| record.receipt.has_work()) {
@@ -743,7 +743,6 @@ struct Cli {
     operation: Option<recovery::PendingPlugin>,
     /// The commands that changed Claude, as run.
     ran: Vec<String>,
-    preserved: Vec<PathBuf>,
     /// Told each command that changes Claude, as it runs.
     progress: Option<Progress>,
 }
@@ -757,7 +756,6 @@ impl Cli {
             settings_created,
             operation: None,
             ran: Vec::new(),
-            preserved: Vec::new(),
             progress: None,
         }
     }
@@ -767,15 +765,13 @@ impl PluginHost for Cli {
     fn run(&mut self, command: &PluginCommand) -> Result<Vec<u8>, String> {
         let mutation = !command.args.iter().any(|arg| arg == "list");
         let root = self.record.parent().expect("record directory");
-        let history = if mutation {
-            let history = crate::claude::history::History::begin(root, &self.settings_path, &command.args)?;
-            crate::transaction::prepare_settings_command(&root.join("applied-files-pending.json"), &history.before)
+        if mutation {
+            // The settings as they were before the command are held only by
+            // a file transaction this command compensates for, and go with it.
+            let before = Snapshot::read(&self.settings_path).map_err(|error| error.to_string())?;
+            crate::transaction::prepare_settings_command(&root.join("applied-files-pending.json"), &before)
                 .map_err(|error| error.to_string())?;
-            self.preserved.push(history.manifest());
-            Some(history)
-        } else {
-            None
-        };
+        }
         let line = format!("claude {}", command.args.join(" "));
         let step = progress::Step::Command { command: line.clone() };
         if mutation {
@@ -802,9 +798,6 @@ impl PluginHost for Cli {
                 return Err(error);
             }
         };
-        if let Some(history) = &history {
-            history.finish()?;
-        }
         if mutation {
             let state = if output.status.success() {
                 progress::StepState::Done
@@ -815,14 +808,10 @@ impl PluginHost for Cli {
         }
         if !output.status.success() {
             return Err(format!(
-                "{line}: {}\n{}\n{}{}",
+                "{line}: {}\n{}\n{}",
                 output.status,
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr),
-                history
-                    .as_ref()
-                    .map(|history| format!("\nsettings versions: {}", history.manifest().display()))
-                    .unwrap_or_default(),
             ));
         }
         if mutation {
@@ -930,7 +919,7 @@ fn rollback_plugin(
     added: &PluginReceipt,
     host: &mut Cli,
 ) -> Error {
-    let result = match planned.rollback(host, added) {
+    match planned.rollback(host, added) {
         Ok(receipt) => match recovery::finish_rollback(places, planned, &receipt, host, &mut Report::default()) {
             Ok(()) => error,
             Err(rollback) => Error::Io(format!("{error}\n{rollback}")),
@@ -938,14 +927,6 @@ fn rollback_plugin(
         Err(rollback) => {
             Error::Io(format!("{error}\nand what was added to Claude Code could not be taken back: {rollback}"))
         }
-    };
-    if host.preserved.is_empty() {
-        result
-    } else {
-        Error::Io(format!(
-            "{result}\nClaude settings versions: {}",
-            host.preserved.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", ")
-        ))
     }
 }
 

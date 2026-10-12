@@ -101,6 +101,11 @@ pub(super) async fn read(
                         {
                             item.started_at =
                                 timing["startedAtMs"].as_i64().and_then(|n| jiff::Timestamp::from_millisecond(n).ok());
+                            if let Some(end) =
+                                timing["completedAtMs"].as_i64().and_then(|n| jiff::Timestamp::from_millisecond(n).ok())
+                            {
+                                item.thought_until(end);
+                            }
                         }
                         events.push(SessionEvent { at, happened });
                     }

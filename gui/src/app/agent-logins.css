@@ -148,21 +148,51 @@
   color: var(--caution);
 }
 
+/* The rows share their columns: the window's name, the bar, how much is
+   used and how long until it starts again, each column aligned down the
+   slip, the figures in even digits to the right. */
 .logins-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  column-gap: var(--space-3);
+  row-gap: 6px;
 }
 
 .logins-bar {
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 2.4em minmax(0, 1fr) auto;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: var(--space-2);
   font-size: var(--size-small);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   cursor: default;
+}
+
+.logins-bar-used {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 2px;
+  min-width: 2.8em;
+  color: var(--text-2);
+}
+
+.logins-bar.high .logins-bar-used {
+  color: var(--caution);
+}
+
+.logins-bar.spent .logins-bar-used {
+  color: var(--wrong);
+}
+
+/* The times start at their clocks, the clocks one above another. */
+.logins-bar-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 3px;
+  min-width: 4.6em;
 }
 
 .logins-bar-track {
@@ -235,13 +265,6 @@
   gap: 6px;
   font-size: var(--size-small);
   color: var(--text-3);
-}
-
-.tag-removable {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  cursor: pointer;
 }
 
 .logins-group {

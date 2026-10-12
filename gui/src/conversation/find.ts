@@ -6,6 +6,14 @@
 
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
+import { FindIndex, type FindChanges, type FindMatch } from "./find-index";
+import { FindHighlights } from "./find-highlights";
+
+interface FindView {
+  findChanges(): FindChanges;
+  revealFind(match: FindMatch): Promise<void>;
+  findRange(match: FindMatch): Range | null;
+}
 
 export interface FindWords {
   find: string;
@@ -21,18 +29,35 @@ export class Finder {
   readonly element: HTMLElement;
   private readonly input: HTMLInputElement;
   private readonly count: HTMLElement;
-  private matches: Range[] = [];
+  private readonly index = new FindIndex();
+  private selected: FindMatch | null = null;
   private current = -1;
+  private fresh = false;
+  private pending = false;
+  private running = false;
+  private disposed = false;
+  private revision = 0;
+  private readonly highlights: FindHighlights;
+  private task: Promise<void> = Promise.resolve();
+
+  /** Resolves once queued changes and the requested reveal have settled. */
+  get ready(): Promise<void> {
+    return (async () => {
+      for (;;) {
+        const task = this.task;
+        await task;
+        if (task === this.task) return;
+      }
+    })();
+  }
 
   constructor(
-    private readonly transcript: HTMLElement,
+    transcript: HTMLElement,
     private readonly scroller: HTMLElement,
     private readonly words: FindWords,
     /** The reader moved through the conversation by finding. */
     private readonly moved: () => void,
-    /** The whole conversation is to be drawn, as long as the bar is open,
-     *  so that all of it can be found. */
-    private readonly whole: (whole: boolean) => void = () => {},
+    private readonly view: FindView,
   ) {
     this.element = document.createElement("div");
     this.element.className = "find-bar";
@@ -45,7 +70,7 @@ export class Finder {
     this.input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.isComposing) {
         event.preventDefault();
-        this.step(event.shiftKey ? -1 : 1);
+        void this.step(event.shiftKey ? -1 : 1);
       }
     });
     this.element.addEventListener("keydown", (event) => {
@@ -58,7 +83,12 @@ export class Finder {
       const target = (event.target as HTMLElement).closest<HTMLElement>("[data-step], .find-close");
       if (!target) return;
       if (target.classList.contains("find-close")) this.close();
-      else this.step(Number(target.dataset.step));
+      else void this.step(Number(target.dataset.step));
+    });
+    this.highlights = new FindHighlights(transcript, () => {
+      if (!this.open) return;
+      this.refresh();
+      this.paint();
     });
   }
 
@@ -72,7 +102,6 @@ export class Finder {
   show(): void {
     if (this.element.hidden && document.activeElement instanceof HTMLElement) this.before = document.activeElement;
     this.element.hidden = false;
-    this.whole(true);
     // What is selected is what is looked for, as browsers do.
     const selected = window.getSelection()?.toString().trim();
     if (selected && !selected.includes("\n")) this.input.value = selected;
@@ -86,108 +115,105 @@ export class Finder {
     this.element.hidden = true;
     if (inside && this.before?.isConnected) this.before.focus({ preventScroll: true });
     this.before = null;
-    this.matches = [];
+    this.revision += 1;
+    this.selected = null;
     this.current = -1;
     this.paint();
-    this.whole(false);
   }
 
-  /** The conversation changed while open: matches are found again, the
-   *  current one kept where it still is. */
+  /** New or changed display text is searched; historical text and the
+   * selected match keep their identities across drawing and streaming. */
   refresh(): void {
-    if (this.open) this.search(false);
+    if (this.open && this.input.value) this.search(false);
   }
 
   private search(fresh: boolean): void {
-    const query = this.input.value.toLocaleLowerCase();
-    const previous = this.matches[this.current];
-    this.matches = query ? ranges(this.transcript, query) : [];
-    if (fresh || !previous) {
-      // From the newest match upward, the way a conversation is read back.
-      this.current = this.matches.length - 1;
-    } else {
-      const same = this.matches.findIndex((range) => range.compareBoundaryPoints(Range.START_TO_START, previous) === 0);
-      this.current = same >= 0 ? same : Math.min(this.current, this.matches.length - 1);
+    this.fresh ||= fresh;
+    if (fresh) this.revision += 1;
+    if (!this.input.value) {
+      this.index.search("");
+      this.selected = null;
+      this.current = -1;
+      this.paint();
+      return;
     }
-    this.paint();
-    if (fresh) this.reveal();
+    this.pending = true;
+    if (!this.running) this.task = this.synchronize();
   }
 
-  private step(by: number): void {
-    if (!this.matches.length) return;
-    this.current = (this.current + by + this.matches.length) % this.matches.length;
+  private async synchronize(): Promise<void> {
+    this.running = true;
+    try {
+      while (this.pending && this.open && this.input.value) {
+        this.pending = false;
+        await this.index.update(this.view.findChanges());
+        this.index.search(this.input.value.toLowerCase());
+        const same = this.selected ? this.index.position(this.selected) : -1;
+        this.current = this.fresh || !this.selected ? this.index.total - 1
+          : same >= 0 ? same : Math.min(this.current, this.index.total - 1);
+        this.selected = this.index.at(this.current);
+      }
+      const reveal = this.fresh;
+      this.fresh = false;
+      this.paint();
+      if (reveal && this.open) await this.reveal();
+    } catch (error) {
+      if (!this.disposed || !(error instanceof DOMException) || error.name !== "AbortError") throw error;
+    } finally {
+      this.running = false;
+      if (this.pending && this.open && this.input.value) this.task = this.synchronize();
+    }
+  }
+
+  private async step(by: number): Promise<void> {
+    await this.ready;
+    if (!this.open || !this.index.total) return;
+    this.revision += 1;
+    this.current = (this.current + by + this.index.total) % this.index.total;
+    this.selected = this.index.at(this.current);
     this.paint();
-    this.reveal();
+    await this.reveal();
   }
 
   private paint(): void {
-    const highlights = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
-    const Highlight = (window as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
-    if (highlights && Highlight) {
-      const current = this.matches[this.current];
-      highlights.set("find", new Highlight(...this.matches.filter((range) => range !== current)));
-      highlights.set("find-current", current ? new Highlight(current) : new Highlight());
-    }
+    const selected = this.open ? this.selected : null;
+    const identity = selected ? `${selected.document.key}|${selected.document.stamp}|${selected.start}|${selected.end}` : null;
+    this.highlights.paint(this.open ? this.input.value.toLowerCase() : "", identity, () => selected ? this.view.findRange(selected) : null);
     const query = this.input.value;
-    this.count.textContent = !query ? "" : this.matches.length ? this.words.count(this.current + 1, this.matches.length) : this.words.none;
-    this.count.classList.toggle("none", !!query && !this.matches.length);
+    const said = !query ? "" : this.index.total ? this.words.count(this.current + 1, this.index.total) : this.words.none;
+    if (this.count.textContent !== said) this.count.textContent = said;
+    this.count.classList.toggle("none", !!query && !this.index.total);
   }
 
   /** Brings the current match into view, opening what folds it away. */
-  private reveal(): void {
-    const range = this.matches[this.current];
-    if (!range) return;
-    let node: Node | null = range.startContainer;
-    while (node && node !== this.transcript) {
-      if (node instanceof HTMLElement && node.classList.contains("fold") && !node.classList.contains("open")) {
-        (node.previousElementSibling as HTMLElement | null)?.click();
-      }
-      node = node.parentNode;
-    }
+  private async reveal(): Promise<void> {
+    const match = this.selected;
+    if (!match) return;
+    const revision = this.revision;
     this.moved();
+    await this.view.revealFind(match);
+    if (revision !== this.revision || !this.open) return;
+    this.paint();
+    const range = this.view.findRange(match);
+    if (!range) return;
     const box = range.getBoundingClientRect();
     const view = this.scroller.getBoundingClientRect();
     if (box.top < view.top + 48 || box.bottom > view.bottom - 48) {
       this.scroller.scrollTop += box.top - view.top - view.height / 3;
     }
+    // A command can be wider than its line box on a phone.
+    for (let node = range.startContainer.parentElement; node && node !== this.scroller; node = node.parentElement) {
+      if (node.scrollWidth <= node.clientWidth || !/^(auto|scroll|hidden)$/.test(getComputedStyle(node).overflowX)) continue;
+      const area = node.getBoundingClientRect();
+      const match = range.getBoundingClientRect();
+      if (match.left < area.left || match.right > area.right) node.scrollLeft += match.left - area.left;
+    }
   }
-}
 
-/** Every place the query occurs in the text a reader sees, ignoring case.
- *  Each block's text is read as one, so a match may cross the edges of
- *  inline code or emphasis, but never runs from one block into the next. */
-function ranges(root: HTMLElement, query: string): Range[] {
-  const found: Range[] = [];
-  for (const block of root.querySelectorAll<HTMLElement>(":scope > .block")) {
-    const nodes: { node: Text; from: number }[] = [];
-    let text = "";
-    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
-      acceptNode: (node) =>
-        node.parentElement?.closest("button, svg, .katex-mathml, [aria-hidden=true]") && !node.parentElement.closest(".row-line, .group-head")
-          ? NodeFilter.FILTER_REJECT
-          : NodeFilter.FILTER_ACCEPT,
-    });
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      nodes.push({ node: node as Text, from: text.length });
-      // Offsets must stay the node's own: where lower case changes a
-      // text's length (a dotted İ), that text is matched as written.
-      const raw = node.nodeValue ?? "";
-      const lower = raw.toLocaleLowerCase();
-      text += lower.length === raw.length ? lower : raw;
-    }
-    const place = (offset: number, end: boolean): [Text, number] => {
-      // The node holding this offset; an end at a node's edge stays in it.
-      let index = nodes.length - 1;
-      while (index > 0 && (end ? nodes[index]!.from >= offset : nodes[index]!.from > offset)) index -= 1;
-      const { node, from } = nodes[index]!;
-      return [node, offset - from];
-    };
-    for (let at = text.indexOf(query); at >= 0; at = text.indexOf(query, at + query.length)) {
-      const range = document.createRange();
-      range.setStart(...place(at, false));
-      range.setEnd(...place(at + query.length, true));
-      found.push(range);
-    }
+  destroy(): void {
+    this.disposed = true;
+    this.close();
+    this.index.destroy();
+    this.highlights.destroy();
   }
-  return found;
 }

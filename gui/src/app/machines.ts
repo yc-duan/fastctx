@@ -21,6 +21,7 @@ import { agentName, osName, titleOf } from "../world/names";
 import type { AccessWords, MachinesWords } from "./account-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
+import { LendSheet, type Loan } from "./lend-sheet";
 import { GiveSheet, RelaysSheet, socketAddress } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
 import { MachineMap, type Way } from "./machine-map";
@@ -78,6 +79,8 @@ interface Given {
   login: Login;
   take: AccountChange;
   give: AccountChange;
+  /** A loan: the login lent and when the loan ends. */
+  lend?: { machine: string; agent: string; home: string | null; until: string | null };
 }
 
 /** How long a taking back can be undone from the drawing's corner. */
@@ -141,6 +144,7 @@ export class MachinesPage implements Page {
   private scale = 1;
   private note: { machine: string; text: string } | null = null;
   private readonly giving: GiveSheet;
+  private readonly lending: LendSheet;
   private readonly relaying: RelaysSheet;
   /** Hubs a machine is on its way to, with the machines each had when a
    *  way in was given. */
@@ -150,6 +154,7 @@ export class MachinesPage implements Page {
   constructor(private readonly options: MachinesOptions) {
     const { words } = options;
     this.giving = new GiveSheet(options.access);
+    this.lending = new LendSheet(options.access);
     this.relaying = new RelaysSheet(options.access);
     this.title = options.focus ?? words.title;
     this.selected = options.focus ? `m:${options.focus}` : null;
@@ -218,6 +223,9 @@ export class MachinesPage implements Page {
     this.acts.addEventListener("click", (event) => this.clickAct(event));
     this.menu.addEventListener("click", (event) => this.clickAct(event));
     this.tags.addEventListener("click", (event) => {
+      const opened = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-given-open]");
+      const loan = opened ? this.given[Number(opened.dataset.givenOpen)] : undefined;
+      if (loan?.lend) return this.lend(loan.login, loan.lend.machine, loan.lend.agent, loan.lend.home, loan.to);
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-given]");
       const given = button ? this.given[Number(button.dataset.given)] : undefined;
       if (button && given) void this.takeBack(button, given);
@@ -283,6 +291,9 @@ export class MachinesPage implements Page {
         return;
       case "unshare":
         if (login) void this.act(button, login, { change: "share", machine, to: button.dataset.to ?? "", shared: false });
+        return;
+      case "lend-edit":
+        if (login) this.lend(login, machine, button.dataset.agent ?? "", button.dataset.home ?? null, button.dataset.to ?? null);
         return;
       case "unlend": {
         const home = button.dataset.home ? { home: button.dataset.home } : {};
@@ -448,6 +459,29 @@ export class MachinesPage implements Page {
 
   /** A change made at once, with nothing to read first: taking back a
    *  share or a loan, which can be given again as easily. */
+  /** The lend sheet for `agent`'s login `home` on `machine`, lent as
+   *  `login`, with `editing`'s deadline open. */
+  private lend(login: Login, machine: string, agent: string, home: string | null, editing: string | null): void {
+    const { options } = this;
+    const loans = (): Loan[] =>
+      (this.hubOf(login)?.lends ?? [])
+        .filter((lend) => lend.machine === machine && lend.agent === agent && (lend.home ?? null) === home)
+        .map((lend) => ({ to: lend.account, until: lend.until ?? null }));
+    const name = home ? `${agentName(agent)} · ${home.split(/[\\/]/).filter(Boolean).pop() ?? home}` : agentName(agent);
+    this.lending.open(
+      options.access.lendTitle(name, machine),
+      loans(),
+      async (to, until, lent) => {
+        const ends = lent && until ? { until: until.toISOString() } : {};
+        await options.change(login, { change: "lend", machine, to, agent, ...(home ? { home } : {}), lent, ...ends });
+        await options.store.refresh();
+        this.redraw();
+        return loans();
+      },
+      editing,
+    );
+  }
+
   private async act(button: HTMLButtonElement, login: Login, change: AccountChange): Promise<void> {
     const machine = button.closest<HTMLElement>("[data-machine]")?.dataset.machine ?? "";
     button.disabled = true;
@@ -919,13 +953,15 @@ export class MachinesPage implements Page {
         for (const lend of hub?.lends ?? []) {
           if (lend.machine !== machine.name) continue;
           const home = lend.home ? { home: lend.home } : {};
+          const until = lend.until ? { until: lend.until } : {};
           given.push({
             key: `m:${machine.written}`,
             label: `${agentName(lend.agent)} · ${lend.account}`,
             to: lend.account,
             login,
             take: { change: "lend", machine: machine.name, to: lend.account, agent: lend.agent, ...home, lent: false },
-            give: { change: "lend", machine: machine.name, to: lend.account, agent: lend.agent, ...home, lent: true },
+            give: { change: "lend", machine: machine.name, to: lend.account, agent: lend.agent, ...home, lent: true, ...until },
+            lend: { machine: machine.name, agent: lend.agent, home: lend.home ?? null, until: lend.until ?? null },
           });
         }
       }
@@ -980,10 +1016,20 @@ export class MachinesPage implements Page {
     // A narrow page has no room for them among the rings; there they are in
     // the chosen one's sheet.
     const shown = this.level >= 1 && !this.narrow() ? this.given.map((given, index) => ({ given, index })).filter(({ given }) => given.key !== this.selected) : [];
+    const { access } = this.options;
+    const now = new Date();
+    // A loan's tag opens its deadline to be changed, and shows the day it ends.
+    const label = (given: Given, index: number) => {
+      if (!given.lend) return escape(given.label);
+      const until = given.lend.until ? new Date(given.lend.until) : null;
+      const said = until ? access.moment.until(until, now) : access.when.none;
+      const day = until ? `<span class="lend-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
+      return `<button class="lend-tag-open" type="button" data-given-open="${index}" title="${escape(`${access.changeUntil} · ${said}`)}">${escape(given.label)}${day}</button>`;
+    };
     const html = shown
       .map(
         ({ given, index }) =>
-          `<span class="map-tag" data-for="${escape(given.key)}">${escape(given.label)}<button class="chip-x" type="button" data-given="${index}" aria-label="${escape(this.options.words.takeBack(given.label))}" title="${escape(this.options.words.takeBack(given.label))}">${glyph("close", 12)}</button></span>`,
+          `<span class="map-tag" data-for="${escape(given.key)}">${label(given, index)}<button class="chip-x" type="button" data-given="${index}" aria-label="${escape(this.options.words.takeBack(given.label))}" title="${escape(this.options.words.takeBack(given.label))}">${glyph("close", 12)}</button></span>`,
       )
       .join("");
     if (html !== this.tagged) {
@@ -1130,7 +1176,7 @@ export class MachinesPage implements Page {
 
   /** What is known of a machine the account may work on. */
   private machinePanel(machine: Machine, world: WorldNow, now: Date, acts = ""): string {
-    const { words } = this.options;
+    const { words, access } = this.options;
     const logins = loginsOf(world.accounts);
     const owner = logins.find((login) => owns(machine, login)) ?? null;
     const mine = machine.here || !!owner;
@@ -1185,7 +1231,11 @@ export class MachinesPage implements Page {
         const chips = lends
           .map((lend) => {
             const label = `${agentName(lend.agent)} · ${lend.account}`;
-            return `<span class="chip">${escape(label)}<button class="chip-x" type="button" data-act="unlend" data-to="${escape(lend.account)}" data-agent="${escape(lend.agent)}"${lend.home ? ` data-home="${escape(lend.home)}"` : ""} aria-label="${escape(words.takeBack(label))}" title="${escape(words.takeBack(label))}">${glyph("close", 12)}</button></span>`;
+            const at = `data-to="${escape(lend.account)}" data-agent="${escape(lend.agent)}"${lend.home ? ` data-home="${escape(lend.home)}"` : ""}`;
+            const until = lend.until ? new Date(lend.until) : null;
+            const said = until ? access.moment.until(until, now) : access.when.none;
+            const day = until ? `<span class="lend-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
+            return `<span class="chip lend-chip"><button class="lend-tag-open" type="button" data-act="lend-edit" ${at} title="${escape(`${access.changeUntil} · ${said}`)}">${escape(label)}${day}</button><button class="chip-x" type="button" data-act="unlend" ${at} aria-label="${escape(words.takeBack(label))}" title="${escape(words.takeBack(label))}">${glyph("close", 12)}</button></span>`;
           })
           .join("");
         return `<div class="panel-give" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}"><div class="given-row"><span class="given-label">${escape(words.lentTo)}</span>${chips}</div></div>`;
@@ -1221,6 +1271,10 @@ export class MachinesPage implements Page {
       ${this.panelHead(first.written, tags, state, true)}
       ${acts}
       <p class="panel-said" title="${escape(words.borrowedSaid(first.owner ?? ""))}">${glyph("colleague", 14)}<span>${escape(words.borrowedNote)}</span></p>
+      ${lent
+        .filter((one) => one.until)
+        .map((one) => `<p class="panel-said">${glyph("history", 14)}<span>${escape(`${agentName(one.agent)} ${this.options.access.moment.until(new Date(one.until!), now)}`)}</span></p>`)
+        .join("")}
       ${this.present(first.machine, world, first.login)}
       ${this.agentsLink(first.written)}
     </article>`;

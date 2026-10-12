@@ -3,7 +3,7 @@
     {
       "records": [
         {
-          "id": 25,
+          "id": 27,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -20,7 +20,7 @@
           }
         },
         {
-          "id": 24,
+          "id": 26,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -39,7 +39,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 25,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -58,6 +58,48 @@
           "outcome": {
             "kind": "refused",
             "reason": "the machine is another account's"
+          }
+        },
+        {
+          "id": 24,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "lend",
+            "machine": "laptop",
+            "to": "bo",
+            "agent": "claude",
+            "home": null,
+            "lent": true,
+            "until": "2026-10-10T12:00:00Z"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 23,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "lend_ended",
+            "machine": "laptop",
+            "to": "bo",
+            "agent": "claude",
+            "home": null
+          },
+          "outcome": {
+            "kind": "done"
           }
         },
         {
@@ -178,10 +220,10 @@
           "id": 16,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
-            "account": "ada",
-            "authenticated": true,
-            "member": "laptop",
-            "peer": null
+            "account": null,
+            "authenticated": false,
+            "member": null,
+            "peer": "203.0.113.10:4567"
           },
           "action": {
             "change": "token",
@@ -215,10 +257,10 @@
           "id": 14,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
-            "account": null,
-            "authenticated": false,
-            "member": null,
-            "peer": "203.0.113.10:4567"
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
           },
           "action": {
             "change": "password_finish",
@@ -1495,13 +1537,15 @@
                 "machine": "desktop",
                 "account": "cy",
                 "agent": "codex",
-                "home": null
+                "home": null,
+                "until": null
               },
               {
                 "machine": "gpu",
                 "account": "ada",
                 "agent": "claude",
-                "home": "/home/bo/.claude-team"
+                "home": "/home/bo/.claude-team",
+                "until": "2026-10-20T10:00:00Z"
               }
             ],
             "plans": [
@@ -1558,7 +1602,8 @@
         "to": "cy",
         "agent": "codex",
         "home": "C:/Users/ada/.codex-work",
-        "lent": true
+        "lent": true,
+        "until": "2026-10-20T10:00:00Z"
       },
       {
         "change": "plan",
@@ -2697,7 +2742,8 @@
         "item": {
           "id": "thinking",
           "kind": "thinking",
-          "text": "thinking"
+          "text": "thinking",
+          "duration_ms": 4200
         }
       },
       {
@@ -2707,7 +2753,8 @@
         "item": {
           "id": "thinking",
           "kind": "thinking",
-          "text": "thinking"
+          "text": "thinking",
+          "duration_ms": 4200
         }
       },
       {
@@ -2717,7 +2764,8 @@
         "item": {
           "id": "thinking",
           "kind": "thinking",
-          "text": "thinking"
+          "text": "thinking",
+          "duration_ms": 4200
         }
       },
       {

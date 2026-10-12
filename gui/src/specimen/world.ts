@@ -11,6 +11,14 @@ import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
 
 const at = (time: string) => `2026-10-04T${time}Z`;
+/** A loan's deadline some days from the moment the specimen is opened, at
+ *  that day's six in the evening, so it is always ahead. */
+const daysAhead = (days: number) => {
+  const until = new Date();
+  until.setDate(until.getDate() + days);
+  until.setHours(18, 0, 0, 0);
+  return until.toISOString();
+};
 
 const claude = (version = "2.1.289"): About["host"] => ({ agent: "claude", client: "claude-code", version });
 const codex = (): About["host"] => ({ agent: "codex", client: "codex-mcp-client", version: "0.160.0" });
@@ -132,7 +140,10 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         member("gpu", "computer", ["bo"], "bo", "03:30:00", true, "be3f0a77"),
       ],
       shares: [{ machine: "lab", account: "ada" }],
-      lends: [{ machine: "desktop", account: "ada", agent: "codex", home: "C:/Users/me/.codex-work" }],
+      lends: [
+        { machine: "desktop", account: "ada", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: daysAhead(3) },
+        { machine: "desktop", account: "bo", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: null },
+      ],
       plans: [],
       acting: [{ machine: "gpu", account: "me", since: at("03:42:00") }],
       projects: [
@@ -170,7 +181,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         member("render", "computer", ["ops"], "ops", "00:07:00", true, "4e11d3a9"),
       ],
       shares: [{ machine: "build", account: "yc" }],
-      lends: [{ machine: "render", account: "yc", agent: "claude", home: null }],
+      lends: [{ machine: "render", account: "yc", agent: "claude", home: null, until: daysAhead(1) }],
       plans: [{ machine: "render", agent: "claude", home: null, plan: "max" }],
       acting: [{ machine: "build", account: "yc", since: at("09:15:00") }],
       projects: [{ name: "ingest", owner: "yc", granted: [] }],
@@ -428,11 +439,24 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
   };
 }
 
-/** The changes a specimen takes as asked, a machine's relays and where it
- *  relays for others, so the machines page shows what follows them; the
- *  machine never really goes another way. Anything else it refuses. */
+/** The changes a specimen takes as asked: a machine's relays and where it
+ *  relays for others, so the machines page shows what follows them, and
+ *  loans with their deadlines; the machine never really goes another way.
+ *  Anything else it refuses. */
 export function specimenChange(world: WorldNow | null, hub: string, made: AccountChange): WorldNow | null {
-  if (!world || (made.change !== "relays" && made.change !== "relay_at")) return null;
+  if (!world) return null;
+  if (made.change === "lend") {
+    if (made.lent && made.until && new Date(made.until) <= new Date()) throw new Error("the loan's deadline has already passed");
+    const home = made.home ?? null;
+    const hubs = world.accounts.hubs.map((one) => {
+      if (one.hub !== hub) return one;
+      const kept = one.lends.filter((lend) => !(lend.machine === made.machine && lend.account === made.to && lend.agent === made.agent && lend.home === home));
+      const lends = made.lent ? [...kept, { machine: made.machine, account: made.to, agent: made.agent, home, until: made.until ?? null }] : kept;
+      return { ...one, lends };
+    });
+    return { ...world, accounts: { ...world.accounts, hubs } };
+  }
+  if (made.change !== "relays" && made.change !== "relay_at") return null;
   const hubs = world.accounts.hubs.map((one) =>
     one.hub !== hub
       ? one

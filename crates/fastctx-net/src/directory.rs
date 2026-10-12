@@ -72,7 +72,8 @@ pub struct Share {
 }
 
 /// One login of an agent on a machine, lent to an account that is not the
-/// machine's: that login, and not the machine.
+/// machine's: that login, and not the machine; until a deadline, when the
+/// owner set one.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Lend {
     pub machine: MachineName,
@@ -82,12 +83,26 @@ pub struct Lend {
     /// agent's default login there, which follows its user's environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<PathBuf>,
+    /// When the loan ends by itself; none while the owner keeps it lent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<Timestamp>,
 }
 
 impl Lend {
     /// Whether this lends `agent`'s login `home` there.
     pub fn is(&self, agent: &AgentName, home: Option<&Path>) -> bool {
         self.agent == *agent && self.home.as_deref() == home
+    }
+
+    /// Whether `other` lends the same login to the same account, whatever
+    /// its deadline.
+    pub fn same(&self, other: &Lend) -> bool {
+        self.machine == other.machine && self.account == other.account && other.is(&self.agent, self.home.as_deref())
+    }
+
+    /// Whether it still lends at `now`: its deadline, if any, is later.
+    pub fn live(&self, now: Timestamp) -> bool {
+        self.until.is_none_or(|until| until > now)
     }
 }
 
@@ -199,9 +214,12 @@ impl Directory {
         self.shares.iter().any(|share| share.account == *account && share.machine == *machine)
     }
 
-    /// The agents' logins on `machine` lent to `account`.
+    /// The agents' logins on `machine` lent to `account` now. A loan past
+    /// its deadline lends nothing from that moment, on the hub and on every
+    /// member alike, before the hub has taken it off the list.
     pub fn lent<'a>(&'a self, account: &'a AccountName, machine: &'a MachineName) -> impl Iterator<Item = &'a Lend> {
-        self.lends.iter().filter(move |lend| lend.account == *account && lend.machine == *machine)
+        let now = Timestamp::now();
+        self.lends.iter().filter(move |lend| lend.account == *account && lend.machine == *machine && lend.live(now))
     }
 
     /// What `account` may do on `machine`: everything on its own machines,
@@ -233,18 +251,25 @@ impl Directory {
     }
 
     /// Whether `member` may act for `account`: the account is logged in on
-    /// it, or used an agent there.
+    /// it, or used an agent there and may still use the agents there. A
+    /// loan past its deadline ends that from the same moment as the loan,
+    /// before the hub drops the record of the use (`settle_acting`).
     pub fn may_act_for(&self, account: &AccountName, member: &MachineName) -> bool {
         self.logged_in(member, account)
-            || self.acting.iter().any(|acting| acting.account == *account && acting.machine == *member)
+            || (self.acting.iter().any(|acting| acting.account == *account && acting.machine == *member)
+                && self.rights(account, member).agents)
     }
 
     /// The accounts `member` may act for.
     pub fn acts_for(&self, member: &MachineName) -> BTreeSet<AccountName> {
         let mut accounts: BTreeSet<AccountName> =
             self.member(member).map(|member| member.logins.clone()).unwrap_or_default();
-        accounts
-            .extend(self.acting.iter().filter(|acting| acting.machine == *member).map(|acting| acting.account.clone()));
+        accounts.extend(
+            self.acting
+                .iter()
+                .filter(|acting| acting.machine == *member && self.rights(&acting.account, member).agents)
+                .map(|acting| acting.account.clone()),
+        );
         accounts
     }
 

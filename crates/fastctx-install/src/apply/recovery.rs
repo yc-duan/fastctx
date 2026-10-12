@@ -88,7 +88,6 @@ pub(super) fn before(places: &Places) -> Result<Report, Error> {
             let receipt = pending.plan.rollback(&mut host, &previous.receipt)?;
             finish_rollback(places, &pending.plan, &receipt, &mut host, &mut report)?;
             report.commands.extend(host.ran);
-            report.preserved.extend(host.preserved);
         }
     }
     let files = files?;
@@ -98,6 +97,7 @@ pub(super) fn before(places: &Places) -> Result<Report, Error> {
     if let Err(error) = crate::transaction::collect_finished(&places.root) {
         report.leftovers.push(error.to_string());
     }
+    report.leftovers.extend(crate::claude::history::retire(&places.root));
     Ok(report)
 }
 

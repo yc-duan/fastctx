@@ -74,10 +74,16 @@ pub fn digest(path: &Path) -> io::Result<String> {
 }
 
 /// Where the digest of `path` is kept: one small file per path, named by the
-/// hash of the path's canonical spelling.
+/// hash of the path's canonical spelling. Only in a World that is there: a
+/// program asking as another account, such as the service's guardian
+/// running as SYSTEM, would otherwise make a fastctx directory in that
+/// account's profile, which nothing reads and no removal knows of.
 fn kept_digest(path: &Path) -> Option<PathBuf> {
     let canonical = fs::canonicalize(path).ok()?;
     let root = fastctx_platform::fastctx_root().ok()?;
+    if !root.is_dir() {
+        return None;
+    }
     let name = format!("{:x}", Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
     Some(root.join("cache").join("digests").join(name))
 }

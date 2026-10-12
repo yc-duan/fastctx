@@ -317,6 +317,9 @@ pub(crate) struct Moving {
     /// Connections that may change the records, under way.
     active: AtomicUsize,
     idle: Notify,
+    /// Woken when the hub takes changes again after a switch that did not
+    /// finish.
+    thawed: Notify,
     /// Set when the hub stops serving here: every connection still open ends.
     stop: watch::Sender<bool>,
     /// Wakes the move under way to try its step again now.
@@ -346,6 +349,7 @@ impl Moving {
             frozen: AtomicBool::new(false),
             active: AtomicUsize::new(0),
             idle: Notify::new(),
+            thawed: Notify::new(),
             stop: watch::channel(false).0,
             poke: Notify::new(),
             driving: AtomicBool::new(false),
@@ -387,6 +391,18 @@ impl Moving {
 
     pub fn thaw(&self) {
         self.frozen.store(false, Ordering::SeqCst);
+        self.thawed.notify_waiters();
+    }
+
+    /// Resolves once the hub takes changes, at once when it does now.
+    pub async fn unfrozen(&self) {
+        loop {
+            let thawed = self.thawed.notified();
+            if !self.frozen() {
+                return;
+            }
+            thawed.await;
+        }
     }
 
     /// Ends every connection still open here.

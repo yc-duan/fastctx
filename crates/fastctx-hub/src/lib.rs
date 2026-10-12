@@ -23,6 +23,7 @@
 mod control;
 mod data;
 mod ledger;
+mod lends;
 mod log;
 mod login;
 mod machine_log;
@@ -195,6 +196,9 @@ pub(crate) struct Hub {
     log: Arc<log::Log>,
     machine_log_changed: tokio::sync::Notify,
     moving: moving::Moving,
+    /// Told when the directory changes, so the loans' deadlines are read again.
+    lends_changed: tokio::sync::Notify,
+    next_lend_end: lends::NextEnd,
 }
 
 /// A member's open control connection.
@@ -269,6 +273,7 @@ impl Hub {
     /// look again, and what lost the standing it was allowed under ends.
     fn changed(&self) {
         self.machine_log_changed.notify_one();
+        self.lends_changed.notify_one();
         let outs: Vec<mpsc::UnboundedSender<Out>> =
             self.sessions().values().map(|session| session.out.clone()).collect();
         for out in outs {
@@ -333,7 +338,10 @@ pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
 }
 
 async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::Result<Next> {
-    let store = Store::open(dir)?;
+    let mut store = Store::open(dir)?;
+    // A loan whose deadline passed while the hub was stopped is taken back
+    // before any member is heard.
+    lends::end_due(&mut store, Timestamp::now())?;
     let certificate = HubCertificate {
         certificate: std::fs::read(Store::certificate_file(dir))?,
         key: std::fs::read(Store::key_file(dir))?,
@@ -372,6 +380,8 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         log,
         machine_log_changed: tokio::sync::Notify::new(),
         moving: moving::Moving::new(switched),
+        lends_changed: tokio::sync::Notify::new(),
+        next_lend_end: lends::NextEnd::default(),
     });
     if driven {
         moving::out::drive(&hub);
@@ -392,6 +402,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
             },
             () = shutdown_signal() => break false,
             expired = machine_log::expire(&hub) => expired?,
+            ended = lends::expire(&hub) => ended?,
             Ok(()) = &mut switch => break true,
         }
     };

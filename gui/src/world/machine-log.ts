@@ -12,7 +12,8 @@ export interface MachineLogActor {
 export type MachineLogAction =
   | { change: "collab"; version: number }
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
-  | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home: string | null; lent: boolean }
+  | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home: string | null; lent: boolean; until?: Timestamp }
+  | { change: "lend_ended"; machine: MachineName; to: AccountName; agent: string; home: string | null }
   | { change: "plan"; machine: MachineName; agent: string; home: string | null; plan: PlanLabel | null }
   | { change: "stop_acting"; machine: MachineName }
   | { change: "relays"; machine: MachineName; relays: Relay[] }

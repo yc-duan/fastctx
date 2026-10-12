@@ -97,7 +97,7 @@ impl Live {
                         match (&mut i.what, part) {
                             (
                                 What::Message { text: whole }
-                                | What::Thinking { text: whole }
+                                | What::Thinking { text: whole, .. }
                                 | What::Plan { text: whole },
                                 Part::Text,
                             ) => whole.push_str(text),
@@ -214,7 +214,7 @@ mod tests {
             id: "same".into(),
             started_at: Some(at),
             detail: None,
-            what: What::Thinking { text: text.into() },
+            what: What::Thinking { text: text.into(), duration_ms: None },
         };
         let mut live = Live::default();
         live.observe(&event(Happened::Began { turn: "a".into(), item: item("") }));
@@ -228,7 +228,7 @@ mod tests {
             }));
         }
         assert!(
-            matches!(&live.snapshots().next().unwrap().happened, Happened::Began { item, .. } if item.what == What::Thinking { text: "xx".into() })
+            matches!(&live.snapshots().next().unwrap().happened, Happened::Began { item, .. } if item.what == What::Thinking { text: "xx".into(), duration_ms: None })
         );
         live.observe(&event(Happened::Updated { turn: "a".into(), item: item("replacement") }));
         live.observe(&event(Happened::Began { turn: "b".into(), item: item("independent") }));
