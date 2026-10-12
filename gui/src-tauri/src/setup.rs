@@ -230,11 +230,17 @@ pub(crate) async fn finish_keep(world: &World, kept: Kept) -> Result<KeptNow, St
     })
 }
 
-/// Places World and restores its owned host integration at installation.
-/// An enrolled computer also restores its boot service; a standalone
-/// computer starts a node when an interface or agent needs it.
+/// What installing World does for this computer besides the application:
+/// the fastctx it carries put in place when there is none yet, the records
+/// of a removal that kept the data cleared, and the host hook-ups that
+/// removal took out put back (`world-gui.md`, 设置). An update finds the
+/// program there and leaves it: a newer World is put in place by the user,
+/// from the settings. A computer already in a network also gets back the
+/// service that keeps it there from boot; on one in no network the service
+/// comes when it first joins or creates one (`keep`), and until then a node
+/// starts when an interface or an agent needs it.
 #[cfg(windows)]
-pub fn keep_at_install() -> Result<Option<String>, String> {
+pub fn after_install() -> Result<(), String> {
     let places = places()?;
     let _uninstall = fastctx_platform::uninstall_gate::Gate::try_acquire(&places.root)
         .map_err(|error| error.to_string())?
@@ -248,13 +254,13 @@ pub fn keep_at_install() -> Result<Option<String>, String> {
     }
     apply::restore_withdrawn(&places).map_err(|error| error.to_string())?;
     if !membership::any(&WorldDir::under(&places.root)).map_err(|error| error.to_string())? {
-        return Ok(None);
+        return Ok(());
     }
     let (kept, _) = keep_connected(&places).map_err(|error| error.to_string())?;
     if kept == Kept::Installed {
         hand_over_running(&places)?;
     }
-    Ok(Some(format!("{kept:?}")))
+    Ok(())
 }
 
 /// Asks the node running for this World, if one is, to hand the World over

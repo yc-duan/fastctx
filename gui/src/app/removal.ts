@@ -31,6 +31,10 @@ const ORDER: RemovalGroup[] = ["start", "agents", "hub", "program", "data", "hub
 
 export class RemovalSection {
   private state: State = { at: "choose" };
+  /** Set while the section rewrites itself. Chromium (WebView2) reports
+   *  the pressed button it removes as a focusout without a related target,
+   *  synchronously inside the rewrite; that is not the reader moving on. */
+  private drawing = false;
 
   constructor(
     private readonly host: HTMLElement,
@@ -54,6 +58,7 @@ export class RemovalSection {
     // A press that waits for a second one is let go when the reader moves on.
     host.addEventListener("focusout", (event) => {
       const into = (event as FocusEvent).relatedTarget as HTMLElement | null;
+      if (this.drawing) return;
       if (this.state.at === "plan" && this.state.armed && !into?.closest("[data-removal='go']")) {
         this.state.armed = false;
         this.draw();
@@ -173,7 +178,12 @@ export class RemovalSection {
       const on = chosen === everything;
       return `<button class="welcome-way removal-way${on ? " chosen" : ""}${everything ? " erase" : ""}" type="button" data-removal="${act}" aria-pressed="${on}" title="${escape(more)}"${locked && !on ? " disabled" : ""}>${drawing}<span class="welcome-way-title">${escape(title)}</span><span class="welcome-way-what">${escape(what)}</span></button>`;
     };
-    this.host.innerHTML = `<div class="welcome-ways removal-ways">${way(false)}${way(true)}</div>${this.body()}`;
+    this.drawing = true;
+    try {
+      this.host.innerHTML = `<div class="welcome-ways removal-ways">${way(false)}${way(true)}</div>${this.body()}`;
+    } finally {
+      this.drawing = false;
+    }
     const name = this.host.querySelector<HTMLInputElement>("[data-removal-name]");
     if (name && state.at === "plan") name.value = state.typed;
   }

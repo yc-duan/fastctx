@@ -20,6 +20,7 @@ import type { Store } from "./store";
 import type { SettingsWords } from "./words";
 import { RemovalSection, type Removing } from "./removal";
 import type { RemovalWords } from "./removal-words";
+import { loginsOf } from "../world/accounts";
 
 export interface SettingsOptions {
   store: Store;
@@ -176,8 +177,8 @@ export class SettingsPage implements Page {
     );
   }
 
-  /** Installs the service an installation would have, when it is missing:
-   *  the rights were declined, or fastctx came here another way. */
+  /** Installs the service joining or creating a network would have, when it
+   *  is missing: the rights were declined, or fastctx came here another way. */
   private keep(): void {
     const service = this.options.computer;
     if (!service || this.busy) return;
@@ -206,8 +207,11 @@ export class SettingsPage implements Page {
     const kept = this.setup ? this.setup.service : null;
     if (kept === null && !this.said) return;
     const state = kept === null ? "" : kept ? words.serviceOn : words.serviceOff;
+    // The service belongs to a computer in a network (`world-gui.md`, 设置):
+    // one used on its own is not offered it.
+    const inNetwork = loginsOf(this.options.store.world.peek()?.accounts).length > 0;
     const button =
-      kept === false
+      kept === false && inNetwork
         ? `<button class="text-button quiet-button" type="button" data-service="keep" title="${escape(words.keepAsks)}"${this.busy ? " disabled" : ""}>${escape(words.keep)}</button>`
         : "";
     this.service.hidden = false;
