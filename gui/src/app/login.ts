@@ -521,14 +521,19 @@ export class LoginPage implements Page {
     let act: () => Promise<LoggedIn>;
     this.keep();
     // A name is checked by the World's rule before anything is sent; the
-    // page takes nothing else meanwhile.
+    // page takes nothing else meanwhile. Creating a World asks for two
+    // names, so there the note says which field it is about.
     const named = async (kind: "machine" | "hub", text: string | null): Promise<boolean> => {
       const check = this.options.nameProblem;
       if (!text || !check) return true;
       this.busy = true;
       const problem = await check(kind, text).finally(() => (this.busy = false));
-      if (problem) this.note(words.nameSaid(problem));
-      return !problem;
+      if (!problem) return true;
+      const said = words.nameSaid(problem);
+      const label = kind === "hub" ? words.worldName : this.options.device ? words.phoneName : words.name;
+      this.note(this.step === "create" ? words.inField(label, said) : said);
+      field(kind === "hub" ? "world" : "name")?.focus();
+      return false;
     };
     if (!(await named("machine", name))) return;
     // A new password must pass before anything is sent.

@@ -63,6 +63,8 @@ export interface LoginWords {
   phoneName: string;
   /** What is wrong with a machine or server name as typed. */
   nameSaid: NameSaid;
+  /** `said` about the field labelled `field`, where a form has two names. */
+  inField(field: string, said: string): string;
   go: string;
   going: string;
   signUp: string;
@@ -152,6 +154,7 @@ export const zhLogin: LoginWords = {
   name: "电脑名称",
   phoneName: "手机名称",
   nameSaid: zhNameSaid,
+  inField: (field, said) => `${field}：${said}`,
   go: "登录",
   going: "正在登录…",
   signUp: "注册账号",
@@ -232,6 +235,7 @@ export const enLogin: LoginWords = {
   name: "Computer name",
   phoneName: "Phone name",
   nameSaid: enNameSaid,
+  inField: (field, said) => `${field}: ${said}`,
   go: "Log in",
   going: "Logging in…",
   signUp: "Sign up",
