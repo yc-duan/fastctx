@@ -242,7 +242,7 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
         for home in claude_homes {
             add(
                 "claude-trust",
-                "Remove only the trust record whose key is this World's own directory",
+                "Remove the trust records of this World's own directories, where its sessions ran",
                 home.display().to_string(),
                 false,
                 Action::Trust { home, key: key.clone() },

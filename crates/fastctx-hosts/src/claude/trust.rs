@@ -161,36 +161,61 @@ fn unicode_path(path: &Path) -> io::Result<&str> {
     path.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Claude paths must be Unicode"))
 }
 
-/// Removes only the exact World project entry, preserving every other byte.
-/// The ordinary Claude lease and compare-before-publication apply here too.
+/// Whether `name`, a key of Claude's projects, is the directory `key` or one
+/// inside it. Keys are physical paths with forward slashes; Windows paths
+/// compare without case, as the file system does.
+fn within(name: &str, key: &str) -> bool {
+    let same = |a: &str, b: &str| if cfg!(windows) { a.eq_ignore_ascii_case(b) } else { a == b };
+    same(name, key)
+        || (name.len() > key.len()
+            && name.as_bytes()[key.len()] == b'/'
+            && name.is_char_boundary(key.len())
+            && same(&name[..key.len()], key))
+}
+
+/// Removes the project entries of the World's directory `key` and of every
+/// directory inside it, where its sessions ran, preserving every other byte.
+/// The World made those directories, so no entry for them predates it. The
+/// ordinary Claude lease and compare-before-publication apply here too.
 pub fn remove_world_trust(config_dir: Option<&std::ffi::OsStr>, key: &str) -> io::Result<bool> {
     use jsonc_parser::ast::Value;
     use jsonc_parser::common::Ranged;
     let paths = StatePaths::resolve(config_dir)?;
     let Some(before) = state_file::read(&paths.file)? else { return Ok(false) };
-    let remove = |bytes: &[u8]| -> io::Result<Option<Vec<u8>>> {
+    // One entry at a time, each removal parsed afresh.
+    let remove_one = |bytes: &[u8]| -> io::Result<Option<Vec<u8>>> {
         let text = std::str::from_utf8(bytes).map_err(|_| io::Error::other("Claude state is not UTF-8"))?;
         let offset = if text.starts_with('\u{feff}') { 3 } else { 0 };
         let source = &text[offset..];
         let parsed = jsonc_parser::parse_to_ast(source, &Default::default(), &Default::default())
             .map_err(|_| io::Error::other("Claude state is invalid JSON"))?;
-        let Some(Value::Object(root)) = parsed.value else { return Err(io::Error::other("Claude state is not an object")) };
-        let Some(projects) = root.properties.iter().find(|property| property.name.as_str() == "projects") else { return Ok(None) };
-        let Value::Object(projects) = &projects.value else { return Err(io::Error::other("Claude projects is not an object")) };
-        let found = projects.properties.iter().enumerate().filter(|(_, property)| property.name.as_str() == key).collect::<Vec<_>>();
-        let [(index, property)] = found.as_slice() else {
-            if found.is_empty() { return Ok(None) }
-            return Err(io::Error::other("Claude state contains duplicate World directory keys"));
+        let Some(Value::Object(root)) = parsed.value else {
+            return Err(io::Error::other("Claude state is not an object"));
+        };
+        let Some(projects) = root.properties.iter().find(|property| property.name.as_str() == "projects") else {
+            return Ok(None);
+        };
+        let Value::Object(projects) = &projects.value else {
+            return Err(io::Error::other("Claude projects is not an object"));
+        };
+        let Some((index, property)) =
+            projects.properties.iter().enumerate().find(|(_, property)| within(property.name.as_str(), key))
+        else {
+            return Ok(None);
         };
         let range = property.range();
         let mut start = range.start;
         let mut end = range.end;
         if let Some(next) = projects.properties.get(index + 1) {
-            let comma = source[end..next.range().start].find(',').ok_or_else(|| io::Error::other("Claude project separator is absent"))?;
+            let comma = source[end..next.range().start]
+                .find(',')
+                .ok_or_else(|| io::Error::other("Claude project separator is absent"))?;
             end += comma + 1;
-        } else if *index > 0 {
+        } else if index > 0 {
             let previous = projects.properties[index - 1].range().end;
-            let comma = source[previous..start].rfind(',').ok_or_else(|| io::Error::other("Claude project separator is absent"))?;
+            let comma = source[previous..start]
+                .rfind(',')
+                .ok_or_else(|| io::Error::other("Claude project separator is absent"))?;
             start = previous + comma;
         }
         let mut after = bytes.to_vec();
@@ -200,13 +225,28 @@ pub fn remove_world_trust(config_dir: Option<&std::ffi::OsStr>, key: &str) -> io
             .map_err(|_| io::Error::other("removing Claude trust would produce invalid JSON"))?;
         Ok(Some(after))
     };
-    if remove(&before)?.is_none() { return Ok(false) }
+    let remove = |bytes: &[u8]| -> io::Result<Option<Vec<u8>>> {
+        let mut removed: Option<Vec<u8>> = None;
+        while let Some(after) = remove_one(removed.as_deref().unwrap_or(bytes))? {
+            removed = Some(after);
+        }
+        Ok(removed)
+    };
+    if remove(&before)?.is_none() {
+        return Ok(false);
+    }
     let lease = lease::Lease::acquire(&paths.file)?;
     let result = (|| {
-        let before = state_file::read(&paths.file)?.ok_or_else(|| io::Error::other("Claude state disappeared before trust removal"))?;
+        let before = state_file::read(&paths.file)?
+            .ok_or_else(|| io::Error::other("Claude state disappeared before trust removal"))?;
         let Some(after) = remove(&before)? else { return Ok(false) };
         state_file::publish(&paths.file, Some(&before), &after, &lease)?;
-        if remove(&state_file::read(&paths.file)?.ok_or_else(|| io::Error::other("Claude state disappeared after trust removal"))?)?.is_some() {
+        if remove(
+            &state_file::read(&paths.file)?
+                .ok_or_else(|| io::Error::other("Claude state disappeared after trust removal"))?,
+        )?
+        .is_some()
+        {
             return Err(io::Error::other("World trust is still present after publication"));
         }
         Ok(true)
