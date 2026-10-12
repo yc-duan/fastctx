@@ -68,6 +68,16 @@ pub(crate) struct Direct {
     /// The addresses of the hub's check this machine last said it listens
     /// for.
     reported: Mutex<Vec<SocketAddr>>,
+    /// The ports this machine's firewall is to let in.
+    firewall: Arc<Firewall>,
+}
+
+#[derive(Default)]
+struct Firewall {
+    /// What was last asked.
+    wanted: Mutex<BTreeSet<u16>>,
+    /// Held while a change is made.
+    applying: Mutex<()>,
 }
 
 /// One machine's links: the one this machine dialed, and the one it took.
@@ -228,15 +238,8 @@ impl Inner {
                     }
                     let this = self.clone();
                     tokio::spawn(async move {
-                        let node = this.node.clone();
-                        match tokio::task::spawn_blocking(move || node.open_ports(&BTreeSet::new())).await {
-                            Ok(Ok(_)) => {}
-                            Ok(Err(why)) => {
-                                this.node.log(format!("direct connections: closing this machine's firewall: {why}"))
-                            }
-                            Err(error) => {
-                                this.node.log(format!("direct connections: closing this machine's firewall: {error}"))
-                            }
+                        if let Err(why) = this.firewall(BTreeSet::new()).await {
+                            this.node.log(format!("direct connections: closing this machine's firewall: {why}"));
                         }
                     });
                 }
@@ -276,11 +279,7 @@ impl Inner {
         if let Some(Err(why)) = self.direct.listening() {
             return Err(why);
         }
-        let node = self.node.clone();
-        let opened = tokio::task::spawn_blocking(move || node.open_ports(&ports))
-            .await
-            .map_err(|error| format!("opening the firewall: {error}"))?;
-        match opened {
+        match self.firewall(ports).await {
             Ok(firewall) => {
                 self.node.log(format!("direct connections: this machine's firewall: {firewall:?}"));
                 Ok(firewall)
@@ -290,6 +289,22 @@ impl Inner {
                 Err(why)
             }
         }
+    }
+
+    /// Brings this machine's firewall to let in exactly `ports`, or nothing.
+    /// The changes are made one at a time, and each makes the firewall what
+    /// was last asked: a change asked later is never undone by one asked
+    /// earlier that finished later.
+    async fn firewall(self: &Arc<Self>, ports: BTreeSet<u16>) -> Result<crate::wire::Firewall, String> {
+        *self.direct.firewall.wanted.lock().expect("never poisoned") = ports;
+        let (node, firewall) = (self.node.clone(), self.direct.firewall.clone());
+        tokio::task::spawn_blocking(move || {
+            let _one_at_a_time = firewall.applying.lock().expect("never poisoned");
+            let wanted = firewall.wanted.lock().expect("never poisoned").clone();
+            node.open_ports(&wanted)
+        })
+        .await
+        .map_err(|error| format!("changing the firewall: {error}"))?
     }
 
     /// The machines this one keeps a link with.
