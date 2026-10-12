@@ -18,9 +18,15 @@ fn main() {
 fn released_ownership_is_bound_and_retired_with_the_host_files() {
     // Apply ends by asking the machine's Codex about its tools, and a Codex
     // that starts writes into its home; this test's homes must stay its own.
-    // SAFETY: the only test in this binary, before it starts any thread.
-    unsafe { std::env::set_var("PATH", "") };
+    // The program is found on PATH, or as the default Codex home records the
+    // desktop app's; both point into this test's own empty places.
     let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("default-codex")).unwrap();
+    // SAFETY: the only test in this binary, before it starts any thread.
+    unsafe {
+        std::env::set_var("PATH", "");
+        std::env::set_var("CODEX_HOME", temp.path().join("default-codex"));
+    }
     let mut places = Places {
         root: temp.path().join("fastctx"),
         world: temp.path().join("fastctx/world"),
