@@ -1,7 +1,7 @@
 //! The commands that put this computer on hubs and look after its accounts
 //! (`world-network.md`): logging in and out, tokens for other devices, what
-//! an account's machines let other accounts do, and the hub and relays
-//! themselves.
+//! an account's machines let other accounts do, direct connections, and the
+//! hub itself.
 
 use clap::{Args, Subcommand};
 use fastctx_types::accounts::{AccountChange, AccountsReply, MemberKind};

@@ -292,13 +292,13 @@ export interface MachinesWords {
   manageHub: string;
   /** How this computer reaches a hub. */
   linkOnline(address: string): string;
-  linkVia(relay: string, address: string): string;
+  linkVia(through: string, address: string): string;
   linkConnecting(error: string | null): string;
   linkStopped(reason: string): string;
   /** Where this computer stands on a hub. */
   registeredUnder(account: string): string;
   onlyLogins(accounts: string): string;
-  via(relay: string): string;
+  via(through: string): string;
   direct: string;
   yours: string;
   ownedBy(account: string): string;
@@ -352,7 +352,6 @@ export interface MachinesWords {
   homeNotChanged(why: string): string;
   share: string;
   lend: string;
-  relays: string;
   remove: string;
   /** An agent lent to the account, on a machine of another's: the tag on
    *  the map, the one line on its panel, and the saying behind both. */
@@ -381,23 +380,10 @@ export interface MachinesWords {
   /** A share or loan taken back from the drawing, and giving it again. */
   tookBack(to: string): string;
   undo: string;
-  /** How a machine reaches its hub, changed on the drawing: the handle on
-   *  its line, the card shown where it is dropped, the address list it
-   *  leaves behind, and what is said when the machine did not go that way. */
+  /** The handle on a machine's line on the drawing. */
   reroute: string;
-  routeVia(machine: string, relay: string): string;
-  routeDirect(machine: string): string;
-  routeList(relays: string[]): string;
-  routeFailed(machine: string, relay: string): string;
   confirm: string;
   more: string;
-  /** Making a machine a relay others may connect through, and no longer. */
-  beRelay: string;
-  stopRelay: string;
-  relayTitle(machine: string): string;
-  relayAddress: string;
-  relayAddressWrong: string;
-  relayWhat: string;
   /** The hub's record of changes, in the drawing's corner. */
   log: string;
   logEmpty: string;
@@ -484,7 +470,6 @@ export const zhMachines: MachinesWords = {
   homeNotChanged: failure(zhProblems, "操作失败"),
   share: "共享",
   lend: "借出",
-  relays: "中转",
   remove: "移除",
   lentShort: (owner) => `来自 ${owner}`,
   borrowedNote: "在你的机器上工作",
@@ -506,18 +491,8 @@ export const zhMachines: MachinesWords = {
   tookBack: (to) => `已收回 ${to}`,
   undo: "撤回",
   reroute: "改连接方式",
-  routeVia: (machine, relay) => `${machine} 改经 ${relay} 连接服务器`,
-  routeDirect: (machine) => `${machine} 改为直连服务器`,
-  routeList: (relays) => (relays.length ? `依次连接 ${relays.join("、")}，最后是服务器` : "只连服务器"),
-  routeFailed: (machine, relay) => `${machine} 没能经 ${relay} 连上`,
   confirm: "确定",
   more: "细节",
-  beRelay: "设为中转",
-  stopRelay: "停止中转",
-  relayTitle: (machine) => `让 ${machine} 当中转`,
-  relayAddress: "对外地址",
-  relayAddressWrong: "写成 地址:端口",
-  relayWhat: "这台机器把这个端口收到的连接原样转给服务器，看不到内容。防火墙或安全组要放行这个端口。",
   log: "变更记录",
   logEmpty: "暂无记录",
   logEarlier: "更早",
@@ -577,12 +552,12 @@ export const enMachines: MachinesWords = {
   inviteDevice: "Add device",
   manageHub: "Accounts",
   linkOnline: (address) => `direct · ${address}`,
-  linkVia: (relay, address) => `via ${relay} · ${address}`,
+  linkVia: (through, address) => `via ${through} · ${address}`,
   linkConnecting: () => "connecting",
   linkStopped: () => "removed by the server",
   registeredUnder: (account) => `${account}'s machine`,
   onlyLogins: (accounts) => `signed in to ${accounts}`,
-  via: (relay) => `via ${relay}`,
+  via: (through) => `via ${through}`,
   direct: "direct",
   yours: "yours",
   ownedBy: (account) => `${account}'s`,
@@ -628,7 +603,6 @@ export const enMachines: MachinesWords = {
   homeNotChanged: failure(enProblems, "Couldn't complete"),
   share: "Share",
   lend: "Lend",
-  relays: "Relays",
   remove: "Remove",
   lentShort: (owner) => `from ${owner}`,
   borrowedNote: "Works on your machines",
@@ -650,18 +624,8 @@ export const enMachines: MachinesWords = {
   tookBack: (to) => `Revoked ${to}`,
   undo: "Undo",
   reroute: "Change route",
-  routeVia: (machine, relay) => `${machine} reaches the server through ${relay}`,
-  routeDirect: (machine) => `${machine} reaches the server directly`,
-  routeList: (relays) => (relays.length ? `Tries ${relays.join(", ")}, then the server` : "The server only"),
-  routeFailed: (machine, relay) => `${machine} could not connect through ${relay}`,
   confirm: "Confirm",
   more: "Details",
-  beRelay: "Make a relay",
-  stopRelay: "Stop relaying",
-  relayTitle: (machine) => `Make ${machine} a relay`,
-  relayAddress: "Public address",
-  relayAddressWrong: "Write it as address:port",
-  relayWhat: "This machine passes connections on this port to the server unread. Allow the port in the firewall or security group.",
   log: "Changes",
   logEmpty: "No changes yet",
   logEarlier: "Earlier",
@@ -701,8 +665,7 @@ export const enMachines: MachinesWords = {
 };
 
 /** The sheets on a machine: whom its owner shares it with, whom it lends
- *  one login of an agent on it, the relays it connects through, and
- *  removing it. */
+ *  one login of an agent on it, and removing it. */
 export interface AccessWords {
   shareTitle(machine: string): string;
   shareWhat: string;
@@ -718,17 +681,6 @@ export interface AccessWords {
   to: string;
   toHint: string;
   takeBack: string;
-  relaysTitle(machine: string): string;
-  relaysWhat: string;
-  relayLabel: string;
-  relayAddresses: string;
-  addRelay: string;
-  removeRelay: string;
-  noRelays: string;
-  hubLast: string;
-  badAddress(text: string): string;
-  needsLabel: string;
-  relaysGo: string;
   removeTitle(machine: string): string;
   removeWhat(machine: string): string;
   removeGo: string;
@@ -754,17 +706,6 @@ export const zhAccess: AccessWords = {
   to: "账号",
   toHint: "对方的账号名",
   takeBack: "收回",
-  relaysTitle: (machine) => `${machine} 的中转`,
-  relaysWhat: "按顺序尝试中转地址，都不通时直连服务器。中转只转发，无法读取内容。",
-  relayLabel: "名称",
-  relayAddresses: "地址",
-  addRelay: "添加中转",
-  removeRelay: "删除",
-  noRelays: "直连服务器",
-  hubLast: "最后直连服务器",
-  badAddress: (text) => `「${text}」不是有效的 IP:端口`,
-  needsLabel: "请为每个中转命名",
-  relaysGo: "保存",
   removeTitle: (machine) => `移除 ${machine}？`,
   removeWhat: (machine) => `${machine} 将断开服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`,
   removeGo: "移除",
@@ -790,17 +731,6 @@ export const enAccess: AccessWords = {
   to: "Account",
   toHint: "Their account name",
   takeBack: "Revoke",
-  relaysTitle: (machine) => `Relays for ${machine}`,
-  relaysWhat: "Relays are tried in order, then the server directly. A relay only forwards and can't read the traffic.",
-  relayLabel: "Name",
-  relayAddresses: "Address",
-  addRelay: "Add relay",
-  removeRelay: "Delete",
-  noRelays: "Connects directly",
-  hubLast: "Then the server directly",
-  badAddress: (text) => `“${text}” isn't a valid IP:port`,
-  needsLabel: "Name each relay",
-  relaysGo: "Save",
   removeTitle: (machine) => `Remove ${machine}?`,
   removeWhat: (machine) => `${machine} will disconnect from the server and sign out of every account; its shares and loans end. Data on it is untouched.`,
   removeGo: "Remove",
