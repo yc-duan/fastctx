@@ -50,6 +50,9 @@ export interface MachineMapScene {
   framed: readonly string[];
   /** The boxes folded to their title strip, by key. */
   folded: ReadonlySet<string>;
+  /** While a new place for the server is chosen: the machines that can take
+   *  it, by key, and whether each goes to sleep; the rest are faint. */
+  lit?: ReadonlyMap<string, { sleeps: boolean }> | null;
 }
 
 /** The key of a hub's dashed ring that adds a machine. */
@@ -256,7 +259,7 @@ export class MachineMap {
     const key = JSON.stringify([
       near,
       scene.hubs,
-      scene.hubLabels.size,
+      [...scene.hubLabels],
       scene.adds,
       [...scene.waiting],
       scene.nodes.map((node) => [node.key, node.name, node.sub, node.online, node.hold, node.reaching, node.here, near ? node.marks : null, node.directAt, node.through]),
@@ -419,7 +422,8 @@ export class MachineMap {
     const { scene, placement } = this;
     if (!scene || !placement) return;
     const near = this.level >= 1;
-    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.marks.includes("busy")]), [...placement.machines]]);
+    const lit = scene.lit ?? null;
+    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.marks.includes("busy")]), [...placement.machines], lit && [...lit]]);
     if (key === this.marked) return;
     this.marked = key;
     const circles: string[] = [];
@@ -433,6 +437,18 @@ export class MachineMap {
       const point = this.pointOf(fresh);
       if (point && fresh !== scene.selected) circles.push(`<path class="arrived" d="${circle(point, RING + 8, 3, seeded(`arrived:${fresh}`))}"/>`);
     }
+    // The machines that can take the server glow with a broken clay ring,
+    // a small moon beside one that goes to sleep.
+    const moons: string[] = [];
+    for (const [key, candidate] of lit ?? []) {
+      const point = this.pointOf(key);
+      if (!point) continue;
+      circles.push(`<path class="lit" d="${circle(point, RING + 8, 3, seeded(`lit:${key}`))}"/>`);
+      if (candidate.sleeps) moons.push(`<path class="moon" d="${crescent([point[0] - (RING + 18) * 0.72, point[1] - (RING + 18) * 0.72], 7)}"/>`);
+    }
+    for (const name of this.names.querySelectorAll<SVGTextElement>(".machine-name")) {
+      name.classList.toggle("unlit", !!lit && !lit.has(name.dataset.name ?? ""));
+    }
     const flows: string[] = [];
     if (near) {
       for (const branch of placement.branches) {
@@ -442,8 +458,15 @@ export class MachineMap {
         flows.push(`<path class="flow" d="M${from[0].toFixed(1)} ${from[1].toFixed(1)}L${to[0].toFixed(1)} ${to[1].toFixed(1)}"/>`);
       }
     }
-    this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)">${circles.join("")}</g><g class="flows">${flows.join("")}</g>`;
+    this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)">${circles.join("")}</g><g class="moons">${moons.join("")}</g><g class="flows">${flows.join("")}</g>`;
   }
+}
+
+/** A crescent moon of radius `r` round `centre`, opening to the right. */
+function crescent(centre: Point, r: number): string {
+  const [x, y] = centre;
+  const tip = (sign: number) => `${(x + r * 0.35).toFixed(1)} ${(y + sign * r * 0.94).toFixed(1)}`;
+  return `M${tip(-1)}A${r} ${r} 0 1 0 ${tip(1)}A${(r * 0.78).toFixed(1)} ${(r * 0.78).toFixed(1)} 0 1 1 ${tip(-1)}Z`;
 }
 
 /** Points round a circle, for a ring drawn as broken strokes. */

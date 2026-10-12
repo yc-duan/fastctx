@@ -23,6 +23,7 @@ export function specimenRemote(): RemoteSeams {
       return { session: 2, machine: "gz-cvm-07" };
     },
     join: async (_session, _token, step) => steps(["join"], step),
+    arrive: async (_session, step) => steps(["arrive"], step),
     close: async () => {},
     login: async (_address, admin) => {
       await after(500);

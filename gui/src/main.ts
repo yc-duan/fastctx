@@ -114,6 +114,7 @@ import { markdownOf } from "./conversation/export";
 import { specimens, type Specimen } from "./specimen/sessions";
 import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
 import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
+import { specimenHubMove } from "./specimen/hub-move";
 import { specimenRemote } from "./specimen/remote";
 import { specimenNameProblem } from "./specimen/names";
 import { specimenMachineLog } from "./specimen/machine-log";
@@ -163,6 +164,9 @@ import {
   removeApp,
   remoteClose,
   remoteHub,
+  arriveHub,
+  hubMove,
+  remoteArrive,
   remoteJoin,
   remoteOpen,
   remoteProbe,
@@ -414,6 +418,7 @@ const remoteSeams: RemoteSeams = {
   hub: remoteHub,
   open: remoteOpen,
   join: remoteJoin,
+  arrive: remoteArrive,
   close: remoteClose,
   login: (address, admin, password, name) => login(address, admin, password, true, name),
   nameProblem,
@@ -425,6 +430,8 @@ const remoteSeams: RemoteSeams = {
   },
 };
 const accountConfirm = new Confirm(english ? enAccess : zhAccess);
+/** The specimen's server moving, kept across pages. */
+const specimenMove = specimenHubMove();
 const tokens = new Tokens({
   words: english ? enToken : zhToken,
   addresses: (login) => store.world.peek()?.accounts.hubs.find((hub) => hub.hub === login.hub)?.addresses ?? (live ? [] : ["192.168.1.20:7443"]),
@@ -1321,6 +1328,24 @@ function show(next: Place): void {
         talk: (machine) => beginTalk(null, null, machine),
         confirm: accountConfirm,
         log: live ? machineLog : specimenMachineLog,
+        moving: {
+          move: (login, request) => (live ? hubMove(login.hubName, login.account, request) : specimenMove(request)),
+          arrive: () => (live ? arriveHub() : notLive()),
+          // Over SSH only from a computer, as a server is added.
+          remote:
+            live && !onComputer()
+              ? undefined
+              : {
+                  seams: live ? remoteSeams : specimenRemote(),
+                  words: english ? enLogin : zhLogin,
+                  token: (login, machine) =>
+                    live
+                      ? accountChange(login.hubName, login.account, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString() }).then(
+                          (token) => token ?? Promise.reject(new Error("the hub made no token")),
+                        )
+                      : Promise.resolve("FX5SPECIMEN"),
+                },
+        },
       });
       break;
     case "agents":

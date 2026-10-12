@@ -45,7 +45,7 @@ export interface RemoteHub extends RemoteServer {
   hubPort: number;
 }
 
-export type RemoteStep = "connect" | "check" | "upload" | "hub" | "join";
+export type RemoteStep = "connect" | "check" | "upload" | "hub" | "join" | "arrive";
 
 export interface RemoteSeams {
   probe(host: string, port: number): Promise<RemoteKey>;
@@ -55,7 +55,10 @@ export interface RemoteSeams {
   /** Connects, checks the system and uploads the program, for a World there
    *  is; the session stays open for the server to join. */
   open(server: RemoteServer, step: (step: RemoteStep) => void): Promise<{ session: number; machine: string }>;
-  join(session: number, token: string, step: (step: RemoteStep) => void): Promise<void>;
+  /** Joins the server; kept open, the session stays for what follows. */
+  join(session: number, token: string, step: (step: RemoteStep) => void, keepOpen?: boolean): Promise<void>;
+  /** Installs the service of the hub moving to the server. */
+  arrive(session: number, step: (step: RemoteStep) => void): Promise<void>;
   close(session: number): Promise<void>;
   /** This computer signs in to the World just made, as its administrator. */
   login(address: string, admin: string, password: string, name: string | null): Promise<LoggedIn>;
@@ -72,6 +75,15 @@ const SUDO_WANTED = "sudo needs a password";
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 
 type Stage = "server" | "key" | "world" | "making";
+
+/** A server added to a World there is. */
+export interface Adding {
+  token(machine: string): Promise<string>;
+  /** What is done on the server once it joined, over the same session,
+   *  as the hub moving to it: given the address typed for it. */
+  then?(session: number, machine: string, host: string, step: (step: RemoteStep) => void): Promise<void>;
+  added(machine: string): void;
+}
 
 interface Progress {
   step: RemoteStep | "login";
@@ -91,6 +103,8 @@ export class RemoteWorld {
   private opened: { session: number; machine: string } | null = null;
   private signedIn: LoggedIn | null = null;
   private joined = false;
+  /** What follows the joining is done, and the session it kept closed. */
+  private followed = false;
   private busy = false;
 
   constructor(
@@ -106,7 +120,7 @@ export class RemoteWorld {
       /** Adding the server to a World there is, instead of making one: a
        *  code for it to join with, by the name it will have, and word once
        *  it has. */
-      adding?: { token(machine: string): Promise<string>; added(machine: string): void };
+      adding?: Adding;
     },
   ) {
     body.addEventListener("click", this.clicked);
@@ -125,7 +139,8 @@ export class RemoteWorld {
     this.body.removeEventListener("change", this.changed);
     this.body.removeEventListener("submit", this.submitted);
     const open = this.made ?? this.opened;
-    if (open && !this.joined) void this.options.seams.close(open.session).catch((error: unknown) => console.warn("the session with the server could not be closed", error));
+    const kept = !!this.options.adding?.then && !this.followed;
+    if (open && (!this.joined || kept)) void this.options.seams.close(open.session).catch((error: unknown) => console.warn("the session with the server could not be closed", error));
   }
 
   private readonly clicked = (event: Event): void => {
@@ -391,7 +406,7 @@ export class RemoteWorld {
   }
   /** A server added to a World there is: signed in to, checked, the
    *  program up; then a code by the name it will have, and it joins. */
-  private async add(adding: { token(machine: string): Promise<string>; added(machine: string): void }): Promise<void> {
+  private async add(adding: Adding): Promise<void> {
     const { words, seams } = this.options;
     const auth = this.auth()!;
     this.busy = true;
@@ -414,10 +429,17 @@ export class RemoteWorld {
       if (!this.joined) {
         this.mark("join", "doing");
         const token = await adding.token(machine);
-        await seams.join(this.opened.session, token, step);
+        await seams.join(this.opened.session, token, step, !!adding.then);
         this.joined = true;
       }
       this.mark("join", "done");
+      if (adding.then && !this.followed) {
+        this.mark("arrive", "doing");
+        await adding.then(this.opened.session, machine, this.typed.host.trim(), step);
+        await seams.close(this.opened.session);
+        this.followed = true;
+      }
+      if (adding.then) this.mark("arrive", "done");
       this.busy = false;
       adding.added(machine);
     } catch (error) {

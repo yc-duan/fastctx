@@ -24,6 +24,7 @@ import type { AccessWords, MachinesWords } from "./account-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { LendSheet, type Loan } from "./lend-sheet";
+import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
 import { MachineMap } from "./machine-map";
@@ -55,6 +56,8 @@ export interface MachinesOptions {
   confirm: Confirm;
   /** Reads the hub's record of changes, a page at a time. */
   log: ReadLog;
+  /** Moving the server to another machine. */
+  moving: Pick<HubMovingOptions, "move" | "arrive" | "remote">;
 }
 
 /** One thing on the map, as the page knows it. */
@@ -134,6 +137,11 @@ export class MachinesPage implements Page {
   private note: { machine: string; text: string } | null = null;
   private readonly giving: GiveSheet;
   private readonly lending: LendSheet;
+  private readonly moving: HubMoving;
+  /** While the server's new place is chosen: what to do, and why a machine
+   *  pressed cannot take it. */
+  private readonly chooseBar: HTMLElement;
+  private whyNot: { said: string; detail: string } | null = null;
   /** Hubs a machine is on its way to, with the machines each had when a
    *  way in was given. */
   private readonly waiting = new Map<string, Set<string>>();
@@ -153,6 +161,7 @@ export class MachinesPage implements Page {
     const { words } = options;
     this.giving = new GiveSheet(options.access);
     this.lending = new LendSheet(options.access);
+    this.moving = new HubMoving({ ...options.moving, words, access: options.access, confirm: options.confirm, changed: () => this.redraw() });
     this.title = options.focus ?? words.title;
     this.selected = options.focus ? `m:${options.focus}` : null;
     // Come to a machine from elsewhere, what is known of it is open.
@@ -164,12 +173,13 @@ export class MachinesPage implements Page {
         `<h1 class="page-title">${escape(words.title)}</h1>`,
         `<button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
-      <div class="machines-layout"><div class="machines-canvas"><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
+      <div class="machines-layout"><div class="machines-canvas"><div class="map-undo" role="status" hidden></div><div class="map-choose" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
     this.acts = this.element.querySelector<HTMLElement>(".map-acts")!;
     this.menu = this.element.querySelector<HTMLElement>(".map-menu")!;
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
+    this.chooseBar = this.element.querySelector<HTMLElement>(".map-choose")!;
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
     this.map = new MachineMap({
       words,
@@ -210,12 +220,22 @@ export class MachinesPage implements Page {
       if (first) this.invite(first);
     });
     this.panel.addEventListener("click", (event) => this.click(event));
+    this.panel.addEventListener("click", (event) => {
+      const section = (event.target as HTMLElement).closest<HTMLElement>(".move-section");
+      const hub = this.selected?.startsWith("hub:") ? this.selected.slice(4) : null;
+      if (section && hub) void this.moving.click(event.target as HTMLElement, hub).catch((error: unknown) => console.warn("the move could not go on", error));
+    });
     this.panel.addEventListener("click", (event) => this.clickAct(event));
     this.panel.addEventListener("pointerdown", (event) => this.pull(event));
     this.acts.addEventListener("click", (event) => this.clickAct(event));
     this.menu.addEventListener("click", (event) => this.clickAct(event));
     this.undoBar.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest(".map-undo-go")) void this.undo();
+    });
+    this.chooseBar.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest("[data-choose=new]")) this.moving.toNewServer(() => this.showMove());
+      else if (target.closest("[data-choose=cancel]")) this.stopChoosing();
     });
     this.element.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && this.menuFor) {
@@ -224,6 +244,9 @@ export class MachinesPage implements Page {
       } else if (event.key === "Escape" && this.cardFor) {
         event.stopPropagation();
         this.closeCard();
+      } else if (event.key === "Escape" && (this.moving.chosenHub || this.whyNot)) {
+        event.stopPropagation();
+        this.stopChoosing();
       } else if (event.key === "Escape" && this.framed.length) {
         event.stopPropagation();
         this.framed = [];
@@ -251,6 +274,7 @@ export class MachinesPage implements Page {
 
   leave(): void {
     this.stop();
+    this.moving.dispose();
     this.resized.disconnect();
     this.log.dispose();
     if (this.undoing) clearTimeout(this.undoing.timer);
@@ -406,6 +430,16 @@ export class MachinesPage implements Page {
   }
 
   private choose(key: string | null): void {
+    // Choosing where the server goes: a machine that can take it asks to
+    // be confirmed; any other says why it cannot; the paper ends choosing.
+    if (this.moving.chosenHub) {
+      const machine = key?.startsWith("m:") ? this.machineNamed(key) : null;
+      if (!machine) return this.stopChoosing();
+      this.whyNot = this.moving.whyNot(machine);
+      if (!this.whyNot) this.moving.confirmTo(machine, () => this.showMove());
+      this.redraw();
+      return;
+    }
     // A group's knot folds its machines away, or opens them again.
     if (key?.startsWith("group:")) {
       const world = this.options.store.world.peek();
@@ -607,7 +641,68 @@ export class MachinesPage implements Page {
         this.panel.innerHTML = html;
       });
     }
+    this.drawChoosing();
+    // The server's details follow its move while they are open, for the one
+    // who may move it.
+    const top = spot?.kind === "hub" && open ? this.superLogin(spot.hub, world) : undefined;
+    if (top && spot?.kind === "hub") this.moving.watch(top, spot.hub.hub);
+    else this.moving.unwatch();
     this.float();
+  }
+
+  /** The strip over the drawing while the server's new place is chosen. */
+  private drawChoosing(): void {
+    const { words } = this.options;
+    const choosing = !!this.moving.chosenHub;
+    this.chooseBar.hidden = !choosing && !this.whyNot;
+    if (this.chooseBar.hidden) return;
+    const said = this.whyNot
+      ? `<span class="map-choose-said why"${this.whyNot.detail ? ` title="${escape(this.whyNot.detail)}"` : ""}>${escape(this.whyNot.said)}</span>`
+      : `<span class="map-choose-said">${escape(words.moveChoose)}</span>`;
+    const fresh = choosing && this.options.moving.remote ? `<button class="text-button quiet-button" type="button" data-choose="new">${glyph("server", 14)}<span>${escape(words.moveNewServer)}</span></button>` : "";
+    const html = `${said}${fresh}<button class="text-button quiet-button" type="button" data-choose="cancel"><span>${escape(choosing ? words.cancel : words.closeDetails)}</span></button>`;
+    if (this.chooseBar.innerHTML !== html) this.chooseBar.innerHTML = html;
+  }
+
+  private stopChoosing(): void {
+    this.whyNot = null;
+    this.moving.stopChoosing();
+    this.redraw();
+  }
+
+  /** The server whose move just began, its details open to follow it. */
+  private showMove(): void {
+    const world = this.options.store.world.peek();
+    const hub = world?.accounts.hubs.find((one) => this.superLogin(one, world));
+    this.whyNot = null;
+    if (hub) {
+      this.selected = `hub:${hub.hub}`;
+      this.detailsOpen = true;
+    }
+    this.redraw();
+  }
+
+  /** The login of this device that is `hub`'s super administrator. */
+  private superLogin(hub: HubAccounts, world: WorldNow): Login | undefined {
+    return loginsOf(world.accounts).find((login) => login.hub === hub.hub && hub.accounts.find((account) => account.name === login.account)?.level === "super");
+  }
+
+  /** The machine a key on the drawing stands for, by its name. */
+  private machineNamed(key: string): string | null {
+    const world = this.options.store.world.peek();
+    const spot = world ? this.spots(world).get(key) : undefined;
+    return spot?.kind === "machine" ? spot.machine.name : null;
+  }
+
+  /** The keys of the machines that can take the server. */
+  private litKeys(world: WorldNow): Map<string, { sleeps: boolean }> {
+    const candidates = this.moving.candidates();
+    const lit = new Map<string, { sleeps: boolean }>();
+    for (const machine of machinesOf(world)) {
+      const candidate = candidates.get(machine.name);
+      if (candidate) lit.set(`m:${machine.written}`, candidate);
+    }
+    return lit;
   }
 
   /** The drawing: each hub the account is on with the ring that adds a
@@ -629,6 +724,12 @@ export class MachinesPage implements Page {
       }
     }
     const adds = hubs.filter((hub) => this.hubLogin(hub.id)).map((hub) => hub.id);
+    // While the server moves, under its name: where to, then who is still to
+    // follow.
+    for (const hub of hubs) {
+      const moving = this.moving.label(hub.id);
+      if (moving) hubLabels.set(hub.id, moving);
+    }
     this.map.update({
       hubs,
       nodes,
@@ -641,6 +742,7 @@ export class MachinesPage implements Page {
       opening: this.opening,
       framed: this.framing.length ? this.framing : this.framed,
       folded: this.foldedOf(nodes),
+      lit: this.moving.chosenHub ? this.litKeys(world) : null,
     });
   }
 
@@ -655,6 +757,7 @@ export class MachinesPage implements Page {
       const top = logins.some((login) => spot.hub.accounts.find((account) => account.name === login.account)?.level === "super");
       return [
         ...(logins.length ? [{ act: "invite", label: words.inviteDevice, icon: "plus" as const }] : []),
+        ...(top ? [{ act: "move", label: words.moveHub, icon: "move" as const }] : []),
         ...(top ? [{ act: "manage", label: words.manageHub, icon: "settings" as const }] : []),
         details,
       ];
@@ -716,6 +819,18 @@ export class MachinesPage implements Page {
       const login = this.hubLogin(spot.hub.hub);
       if (act === "invite" && login) this.invite(login);
       else if (act === "manage") location.hash = link({ kind: "admin" });
+      else if (act === "move") {
+        const top = this.superLogin(spot.hub, world);
+        if (!top) return;
+        this.selected = null;
+        this.whyNot = null;
+        this.moving.choose(top, spot.hub).catch((error: unknown) => {
+          const said = error instanceof Error ? error.message : String(error);
+          this.whyNot = { said: this.options.access.failed(said), detail: said };
+          this.redraw();
+        });
+        this.redraw();
+      }
       return;
     }
     if (spot.kind === "lent") {
@@ -1262,6 +1377,7 @@ export class MachinesPage implements Page {
       ${acts}
       <p class="panel-facts">${escape(words.hubMachines(machines))}</p>
       <ul class="panel-logins">${rows}</ul>
+      ${this.superLogin(hub, world) ? this.moving.section(hub.hub, world.nodes.machine ?? null) : ""}
     </article>`;
   }
 

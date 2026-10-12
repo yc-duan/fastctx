@@ -197,6 +197,27 @@
   animation: arrived 1.4s cubic-bezier(0.33, 1, 0.68, 1) both;
 }
 
+/* The machines that can take the server, while its new place is chosen:
+   their clay rings breathe; the rest of the names are faint. */
+.map-live .lit {
+  opacity: 0.6;
+  animation: paper-in 0.35s cubic-bezier(0.33, 1, 0.68, 1) both, lit-breathe 2.4s ease-in-out 0.35s infinite;
+}
+
+.map-live .moons path {
+  fill: var(--text-2);
+}
+
+.map-names .machine-name.unlit {
+  opacity: 0.35;
+}
+
+@keyframes lit-breathe {
+  50% {
+    opacity: 0.95;
+  }
+}
+
 .map-live .flow {
   fill: none;
   stroke: var(--pen-clay);
@@ -1516,4 +1537,117 @@
 .map-names .machine-sub {
   fill: var(--text-3);
   font-size: 10.5px;
+}
+
+/* Choosing the server's new place: a strip over the bottom of the drawing,
+   what to do and the other ways, and why a machine pressed cannot. */
+.map-choose {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--space-4) + var(--safe-bottom));
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: calc(100% - 2 * var(--space-3));
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  transform: translateX(-50%);
+}
+
+.map-choose-said {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-choose-said.why {
+  color: var(--caution);
+}
+
+/* The server's move in its details: the steps ticked as on the removal
+   list, what waits for someone, and the old place. */
+.move-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.move-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font: inherit;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.move-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.move-steps li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.move-steps li.now {
+  color: var(--text);
+}
+
+.move-error {
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--caution);
+}
+
+.move-command {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.move-command code {
+  padding: 4px 8px;
+  border-radius: var(--radius-s);
+  background: var(--field);
+  font-size: var(--size-small);
+}
+
+.move-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.move-carries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 var(--space-3);
+}
+
+.move-sleeps {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-2);
 }

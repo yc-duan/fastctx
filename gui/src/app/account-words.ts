@@ -51,7 +51,7 @@ export interface LoginWords {
   /** Adding a server to an existing World over SSH. */
   addGo: string;
   adding: string;
-  remoteSteps: Record<"connect" | "check" | "upload" | "hub" | "login" | "join", string>;
+  remoteSteps: Record<"connect" | "check" | "upload" | "hub" | "login" | "join" | "arrive", string>;
   another: string;
   hub: string;
   account: string;
@@ -144,7 +144,7 @@ export const zhLogin: LoginWords = {
   notArch: "这台服务器的架构不受支持，只支持 x86_64 与 aarch64",
   addGo: "添加",
   adding: "正在添加…",
-  remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建世界", login: "这台电脑登录", join: "服务器加入" },
+  remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建世界", login: "这台电脑登录", join: "服务器加入", arrive: "服务器搬过去" },
   another: "登录其他账号",
   hub: "服务器地址",
   account: "账号",
@@ -226,7 +226,7 @@ export const enLogin: LoginWords = {
   notArch: "This server's architecture isn't supported; only x86_64 and aarch64 are",
   addGo: "Add",
   adding: "Adding…",
-  remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Make the World", login: "Sign this computer in", join: "Add the server" },
+  remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Make the World", login: "Sign this computer in", join: "Add the server", arrive: "Move the server there" },
   another: "Log in to another account",
   hub: "Server address",
   account: "Account",
@@ -441,6 +441,46 @@ export interface MachinesWords {
   stopDirectTitle(machine: string): string;
   stopDirectSaid: string;
   directStopped(machine: string): string;
+  /** Moving the server to another machine: the administrator's, from beside
+   *  the server on the drawing (`world-gui.md`, 把服务器搬到别处). */
+  moveHub: string;
+  moveChoose: string;
+  moveNewServer: string;
+  /** Why a machine cannot take the server, from what the server says. */
+  moveWhyNot: { offline: string; hosts: string; moving(to: string): string; older: string; system: string; notOwn: string; other: string };
+  moveSleeps: string;
+  moveTitle(to: string): string;
+  /** What goes with the server, as a row of tags. */
+  moveCarries: string[];
+  moveSaid: string;
+  moveWhat: string;
+  moveTypeName(hub: string): string;
+  moveGo: string;
+  moveNewTitle: string;
+  moveNext: string;
+  moveStages: Record<"preparing" | "service" | "reaching" | "copying" | "switching" | "following" | "done" | "cancelled", string>;
+  moveTo(to: string): string;
+  moveMoved(to: string): string;
+  moveInstallHere: string;
+  moveInstall: string;
+  moveInstallThere(machine: string): string;
+  /** The command that installs the server there, on its system. */
+  moveInstallCommand(os: string): string;
+  moveCopy: string;
+  moveCopied: string;
+  moveCall: string;
+  moveRetry: string;
+  moveFollowing(machines: number, devices: number): string;
+  moveAllFollowed: string;
+  moveOldForwards: string;
+  moveOldStopped: string;
+  moveOldDeleted: string;
+  moveStop: string;
+  moveStopTitle: string;
+  moveStopSaid(machines: string[]): string;
+  moveDelete: string;
+  moveDeleteTitle: string;
+  moveDeleteSaid: string;
   /** The hub's record of changes, in the drawing's corner. */
   log: string;
   logEmpty: string;
@@ -582,6 +622,49 @@ export const zhMachines: MachinesWords = {
   stopDirectTitle: (machine) => `不再允许直接连到 ${machine}？`,
   stopDirectSaid: "别的机器和它之间改经服务器转。",
   directStopped: (machine) => `已不再允许直接连到 ${machine}`,
+  moveHub: "搬到…",
+  moveChoose: "选一台接手服务器",
+  moveNewServer: "一台新服务器",
+  moveWhyNot: {
+    offline: "离线",
+    hosts: "服务器就在这台",
+    moving: (to) => `正在搬到 ${to}`,
+    older: "这台的 World 版本太旧",
+    system: "服务器只能在 Windows 和 Linux 上",
+    notOwn: "只有管理员自己的机器能接手",
+    other: "不能接手",
+  },
+  moveSleeps: "这台会睡眠，睡着时整个网络都连不上服务器",
+  moveTitle: (to) => `把服务器搬到 ${to}？`,
+  moveCarries: ["账号", "机器", "权限", "项目", "信"],
+  moveSaid: "谁都不用重新登录。",
+  moveWhat: "服务器的整个目录搬过去，身份不变。拷贝时照常服务，只在切换那一下停一停；之后旧的位置把连过来的机器转过去，直到每台都跟过来。旧的数据停用、不删，在服务器详情里删。",
+  moveTypeName: (hub) => `输入网络名称 ${hub} 确认`,
+  moveGo: "搬过去",
+  moveNewTitle: "把服务器搬到一台新服务器",
+  moveNext: "下一步",
+  moveStages: { preparing: "准备", service: "装上服务器", reaching: "连上新位置", copying: "拷贝记录", switching: "切换", following: "等各台跟过来", done: "完成", cancelled: "已取消" },
+  moveTo: (to) => `正在搬到 ${to}`,
+  moveMoved: (to) => `已搬到 ${to}`,
+  moveInstallHere: "这台电脑要装上服务器，需要管理员确认一次。",
+  moveInstall: "装上",
+  moveInstallThere: (machine) => `在 ${machine} 上的 World 里点「装上」，或在它的终端里运行：`,
+  moveInstallCommand: (os) => (os === "windows" ? "fastctx hub arrive" : "sudo fastctx hub arrive"),
+  moveCopy: "复制",
+  moveCopied: "已复制",
+  moveCall: "取消搬家",
+  moveRetry: "重试",
+  moveFollowing: (machines, devices) => [machines ? `${machines} 台机器` : "", devices ? `${devices} 台设备` : ""].filter(Boolean).join("、") + "还没跟过来",
+  moveAllFollowed: "都已跟过来",
+  moveOldForwards: "旧的位置在转发",
+  moveOldStopped: "旧的位置已停下，数据停用未删",
+  moveOldDeleted: "旧数据已删",
+  moveStop: "停下旧的转发",
+  moveStopTitle: "停下旧位置的转发？",
+  moveStopSaid: (machines) => `${machines.length ? `${machines.join("、")} 还没跟过来，` : ""}停下之后要在那里重新登录，登录后还是同一台机器。`,
+  moveDelete: "删掉旧数据",
+  moveDeleteTitle: "删掉旧位置的数据？",
+  moveDeleteSaid: "旧的服务器数据删掉后，就不能退回到旧的位置了。",
   log: "变更记录",
   logEmpty: "暂无记录",
   logEarlier: "更早",
@@ -752,6 +835,49 @@ export const enMachines: MachinesWords = {
   stopDirectTitle: (machine) => `Stop direct connections to ${machine}?`,
   stopDirectSaid: "What goes between it and other machines will go through the server.",
   directStopped: (machine) => `No more direct connections to ${machine}`,
+  moveHub: "Move to…",
+  moveChoose: "Choose the machine to take the server",
+  moveNewServer: "A new server",
+  moveWhyNot: {
+    offline: "Offline",
+    hosts: "The server is on it",
+    moving: (to) => `Moving to ${to}`,
+    older: "Its World is too old",
+    system: "The server runs on Windows and Linux",
+    notOwn: "Only the administrator's own machines can take it",
+    other: "Cannot take it",
+  },
+  moveSleeps: "It sleeps; while it does, no machine reaches the server",
+  moveTitle: (to) => `Move the server to ${to}?`,
+  moveCarries: ["Accounts", "Machines", "Rights", "Projects", "Letters"],
+  moveSaid: "Nobody signs in again.",
+  moveWhat: "The server's whole directory moves, its identity unchanged. It keeps serving while it copies and pauses only for the switch; then the old place forwards each machine that comes to it until all have followed. The old data is disabled, not deleted; delete it in the server's details.",
+  moveTypeName: (hub) => `Type ${hub} to confirm`,
+  moveGo: "Move",
+  moveNewTitle: "Move the server to a new server",
+  moveNext: "Next",
+  moveStages: { preparing: "Prepare", service: "Install the server", reaching: "Reach the new place", copying: "Copy the records", switching: "Switch", following: "Wait for every machine", done: "Done", cancelled: "Called off" },
+  moveTo: (to) => `Moving to ${to}`,
+  moveMoved: (to) => `Moved to ${to}`,
+  moveInstallHere: "This computer installs the server, after one administrator confirmation.",
+  moveInstall: "Install",
+  moveInstallThere: (machine) => `In World on ${machine}, press Install, or run in its terminal:`,
+  moveInstallCommand: (os) => (os === "windows" ? "fastctx hub arrive" : "sudo fastctx hub arrive"),
+  moveCopy: "Copy",
+  moveCopied: "Copied",
+  moveCall: "Call off the move",
+  moveRetry: "Try again",
+  moveFollowing: (machines, devices) => [machines ? `${machines} machine${machines === 1 ? "" : "s"}` : "", devices ? `${devices} device${devices === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ") + " not followed yet",
+  moveAllFollowed: "Everything followed",
+  moveOldForwards: "The old place forwards",
+  moveOldStopped: "The old place stopped; its data is disabled, not deleted",
+  moveOldDeleted: "The old data is deleted",
+  moveStop: "Stop forwarding",
+  moveStopTitle: "Stop the old place forwarding?",
+  moveStopSaid: (machines) => `${machines.length ? `${machines.join(", ")} ${machines.length === 1 ? "has" : "have"} not followed; ` : ""}after this they sign in again there, and stay the same machines.`,
+  moveDelete: "Delete the old data",
+  moveDeleteTitle: "Delete the old place's data?",
+  moveDeleteSaid: "Once the old server's data is deleted, there is no going back to the old place.",
   log: "Changes",
   logEmpty: "No changes yet",
   logEarlier: "Earlier",
