@@ -21,6 +21,7 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util", "process", "time"] }
 tempfile = "3"
 notify = "8"
+unicode-normalization = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

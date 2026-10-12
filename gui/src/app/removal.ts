@@ -205,12 +205,12 @@ export class RemovalSection {
         return `<div class="removal-plan">
           <div class="removal-columns">
             ${this.column(words.goes, plan.steps, "goes")}
-            ${plan.everything ? "" : this.column(words.stays, plan.keeps, "stays")}
+            ${plan.keeps.length ? this.column(words.stays, plan.keeps, "stays") : ""}
           </div>
           ${hub ? `<p class="removal-warn">${escape(words.hubWarn(plan.hub!.name))}</p>` : ""}
           ${plan.other ? `<p class="removal-note">${escape(words.other(plan.other.path, plan.other.version))}</p>` : ""}
           <button class="text-button removal-toggle" type="button" data-removal="list" aria-expanded="${state.open}">${escape(state.open ? words.hideList : words.list)}</button>
-          ${state.open ? this.list(plan.steps, null) : ""}
+          ${state.open ? `<h3 class="removal-head">${escape(words.goes)}</h3>${this.list(plan.steps, null)}${plan.keeps.length ? `<h3 class="removal-head">${escape(words.stays)}</h3>${this.list(plan.keeps, null)}` : ""}` : ""}
           <div class="removal-go">
             ${hub ? `<input class="removal-name" data-removal-name type="text" spellcheck="false" autocomplete="off" placeholder="${escape(words.typeName(plan.hub!.name))}" aria-label="${escape(words.typeName(plan.hub!.name))}">` : ""}
             ${admin ? `<span class="removal-admin">${escape(words.admin)}</span>` : ""}

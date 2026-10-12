@@ -24,7 +24,7 @@ fn publish(path: &Path, value: &impl Serialize) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Result<()> {
+pub async fn run(mut request: Request, mut events: impl FnMut(Event)) -> anyhow::Result<()> {
     request.installation.validate()?;
     let root = &request.installation.root;
     let world = fastctx_types::layout::WorldDir::under(root);
@@ -151,6 +151,12 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
             why: format!("{error:#}"),
         });
     }
+    if running_stopped && system_removed {
+        // Persist identities found after the preview before their diagnostic
+        // logs can disappear. A failed temp deletion still has its evidence.
+        crate::claude_work_cache::remember_sessions(&mut request.steps)?;
+        publish(&request.installation.marker(), &request)?;
+    }
     for step in request.steps.iter().filter(|step| {
         !step.item.admin && !matches!(step.action, Action::Stop | Action::Logout { .. } | Action::Legacy(_))
     }) {
@@ -167,7 +173,12 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
             Err(anyhow::anyhow!("{}", blocked_by(&request, &progress)))
         } else if matches!(
             step.action,
-            Action::Programs | Action::Delete(_) | Action::WorldData | Action::ApplicationData(_)
+            Action::Programs
+                | Action::Delete(_)
+                | Action::WorldData
+                | Action::ApplicationData(_)
+                | Action::ClaudeWorkCache { .. }
+                | Action::ClaudeSessionCache { .. }
         ) && !hosts_withdrawn
             && !matches!(&step.action, Action::Delete(path) if path == &world.node_service())
         {
@@ -184,7 +195,7 @@ pub async fn run(request: Request, mut events: impl FnMut(Event)) -> anyhow::Res
     }
     let mut retained = Vec::new();
     for left in std::mem::take(&mut progress.retained) {
-        if matches!(left.kind.as_str(), "user-files" | "unrecognized")
+        if matches!(left.kind.as_str(), "user-files" | "unrecognized" | "claude-shared-cache")
             && let Some(path) = left.location.as_deref().map(Path::new).filter(|path| path.is_absolute())
         {
             match std::fs::symlink_metadata(path) {
@@ -389,8 +400,19 @@ pub(crate) fn application_data(directories: &[std::path::PathBuf]) -> anyhow::Re
 fn remaining(request: &Request, progress: &Progress, places: &apply::Places) -> Vec<Left> {
     let mut left = progress.retained.clone();
     for item in &request.plan.keeps {
+        if item.kind == "claude-shared-cache"
+            && let Some(location) = &item.location
+            && request.steps.iter().any(|step| {
+                (matches!(&step.action, Action::ClaudeWorkCache { directory, .. } if Path::new(location).starts_with(directory))
+                    || matches!(&step.action, Action::ClaudeSessionCache { path, .. } if Path::new(location) == path))
+                    && done(step, progress)
+            })
+        {
+            continue;
+        }
         left.push(Left { kind: item.kind.clone(), what: item.what.clone(), location: item.location.clone(),
             why: if item.what == "Old-version files with unproven or user-modified contents" { "The old version did not prove these contents were unchanged; user additions and edits must be preserved.".into() }
+                else if item.what == "Claude cache entry without exclusive World ownership" { "Claude's cache paths can be shared or collide; this entry could not be identified as belonging only to World.".into() }
                 else if item.kind == "user-files" { "These are original user file objects retained across publication. A later write through an old handle must not be discarded.".into() }
                 else if item.kind == "other-program" { "This copy is owned by npm or a separate installation.".into() } else { "Data-preserving uninstall was selected.".into() } });
     }
@@ -507,6 +529,23 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
             uninstall::delete_tree(&crate::claude_cache::directory(home))?;
         }
         Action::Legacy(legacy) => legacy.uninstall(installation)?,
+        Action::ClaudeWorkCache { .. } | Action::ClaudeSessionCache { .. } => {
+            anyhow::ensure!(request.plan.everything, "data-preserving uninstall keeps Claude working-directory caches");
+            mods_stood_aside(installation).await?;
+            let left = if matches!(step.action, Action::ClaudeWorkCache { .. }) {
+                crate::claude_work_cache::delete(&step.action)?
+            } else {
+                crate::claude_session_cache::delete(&step.action)?
+            };
+            for path in left {
+                progress.retained.push(Left {
+                    kind: "claude-shared-cache".into(),
+                    what: "Claude cache entry without exclusive World ownership".into(),
+                    location: Some(path.display().to_string()),
+                    why: "Claude's cache paths can be shared or collide; this entry could not be identified as belonging only to World.".into(),
+                });
+            }
+        }
         Action::Trust { home, key } => {
             let configured = if home == &installation.claude_home {
                 installation.claude_override.as_deref()
