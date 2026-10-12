@@ -194,8 +194,40 @@ pub(crate) fn network_changed() {
 /// only for the first contact of a password login, which proves the hub
 /// itself.
 pub async fn dial(hub: &[SocketAddr], pin: Option<CertPin>, path: &str, max_message: usize) -> Result<Dialed, String> {
-    watching_android(|| reach(hub, |tcp, address| tls_websocket(Transport::Tcp(tcp), address, pin, path, max_message)))
+    let (hub, path) = (hub.to_vec(), path.to_string());
+    on_own_task(async move {
+        watching_android(|| {
+            reach(&hub, |tcp, address| tls_websocket(Transport::Tcp(tcp), address, pin, &path, max_message))
+        })
         .await
+    })
+    .await
+}
+
+/// Runs a dial on a task of its own and waits for it. A dial nests many
+/// futures, TCP by each way out, TLS, a WebSocket handshake, and inside a
+/// forward a second TLS and WebSocket; polling them takes hundreds of
+/// kilobytes of stack in a build without optimizations. A task of its own
+/// starts at the top of a worker thread's stack instead of below whatever
+/// called it, such as the node's handling of a local call. Dropping the
+/// wait ends the dial.
+async fn on_own_task<F>(dialing: F) -> Result<Dialed, String>
+where
+    F: std::future::Future<Output = Result<Dialed, String>> + Send + 'static,
+{
+    struct Abort(tokio::task::AbortHandle);
+    impl Drop for Abort {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let task = tokio::spawn(dialing);
+    let _abort = Abort(task.abort_handle());
+    match task.await {
+        Ok(dialed) => dialed,
+        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+        Err(error) => Err(format!("the dial was stopped: {error}")),
+    }
 }
 
 /// Connects to the hub `hub` by `upstream`: its own line, or through the
@@ -211,28 +243,33 @@ pub async fn dial_upstream(
         Upstream::Hub(addresses) => dial(addresses, Some(pin), path, max_message).await,
         Upstream::Through(forwarder) => {
             let forward = format!("{}/{hub}", crate::peer::FORWARD_PATH);
-            watching_android(|| {
-                reach(&forwarder.at, |tcp, address| {
-                    let forward = forward.clone();
-                    async move {
-                        // Any certificate is taken from the forwarding
-                        // machine: the hub's own TLS inside is pinned, and
-                        // nothing else is said to the forwarding machine.
-                        let (outer, _, _) = tls(tcp, address, None).await?;
-                        let carried = config(crate::peer::MAX_FORWARD_MESSAGE);
-                        let (socket, _) = tokio_tungstenite::client_async_with_config(
-                            format!("ws://{address}{forward}"),
-                            outer,
-                            Some(carried),
-                        )
-                        .await
-                        .map_err(|error| format!("asking it to forward: {error}"))?;
-                        let inner = Transport::Forwarded(Box::new(WsIo::new(socket)));
-                        tls_websocket(inner, address, Some(pin), path, max_message)
+            let (at, path) = (forwarder.at.clone(), path.to_string());
+            on_own_task(async move {
+                watching_android(|| {
+                    reach(&at, |tcp, address| {
+                        let (forward, path) = (forward.clone(), path.clone());
+                        async move {
+                            // Any certificate is taken from the forwarding
+                            // machine: the hub's own TLS inside is pinned,
+                            // and nothing else is said to the forwarding
+                            // machine.
+                            let (outer, _, _) = tls(tcp, address, None).await?;
+                            let carried = config(crate::peer::MAX_FORWARD_MESSAGE);
+                            let (socket, _) = tokio_tungstenite::client_async_with_config(
+                                format!("ws://{address}{forward}"),
+                                outer,
+                                Some(carried),
+                            )
                             .await
-                            .map_err(|error| format!("the hub through it: {error}"))
-                    }
+                            .map_err(|error| format!("asking it to forward: {error}"))?;
+                            let inner = Transport::Forwarded(Box::new(WsIo::new(socket)));
+                            tls_websocket(inner, address, Some(pin), &path, max_message)
+                                .await
+                                .map_err(|error| format!("the hub through it: {error}"))
+                        }
+                    })
                 })
+                .await
             })
             .await
         }
@@ -242,8 +279,14 @@ pub async fn dial_upstream(
 /// Connects to a machine at `at` that allows direct connections. Its
 /// certificate is whatever it shows; it proves who it is with its key.
 pub async fn dial_peer(at: &[SocketAddr], path: &str, max_message: usize) -> Result<Dialed, String> {
-    watching_android(|| reach(at, |tcp, address| tls_websocket(Transport::Tcp(tcp), address, None, path, max_message)))
+    let (at, path) = (at.to_vec(), path.to_string());
+    on_own_task(async move {
+        watching_android(|| {
+            reach(&at, |tcp, address| tls_websocket(Transport::Tcp(tcp), address, None, &path, max_message))
+        })
         .await
+    })
+    .await
 }
 
 /// Dials, starting again with the networks Android has when they change
