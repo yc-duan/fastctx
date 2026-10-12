@@ -45,6 +45,9 @@ export interface MapNode {
   /** The round trip of its line to the hub, in milliseconds, as last
    *  measured. */
   hubMs?: number | undefined;
+  /** Whose it is, as the drawing groups machines round their hub: the
+   *  account's own, one other's, or lent by one other. */
+  group?: { key: string; label: string } | undefined;
 }
 
 /** A direct link between two machines on the drawing, by their keys. */

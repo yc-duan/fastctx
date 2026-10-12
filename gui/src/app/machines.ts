@@ -141,6 +141,10 @@ export class MachinesPage implements Page {
    *  checks it reaches them. */
   private readonly opening = new Set<string>();
   private readonly tip: HTMLElement;
+  /** Machines framed together with the mouse, and those inside the frame
+   *  while it is drawn. */
+  private framed: string[] = [];
+  private framing: string[] = [];
 
   constructor(private readonly options: MachinesOptions) {
     const { words } = options;
@@ -170,6 +174,7 @@ export class MachinesPage implements Page {
       storageKey: "machines-map",
       event: (event) => {
         if (event.kind === "select") this.choose(event.key);
+        else if (event.kind === "marquee") this.frame(event.keys, event.done);
         else if (event.kind === "context") this.openMenu(event.key, event.at, event.input !== "mouse" || matchMedia("(max-width: 760px)").matches);
       },
       frame: (frame) => {
@@ -226,6 +231,10 @@ export class MachinesPage implements Page {
       } else if (event.key === "Escape" && this.cardFor) {
         event.stopPropagation();
         this.closeCard();
+      } else if (event.key === "Escape" && this.framed.length) {
+        event.stopPropagation();
+        this.framed = [];
+        this.redraw();
       }
     });
     this.card.addEventListener("click", (event) => {
@@ -289,6 +298,19 @@ export class MachinesPage implements Page {
       case "remove":
         if (login) this.remove(login, machine);
         return;
+      case "framed-pick":
+        this.choose(button.dataset.key ?? null);
+        return;
+      case "framed-clear":
+        this.framed = [];
+        this.redraw();
+        return;
+      case "framed-share":
+        this.shareFramed();
+        return;
+      case "framed-remove":
+        this.removeFramed();
+        return;
       case "close-details":
         // On a narrow page the sheet is the choice itself.
         if (this.narrow()) {
@@ -343,7 +365,27 @@ export class MachinesPage implements Page {
   }
 
   /** The hub or machine chosen on the drawing: its actions float beside it. */
+  /** A frame drawn round machines: one chosen, or several together. */
+  private frame(keys: string[], done: boolean): void {
+    const machines = keys.filter((key) => key.startsWith("m:"));
+    if (!done) {
+      if (JSON.stringify(machines) === JSON.stringify(this.framing)) return;
+      this.framing = machines;
+      const world = this.options.store.world.peek();
+      if (world) this.drawMap(world);
+      return;
+    }
+    this.framing = [];
+    if (machines.length < 2) return this.choose(machines[0] ?? null);
+    this.closeMenu();
+    this.closeCard();
+    this.framed = machines;
+    this.selected = null;
+    this.redraw();
+  }
+
   private choose(key: string | null): void {
+    this.framed = [];
     this.closeMenu();
     // The dashed ring is itself the way to add a machine.
     if (key?.startsWith("add:")) {
@@ -473,7 +515,8 @@ export class MachinesPage implements Page {
     // On a narrow page nothing floats beside the one chosen: its sheet rises
     // at once, its actions a row in it.
     const narrow = this.narrow();
-    const open = !!spot && (narrow || this.detailsOpen);
+    const framed = this.framed.filter((key) => spots.get(key)?.kind === "machine");
+    const open = (!!spot && (narrow || this.detailsOpen)) || framed.length > 1;
     this.panel.hidden = !open;
     this.panel.classList.toggle("peek", narrow && !this.grown);
     const alone = !loginsOf(world.accounts).length && isComputer(world);
@@ -484,6 +527,8 @@ export class MachinesPage implements Page {
       : "";
     const html = alone
       ? `<p class="machines-alone">${escape(words.alone)} <a class="text-link" href="${link({ kind: "login" })}">${escape(words.logIn)}</a></p>`
+      : framed.length > 1
+        ? this.framedPanel(framed, world)
       : spot && open
         ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "lent" ? this.lentPanel(spot.lent, world, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
         : "";
@@ -526,6 +571,7 @@ export class MachinesPage implements Page {
       fresh: this.fresh,
       links,
       opening: this.opening,
+      framed: this.framing.length ? this.framing : this.framed,
     });
   }
 
@@ -1033,6 +1079,78 @@ export class MachinesPage implements Page {
 
   private button(act: string, label: string, extra = "", icon = ""): string {
     return `<button class="text-button quiet-button" type="button" data-act="${act}"${extra}>${icon}<span>${escape(label)}</span></button>`;
+  }
+
+  /** The machines framed together: each, and what is done to all of them
+   *  at once where the account owns every one. */
+  private framedPanel(keys: string[], world: WorldNow): string {
+    const { words } = this.options;
+    const spots = this.spots(world);
+    const machines = keys.map((key) => spots.get(key)).flatMap((spot) => (spot?.kind === "machine" ? [spot.machine] : []));
+    const owned = this.ownedTogether(machines, world);
+    const rows = machines
+      .map((machine) => {
+        const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
+        const state = machine.online === false ? " offline" : "";
+        return `<li><button class="framed-row${state}" type="button" data-act="framed-pick" data-key="m:${escape(machine.written)}"><span class="dot" aria-hidden="true"></span><span class="framed-name">${escape(machine.written)}</span><span class="framed-sub">${escape(facts ? osName(facts.os) : "")}</span></button></li>`;
+      })
+      .join("");
+    return `<header class="panel-head"><h2 class="panel-title">${escape(words.framedTitle(machines.length))}</h2></header>
+      <ul class="framed-list">${rows}</ul>
+      <div class="panel-acts">${owned ? `${this.button("framed-share", words.framedShare, "", glyph("colleague", 14))}${machines.some((machine) => machine.here) ? "" : this.button("framed-remove", words.framedRemove, " data-danger", glyph("close", 14))}` : ""}${this.button("framed-clear", words.framedClear)}</div>`;
+  }
+
+  /** The one login that owns every machine in `machines`, if one does. */
+  private ownedTogether(machines: Machine[], world: WorldNow): Login | undefined {
+    const first = machines[0] ? this.ownersOf(machines[0], world)[0] : undefined;
+    return first && machines.every((machine) => this.ownersOf(machine, world).some((login) => sameLogin(login, first))) ? first : undefined;
+  }
+
+  private framedMachines(): { machines: Machine[]; login: Login } | null {
+    const world = this.options.store.world.peek();
+    if (!world) return null;
+    const spots = this.spots(world);
+    const machines = this.framed.map((key) => spots.get(key)).flatMap((spot) => (spot?.kind === "machine" ? [spot.machine] : []));
+    const login = this.ownedTogether(machines, world);
+    return login && machines.length ? { machines, login } : null;
+  }
+
+  /** Shares every framed machine with the same accounts: those all of them
+   *  are shared with are shown, and a change applies to each. */
+  private shareFramed(): void {
+    const framed = this.framedMachines();
+    if (!framed) return;
+    const { access, words } = this.options;
+    const { machines, login } = framed;
+    const together = () => {
+      const each = machines.map((machine) => new Set(this.sharedWith(login, machine.name)));
+      return [...(each[0] ?? [])].filter((account) => each.every((set) => set.has(account)));
+    };
+    this.giving.open({ title: words.framedShareTitle(machines.length), what: access.shareWhat, sees: access.shareSees, given: access.sharedTo, go: access.shareGo }, together(), async (to, shared) => {
+      for (const machine of machines) await this.options.change(login, { change: "share", machine: machine.name, to, shared });
+      await this.options.store.refresh();
+      return together();
+    });
+  }
+
+  /** Removes every framed machine, after one red card naming them. */
+  private removeFramed(): void {
+    const framed = this.framedMachines();
+    if (!framed) return;
+    const { access, words } = this.options;
+    const { machines, login } = framed;
+    this.options.confirm.ask({
+      title: words.framedRemoveTitle(machines.length),
+      what: words.framedRemoveWhat(machines.map((machine) => machine.written)),
+      go: access.removeGo,
+      act: async () => {
+        for (const machine of machines) await this.options.change(login, { change: "remove", name: machine.name, reason: access.reasonDefault });
+      },
+      done: () => {
+        this.framed = [];
+        void this.options.store.refresh();
+      },
+    });
   }
 
   /** What is known of a machine the account may work on. */

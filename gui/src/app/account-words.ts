@@ -389,6 +389,23 @@ export interface MachinesWords {
   /** On a machine others may connect to directly, for a pointer resting on
    *  its ring. */
   takesDirect: string;
+  /** The groups round a hub, written along their arcs: the account's own
+   *  machines, and those an agent is lent on from another. Others' are
+   *  named by `ownedBy`. */
+  mineGroup: string;
+  lentGroup(owner: string): string;
+  /** Under the drawing, for a mouse: how to zoom and how to move it. */
+  hintZoom: string;
+  hintPan: string;
+  /** Several machines framed with the mouse, and what is done to them
+   *  together. */
+  framedTitle(n: number): string;
+  framedShare: string;
+  framedRemove: string;
+  framedClear: string;
+  framedShareTitle(n: number): string;
+  framedRemoveTitle(n: number): string;
+  framedRemoveWhat(names: string[]): string;
   /** Letting other machines connect to one directly, and no longer: the
    *  administrator's, from beside its ring. */
   allowDirect: string;
@@ -519,6 +536,17 @@ export const zhMachines: MachinesWords = {
   lineDirect: (a, b, ms) => `${a} 和 ${b} 直连${ms !== undefined ? ` · ${ms} ms` : ""}`,
   lineDown: (a, b, why) => `${a} 和 ${b} 的直连断了，改经服务器${why ? `：${why}` : ""}`,
   takesDirect: "别的机器可以直接连到这台",
+  mineGroup: "我的",
+  lentGroup: (owner) => `借自 ${owner}`,
+  hintZoom: "缩放",
+  hintPan: "按住拖动",
+  framedTitle: (n) => `选了 ${n} 台`,
+  framedShare: "一起共享",
+  framedRemove: "一起移除",
+  framedClear: "取消选择",
+  framedShareTitle: (n) => `共享这 ${n} 台`,
+  framedRemoveTitle: (n) => `移除这 ${n} 台？`,
+  framedRemoveWhat: (names) => `${names.join("、")} 将断开服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`,
   allowDirect: "允许直接连到这台",
   stopDirect: "不再允许直接连到这台",
   directTitle: (machine) => `允许直接连到 ${machine}`,
@@ -671,6 +699,17 @@ export const enMachines: MachinesWords = {
   lineDirect: (a, b, ms) => `${a} and ${b}, direct${ms !== undefined ? ` · ${ms} ms` : ""}`,
   lineDown: (a, b, why) => `${a} and ${b} lost their direct link and go through the server${why ? `: ${why}` : ""}`,
   takesDirect: "Other machines may connect to it directly",
+  mineGroup: "Mine",
+  lentGroup: (owner) => `Lent by ${owner}`,
+  hintZoom: "Zoom",
+  hintPan: "Hold to move",
+  framedTitle: (n) => `${n} chosen`,
+  framedShare: "Share together",
+  framedRemove: "Remove together",
+  framedClear: "Clear",
+  framedShareTitle: (n) => `Share these ${n}`,
+  framedRemoveTitle: (n) => `Remove these ${n}?`,
+  framedRemoveWhat: (names) => `${names.join(", ")} will leave the server and every account; their shares and loans end. Nothing on the machines is touched.`,
   allowDirect: "Allow direct connections",
   stopDirect: "Stop direct connections",
   directTitle: (machine) => `Allow direct connections to ${machine}`,

@@ -48,6 +48,8 @@ export interface MachineMapScene {
   /** Machines direct connections were just allowed to, whose socket is in
    *  pencil until the hub has checked them. */
   opening: ReadonlySet<string>;
+  /** Machines framed with the mouse, or inside the frame being drawn. */
+  framed: readonly string[];
 }
 
 /** A line on the drawing, as a pointer resting on it is told of it. */
@@ -62,6 +64,10 @@ export const addKey = (hub: string) => `add:${hub}`;
 /** Zoom levels: below the first the drawing is far, above the second near. */
 const LEVELS: [number, number] = [0.55, 1.2];
 const SVG = "http://www.w3.org/2000/svg";
+
+/** How far outside its orbit a group's arc is drawn: clear of the rings'
+ *  names, which stand below or beside them. */
+const GROUP_OUT = RING + 78;
 
 /** How long the drawing takes to glide to where it is brought. */
 const GLIDE_MS = 240;
@@ -85,6 +91,7 @@ export class MachineMap {
     this.surface = new MapCanvas({
       label: words.map,
       controls: { minus: words.zoomOut, plus: words.zoomIn, fit: words.fit, scale: words.scale },
+      hints: { zoom: words.hintZoom, pan: words.hintPan },
       minScale: 1 / 16,
       maxScale: 4,
       levels: LEVELS,
@@ -193,7 +200,7 @@ export class MachineMap {
 
   update(scene: MachineMapScene): void {
     this.scene = scene;
-    this.placement = this.layout.update(scene.hubs, scene.nodes);
+    this.placement = this.layout.update(scene.hubs, scene.nodes, scene.links);
     this.compose();
     this.place();
     this.mark();
@@ -273,6 +280,7 @@ export class MachineMap {
       scene.links.map((link) => [link.a, link.b, link.up, near ? link.why : null]),
       [...scene.opening],
       [...placement.machines],
+      placement.groups.map((group) => [group.key, group.from, group.to, group.radius]),
     ]);
     if (key === this.composed) return;
     this.composed = key;
@@ -307,6 +315,24 @@ export class MachineMap {
         add(outline([[at[0] - arm, at[1]], [at[0] + arm, at[1]]], 1.6, random), around(at, arm + 3), "dry", graphite, 0.7);
         add(outline([[at[0], at[1] - arm], [at[0], at[1] + arm]], 1.6, random), around(at, arm + 3), "dry", graphite, 0.7);
       }
+    }
+
+    // Each group of machines round a hub, when there are several: a faint
+    // pencil arc outside their names, its ends turned in toward the hub.
+    for (const group of placement.groups) {
+      const random = seeded(`group:${group.hub}:${group.key}`);
+      const reach = group.radius + GROUP_OUT;
+      const steps = Math.max(8, Math.round(((group.to - group.from) * reach) / 14));
+      const arc: Point[] = [];
+      for (let index = 0; index <= steps; index += 1) {
+        const angle = group.from + ((group.to - group.from) * index) / steps;
+        arc.push([group.centre[0] + Math.cos(angle) * reach, group.centre[1] + Math.sin(angle) * reach]);
+      }
+      const end = (angle: number): Point[] => [
+        [group.centre[0] + Math.cos(angle) * reach, group.centre[1] + Math.sin(angle) * reach],
+        [group.centre[0] + Math.cos(angle) * (reach - 14), group.centre[1] + Math.sin(angle) * (reach - 14)],
+      ];
+      for (const line of [arc, end(group.from), end(group.to)]) add(outline(line, 1.2, random, { pressure: 0.2, taper: 0.08 }), spanning(line, 3), "dry", graphite, 0.45);
     }
 
     // A direct link: a straight thin line between the two rings, ruled, so
@@ -446,7 +472,7 @@ export class MachineMap {
     const { scene, placement } = this;
     if (!scene || !placement) return;
     const near = this.level >= 1;
-    const key = JSON.stringify([scene.selected, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.marks.includes("busy"), node.through]), [...placement.machines]]);
+    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.marks.includes("busy"), node.through]), [...placement.machines], placement.groups]);
     if (key === this.marked) return;
     this.marked = key;
     const circles: string[] = [];
@@ -454,6 +480,10 @@ export class MachineMap {
     if (chosen) {
       const hub = scene.selected!.startsWith("hub:");
       circles.push(`<path class="chosen" d="${circle(chosen, hub ? KNOT + 9 : RING + 9, 3.2, seeded(`chosen:${scene.selected}`))}"/>`);
+    }
+    for (const framed of scene.framed) {
+      const point = this.pointOf(framed);
+      if (point && framed !== scene.selected) circles.push(`<path class="chosen" d="${circle(point, RING + 9, 3.2, seeded(`chosen:${framed}`))}"/>`);
     }
     for (const fresh of scene.fresh) {
       const point = this.pointOf(fresh);
@@ -470,7 +500,17 @@ export class MachineMap {
         }
       }
     }
-    this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)">${circles.join("")}</g><g class="flows">${flows.join("")}</g>`;
+    const names = placement.groups.map((group) => {
+      const angle = (group.from + group.to) / 2;
+      const reach = group.radius + GROUP_OUT + 26;
+      const x = group.centre[0] + Math.cos(angle) * reach;
+      const y = group.centre[1] + Math.sin(angle) * reach;
+      // Left of the hub the name ends at its place, right of it begins
+      // there; above and below it is centred.
+      const anchor = Math.abs(Math.cos(angle)) < 0.4 ? "middle" : Math.cos(angle) > 0 ? "start" : "end";
+      return `<text class="group-name" x="${x.toFixed(1)}" y="${(y + 6).toFixed(1)}" text-anchor="${anchor}">${escapeText(group.label)}</text>`;
+    });
+    this.marks.innerHTML = `<g class="groups">${names.join("")}</g><g class="clay" filter="url(#pen-marker)">${circles.join("")}</g><g class="flows">${flows.join("")}</g>`;
   }
 }
 
@@ -498,4 +538,9 @@ function distanceTo(points: Point[], point: Point): number {
     best = Math.min(best, Math.hypot(point[0] - (ax + t * dx), point[1] - (ay + t * dy)));
   }
   return best;
+}
+
+/** Text for SVG, its markup characters written as entities. */
+function escapeText(text: string): string {
+  return text.replace(/[&<>]/g, (character) => (character === "&" ? "&amp;" : character === "<" ? "&lt;" : "&gt;"));
 }

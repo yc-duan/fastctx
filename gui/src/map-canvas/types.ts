@@ -39,6 +39,9 @@ export type CanvasEvent =
   | { kind: "context"; key: string | null; at: Point; input: "mouse" | "touch" | "keyboard" }
   | { kind: "draft"; draft: Draft }
   | { kind: "drop"; handle: CanvasHandle; target: string; at: Point }
+  /** A frame drawn with the left mouse button: the items inside it, while
+   *  it is drawn and once it is let go. */
+  | { kind: "marquee"; keys: string[]; done: boolean }
   | { kind: "cancel"; handle: CanvasHandle; reason: "escape" | "outside" | "interrupted" | "changed" };
 
 export interface CanvasFrame {

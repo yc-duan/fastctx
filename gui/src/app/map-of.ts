@@ -18,6 +18,8 @@ export interface MapWords {
   /** On a machine others may connect to directly, for a pointer resting on
    *  its ring. */
   takesDirect: string;
+  mineGroup: string;
+  lentGroup(owner: string): string;
   lentShort(owner: string): string;
   borrowedSaid(owner: string): string;
   reachingWhat: string;
@@ -66,6 +68,7 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       directAt: direct,
       through: machine.through ?? null,
       hubMs: (hubLink?.kind === "online" ? hubLink.ms : member?.paths?.hub_ms) ?? undefined,
+      group: owner ? { key: `of:${owner}`, label: words.ownedBy(owner) } : { key: "mine", label: words.mineGroup },
     });
   }
   const lent = new Set<string>();
@@ -83,6 +86,7 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       reaching: machineActsFor(world, one.machine, one.login),
       marks: marks(one.machine),
       title: words.borrowedSaid(one.owner ?? ""),
+      group: { key: `lent:${one.owner ?? ""}`, label: words.lentGroup(one.owner ?? "") },
     });
   }
   return { hubs, nodes, hubLabels, links: linksOf(world, nodes) };
