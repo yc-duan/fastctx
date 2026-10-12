@@ -2,7 +2,7 @@
 //! (`world-gui.md`, 新对话): what is in it, one level only, each folder with
 //! how many entries it holds and each file with how many lines, or its size
 //! where it is not text. Reading stops at a deadline, and whatever was not
-//! read by then is named without its number.
+//! read by then is marked so, a file still with its size.
 
 use std::fs;
 use std::io::Read as _;
@@ -103,7 +103,7 @@ pub fn outline(path: &str, deadline: Instant) -> Result<String, String> {
         ));
     }
     if stopped {
-        text.push_str("\n  (reading stopped at its time limit; the entries without a number were not read)");
+        text.push_str("\n  (reading stopped at its time limit)");
     }
     Ok(text)
 }
@@ -172,8 +172,9 @@ fn lines(path: &Path, deadline: Instant) -> Option<Counted> {
 
 fn told(entry: &Entry) -> String {
     match &entry.count {
-        None if entry.folder => entry.name.clone(),
-        None | Some(Counted::Binary) => format!("{} ({})", entry.name, size(entry.size)),
+        None if entry.folder => format!("{} (not read)", entry.name),
+        None => format!("{} ({}, not read)", entry.name, size(entry.size)),
+        Some(Counted::Binary) => format!("{} ({})", entry.name, size(entry.size)),
         Some(Counted::Entries(entries)) => format!("{} ({})", entry.name, grouped(*entries as u64)),
         Some(Counted::Lines(0)) => format!("{} (empty)", entry.name),
         Some(Counted::Lines(1)) => format!("{} (1 line)", entry.name),
