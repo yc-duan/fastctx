@@ -1,4 +1,4 @@
-// The account's World as the drawing shows it (`network-map.ts`): each hub
+// The account's World as the drawing shows it (`machine-map.ts`): each hub
 // the account is on, each machine it may work on, and each machine of
 // another an agent is lent on, with what the drawing marks on it. The front
 // page and the machines page draw the same thing; a machine is keyed
@@ -8,7 +8,7 @@
 
 import { loginsOf, type LinkSeen } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
-import type { MapHub, MapLink, MapNode } from "./network-map";
+import type { MapHub, MapLink, MapNode } from "./map-nodes";
 import { osName } from "../world/names";
 import { borrowedOf, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
 import { residentsOf } from "./store";

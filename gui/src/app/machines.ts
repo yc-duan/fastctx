@@ -27,10 +27,10 @@ import { LendSheet, type Loan } from "./lend-sheet";
 import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
-import { MachineMap } from "./machine-map";
+import { foldedOf, MachineMap, MAP_ORDER } from "./machine-map";
 import { RING } from "./map-layout";
 import { mapOf } from "./map-of";
-import type { MapNode } from "./network-map";
+import type { MapNode } from "./map-nodes";
 import { link, talkLink } from "./places";
 import { borrowedOf, groupsOf, isComputer, isSuper, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Borrowed, type Machine } from "./reach";
 import type { Page } from "./shell";
@@ -83,7 +83,6 @@ const UNDO_MS = 6_000;
 const ARRIVED_MS = 6_000;
 
 /** Past this many machines others' groups start folded. */
-const FOLD_PAST = 24;
 
 /** The port offered first for direct connections: the one after the hub's
  *  own, 7443. */
@@ -183,7 +182,7 @@ export class MachinesPage implements Page {
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
     this.map = new MachineMap({
       words,
-      storageKey: "machines-map",
+      storageKey: MAP_ORDER,
       event: (event) => {
         if (event.kind === "select") this.choose(event.key);
         else if (event.kind === "marquee") this.frame(event.keys, event.done);
@@ -398,16 +397,7 @@ export class MachinesPage implements Page {
    *  start folded and the account's own open; what the user opened or
    *  folded stays so. */
   private foldedOf(nodes: MapNode[]): Set<string> {
-    const many = nodes.length > FOLD_PAST;
-    const folded = new Set<string>();
-    for (const node of nodes) {
-      const group = node.group?.key ?? "mine";
-      for (const hub of node.hubs) {
-        const key = `group:${hub}:${group}`;
-        if (this.folds.get(key) ?? (many && group !== "mine")) folded.add(key);
-      }
-    }
-    return folded;
+    return foldedOf(nodes, this.folds);
   }
 
   /** A frame drawn round machines: one chosen, or several together. */

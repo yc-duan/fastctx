@@ -35,7 +35,7 @@
 }
 
 /* The drawing is the machines page's, to be pointed at here too. */
-.frontispiece > .network-map {
+.frontispiece > .machine-map {
   position: absolute;
   inset: 0;
   min-height: 0;

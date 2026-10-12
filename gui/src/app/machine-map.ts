@@ -16,8 +16,8 @@
 import { MapCanvas, PenLayer, type Bounds, type CanvasEvent, type CanvasFrame, type CanvasItem, type PenStroke, type Point } from "../map-canvas";
 import { blot, circle, outline, ruled, seeded, ticks } from "../pen/shapes";
 import type { MachinesWords } from "./account-words";
-import { KNOT, MapLayout, RING, TITLE, TRUNK, type Placement } from "./map-layout";
-import type { MapHub, MapLink, MapNode } from "./network-map";
+import { KNOT, MapLayout, RING, ROWS, TITLE, TRUNK, type Placement } from "./map-layout";
+import type { MapHub, MapLink, MapNode } from "./map-nodes";
 
 export interface MachineMapOptions {
   words: MachinesWords;
@@ -26,6 +26,10 @@ export interface MachineMapOptions {
   event(event: CanvasEvent): void;
   /** Each painted frame, for what the page floats over the drawing. */
   frame?(frame: CanvasFrame): void;
+  /** A picture on another page: fitted to its frame and never moved, its
+   *  columns as tall as fill the frame best, its names kept readable however
+   *  small it is drawn. */
+  still?: boolean;
 }
 
 export interface MachineMapScene {
@@ -55,8 +59,35 @@ export interface MachineMapScene {
   lit?: ReadonlyMap<string, { sleeps: boolean }> | null;
 }
 
+/** Where this device remembers the order of the machines on the drawing,
+ *  the same on every page that draws it. */
+export const MAP_ORDER = "machines-map";
+
 /** The key of a hub's dashed ring that adds a machine. */
 export const addKey = (hub: string) => `add:${hub}`;
+
+/** Past this many machines, others' boxes start folded: the drawing fitted
+ *  to its page is too small to read them all. */
+const FOLD_PAST = 24;
+
+/** The boxes folded: others', when the machines are many, unless the user
+ *  opened or folded one, as `chosen` holds. */
+export function foldedOf(nodes: readonly MapNode[], chosen: ReadonlyMap<string, boolean> = new Map()): Set<string> {
+  const many = nodes.length > FOLD_PAST;
+  const folded = new Set<string>();
+  for (const node of nodes) {
+    const group = node.group?.key ?? "mine";
+    for (const hub of node.hubs) {
+      const key = `group:${hub}:${group}`;
+      if (chosen.get(key) ?? (many && group !== "mine")) folded.add(key);
+    }
+  }
+  return folded;
+}
+
+/** A still drawing's names are never drawn smaller than this share of their
+ *  size. */
+const LEGIBLE = 0.85;
 
 /** Zoom levels: below the first the drawing is far, above the second near. */
 const LEVELS: [number, number] = [0.55, 1.2];
@@ -84,6 +115,8 @@ export class MachineMap {
   private narrow = false;
   private composed = "";
   private marked = "";
+  /** A still drawing's frame, as of its last layout. */
+  private framed = "";
 
   constructor(private readonly options: MachineMapOptions) {
     const { words } = options;
@@ -91,7 +124,8 @@ export class MachineMap {
     this.surface = new MapCanvas({
       label: words.map,
       controls: { minus: words.zoomOut, plus: words.zoomIn, fit: words.fit, scale: words.scale },
-      hints: { zoom: words.hintZoom, pan: words.hintPan },
+      hints: options.still ? undefined : { zoom: words.hintZoom, pan: words.hintPan },
+      still: options.still ?? false,
       minScale: 1 / 16,
       maxScale: 4,
       levels: LEVELS,
@@ -179,8 +213,11 @@ export class MachineMap {
 
   update(scene: MachineMapScene): void {
     this.scene = scene;
-    this.narrow = this.isNarrow();
-    this.placement = this.layout.update(scene.hubs, scene.nodes, scene.links, scene.folded, this.narrow);
+    if (this.options.still) this.placement = this.fill(scene);
+    else {
+      this.narrow = this.isNarrow();
+      this.placement = this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, narrow: this.narrow });
+    }
     this.compose();
     this.place();
     this.mark();
@@ -196,6 +233,26 @@ export class MachineMap {
     return placement.machines.get(key) ?? null;
   }
 
+  /** A still drawing laid with its columns as tall as let it be drawn
+   *  largest in its frame; ten to a column until the frame has a size. */
+  private fill(scene: MachineMapScene): Placement {
+    const width = this.element.clientWidth;
+    const height = this.element.clientHeight;
+    this.framed = `${width}x${height}`;
+    const lay = (rows: number) => this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, rows, vacant: scene.adds.length > 0 });
+    if (!width || !height) return lay(ROWS);
+    // The canvas leaves a tenth of the shorter side round what it fits.
+    const pad = Math.max(24, Math.min(76, Math.min(width, height) * 0.1));
+    let best: { placement: Placement; scale: number } | null = null;
+    for (let rows = 1; rows <= ROWS; rows += 1) {
+      const placement = lay(rows);
+      const { bounds } = placement;
+      const scale = Math.min((width - 2 * pad) / bounds.width, (height - 2 * pad) / bounds.height);
+      if (!best || scale > best.scale + 1e-6) best = { placement, scale };
+    }
+    return best!.placement;
+  }
+
   /** A phone's screen, or a page as narrow: under 600 pixels across. */
   private isNarrow(): boolean {
     const width = this.element.clientWidth;
@@ -204,8 +261,13 @@ export class MachineMap {
 
   private onFrame(frame: CanvasFrame): void {
     this.pens.view(frame);
-    // Laid again when the page becomes narrow or wide.
-    if (this.scene && this.isNarrow() !== this.narrow) this.update(this.scene);
+    // Laid again when the page becomes narrow or wide, or a still drawing's
+    // frame changes shape.
+    if (this.options.still) {
+      if (this.scene && `${this.element.clientWidth}x${this.element.clientHeight}` !== this.framed) this.update(this.scene);
+      // Drawn small, its names grow back to stay readable.
+      this.element.style.setProperty("--name-grow", Math.max(1, LEGIBLE / frame.view.scale).toFixed(3));
+    } else if (this.scene && this.isNarrow() !== this.narrow) this.update(this.scene);
     // The graph paper moves with the drawing, a line every 32 of its units.
     this.element.style.setProperty("--paper-step", `${(32 * frame.view.scale).toFixed(2)}px`);
     this.element.style.setProperty("--paper-x", `${frame.view.x.toFixed(1)}px`);
@@ -387,8 +449,8 @@ export class MachineMap {
     for (const hub of scene.hubs) {
       const [x, y] = placement.hubs.get(hub.id)!;
       const said = scene.hubLabels.get(hub.id) ?? "";
-      text.push(`<text class="hub-name" x="${x}" y="${y - 30}" text-anchor="middle">${escapeText(hub.name)}</text>`);
-      if (said) text.push(`<text class="hub-sub" x="${x}" y="${y - 15}" text-anchor="middle">${escapeText(said)}</text>`);
+      text.push(`<text class="hub-name" x="${x}" y="${y - 22}"${said ? ` dy="-1.15em"` : ""} text-anchor="middle">${escapeText(hub.name)}</text>`);
+      if (said) text.push(`<text class="hub-sub" x="${x}" y="${y - 22}" text-anchor="middle">${escapeText(said)}</text>`);
     }
     for (const group of placement.groups) {
       const { x, y } = group.box;
@@ -398,7 +460,7 @@ export class MachineMap {
       const x = point[0] + RING + 15;
       text.push(
         sub
-          ? `<text class="machine-name${quiet ? " quiet" : ""}" data-name="${escapeText(key)}" x="${x}" y="${point[1] - 2}">${escapeText(name)}<tspan class="machine-sub" x="${x}" dy="15">${escapeText(sub)}</tspan></text>`
+          ? `<text class="machine-name${quiet ? " quiet" : ""}" data-name="${escapeText(key)}" x="${x}" y="${point[1] - 2}">${escapeText(name)}<tspan class="machine-sub" x="${x}" dy="1.43em">${escapeText(sub)}</tspan></text>`
           : `<text class="machine-name${quiet ? " quiet" : ""}" data-name="${escapeText(key)}" x="${x}" y="${point[1] + 5}">${escapeText(name)}</text>`,
       );
     };

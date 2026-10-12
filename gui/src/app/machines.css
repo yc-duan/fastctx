@@ -60,8 +60,9 @@
 }
 
 /* The drawing: graph paper that moves with it, a fine line every step and
-   a firmer one every fourth (their size and offset follow the camera). */
-.machines-canvas .machine-map {
+   a firmer one every fourth (their size and offset follow the camera). The
+   same paper under the drawing as a picture on another page. */
+:is(.machines-canvas .machine-map, .machine-map.map-still) {
   --canvas-ink: var(--text);
   --canvas-selection: var(--accent);
   --canvas-paper: var(--bg);
@@ -70,8 +71,8 @@
   --paper-y: 0px;
 }
 
-/* The paper fades out toward the edges, as the front page's drawing does. */
-.machines-canvas .machine-map::before {
+/* The paper fades out toward the edges. */
+:is(.machines-canvas .machine-map, .machine-map.map-still)::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -542,185 +543,6 @@
   right: var(--space-3);
 }
 
-/* The drawing, as the front page's, but every hub and machine is a
-   button. */
-.network-map {
-  position: relative;
-  min-width: 0;
-  min-height: 300px;
-  margin: 0;
-}
-
-.map-drawing,
-.map-drawing svg,
-.map-marks,
-.map-marks svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.map-marks {
-  pointer-events: none;
-}
-
-.network-map .paper path {
-  fill: var(--pen-graphite);
-}
-
-.network-map .paper .minor {
-  opacity: 0.14;
-}
-
-.network-map .paper .major {
-  opacity: 0.26;
-}
-
-.network-map .ink {
-  mix-blend-mode: var(--pen-blend);
-}
-
-.network-map .graphite {
-  fill: var(--pen-graphite);
-  opacity: 0.9;
-}
-
-.network-map .graphite .second {
-  opacity: 0.45;
-}
-
-.network-map .dry {
-  fill: var(--pen-graphite);
-  opacity: 0.5;
-}
-
-.network-map .clay {
-  fill: var(--pen-clay);
-}
-
-.network-map .flow {
-  fill: none;
-  stroke: var(--pen-clay);
-  stroke-width: 2.4;
-  stroke-linecap: round;
-  stroke-dasharray: 3 14 6 11;
-  animation: pen-flow 2.8s linear infinite;
-}
-
-.map-drawing.arriving .paper {
-  animation: paper-in 0.6s cubic-bezier(0.33, 1, 0.68, 1) both;
-}
-
-.map-drawing.arriving .ink,
-.map-drawing.arriving .flows {
-  animation: paper-in 0.9s cubic-bezier(0.33, 1, 0.68, 1) 0.25s both;
-}
-
-/* The circle round the one chosen is drawn in as a hand circles a word. */
-.map-marks .clay path {
-  animation: paper-in 0.35s cubic-bezier(0.33, 1, 0.68, 1) both;
-}
-
-.map-labels {
-  position: absolute;
-  inset: 0;
-}
-
-.map-hub,
-.map-node {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  max-width: 13em;
-  padding: 3px 7px;
-  border-radius: var(--radius-s);
-  /* The paper shows through a little, so a line passing under a name
-     does not run through its letters. */
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  line-height: 1.25;
-  text-align: inherit;
-  white-space: nowrap;
-  transform: translate(-50%, -50%);
-  transition: background-color var(--hover) ease;
-}
-
-.map-hub {
-  align-items: center;
-}
-
-.map-node.start {
-  align-items: flex-start;
-  transform: translate(0, -50%);
-}
-
-.map-node.middle {
-  align-items: center;
-}
-
-.map-node.end {
-  align-items: flex-end;
-  transform: translate(-100%, -50%);
-}
-
-.map-hub:hover,
-.map-node:hover,
-.map-hub:focus-visible,
-.map-node:focus-visible {
-  outline: 0;
-  background: color-mix(in srgb, var(--text) 7%, var(--bg));
-}
-
-.map-labels .name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-  font-family: var(--font-emphasis);
-  font-size: var(--size-ui);
-  color: var(--text);
-}
-
-.map-hub .name {
-  font-family: var(--font-reading);
-  font-size: var(--size-small);
-  letter-spacing: 0.04em;
-  color: var(--text-2);
-}
-
-.map-labels .sub {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.map-labels .chosen .name {
-  color: var(--text-strong);
-}
-
-.map-labels .lost .name {
-  color: var(--text-3);
-}
-
-.map-node.hold-lent .sub {
-  color: var(--accent);
-}
-
-/* Over each ring, a round button the size of the ring; pointed at, a soft
-   disc of fill comes up under the ink. */
-.map-ring {
-  position: absolute;
-  border-radius: var(--radius-full);
-  transform: translate(-50%, -50%);
-  transition: background-color var(--hover) ease;
-}
-
-.map-ring:hover {
-  background: var(--fill);
-}
-
 /* What is known of the one pointed at. */
 .machine-panel {
   min-height: 0;
@@ -1085,17 +907,6 @@
   }
 }
 
-/* A phone's page: the names alone, a size smaller. */
-@container machines (max-width: 520px) {
-  .map-labels .sub {
-    display: none;
-  }
-
-  .map-labels .name {
-    font-size: var(--size-small);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .map-live .flow,
   .map-live .chosen,
@@ -1105,12 +916,7 @@
   .map-menu.as-sheet,
   .map-card,
   .map-card.as-sheet,
-  .machines-layout > .machine-panel,
-  .network-map .flow,
-  .map-drawing.arriving .paper,
-  .map-drawing.arriving .ink,
-  .map-drawing.arriving .flows,
-  .map-marks .clay path {
+  .machines-layout > .machine-panel {
     animation: none;
   }
 }
@@ -1538,6 +1344,19 @@
 .map-names .machine-sub {
   fill: var(--text-3);
   font-size: 10.5px;
+}
+
+/* Drawn small as a picture on another page, the names grow back by
+   --name-grow to stay readable (`machine-map.ts`). */
+.machine-map.map-still .map-names .hub-name { font-size: calc(15px * var(--name-grow, 1)); }
+.machine-map.map-still .map-names .hub-sub { font-size: calc(11px * var(--name-grow, 1)); }
+.machine-map.map-still .map-names .box-name { font-size: calc(14px * var(--name-grow, 1)); }
+.machine-map.map-still .map-names .box-count { font-size: calc(12px * var(--name-grow, 1)); }
+.machine-map.map-still .map-names .machine-name { font-size: calc(13px * var(--name-grow, 1)); }
+.machine-map.map-still .map-names .machine-sub { font-size: calc(10.5px * var(--name-grow, 1)); }
+
+.machine-map.map-still .canvas-object {
+  cursor: pointer;
 }
 
 /* Choosing the server's new place: a strip over the bottom of the drawing,

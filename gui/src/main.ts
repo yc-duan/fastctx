@@ -137,8 +137,8 @@ import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
 import type { Address, SessionEvent } from "./world/events";
 import { ownerResident, type ResidentDetail } from "./world/world";
 import { agentName, titleOf } from "./world/names";
+import { foldedOf, MachineMap, MAP_ORDER, type MachineMapScene } from "./app/machine-map";
 import { mapOf } from "./app/map-of";
-import { NetworkMap } from "./app/network-map";
 import {
   addAgentLogin,
   agentLogins,
@@ -705,14 +705,27 @@ function specimenManage(): Manage {
   };
 }
 
+/** The machines page's drawing of `world`, as a picture on another page:
+ *  nothing being added, framed or moved, `marked` circled. */
+function stillScene(world: WorldNow, marked: string | null = null): MachineMapScene {
+  const map = mapOf(world, english ? enMachines : zhMachines);
+  return { ...map, adds: [], waiting: new Set(), selected: marked, fresh: new Set(), opening: new Set(), framed: [], folded: foldedOf(map.nodes) };
+}
+
 function home(): Page {
   const lastVisit = live ? seen.read() : specimen.lastVisit;
   // The drawing of the World; a machine on it opens on the machines page,
-  // a hub on the account page.
-  const drawing = new NetworkMap((key) => {
-    location.hash = key.startsWith("hub:") ? link({ kind: "account" }) : link({ kind: "machine", name: key.replace(/^(m|lent):/, "") });
+  // a hub on the account page, a box the machines page.
+  const drawing = new MachineMap({
+    words: english ? enMachines : zhMachines,
+    storageKey: MAP_ORDER,
+    still: true,
+    event: (event) => {
+      if (event.kind !== "select" || !event.key) return;
+      const { key } = event;
+      location.hash = key.startsWith("hub:") ? link({ kind: "account" }) : key.startsWith("group:") ? link({ kind: "machines" }) : link({ kind: "machine", name: key.replace(/^(m|lent):/, "") });
+    },
   });
-  const mapWords = english ? enMachines : zhMachines;
   const page = new HomePage({
     drawing: drawing.element,
     words: homeWords,
@@ -756,8 +769,7 @@ function home(): Page {
     const now = store.clock.get();
     if (world) {
       page.update(stateOf(world, away), now);
-      const map = mapOf(world, mapWords);
-      drawing.update(map.hubs, map.nodes, null, map.hubLabels);
+      drawing.update(stillScene(world));
     }
     if (live && world) {
       const next = shapeOf(world);
@@ -774,6 +786,7 @@ function home(): Page {
     title: homeWords.world,
     leave() {
       stop();
+      drawing.dispose();
       if (live) seen.now();
     },
   };
@@ -1376,13 +1389,11 @@ function show(next: Place): void {
       break;
     case "login": {
       // The World's drawing, for the moment this computer is in it.
-      const loginMap = new NetworkMap(() => {});
+      const loginMap = new MachineMap({ words: english ? enMachines : zhMachines, storageKey: MAP_ORDER, still: true, event: () => {} });
       let marked: string | null = null;
       const drawLoginMap = () => {
         const world = store.world.peek();
-        if (!world) return;
-        const map = mapOf(world, english ? enMachines : zhMachines);
-        loginMap.update(map.hubs, map.nodes, marked ? `m:${marked}` : null, map.hubLabels);
+        if (world) loginMap.update(stillScene(world, marked ? `m:${marked}` : null));
       };
       const stopLoginMap = effect(() => {
         store.world.get();
@@ -1420,7 +1431,10 @@ function show(next: Place): void {
             marked = machine;
             drawLoginMap();
           },
-          stop: stopLoginMap,
+          stop: () => {
+            stopLoginMap();
+            loginMap.dispose();
+          },
         },
         enter() {
           welcomed.now();

@@ -18,7 +18,7 @@
 // device, so machines keep their order while others come and go.
 
 import type { Bounds, Point } from "../map-canvas";
-import type { MapHub, MapLink, MapNode } from "./network-map";
+import type { MapHub, MapLink, MapNode } from "./map-nodes";
 
 /** A machine's ring and a hub's knot, in the drawing's units. */
 export const RING = 24;
@@ -38,7 +38,7 @@ const ROW = 74;
 const COLUMN = 230;
 const NAME = 150;
 /** At most this many machines stand in one column before the next. */
-const ROWS = 10;
+export const ROWS = 10;
 /** A folded box: its title strip, this wide. */
 const FOLDED = 200;
 /** On a narrow screen: how far right of the spine the boxes stand. */
@@ -80,6 +80,21 @@ export interface Placement {
   groups: GroupNode[];
   branches: Branch[];
   bounds: Bounds;
+}
+
+/** How a drawing is laid out, past its hubs and machines. */
+export interface LayoutChoices {
+  /** Direct links, which put linked machines side by side. */
+  links?: readonly MapLink[];
+  /** The boxes shown as their title strip alone, by key. */
+  folded?: ReadonlySet<string>;
+  /** Laid one under another for a phone. */
+  narrow?: boolean;
+  /** How many machines stand in a column before the next. */
+  rows?: number;
+  /** Whether the account's own box ends with the place the dashed ring that
+   *  adds a machine waits in. */
+  vacant?: boolean;
 }
 
 interface Remembered {
@@ -135,9 +150,9 @@ export class MapLayout {
     }
   }
 
-  /** `folded`: the boxes shown as their title strip alone, by key;
-   *  `narrow`: laid one under another for a phone. */
-  update(hubs: readonly MapHub[], nodes: readonly MapNode[], links: readonly MapLink[] = [], folded: ReadonlySet<string> = new Set(), narrow = false): Placement {
+  update(hubs: readonly MapHub[], nodes: readonly MapNode[], choices: LayoutChoices = {}): Placement {
+    const { links = [], folded = new Set<string>(), narrow = false, rows = ROWS, vacant = true } = choices;
+    const ending = (kind: string) => vacant && kind === "mine";
     for (const hub of [...hubs].sort((a, b) => a.id.localeCompare(b.id))) if (!this.hubOrder.includes(hub.id)) this.hubOrder.push(hub.id);
     const live = new Set(hubs.map((hub) => hub.id));
     const order = this.hubOrder.filter((id) => live.has(id));
@@ -165,12 +180,12 @@ export class MapLayout {
         const key = `group:${id}:${kind}`;
         const fold = folded.has(key) && members.length > 0;
         // The account's own end with the dashed ring.
-        const cells = members.length + (kind === "mine" ? 1 : 0);
-        const perColumn = narrow ? Math.max(1, cells) : ROWS;
+        const cells = members.length + (ending(kind) ? 1 : 0);
+        const perColumn = narrow ? Math.max(1, cells) : rows;
         const columns = Math.max(1, Math.ceil(cells / perColumn));
-        const rows = Math.min(cells, perColumn);
+        const tall = Math.min(cells, perColumn);
         const width = fold ? FOLDED : TRUNK + TWIG + PAD + (columns - 1) * COLUMN + RING * 2 + NAME;
-        const height = fold ? TITLE : TITLE + PAD * 2 + (rows - 1) * ROW + RING * 2;
+        const height = fold ? TITLE : TITLE + PAD * 2 + (tall - 1) * ROW + RING * 2;
         return { kind, key, members, fold, width, height, perColumn };
       });
       if (narrow) {
@@ -188,7 +203,7 @@ export class MapLayout {
           const trunk = SIDE + TRUNK;
           branches.push({ points: [[0, join], [trunk, join]], hub: id });
           if (!block.fold) {
-            const slots: (MapNode | null)[] = [...block.members, ...(block.kind === "mine" ? [null] : [])];
+            const slots: (MapNode | null)[] = [...block.members, ...(ending(block.kind) ? [null] : [])];
             branches.push({ points: [[trunk, join], [trunk, y + TITLE + PAD + RING + (slots.length - 1) * ROW]], hub: id });
             slots.forEach((slot, row) => {
               const at: Point = [trunk + TWIG + RING, y + TITLE + PAD + RING + row * ROW];
@@ -220,18 +235,18 @@ export class MapLayout {
         drops.push(drop);
         if (block.fold) branches.push({ points: [[drop, busY], [drop, top + TITLE / 2]], hub: id });
         else {
-          const slots: (MapNode | null)[] = [...block.members, ...(block.kind === "mine" ? [null] : [])];
-          const columns = Math.ceil(slots.length / ROWS);
+          const slots: (MapNode | null)[] = [...block.members, ...(ending(block.kind) ? [null] : [])];
+          const columns = Math.ceil(slots.length / rows);
           const fork = top + TITLE + PAD * 0.55;
           for (let column = 0; column < columns; column += 1) {
             const trunk = x + TRUNK + column * COLUMN;
-            const last = Math.min(ROWS, slots.length - column * ROWS) - 1;
+            const last = Math.min(rows, slots.length - column * rows) - 1;
             branches.push({ points: [[trunk, column ? fork : busY], [trunk, top + TITLE + PAD + RING + last * ROW]], hub: id });
           }
           if (columns > 1) branches.push({ points: [[drop, fork], [x + TRUNK + (columns - 1) * COLUMN, fork]], hub: id });
           slots.forEach((slot, index) => {
-            const column = Math.floor(index / ROWS);
-            const row = index % ROWS;
+            const column = Math.floor(index / rows);
+            const row = index % rows;
             const trunk = x + TRUNK + column * COLUMN;
             const at: Point = [trunk + TWIG + RING, top + TITLE + PAD + RING + row * ROW];
             branches.push({ points: [[trunk, at[1]], [trunk + TWIG - 3, at[1]]], hub: id, machine: slot?.key, out: !!slot && slot.online !== true });

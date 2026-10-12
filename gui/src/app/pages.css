@@ -1026,7 +1026,7 @@ a.details-job {
   margin-top: var(--space-6);
 }
 
-.welcome-drawing > .network-map {
+.welcome-drawing > .machine-map {
   position: absolute;
   inset: 0;
   min-height: 0;

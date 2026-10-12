@@ -17,6 +17,9 @@ export interface CanvasOptions extends CameraOptions {
   frame?(frame: CanvasFrame): void;
   /** Text for assistive technology, supplied by the page. */
   draftLabel?(draft: Draft): string;
+  /** A picture to look at: always fitted to its frame, never moved or
+   *  zoomed, with no controls; its items can still be chosen. */
+  still?: boolean;
 }
 
 /** A pointer down on the drawing. With a mouse the left button chooses
@@ -67,8 +70,8 @@ export class MapCanvas {
     this.camera = new CanvasCamera(options);
     this.targets = new DropTargets(options.validTarget);
     this.frameState = { view: this.camera.view, moving: false, reducedMotion: this.media.matches, hiddenLabels: [] };
-    this.element.className = "map-canvas";
-    this.element.tabIndex = 0;
+    this.element.className = options.still ? "map-canvas map-still" : "map-canvas";
+    this.element.tabIndex = options.still ? -1 : 0;
     this.element.setAttribute("role", "group");
     this.element.setAttribute("aria-label", options.label);
     this.ink.className = "canvas-ink";
@@ -99,8 +102,9 @@ export class MapCanvas {
     this.marquee.className = "canvas-marquee";
     this.marquee.hidden = true;
     this.overlay.append(this.marquee);
-    this.element.append(this.ink, this.overlay, this.hits, this.names, this.control, this.status);
-    if (options.hints) {
+    this.element.append(this.ink, this.overlay, this.hits, this.names, this.status);
+    if (!options.still) this.element.append(this.control);
+    if (options.hints && !options.still) {
       const hints = document.createElement("div");
       hints.className = "canvas-hints";
       hints.setAttribute("aria-hidden", "true");
@@ -115,7 +119,7 @@ export class MapCanvas {
     this.element.addEventListener("lostpointercapture", e => { if (this.pointers.has(e.pointerId)) this.cancelPointer(e.pointerId); }, { signal });
     this.element.addEventListener("pointerleave", () => { if (!this.pointers.size) this.point(null, [0, 0]); }, { signal });
     this.element.addEventListener("wheel", e => this.wheel(e), { passive: false, signal });
-    this.element.addEventListener("dblclick", e => { if (!this.keyOf(e.target) && !(e.target as Element).closest("[data-handle]") && !this.isControl(e.target)) { e.preventDefault(); this.fit(); } }, { signal });
+    this.element.addEventListener("dblclick", e => { if (!options.still && !this.keyOf(e.target) && !(e.target as Element).closest("[data-handle]") && !this.isControl(e.target)) { e.preventDefault(); this.fit(); } }, { signal });
     this.element.addEventListener("contextmenu", e => {
       if (this.isControl(e.target)) return;
       e.preventDefault();
@@ -349,8 +353,8 @@ export class MapCanvas {
     // The middle button moves the paper and never chooses or opens
     // anything; with a mouse the left button chooses, or draws a frame.
     const middle = e.button === 1;
-    if ((e.button !== 0 && !middle) || this.isControl(e.target)) return;
-    const frame = e.pointerType === "mouse" && !middle;
+    if ((e.button !== 0 && !middle) || this.isControl(e.target) || (middle && this.options.still)) return;
+    const frame = e.pointerType === "mouse" && !middle && !this.options.still;
     e.preventDefault();
     // Capture keyboard cancellation throughout a pointer gesture without moving
     // the camera as focusing an off-screen item would do.
@@ -397,6 +401,7 @@ export class MapCanvas {
       this.stopLongPress();
     }
     if (this.draft && this.draftPointer === e.pointerId) { this.refreshDraft(p); return; }
+    if (this.options.still) return;
     if (this.pointers.size >= 2) {
       const now = [...this.pointers.values()].slice(0, 2).map(p => p.point);
       const centre = (points: Point[]): Point => [(points[0][0] + points[1][0]) / 2, (points[0][1] + points[1][1]) / 2];
@@ -450,7 +455,7 @@ export class MapCanvas {
   /** Ctrl and the wheel zoom (a touchpad's pinch comes as the same); the
    *  wheel alone moves nothing. */
   private wheel(e: WheelEvent): void {
-    if (this.isControl(e.target) || !(e.ctrlKey || e.metaKey)) return;
+    if (this.options.still || this.isControl(e.target) || !(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     this.rect = this.element.getBoundingClientRect();
     const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? parseFloat(getComputedStyle(this.element).fontSize) : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? this.camera.view.height : 1;
@@ -527,6 +532,7 @@ export class MapCanvas {
       const item = key ? this.buttons.get(key)?.item : undefined;
       if (item) { e.preventDefault(); this.select(item.key, this.camera.toScreen(item.point)); return; }
     }
+    if (this.options.still) return;
     const pans: Record<string, Point> = { ArrowLeft: [48, 0], ArrowRight: [-48, 0], ArrowUp: [0, 48], ArrowDown: [0, -48] };
     if (pans[e.key]) { e.preventDefault(); this.pan(...pans[e.key]); }
     else if (e.key === "+" || e.key === "=") { e.preventDefault(); this.zoom(1.25); }

@@ -1,4 +1,4 @@
-import type { MapHub, MapNode } from "../app/network-map";
+import type { MapHub, MapNode } from "../app/map-nodes";
 import type { Bounds, CanvasItem, Point } from "./types";
 
 export interface LayoutSnapshot { hubs: [string, Point][]; machines: [string, Point][] }

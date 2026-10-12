@@ -4,7 +4,7 @@ import "../design/base.css";
 import "./specimen.css";
 import { applyTheme } from "../theme";
 import { blot, circle, outline, quadratic, seeded } from "../pen/shapes";
-import type { MapHub, MapNode } from "../app/network-map";
+import type { MapHub, MapNode } from "../app/map-nodes";
 import { MapCanvas, PenLayer, StableNetworkLayout, type Bounds, type CanvasEvent, type CanvasFrame, type CanvasHandle, type CanvasItem, type NetworkLayout, type PenStroke, type Point } from "./index";
 
 const params = new URLSearchParams(location.search);

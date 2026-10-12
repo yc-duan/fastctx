@@ -14,6 +14,8 @@
   cursor: default;
 }
 .map-canvas[data-panning="true"] { cursor: grabbing; }
+/* A picture in a page that scrolls: a finger moving over it moves the page. */
+.map-canvas.map-still { touch-action: pan-x pan-y; }
 /* The frame the left button draws round several: a light wash, no line. */
 .canvas-marquee {
   position: absolute;
