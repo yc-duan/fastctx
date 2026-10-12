@@ -1301,23 +1301,6 @@
   }
 }
 
-/* What a line is, beside the pointer resting on it. */
-.map-tip {
-  position: absolute;
-  left: 0;
-  top: 0;
-  z-index: 4;
-  max-width: min(320px, calc(100% - 16px));
-  padding: 4px 10px;
-  border-radius: var(--radius-s);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop);
-  color: var(--text-2);
-  font-size: var(--size-small);
-  line-height: 1.45;
-  pointer-events: none;
-}
-
 /* The addresses a machine may be reached at, chosen as solid pills; the
    chosen ones washed in clay. */
 .map-card-field {
@@ -1452,4 +1435,85 @@
   margin: 0;
   font-size: var(--size-small);
   color: var(--text-3);
+}
+
+/* The machines drawing writes its names on the paper, where they zoom with
+   it; the canvas keeps its own only for those who hear the drawing. */
+.machine-map .canvas-name {
+  display: none;
+}
+
+.map-boxes,
+.map-names {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* A group's box, as a comment box in a blueprint: a wash for the body, a
+   deeper one for the title strip, no line round either. */
+.map-boxes .box-body {
+  fill: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.map-boxes .box-title {
+  fill: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.map-boxes .mine .box-body {
+  fill: color-mix(in srgb, var(--pen-clay) 7%, transparent);
+}
+
+.map-boxes .mine .box-title {
+  fill: color-mix(in srgb, var(--pen-clay) 16%, transparent);
+}
+
+.map-boxes .lent .box-body {
+  fill: color-mix(in srgb, var(--pen-clay) 4%, transparent);
+}
+
+.map-boxes .lent .box-title {
+  fill: color-mix(in srgb, var(--pen-clay) 9%, transparent);
+}
+
+.map-names text {
+  font-family: var(--font-reading);
+}
+
+.map-names .hub-name {
+  fill: var(--text-strong);
+  font-size: 15px;
+}
+
+.map-names .hub-sub {
+  fill: var(--text-3);
+  font-size: 11px;
+}
+
+.map-names .box-name {
+  fill: var(--text-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.map-names .box-count {
+  fill: var(--text-3);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.map-names .machine-name {
+  fill: var(--text);
+  font-size: 13px;
+}
+
+.map-names .machine-name.quiet {
+  fill: var(--text-3);
+}
+
+.map-names .machine-sub {
+  fill: var(--text-3);
+  font-size: 10.5px;
 }

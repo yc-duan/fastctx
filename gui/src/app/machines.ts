@@ -24,7 +24,7 @@ import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
-import { MachineMap, type LineSeen } from "./machine-map";
+import { MachineMap } from "./machine-map";
 import { RING } from "./map-layout";
 import { mapOf } from "./map-of";
 import type { MapNode } from "./network-map";
@@ -130,7 +130,6 @@ export class MachinesPage implements Page {
   /** Machines direct connections were just allowed to, while the hub
    *  checks it reaches them. */
   private readonly opening = new Set<string>();
-  private readonly tip: HTMLElement;
   /** Machines framed together with the mouse, and those inside the frame
    *  while it is drawn. */
   private framed: string[] = [];
@@ -153,14 +152,13 @@ export class MachinesPage implements Page {
         `<h1 class="page-title">${escape(words.title)}</h1>`,
         `<button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
-      <div class="machines-layout"><div class="machines-canvas"><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form><div class="map-tip" role="tooltip" hidden></div></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
+      <div class="machines-layout"><div class="machines-canvas"><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
     this.acts = this.element.querySelector<HTMLElement>(".map-acts")!;
     this.menu = this.element.querySelector<HTMLElement>(".map-menu")!;
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
-    this.tip = this.element.querySelector<HTMLElement>(".map-tip")!;
     this.map = new MachineMap({
       words,
       storageKey: "machines-map",
@@ -182,9 +180,6 @@ export class MachinesPage implements Page {
     this.canvas.prepend(this.map.element);
     this.log = new MachineLog(words, options.log, () => loginsOf(options.store.world.peek()?.accounts), (at) => options.when(at, options.store.clock.peek()));
     this.canvas.append(this.log.button, this.log.panel);
-    // A pointer resting on a line is told which way it is and how fast.
-    this.map.element.addEventListener("pointermove", (event) => this.tell(event));
-    this.map.element.addEventListener("pointerleave", () => this.untell());
     // A ring pressed twice opens what is known of it.
     this.map.element.addEventListener("dblclick", (event) => {
       const key = (event.target as HTMLElement).closest<HTMLElement>("[data-item]")?.dataset.item;
@@ -822,39 +817,6 @@ export class MachinesPage implements Page {
       );
     };
     this.card.focus({ preventScroll: true });
-  }
-
-  /** Says which line the pointer rests on, beside it. */
-  private tell(event: PointerEvent): void {
-    if (event.pointerType === "touch" || event.buttons) return this.untell();
-    const box = this.map.element.getBoundingClientRect();
-    const at: Point = [event.clientX - box.left, event.clientY - box.top];
-    const seen = (event.target as HTMLElement).closest("[data-item]") ? null : this.map.lineAt(at);
-    const said = seen ? this.lineSaid(seen) : "";
-    if (!said) return this.untell();
-    this.tip.textContent = said;
-    this.tip.hidden = false;
-    const x = Math.min(this.canvas.clientWidth - this.tip.offsetWidth - 8, at[0] + 14);
-    const y = Math.max(8, at[1] - this.tip.offsetHeight - 10);
-    this.tip.style.transform = `translate(${Math.max(8, x).toFixed(0)}px, ${y.toFixed(0)}px)`;
-  }
-
-  private untell(): void {
-    if (!this.tip.hidden) this.tip.hidden = true;
-  }
-
-  private lineSaid(seen: LineSeen): string {
-    const { words } = this.options;
-    const world = this.options.store.world.peek();
-    if (!world) return "";
-    const { nodes } = mapOf(world, words);
-    const name = (key: string) => nodes.find((node) => node.key === key)?.name ?? key.replace(/^m:/, "");
-    switch (seen.kind) {
-      case "hub":
-        return words.lineHub(name(seen.machine), seen.ms);
-      case "through":
-        return words.lineThrough(name(seen.machine), name(seen.through));
-    }
   }
 
   private closeCard(): void {

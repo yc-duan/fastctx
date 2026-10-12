@@ -299,6 +299,9 @@ export interface MachinesWords {
   registeredUnder(account: string): string;
   onlyLogins(accounts: string): string;
   via(through: string): string;
+  /** Under a machine's name on the drawing, when it reaches the hub
+   *  through another. */
+  viaShort(through: string): string;
   yours: string;
   ownedBy(account: string): string;
   /** Another's machine shared with this account; a member's, used as the
@@ -381,11 +384,6 @@ export interface MachinesWords {
   undo: string;
   confirm: string;
   more: string;
-  /** The lines on the drawing, for a pointer resting on one. */
-  lineHub(machine: string, ms: number | undefined): string;
-  lineThrough(machine: string, through: string): string;
-  lineDirect(a: string, b: string, ms: number | undefined): string;
-  lineDown(a: string, b: string, why: string | undefined): string;
   /** On a machine others may connect to directly, for a pointer resting on
    *  its ring. */
   takesDirect: string;
@@ -396,7 +394,6 @@ export interface MachinesWords {
   lentGroup(owner: string): string;
   /** Under a group's name on the drawing: how many, how many online. */
   groupSub(count: number, online: number): string;
-  groupFolded(count: number, online: number): string;
   /** A machine's direct links, in its details. */
   directRow: string;
   directUp(peer: string, ms: number | undefined): string;
@@ -473,6 +470,7 @@ export const zhMachines: MachinesWords = {
   registeredUnder: (account) => `${account} 的机器`,
   onlyLogins: (accounts) => `已登录 ${accounts}`,
   via: (through) => `经 ${through} 连着服务器`,
+  viaShort: (through) => `经 ${through}`,
   yours: "你的",
   ownedBy: (account) => `${account} 的`,
   sharedInShort: (owner) => `${owner} 共享`,
@@ -539,15 +537,10 @@ export const zhMachines: MachinesWords = {
   undo: "撤回",
   confirm: "确定",
   more: "细节",
-  lineHub: (machine, ms) => `${machine} 到服务器${ms !== undefined ? ` · ${ms} ms` : ""}`,
-  lineThrough: (machine, through) => `${machine} 自己的线断了，经 ${through} 去服务器`,
-  lineDirect: (a, b, ms) => `${a} 和 ${b} 直连${ms !== undefined ? ` · ${ms} ms` : ""}`,
-  lineDown: (a, b, why) => `${a} 和 ${b} 的直连断了，改经服务器${why ? `：${why}` : ""}`,
   takesDirect: "别的机器可以直接连到这台",
   mineGroup: "我的",
   lentGroup: (owner) => `借自 ${owner}`,
   groupSub: (count, online) => `${count} 台 · ${online} 在线`,
-  groupFolded: (count, online) => `${count} 台 · ${online} 在线`,
   directRow: "直连",
   directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
   directDown: (peer, why) => `${peer} 断了${why ? `：${why}` : ""}`,
@@ -642,6 +635,7 @@ export const enMachines: MachinesWords = {
   registeredUnder: (account) => `${account}'s machine`,
   onlyLogins: (accounts) => `signed in to ${accounts}`,
   via: (through) => `reaches the server through ${through}`,
+  viaShort: (through) => `via ${through}`,
   yours: "yours",
   ownedBy: (account) => `${account}'s`,
   sharedInShort: (owner) => `shared by ${owner}`,
@@ -708,15 +702,10 @@ export const enMachines: MachinesWords = {
   undo: "Undo",
   confirm: "Confirm",
   more: "Details",
-  lineHub: (machine, ms) => `${machine} to the server${ms !== undefined ? ` · ${ms} ms` : ""}`,
-  lineThrough: (machine, through) => `${machine}'s own line is down; it reaches the server through ${through}`,
-  lineDirect: (a, b, ms) => `${a} and ${b}, direct${ms !== undefined ? ` · ${ms} ms` : ""}`,
-  lineDown: (a, b, why) => `${a} and ${b} lost their direct link and go through the server${why ? `: ${why}` : ""}`,
   takesDirect: "Other machines may connect to it directly",
   mineGroup: "Mine",
   lentGroup: (owner) => `Lent by ${owner}`,
   groupSub: (count, online) => `${count} · ${online} online`,
-  groupFolded: (count, online) => `${count} · ${online} online`,
   directRow: "Direct",
   directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
   directDown: (peer, why) => `${peer} down${why ? `: ${why}` : ""}`,
