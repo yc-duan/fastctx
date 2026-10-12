@@ -6,8 +6,8 @@
 // that live elsewhere), largest first; one opens to show its parts, several
 // can be chosen and deleted together, on a red card. Then how long full
 // command output stays after the model has its answer, the cache with the
-// way to empty it, and how long each Claude Code login keeps its own
-// records, as its settings say.
+// way to empty it. A phone keeps no conversation as their home, so there the
+// page is its cache alone.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -44,10 +44,9 @@ export interface DataWords {
   cacheSaid: string;
   clear: string;
   cleared: string;
-  keeping: string;
-  keepingLine(login: string, days: number | null, set: boolean): string;
-  keepingSaid: string;
-  defaultLogin: string;
+  /** How long Claude Code keeps a session nobody touched, as its login's
+   *  settings say. */
+  keeps(days: number): string;
   failed: string;
   reading: string;
 }
@@ -90,10 +89,7 @@ export const zhData: DataWords = {
   cacheSaid: "点开过的文件、拍照留下的图与看过的对话；到期也会自己删",
   clear: "清空",
   cleared: "已清空",
-  keeping: "Claude Code 的保留期",
-  keepingLine: (login, days, set) => (days === null ? `${login}：读不到它的保留期` : `${login}：Claude Code 会删掉 ${days} 天没动过的会话记录${set ? "" : "（它的默认）"}`),
-  keepingSaid: "照那个登录自己的设置，World 只说明、不改",
-  defaultLogin: "默认登录",
+  keeps: (days) => `Claude Code 会删掉 ${days} 天没动过的会话记录`,
   failed: "读不到",
   reading: "正在量",
 };
@@ -134,10 +130,7 @@ export const enData: DataWords = {
   cacheSaid: "Files opened, photos taken and conversations viewed; they expire on their own too",
   clear: "Empty",
   cleared: "Emptied",
-  keeping: "Claude Code's own keeping",
-  keepingLine: (login, days, set) => (days === null ? `${login}: its keeping could not be read` : `${login}: Claude Code deletes sessions untouched for ${days} days${set ? "" : " (its default)"}`),
-  keepingSaid: "As that login's own settings say; World only tells, never changes it",
-  defaultLogin: "Default login",
+  keeps: (days) => `Claude Code deletes sessions untouched for ${days} days`,
   failed: "Couldn't read",
   reading: "Measuring",
 };
@@ -145,8 +138,10 @@ export const enData: DataWords = {
 export interface DataPageOptions {
   words: DataWords;
   head(title: string, actions?: string): string;
-  data(call: DataCall): Promise<DataReply>;
-  /** This device's own cache, where it keeps one. */
+  /** This computer's node; a phone has none. */
+  data?: ((call: DataCall) => Promise<DataReply>) | undefined;
+  /** This device's own cache of the conversations it viewed. On a computer
+   *  it lies inside World's directory, so the node's count holds it. */
   cache?: { size(): Promise<number>; clear(): Promise<void> } | undefined;
   confirm: Confirm;
   now(): Date;
@@ -185,14 +180,17 @@ export class DataPage implements Page {
   }
 
   private async read(): Promise<void> {
+    const { data, cache } = this.options;
     try {
-      const reply = await this.options.data({ do: "list" });
-      if (reply.data === "listed") this.space = reply;
+      if (data) {
+        const reply = await data({ do: "list" });
+        if (reply.data === "listed") this.space = reply;
+      }
+      if (cache) this.deviceCache = await cache.size();
       this.problem = null;
     } catch (error) {
       this.problem = detailOf(error);
     }
-    if (this.options.cache) this.deviceCache = await this.options.cache.size().catch(() => null);
     this.draw();
   }
 
@@ -200,11 +198,10 @@ export class DataPage implements Page {
     const { words } = this.options;
     const space = this.space;
     let html: string;
-    if (!space) {
-      html = this.problem ? `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>` : `<p class="feature-note">${escape(words.reading)}</p>`;
-    } else {
-      html = `${this.bar(space)}${this.conversations(space)}${this.output(space)}${this.cacheSection(space)}${this.keeping(space)}`;
-    }
+    if (this.problem) html = `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>`;
+    else if (space) html = `${this.bar(space)}${this.conversations(space)}${this.output(space)}${this.cacheSection(space.kinds.cache)}`;
+    else if (!this.options.data && this.deviceCache !== null) html = this.cacheSection(this.deviceCache);
+    else html = `<p class="feature-note">${escape(words.reading)}</p>`;
     redrawKeepingFocus(this.body, () => {
       this.body.innerHTML = html;
     });
@@ -216,11 +213,11 @@ export class DataPage implements Page {
     const sizes: Record<(typeof KIND_ORDER)[number], number> = {
       conversations: space.kinds.conversations + space.kinds.host_records,
       command_output: space.kinds.command_output,
-      cache: space.kinds.cache + (this.deviceCache ?? 0),
+      cache: space.kinds.cache,
       program: space.kinds.program,
       other: space.kinds.other,
     };
-    const total = KIND_ORDER.reduce((sum, kind) => sum + sizes[kind], 0) || 1;
+    const total = totalOf(space) || 1;
     const width = 600;
     let at = 4;
     const random = seeded("data-bar");
@@ -238,7 +235,7 @@ export class DataPage implements Page {
       .map((kind) => `<li><span class="data-swatch data-${kind}" aria-hidden="true"></span><span>${escape(words.kinds[kind])}</span><span class="data-size">${escape(size(sizes[kind]))}</span></li>`)
       .join("");
     return `<section class="data-top">
-      <p class="data-total" title="${escape(space.root)}">${escape(words.total(size(total)))}</p>
+      <p class="data-total" title="${escape(space.root)}">${escape(words.total(size(totalOf(space))))}</p>
       <svg class="data-bar" viewBox="0 0 ${width} 32" preserveAspectRatio="none" aria-hidden="true"><g filter="url(#pen-marker-lite)">${strokes}</g></svg>
       <ul class="data-legend">${legend}</ul>
     </section>`;
@@ -283,7 +280,10 @@ export class DataPage implements Page {
       [words.parts.records, size(one.parts.records)],
       [words.parts.command_output, size(one.parts.command_output)],
       ...(host ? [[words.parts.host(agent), host]] : []),
-      ...(one.group === "elsewhere" && one.lives_on ? [["", words.livesOn(one.lives_on)]] : []),
+    ];
+    const notes = [
+      ...(one.parts.host.kept === "kept" && one.parts.host.days ? [words.keeps(one.parts.host.days)] : []),
+      ...(one.group === "elsewhere" && one.lives_on ? [words.livesOn(one.lives_on)] : []),
     ];
     return `<li class="data-row${open ? " open" : ""}">
       <div class="data-row-line">
@@ -296,7 +296,7 @@ export class DataPage implements Page {
           <span class="data-size">${escape(size(one.bytes))}</span>
         </button>
       </div>
-      ${open ? `<dl class="data-parts">${parts.map(([label, value]) => `<div><dt>${escape(label!)}</dt><dd>${escape(value!)}</dd></div>`).join("")}</dl>` : ""}
+      ${open ? `<dl class="data-parts">${parts.map(([label, value]) => `<div><dt>${escape(label!)}</dt><dd>${escape(value!)}</dd></div>`).join("")}${notes.map((note) => `<p class="data-note">${escape(note)}</p>`).join("")}</dl>` : ""}
     </li>`;
   }
 
@@ -309,19 +309,10 @@ export class DataPage implements Page {
       ).join("")}</div></section>`;
   }
 
-  private cacheSection(space: Space): string {
+  private cacheSection(bytes: number): string {
     const { words } = this.options;
-    const bytes = space.kinds.cache + (this.deviceCache ?? 0);
     return `<section class="home-section data-section"><h2 class="section-title">${escape(words.cache)}<span class="data-size">${escape(size(bytes))}</span></h2>
       <p class="data-said">${escape(words.cacheSaid)}${this.options.cache ? `<button class="text-button quiet-button" type="button" data-act="clear">${escape(words.clear)}</button>` : ""}</p></section>`;
-  }
-
-  private keeping(space: Space): string {
-    const { words } = this.options;
-    const logins = space.claude_logins ?? [];
-    if (!logins.length) return "";
-    return `<section class="home-section data-section"><h2 class="section-title" title="${escape(words.keepingSaid)}">${escape(words.keeping)}</h2>
-      <ul class="data-keeping">${logins.map((login) => `<li${login.unreadable ? ` title="${escape(login.unreadable)}"` : ""}>${glyph("claude", 14)}<span>${escape(words.keepingLine(login.home ? (login.home.split(/[\\/]/).pop() ?? login.home) : words.defaultLogin, login.days ?? null, login.set))}</span></li>`).join("")}</ul></section>`;
   }
 
   private async click(event: Event): Promise<void> {
@@ -340,7 +331,7 @@ export class DataPage implements Page {
       return;
     }
     const days = target.closest<HTMLElement>("[data-days]")?.dataset.days;
-    if (days && this.space) {
+    if (days && this.space && this.options.data) {
       try {
         const reply = await this.options.data({ do: "output_days", days: Number(days) });
         if (reply.data === "output_days") this.space.output_days = reply.days;
@@ -369,7 +360,7 @@ export class DataPage implements Page {
       what: words.deleteWhat(chosen.length - guests, guests),
       go: words.deleteGo,
       act: async () => {
-        const reply = await this.options.data({ do: "delete", names: chosen.map((one) => one.name) });
+        const reply = await this.options.data!({ do: "delete", names: chosen.map((one) => one.name) });
         if (reply.data !== "deleted") return;
         const done = reply.deletions.filter((one) => one.outcome.outcome === "deleted");
         const freed = done.reduce((sum, one) => sum + (one.outcome.outcome === "deleted" ? one.outcome.bytes : 0), 0);
@@ -385,8 +376,16 @@ export class DataPage implements Page {
   }
 }
 
+/** Everything World keeps on this computer. */
+export function totalOf(space: Space): number {
+  const { kinds } = space;
+  return kinds.conversations + kinds.host_records + kinds.command_output + kinds.cache + kinds.program + kinds.other;
+}
+
+const size = (bytes: number) => bytesSaid(bytes);
+
 /** Bytes as a person reads them. */
-function size(bytes: number): string {
+export function bytesSaid(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KB", "MB", "GB", "TB"];
   let value = bytes / 1024;

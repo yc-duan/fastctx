@@ -25,7 +25,7 @@ const conversations: ConversationSpace[] = [
     title: "整理实验室服务器的备份脚本",
     last_activity: hoursAgo(26),
     bytes: 58 * MB,
-    parts: { records: 21 * MB, command_output: 25 * MB, host: { kept: "kept", bytes: 12 * MB } },
+    parts: { records: 21 * MB, command_output: 25 * MB, host: { kept: "kept", bytes: 12 * MB, days: 30 } },
   },
   {
     name: "codex-a51c",

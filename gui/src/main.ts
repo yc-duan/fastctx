@@ -50,7 +50,7 @@ import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
 import { SettingsPage } from "./app/settings";
-import { DataPage, enData, zhData } from "./app/data-page";
+import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
 import { specimenCache, specimenData } from "./specimen/data";
 import { ReaderPage } from "./app/reader";
@@ -154,8 +154,6 @@ import {
   remoteJoin,
   remoteOpen,
   remoteProbe,
-  retentionRead,
-  retentionWrite,
   journal as readJournal,
   journalAdd,
   look,
@@ -1436,7 +1434,7 @@ function show(next: Place): void {
       page = new DataPage({
         words: english ? enData : zhData,
         head,
-        data: live ? data : specimenData,
+        data: live ? (onComputer() ? data : undefined) : params.has("phone") ? undefined : specimenData,
         cache: live ? undefined : specimenCache,
         confirm: accountConfirm,
         now: () => new Date(),
@@ -1471,7 +1469,10 @@ function show(next: Place): void {
                 setup: setupState,
                 keep: keepHere,
                 removing: { plan: removalPlan, run: removeHere, finish: removeApp },
-                retention: { read: retentionRead, write: retentionWrite },
+                dataSize: async () => {
+                  const reply = await data({ do: "list" });
+                  return reply.data === "listed" ? totalOf(reply) : 0;
+                },
                 renewing: {
                   state: renewalState,
                   // The program the interface carries is put in place,

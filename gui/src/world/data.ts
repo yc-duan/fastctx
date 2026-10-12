@@ -58,7 +58,9 @@ export interface Parts {
   host: HostRecord;
 }
 
-export type HostRecord = { kept: "none" } | { kept: "kept"; bytes: number } | { kept: "gone_by_claude"; days?: number } | { kept: "missing" };
+/** The host's own record of it. For Claude Code, `days` is how long its
+ *  login keeps a session nobody touched, as that login's settings say. */
+export type HostRecord = { kept: "none" } | { kept: "kept"; bytes: number; days?: number } | { kept: "gone_by_claude"; days?: number } | { kept: "missing" };
 
 export interface ClaudeKeeping {
   home?: string;
