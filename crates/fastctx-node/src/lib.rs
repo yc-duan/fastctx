@@ -30,6 +30,7 @@ mod copy;
 mod delivery;
 mod desk;
 mod devices;
+mod features;
 mod file_read;
 mod file_search;
 mod firewall;
@@ -55,6 +56,7 @@ mod management;
 mod on;
 mod on_delivery;
 mod on_stop;
+mod own_collab;
 mod pages;
 mod program_collection;
 mod reach;
@@ -168,6 +170,9 @@ pub(crate) struct Node {
     /// Whether turns may start, while a guardian may ask for the World to
     /// be handed on.
     handoff: Arc<handoff::Handoff>,
+    /// Who watches the interface's optional parts (`features`).
+    features: features::Switches,
+    own_collab: own_collab::Keeping,
     renewal: renewal::Startup,
     supervised: bool,
     lifetime: fastctx_types::node_lifetime::NodeLifetime,
@@ -394,6 +399,8 @@ pub async fn run_prepared(
         // the capacity only bounds how many changes are told one by one.
         tools: tokio::sync::broadcast::channel(64).0,
         handoff: Arc::new(handoff::Handoff::default()),
+        features: features::Switches::default(),
+        own_collab: own_collab::Keeping::default(),
         renewal,
         supervised: supervision.is_some(),
         lifetime,

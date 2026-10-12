@@ -128,6 +128,29 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             }
         }
+        if let Call::WatchFeatures = call {
+            // An interface follows the switches for as long as it is open:
+            // as they are first, then after each change.
+            let mut changes = node.features.subscribe();
+            let mut told = None;
+            loop {
+                match crate::features::read(&node.world) {
+                    Ok(features) if told != Some(features) => {
+                        writer.send(&json(&NodeFrame::Features { id, features })).await?;
+                        told = Some(features);
+                    }
+                    Ok(_) => {}
+                    Err(failure) => {
+                        writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                        return writer.drain().await;
+                    }
+                }
+                tokio::select! {
+                    changed = changes.changed() => if changed.is_err() { return Ok(()) },
+                    _ = reader.recv() => return Ok(()),
+                }
+            }
+        }
         if let Call::Wait { jobs, receipt, parent } = call {
             // A wait keeps the connection until the jobs end; its leaving
             // hands back the ends the wait held (`waiting`).
@@ -891,16 +914,40 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::CollabRead { hub, account } => {
             users_voice(node, peer)?;
-            crate::world::hub_link(node, Some(&hub))?.collab_read(&account).map(Reply::CollabRead).map_err(Failure::new)
+            match account {
+                Some(account) => crate::world::hub_link(node, hub.as_ref())?
+                    .collab_read(&account)
+                    .map(Reply::CollabRead)
+                    .map_err(Failure::new),
+                None => {
+                    own_settings(hub.as_ref())?;
+                    Ok(Reply::CollabRead(fastctx_types::collab::CollabView {
+                        collab: crate::own_collab::read(&node.world)?,
+                        default_prompt: fastctx_types::collab_prompt::DEFAULT_PROMPT.to_string(),
+                    }))
+                }
+            }
         }
         Call::CollabWrite { hub, account, collab } => {
             users_voice(node, peer)?;
-            crate::world::hub_link(node, Some(&hub))?
-                .collab_write(&account, collab)
-                .await
-                .map(|version| Reply::CollabWritten { version })
-                .map_err(Failure::new)
+            match account {
+                Some(account) => crate::world::hub_link(node, hub.as_ref())?
+                    .collab_write(&account, collab)
+                    .await
+                    .map(|version| Reply::CollabWritten { version })
+                    .map_err(Failure::new),
+                None => {
+                    own_settings(hub.as_ref())?;
+                    crate::own_collab::write(node, collab).map(|version| Reply::CollabWritten { version })
+                }
+            }
         }
+        Call::Features => crate::features::read(&node.world).map(Reply::Features),
+        Call::SetFeature { feature, on } => {
+            users_voice(node, peer)?;
+            crate::features::set(&node.world, &node.features, feature, on).map(Reply::Features)
+        }
+        Call::WatchFeatures => Err(Failure::new("a features watch is answered as it goes, not at once")),
         Call::Nodes => nodes(node).await.map(Reply::Nodes),
         Call::Machines { resident, login, thread } => {
             let resident =
@@ -912,6 +959,16 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::here::set_anywhere(node, resident, machine, works_on).await.map(|()| Reply::Done)
         }
         Call::WatchTools { .. } => Err(Failure::new("a tools watch is answered as it goes, not at once")),
+    }
+}
+
+/// This computer's own model collaboration belongs to no hub.
+fn own_settings(hub: Option<&fastctx_types::HubName>) -> Result<(), Failure> {
+    match hub {
+        Some(hub) => Err(Failure::not_run(format!(
+            "name the account at {hub}; without one, the settings are this computer's own"
+        ))),
+        None => Ok(()),
     }
 }
 

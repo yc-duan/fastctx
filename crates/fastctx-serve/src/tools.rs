@@ -244,6 +244,7 @@ const RUN_WRITING: &str = "\
     >>>>>>> REPLACE
     EOF
   The SEARCH text must be in the file exactly once (`--all` replaces every one); all blocks apply, or none. Only the text replaced changes: the file keeps its encoding, BOM and line endings.
+  When the file or your text has lines like these markers, write the block's markers longer than those lines, all three the same length, such as <<<<<<<<< SEARCH, ========= and >>>>>>>>> REPLACE.
 - `write PATH` makes standard input the whole file, in the file's encoding and line endings; a new file is UTF-8 (`-n`: no final newline).
 - `edit` and `write` take absolute paths. Quote the here-document delimiter, <<'EOF', so bash leaves the text as written.
 ";
@@ -310,7 +311,8 @@ fn ask_colleague_definition(woken: bool, collab: &fastctx_types::collab::Offered
             Some(lives_on) => format!("It lives on {lives_on}, the machine configured for this callee, and its scripts start there; it reaches the other machines the same way you do, with `on`."),
             None => "It is an agent another account lent the user: it has no access to the computer it runs on, so each of its commands names its machine with `on`, and it reaches that account's machines.".to_string(),
         };
-        format!("{}: {}\nIt works for account {}. {lives}", callee.name, callee.use_when, callee.account)
+        let account = callee.account.as_ref().map(|account| format!("It works for account {account}. ")).unwrap_or_default();
+        format!("{}: {}\n{account}{lives}", callee.name, callee.use_when)
     }).collect::<Vec<_>>().join("\n\n");
     let mut tool = json!({
         "name": "ask_colleague",

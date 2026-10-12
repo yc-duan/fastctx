@@ -104,11 +104,11 @@ export class FeaturesPage implements Page {
       </ul>`;
     };
     draw(null);
+    // In no network, this computer keeps its own settings.
     const [first] = loginsOf(this.options.store.world.peek()?.accounts);
-    if (first)
-      readCollab(first.hub, first.account)
-        .then((view) => draw(view.collab.on))
-        .catch(() => draw(false));
+    readCollab(first?.hub ?? null, first?.account ?? null)
+      .then((view) => draw(view.collab.on))
+      .catch(() => draw(false));
   }
 
   /** 「对话」: its drawing and its switch; on, the drawing folds to the top. */
@@ -143,7 +143,7 @@ export class FeaturesPage implements Page {
     const logins = loginsOf(store.world.peek()?.accounts);
     this.account = logins[0] ?? null;
     this.draw();
-    if (this.account) void this.load();
+    void this.load();
     void this.ask();
     this.stop = effect(() => {
       store.world.get();
@@ -154,11 +154,11 @@ export class FeaturesPage implements Page {
     this.body.addEventListener("change", (event) => this.input(event));
   }
 
+  /** The account's settings, or in no network this computer's own. */
   private async load(): Promise<void> {
     const account = this.account;
-    if (!account) return;
     try {
-      this.view = await readCollab(account.hub, account.account);
+      this.view = await readCollab(account?.hub ?? null, account?.account ?? null);
       this.draft = structuredClone(this.view.collab);
       this.problem = null;
     } catch (error) {
@@ -336,9 +336,7 @@ export class FeaturesPage implements Page {
     const gives = `<ul class="feature-gives">${words.collaboration.gives
       .map(([mark, line]) => `<li><span class="feature-give-mark">${glyph(mark, 16)}</span><span>${escape(line)}</span></li>`)
       .join("")}</ul>`;
-    const turn = !this.account
-      ? `<p class="feature-note">${escape(words.noAccount)}</p>`
-      : !collab
+    const turn = !collab
         ? this.problem
           ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}<button class="text-button quiet-button" type="button" data-act="retry">${glyph("regenerate", 14)}<span>${escape(words.retry)}</span></button></p>`
           : `<p class="feature-note">${escape(words.reading)}</p>`

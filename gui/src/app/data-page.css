@@ -1,0 +1,281 @@
+/* What World keeps on this computer (data-page.ts): a hand-drawn bar in a
+   colour for each kind, the conversations as rows to open and choose, and
+   the few settings of how long things stay. */
+
+.data-page {
+  --data-conversations: var(--pen-clay);
+  --data-command_output: var(--pen-sky);
+  --data-cache: var(--pen-sage);
+  --data-program: var(--pen-graphite);
+  --data-other: var(--pen-rose);
+}
+
+.data-top {
+  margin-top: var(--space-6);
+}
+
+.data-total {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-reading);
+  font-size: calc(var(--body-size) * 1.15);
+  color: var(--text-strong);
+}
+
+.data-bar {
+  display: block;
+  width: 100%;
+  height: 32px;
+  overflow: visible;
+}
+
+.data-ink {
+  mix-blend-mode: var(--pen-blend);
+}
+
+.data-ink.data-conversations { fill: var(--data-conversations); }
+.data-ink.data-command_output { fill: var(--data-command_output); }
+.data-ink.data-cache { fill: var(--data-cache); }
+.data-ink.data-program { fill: var(--data-program); }
+.data-ink.data-other { fill: var(--data-other); }
+
+.data-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.data-legend li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.data-swatch {
+  align-self: center;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px 4px 3px 5px;
+}
+
+.data-swatch.data-conversations { background: var(--data-conversations); }
+.data-swatch.data-command_output { background: var(--data-command_output); }
+.data-swatch.data-cache { background: var(--data-cache); }
+.data-swatch.data-program { background: var(--data-program); }
+.data-swatch.data-other { background: var(--data-other); }
+
+.data-size {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* The size of a section sits after its rule, at the right edge. */
+.data-section .section-title::after {
+  order: 1;
+}
+
+.data-section .section-title .data-size {
+  order: 2;
+  font-family: var(--font-reading);
+  letter-spacing: 0;
+}
+
+.data-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: var(--space-3);
+}
+
+.data-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: var(--size-ui);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.data-tab:hover {
+  color: var(--text);
+  background: var(--fill-strong);
+}
+
+.data-tab.current,
+.data-tab.current:hover {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+}
+
+.data-tab .count {
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.data-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.data-row {
+  border-radius: var(--radius-m);
+  transition: background-color var(--hover) ease;
+}
+
+.data-row:hover,
+.data-row.open {
+  background: var(--fill);
+}
+
+.data-row-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+}
+
+.data-row-line input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--pen-clay);
+}
+
+.data-row-line input:disabled {
+  opacity: 0.35;
+}
+
+.data-row-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-3) 0 var(--space-1);
+  color: var(--text);
+  font-size: var(--size-ui);
+  text-align: left;
+}
+
+.data-agent {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+
+.data-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-when {
+  flex: none;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.data-row-open .data-size {
+  flex: none;
+  min-width: 5.5em;
+  text-align: right;
+}
+
+.data-parts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-3) calc(var(--space-3) + 16px + var(--space-2) + var(--space-1) + 16px + var(--space-2));
+  font-size: var(--size-small);
+}
+
+.data-parts > div {
+  display: contents;
+}
+
+.data-parts dt {
+  color: var(--text-3);
+}
+
+.data-note {
+  grid-column: 1 / -1;
+  margin: var(--space-1) 0 0;
+  color: var(--text-3);
+}
+
+.data-parts dd {
+  margin: 0;
+  color: var(--text-2);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The delete stays in reach while the list scrolls under it. */
+.data-acts {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3) 0;
+  background: linear-gradient(transparent, var(--bg) 35%);
+}
+
+.data-said {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.data-keeping {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.data-keeping li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.data-keeping li .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+@media (max-width: 520px) {
+  .data-when {
+    display: none;
+  }
+
+  .data-row-open .data-size {
+    min-width: 0;
+  }
+}

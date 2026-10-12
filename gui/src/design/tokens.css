@@ -76,6 +76,19 @@
   --fold: 220ms;
   --fold-easing: cubic-bezier(0.2, 0, 0, 1);
   --enter: 220ms;
+  /* A turn's line comes as if drawn: the rule pulled across the column
+     (--draw), the drop of ink and the words written in after it (--write,
+     beginning --write-after into the rule). It goes at once. */
+  --draw: 820ms;
+  --draw-easing: cubic-bezier(0.33, 0.05, 0.2, 1);
+  --write: 560ms;
+  --write-after: 120ms;
+  /* Words sent rise from the input into their place: up along
+     --send-easing, across along the slower --send-drift, so they travel on
+     a curve. */
+  --send: 560ms;
+  --send-easing: cubic-bezier(0.3, 0.2, 0.15, 1);
+  --send-drift: cubic-bezier(0.55, 0, 0.3, 1);
 }
 
 /* On a phone the body is a size larger: the same words are read at arm's
@@ -122,11 +135,9 @@
 
   --add-fg: #7cb27c;
   --add-line: #23863633;
-  --add-bar: #3fb950;
   --add-char: #2ea04366;
   --del-fg: #c96a6a;
   --del-line: #da363333;
-  --del-bar: #f85149;
   --del-char: #f8514966;
 
   --alive: #7cb27c;
@@ -182,11 +193,9 @@
 
   --add-fg: #7cb27c;
   --add-line: #23863633;
-  --add-bar: #3fb950;
   --add-char: #2ea04366;
   --del-fg: #c96a6a;
   --del-line: #da363333;
-  --del-bar: #f85149;
   --del-char: #f8514966;
 
   --alive: #7cb27c;
@@ -237,11 +246,9 @@
 
   --add-fg: #1c9c1c;
   --add-line: #dafbe180;
-  --add-bar: #1f883d;
   --add-char: #aceebb99;
   --del-fg: #c92626;
   --del-line: #ffebe980;
-  --del-bar: #cf222e;
   --del-char: #ff818266;
 
   --alive: #1c9c1c;
@@ -265,6 +272,10 @@
     --hover: 0ms;
     --fold: 0ms;
     --enter: 0ms;
+    --draw: 0ms;
+    --write: 0ms;
+    --write-after: 0ms;
+    --send: 0ms;
   }
 }
 

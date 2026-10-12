@@ -362,7 +362,19 @@ pub fn direct(args: DirectArgs) -> anyhow::Result<()> {
 
 pub fn accounts() -> anyhow::Result<()> {
     match call(Call::Accounts)? {
-        Reply::Accounts(reply) => print!("{}", render_accounts(&reply, Timestamp::now())),
+        Reply::Accounts(reply) => {
+            print!("{}", render_accounts(&reply, Timestamp::now()));
+            // In a network, this computer is to be there from boot
+            // (`world-network.md`, 登记了，就一直连着); when the service that
+            // does it was never installed, the user is told so.
+            let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
+            if !reply.hubs.is_empty() && !world.node_service().try_exists()? {
+                println!(
+                    "\nno system service keeps this computer's node: it runs only while something here started it. \
+                     `fastctx service node install`, as administrator, installs one."
+                );
+            }
+        }
         other => anyhow::bail!("the node answered something else: {other:?}"),
     }
     Ok(())
@@ -594,7 +606,7 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
         text.push_str(&format!("{}  this computer  {}\n", reply.machine, facts_line(facts)));
     }
     if reply.hubs.is_empty() {
-        text.push_str("logged in to no hub: `fastctx login HUB ACCOUNT` logs in\n");
+        text.push_str("in no network: this computer is the only machine\n");
     }
     for hub in &reply.hubs {
         text.push_str(&hub_nodes(hub, now));

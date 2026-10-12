@@ -11,9 +11,9 @@ pub(super) fn edit(writer: &Writer, request: EditRequest, seen: &SeenFiles) -> R
     edit_file(
         writer,
         &request.file_path,
-        &[Block { old: &request.old_string, new: &request.new_string }],
+        &[Block { old: &request.old_string, new: &request.new_string, markers: None }],
         request.replace_all,
-        false,
+        None,
         request.encoding.as_deref(),
         seen,
     )
@@ -25,7 +25,15 @@ pub(super) fn edit_blocks(
     seen: &SeenFiles,
 ) -> Result<WriteResult, WriteError> {
     let blocks = blocks::parse(&request.input)?;
-    edit_file(writer, &request.file_path, &blocks, request.replace_all, true, request.encoding.as_deref(), seen)
+    edit_file(
+        writer,
+        &request.file_path,
+        &blocks,
+        request.replace_all,
+        Some(&request.input),
+        request.encoding.as_deref(),
+        seen,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -34,7 +42,8 @@ fn edit_file(
     path: &Path,
     blocks: &[Block<'_>],
     replace_all: bool,
-    numbered: bool,
+    // The SEARCH/REPLACE input the blocks were read from, when they were.
+    input: Option<&str>,
     encoding: Option<&str>,
     seen: &SeenFiles,
 ) -> Result<WriteResult, WriteError> {
@@ -46,14 +55,14 @@ fn edit_file(
         None => target.encoding(&before, seen)?,
     };
     let mut document = Source::decode(before.bytes.clone(), selection)?;
-    // Literal markers can form a syntactically valid second block. Parsing the
-    // input alone cannot distinguish that collision from an intended batch.
-    if numbered && blocks::contains_marker(&document.text) {
-        return Err(format!(
-            "{} contains a SEARCH/REPLACE marker on a whole line; edit cannot distinguish literal markers from block boundaries. Use write for this file",
-            path.display()
-        ).into());
+    // A marker line of the file copied into a block of the same marker
+    // length would be read as a boundary: the input alone cannot tell.
+    if let Some(input) = input
+        && let Some(reason) = blocks::ambiguity(&document.text, blocks, input)
+    {
+        return Err(format!("{}: {reason}", path.display()).into());
     }
+    let numbered = input.is_some();
     let original_text_hash = crate::files::content_hash(document.text.as_bytes());
     let mut ranges = Vec::new();
     let all_option = if numbered { "--all" } else { "replace_all: true" };

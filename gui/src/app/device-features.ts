@@ -9,10 +9,13 @@ import { signal, type Signal } from "./signals";
 
 const KEPT = "feature.conversations";
 
-/** Where the value lives when not in this window: the node, on a computer. */
+/** Where the value lives when not in this window: the node, on a computer;
+ *  the device's own directory, on a phone. `follow` hears a change made
+ *  elsewhere, such as in the TUI. */
 export interface FeatureSeam {
   read(): Promise<boolean>;
   write(on: boolean): Promise<void>;
+  follow(heard: (on: boolean) => void): void;
 }
 
 class DeviceFeatures {
@@ -23,6 +26,10 @@ class DeviceFeatures {
    *  from now on. */
   attach(seam: FeatureSeam): void {
     this.seam = seam;
+    seam.follow((on) => {
+      this.conversations.set(on);
+      keep(on);
+    });
     void seam.read().then(
       (on) => {
         this.conversations.set(on);

@@ -8,8 +8,15 @@ __fastctx_state_helper="${BASH_SOURCE[0]%/*}/state.bash"
 
 # A profile may have rewritten PATH (Git's and Debian's both do): the
 # World's programs come first again.
+#
+# The functions below call the World's program by its path. A function or
+# alias named `fastctx` or `command` cannot stand in for a path, and a plain
+# call keeps every exit-status rule bash has; `builtin command` does not:
+# a failure under it ends a `set -e` script even inside `if`, `||` or `!`.
+__fastctx_program=
 if [ -n "${FASTCTX_BIN-}" ]; then
     PATH="$FASTCTX_BIN:$PATH"
+    __fastctx_program=$FASTCTX_BIN/fastctx
 fi
 unset FASTCTX_BIN
 
@@ -54,14 +61,19 @@ __fastctx_state() {
     [ "$1" = 0 ] && [ "$2" = 0 ] || builtin return 255
 }
 
-on() { __fastctx_on 0 - "$@"; }
+# Each call that can fail is followed by `|| builtin return`: a failure
+# inside a function would otherwise fire an inherited ERR trap (set -E) a
+# second time, and once even under `!`, which a program typed directly never
+# does. The function then fails with the program's status, where bash
+# applies its rules once, as for the program.
+on() { __fastctx_on 0 - "$@" || builtin return; }
 
 # The first two arguments describe an on-to-on pipe; the remainder are the
 # script's words. No collector local can shadow one of its variables.
 __fastctx_on() {
     case $#:${3-} in
-        2:) builtin command fastctx on; builtin return ;;
-        3:-h | 3:--help) builtin command fastctx on --help; builtin return ;;
+        2:) "$__fastctx_program" on || builtin return; builtin return ;;
+        3:-h | 3:--help) "$__fastctx_program" on --help || builtin return; builtin return ;;
     esac
     if [ $# -eq 4 ] && [[ $4 == *[[:space:]\;\|\&\<\>\$\`\(\)]* ]]; then
         builtin printf '%s\n' "on: '$4' is one word, the name of a program to run on $3. For a script, give it on standard input: on $3 <<'EOF' ... EOF" >&2
@@ -78,8 +90,7 @@ __fastctx_on() {
     fi
     if [ "$3" = 1 ] && [ -p /dev/stdin ]; then builtin set -- "$@" --pipe-in; fi
     if [ "$4" != - ] && [ -p /dev/stdout ]; then builtin set -- "$@" --pipe-to "$4"; fi
-    builtin command fastctx on "${@:6}" --shell-parent "$2" --state "$1.state" -- "$5"
-    builtin return $?
+    "$__fastctx_program" on "${@:6}" --shell-parent "$2" --state "$1.state" -- "$5" || builtin return
 }
 
 # An `on` the script pipes straight from or into another, as the run tool
@@ -87,18 +98,18 @@ __fastctx_on() {
 # first word is 1 when its input comes from an `on`, the second the machine
 # of the `on` its output goes to, or -.
 __fastctx_on_pipe() {
-    __fastctx_on "$@"
+    __fastctx_on "$@" || builtin return
 }
 
 # The World's ways of writing files (world-write.md). Functions, because
 # these names belong elsewhere too: Windows has an editor called `edit`,
 # Linux a `write` that messages other users.
-edit() { builtin command fastctx edit "$@"; }
-write() { builtin command fastctx write "$@"; }
-apply_patch() { builtin command fastctx apply-patch "$@"; }
+edit() { "$__fastctx_program" edit "$@" || builtin return; }
+write() { "$__fastctx_program" write "$@" || builtin return; }
+apply_patch() { "$__fastctx_program" apply-patch "$@" || builtin return; }
 
 export -f on __fastctx_on __fastctx_on_pipe __fastctx_state __fastctx_select edit write apply_patch
-export __fastctx_state_helper __fastctx_login __fastctx_flags __fastctx_carried_vars __fastctx_carried_funcs __fastctx_carried_opts
+export __fastctx_program __fastctx_state_helper __fastctx_login __fastctx_flags __fastctx_carried_vars __fastctx_carried_funcs __fastctx_carried_opts
 
 # Restore last: options such as verbose and nounset govern the requested
 # script, not the implementation of the World's prelude. A failed restore
