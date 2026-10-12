@@ -244,6 +244,7 @@ const RUN_WRITING: &str = "\
     >>>>>>> REPLACE
     EOF
   The SEARCH text must be in the file exactly once (`--all` replaces every one); all blocks apply, or none. Only the text replaced changes: the file keeps its encoding, BOM and line endings.
+  When the file or your text has lines like these markers, write the block's markers longer than those lines, all three the same length, such as <<<<<<<<< SEARCH, ========= and >>>>>>>>> REPLACE.
 - `write PATH` makes standard input the whole file, in the file's encoding and line endings; a new file is UTF-8 (`-n`: no final newline).
 - `edit` and `write` take absolute paths. Quote the here-document delimiter, <<'EOF', so bash leaves the text as written.
 ";
