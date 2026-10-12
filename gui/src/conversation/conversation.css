@@ -580,12 +580,80 @@
   color: var(--wrong);
 }
 
-.row-thinking.withheld .row-action,
-.group-head.withheld {
+/* Thinking reads as one phrase, "Thought for 4s", not as a verb in the
+   stretch's column: its section's title after it, the tokens at the end. */
+.row-thinking > .row-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.row-said {
+  flex: none;
+  white-space: nowrap;
+}
+
+.row-thinking.row-running .row-said {
+  color: var(--text);
+}
+
+.row-figures {
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thinking's spark: before a stretch that is only thinking, and in the rail
+   of a thinking row; it twinkles while the model thinks. */
+.group-mark {
+  display: none;
+  flex: none;
   color: var(--text-3);
 }
 
-.group-head.withheld .glyph {
+.group-head.thought .group-mark {
+  display: inline-grid;
+}
+
+.group-head.thought .group-mark .glyph {
+  transform: none;
+}
+
+.group-head.thought.going .group-mark .glyph,
+.row-thinking.row-running > .rail .glyph {
+  color: var(--pen-clay);
+  animation: twinkle 1.6s ease-in-out infinite;
+}
+
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82) rotate(12deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .group-head.thought.going .group-mark .glyph,
+  .row-thinking.row-running > .rail .glyph {
+    animation: none;
+  }
+}
+
+/* A heading with nothing beneath to open: thinking whose words were kept. */
+.group-head.bare {
+  cursor: default;
+}
+
+.group-head.bare:hover {
+  color: var(--text-2);
+}
+
+.group-head.bare > .glyph {
   display: none;
 }
 

@@ -832,7 +832,8 @@ export class NewTalk {
     if (option && line) {
       const who = this.who(option, line);
       const asking = !this.factsOf(option) && this.askingAll;
-      const sub = option.lent ? words.lentBy(option.lent.owner ?? "") : option.written;
+      const lent = option.lent;
+      const sub = lent ? [words.lentBy(lent.owner ?? ""), lent.until ? words.lentUntil(new Date(lent.until), new Date()) : ""].filter(Boolean).join(" · ") : option.written;
       const works = !option.lent && this.worksOn ? this.worksOn : null;
       const said = [programName(option.agent), sub, who, works ? `${words.worksOn} ${works}` : ""].filter(Boolean).join(" · ");
       chips.push(

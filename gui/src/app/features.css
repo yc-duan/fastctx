@@ -1,6 +1,6 @@
-/* The features: a card for each, and each its own page. The storyboard
-   draws itself stroke by stroke, a frame at a time; settings are solid
-   fields on the paper. */
+/* The features: a card for each, and each its own page. A feature's film
+   plays as large as the page allows; settings are solid fields on the
+   paper. */
 .features-page {
   display: flex;
   flex-direction: column;
@@ -23,7 +23,13 @@
   gap: var(--space-3);
 }
 
+/* The cards in a row share the tallest one's height. */
+.feature-cards > li {
+  display: flex;
+}
+
 .feature-card {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -87,127 +93,12 @@
   color: var(--text-3);
 }
 
-/* The storyboard. */
-.storyboard {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
-  gap: var(--space-4);
-  width: 100%;
-}
-
-.sb-frame {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-/* On a phone the frames are a strip swiped one by one, so turning the
-   feature on is right under the pictures rather than four screens down. */
-@media (max-width: 760px) {
-  .feature-intro .storyboard {
-    grid-template-columns: none;
-    grid-auto-flow: column;
-    grid-auto-columns: 84%;
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-    scrollbar-width: none;
-    padding-bottom: var(--space-1);
-  }
-
-  .feature-intro .sb-frame {
-    scroll-snap-align: center;
-  }
-
-  .feature-intro .sb-frame.waiting * {
-    animation-play-state: paused;
-  }
-
-  .feature-intro .feature-turn {
-    min-height: 44px;
-    min-width: 50%;
-  }
-}
-
-.sb-frame svg {
-  width: 100%;
-  height: auto;
-  border-radius: var(--radius-m);
-  background: var(--bg-sunken);
-}
-
-.sb-frame figcaption {
-  font-family: var(--font-reading);
-  font-size: var(--size-small);
-  line-height: 1.6;
-  color: var(--text-2);
-  animation: sb-caption 420ms ease-out both;
-}
-
-.sb-stroke {
-  animation: sb-draw 320ms ease-out both;
-}
-
-.sb-graphite {
-  fill: var(--pen-graphite);
-}
-
-.sb-ink {
-  fill: var(--text-2);
-}
-
-.sb-clay {
-  fill: var(--pen-clay);
-}
-
-.sb-mark {
-  color: var(--text-2);
-  animation: sb-caption 300ms ease-out both;
-}
-
-@keyframes sb-draw {
-  from {
-    clip-path: inset(0 100% 0 0);
-    opacity: 0.3;
-  }
-  to {
-    clip-path: inset(0 0 0 0);
-    opacity: 1;
-  }
-}
-
-@keyframes sb-caption {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-}
-
-/* Turned on, the storyboard waits folded at the top: small, still. */
+/* Turned on, a still of the film waits at the top. */
 .feature-top {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: var(--space-3);
-}
-
-.storyboard-strip {
-  flex: 1 1 420px;
-  min-width: 0;
-}
-
-.storyboard.folded {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-.storyboard.folded figcaption {
-  display: none;
-}
-
-.storyboard.folded .sb-stroke,
-.storyboard.folded .sb-mark {
-  animation: none;
 }
 
 .feature-top-acts {
@@ -476,12 +367,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sb-stroke,
-  .sb-mark,
-  .sb-frame figcaption {
-    animation: none;
-  }
-
   .effort-name,
   .feature-save-bar {
     transition: none;
@@ -539,4 +424,85 @@
 
 .feature-after {
   margin: var(--space-4) 0 0;
+}
+
+/* A feature's film: as large as the page allows, with room under it for
+   its words and the button that turns the feature on, all on one screen. */
+.features-body.features-film {
+  width: min(100%, 1280px);
+}
+
+.feature-intro .feature-film {
+  width: min(100%, calc((100dvh - var(--film-room, 300px)) * 16 / 9));
+}
+
+.feature-intro.with-gives {
+  --film-room: 400px;
+}
+
+.film[data-shape="tall"] {
+  width: 100%;
+}
+
+/* On, a still of the film at the top, to be watched again over the page. */
+.feature-still {
+  flex: 0 1 280px;
+  min-width: 180px;
+  padding: 0;
+  border-radius: var(--radius-l);
+  cursor: pointer;
+}
+
+.feature-still .film-caption {
+  display: none;
+}
+
+.feature-still .film-stage {
+  transition: opacity var(--hover) ease;
+}
+
+.feature-still:hover .film-stage {
+  opacity: 0.85;
+}
+
+.film-theater {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6) var(--gutter);
+  background: rgba(0, 0, 0, 0.62);
+  animation: film-theater-in var(--fold) var(--fold-easing) both;
+}
+
+.film-theater-box {
+  width: min(100%, 1280px, calc((100dvh - 160px) * 16 / 9));
+}
+
+.film-theater-close {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + var(--space-3));
+  right: var(--space-3);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.film-theater-close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Over the dimmed page the words are light in every theme. */
+.film-theater .film-caption {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+@keyframes film-theater-in {
+  from {
+    opacity: 0;
+  }
 }

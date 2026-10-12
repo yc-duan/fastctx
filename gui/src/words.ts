@@ -48,11 +48,19 @@ export interface Words {
   act(act: Act, tense: Tense): string;
   failedTool(name: string): string;
   tally(tally: Tally): string;
-  thought: string;
+  /** Thinking under way, as both hosts say it, in every language. */
   thinking: string;
-  thoughtWithheld: string;
-  /** A thought's row where the host gave none of its words. */
-  thoughtHidden: string;
+  /** Thinking under way, on the section its words are now under. */
+  thinkingAbout(title: string): string;
+  /** Thinking that is over, its length not told. */
+  thought: string;
+  /** Thinking that is over: "Thought for 4s". */
+  thoughtFor(ms: number): string;
+  /** The tokens a run of thinking took: "1.2k tokens". */
+  thinkingTokens(n: number): string;
+  /** What the turn's line says the model is doing, one picked for each
+   *  turn, as the hosts' own spinners say it. */
+  lively: readonly string[];
   plan: string;
   copyMessage: string;
   copyCode: string;
@@ -91,8 +99,6 @@ export interface Words {
   /** Under the first words, when the conversation could not begin; the
    *  reason follows as it was given. */
   startFailed: string;
-  /** The turn's line while the agent writes its answer. */
-  answering: string;
   idle: string;
   /** The user removed it from the World: kept to read, not to speak to. */
   removed: string;
@@ -270,13 +276,15 @@ export const zh: Words = {
     if (t.asked) parts.push(`调用模型 ${t.asked} 次`);
     if (t.other) parts.push(`调用 ${t.other} 个工具`);
     let heading = parts.join(" · ");
-    if (!heading) heading = t.thinking ? "思考" : "活动";
+    if (!heading) heading = t.thinking ? "Thought" : "活动";
     return t.failed ? `${heading} · ${t.failed} 个失败` : heading;
   },
-  thought: "思考",
-  thinking: "正在思考",
-  thoughtWithheld: "思考内容未公开",
-  thoughtHidden: "内容未公开",
+  thinking: "Thinking…",
+  thinkingAbout: (title) => `Thinking… ${title}`,
+  thought: "Thought",
+  thoughtFor: (ms) => `Thought for ${clock(ms)}`,
+  thinkingTokens: (n) => tokensSaid(n),
+  lively: ["琢磨", "推敲", "研墨", "构思", "酝酿", "斟酌", "盘算", "落笔", "打磨", "掂量", "端详", "运笔"],
   plan: "计划",
   copyMessage: "复制",
   copyCode: "复制代码",
@@ -320,7 +328,6 @@ export const zh: Words = {
   working: "工作中",
   starting: "启动中",
   startFailed: "启动失败",
-  answering: "书写回答",
   idle: "空闲",
   removed: "已移除",
   removedNote: "已移除，对话仅供查看",
@@ -481,14 +488,16 @@ export const en: Words = {
     if (t.asked) parts.push(`called ${plural(t.asked, "model", "models")}`);
     if (t.other) parts.push(plural(t.other, "tool call", "tool calls"));
     let heading = parts.join(", ");
-    if (!heading) heading = t.thinking ? "Thinking" : "Activity";
+    if (!heading) heading = t.thinking ? "Thought" : "Activity";
     heading = heading.charAt(0).toUpperCase() + heading.slice(1);
     return t.failed ? `${heading} · ${t.failed} failed` : heading;
   },
+  thinking: "Thinking…",
+  thinkingAbout: (title) => `Thinking… ${title}`,
   thought: "Thought",
-  thinking: "Thinking",
-  thoughtWithheld: "Thinking not shared",
-  thoughtHidden: "not shared",
+  thoughtFor: (ms) => `Thought for ${clock(ms)}`,
+  thinkingTokens: (n) => tokensSaid(n),
+  lively: ["Mulling", "Inking", "Sketching", "Pondering", "Weighing", "Drafting", "Tinkering", "Musing", "Puzzling", "Whittling", "Penciling", "Ruminating"],
   plan: "Plan",
   copyMessage: "Copy",
   copyCode: "Copy code",
@@ -532,7 +541,6 @@ export const en: Words = {
   working: "Working",
   starting: "Starting",
   startFailed: "Couldn't start",
-  answering: "Writing",
   idle: "Idle",
   removed: "Removed",
   removedNote: "Removed; the conversation is read-only",
@@ -685,4 +693,22 @@ function endedIn(how: string, say: EndedWords): string {
   else if ((match = /^turn (\w+)(?:: (.*))?$/.exec(what))) said = say.turn(match[1], match[2] ?? null);
   else said = what;
   return said + took;
+}
+
+/** A span as the hosts write it after "Thought for": 4s, 1m 4s, 1h 2m;
+ *  never under a second. */
+function clock(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
+  return minutes % 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${Math.floor(minutes / 60)}h`;
+}
+
+/** Tokens as the hosts count them in a line: 640 tokens, 1.2k tokens. */
+function tokensSaid(n: number): string {
+  if (n === 1) return "1 token";
+  if (n < 1000) return `${n} tokens`;
+  const short = (value: number, unit: string) => `${value >= 100 ? Math.round(value) : Number(value.toFixed(1))}${unit} tokens`;
+  return n < 1_000_000 ? short(n / 1000, "k") : short(n / 1_000_000, "M");
 }

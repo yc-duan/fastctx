@@ -1,5 +1,5 @@
 // The features that change how this device's interface looks
-// (`world-gui.md`, 功能): kept per device, not per account. 「对话」 is the
+// (`world-gui.md`, 功能): kept per device, not per account. The workbench is the
 // first: off, the interface is this computer's agents, its machines and the
 // features; on, the front page, new conversations, the projects and the
 // conversations grow in the sidebar. A computer's interface and its TUI share

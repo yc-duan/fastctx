@@ -31,7 +31,7 @@ import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
 import { effortLabel } from "./effort-slider";
-import { visible, withheld, type Activity, type Block, type Conversation, type Entry, type SendState, type ShownAttachment } from "./model";
+import { isThinking, runsOf, type Activity, type Block, type Conversation, type Entry, type SendState, type ShownAttachment } from "./model";
 import { escape, plain, render } from "./prose";
 import { counts, numbered, parse } from "./diff";
 import { DiffLines, RemoteDiff, diffPaint, memoryDiff } from "./diff-lines";
@@ -477,7 +477,8 @@ export class ConversationView {
   }
   private followed = true;
 
-  /** What the line at the foot says, or null when no turn is under way. */
+  /** What the line at the foot says, or null when no turn is under way:
+   *  what the model is on is said above, by the stretch that holds it. */
   private lineSays(blocks: readonly Block[]): LineSays | null {
     if (!this.followed) return null;
     const conversation = this.conversation;
@@ -492,25 +493,10 @@ export class ConversationView {
       const block = blocks[index]!;
       if (!(block.kind === "heard" && block.sending !== undefined && block.intoTurn)) last = block;
     }
-    // A card waiting at the end says what it waits for, and a stretch under
-    // way at the end says the step itself: the line does not say it again.
+    // A card waiting at the end says what it waits for: the line does not
+    // say it again.
     if (waiting) return { kind: "waiting", said: !(last?.kind === "ask" && last.state.state === "waiting") };
-    const since = conversation.turnBegan();
-    const going =
-      last?.kind === "activity-group" &&
-      last.members.some((member) => (member.kind === "tool" && member.ended === null) || (member.kind === "prose" && member.writing));
-    if (going) return { kind: "working", step: null, since };
-    const { words } = this.context;
-    const doing = conversation.doing();
-    let step: string | null = null;
-    if (doing?.kind === "tool") {
-      const line = headline(doing.tool, null, words, (path) => conversation.attachmentName(path));
-      step = [line.action, line.object].filter(Boolean).join(" ");
-    } else if (doing?.kind === "prose" && doing.prose === "thinking") {
-      const titles = [...doing.text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]);
-      step = titles.length ? `${words.thought}：${titles[titles.length - 1]}` : words.thinking;
-    } else if (doing?.kind === "prose") step = words.answering;
-    return { kind: "working", step, since };
+    return { kind: "working", since: conversation.turnBegan() };
   }
 
   /** Words just sent rise from the input into their place, once the page
@@ -960,7 +946,7 @@ export class ConversationView {
     let stretch = slot.stretch;
     if (!stretch) {
       const open = this.openStretches.has(group.key);
-      slot.element.innerHTML = `<button class="group-head" type="button" data-fold="${escape(group.key)}" aria-expanded="${open}"><span class="group-title"></span><span class="row-stats group-stats"></span><span class="group-time"></span>${glyph("chevron", 16)}</button><div class="fold-box group-box"${open ? "" : ' style="height:0" inert'}><div class="rows"></div></div>`;
+      slot.element.innerHTML = `<button class="group-head" type="button" data-fold="${escape(group.key)}" aria-expanded="${open}"><span class="group-mark">${glyph("thinking", 16)}</span><span class="group-title"></span><span class="row-stats group-stats"></span><span class="group-time"></span>${glyph("chevron", 16)}</button><div class="fold-box group-box"${open ? "" : ' style="height:0" inert'}><div class="rows"></div></div>`;
       stretch = {
         head: slot.element.querySelector<HTMLButtonElement>(".group-head")!,
         box: slot.element.querySelector<HTMLElement>(".group-box")!,
@@ -978,9 +964,12 @@ export class ConversationView {
     if (this.openStretches.has(group.key)) this.rows(stretch, group);
   }
 
-  /** A stretch's rows as its members now stand. */
+  /** A stretch's rows as its members now stand: thinking with nothing
+   *  between is one row, and a stretch that is only thinking holds its
+   *  words, its heading having said the rest. */
   private rows(stretch: Stretch, group: Activity): void {
-    const rows = group.members.filter(visible).flatMap((member) => this.rowsOf(member));
+    const runs = runsOf(group.members);
+    const rows = thoughtOnly(group) ? [this.thoughtWords(runs[0] as ProseEntry[])] : runs.flatMap((run) => this.rowsOf(run));
     const present = new Set<string>();
     let previous: HTMLElement | null = null;
     for (const row of rows) {
@@ -1016,31 +1005,37 @@ export class ConversationView {
 
   /** A stretch's heading: while it runs, the step it is on, how many steps
    *  and for how long; once done, what it did, the lines it changed, and
-   *  how long it took. The words change in place; the line keeps its
-   *  height. */
+   *  how long it took. A stretch that is only thinking says how long it
+   *  thought and the tokens it took, and opens only where there are words.
+   *  The words change in place; the line keeps its height. */
   private heading(stretch: Stretch, group: Activity): void {
     const { words } = this.context;
     const tools = group.members.filter((member): member is ToolEntry => member.kind === "tool");
-    const thinking = group.members.filter((member) => member.kind === "prose");
-    const steps = group.members.filter(visible).length;
-    const writing = thinking.find((member) => member.kind === "prose" && member.writing);
+    const thinking = group.members.filter(isThinking);
+    const steps = runsOf(group.members).length;
+    const writing = thinking.find((member) => member.writing);
     const runningTool = tools.find((tool) => tool.ended === null);
     const running = !!runningTool || !!writing;
-    // Thinking the host kept to itself is no row of its own; a stretch that
-    // was nothing else says so on its own line, which opens to nothing.
-    const bare = !running && withheld(group);
-    stretch.head.classList.toggle("withheld", bare);
+    const only = thoughtOnly(group);
+    // Thinking without words has nothing to open.
+    const bare = only && !thinking.some((member) => member.text.trim());
+    stretch.head.classList.toggle("bare", bare);
+    stretch.head.classList.toggle("thought", only);
     stretch.head.disabled = bare;
     let title: string;
     let stats = "";
-    if (bare) title = words.thoughtWithheld;
-    else if (runningTool) {
+    let figures = "";
+    if (runningTool) {
       const line = headline(runningTool.tool, null, words, (path) => this.conversation.attachmentName(path));
       title = [line.action, line.object].filter(Boolean).join(" ");
-    } else if (writing && writing.kind === "prose") {
-      const titles = [...writing.text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]);
-      const last = titles[titles.length - 1];
-      title = last ? `${words.thought}：${last}` : words.thinking;
+    } else if (writing) {
+      const last = sections(writing.text).at(-1);
+      title = last ? words.thinkingAbout(last) : words.thinking;
+    } else if (only) {
+      const took = thoughtTook(thinking);
+      title = took === null ? words.thought : words.thoughtFor(took);
+      const tokens = this.conversation.thinkingTokens(thinking);
+      if (tokens !== null) figures = words.thinkingTokens(tokens);
     } else {
       title = groupHeading(tools, thinking.length, words);
       let added = 0;
@@ -1059,12 +1054,14 @@ export class ConversationView {
       }
       stats = added || removed ? `<span class="add">+${added}</span><span class="del">−${removed}</span>` : "";
     }
+    // Its clock runs from when its first step began, thinking included.
     let began: number | null = null;
     let last: number | null = null;
-    for (const tool of tools) {
-      if (began === null || tool.began < began) began = tool.began;
-      if (tool.ended && (last === null || tool.ended.at > last)) last = tool.ended.at;
+    for (const member of group.members) {
+      const start = member.kind === "tool" ? member.began : isThinking(member) ? (member.began ?? null) : null;
+      if (start !== null && (began === null || start < began)) began = start;
     }
+    for (const tool of tools) if (tool.ended && (last === null || tool.ended.at > last)) last = tool.ended.at;
     const ended = !running && tools.length && tools.every((tool) => tool.ended) ? last : null;
     const titleElement = stretch.head.querySelector<HTMLElement>(".group-title")!;
     if (titleElement.textContent !== title) {
@@ -1088,7 +1085,7 @@ export class ConversationView {
     } else {
       delete time.dataset.since;
       this.clocks.delete(time);
-      const said = [running || steps < 2 ? "" : words.steps(steps), began !== null && ended !== null ? words.took(ended - began) : ""].filter(Boolean).join(" · ");
+      const said = only ? figures : [running || steps < 2 ? "" : words.steps(steps), began !== null && ended !== null ? words.took(ended - began) : ""].filter(Boolean).join(" · ");
       if (time.textContent !== said) time.textContent = said;
     }
   }
@@ -1102,16 +1099,23 @@ export class ConversationView {
         this.clocks.delete(clock);
         continue;
       }
-      const said = [words.steps(Number(clock.dataset.steps)), words.took(Date.now() - Number(clock.dataset.since))].join(" · ");
+      const steps = Number(clock.dataset.steps);
+      const said = [steps < 2 ? "" : words.steps(steps), words.took(Date.now() - Number(clock.dataset.since))].filter(Boolean).join(" · ");
       if (clock.textContent !== said) clock.textContent = said;
     }
     clearTimeout(this.ticking);
     if (this.clocks.size) this.ticking = window.setTimeout(() => this.tick(), 1000);
   }
 
-  /** The rows a member stands for: a run's writes have one each, after its
-   *  own, which a run that did nothing but write does not have. */
-  private rowsOf(member: Entry): Row[] {
+  /** The rows a run of members stands for: thinking with nothing between
+   *  is one row; a command's writes have one each, after its own, which a
+   *  command that did nothing but write does not have. */
+  private rowsOf(run: Entry[]): Row[] {
+    const member = run[0]!;
+    if (isThinking(member)) {
+      const thoughts = run as ProseEntry[];
+      return [{ key: member.key, signature: this.runSignature(thoughts), html: () => this.thinkingRow(thoughts, this.entering(member.key)) }];
+    }
     const own: Row = { key: member.key, signature: this.memberSignature(member), html: () => this.member(member) };
     const writes = member.kind === "tool" ? (member.tool.run?.writes ?? []) : [];
     if (!writes.length || member.kind !== "tool") return [own];
@@ -1122,6 +1126,19 @@ export class ConversationView {
         return { key, signature: `${key}${write.added}${write.removed}${write.diff ? "d" : ""}`, html: () => this.writeRow(key, write) };
       }),
     ];
+  }
+
+  /** What a run of thinking is drawn from: its parts, and the tokens told
+   *  for them. */
+  private runSignature(run: readonly ProseEntry[]): string {
+    return `${run.map((entry) => entry.stamp).join(",")}|${this.conversation.thinkingTokens(run) ?? ""}`;
+  }
+
+  /** The words of a stretch that is only thinking, drawn where its rows
+   *  would be. */
+  private thoughtWords(run: ProseEntry[]): Row {
+    const key = `${run[0]!.key}~words`;
+    return { key, signature: this.runSignature(run), html: () => `<div class="thinking-text prose" data-row="${escape(key)}">${render(thoughtText(run))}</div>` };
   }
 
   private memberSignature(entry: Entry): string {
@@ -1165,7 +1182,6 @@ export class ConversationView {
 
   private member(entry: Entry): string {
     const enter = this.entering(entry.key);
-    if (entry.kind === "prose") return this.thinking(entry, enter);
     if (entry.kind === "activity") {
       return `<div class="row${enter}" data-row="${escape(entry.key)}"><span class="rail">${glyph("colleague")}</span><div class="row-line static"><span class="row-object">${escape(entry.text)}</span></div></div>`;
     }
@@ -1205,21 +1221,38 @@ export class ConversationView {
     return `<div class="row row-tool row-${tense}${enter}" data-row="${escape(entry.key)}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(entry.key)}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest">${object}${meta}</span></button>${colleague}${sub}${fold}</div>`;
   }
 
-  private thinking(entry: ProseEntry, enter: string): string {
+  /** A run of thinking as one row: "Thinking…" while it goes, "Thought for
+   *  4s" once over where the host said how long, "Thought" where not; the title of its words'
+   *  section after it, the tokens it took at the end. It opens only where
+   *  the host gave words; none are made up. */
+  private thinkingRow(run: readonly ProseEntry[], enter: string): string {
     const { words } = this.context;
-    // Its words are shown only where the host gave them; none are made up.
-    const empty = !entry.text.trim();
-    const open = this.openRows.has(entry.key);
-    // A summary of thinking comes in sections, each under a bold title of
-    // the host's: the row says the latest while it thinks, the first after.
-    const titles = [...entry.text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]);
-    const title = entry.writing ? titles[titles.length - 1] : titles[0];
-    // One verb whatever its state, as the tools' rows have: what it was
-    // about, or that its words were not given, is what it was on.
-    const object = empty && !entry.writing ? words.thoughtHidden : title;
-    const chevron = empty ? "" : `<span class="row-chevron">${glyph("chevron", 16)}</span>`;
-    const fold = empty ? "" : `<div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>`;
-    return `<div class="row row-thinking${entry.writing ? " row-running" : ""}${empty ? " withheld" : ""}${enter}" data-row="${escape(entry.key)}"><span class="rail">${glyph("thinking")}</span><button class="row-line" type="button" ${empty ? "disabled" : `data-open="${escape(entry.key)}"`} aria-expanded="${open}"><span class="row-action">${escape(words.thought)}</span><span class="row-rest">${object ? `<span class="row-object">${escape(object)}</span>` : ""}<span class="row-meta">${chevron}</span></span></button>${fold}</div>`;
+    const key = run[0]!.key;
+    const text = thoughtText(run);
+    const has = !!text.trim();
+    const writing = run.some((entry) => entry.writing);
+    const open = has && this.openRows.has(key);
+    const took = writing ? null : thoughtTook(run);
+    const said = writing ? words.thinking : took === null ? words.thought : words.thoughtFor(took);
+    // A summary comes in sections, each under a bold title of the host's:
+    // the row says the latest while it thinks, the first after.
+    const titles = sections(text);
+    const title = writing ? titles.at(-1) : titles[0];
+    const tokens = writing ? null : this.conversation.thinkingTokens(run);
+    const figures = tokens === null ? "" : `<span class="row-figures">${escape(words.thinkingTokens(tokens))}</span>`;
+    const chevron = has ? `<span class="row-chevron">${glyph("chevron", 16)}</span>` : "";
+    const fold = has ? `<div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>` : "";
+    return `<div class="row row-thinking${writing ? " row-running" : ""}${enter}" data-row="${escape(key)}"><span class="rail">${glyph("thinking")}</span><button class="row-line" type="button" ${has ? `data-open="${escape(key)}"` : "disabled"} aria-expanded="${open}"><span class="row-said">${escape(said)}</span>${title ? `<span class="row-object">${escape(title)}</span>` : ""}<span class="row-meta">${figures}${chevron}</span></button>${fold}</div>`;
+  }
+
+  /** The run of thinking a row stands for, by the key of its first part. */
+  private thoughtRun(key: string): ProseEntry[] | null {
+    for (const block of this.conversation.blocks()) {
+      if (block.kind !== "activity-group" || !block.members.some((member) => member.key === key)) continue;
+      const run = runsOf(block.members).find((one) => one[0]!.key === key);
+      return run && isThinking(run[0]!) ? (run as ProseEntry[]) : null;
+    }
+    return null;
   }
 
   private outcome(entry: ToolEntry, tense: string): string {
@@ -1347,7 +1380,7 @@ export class ConversationView {
       return;
     }
     if (entry.kind === "prose") {
-      content.innerHTML = `<div class="thinking-text prose">${render(entry.text)}</div>`;
+      content.innerHTML = `<div class="thinking-text prose">${render(thoughtText(this.thoughtRun(key) ?? [entry]))}</div>`;
       return;
     }
     if (entry.kind !== "tool") return;
@@ -1666,4 +1699,35 @@ function modelName(id: string): string {
   if (!claude) return id;
   const [, family, major, minor] = claude;
   return `${family![0]!.toUpperCase()}${family!.slice(1)} ${major}${minor ? `.${minor}` : ""}`;
+}
+
+/** Whether a stretch is nothing but thinking: one run of it, said by its
+ *  heading alone. */
+function thoughtOnly(group: Activity): boolean {
+  return group.members.every(isThinking);
+}
+
+/** The words of a run of thinking, its parts' one after another. */
+function thoughtText(run: readonly ProseEntry[]): string {
+  return run
+    .map((entry) => entry.text.trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** How long a run of thinking took: its parts' together, where the host
+ *  said for every one. */
+function thoughtTook(run: readonly ProseEntry[]): number | null {
+  let took = 0;
+  for (const entry of run) {
+    if (entry.took === undefined) return null;
+    took += entry.took;
+  }
+  return took;
+}
+
+/** The titles a summary of thinking puts its sections under, in bold on a
+ *  line of their own. */
+function sections(text: string): string[] {
+  return [...text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]!);
 }

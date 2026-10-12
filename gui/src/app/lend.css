@@ -1,0 +1,202 @@
+/* Lending a login (`lend-sheet.ts`): a roomier sheet, each loan a row with
+   its deadline as a pill that opens to be changed in place; then whom to
+   lend to next and until when. */
+@media (min-width: 761px) {
+  .lend-sheet {
+    margin: auto;
+  }
+}
+
+.lend-sheet .sheet-body {
+  width: min(760px, 100vw - 32px);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+
+.lend-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lend-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 44px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-radius: var(--radius-m);
+}
+
+.lend-row.editing {
+  padding-bottom: var(--space-3);
+  background: var(--bg-sunken);
+}
+
+.lend-row.editing .when-pick {
+  background: var(--bg-elevated);
+}
+
+.lend-until {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  white-space: nowrap;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.lend-until:hover {
+  color: var(--text);
+  background: var(--fill-strong);
+}
+
+.lend-until.none {
+  color: var(--text-3);
+}
+
+.lend-row.editing .lend-until {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+}
+
+.lend-edit {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.lend-edit-acts {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Whom to and until when on the left, the month beside them. */
+.lend-new {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto 1fr;
+  grid-template-areas:
+    "who pick"
+    "label pick"
+    "choice pick"
+    "said pick";
+  column-gap: var(--space-5);
+  row-gap: var(--space-2);
+  align-items: start;
+  margin-top: var(--space-5);
+}
+
+.lend-new > .field:first-child {
+  grid-area: who;
+  margin-top: 0;
+}
+
+.lend-new .lend-when,
+.lend-new .when {
+  display: contents;
+}
+
+.lend-new .lend-when > .field-label {
+  grid-area: label;
+  margin-top: var(--space-3);
+}
+
+@media (max-width: 760px) {
+  .lend-new {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas:
+      "who"
+      "label"
+      "choice"
+      "said"
+      "pick";
+  }
+}
+
+/* A loan on a login's slip: whom to and the day it ends, pressed to change
+   it; the cross beside takes it back. */
+.tag.lend-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+}
+
+.lend-tag-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 0 8px;
+  border-radius: var(--radius-full) 0 0 var(--radius-full);
+  color: inherit;
+  line-height: inherit;
+}
+
+.lend-tag-open:hover {
+  color: var(--text);
+}
+
+.lend-tag-until {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-3);
+}
+
+.lend-tag-x {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 20px;
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  color: var(--text-3);
+}
+
+.lend-tag-x:hover {
+  color: var(--text);
+}
+
+@media (max-width: 760px) {
+  .lend-sheet .sheet-body {
+    width: 100%;
+    max-height: 92dvh;
+  }
+
+  .lend-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 4px;
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+  }
+
+  .lend-row > .lend-until {
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .lend-row > .text-button {
+    grid-row: 1;
+    grid-column: 2;
+  }
+}
+
+/* The same, inside the drawing's tags and a machine's details. */
+.map-tag .lend-tag-open,
+.chip .lend-tag-open {
+  padding: 0 2px 0 0;
+  border-radius: 0;
+}

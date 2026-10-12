@@ -51,6 +51,8 @@ export interface Borrowed {
   /** The login's directory as that machine writes it; null for the
    *  agent's default login there. */
   home: string | null;
+  /** When the loan ends by itself; null while its owner keeps it lent. */
+  until: Timestamp | null;
 }
 
 /** One login and the part of the World it sees. */
@@ -173,6 +175,7 @@ export function borrowedOf(world: WorldNow | null): Borrowed[] {
         since: member?.since ?? null,
         agent: lend.agent,
         home: lend.home,
+        until: lend.until ?? null,
       });
     }
   }

@@ -77,6 +77,8 @@ export interface LendSeen {
   /** The login's directory as that machine writes it; null for the
    *  agent's default login there. */
   home: string | null;
+  /** When the loan ends by itself; null while the owner keeps it lent. */
+  until: Timestamp | null;
 }
 
 /** A plan a login names none of (a Claude Code long-lived token), set by
@@ -145,7 +147,7 @@ export interface AccountsReply {
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
-  | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home?: string; lent: boolean }
+  | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home?: string; lent: boolean; until?: Timestamp }
   | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null }
   | { change: "stop_acting"; machine: MachineName }
   | { change: "relays"; machine: MachineName; relays: Relay[] }

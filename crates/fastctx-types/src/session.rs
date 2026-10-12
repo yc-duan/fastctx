@@ -204,6 +204,16 @@ pub struct Item {
     pub what: What,
 }
 
+impl Item {
+    /// Thinking that ended at `end` took as long as it ran from its start,
+    /// where the host said when it started and not how long it took.
+    pub fn thought_until(&mut self, end: Timestamp) {
+        if let (What::Thinking { duration_ms: duration @ None, .. }, Some(start)) = (&mut self.what, self.started_at) {
+            *duration = u64::try_from(end.duration_since(start).as_millis()).ok();
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum What {
@@ -212,9 +222,14 @@ pub enum What {
         text: String,
     },
     /// What the host shows of the agent's thinking: Codex's summaries of its
-    /// reasoning, Claude's thinking.
+    /// reasoning, Claude's thinking; empty where the host kept the words to
+    /// itself.
     Thinking {
         text: String,
+        /// How long the model thought, as the host measured it or as the
+        /// item's start and end say; none where neither is known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
     },
     /// A plan the agent proposed, whole.
     Plan {

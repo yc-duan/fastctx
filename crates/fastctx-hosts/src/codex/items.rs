@@ -78,14 +78,9 @@ pub fn read(item: &Value, completed: bool) -> Read {
             activity: text(item, "kind").unwrap_or_default(),
         },
         "agentMessage" => What::Message { text: text(item, "text").unwrap_or_default() },
-        // The official app shows a reasoning item by its summary only.
-        "reasoning" => {
-            let summary = strings(item, "summary").join("\n\n");
-            if completed && summary.trim().is_empty() {
-                return unshown(item);
-            }
-            What::Thinking { text: summary }
-        }
+        // A reasoning item is shown by its summary; one without a summary is
+        // still thinking that happened, as Claude's kept words are.
+        "reasoning" => What::Thinking { text: strings(item, "summary").join("\n\n"), duration_ms: None },
         "plan" => What::Plan { text: text(item, "text").unwrap_or_default() },
         "contextCompaction" => What::Compaction,
         "commandExecution" => {

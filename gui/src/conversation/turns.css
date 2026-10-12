@@ -527,37 +527,22 @@
   display: none;
 }
 
-/* The turn's line at the foot of a turn under way: ruled in pencil across
-   the column, a drop of clay ink that breathes, and what the agent is
-   doing, in italic, with how long the turn has run (`turn-line.ts`). It is
-   a boundary: above it what the session has taken in, below it words sent
-   and not yet read. Waiting on the user, the ink turns to the accent and
-   keeps still; the card above says what it waits for. It comes drawn in,
-   and goes at once. */
+/* The turn's line at the foot of a turn under way: a pen writing loops in
+   clay ink, a lively word with a light passing over it, and how long the
+   turn has run (`turn-line.ts`). It is a boundary: above it what the
+   session has taken in, below it words sent and not yet read. Waiting on
+   the user, the pen rests and the words take the accent; the card above
+   says what it waits for. */
 .turn-status {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 34px;
-  margin-top: var(--space-5);
-  padding-top: 12px;
+  min-height: 30px;
+  margin-top: var(--space-4);
   font-family: var(--font-reading);
   font-style: italic;
   font-size: var(--size-small);
   color: var(--text-2);
-}
-
-.turn-status-rule {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 8px;
-  background: var(--pen-graphite);
-  opacity: 0.55;
-  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
 }
 
 .turn-status-mark {
@@ -566,12 +551,40 @@
   place-items: center;
 }
 
-.turn-status-mark > i {
-  width: 9px;
-  height: 8px;
-  border-radius: 52% 48% 55% 45% / 47% 55% 45% 53%;
-  background: var(--pen-clay);
-  animation: ink-breathe 2.6s ease-in-out infinite;
+.turn-status-mark > svg {
+  width: 26px;
+  height: 16px;
+  overflow: visible;
+}
+
+.turn-status-mark path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The pencil's trace, faint, so the mark is always there. */
+.turn-status-mark .pen-trace {
+  stroke: var(--pen-trace);
+  stroke-width: 1.1;
+}
+
+/* The ink goes over the trace, then is taken up from where it began, and
+   goes over it again: a pen that does not stop while the model works. */
+.turn-status-mark .pen-ink {
+  stroke: var(--pen-clay);
+  stroke-width: 1.7;
+  stroke-dasharray: 100 100;
+  animation: pen-loop 1.9s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+
+@keyframes pen-loop {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
 }
 
 .turn-status-step {
@@ -580,6 +593,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   padding-right: 0.15em;
+  background: linear-gradient(100deg, var(--text-2) 0%, var(--text-2) 38%, var(--glint) 50%, var(--text-2) 62%, var(--text-2) 100%) 0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.4s linear infinite;
 }
 
 .turn-status-step:empty {
@@ -603,29 +621,22 @@
   margin-right: 6px;
 }
 
-.turn-status.waiting .turn-status-mark > i {
-  background: var(--accent);
+.turn-status.waiting .turn-status-mark .pen-ink {
+  stroke: var(--accent);
+  stroke-dasharray: none;
   animation: none;
 }
 
 .turn-status.waiting .turn-status-step {
+  background: none;
   color: var(--accent);
-}
-
-@keyframes ink-breathe {
-  0%,
-  100% {
-    opacity: 0.95;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.45;
-    transform: scale(0.78);
-  }
+  animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .turn-status-mark > i {
+  .turn-status-step {
+    background: none;
+    color: var(--text-2);
     animation: none;
   }
 }

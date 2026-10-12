@@ -3,7 +3,7 @@
 // network shown, by its server's name (this computer's own name while it is
 // in none); pressed, every network this device is in, the way to make a new
 // one or join one, and each one's management. Then the agents, the
-// machines and the features, each a line with its mark. With 「对话」 on,
+// machines and the features, each a line with its mark. With the workbench on,
 // the front page and a new conversation come first, and below are each
 // project, open to its conversations, and the conversations in no project,
 // most recent first; a conversation is listed as long as it is not removed,

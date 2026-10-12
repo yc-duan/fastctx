@@ -69,9 +69,9 @@ export function outline(
   return `M${left.join("L")}L${right.reverse().join("L")}Z`;
 }
 
-/** A line drawn against a straight edge: near straight, drifting by a
- *  fraction of a unit along its way. */
-export function ruled(from: Point, to: Point, width: number, random: () => number): string {
+/** The centre line of a line drawn against a straight edge: near
+ *  straight, drifting by a fraction of a unit along its way. */
+export function ruledPoints(from: Point, to: Point, random: () => number): Point[] {
   const length = Math.hypot(to[0] - from[0], to[1] - from[1]);
   const steps = Math.max(2, Math.round(length / 6));
   const drift = wander(steps + 1, 0.35, random);
@@ -82,12 +82,18 @@ export function ruled(from: Point, to: Point, width: number, random: () => numbe
     const t = index / steps;
     points.push([from[0] + (to[0] - from[0]) * t + nx * drift[index], from[1] + (to[1] - from[1]) * t + ny * drift[index]]);
   }
-  return outline(points, width, random, { pressure: 0.18, taper: 0.02 });
+  return points;
 }
 
-/** A circle as a hand draws one: begun anywhere, a little off round, and
- *  closed with a small overlap where the pen comes back past its start. */
-export function circle(center: Point, radius: number, width: number, random: () => number): string {
+/** A line drawn against a straight edge. */
+export function ruled(from: Point, to: Point, width: number, random: () => number): string {
+  return outline(ruledPoints(from, to, random), width, random, { pressure: 0.18, taper: 0.02 });
+}
+
+/** The centre line of a circle as a hand draws one: begun anywhere, a
+ *  little off round, and closed with a small overlap where the pen comes
+ *  back past its start. */
+export function circlePoints(center: Point, radius: number, random: () => number): Point[] {
   const start = random() * Math.PI * 2;
   const sweep = Math.PI * 2 + 0.25 + random() * 0.25;
   const steps = Math.max(24, Math.round((radius * sweep) / 3));
@@ -98,7 +104,12 @@ export function circle(center: Point, radius: number, width: number, random: () 
     const r = radius * (1 + wobble[index]);
     points.push([center[0] + Math.cos(angle) * r, center[1] + Math.sin(angle) * r]);
   }
-  return outline(points, width, random, { pressure: 0.3, taper: 0.08 });
+  return points;
+}
+
+/** A circle as a hand draws one. */
+export function circle(center: Point, radius: number, width: number, random: () => number): string {
+  return outline(circlePoints(center, radius, random), width, random, { pressure: 0.3, taper: 0.08 });
 }
 
 /** A blot: a small filled mark, round but not a circle. */

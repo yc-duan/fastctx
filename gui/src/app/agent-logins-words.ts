@@ -60,6 +60,9 @@ export interface AgentLoginsWords {
   window(name: string, minutes: number | null): string;
   used(percent: string): string;
   resets(at: Date, now: Date): string;
+  /** How long until a window starts again, as short as its name: 45m,
+   *  2h20m, 3d4h; nothing once that time has passed. */
+  resetsIn(at: Date, now: Date): string;
   observed(when: string): string;
   credits(balance: string | null, unlimited: boolean): string;
   creditsMark: string;
@@ -143,6 +146,7 @@ export const zhAgentLogins: AgentLoginsWords = {
     if (minutes < 1440) return `${Math.round(minutes / 60)} 小时后重置`;
     return `${["周日", "周一", "周二", "周三", "周四", "周五", "周六"][at.getDay()]} ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")} 重置`;
   },
+  resetsIn: (at, now) => left(at, now),
   observed: (when) => `${when} 读到`,
   credits: (balance, unlimited) => (unlimited ? "超出后用 credits（不限）" : balance !== null ? `超出后用 credits，余 ${balance}` : "超出后用 credits"),
   creditsMark: "正在用 credits",
@@ -211,9 +215,20 @@ export const enAgentLogins: AgentLoginsWords = {
     if (minutes < 1440) return `resets in ${Math.round(minutes / 60)} h`;
     return `resets ${at.toLocaleString("en", { weekday: "short", hour: "2-digit", minute: "2-digit" })}`;
   },
+  resetsIn: (at, now) => left(at, now),
   observed: (when) => `read ${when}`,
   credits: (balance, unlimited) => (unlimited ? "Then credits (unlimited)" : balance !== null ? `Then credits, ${balance} left` : "Then credits"),
   creditsMark: "On credits",
   notRead: (agent) => (agent === "claude" ? "Not read yet: a session in this login has to do one turn first" : "Not read yet"),
   failed: "Not done",
 };
+
+/** Time left, in the units the windows are named in, the two largest. */
+function left(at: Date, now: Date): string {
+  const minutes = Math.ceil((at.getTime() - now.getTime()) / 60_000);
+  if (minutes <= 0) return "";
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1440) return minutes % 60 ? `${Math.floor(minutes / 60)}h${minutes % 60}m` : `${minutes / 60}h`;
+  const hours = Math.floor((minutes % 1440) / 60);
+  return hours ? `${Math.floor(minutes / 1440)}d${hours}h` : `${Math.floor(minutes / 1440)}d`;
+}
