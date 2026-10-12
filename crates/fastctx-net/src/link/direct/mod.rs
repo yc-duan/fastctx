@@ -226,6 +226,19 @@ impl Inner {
                     for conn in taken {
                         conn.close("this machine no longer takes direct connections".to_string());
                     }
+                    let this = self.clone();
+                    tokio::spawn(async move {
+                        let node = this.node.clone();
+                        match tokio::task::spawn_blocking(move || node.open_ports(&BTreeSet::new())).await {
+                            Ok(Ok(_)) => {}
+                            Ok(Err(why)) => {
+                                this.node.log(format!("direct connections: closing this machine's firewall: {why}"))
+                            }
+                            Err(error) => {
+                                this.node.log(format!("direct connections: closing this machine's firewall: {error}"))
+                            }
+                        }
+                    });
                 }
                 self.direct.reported.lock().expect("never poisoned").clear();
                 return;
@@ -264,22 +277,14 @@ impl Inner {
             return Err(why);
         }
         let node = self.node.clone();
-        let opened = tokio::task::spawn_blocking(move || {
-            let mut firewall = None;
-            for port in ports {
-                let outcome = node.open_port(port)?;
-                firewall.get_or_insert(outcome);
-            }
-            Ok::<_, String>(firewall)
-        })
-        .await
-        .map_err(|error| format!("opening the firewall: {error}"))?;
+        let opened = tokio::task::spawn_blocking(move || node.open_ports(&ports))
+            .await
+            .map_err(|error| format!("opening the firewall: {error}"))?;
         match opened {
-            Ok(Some(firewall)) => {
+            Ok(firewall) => {
                 self.node.log(format!("direct connections: this machine's firewall: {firewall:?}"));
                 Ok(firewall)
             }
-            Ok(None) => Err("there was no port to open".to_string()),
             Err(why) => {
                 self.node.log(format!("direct connections: opening this machine's firewall failed: {why}"));
                 Err(why)
@@ -353,7 +358,7 @@ impl Inner {
             .flatten()
             .collect();
         for conn in conns {
-            if !view.member(&conn.name).is_some_and(|member| member.key == conn.key) {
+            if view.member(&conn.name).is_none_or(|member| member.key != conn.key) {
                 conn.close(format!("{} is no longer a member this machine knows", conn.name));
             }
         }

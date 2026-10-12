@@ -28,7 +28,7 @@ mod outgoing;
 mod session;
 pub mod state;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
@@ -93,12 +93,13 @@ pub trait Node: Send + Sync + 'static {
     /// This machine's view of the directory may have changed: the link has
     /// just asked the hub.
     fn directory_changed(&self) {}
-    /// Lets other computers reach this machine at TCP `port` through its own
-    /// firewall, as far as the World does that, and says what it knows of
-    /// that firewall: this machine takes direct connections there
-    /// (`crate::peer`). It may block.
-    fn open_port(&self, port: u16) -> Result<crate::wire::Firewall, String> {
-        let _ = port;
+    /// Lets other computers reach this machine at exactly the TCP `ports`
+    /// through its own firewall, as far as the World does that, and says
+    /// what it knows of that firewall: this machine takes direct connections
+    /// there (`crate::peer`). With no ports, what was let in before is
+    /// closed again. It may block.
+    fn open_ports(&self, ports: &BTreeSet<u16>) -> Result<crate::wire::Firewall, String> {
+        let _ = ports;
         Ok(crate::wire::Firewall::Unknown { why: "this device does not look at its firewall".to_string() })
     }
     fn log(&self, line: String);

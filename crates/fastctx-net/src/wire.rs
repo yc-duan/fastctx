@@ -2,9 +2,10 @@
 //!
 //! A machine reaches the hub over TLS, by its own line or through a machine
 //! that allows direct connections and forwards the hub's bytes as they are,
-//! and opens a WebSocket on one of two paths: the control connection, which each member holds open for as long
-//! as its node runs, and a data connection, opened for one transfer of
-//! bytes too large for a control message. Every frame on either is one
+//! and opens a WebSocket on one of two paths: the control connection, which
+//! each member holds open for as long as its node runs, and a data
+//! connection, opened for one transfer of bytes too large for a control
+//! message. Every frame on either is one
 //! JSON value in a binary WebSocket message; after a data connection is
 //! paired, the bytes it carries follow as raw binary messages.
 //!
