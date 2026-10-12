@@ -606,6 +606,9 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
     let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
     let home = hub.home.as_ref().map(|home| format!("; registered under {home}")).unwrap_or_default();
     let mut text = format!("\n--- hub {} ({}) · logged in to {logins}{home}\n", hub.name, link(&hub.link, now));
+    if hub.machines.is_empty() {
+        text.push_str(&format!("no other machine is in {}: this computer is the only machine\n", hub.name));
+    }
     let width = hub.machines.iter().map(|node| node.written.len()).max().unwrap_or(0);
     for node in &hub.machines {
         let state = match (node.online, node.since) {

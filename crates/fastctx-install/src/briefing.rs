@@ -48,16 +48,7 @@ You work through fastctx's `run` tool. `run` is your shell: bash with the GNU to
 
 `run`'s description shows each of these in full.
 
-`run` starts on the machine the first line of its description names, usually this one. When its description also lists other machines of the user's, reach them by writing `on MACHINE` before a command, or by giving it a script:
-
-```bash
-on server tail -n 50 /var/log/app.log
-on laptop <<'EOF'
-cd C:/work/app && cargo test
-EOF
-```
-
-When the user speaks of one of those machines, work on it this way.
+`run` starts on the machine its description names, usually this one. When its description lists other machines of the user's, it says how to work on them; when the user speaks of one of those machines, work on it that way.
 
 Inside a script, these commands are ordinary programs: give them several files, pipe into and out of them, loop over machines, as with any command. Calls to `run` share nothing: make several at once, or call `run` from your scripts and subagents, as with any tool.
 

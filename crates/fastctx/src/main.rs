@@ -452,7 +452,8 @@ const PEOPLE_ONLY: [&str; 22] = [
 fn command_line() -> clap::Command {
     let mut command = <Cli as clap::CommandFactory>::command();
     if std::env::var_os("FASTCTX_RESIDENT").is_some() {
-        command = command.about("Commands for working on this machine and the user's other machines.");
+        command =
+            command.about("Commands for working on this machine, and on the user's other machines when there are any.");
         for name in PEOPLE_ONLY {
             command = command.mut_subcommand(name, |subcommand| subcommand.hide(true));
         }
