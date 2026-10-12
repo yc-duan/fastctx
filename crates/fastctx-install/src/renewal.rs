@@ -172,6 +172,11 @@ pub fn write_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
     publish(path, &serde_json::to_vec(value).map_err(io::Error::other)?, Permissions::Private)
 }
 
+/// Held by program collection around the renewal's own locks.
+pub fn collection_lock(root: &Path) -> PathBuf {
+    directory(root).join("collection.lock")
+}
+
 /// Stores and checks the new program before publishing either the intent or
 /// the installed name. Repeating an unfinished placement retains its state.
 pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Result<Plan> {
@@ -180,8 +185,20 @@ pub fn stage(root: &Path, source: &Path, _running: Option<&Path>) -> anyhow::Res
         "this World was uninstalled; reinstall it before placing a program"
     );
     ensure_private_dir(&directory(root))?;
-    let _lock = FileLock::try_acquire(&directory(root).join("worker.lock"))?
-        .ok_or_else(|| anyhow::anyhow!("the World program is already being replaced; its plan was left unchanged"))?;
+    let worker = directory(root).join("worker.lock");
+    let _lock = match FileLock::try_acquire(&worker)? {
+        Some(lock) => lock,
+        // Program collection holds the worker lock only inside the collection
+        // lock: waiting for that one waits out a collection, and while it is
+        // held no collection begins, so a worker lock still taken then is a
+        // renewal's.
+        None => {
+            let _collection = FileLock::acquire(&collection_lock(root))?;
+            FileLock::try_acquire(&worker)?.ok_or_else(|| {
+                anyhow::anyhow!("the World program is already being replaced; its plan was left unchanged")
+            })?
+        }
+    };
     let _node_entry = FileLock::try_acquire(&directory(root).join("node-entry.lock"))?
         .ok_or_else(|| anyhow::anyhow!("the node is completing its program handover; its plan was left unchanged"))?;
     let _activation = FileLock::try_acquire(&directory(root).join("activation.lock"))?.ok_or_else(|| {

@@ -10,10 +10,14 @@ use crate::renewal as store;
 
 /// Shares the renewal worker and launch gates; no image can be staged or
 /// started from a plan while it is being collected. Job reservations are
-/// checked by the node for legacy program directories separately.
+/// checked by the node for legacy program directories separately. The
+/// collection lock is held around the others, so a placement that finds the
+/// worker lock taken can tell a collection, which it waits out, from a
+/// renewal (`renewal::stage`).
 pub fn collect(root: &Path) -> anyhow::Result<()> {
     let renewal = store::directory(root);
     fastctx_platform::ensure_private_dir(&renewal)?;
+    let Some(_collecting) = FileLock::try_acquire(&store::collection_lock(root))? else { return Ok(()) };
     let Some(_worker) = FileLock::try_acquire(&renewal.join("worker.lock"))? else { return Ok(()) };
     let Some(_entry) = FileLock::try_acquire(&renewal.join("node-entry.lock"))? else { return Ok(()) };
     let Some(_activation) = FileLock::try_acquire(&renewal.join("activation.lock"))? else { return Ok(()) };
