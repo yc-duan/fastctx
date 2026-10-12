@@ -10,6 +10,7 @@ mod android;
 mod collab;
 mod composer;
 mod connection;
+mod features;
 mod hub_moving;
 
 #[cfg(desktop)]
@@ -58,6 +59,7 @@ mod binary_reading;
 mod desktop_presence;
 mod line_reading;
 mod local_files;
+mod names;
 mod pages;
 mod reading;
 mod save_as;
@@ -888,6 +890,7 @@ pub fn run() {
             connection_state,
             select_connection,
             reconnect,
+            names::name_problem,
             accounts::login,
             accounts::login_token,
             accounts::open_account,
@@ -895,6 +898,9 @@ pub fn run() {
             accounts::machine_log,
             collab::collab_read,
             collab::collab_write,
+            features::features_read,
+            features::features_set,
+            features::features_watch,
             accounts::account_change,
             accounts::server_command,
             hub_moving::hub_move,

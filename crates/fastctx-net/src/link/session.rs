@@ -156,6 +156,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             letters: position,
             through: upstream.relay.clone(),
             dialed: Some(address),
+            any_names: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {

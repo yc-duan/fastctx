@@ -25,15 +25,35 @@ pub enum Call {
         account: crate::AccountName,
         before: Option<u64>,
     },
+    /// Model collaboration as `account` has it at `hub`, or at the one hub
+    /// when none is named; with no account, this computer's own, which
+    /// applies while it is in no network.
     CollabRead {
-        hub: crate::HubName,
-        account: crate::AccountName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<crate::HubName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
     },
+    /// Writes what `CollabRead` reads, over the version it was read at.
+    /// This computer's own is written only while it is in no network.
     CollabWrite {
-        hub: crate::HubName,
-        account: crate::AccountName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hub: Option<crate::HubName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<crate::AccountName>,
         collab: crate::collab::Collab,
     },
+    /// Which optional parts of the interface this computer shows; its
+    /// graphical interface and its TUI share them (`crate::features`).
+    Features,
+    /// Turns one of them on or off; answered with all of them after.
+    SetFeature {
+        feature: crate::features::Feature,
+        on: bool,
+    },
+    /// Answered with `NodeFrame::Features`: the switches as they are, then
+    /// again each time they change, until the client leaves.
+    WatchFeatures,
     /// Reads or changes the shared composer on the resident's machine.
     Composer {
         resident: ResidentId,
@@ -419,6 +439,7 @@ pub enum Reply {
     CollabWritten {
         version: u64,
     },
+    Features(crate::features::Features),
     ComposerUploaded(Box<crate::composer::UploadResult>),
     /// Where the machine relays now; nowhere when it stopped.
     Relaying {

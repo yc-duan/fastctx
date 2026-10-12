@@ -332,6 +332,15 @@ impl JobOwner {
             Self::Page { page } => format!("page:{}:{}:v{}", page.town, page.page, page.version),
         }
     }
+
+    /// The owner as one word that is the same for every spelling of its
+    /// machine (`Address::key`), for ids made from it.
+    pub fn key(&self) -> String {
+        match self {
+            Self::Resident(address) => address.key(),
+            Self::Page { .. } => self.tag(),
+        }
+    }
 }
 
 impl std::fmt::Display for JobOwner {

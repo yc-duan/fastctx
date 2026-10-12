@@ -16,7 +16,7 @@ export interface CanvasOptions extends CameraOptions {
   draftLabel?(draft: Draft): string;
 }
 
-interface Pointer { point: Point; start: Point; item: string | null; moved: boolean; touch: boolean }
+interface Pointer { point: Point; start: Point; item: string | null; moved: boolean; touch: boolean; middle?: boolean }
 interface ButtonLabel { item: CanvasItem; button: HTMLButtonElement; label: HTMLElement; width: number; height: number }
 
 /** The page owns ink and operations. This surface owns the camera, input, hit
@@ -320,7 +320,10 @@ export class MapCanvas {
     this.schedule();
   }
   private down(e: PointerEvent): void {
-    if (e.button !== 0 || this.isControl(e.target)) return;
+    // The middle button drags the paper as the left one does, and never
+    // chooses or opens anything.
+    const middle = e.button === 1;
+    if ((e.button !== 0 && !middle) || this.isControl(e.target)) return;
     e.preventDefault();
     // Capture keyboard cancellation throughout a pointer gesture without moving
     // the camera as focusing an off-screen item would do.
@@ -329,10 +332,12 @@ export class MapCanvas {
     const point = this.local(e);
     this.longPressed = false;
     this.stopLongPress();
-    const item = this.itemAt(point);
-    this.pointers.set(e.pointerId, { point, start: point, item, moved: false, touch: e.pointerType === "touch" });
+    const item = middle ? null : this.itemAt(point);
+    this.pointers.set(e.pointerId, { point, start: point, item, moved: false, touch: e.pointerType === "touch", middle });
     this.element.setPointerCapture(e.pointerId);
-    if (this.pointers.size === 1) {
+    if (middle) {
+      this.cancelDraft("interrupted");
+    } else if (this.pointers.size === 1) {
       const handleKey = (e.target as Element).closest<HTMLElement>("[data-handle]")?.dataset.handle;
       const handle = handleKey ? this.handles.get(handleKey) : undefined;
       if (handle) { this.beginDraft(handle.handle, point, false); this.draftPointer = e.pointerId; }
@@ -372,7 +377,7 @@ export class MapCanvas {
       const distance = (points: Point[]) => Math.hypot(points[0][0] - points[1][0], points[0][1] - points[1][1]);
       if (distance(previous) > 0) this.camera.zoom(distance(now) / distance(previous), before);
       this.pan(after[0] - before[0], after[1] - before[1]);
-    } else if (pointer.moved && !this.longPressed) this.pan(p[0] - old[0], p[1] - old[1]);
+    } else if ((pointer.moved || pointer.middle) && !this.longPressed) this.pan(p[0] - old[0], p[1] - old[1]);
   }
   private up(e: PointerEvent): void {
     const pointer = this.pointers.get(e.pointerId);
@@ -382,7 +387,7 @@ export class MapCanvas {
     this.move(e);
     this.stopLongPress();
     if (this.draft && this.draftPointer === e.pointerId) { this.refreshDraft(this.local(e)); this.finishDraft(this.local(e)); }
-    else if (!pointer.moved && !this.longPressed && this.pointers.size === 1) this.select(pointer.item, this.local(e));
+    else if (!pointer.middle && !pointer.moved && !this.longPressed && this.pointers.size === 1) this.select(pointer.item, this.local(e));
     this.pointers.delete(e.pointerId);
     if (this.element.hasPointerCapture(e.pointerId)) this.element.releasePointerCapture(e.pointerId);
     this.schedule();

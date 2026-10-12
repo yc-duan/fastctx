@@ -1,12 +1,13 @@
 const effortLevels = ['low', 'medium', 'high', 'xhigh', 'max']
 
-// Claude Code's own `default` is whatever the sign-in makes it (a token's
-// lands on Sonnet), so it is not offered: the World names a model every time
-// and starts on the first of the list (walkthrough item 30).
+// The model aliases this login's Claude Code offers (`opus`, `fable`, …).
+// They only tell the World which families the account has: the World offers
+// its own table of full model ids for those families, and never sends an
+// alias, which a request's model does not resolve.
 function modelOffers(rows) {
-  return (rows.find((row) => row.key === 'model')?.options ?? []).filter((id) => id !== 'default').map((id, index) => ({
-    id, name: null, description: null, efforts: effortLevels, default_effort: id === 'fable' ? 'high' : 'medium',
-    default: index === 0, service_tiers: [], default_service_tier: null,
+  return (rows.find((row) => row.key === 'model')?.options ?? []).filter((id) => id !== 'default').map((id) => ({
+    id, name: null, description: null, efforts: [], default_effort: null,
+    default: false, service_tiers: [], default_service_tier: null,
   }))
 }
 
@@ -26,6 +27,21 @@ async function controlSelection($, state, model, effort) {
       state.routedModel = undefined
     }
     return { kind: 'selected', model: selection.model ?? null, effort: selection.effort ?? null }
+  })
+  state.selecting = updated.catch(() => {})
+  return updated
+}
+
+async function controlFollowEngine($, state) {
+  const updated = (state.selecting ?? Promise.resolve()).then(async () => {
+    const selection = { ...state.selection }
+    delete selection.model
+    await controlWrite($, state.directory + '/selection.json', selection)
+    state.selection = selection
+    await controlWrite($, state.directory + '/routing.json', null)
+    state.routing = null
+    state.automaticModel = false
+    state.routedModel = undefined
   })
   state.selecting = updated.catch(() => {})
   return updated
@@ -58,7 +74,9 @@ async function controlModelSwitch($, e) {
   const state = await controlBegin($, sessions)
   if (state === null) return
   if (['command', 'picker', 'sdk'].includes(e.source)) {
-    await controlSelection($, state, e.requested_model ?? 'default', null)
+    // The user chose a model inside Claude Code itself: its engine now runs
+    // that choice, so the World stops naming a model for the requests.
+    await controlFollowEngine($, state)
   } else if (e.source === 'auto') {
     const routing = { model: e.to_model, source: e.source }
     await controlWrite($, state.directory + '/routing.json', routing)

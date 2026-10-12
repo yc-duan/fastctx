@@ -78,10 +78,8 @@ fn deliver(node: &Node, record: &JobRecord, update: &JobFacts) -> io::Result<()>
         .or_else(|| record.account.clone())
         .map(|account| fastctx_types::access::Acting::one(account.hub, account.account))
         .unwrap_or_default();
-    let id = crate::speech::fixed_id(
-        "runfacts",
-        &[record.machine.as_str(), record.id.as_str(), &update.sequence.to_string()],
-    );
+    let id =
+        crate::speech::fixed_id("runfacts", &[record.machine.key(), record.id.as_str(), &update.sequence.to_string()]);
     crate::letters::send(
         node,
         &acting,

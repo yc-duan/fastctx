@@ -222,6 +222,10 @@ pub struct ModelOffer {
     pub service_tiers: Vec<ServiceTierOffer>,
     #[serde(default)]
     pub default_service_tier: Option<String>,
+    /// The model's context window in tokens, when the World knows it: a
+    /// conversation already longer than this does not fit on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

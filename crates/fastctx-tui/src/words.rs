@@ -8,6 +8,7 @@
 
 use std::sync::OnceLock;
 
+use fastctx_types::NameProblem;
 use fastctx_types::session::HealthKind;
 use fastctx_types::world::Route;
 use jiff::Timestamp;
@@ -389,6 +390,15 @@ impl Words {
 
     pub fn key_new_project(&self) -> &'static str {
         self.pick("新建项目", "new project")
+    }
+
+    /// The key that turns conversations off, when they are `on`, or on.
+    pub fn key_conversations(&self, on: bool) -> &'static str {
+        if on {
+            self.pick("关闭对话", "turn conversations off")
+        } else {
+            self.pick("开启对话", "turn conversations on")
+        }
     }
 
     pub fn key_machines(&self) -> &'static str {
@@ -1351,6 +1361,52 @@ impl Words {
 
     pub fn name_and_what_needed(&self) -> &'static str {
         self.pick("请填写名称和简介", "Enter a name and a description")
+    }
+
+    /// What is wrong with a machine or server name as typed, in one sentence
+    /// (`fastctx_types::NameProblem`).
+    pub fn name_problem(&self, problem: &NameProblem) -> String {
+        // Nothing to show between the brackets: say it is invisible.
+        let invisible =
+            |character: char| unicode_width::UnicodeWidthChar::width(character).is_none_or(|width| width == 0);
+        match (self.lang, problem) {
+            (Lang::Zh, NameProblem::Empty) => "请填写名字".to_string(),
+            (Lang::En, NameProblem::Empty) => "Enter a name".to_string(),
+            (Lang::Zh, NameProblem::TooLong) => "名字太长：最多 32 个字，中文最多 21 个".to_string(),
+            (Lang::En, NameProblem::TooLong) => {
+                "That name is too long: 32 characters at most, 21 in Chinese".to_string()
+            }
+            (Lang::Zh, NameProblem::Space) => "名字里不能有空格".to_string(),
+            (Lang::En, NameProblem::Space) => "A name can't contain spaces".to_string(),
+            (Lang::Zh, NameProblem::NotAllowed { character }) if invisible(*character) => {
+                "名字里有看不见的字符".to_string()
+            }
+            (Lang::En, NameProblem::NotAllowed { character }) if invisible(*character) => {
+                "That name contains an invisible character".to_string()
+            }
+            (Lang::Zh, NameProblem::NotAllowed { character }) => {
+                format!("名字里不能有「{character}」，只能用字母、数字和连字符")
+            }
+            (Lang::En, NameProblem::NotAllowed { character }) => {
+                format!("A name can't contain \u{201c}{character}\u{201d}: use letters, digits and hyphens")
+            }
+            (Lang::Zh, NameProblem::BadStart { character: '-' }) => "名字不能以连字符开头".to_string(),
+            (Lang::En, NameProblem::BadStart { character: '-' }) => "A name can't start with a hyphen".to_string(),
+            (Lang::Zh, NameProblem::BadStart { character }) => format!("名字不能以「{character}」开头"),
+            (Lang::En, NameProblem::BadStart { character }) => {
+                format!("A name can't start with \u{201c}{character}\u{201d}")
+            }
+            (Lang::Zh, NameProblem::EndsWithHyphen) => "名字不能以连字符结尾".to_string(),
+            (Lang::En, NameProblem::EndsWithHyphen) => "A name can't end with a hyphen".to_string(),
+            (Lang::Zh, NameProblem::MixedScripts { first, second }) => {
+                format!("「{first}」和「{second}」是两种容易看混的文字，不能放在一个名字里")
+            }
+            (Lang::En, NameProblem::MixedScripts { first, second }) => format!(
+                "\u{201c}{first}\u{201d} and \u{201c}{second}\u{201d} are from scripts that can't be mixed in one name"
+            ),
+            (Lang::Zh, NameProblem::Reserved) => "这个名字留给服务器自己用".to_string(),
+            (Lang::En, NameProblem::Reserved) => "That name is reserved for the server".to_string(),
+        }
     }
 
     pub fn place_wrong(&self, line: &str) -> String {

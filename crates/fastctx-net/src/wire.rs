@@ -131,6 +131,11 @@ pub enum Intent {
         /// through the old place (`crate::moving`). Older machines omit it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         dialed: Option<std::net::SocketAddr>,
+        /// The machine reads machine and hub names of any language
+        /// (`world-network.md`, 机器的名字). Earlier releases do not say so,
+        /// and cannot read such a name in anything the hub sends them.
+        #[serde(default)]
+        any_names: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -164,6 +169,9 @@ pub struct Joining {
     pub proof: Signature,
     pub kind: Kind,
     pub register: bool,
+    /// As on a session: the device reads names of any language.
+    #[serde(default)]
+    pub any_names: bool,
 }
 
 /// Where a machine's letters stand, as it remembers: the hub's letters to it

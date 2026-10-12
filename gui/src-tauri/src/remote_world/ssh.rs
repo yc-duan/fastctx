@@ -20,11 +20,11 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use fastctx_types::kernel::{AARCH64_ARCHIVE, X86_64_ARCHIVE};
 use russh::client::{self, Handle};
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{ChannelMsg, Disconnect};
 use serde::{Deserialize, Serialize};
+use fastctx_types::kernel::{AARCH64_ARCHIVE, X86_64_ARCHIVE};
 use sha2::{Digest as _, Sha256};
 
 /// What the page reads when sudo wants a password it was not given
@@ -155,11 +155,7 @@ pub async fn probe(host: &str, port: u16) -> Result<Probed, String> {
 
 /// Signs in, checks the server, and uploads the program for its
 /// architecture from `archives`, saying each step as it begins.
-pub async fn open(
-    server: &Server,
-    archives: &Path,
-    step: &impl Fn(&'static str) -> Result<(), String>,
-) -> Result<Remote, String> {
+pub async fn open(server: &Server, archives: &Path, step: &impl Fn(&'static str) -> Result<(), String>) -> Result<Remote, String> {
     step("connect")?;
     let seen = Arc::new(Mutex::new(None));
     let checked = Checked { expected: Some(server.fingerprint.clone()), seen };
@@ -171,8 +167,7 @@ pub async fn open(
     let accepted = match &server.auth {
         Auth::Password { password } => handle.authenticate_password(&server.user, password).await,
         Auth::Key { key, passphrase } => {
-            let key = russh::keys::decode_secret_key(key, passphrase.as_deref())
-                .map_err(|error| format!("reading the key file: {error}"))?;
+            let key = russh::keys::decode_secret_key(key, passphrase.as_deref()).map_err(|error| format!("reading the key file: {error}"))?;
             let hash = handle.best_supported_rsa_hash().await.map_err(|error| error.to_string())?.flatten();
             handle.authenticate_publickey(&server.user, PrivateKeyWithHashAlg::new(Arc::new(key), hash)).await
         }
@@ -194,19 +189,12 @@ pub async fn open(
         Some("x86_64") => X86_64_ARCHIVE,
         Some("aarch64") => AARCH64_ARCHIVE,
         other => {
-            return Err(format!(
-                "the server is {}; fastctx runs on x86_64 and aarch64 Linux",
-                other.unwrap_or("of an unknown architecture")
-            ));
+            return Err(format!("the server is {}; fastctx runs on x86_64 and aarch64 Linux", other.unwrap_or("of an unknown architecture")));
         }
     };
     let archive = archives.join(name);
     if !archive.is_file() {
-        return Err(format!(
-            "this app carries no program for {} Linux ({} is missing)",
-            machine.unwrap_or_default(),
-            archive.display()
-        ));
+        return Err(format!("this app carries no program for {} Linux ({} is missing)", machine.unwrap_or_default(), archive.display()));
     }
     let sudo = if uid == Some("0") {
         Sudo::Root
@@ -226,10 +214,9 @@ pub async fn open(
 
     step("upload")?;
     let digest = sha256(&archive).await?;
-    let dir =
-        run(&handle, "d=$(mktemp -d) && cat > \"$d/fastctx.tgz\" && printf %s \"$d\"", Upload::File(archive.clone()))
-            .await?
-            .ok("uploading the program")?;
+    let dir = run(&handle, "d=$(mktemp -d) && cat > \"$d/fastctx.tgz\" && printf %s \"$d\"", Upload::File(archive.clone()))
+        .await?
+        .ok("uploading the program")?;
     let dir = String::from_utf8(dir).map_err(|_| "the server named its temporary directory oddly".to_string())?;
     run(
         &handle,
@@ -244,11 +231,7 @@ pub async fn open(
 
 /// Makes the hub on a server opened for it, saying the step as it begins;
 /// the session stays open for the server to join.
-pub async fn make_hub(
-    request: &Request,
-    archives: &Path,
-    step: impl Fn(&'static str) -> Result<(), String>,
-) -> Result<(Remote, Made), String> {
+pub async fn make_hub(request: &Request, archives: &Path, step: impl Fn(&'static str) -> Result<(), String>) -> Result<(Remote, Made), String> {
     let remote = open(&request.server, archives, &step).await?;
     step("hub")?;
     let public = SocketAddr::new(remote.address.ip(), request.hub_port);
@@ -277,13 +260,9 @@ impl Remote {
 
     /// Installs the server as one of the World's machines with `token`.
     pub async fn join(&self, token: &str) -> Result<(), String> {
-        run(
-            &self.handle,
-            &format!("cd {} && ./fastctx server install {}", quote(&self.dir), quote(token)),
-            self.sudo.line().into_bytes(),
-        )
-        .await?
-        .ok("adding the server to the World")?;
+        run(&self.handle, &format!("cd {} && ./fastctx server install {}", quote(&self.dir), quote(token)), self.sudo.line().into_bytes())
+            .await?
+            .ok("adding the server to the World")?;
         Ok(())
     }
 
@@ -305,14 +284,8 @@ impl Remote {
 
 /// Opens the TCP connection itself, so the address it reached is known, and
 /// starts SSH over it.
-async fn connect(
-    host: &str,
-    port: u16,
-    checked: Checked,
-) -> Result<(SocketAddr, Result<Handle<Checked>, russh::Error>), String> {
-    let stream = tokio::net::TcpStream::connect((host, port))
-        .await
-        .map_err(|error| format!("reaching {host}:{port}: {error}"))?;
+async fn connect(host: &str, port: u16, checked: Checked) -> Result<(SocketAddr, Result<Handle<Checked>, russh::Error>), String> {
+    let stream = tokio::net::TcpStream::connect((host, port)).await.map_err(|error| format!("reaching {host}:{port}: {error}"))?;
     let address = stream.peer_addr().map_err(|error| error.to_string())?;
     stream.set_nodelay(true).map_err(|error| error.to_string())?;
     let config = Arc::new(client::Config::default());
@@ -377,9 +350,7 @@ async fn run(handle: &Handle<Checked>, command: &str, input: impl Into<Upload>) 
         match input.into() {
             Upload::Bytes(bytes) => writing.data(&bytes[..]).await.map_err(|error| error.to_string())?,
             Upload::File(path) => {
-                let file = tokio::fs::File::open(&path)
-                    .await
-                    .map_err(|error| format!("reading {}: {error}", path.display()))?;
+                let file = tokio::fs::File::open(&path).await.map_err(|error| format!("reading {}: {error}", path.display()))?;
                 writing.data(file).await.map_err(|error| error.to_string())?;
             }
         }

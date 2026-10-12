@@ -147,7 +147,8 @@ pub enum HubCommand {
     /// Create a hub on this machine, with its first account, its super
     /// administrator, whose password is asked for.
     Init {
-        /// The hub's short name: lowercase letters, digits and hyphens.
+        /// The hub's short name: letters and digits of any language, and
+        /// hyphens.
         #[arg(long)]
         name: HubName,
         /// The super administrator's account.
@@ -188,7 +189,8 @@ pub enum HubCommand {
     /// account, its super administrator, whose password is asked for. The third
     /// version's files are kept beside it. The hub must not be running.
     Migrate {
-        /// The hub's short name: lowercase letters, digits and hyphens.
+        /// The hub's short name: letters and digits of any language, and
+        /// hyphens.
         #[arg(long)]
         name: HubName,
         /// The account the machines go into.
@@ -356,7 +358,19 @@ pub fn relay(args: RelayArgs) -> anyhow::Result<()> {
 
 pub fn accounts() -> anyhow::Result<()> {
     match call(Call::Accounts)? {
-        Reply::Accounts(reply) => print!("{}", render_accounts(&reply, Timestamp::now())),
+        Reply::Accounts(reply) => {
+            print!("{}", render_accounts(&reply, Timestamp::now()));
+            // In a network, this computer is to be there from boot
+            // (`world-network.md`, 登记了，就一直连着); when the service that
+            // does it was never installed, the user is told so.
+            let world = fastctx_types::layout::WorldDir::under(&fastctx_platform::fastctx_root()?);
+            if !reply.hubs.is_empty() && !world.node_service().try_exists()? {
+                println!(
+                    "\nno system service keeps this computer's node: it runs only while something here started it. \
+                     `fastctx service node install`, as administrator, installs one."
+                );
+            }
+        }
         other => anyhow::bail!("the node answered something else: {other:?}"),
     }
     Ok(())
@@ -637,7 +651,7 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
         text.push_str(&format!("{}  this computer  {}\n", reply.machine, facts_line(facts)));
     }
     if reply.hubs.is_empty() {
-        text.push_str("logged in to no hub: `fastctx login HUB ACCOUNT` logs in\n");
+        text.push_str("in no network: this computer is the only machine\n");
     }
     for hub in &reply.hubs {
         text.push_str(&hub_nodes(hub, now));
@@ -649,7 +663,12 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
     let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
     let home = hub.home.as_ref().map(|home| format!("; registered under {home}")).unwrap_or_default();
     let mut text = format!("\n--- hub {} ({}) · logged in to {logins}{home}\n", hub.name, link(&hub.link, now));
-    let width = hub.machines.iter().map(|node| node.written.len()).max().unwrap_or(0);
+    if hub.machines.is_empty() {
+        text.push_str(&format!("no other machine is in {}: this computer is the only machine\n", hub.name));
+    }
+    // Names line up by the columns they take in a terminal: a Chinese
+    // character takes two.
+    let width = hub.machines.iter().map(|node| fastctx_tui::text::width(&node.written.to_string())).max().unwrap_or(0);
     for node in &hub.machines {
         let state = match (node.online, node.since) {
             (Some(true), Some(since)) => format!("online for {}", age(since, now)),
@@ -675,7 +694,9 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
             Err(_) if node.online == Some(false) => String::new(),
             Err(error) => format!("  not known: {error}"),
         };
-        text.push_str(&format!("{:width$}  {state}{through}{owner} · {}{facts}\n", node.written, rights.join("; ")));
+        let written = node.written.to_string();
+        let pad = " ".repeat(width - fastctx_tui::text::width(&written));
+        text.push_str(&format!("{written}{pad}  {state}{through}{owner} · {}{facts}\n", rights.join("; ")));
         if let Ok(facts) = &node.facts
             && let Some(warning) = facts.node_lifetime.as_ref().and_then(|lifetime| lifetime.warning())
         {

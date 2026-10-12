@@ -98,7 +98,7 @@ pub fn receive(
     if total == 0 || index >= total {
         return Err(io::Error::other("invalid letter fragment numbering"));
     }
-    let name = crate::speech::fixed_id("letter", &[from.as_str(), id.as_str()]);
+    let name = crate::speech::fixed_id("letter", &[from.key(), id.as_str()]);
     let directory = node.world.path().join("letter-parts").join(name.as_str());
     ensure_private_dir(&directory)?;
     let path = directory.join(index.to_string());

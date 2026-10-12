@@ -193,14 +193,15 @@ async fn own_key(node: &Node) -> Result<SecretKey, Failure> {
         .map_err(|error| Failure::new(format!("making this computer's key: {error}")))
 }
 
-/// The name this computer logs in under: its own. Another is taken only
-/// while it is on no hub, and becomes its own.
+/// The name this computer logs in under: its own, as it writes it. Another
+/// is taken only while it is on no hub, and becomes its own.
 fn asked_name(node: &Node, name: Option<MachineName>) -> Result<MachineName, Failure> {
     let here = node.machine();
     match name {
         Some(name) if name != here && node.connected_anywhere() => Err(Failure::new(format!(
             "this computer is {here} on the hubs it is on, and takes the same name on every hub; log in as {here}"
         ))),
+        Some(_) if node.connected_anywhere() => Ok(here),
         Some(name) => Ok(name),
         None => Ok(here),
     }
@@ -210,7 +211,9 @@ fn asked_name(node: &Node, name: Option<MachineName>) -> Result<MachineName, Fai
 /// name it got when it was on no hub, and starts or refreshes the link.
 async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
     let Joined { hub, hub_name, name, account, addresses, cert } = joined;
-    if name != node.machine() {
+    // A computer on no hub yet takes the name as the hub writes it; one on
+    // other hubs keeps its own spelling of the same name.
+    if name.as_str() != node.machine().as_str() && !(name == node.machine() && node.connected_anywhere()) {
         if node.connected_anywhere() {
             return Err(Failure::new(format!(
                 "the hub {hub_name} knows this computer as {name}, and the other hubs it is on as {}; it logged in, but cannot be both",
@@ -248,6 +251,8 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
                 .map_err(|error| Failure::new(format!("logged in, but recording the membership failed: {error}")))?;
             start(node, membership).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
             crate::ledger::joined(node, &hub);
+            let (carrying, at) = (node.clone(), hub.clone());
+            tokio::spawn(async move { crate::own_collab::carry(&carrying, &at).await });
         }
     }
     node.log.line(format_args!("logged in to {account} on {hub_name} as {name}"));
@@ -305,8 +310,16 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
         answer.map_err(Failure::new)?;
     }
     let hub = link.membership().id.clone();
+    // Leaving its last network, the computer keeps the model collaboration
+    // that named it as its own (`own_collab`).
+    if node.links().iter().all(|other| other.membership().id == hub) {
+        crate::own_collab::take_back(node, link);
+    }
     link.stop();
     node.links.write().expect("never poisoned").remove(&hub);
+    // The machines each session may use, and who may ask for colleagues,
+    // are in its tools.
+    node.tools_changed(None);
     crate::relaying::follow(node, &hub);
     let net = net_dir(&node.world, &hub);
     let aside = node.world.path().join(format!("net-left-{}-{}", hub, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
@@ -723,7 +736,7 @@ impl fastctx_net::link::Node for Handler {
         // What the letter carries is named here from who sent it and what
         // they named it, never by a name from the letter itself: a letter
         // that comes again is the same thing, and is not told twice.
-        let delivery_id = crate::speech::fixed_id("letter", &[from.as_str(), id.as_str()]);
+        let delivery_id = crate::speech::fixed_id("letter", &[from.key(), id.as_str()]);
         let node = self.node.upgrade();
         let hub = self.hub.clone();
         Box::pin(async move {
@@ -734,7 +747,7 @@ impl fastctx_net::link::Node for Handler {
             let (letter, delivery_id) = match letter {
                 Letter::Fragment { id, index, total, text } => {
                     match crate::letters::receive(&node, &from, &id, index, total, &text)? {
-                        Some(letter) => (letter, crate::speech::fixed_id("letter", &[from.as_str(), id.as_str()])),
+                        Some(letter) => (letter, crate::speech::fixed_id("letter", &[from.key(), id.as_str()])),
                         None => return Ok(Ok(())),
                     }
                 }
@@ -791,6 +804,7 @@ impl fastctx_net::link::Node for Handler {
                 for problem in crate::ledger::carry(&node, &hub).await {
                     node.log.line(format_args!("carrying a project into the hub: {problem}"));
                 }
+                crate::own_collab::carry(&node, &hub).await;
             }
             if let Err(error) = crate::ledger::sync(&node, &hub, town).await {
                 node.log.line(format_args!("taking the projects' ledgers: {error}"));

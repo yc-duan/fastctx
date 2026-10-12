@@ -2,6 +2,12 @@
 // shown, in the order they first appeared. The same reading as the
 // terminal's (`crates/fastctx-tui/src/transcript.rs`), so every interface
 // shows a session alike.
+//
+// Each entry keeps a key made of what it is (its turn and item, the words'
+// delivery), so reading the same history again gives the same keys and a
+// view keeps what it drew; and a stamp that moves whenever the entry does,
+// so a view draws again only what changed. An event costs the same however
+// long the conversation is: entries are found by index, never by search.
 
 import type { Health, MachineName, Notice, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
 import type { Attachment, AttachmentSource } from "../world/attachments";
@@ -33,7 +39,7 @@ export interface ShownAttachment {
   recorded?: AttachmentSource;
 }
 
-export type Entry =
+export type Entry = { stamp: number } & (
   | {
       kind: "heard";
       key: string;
@@ -41,6 +47,10 @@ export type Entry =
       text: string;
       turn: string | null;
       sending?: SendState;
+      /** Words sent from here while a turn was under way: they wait below
+       *  the turn's line until a turn takes them in. Words sent to a
+       *  conversation at rest begin the next turn, above it. */
+      intoTurn?: boolean;
       attached?: ShownAttachment[];
       /** The attachments as the World answered for them, kept where they
        *  arrived: words taken back to send again take these with them. */
@@ -79,20 +89,43 @@ export type Entry =
   /** Questions the agent asked without stopping its work (Codex's
    *  `request_user_input_async`): answered whenever the user likes, or not
    *  at all. `answers` holds what was answered, by question. */
-  | { kind: "question"; key: string; item: string; turn: string; questions: AsyncQuestion[]; answers: (string | null)[]; version: number };
+  | { kind: "question"; key: string; item: string; turn: string; questions: AsyncQuestion[]; answers: (string | null)[]; version: number }
+);
 
 /** One stretch of what a turn did between things it said: tools and
- *  thinking in a row, folded under one heading. */
+ *  thinking in a row, folded under one heading. `stamp` is the latest of
+ *  its members'. */
 export interface Activity {
   kind: "activity-group";
   key: string;
   turn: string;
   members: Entry[];
+  stamp: number;
+  /** One of its tools started Claude Code's own subagent, which moves on
+   *  its own (`Conversation.agentStamp`). */
+  agents: boolean;
 }
 
 export type Block = Entry | Activity;
 
 type Keyed = Extract<Entry, { item: string; turn: string }>;
+type Heard = Extract<Entry, { kind: "heard" }>;
+type ToolEntry = Extract<Entry, { kind: "tool" }>;
+
+/** What is read off the entries as a whole, once for each state of them. */
+interface Derived {
+  clock: number;
+  /** The last message of each turn, by key. */
+  lastMessage: Map<string, string>;
+  /** The turn of the last ending shown. */
+  latest: string | null;
+  moving: boolean;
+  waiting: boolean;
+  doing: Entry | null;
+  /** Whether anything of the agent's own has been shown: a turn's work or
+   *  words, its end, a request. */
+  heardFrom: boolean;
+}
 
 export class Conversation {
   entries: Entry[] = [];
@@ -115,12 +148,27 @@ export class Conversation {
   }
   /** The host replaced or removed turns: what is shown must be read again. */
   stale = false;
+  /** Moves with every change to what is shown; an entry's stamp is the
+   *  clock when it last changed. */
+  clock = 0;
   /** Each turn's stretches of activity, in order, by the key of their first
    *  entry: a stretch keeps its place and key when its first entry goes. */
   private stretches = new Map<string, string[]>();
+  /** Keys handed out where an entry names nothing of its own; started
+   *  again with each reading, so a reading gives the same keys. */
   private serial = 0;
+  /** Words sent from here, numbered apart: they outlive a reading. */
+  private sends = 0;
+  /** Entries by key, and by their turn and item. */
+  private byKey = new Map<string, Entry>();
+  private byItem = new Map<string, Keyed>();
+  /** Each turn's entries, in the order they came. */
+  private byTurn = new Map<string, Entry[]>();
+  /** How many of the user's heard words each turn holds, for their keys. */
+  private heardIn = new Map<string, number>();
+  private endedTurns = new Set<string>();
   /** Turns begun and not yet ended, as the World tells them, with when
-  * each began. */
+   * each began. */
   private running = new Set<string>();
   private began = new Map<string, number>();
   /** How many turns have ended while watched (history read again is not
@@ -128,28 +176,104 @@ export class Conversation {
   private endings = 0;
   private lastEnding: TurnEnd | null = null;
   private replaying = false;
+  private derivedCache: Derived | null = null;
+  private blocksCache: { clock: number; blocks: Block[] } | null = null;
 
-  private key(prefix: string): string {
-    this.serial += 1;
-    return `${prefix}-${this.serial}`;
+  /** Marks an entry changed. */
+  private touch(entry: Entry): void {
+    entry.stamp = ++this.clock;
+  }
+
+  private add(entry: Entry): void {
+    entry.stamp = ++this.clock;
+    this.entries.push(entry);
+    this.index(entry);
+  }
+
+  private index(entry: Entry): void {
+    this.byKey.set(entry.key, entry);
+    if ("item" in entry && "turn" in entry && typeof entry.turn === "string") this.byItem.set(itemKey(entry.turn, entry.item), entry as Keyed);
+    const turn = "turn" in entry ? entry.turn : null;
+    if (typeof turn === "string") {
+      const list = this.byTurn.get(turn);
+      if (list) list.push(entry);
+      else this.byTurn.set(turn, [entry]);
+    }
+  }
+
+  /** Takes entries out of what is shown. */
+  private remove(gone: (entry: Entry) => boolean): void {
+    const kept: Entry[] = [];
+    let removed = false;
+    for (const entry of this.entries) {
+      if (gone(entry)) removed = true;
+      else kept.push(entry);
+    }
+    if (!removed) return;
+    this.entries = kept;
+    this.reindex();
+  }
+
+  private reindex(): void {
+    this.byKey.clear();
+    this.byItem.clear();
+    this.byTurn.clear();
+    for (const entry of this.entries) this.index(entry);
+    this.clock += 1;
   }
 
   /** What came before, replacing what is shown. */
   history(events: SessionEvent[]): void {
     // Requests still waiting are kept: the host asked them, and they are
-    // not part of the history it gives back.
+    // not part of the history it gives back. So are words sent from here
+    // that this reading does not hold yet.
     const waiting = this.entries.filter((entry) => entry.kind === "ask" && entry.state.state === "waiting");
+    const pending = this.entries.filter((entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined);
+    const known = new Set(this.entries.filter((entry) => entry.kind === "heard").map((entry) => entry.key));
     this.entries = [];
+    this.byKey.clear();
+    this.byItem.clear();
+    this.byTurn.clear();
+    this.heardIn.clear();
+    this.endedTurns.clear();
     this.stretches.clear();
     this.sequences.clear();
     this.stale = false;
     this.running.clear();
     this.began.clear();
-    this.replaying = true;
-    for (const event of events) this.event(event);
-    this.replaying = false;
+    this.serial = 0;
+    this.clock += 1;
+    this.extend(events);
     for (const ask of waiting) {
-      if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.entries.push(ask);
+      if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.add(ask);
+    }
+    // Words sent from here are the reading's own once it holds them: words
+    // the conversation had not shown before, the same as these.
+    const claimed = new Set<string>();
+    for (const sent of pending) {
+      const said = sent.text.trim();
+      const heard = this.entries.find(
+        (entry): entry is Heard =>
+          entry.kind === "heard" &&
+          !known.has(entry.key) &&
+          !claimed.has(entry.key) &&
+          entry.sending === undefined &&
+          (!entry.from || entry.from.kind === "user") &&
+          entry.text.trim() === said,
+      );
+      if (heard) claimed.add(heard.key);
+      else this.add(sent);
+    }
+  }
+
+  /** More of what came before, after what is shown: a reading given in
+   *  parts, as a cache answers and then what is new since. */
+  extend(events: SessionEvent[]): void {
+    this.replaying = true;
+    try {
+      for (const event of events) this.event(event);
+    } finally {
+      this.replaying = false;
     }
   }
 
@@ -159,6 +283,7 @@ export class Conversation {
       case "turn_started":
         this.running.add(event.turn);
         if (!this.began.has(event.turn)) this.began.set(event.turn, at);
+        this.clock += 1;
         return;
       case "realtime":
       case "realtime_grew":
@@ -168,25 +293,35 @@ export class Conversation {
         // carry the head note the World wrapped them in.
         const user = event.from ? null : userWords(event.text);
         const heard = user ? { ...event, from: { kind: "user" as const, machine: user.machine }, text: user.body } : event;
-        // Words sent from here are now heard: they keep their place.
+        // Words taken into a turn say the turn is under way, whichever of
+        // the two the World tells first.
+        if (heard.turn) this.underWay(heard.turn, at);
+        // Words sent from here are now heard: they keep their place. The
+        // bubble shows them without the blank lines around them, while a
+        // shared input sends them as typed (a phone's Enter adds a line).
         if (heard.from?.kind === "user") {
+          const said = heard.text.trim();
           const sent = this.entries.find(
-            (entry) => entry.kind === "heard" && entry.sending !== undefined && entry.text === heard.text,
+            (entry): entry is Heard => entry.kind === "heard" && entry.sending !== undefined && entry.text.trim() === said,
           );
-          if (sent && sent.kind === "heard") {
+          if (sent) {
             delete sent.sending;
+            delete sent.intoTurn;
             sent.turn = heard.turn;
             sent.from = heard.from;
             // Heard now: it stands where the session took it in, after what
             // the turn did before it read them.
             this.entries.splice(this.entries.indexOf(sent), 1);
             this.entries.push(sent);
+            this.reindex();
+            this.touch(sent);
             return;
           }
         }
-        const known = this.entries.some(
-          (entry) => entry.kind === "heard" && entry.text === heard.text && heard.turn !== null && entry.turn === heard.turn,
-        );
+        const turnKey = heard.turn ?? "";
+        const known =
+          heard.turn !== null &&
+          (this.byTurn.get(heard.turn) ?? []).some((entry) => entry.kind === "heard" && entry.text.trim() === heard.text.trim());
         const reply = heard.from?.kind === "user" ? readReply(heard.text) : null;
         if (reply) this.answered(reply.item, reply.answers);
         if (!known) {
@@ -208,9 +343,13 @@ export class Conversation {
               recorded: picture.source,
             })),
           ];
-          this.entries.push({
+          const ordinal = this.heardIn.get(turnKey) ?? 0;
+          this.heardIn.set(turnKey, ordinal + 1);
+          const key = event.delivery ? `h:${event.delivery}` : heard.message?.id ? `h:m:${heard.message.id}` : `h:${turnKey}:${ordinal}`;
+          this.add({
             kind: "heard",
-            key: this.key("heard"),
+            key: this.byKey.has(key) ? `${key}:${++this.serial}` : key,
+            stamp: 0,
             from: heard.from,
             text: heard.text,
             turn: heard.turn,
@@ -223,21 +362,25 @@ export class Conversation {
       }
       case "began":
       case "updated":
+        this.underWay(event.turn, at);
         this.item(event.turn, event.item, at, false);
         return;
       case "finished":
         this.item(event.turn, event.item, at, true);
         return;
       case "grew": {
+        this.underWay(event.turn, at);
         const shown = this.find(event.turn, event.item);
         if (shown?.kind === "prose" && event.part === "text") {
           shown.text += event.text;
           shown.version += 1;
+          this.touch(shown);
         } else if (!shown && event.part === "text") {
           // A message's first words can come before any word of it.
-          this.entries.push({
+          this.add({
             kind: "prose",
-            key: this.key("prose"),
+            key: itemEntryKey(event.turn, event.item),
+            stamp: 0,
             item: event.item,
             turn: event.turn,
             prose: "message",
@@ -249,12 +392,13 @@ export class Conversation {
         return;
       }
       case "steps": {
-        const shown = [...this.entries].reverse().find((entry) => entry.kind === "steps" && entry.turn === event.turn);
+        const shown = lastOf(this.byTurn.get(event.turn) ?? [], (entry) => entry.kind === "steps");
         if (shown?.kind === "steps") {
           shown.steps = event.steps;
           shown.note = event.note;
+          this.touch(shown);
         } else {
-          this.entries.push({ kind: "steps", key: this.key("steps"), turn: event.turn, steps: event.steps, note: event.note });
+          this.add({ kind: "steps", key: `p:${event.turn}`, stamp: 0, turn: event.turn, steps: event.steps, note: event.note });
         }
         return;
       }
@@ -267,18 +411,28 @@ export class Conversation {
       case "turn_ended": {
         this.running.delete(event.turn);
         this.began.delete(event.turn);
-        if (this.entries.some((entry) => entry.kind === "ended" && entry.turn === event.turn)) return;
+        this.clock += 1;
+        if (this.endedTurns.has(event.turn)) return;
         if (!this.replaying) this.endings += 1;
         this.lastEnding = event.end;
-        for (const entry of this.entries) {
-          if (entry.kind === "tool" && entry.turn === event.turn && entry.ended === null) entry.ended = { at, use: "cut" };
-          if (entry.kind === "prose" && entry.turn === event.turn) entry.writing = false;
+        for (const entry of this.byTurn.get(event.turn) ?? []) {
+          if (entry.kind === "tool" && entry.ended === null) {
+            entry.ended = { at, use: "cut" };
+            this.touch(entry);
+          }
+          if (entry.kind === "prose" && entry.writing) {
+            entry.writing = false;
+            this.touch(entry);
+          }
         }
-        this.entries.push({ kind: "ended", key: this.key("ended"), turn: event.turn, end: event.end });
+        this.endedTurns.add(event.turn);
+        this.add({ kind: "ended", key: `e:${event.turn}`, stamp: 0, turn: event.turn, end: event.end });
         return;
       }
       case "delivery_uncertain":
-        this.entries.push({ kind: "uncertain", key: this.key("uncertain"), why: event.why });
+        // Told once for each delivery; a reading and the live event may
+        // both carry it.
+        if (!this.byKey.has(`u:${event.delivery}`)) this.add({ kind: "uncertain", key: `u:${event.delivery}`, stamp: 0, why: event.why });
         return;
       case "health":
         this.health(event.health);
@@ -287,9 +441,10 @@ export class Conversation {
         const change = event.change;
         if (change.kind === "request") {
           if (!forPeople(change.request) || this.ask(change.id)) return;
-          this.entries.push({
+          this.add({
             kind: "ask",
-            key: this.key("ask"),
+            key: `a:${askKey(change.id)}`,
+            stamp: 0,
             id: change.id,
             turn: event.turn,
             request: change.request,
@@ -306,7 +461,9 @@ export class Conversation {
         }
         if (change.kind === "forked") {
           if (!this.entries.some((entry) => entry.kind === "forked")) {
-            this.entries.unshift({ kind: "forked", key: this.key("forked"), source: change.source });
+            const forked: Entry = { kind: "forked", key: "f", stamp: ++this.clock, source: change.source };
+            this.entries.unshift(forked);
+            this.index(forked);
           }
           return;
         }
@@ -328,6 +485,7 @@ export class Conversation {
             this.agents.set(agent.id, { kind: agent.type, description: agent.description, status: agent.status, steps: known?.steps ?? 0, doing: known?.doing ?? null });
           }
           this.agentStamp += 1;
+          this.clock += 1;
           return;
         }
         if (change.kind === "agent_event") {
@@ -340,6 +498,7 @@ export class Conversation {
           if (happened.event === "turn_ended") known.doing = null;
           this.agents.set(change.agent_id, known);
           this.agentStamp += 1;
+          this.clock += 1;
           return;
         }
         if (change.kind === "commands_changed") {
@@ -357,9 +516,20 @@ export class Conversation {
     }
   }
 
+  /** Something happening live in `turn` says it is under way, even where
+   *  its start was not told (as a watch begun as it began may miss it).
+   *  Only live: a history read again may hold turns whose end was never
+   *  told, and none of them is under way for that. */
+  private underWay(turn: string, at: number): void {
+    if (this.replaying || this.endedTurns.has(turn) || this.running.has(turn)) return;
+    this.running.add(turn);
+    if (!this.began.has(turn)) this.began.set(turn, at);
+    this.clock += 1;
+  }
+
   private ask(id: JsonValue): Extract<Entry, { kind: "ask" }> | undefined {
-    const key = askKey(id);
-    return this.entries.find((entry): entry is Extract<Entry, { kind: "ask" }> => entry.kind === "ask" && askKey(entry.id) === key);
+    const found = this.byKey.get(`a:${askKey(id)}`);
+    return found?.kind === "ask" ? found : undefined;
   }
 
   /** How a request now stands: being answered, answered, or no longer
@@ -367,11 +537,12 @@ export class Conversation {
   settle(ask: Extract<Entry, { kind: "ask" }>, state: AskState): void {
     ask.state = state;
     ask.version += 1;
+    this.touch(ask);
   }
 
   /** Whether the session waits on the user for anything. */
   waiting(): boolean {
-    return this.entries.some((entry) => entry.kind === "ask" && entry.state.state === "waiting");
+    return this.derived().waiting;
   }
 
   /** Something of the session's own health, shown once however often the
@@ -379,7 +550,7 @@ export class Conversation {
   private health(health: Health): void {
     const last = this.entries[this.entries.length - 1];
     if (last?.kind === "health" && last.health.kind === health.kind && last.health.text === health.text) return;
-    this.entries.push({ kind: "health", key: this.key("health"), health });
+    this.add({ kind: "health", key: `x:${++this.serial}`, stamp: 0, health });
   }
 
   /** An item began or finished: shown where it first appeared, as it now
@@ -387,14 +558,15 @@ export class Conversation {
   private item(turn: string, native: import("../world/events").Item, at: number, finished: boolean): void {
     const startedAt = native.started_at ? Date.parse(native.started_at) : at;
     const id = native.id;
+    const key = id ? itemEntryKey(turn, id) : `n:${++this.serial}`;
     let fresh: Entry;
     const questions = native.kind === "message" ? questionsOf(native.detail) : null;
     if (questions) {
-      const shown = this.find(turn, id);
+      const shown = id ? this.find(turn, id) : undefined;
       if (shown?.kind === "question") return;
-      const fresh: Entry = { kind: "question", key: this.key("question"), item: id, turn, questions, answers: questions.map(() => null), version: 0 };
-      if (shown) this.entries[this.entries.indexOf(shown)] = { ...fresh, key: shown.key };
-      else this.entries.push(fresh);
+      const asked: Entry = { kind: "question", key, stamp: 0, item: id, turn, questions, answers: questions.map(() => null), version: 0 };
+      if (shown) this.replace(shown, asked);
+      else this.add(asked);
       return;
     }
     switch (native.kind) {
@@ -403,7 +575,8 @@ export class Conversation {
       case "plan":
         fresh = {
           kind: "prose",
-          key: this.key("prose"),
+          key,
+          stamp: 0,
           item: id,
           turn,
           prose: native.kind,
@@ -413,7 +586,7 @@ export class Conversation {
         };
         break;
       case "agent_activity":
-        fresh = { kind: "activity", key: this.key("activity"), item: id, turn, text: `${native.path}: ${native.activity}` };
+        fresh = { kind: "activity", key, stamp: 0, item: id, turn, text: `${native.path}: ${native.activity}` };
         break;
       case "tool": {
         const { kind: _kind, id: _id, started_at: _started, detail: _detail, ...tool } = native;
@@ -421,7 +594,8 @@ export class Conversation {
           tool.status === "running" ? null : tool.status === "unknown" ? "unknown" : (tool.status as Use);
         fresh = {
           kind: "tool",
-          key: this.key("tool"),
+          key,
+          stamp: 0,
           item: id,
           turn,
           tool,
@@ -433,24 +607,24 @@ export class Conversation {
       case "compaction":
         // Shown once it is done: the context it leaves is what counts.
         if (!finished) return;
-        fresh = { kind: "compaction", key: this.key("compaction"), item: id, turn };
+        fresh = { kind: "compaction", key, stamp: 0, item: id, turn };
         break;
       case "hidden":
         // A completed item can remove a transient placeholder.
-        if (id) this.entries = this.entries.filter((entry) => !("item" in entry && entry.item === id && entry.turn === turn));
+        if (id && this.find(turn, id)) this.remove((entry) => "item" in entry && entry.item === id && entry.turn === turn);
         return;
       case "other":
         if (!finished) return;
-        fresh = { kind: "other", key: this.key("other"), item: id, turn, hostKind: native.host_kind };
+        fresh = { kind: "other", key, stamp: 0, item: id, turn, hostKind: native.host_kind };
         break;
     }
     if (!id) {
-      this.entries.push(fresh);
+      this.add(fresh);
       return;
     }
     const shown = this.find(turn, id);
     if (!shown) {
-      this.entries.push(fresh);
+      this.add(fresh);
       return;
     }
     if (shown.kind === "prose" && fresh.kind === "prose") {
@@ -460,16 +634,25 @@ export class Conversation {
       if (shown.text !== fresh.text) shown.version += 1;
       shown.text = fresh.text;
       shown.writing = fresh.writing;
+      this.touch(shown);
       return;
     }
     if (shown.kind === "tool" && fresh.kind === "tool") {
       // Facts gathered while it ran stand until the item brings its own.
       shown.tool = fresh.tool.run || !shown.tool.run ? fresh.tool : { ...fresh.tool, run: shown.tool.run };
       shown.ended = fresh.ended;
+      this.touch(shown);
       return;
     }
+    this.replace(shown, { ...fresh, key: shown.key } as Entry);
+  }
+
+  /** Puts `fresh` where `shown` stood. */
+  private replace(shown: Entry, fresh: Entry): void {
     const index = this.entries.indexOf(shown);
-    this.entries[index] = { ...fresh, key: shown.key };
+    this.entries[index] = fresh;
+    this.reindex();
+    this.touch(fresh);
   }
 
   /** What a run's jobs told while it ran, by job: the latest of each. */
@@ -479,7 +662,11 @@ export class Conversation {
    *  where its output is. Writes join those already known; how the run
    *  stands is its own job's to say, the latest word kept. */
   private runFacts(update: JobFacts): void {
-    const entry = [...this.entries].reverse().find((candidate): candidate is Extract<Entry, { kind: "tool" }> => candidate.kind === "tool" && candidate.item === update.call_id);
+    let entry: ToolEntry | undefined;
+    for (let index = this.entries.length - 1; index >= 0 && !entry; index -= 1) {
+      const candidate = this.entries[index]!;
+      if (candidate.kind === "tool" && candidate.item === update.call_id) entry = candidate;
+    }
     if (!entry) return;
     const job = `${update.call_id}|${update.machine}|${update.job}`;
     const fresh = update.sequence > (this.sequences.get(job) ?? -1);
@@ -496,6 +683,7 @@ export class Conversation {
     for (const visit of update.visited) if (!run.visited.some(([machine, job]) => machine === visit[0] && job === visit[1])) run.visited.push(visit);
     for (const write of update.writes) if (!run.writes.some((known) => known.id === write.id)) run.writes.push(write);
     entry.tool = { ...entry.tool, run };
+    this.touch(entry);
   }
 
   /** Answers the user sent to the questions of `item`, by question. */
@@ -504,6 +692,7 @@ export class Conversation {
     if (!question) return;
     for (const { index, answer } of answers) if (index >= 0 && index < question.answers.length) question.answers[index] = answer;
     question.version += 1;
+    this.touch(question);
   }
 
   /** Answers about to be sent: shown answered at once. */
@@ -516,23 +705,40 @@ export class Conversation {
 
   /** Whether a turn has ended, as far as is shown. */
   turnEnded(turn: string): boolean {
-    return this.entries.some((entry) => entry.kind === "ended" && entry.turn === turn);
+    return this.endedTurns.has(turn);
+  }
+
+  /** The last message a turn said, by key. */
+  lastMessageOf(turn: string): string | null {
+    return this.derived().lastMessage.get(turn) ?? null;
+  }
+
+  /** The turn whose actions stay shown: the last that ended. */
+  latestEnded(): string | null {
+    return this.derived().latest;
   }
 
   private find(turn: string, id: string): Keyed | undefined {
-    return this.entries.find((entry): entry is Keyed => "item" in entry && entry.item === id && entry.turn === turn);
+    return this.byItem.get(itemKey(turn, id));
+  }
+
+  /** An entry by its key. */
+  get(key: string): Entry | undefined {
+    return this.byKey.get(key);
   }
 
   /** Words the user is sending, shown at once; returns their key. */
   sending(text: string, here: MachineName | null, attached: ShownAttachment[] = []): string {
-    const key = this.key("heard");
-    this.entries.push({
+    const key = `s:${++this.sends}`;
+    this.add({
       kind: "heard",
       key,
+      stamp: 0,
       from: here ? { kind: "user", machine: here } : null,
       text,
       turn: null,
       sending: { state: "going" },
+      ...(this.running.size > 0 ? { intoTurn: true } : {}),
       ...(attached.length ? { attached } : {}),
       ...replyOf(text),
     });
@@ -558,22 +764,51 @@ export class Conversation {
     return [...this.agents.values()].find((agent) => agent.description === description) ?? null;
   }
 
+  /** The conversation could not begin: why, as it was given, under the
+   *  first words. */
+  failedToStart(why: string): void {
+    this.remove((entry) => entry.key === "u:start");
+    // The words stand as they were said; what became of them is said
+    // beneath, once.
+    for (const entry of this.entries) {
+      if (entry.kind === "heard" && entry.sending) {
+        delete entry.sending;
+        delete entry.intoTurn;
+        this.touch(entry);
+      }
+    }
+    this.add({ kind: "uncertain", key: "u:start", stamp: 0, why });
+  }
+
+  /** Whether any turn has been seen to begin or end. */
+  hasTurns(): boolean {
+    return this.running.size > 0 || this.endedTurns.size > 0;
+  }
+
   /** Words shown as being sent that went into the queue instead. */
   unsend(key: string): void {
-    this.entries = this.entries.filter((entry) => entry.key !== key);
+    this.remove((entry) => entry.key === key);
   }
 
   /** What became of words being sent: they are kept, with how they stand,
    *  until the session hears them. */
   sent(key: string, state: SendState): void {
-    const entry = this.entries.find((candidate) => candidate.key === key);
-    if (entry?.kind === "heard" && entry.sending) entry.sending = state;
+    const entry = this.byKey.get(key);
+    if (entry?.kind === "heard" && entry.sending) {
+      entry.sending = state;
+      this.touch(entry);
+    }
   }
 
   /** Whether a turn is under way: begun and not ended, or anything shown
    *  still happening. */
   busy(): boolean {
     return this.running.size > 0 || this.moving();
+  }
+
+  /** Whether a turn the World told of is under way. */
+  turning(): boolean {
+    return this.running.size > 0;
   }
 
   /** When the turn under way began, as the World told it; null when no
@@ -586,11 +821,13 @@ export class Conversation {
   /** What the turn under way is doing now, for the line under it: the last
    *  thing still happening. */
   doing(): Entry | null {
-    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
-      const entry = this.entries[index]!;
-      if ((entry.kind === "tool" && entry.ended === null) || (entry.kind === "prose" && entry.writing)) return entry;
-    }
-    return null;
+    return this.derived().doing;
+  }
+
+  /** Whether the agent has shown anything of its own yet: before then, a
+   *  conversation whose user has spoken is still starting. */
+  spoke(): boolean {
+    return this.derived().heardFrom;
   }
 
   /** How many turns have ended while watched. */
@@ -605,12 +842,63 @@ export class Conversation {
 
   /** Whether anything shown is happening now. */
   moving(): boolean {
-    return this.entries.some(
-      (entry) =>
-        (entry.kind === "tool" && entry.ended === null) ||
-        (entry.kind === "prose" && entry.writing) ||
-        (entry.kind === "heard" && entry.sending?.state === "going"),
-    );
+    return this.derived().moving;
+  }
+
+  private derived(): Derived {
+    if (this.derivedCache?.clock === this.clock) return this.derivedCache;
+    const lastMessage = new Map<string, string>();
+    let latest: string | null = null;
+    let moving = false;
+    let waiting = false;
+    let doing: Entry | null = null;
+    let heardFrom = false;
+    for (const entry of this.entries) {
+      switch (entry.kind) {
+        case "prose":
+          if (entry.prose === "message") lastMessage.set(entry.turn, entry.key);
+          if (entry.writing) {
+            moving = true;
+            doing = entry;
+          }
+          heardFrom = true;
+          break;
+        case "tool":
+          if (entry.ended === null) {
+            moving = true;
+            doing = entry;
+          }
+          heardFrom = true;
+          break;
+        case "heard":
+          if (entry.sending?.state === "going") moving = true;
+          break;
+        case "ask":
+          if (entry.state.state === "waiting") waiting = true;
+          heardFrom = true;
+          break;
+        case "ended":
+          latest = entry.turn;
+          heardFrom = true;
+          break;
+        case "steps":
+        case "compaction":
+        case "other":
+        case "activity":
+        case "question":
+        case "uncertain":
+          heardFrom = true;
+          break;
+        case "health":
+          // Trouble that stopped it from starting ends the start.
+          if (entry.health.kind === "error" || entry.health.kind === "tool_server") heardFrom = true;
+          break;
+        case "forked":
+          break;
+      }
+    }
+    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, doing, heardFrom };
+    return this.derivedCache;
   }
 
   /** The entries as they are laid out: what a turn did between the things
@@ -619,9 +907,13 @@ export class Conversation {
    *  A stretch keeps its key while it lasts, whatever comes and goes in it;
    *  it is laid out only while something in it can be seen, so its heading
    *  never comes and goes with a placeholder. A message not yet begun, and
-   *  thinking not yet given, are nothing to show. */
+   *  thinking not yet given, are nothing to show. Words sent into a turn
+   *  under way and not yet taken in come last, in the order sent: they
+   *  stand below the turn's line and divide nothing. */
   blocks(): Block[] {
+    if (this.blocksCache?.clock === this.clock) return this.blocksCache.blocks;
     const blocks: Block[] = [];
+    const below: Entry[] = [];
     let group: Activity | null = null;
     const ordinal = new Map<string, number>();
     const keyFor = (turn: string, first: string): string => {
@@ -634,13 +926,19 @@ export class Conversation {
     };
     for (const entry of this.entries) {
       if (entry.kind === "prose" && entry.prose === "message" && entry.writing && !entry.text.trim()) continue;
+      if (entry.kind === "heard" && entry.sending !== undefined && entry.intoTurn) {
+        below.push(entry);
+        continue;
+      }
       const activity = entry.kind === "tool" || entry.kind === "activity" || (entry.kind === "prose" && entry.prose === "thinking");
       if (activity && "turn" in entry) {
         if (!group || group.turn !== entry.turn) {
-          group = { kind: "activity-group", key: keyFor(entry.turn, entry.key), turn: entry.turn, members: [] };
+          group = { kind: "activity-group", key: keyFor(entry.turn, entry.key), turn: entry.turn, members: [], stamp: 0, agents: false };
           blocks.push(group);
         }
         group.members.push(entry);
+        if (entry.stamp > group.stamp) group.stamp = entry.stamp;
+        if (entry.kind === "tool" && (entry.tool.name === "Agent" || entry.tool.name === "Task")) group.agents = true;
       } else {
         // Only words said, the model's or a person's, begin a new stretch
         // (walkthrough item 33); a note, a notice or a request in between
@@ -649,8 +947,26 @@ export class Conversation {
         blocks.push(entry);
       }
     }
-    return blocks.filter((block) => block.kind !== "activity-group" || block.members.some(visible) || withheld(block));
+    const shown = blocks.filter((block) => block.kind !== "activity-group" || block.members.some(visible) || withheld(block));
+    shown.push(...below);
+    this.blocksCache = { clock: this.clock, blocks: shown };
+    return shown;
   }
+}
+
+/** The last of `list` that `test` takes. */
+function lastOf<T>(list: readonly T[], test: (item: T) => boolean): T | undefined {
+  for (let index = list.length - 1; index >= 0; index -= 1) if (test(list[index]!)) return list[index];
+  return undefined;
+}
+
+/** An entry's key by its turn and the host's item. */
+function itemEntryKey(turn: string, item: string): string {
+  return `i:${turn}:${item}`;
+}
+
+function itemKey(turn: string, item: string): string {
+  return `${turn}\u0001${item}`;
 }
 
 /** What a host's state change says of the session's health: the same

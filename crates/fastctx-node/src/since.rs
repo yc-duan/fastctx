@@ -116,7 +116,7 @@ pub async fn query(
 fn presence(name: &MachineName, online: bool, at: Option<Timestamp>, since: Timestamp) -> Option<SinceEvent> {
     let at = at.filter(|at| *at > since)?;
     Some(SinceEvent {
-        id: records::identity("presence", &[name.as_str(), &at.to_string(), if online { "on" } else { "off" }]),
+        id: records::identity("presence", &[name.key(), &at.to_string(), if online { "on" } else { "off" }]),
         at,
         machine: name.clone(),
         town: SinceTown::Unrecorded { recorded_in: Vec::new() },

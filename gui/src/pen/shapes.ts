@@ -40,7 +40,7 @@ export function outline(
   points: Point[],
   width: number,
   random: () => number,
-  { pressure = 0.25, taper = 0.12 }: { pressure?: number; taper?: number } = {},
+  { pressure = 0.25, taper = 0.12, taperStart = taper, taperEnd = taper }: { pressure?: number; taper?: number; taperStart?: number; taperEnd?: number } = {},
 ): string {
   if (points.length < 2) return "";
   const lengths = [0];
@@ -60,7 +60,7 @@ export function outline(
     const nx = -dy / length;
     const ny = dx / length;
     const t = lengths[index] / total;
-    const ends = taper > 0 ? Math.min(1, t / taper, (1 - t) / taper) : 1;
+    const ends = Math.min(1, taperStart > 0 ? t / taperStart : 1, taperEnd > 0 ? (1 - t) / taperEnd : 1);
     const eased = ends * ends * (3 - 2 * ends);
     const half = (width / 2) * (1 + press[index]) * (0.25 + 0.75 * eased);
     left.push(`${f(point[0] + nx * half)} ${f(point[1] + ny * half)}`);

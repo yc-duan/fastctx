@@ -19,7 +19,7 @@ use crate::app::{Around, Data, Done, Feed, Job};
 use crate::sessions::Refused;
 
 /// How long a page that shows who is where waits between asks.
-const EVERY: Duration = Duration::from_secs(2);
+pub(crate) const EVERY: Duration = Duration::from_secs(2);
 /// How many rounds pass between asks of this computer's agents: a minute.
 const AGENTS_EVERY: u32 = 30;
 
@@ -253,6 +253,22 @@ async fn keep_connected(world: &World) -> Result<fastctx_install::service::Kept,
     }
 }
 
+/// Follows the interface's optional parts this computer shows, which its
+/// graphical interface may change too. A watch the node ended, as when it
+/// restarts, is taken up again as pages ask again, every `EVERY`.
+pub async fn features(world: World, sender: UnboundedSender<fastctx_types::features::Features>) {
+    loop {
+        if let Ok(mut watch) = world.watch_features().await {
+            while let Ok(features) = watch.next().await {
+                if sender.send(features).is_err() {
+                    return;
+                }
+            }
+        }
+        tokio::time::sleep(EVERY).await;
+    }
+}
+
 /// Does a job and sends its answer to the page that asked.
 pub fn run(world: World, sender: Sender, page: u64, job: Job) {
     tokio::spawn(async move {
@@ -327,6 +343,10 @@ async fn work(world: &World, job: Job) -> Result<Done, fastctx_client::Error> {
         }
         Job::Seen { hub, account, name } => {
             world.account(Some(hub), account, AccountChange::Seen { name }).await?;
+            Done::Changed
+        }
+        Job::Conversations { on } => {
+            world.set_feature(fastctx_types::features::Feature::Conversations, on).await?;
             Done::Changed
         }
         Job::Apply { .. } | Job::Unapply | Job::ApplyHome { .. } => {

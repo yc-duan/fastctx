@@ -36,6 +36,7 @@ async fn open(world: &WorldDir, directory: &Path) -> anyhow::Result<Option<dial:
         letters: wire::Letters { epoch: letters.epoch, taken: letters.taken },
         through: None,
         dialed: Some(connection.address),
+        any_names: true,
     };
     dial::send(
         &mut connection.socket,

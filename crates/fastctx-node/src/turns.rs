@@ -316,7 +316,7 @@ async fn keep_answers(
         .map(|reader| Owing {
             to: reader.clone(),
             delivery: Delivery {
-                id: speech::fixed_id("answer", &[&colleague.tag(), key, &reader.tag()]),
+                id: speech::fixed_id("answer", &[&colleague.key(), key, &reader.key()]),
                 at: Timestamp::now(),
                 notice: Notice::Answer {
                     colleague: colleague.clone(),
@@ -556,7 +556,7 @@ fn health_event(
         Origin::User => String::new(),
     };
     for reader in readers {
-        let id = speech::fixed_id("health", &[&colleague.tag(), &turn, &format!("{:?}", report.kind), &reader.tag()]);
+        let id = speech::fixed_id("health", &[&colleague.key(), &turn, &format!("{:?}", report.kind), &reader.key()]);
         let notice = Notice::Health { colleague: colleague.clone(), label: label.clone(), health: report.clone() };
         crate::inbox::owe(&directory, &Owing { to: reader, delivery: Delivery { id, at, notice } })?;
     }

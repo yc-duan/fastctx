@@ -20,7 +20,7 @@ pub fn town_from_run() -> Option<TownName> {
     let resident: Address = std::env::var("FASTCTX_RESIDENT").ok()?.parse().ok()?;
     let here = std::fs::read(WorldDir::under(&fastctx_platform::fastctx_root().ok()?).machine_file()).ok()?;
     let here: serde_json::Value = serde_json::from_slice(&here).ok()?;
-    if here.get("name")?.as_str()? == resident.machine.as_str() {
+    if MachineName::try_from(here.get("name")?.as_str()?).ok()? == resident.machine {
         return None;
     }
     TownName::try_from(std::env::var("FASTCTX_TOWN").ok()?).ok()

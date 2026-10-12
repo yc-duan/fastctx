@@ -17,6 +17,7 @@ pub mod collab_prompt;
 pub mod composer;
 pub mod copy;
 pub mod device;
+pub mod features;
 pub mod file_read;
 pub mod file_search;
 pub mod files;
@@ -49,7 +50,7 @@ pub mod write;
 
 pub use calls::{Attach, Call, JournalCall, ProjectCall, Reply};
 pub use names::{
-    AccountName, Address, AgentName, EntryId, HubName, JobId, JournalName, MachineName, NameError, NoticeId, PageName,
-    ResidentId, TownName,
+    AccountName, Address, AgentName, EntryId, HubName, JobId, JournalName, MachineName, NameError, NameProblem,
+    NoticeId, PageName, ResidentId, TownName,
 };
 pub use process::ProcessIdentity;

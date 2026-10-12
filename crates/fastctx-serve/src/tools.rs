@@ -26,6 +26,13 @@ impl Machines {
     fn lent(&self) -> bool {
         self.here.is_none()
     }
+
+    /// Whether this session reaches only the machine its shell is on: then
+    /// nothing in the description speaks of other machines or of `on`
+    /// (`world-run.md`, 模型怎样知道).
+    fn alone(&self) -> bool {
+        self.here.is_some() && self.others.is_empty()
+    }
 }
 
 /// What tells the host to list the tools again.
@@ -71,15 +78,13 @@ pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<
 fn opening(machines: Option<&Machines>) -> String {
     const SHELL: &str = "This tool is your shell on all of them, with no address, login or key; `fastctx nodes` shows which are online.";
     let Some(machines) = machines else {
-        return "The user's machines are connected by fastctx, and this tool is your shell on all of them: it runs a bash script on this machine, and inside the script `on MACHINE` runs a part of it on another machine, with no address, login or key. `fastctx nodes` lists them.".to_string();
+        return "This tool is your shell: it runs a bash script on this machine. When the user has other machines connected by fastctx, `on MACHINE` inside the script runs a part of it on one of them, with no address, login or key; `fastctx nodes` lists them.".to_string();
     };
     let Some(here) = &machines.here else {
         return format!("{}\n{SHELL}", fastctx_hands::lent::opening(&machines.others));
     };
     if machines.others.is_empty() {
-        return format!(
-            "Your shell is on {here}, this machine, the one machine of the user's you have access to now. This tool is your shell there; `fastctx nodes` shows the user's machines."
-        );
+        return format!("This tool is your shell on {here}, this machine.");
     }
     let this = if machines.program.is_none() { ", this machine" } else { "" };
     let example = &machines.others[0];
@@ -97,10 +102,15 @@ fn opening(machines: Option<&Machines>) -> String {
 
 /// `run`'s `cwd`: weaker models reach for it to work on another machine's
 /// files, which only `on` does.
-fn cwd_description(here: Option<&str>) -> String {
+fn cwd_description(here: Option<&str>, alone: bool) -> String {
     let here = here.map(|here| format!(" ({here})")).unwrap_or_default();
+    let elsewhere = if alone {
+        ""
+    } else {
+        " For a directory on another machine, write `on MACHINE` in the script and `cd` there."
+    };
     format!(
-        "Absolute path of a directory on this machine{here} to start in; without it, the home directory. For a directory on another machine, write `on MACHINE` in the script and `cd` there."
+        "Absolute path of a directory on this machine{here} to start in; without it, the home directory.{elsewhere}"
     )
 }
 
@@ -109,9 +119,18 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     let ends = if woken { RUN_ENDS_WOKEN } else { RUN_ENDS_ASKED };
     let exec = if codex { RUN_EXEC } else { "" };
     let lent = machines.is_some_and(Machines::lent);
+    let alone = machines.is_some_and(Machines::alone);
     let start = if lent { RUN_START_LENT } else { RUN_START };
-    let together =
-        if lent { format!("{}\n{RUN_TOGETHER_LENT}", run_together(writes_off)) } else { run_together(writes_off) };
+    let together = if lent {
+        format!("{}\n{RUN_TOGETHER_LENT}", run_together(writes_off, alone))
+    } else {
+        run_together(writes_off, alone)
+    };
+    let (shell, copy, on, commands) = if alone {
+        (RUN_SHELL_ALONE, RUN_COPY_ALONE, String::new(), RUN_COMMANDS_ALONE)
+    } else {
+        (RUN_SHELL, RUN_COPY, format!("{RUN_ON}\n\n"), RUN_COMMANDS)
+    };
     let mut properties = json!({
         "command": {
             "type": "string",
@@ -129,13 +148,13 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     if !lent {
         properties["cwd"] = json!({
             "type": "string",
-            "description": cwd_description(machines.and_then(|machines| machines.here.as_deref()))
+            "description": cwd_description(machines.and_then(|machines| machines.here.as_deref()), alone)
         });
     }
     json!({
         "name": "run",
         "description": format!(
-            "{exec}{}\n\n{RUN_SHELL}{start}\n{RUN_SHELL_REST}{ends}\n\n{RUN_FILES}{writing}{RUN_COPY}\n\n{RUN_ON}\n\n{together}\n\n{RUN_COMMANDS}",
+            "{exec}{}\n\n{shell}{start}\n{RUN_SHELL_REST}{ends}\n\n{RUN_FILES}{writing}{copy}\n\n{on}{together}\n\n{commands}",
             opening(machines),
         ),
         "inputSchema": {
@@ -156,6 +175,14 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
 const RUN_SHELL: &str = "\
 Shell:
 - Every machine runs bash with the GNU tools and `rg`, Windows ones too (Git Bash). Write Windows paths like C:/Users/me, and use `ls`, `find`, `du` and `df` rather than PowerShell.
+- Your script reaches bash as a file, exactly as you wrote it: no other shell parses it on the way, so nothing in it is unquoted, halved or cut. A program can run inline in it, in a here-document with a quoted delimiter, as written.
+- Git Bash rewrites arguments that look like Unix paths, such as /FI, before a Windows program sees them. Put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
+";
+
+/// The shell, on a computer that reaches no other machine.
+const RUN_SHELL_ALONE: &str = "\
+Shell:
+- It is bash with the GNU tools and `rg`, on Windows too (Git Bash). Write Windows paths like C:/Users/me, and use `ls`, `find`, `du` and `df` rather than PowerShell.
 - Your script reaches bash as a file, exactly as you wrote it: no other shell parses it on the way, so nothing in it is unquoted, halved or cut. A program can run inline in it, in a here-document with a quoted delimiter, as written.
 - Git Bash rewrites arguments that look like Unix paths, such as /FI, before a Windows program sees them. Put MSYS_NO_PATHCONV=1 before such a command, and before `cmd /c`, which otherwise silently does nothing.
 ";
@@ -222,12 +249,16 @@ const RUN_WRITING: &str = "\
     >>>>>>> REPLACE
     EOF
   The SEARCH text must be in the file exactly once (`--all` replaces every one); all blocks apply, or none. Only the text replaced changes: the file keeps its encoding, BOM and line endings.
+  When the file or your text has lines like these markers, write the block's markers longer than those lines, all three the same length, such as <<<<<<<<< SEARCH, ========= and >>>>>>>>> REPLACE.
 - `write PATH` makes standard input the whole file, in the file's encoding and line endings; a new file is UTF-8 (`-n`: no final newline).
 - `edit` and `write` take absolute paths. Quote the here-document delimiter, <<'EOF', so bash leaves the text as written.
 ";
 
 const RUN_COPY: &str = "\
 - `fastctx copy SOURCE... DEST` copies files and directories, on one machine or between machines, each end MACHINE:PATH or a path on this machine. DEST is what the copy becomes; end it with / to copy into that directory, as several sources need.";
+
+const RUN_COPY_ALONE: &str = "\
+- `fastctx copy SOURCE... DEST` copies files and directories. DEST is what the copy becomes; end it with / to copy into that directory, as several sources need.";
 
 const RUN_ON: &str = "\
 Other machines: write `on MACHINE` before a command, or give it a script on standard input:
@@ -237,21 +268,28 @@ Other machines: write `on MACHINE` before a command, or give it a script on stan
     EOF
 - The part sent there sees your script's variables, functions and shell options; PATH, HOME, LANG and the machine's other settings are its own.
 - Its output, exit code and standard input work like any command's, in pipelines and `if` too.
-- A script quoted as one word, such as `on server 'cd /srv && ls'`, is refused: use a here-document.
+- A script after `on MACHINE` goes on standard input, as a here-document; one quoted as a single word is refused.
 - If the connection drops, it goes on there, and its end still reaches you.
 - Every command here works there too, such as `on server fastctx view /srv/app/app.ini`.";
 
 /// The commands as programs a script combines; the example of piping into
-/// `write` goes when the World's write commands are off.
-fn run_together(writes_off: bool) -> String {
+/// `write` goes when the World's write commands are off, and those with
+/// `on` when the session reaches no other machine.
+fn run_together(writes_off: bool, alone: bool) -> String {
     let write = if writes_off { "" } else { "\n    python3 render.py | write /srv/app/config.json" };
+    let (these, on) = if alone {
+        ("every command here, the fastctx ones included,", "")
+    } else {
+        (
+            "every command here, `on` and the fastctx ones included,",
+            "\n    for m in laptop server; do on \"$m\" df -h / & done; wait\n    diff <(on laptop cat C:/work/app.ini) <(on server cat /srv/app/app.ini)",
+        )
+    };
     format!(
         "\
-Putting commands together: every command here, `on` and the fastctx ones included, is an ordinary program in your script. Its arguments, standard input and output, and exit code work as any command's, so combine them as you would `cat` or `grep`: pipelines, loops, `$( )`, `&&`, `xargs`, `&` with `wait`. For example:
+Putting commands together: {these} is an ordinary program in your script. Its arguments, standard input and output, and exit code work as any command's, so combine them as you would `cat` or `grep`: pipelines, loops, `$( )`, `&&`, `xargs`, `&` with `wait`. For example:
     fastctx view /srv/app/src/*.rs
-    rg -l0 'TODO' /srv/app | fastctx view --files0-from -{write}
-    for m in laptop server; do on \"$m\" df -h / & done; wait
-    diff <(on laptop cat C:/work/app.ini) <(on server cat /srv/app/app.ini)"
+    rg -l0 'TODO' /srv/app | fastctx view --files0-from -{write}{on}"
     )
 }
 
@@ -263,6 +301,14 @@ More commands (`--help` on each gives all its options):
 - `fastctx project` lists the user's projects and shows their records. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its record says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx page` publishes an HTML page the user opens in the World app.";
 
+/// The other commands, on a computer that reaches no other machine.
+const RUN_COMMANDS_ALONE: &str = "\
+More commands (`--help` on each gives all its options):
+- `fastctx w` shows what runs and who works now, and what happened since your last turn; `fastctx w ID...` shows those sessions or jobs.
+- `fastctx wait JOB...` waits until jobs end and shows how each ended; `fastctx stop JOB...` stops them and everything they started.
+- `fastctx project` lists the user's projects and shows their records. A fastctx project is not a folder or a repository but a named piece of work; its record says what it is for and where its code and data are. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
+- `fastctx page` publishes an HTML page the user opens in the World app.";
+
 fn ask_colleague_definition(woken: bool, collab: &fastctx_types::collab::Offered) -> Value {
     let delivered = if woken { "" } else { " with the answer of your next call to a fastctx tool" };
     let lives = collab.callees.iter().map(|callee| {
@@ -270,7 +316,8 @@ fn ask_colleague_definition(woken: bool, collab: &fastctx_types::collab::Offered
             Some(lives_on) => format!("It lives on {lives_on}, the machine configured for this callee, and its scripts start there; it reaches the other machines the same way you do, with `on`."),
             None => "It is an agent another account lent the user: it has no access to the computer it runs on, so each of its commands names its machine with `on`, and it reaches that account's machines.".to_string(),
         };
-        format!("{}: {}\nIt works for account {}. {lives}", callee.name, callee.use_when, callee.account)
+        let account = callee.account.as_ref().map(|account| format!("It works for account {account}. ")).unwrap_or_default();
+        format!("{}: {}\n{account}{lives}", callee.name, callee.use_when)
     }).collect::<Vec<_>>().join("\n\n");
     let mut tool = json!({
         "name": "ask_colleague",

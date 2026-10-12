@@ -1,15 +1,22 @@
 // The sidebar: the places of the World, always at hand, so who is working
-// can be seen from any page. The World, its machines, the agents on them
-// and the features first, each a line with its mark; then each project,
-// open to its conversations, and the conversations in no project, most
-// recent first. A conversation is listed as long as it is not removed,
-// whether its agent's process runs or not (`world-gui.md`, 界面的结构).
-// Logged in to more than one account, the projects and conversations come
-// account by account, each only what that account may use. A conversation
-// is begun from here; the account and the settings are at its foot.
+// can be seen from any page (`world-gui.md`, 界面的结构). At its top, the
+// network shown, by its server's name (this computer's own name while it is
+// in none); pressed, every network this device is in, the way to make a new
+// one or join one, and each one's management. Then the agents, the
+// machines and the features, each a line with its mark. With 「对话」 on,
+// the front page and a new conversation come first, and below are each
+// project, open to its conversations, and the conversations in no project,
+// most recent first; a conversation is listed as long as it is not removed,
+// whether its agent's process runs or not. Logged in to more than one
+// account of the network, the projects and conversations come account by
+// account, each only what that account may use. The account and the
+// settings are at its foot.
 
 import { glyph } from "../conversation/glyphs";
+import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
+import { deviceFeatures } from "./device-features";
+import { networksOf, shownNetwork } from "./network";
 import { redrawKeepingFocus } from "./focus";
 import { loginsOf, type Login } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
@@ -67,6 +74,9 @@ export class Sidebar {
   readonly element: HTMLElement;
   private readonly list: HTMLElement;
   private readonly foot: HTMLElement;
+  private readonly switcher: HTMLButtonElement;
+  private readonly networks: HTMLElement;
+  private readonly popover: Popover;
   private drawn = "";
 
   constructor(private readonly options: SidebarOptions) {
@@ -76,14 +86,35 @@ export class Sidebar {
     this.element.setAttribute("aria-label", words.app);
     this.element.innerHTML = `
       <div class="sidebar-head">
-        <a class="wordmark" href="#/">${mark()}<span>${escape(words.app)}</span></a>
+        <button class="network-switch" type="button" aria-haspopup="menu">${mark()}<span class="network-name"></span>${glyph("chevron", 14)}</button>
         <button class="icon-button sidebar-fold" type="button" aria-label="${escape(words.foldSidebar)}" title="${escape(words.foldSidebar)} · Ctrl+B">${glyph("sidebar", 18)}</button>
+        <div class="network-pop" role="menu" aria-label="${escape(words.networks)}" hidden></div>
       </div>
       <button class="new-talk" type="button">${glyph("plus", 18)}<span>${escape(words.newTalk)}</span><kbd>Ctrl N</kbd></button>
       <div class="sidebar-places"></div>
       <div class="sidebar-foot"></div>`;
     this.list = this.element.querySelector<HTMLElement>(".sidebar-places")!;
     this.foot = this.element.querySelector<HTMLElement>(".sidebar-foot")!;
+    this.switcher = this.element.querySelector<HTMLButtonElement>(".network-switch")!;
+    this.networks = this.element.querySelector<HTMLElement>(".network-pop")!;
+    this.popover = new Popover(this.networks, this.switcher);
+    this.switcher.addEventListener("click", () => {
+      if (!this.popover.open) this.drawNetworks();
+      this.popover.toggle();
+    });
+    this.networks.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      const pick = target.closest<HTMLElement>("[data-network]");
+      if (pick) {
+        options.store.showNetwork(pick.dataset.network!);
+        this.popover.hide();
+        this.drawn = "";
+        this.draw();
+        return;
+      }
+      // A link in it goes where it says, and the list folds away.
+      if (target.closest("a")) this.popover.hide();
+    });
     this.element.querySelector(".new-talk")!.addEventListener("click", () => options.newTalk());
     this.element.querySelector(".sidebar-fold")!.addEventListener("click", () => options.fold());
     this.list.addEventListener("click", (event) => {
@@ -105,6 +136,7 @@ export class Sidebar {
     });
     effect(() => {
       options.store.world.get();
+      deviceFeatures.conversations.get();
       options.store.trouble.get();
       options.store.clock.get();
       options.store.unanswered.get();
@@ -119,7 +151,10 @@ export class Sidebar {
     const place = this.options.place();
     const now = store.clock.peek();
     // The new conversation outside any project is a place of its own.
+    const talking = deviceFeatures.conversations.peek();
+    this.drawSwitcher();
     const begin = this.element.querySelector<HTMLElement>(".new-talk");
+    if (begin) begin.hidden = !talking;
     const beginning = place.kind === "new" && place.town === null;
     begin?.classList.toggle("current", beginning);
     if (beginning) begin?.setAttribute("aria-current", "page");
@@ -133,10 +168,12 @@ export class Sidebar {
     const at = (kinds: Place["kind"][]) => (kinds.includes(place.kind) ? " current" : "");
     const top = (href: string, current: string, mark: string, name: string, extra = "") =>
       `<a class="place home${current}" href="${href}"${current ? ' aria-current="page"' : ""}><span class="place-mark">${mark}</span><span class="place-name">${escape(name)}</span>${extra}</a>`;
+    // The agents come first: they are what the interface is for on a
+    // computer of its own.
     const places = `<div class="side-places">
-        ${top(link({ kind: "home" }), at(["home"]), knotMark(), words.world, waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : "")}
-        ${machines ? top(link({ kind: "machines" }), at(["machines", "machine"]), glyph("machine", 18), words.machines) : ""}
+        ${talking ? top(link({ kind: "home" }), at(["home"]), knotMark(), words.world, waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : "") : ""}
         ${machines ? top(link({ kind: "agents", machine: null }), at(["agents"]), glyph("agents", 18), words.agents) : ""}
+        ${machines ? top(link({ kind: "machines" }), at(["machines", "machine"]), glyph("machine", 18), words.machines) : ""}
         ${machines || loggedIn ? top(link({ kind: "features" }), at(["features", "feature"]), glyph("features", 18), words.features) : ""}
       </div>
       ${store.trouble.peek() ? `<p class="sidebar-trouble">${escape(words.unreachable)}</p>` : ""}
@@ -146,7 +183,9 @@ export class Sidebar {
     // of them sees it, one after another; with one, it is that account's.
     const groups = groupsOf(world);
     let body: string;
-    if (world && groups.length > 1) {
+    if (!talking) {
+      body = "";
+    } else if (world && groups.length > 1) {
       body = groups
         .map((group) => {
           const key = `${group.login.hub}/${group.login.account}`;
@@ -164,19 +203,52 @@ export class Sidebar {
       body = this.projects(towns, talks, place, now, facts, null) + this.loose(talks, place, now, facts);
     }
 
-    // On its own, this computer is a World of one; the way in is kept at
-    // hand until it logs in.
-    const alone =
-      world && isComputer(world) && !groups.length
-        ? `<section class="sidebar-group">${top(link({ kind: "login" }), at(["login"]), glyph("person", 18), words.logIn)}</section>`
-        : "";
     this.drawFoot(world, place);
-    const html = places + body + alone;
+    const html = places + body;
     if (html === this.drawn) return;
     this.drawn = html;
     redrawKeepingFocus(this.list, () => {
       this.list.innerHTML = html;
     });
+  }
+
+  /** The network shown, by name: its server's, or this computer's own while
+   *  it is in none. */
+  private drawSwitcher(): void {
+    const { store, words } = this.options;
+    const whole = store.whole.peek();
+    const shown = shownNetwork(whole);
+    const network = networksOf(whole).find((one) => one.hub === shown);
+    const name = network?.name ?? (whole && isComputer(whole) ? whole.here : words.app);
+    const label = this.switcher.querySelector(".network-name")!;
+    if (label.textContent !== name) label.textContent = name;
+    this.switcher.title = words.networks;
+  }
+
+  /** Every network this device is in, the one shown checked, each with its
+   *  management; then the ways into another. */
+  private drawNetworks(): void {
+    const { store, words } = this.options;
+    const whole = store.whole.peek();
+    const shown = shownNetwork(whole);
+    const rows = networksOf(whole)
+      .map(
+        (network) => `<li class="network-row">
+          <button class="network-pick${network.hub === shown ? " current" : ""}" type="button" role="menuitemradio" aria-checked="${network.hub === shown}" data-network="${escape(network.hub)}">
+            <span class="network-dot${network.online ? " online" : ""}" aria-hidden="true"></span>
+            <span class="network-row-text"><span class="network-row-name">${escape(network.name)}</span><span class="network-row-note">${escape(network.admin ? words.admin : words.member)} · ${escape(words.machinesCount(network.machines))}</span></span>
+            ${network.hub === shown ? glyph("check", 14) : ""}
+          </button>
+          <a class="icon-button network-manage" href="${link({ kind: "network", hub: network.hub })}" role="menuitem" aria-label="${escape(`${words.manageNetwork} ${network.name}`)}" title="${escape(words.manageNetwork)}">${glyph("settings", 16)}</a>
+        </li>`,
+      )
+      .join("");
+    const computer = !whole || isComputer(whole);
+    this.networks.innerHTML = `${rows ? `<ul class="network-rows">${rows}</ul>` : ""}
+      <div class="network-ways">
+        ${computer ? `<a class="network-way" href="${link({ kind: "login", way: "new" })}" role="menuitem">${glyph("plus", 16)}<span>${escape(words.newNetwork)}</span></a>` : ""}
+        <a class="network-way" href="${link({ kind: "login", way: "join" })}" role="menuitem">${glyph("link", 16)}<span>${escape(words.joinNetwork)}</span></a>
+      </div>`;
   }
 
   /** The foot: the accounts, marked when someone came into one, and the
@@ -187,7 +259,7 @@ export class Sidebar {
     const account = loginsOf(world?.accounts).length
       ? `<a class="place account-place${place.kind === "account" || place.kind === "admin" ? " current" : ""}" href="${link({ kind: "account" })}">${glyph("person", 18)}<span class="place-name">${escape(words.account)}</span>${arrivals ? `<span class="count waiting"><span class="spoken">${escape(words.arrivals(arrivals))}</span>${arrivals}</span>` : ""}</a>`
       : "";
-    const html = `${account}<a class="place settings${place.kind === "settings" ? " current" : ""}" href="${link({ kind: "settings" })}">${glyph("settings", 18)}<span class="place-name">${escape(words.settings)}</span></a>`;
+    const html = `${account}<a class="place settings${place.kind === "settings" || place.kind === "data" ? " current" : ""}" href="${link({ kind: "settings" })}">${glyph("settings", 18)}<span class="place-name">${escape(words.settings)}</span></a>`;
     if (html !== this.foot.innerHTML) this.foot.innerHTML = html;
   }
 

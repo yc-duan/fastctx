@@ -62,6 +62,7 @@ pub(crate) async fn session(
     proof: Signature,
     letters: Letters,
     through: Option<String>,
+    any_names: bool,
     dialed: Option<SocketAddr>,
 ) {
     let name = match hub.member(&key, &proof, &binding) {
@@ -74,7 +75,8 @@ pub(crate) async fn session(
     };
     let generation = hub.next();
     let (out, mut outgoing) = mpsc::unbounded_channel();
-    if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, through.clone(), peer) {
+    let opened = open(&hub, &name, generation, out.clone(), letters, through.clone(), any_names, peer);
+    if let Err(reason) = opened {
         refuse(&mut socket, reason).await;
         return;
     }
@@ -161,13 +163,24 @@ fn open(
     out: mpsc::UnboundedSender<Out>,
     letters: Letters,
     through: Option<String>,
+    any_names: bool,
     peer: SocketAddr,
 ) -> Result<(), Refusal> {
     // The store's lock is held while the session is registered, so a letter
     // kept meanwhile is either in the backlog below or pushed after it.
     let mut store = hub.store();
     let (world, hub_name) = (store.hub.id.clone(), store.hub.name.clone());
+    let too_old = !any_names && crate::login::beyond_older_releases(&store);
     let entry = store.letters_of(name).map_err(|error| storage_failure(hub, "making letter records", &error))?;
+    entry.any_names = any_names;
+    if too_old {
+        // A member back on a release from before names of any language,
+        // which would fail on the first name it cannot read: it is told why
+        // instead, and is counted as one such release when a name is asked.
+        store.save_letters().map_err(|error| storage_failure(hub, "recording the connection", &error))?;
+        hub.log.line(format_args!("{name}: refused a session: {}", crate::login::OLDER_RELEASE));
+        return Err(Refusal::Broken { reason: crate::login::OLDER_RELEASE.to_string() });
+    }
     if entry.epoch != letters.epoch {
         // The machine numbers its letters afresh, having lost its records.
         entry.epoch = letters.epoch;

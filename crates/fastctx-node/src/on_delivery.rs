@@ -120,7 +120,7 @@ fn receipt(
     job: &JobId,
     request: Option<&NoticeId>,
 ) -> PathBuf {
-    let mut parts = vec![owner.as_str(), to.as_str(), machine.as_str(), job.as_str()];
+    let mut parts = vec![owner.key(), to.as_str(), machine.key(), job.as_str()];
     if let Some(request) = request {
         parts.push(request.as_str());
     }
@@ -134,7 +134,7 @@ fn cancellation(
     machine: &MachineName,
     request: &NoticeId,
 ) -> PathBuf {
-    named(node, &[owner.as_str(), to.as_str(), machine.as_str(), request.as_str()]).with_extension("stopped")
+    named(node, &[owner.key(), to.as_str(), machine.key(), request.as_str()]).with_extension("stopped")
 }
 
 pub(crate) fn cancelled(node: &Node, origin: &OnOrigin, machine: &MachineName) -> io::Result<()> {
@@ -196,7 +196,7 @@ pub(crate) fn park(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> io
         let directory = node.world.resident(town.as_ref(), to);
         let id = crate::inbox::end_id(&owner, machine, job, request.as_ref());
         crate::inbox::consume(&directory, &id)?;
-        let letter = crate::speech::fixed_id("letter", &[machine.as_str(), id.as_str()]);
+        let letter = crate::speech::fixed_id("letter", &[machine.key(), id.as_str()]);
         crate::inbox::consume(&directory, &letter)?;
         return Ok(true);
     }

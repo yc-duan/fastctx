@@ -479,8 +479,8 @@ async fn intended(
         None => None,
     };
     match (path.as_str(), intent) {
-        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through, dialed }) => {
-            control::session(hub, socket, peer, binding, key, proof, letters, through, dialed).await;
+        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through, any_names, dialed }) => {
+            control::session(hub, socket, peer, binding, key, proof, letters, through, any_names, dialed).await;
         }
         (wire::CONTROL_PATH, Intent::Login { account, request }) => {
             login::with_password(hub, socket, peer, binding, account, request).await;

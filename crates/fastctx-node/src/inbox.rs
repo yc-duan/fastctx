@@ -421,11 +421,14 @@ pub(crate) fn end_id(
         // The request distinguishes jobs even after that owner changes towns.
         crate::speech::fixed_id(
             "on-end",
-            &[machine.as_str(), owner.machine.as_str(), owner.resident.as_str(), job.as_str(), request.as_str()],
+            &[machine.key(), owner.machine.key(), owner.resident.as_str(), job.as_str(), request.as_str()],
         )
     } else {
         // An older job may already have posted this id before an upgrade.
-        NoticeId::try_from(format!("{machine}-{job}")).expect("a machine and a job make an id")
+        // Only names of lowercase English letters, digits and hyphens made
+        // such ids; any other name, or one too long for an id, is hashed.
+        NoticeId::try_from(format!("{}-{job}", machine.key()))
+            .unwrap_or_else(|_| crate::speech::fixed_id("end", &[machine.key(), job.as_str()]))
     }
 }
 
