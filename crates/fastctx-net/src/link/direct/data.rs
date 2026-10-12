@@ -57,7 +57,13 @@ impl DataWay {
 
     async fn dial(&self, stream: u64, end: End) -> Result<Socket, String> {
         let limit = crate::wire::MAX_DATA_MESSAGE + crate::wire::MAX_CONTROL_FRAME;
-        let dialed = crate::dial::dial_peer(&self.conn.at, peer::DATA_PATH, limit).await?;
+        // What went wrong names the other machine's addresses: it goes to
+        // this machine's log, and the caller, which may be a model, learns
+        // only which machine.
+        let dialed = crate::dial::dial_peer(&self.conn.at, peer::DATA_PATH, limit).await.map_err(|error| {
+            self.inner.node.log(format!("a data connection to {} failed: {error}", self.conn.name));
+            format!("{} was not reached directly for the data connection; this machine's log says why", self.conn.name)
+        })?;
         let mut socket = dialed.socket;
         let key = &self.inner.key;
         let hello = Frame::Hello {
