@@ -21,6 +21,9 @@ use super::identity::APP_ID;
 pub enum Launch {
     Open(Option<String>),
     Notification(String),
+    /// Exit, as the tray's quit does: World's uninstaller asks it, from any
+    /// session of this user, including a remote one.
+    Quit,
 }
 
 pub struct Instance {
@@ -61,6 +64,76 @@ pub fn enter(launch: Launch) -> Result<Option<Instance>, String> {
         }
         Err(error) => Err(format!("binding the World instance endpoint: {error}")),
     }
+}
+
+/// Asks the World running for this user, in whichever session, to exit,
+/// and waits until it and the processes it started (its WebView2, which
+/// hold its data) have exited. No World running is nothing to wait for.
+pub fn quit_running() -> Result<(), String> {
+    let sid = fastctx_platform::current_user_sid().map_err(|e| e.to_string())?;
+    let name = format!(r"\\.\pipe\{APP_ID}.{sid}");
+    let mut pipe = loop {
+        match std::fs::OpenOptions::new().read(true).write(true).open(&name) {
+            Ok(pipe) => break pipe,
+            // ERROR_FILE_NOT_FOUND: no World is listening.
+            Err(error) if error.raw_os_error() == Some(2) => return Ok(()),
+            Err(error) if error.raw_os_error() == Some(231) => {
+                unsafe { WaitNamedPipeW(&HSTRING::from(name.as_str()), u32::MAX).ok() }.map_err(|e| e.to_string())?;
+            }
+            Err(error) => return Err(format!("contacting the running World: {error}")),
+        }
+    };
+    let mut pid = 0;
+    unsafe { GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut pid) }.map_err(|e| e.to_string())?;
+    let Some(world) = fastctx_platform::identity_of(pid).map_err(|e| e.to_string())? else { return Ok(()) };
+    let mut waited = vec![world.clone()];
+    waited.extend(started_by(&world)?);
+    let mut request = serde_json::to_vec(&Launch::Quit).map_err(|e| e.to_string())?;
+    request.push(b'\n');
+    pipe.write_all(&request).map_err(|e| format!("asking World to exit: {e}"))?;
+    // World may be gone before its acknowledgement is written; its exit is
+    // what is waited for.
+    let _ = BufReader::new(pipe).read_line(&mut String::new());
+    for identity in &waited {
+        fastctx_platform::host_process::wait_for_exit(identity).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// The processes `world` started, and theirs: each a child by its parent's
+/// id and created no earlier than that parent, so a reused id is not taken.
+fn started_by(world: &fastctx_types::ProcessIdentity) -> Result<Vec<fastctx_types::ProcessIdentity>, String> {
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+    };
+    let mut parents = Vec::new();
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).map_err(|e| e.to_string())?;
+        let mut entry = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+        let mut more = Process32FirstW(snapshot, &mut entry).is_ok();
+        while more {
+            parents.push((entry.th32ProcessID, entry.th32ParentProcessID));
+            more = Process32NextW(snapshot, &mut entry).is_ok();
+        }
+        let _ = windows::Win32::Foundation::CloseHandle(snapshot);
+    }
+    let created = |identity: &fastctx_types::ProcessIdentity| identity.token.parse::<u64>().map_err(|e| e.to_string());
+    let mut tree = vec![world.clone()];
+    let mut index = 0;
+    while index < tree.len() {
+        let parent = tree[index].clone();
+        for &(pid, _) in parents.iter().filter(|(_, ppid)| *ppid == parent.pid) {
+            if let Some(child) = fastctx_platform::identity_of(pid).map_err(|e| e.to_string())?
+                && created(&child)? >= created(&parent)?
+                && !tree.contains(&child)
+            {
+                tree.push(child);
+            }
+        }
+        index += 1;
+    }
+    tree.remove(0);
+    Ok(tree)
 }
 
 fn forward(name: &str, launch: &Launch) -> Result<(), String> {

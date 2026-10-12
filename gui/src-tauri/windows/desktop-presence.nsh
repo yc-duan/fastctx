@@ -38,6 +38,17 @@ Var FastctxEverything
   ${IfNot} ${Errors}
     StrCpy $FastctxEverything 1
   ${EndIf}
+  ; A World open for this user, in this session or another (a removal run
+  ; remotely while the user's desktop session has it open), is asked to exit
+  ; and waited for; the template's own check below cannot close a program
+  ; in another session and would abort.
+  ${If} $UpdateMode != 1
+    nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --quit-running'
+    Pop $0
+    ${If} $0 != 0
+      Abort "World could not be closed (exit $0)."
+    ${EndIf}
+  ${EndIf}
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
   ; /UPDATE belongs to the updater, never to a user's removal. A removal from
   ; World's settings has already done the kernel's part (/FASTCTXKERNELDONE)

@@ -148,6 +148,10 @@ async fn launch(app: &tauri::AppHandle, launch: Launch) -> Result<(), String> {
         let result = (|| {
             let state = handle.state::<Presence>();
             let activation = match launch {
+                Launch::Quit => {
+                    handle.exit(0);
+                    return Ok(());
+                }
                 Launch::Notification(uri) => state.notifications.activate(&uri)?,
                 Launch::Open(route) => {
                     if let Some(route) = &route {
@@ -212,6 +216,13 @@ pub fn enter() -> Result<Option<Instance>, String> {
                     std::process::exit(1);
                 }
             }
+        }
+        [command] if command == "--quit-running" => {
+            if let Err(error) = instance::quit_running() {
+                crate::installer_lines::complain(&error);
+                std::process::exit(1);
+            }
+            Ok(None)
         }
         [command] if command == "--uninstall-finish" => {
             if let Err(error) = crate::package_removal::finish_checkpoint() {
