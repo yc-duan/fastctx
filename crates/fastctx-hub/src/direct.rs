@@ -110,6 +110,9 @@ async fn allow(
         if !directory.logged_in(asker, account) {
             return Err(format!("{asker} is not logged in to the account {account}"));
         }
+        if directory.account(account).is_some_and(|found| found.locked) {
+            return Err(format!("the account {account} is locked"));
+        }
         if !directory.is_super(account) {
             return Err(format!("only the network's administrator allows direct connections, and {account} is not it"));
         }
