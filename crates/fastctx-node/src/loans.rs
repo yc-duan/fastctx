@@ -1,0 +1,43 @@
+//! A session on a login lent to another account works for the accounts
+//! that borrowed it (`world-network.md`, 共享机器与借出智能体), and takes a
+//! new turn only while one of them may still use that login here. When the
+//! loan is taken back or reaches its deadline, the turn already running
+//! goes on, which the owner sees and may stop (收回立刻生效); nothing starts
+//! another: words, a colleague's answer or a queued message for it stay
+//! kept, and go in with whatever is next handed to it once the login is
+//! lent to them again.
+
+use fastctx_types::access::Acting;
+use fastctx_types::ipc::Failure;
+use fastctx_types::residents::About;
+
+use crate::Node;
+
+/// Whether the session `about` may take a new turn now. One that works for
+/// accounts needs one of them logged in here or allowed to use its login
+/// here, as this machine's view of their hub says at this moment; an
+/// account of a hub that has given this machine no view yet, or that this
+/// machine is no longer on, has nothing to judge by and is passed over.
+pub(crate) fn may_turn(node: &Node, about: &About) -> Result<(), Failure> {
+    let Acting::Accounts { accounts } = &about.acting else { return Ok(()) };
+    let mut refused = Vec::new();
+    for account in accounts {
+        let Some(link) = node.link_of(&account.hub) else { continue };
+        let view = link.view();
+        let Some(here) = view.me().map(|me| me.name.clone()) else { continue };
+        if view.logged_in(&here, &account.account)
+            || view.may_use_login(&account.account, &here, &about.host.agent, about.home.as_deref())
+        {
+            return Ok(());
+        }
+        refused.push(account.account.to_string());
+    }
+    if refused.is_empty() {
+        return Ok(());
+    }
+    Err(Failure::not_run(format!(
+        "the {} login this session runs on is no longer lent to {}, for whom it works: it takes no new turn, and what is for it stays kept",
+        about.host.agent,
+        refused.join(", ")
+    )))
+}

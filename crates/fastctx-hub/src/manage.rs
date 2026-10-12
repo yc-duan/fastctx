@@ -26,6 +26,12 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
     let mut ended = Vec::new();
     let told = {
         let mut store = hub.store();
+        // A loan past its deadline is taken back first, as the hub's own
+        // doing, so no change is made over it: lending that login again is a
+        // new loan, which the borrower uses again before its machine acts
+        // for them once more.
+        let expired = crate::lends::end_due(&mut store, Timestamp::now())
+            .map_err(|error| format!("the hub could not take back a loan past its deadline: {error}"))?;
         let before = store.book.clone();
         let action = crate::machine_log::action(&change, &before);
         let authenticated = match &change {
@@ -75,6 +81,10 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
                     Outcome::Refused { reason: reason.clone() },
                 )?;
                 hub.machine_log_changed.notify_one();
+                drop(store);
+                if expired {
+                    hub.changed();
+                }
                 return Err(reason);
             }
         }
