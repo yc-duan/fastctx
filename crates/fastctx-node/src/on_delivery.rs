@@ -234,31 +234,54 @@ pub(crate) fn park(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> io
 }
 
 /// Startup and follower departure both release durable, unclaimed letters.
+/// What is still held goes again as everything that reconnects does, and at
+/// once when a way opens to a follower that was not reached.
 pub(crate) fn resume(node: &Arc<Node>) {
     let node = node.clone();
     tokio::spawn(async move {
         let _draining = node.on_deliveries.draining.lock().await;
-        let mut delay = crate::on::Backoff::default();
+        let mut again = crate::again::Again::default();
         loop {
-            match drain(&node).await {
+            let unreached = match drain(&node).await {
                 Ok(()) => return,
-                Err(error) => node.log.line(format_args!("delivering held on completions: {error}")),
-            }
-            tokio::time::sleep(delay.next()).await;
+                Err(unreached) => unreached,
+            };
+            node.log.line("delivering held on completions: some remain held; see the errors above");
+            again.pause(&node, &unreached).await;
         }
     });
 }
 
-async fn drain(node: &Arc<Node>) -> io::Result<()> {
-    let entries =
-        node.world.book_directories("on-deliveries")?.into_iter().flat_map(|directory| {
-            match std::fs::read_dir(directory) {
-                Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect::<Vec<_>>(),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
-                Err(error) => vec![Err(error)],
-            }
-        });
+/// A held completion not delivered: why, and the follower that was to be
+/// asked about it, when it was not reached.
+struct Held {
+    error: io::Error,
+    unreached: Option<crate::reach::Written>,
+}
+
+impl From<io::Error> for Held {
+    fn from(error: io::Error) -> Self {
+        Self { error, unreached: None }
+    }
+}
+
+/// Delivers what is held; when some remain, says which followers were not
+/// reached.
+async fn drain(node: &Arc<Node>) -> Result<(), Vec<crate::reach::Written>> {
+    let directories = match node.world.book_directories("on-deliveries") {
+        Ok(directories) => directories,
+        Err(error) => {
+            node.log.line(format_args!("reading held on completions: {error}"));
+            return Err(Vec::new());
+        }
+    };
+    let entries = directories.into_iter().flat_map(|directory| match std::fs::read_dir(directory) {
+        Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect::<Vec<_>>(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => vec![Err(error)],
+    });
     let mut failed = false;
+    let mut unreached = Vec::new();
     for entry in entries {
         let path = match entry {
             Ok(path) => path,
@@ -273,18 +296,23 @@ async fn drain(node: &Arc<Node>) -> io::Result<()> {
         {
             continue;
         }
-        if let Err(error) = drain_one(node, &path).await {
+        if let Err(held) = drain_one(node, &path).await {
             failed = true;
-            node.log.line(format_args!("{}: {error}", path.display()));
+            node.log.line(format_args!("{}: {}", path.display(), held.error));
+            if let Some(machine) = held.unreached
+                && !unreached.contains(&machine)
+            {
+                unreached.push(machine);
+            }
         }
     }
-    if failed { Err(io::Error::other("some on completions remain pending; see the individual errors")) } else { Ok(()) }
+    if failed { Err(unreached) } else { Ok(()) }
 }
 
-async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> io::Result<()> {
+async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> Result<(), Held> {
     let parked: Parked = serde_json::from_slice(&std::fs::read(path)?).map_err(io::Error::other)?;
     let Notice::JobEnded { job, machine, request, follower, .. } = &parked.delivery.notice else {
-        return Err(io::Error::other(format!("{} is not a completion", path.display())));
+        return Err(io::Error::other(format!("{} is not a completion", path.display())).into());
     };
     let owner = Address { machine: node.machine(), resident: parked.to.clone() };
     let mut taken = {
@@ -307,13 +335,16 @@ async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> io::Result<()> {
         match node.call(&acting, &follower.into(), purpose, call).await {
             Ok(Ok(fastctx_types::remote::RemoteReply::OnReceipt { taken: claimed, following })) => {
                 if following && !claimed {
-                    return Err(io::Error::other("the nested hop is still handing its end to its CLI"));
+                    return Err(io::Error::other("the nested hop is still handing its end to its CLI").into());
                 }
                 taken = claimed;
             }
-            Ok(Ok(_)) => return Err(io::Error::other("the nested follower answered without a receipt decision")),
-            Ok(Err(error)) => return Err(io::Error::other(error.message)),
-            Err(error) => return Err(io::Error::other(error.to_string())),
+            Ok(Ok(_)) => return Err(io::Error::other("the nested follower answered without a receipt decision").into()),
+            Ok(Err(error)) => return Err(io::Error::other(error.message).into()),
+            Err(error) => {
+                let error = io::Error::other(error.to_string());
+                return Err(Held { error, unreached: Some(follower.into()) });
+            }
         }
     }
     if !taken {

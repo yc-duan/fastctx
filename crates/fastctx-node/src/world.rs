@@ -141,6 +141,9 @@ pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> 
     if let Some(old) = node.links.write().expect("never poisoned").insert(hub.clone(), link.clone()) {
         old.stop();
     }
+    // What the link said of its ways before it was among the links was not
+    // seen in them.
+    node.ways_changed();
     Ok(link)
 }
 
@@ -316,6 +319,7 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     }
     link.stop();
     node.links.write().expect("never poisoned").remove(&hub);
+    node.ways_changed();
     // The machines each session may use, and who may ask for colleagues,
     // are in its tools.
     node.tools_changed(None);
@@ -432,10 +436,12 @@ struct Handler {
 impl fastctx_net::link::Node for Handler {
     fn answering(&self, call: &RemoteCall) -> Result<Option<Box<dyn Send>>, Failure> {
         // A watch and an `on` go on for as long as they go on: a node
-        // handing the World on does not wait for them.
+        // handing the World on does not wait for them. A copy asked of this
+        // machine holds it back only while it moves bytes (`copy`).
         if matches!(
             call,
             RemoteCall::Watch { .. }
+                | RemoteCall::CopySend { .. }
                 | RemoteCall::On { .. }
                 | RemoteCall::Follow { .. }
                 | RemoteCall::PipeOut { .. }
@@ -826,16 +832,22 @@ impl fastctx_net::link::Node for Handler {
             }
             // What could not be taken is taken again until it is, paced as
             // everything that reconnects (`world-network.md`, 断开不是结束).
-            let mut delay = crate::on::Backoff::default();
+            // With the line to the hub down, the link takes every project's
+            // ledger when it is up again; this one waits for nothing then.
+            let mut again = crate::again::Again::default();
             loop {
-                match crate::ledger::sync(&node, &hub, town.clone()).await {
+                let error = match crate::ledger::sync(&node, &hub, town.clone()).await {
                     Ok(()) => return,
-                    Err(error) => node.log.line(format_args!("taking the projects' ledgers: {error}; trying again")),
-                }
-                if node.link_of(&hub).is_none() {
+                    Err(error) => error,
+                };
+                if !node.link_of(&hub).is_some_and(|link| matches!(link.status(), Status::Online { .. })) {
+                    node.log.line(format_args!(
+                        "taking the projects' ledgers: {error}; they are taken when the hub is reached again"
+                    ));
                     return;
                 }
-                tokio::time::sleep(delay.next()).await;
+                node.log.line(format_args!("taking the projects' ledgers: {error}; trying again"));
+                tokio::time::sleep(again.next()).await;
             }
         });
     }
@@ -848,6 +860,12 @@ impl fastctx_net::link::Node for Handler {
         crate::hub_arrival::check(&node, &self.hub);
         // The machines each session may use are in its tools' descriptions.
         node.tools_changed(None);
+    }
+
+    fn ways_changed(&self) {
+        if let Some(node) = self.node.upgrade() {
+            node.ways_changed();
+        }
     }
 
     fn open_ports(&self, ports: &std::collections::BTreeSet<u16>) -> Result<fastctx_net::wire::Firewall, String> {

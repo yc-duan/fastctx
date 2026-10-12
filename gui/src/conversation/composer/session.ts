@@ -94,6 +94,8 @@ export class ComposerSession {
     private readonly releaseWriter: () => void,
     snapshot: ComposerSnapshot,
     saved: Awaited<ReturnType<ComposerJournalStore["read"]>>,
+    /** The machine of the conversation, where what is asked of it goes. */
+    private readonly machine: string | null,
   ) {
     this.snapshot = snapshot;
     const draft = [...saved].find(([key, value]) => key === "draft" && value.target.kind === "draft")
@@ -113,7 +115,7 @@ export class ComposerSession {
       const journal = options.journal ?? await composerJournalStore(writer.key);
       const saved = await journal.read();
       const initial = await transport.read();
-      session = new ComposerSession(transport, journal, writer.key, writer.release, initial.composer, saved);
+      session = new ComposerSession(transport, journal, writer.key, writer.release, initial.composer, saved, who.machine);
       await session.reconnect();
       return session;
     } catch (error) {
@@ -231,7 +233,7 @@ export class ComposerSession {
       } catch (error) {
         const forgotten = () => this.operations.get(operation.id) !== operation;
         if (!operation.broken || this.closed || this.closing || forgotten()) throw error;
-        if (this.connected) await new Promise<void>((resolve) => after(tries + 1, resolve));
+        if (this.connected) await new Promise<void>((resolve) => after(tries + 1, resolve, this.machine));
         await this.untilConnected();
         if (forgotten()) throw error;
         if (operation.status === "completed") return operation.result!;

@@ -79,7 +79,7 @@ pub(crate) async fn run(
                     said = reason;
                     failures = if connected { 1 } else { failures + 1 };
                     tokio::select! {
-                        () = tokio::time::sleep(dial::backoff(failures)) => {}
+                        () = tokio::time::sleep(fastctx_net::again::backoff(failures)) => {}
                         () = crate::shutdown_signal() => return Ok(Next::Stop),
                     }
                 }

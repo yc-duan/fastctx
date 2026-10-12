@@ -99,10 +99,14 @@ export const watched: ConversationSource = {
           since ??= new Date();
           feed.interrupted(whyOf(error), since);
           tries += 1;
-          waiting = after(tries + 1, () => {
-            waiting = null;
-            read();
-          });
+          waiting = after(
+            tries + 1,
+            () => {
+              waiting = null;
+              read();
+            },
+            address.machine,
+          );
         });
     };
     read();

@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use fastctx_types::access::Purpose;
@@ -16,17 +15,12 @@ use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use super::super::{CallEvent, CallOn, Inner};
+use crate::again::{STABLE, backoff};
 use crate::directory::View;
 use crate::peer::{self, Frame, Intent};
 use crate::sign::{Domain, PublicKey};
 use crate::transport::Socket;
 use crate::wire::{CallStatus, HEARTBEAT, SILENCE};
-
-/// A link that stays up this long counts as healthy: the next failure is
-/// tried again at once.
-const STABLE: std::time::Duration = std::time::Duration::from_secs(60);
-
-static GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// One live direct link.
 pub(crate) struct PeerConn {
@@ -58,7 +52,7 @@ impl PeerConn {
         let conn = Self {
             name,
             key,
-            generation: GENERATION.fetch_add(1, Ordering::Relaxed),
+            generation: super::super::ways::connection_number(),
             dialed,
             at,
             out,
@@ -202,7 +196,7 @@ pub(super) async fn keep(inner: Arc<Inner>, peer: MachineName, at: Vec<SocketAdd
             Err(why) => why,
         };
         failures = failures.saturating_add(1);
-        let wait = crate::dial::backoff(failures);
+        let wait = backoff(failures);
         let next = if wait.is_zero() {
             "trying again at once".to_string()
         } else {
@@ -279,6 +273,7 @@ impl Inner {
             older.close("a newer link with the same machine replaced it".to_string());
         }
         self.direct.mark(&conn.name, true, None);
+        self.ways_changed();
     }
 
     fn direct_down(&self, conn: &Arc<PeerConn>, reason: &str) {
@@ -300,6 +295,8 @@ impl Inner {
         if !still_up {
             self.direct.mark(&conn.name, false, Some(reason.to_string()));
         }
+        // As with the hub's line: the way is gone before its calls hear so.
+        self.ways_changed();
         self.fail_calls_on(&conn.on(), reason);
     }
 }

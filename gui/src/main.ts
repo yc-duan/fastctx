@@ -1196,10 +1196,14 @@ function liveTalk(address: Address): KeepablePage {
       // Words with no answer are said again under the same id until one
       // comes: they go in once (`world-network.md`, 断开不是结束).
       const id = crypto.randomUUID();
-      return untilAnswered(() => talk(address, text, attached.refs as Attachment[], attached.filesOn ?? null, id), (why) => {
-        conversation.sent(key, { state: "waiting", why });
-        page.update();
-      })
+      return untilAnswered(
+        () => talk(address, text, attached.refs as Attachment[], attached.filesOn ?? null, id),
+        (why) => {
+          conversation.sent(key, { state: "waiting", why });
+          page.update();
+        },
+        address.machine,
+      )
         .then(({ to, landed }) => {
           // Words in a turn take their place when the session hears them;
           // words in no turn yet say where they are.
@@ -1904,7 +1908,7 @@ startPresence({
   // closed (`world-network.md`, 断开不是结束).
   say: (address, text) => {
     const id = crypto.randomUUID();
-    return untilAnswered(() => talk(address, text, [], null, id), () => {});
+    return untilAnswered(() => talk(address, text, [], null, id), () => {}, address.machine);
   },
 });
 

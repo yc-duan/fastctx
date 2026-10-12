@@ -54,6 +54,14 @@ pub enum Call {
     /// Answered with `NodeFrame::Features`: the switches as they are, then
     /// again each time they change, until the client leaves.
     WatchFeatures,
+    /// Answered `Done` once a way from this computer to `machine` opens that
+    /// was not there when asked: its line to the hub came back, the machine
+    /// connected anew, or a direct link with it came up. An interface that
+    /// waits to open again what broke asks it, and leaves once its wait is
+    /// over (`world-network.md`, 断开不是结束).
+    Reopened {
+        machine: MachineName,
+    },
     /// Reads or changes the shared composer on the resident's machine.
     Composer {
         resident: ResidentId,

@@ -152,6 +152,16 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             }
         }
+        if let Call::Reopened { machine } = call {
+            // An interface pausing before it tries again waits here for a
+            // way to open; its leaving ends the wait.
+            let reply = tokio::select! {
+                reply = reopened(node, machine) => reply,
+                _ = reader.recv() => return Ok(()),
+            };
+            writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
+            continue;
+        }
         if let Call::Wait { jobs, receipt, parent } = call {
             // A wait keeps the connection until the jobs end; its leaving
             // hands back the ends the wait held (`waiting`).
@@ -300,7 +310,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         // A call is answered whole or not taken on: a node handing the
         // World to its successor answers what it has begun, then goes.
-        let Some(_answering) = node.handoff.call() else {
+        let Some(answering) = node.handoff.call() else {
             let reply = Err(Failure::new(format!(
                 "the node on {} is handing over to its successor; ask again in a moment",
                 node.machine()
@@ -308,6 +318,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
             continue;
         };
+        // A copy holds the node back only while a try of it runs (`copy`).
+        let _answering = (!matches!(call, Call::Copy { .. })).then_some(answering);
         if let Call::ReadFile { machine, request } = call {
             if let Err(failure) = users_voice(node, &hello.peer) {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
@@ -373,9 +385,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             continue;
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
+        // A copy goes on through every break while its caller waits for it.
         let cancellable = matches!(
             &call,
-            Call::Offers { .. } | Call::Lines { .. } | Call::Thumbnail { .. } | Call::AttachmentThumbnail { .. }
+            Call::Offers { .. }
+                | Call::Lines { .. }
+                | Call::Thumbnail { .. }
+                | Call::AttachmentThumbnail { .. }
+                | Call::Copy { .. }
         );
         let run_resident = match &call {
             Call::Run { resident, .. } => Some(resident.clone()),
@@ -1035,6 +1052,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::features::set(&node.world, &node.features, feature, on).map(Reply::Features)
         }
         Call::WatchFeatures => Err(Failure::new("a features watch is answered as it goes, not at once")),
+        Call::Reopened { .. } => Err(Failure::new("a way opening is waited for on a connection of its own")),
         Call::Nodes => nodes(node).await.map(Reply::Nodes),
         Call::Machines { resident, login, thread } => {
             let resident =
@@ -1043,6 +1061,16 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::WatchTools { .. } => Err(Failure::new("a tools watch is answered as it goes, not at once")),
     }
+}
+
+/// Answers once a way from this computer to `machine` opens that was not
+/// there when asked (`Call::Reopened`).
+async fn reopened(node: &Arc<Node>, machine: MachineName) -> Result<Reply, Failure> {
+    if machine == node.machine() {
+        return Err(Failure::new(format!("{machine} is this computer; no way to it opens")));
+    }
+    node.reopened(vec![(&machine).into()]).await;
+    Ok(Reply::Done)
 }
 
 /// This computer's own model collaboration belongs to no hub.

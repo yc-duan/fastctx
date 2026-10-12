@@ -488,7 +488,7 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
     }
     let (node, path) = (node.clone(), path.to_path_buf());
     tokio::spawn(async move {
-        let mut delay = crate::on::Backoff::default();
+        let mut again = crate::again::Again::default();
         loop {
             let result = match record::read(&path) {
                 Ok(record) => tell_if_ended(&node, &path, &record).await,
@@ -498,7 +498,7 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
                 Ok(()) => break,
                 Err(error) => node.log.line(format_args!("{} still owes its completion: {error}", path.display())),
             }
-            tokio::time::sleep(delay.next()).await;
+            tokio::time::sleep(again.next()).await;
         }
         node.notifying_jobs.lock().expect("never poisoned").remove(&path);
     });

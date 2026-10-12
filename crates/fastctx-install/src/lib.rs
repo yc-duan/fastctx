@@ -21,6 +21,7 @@ pub mod apply;
 pub mod briefing;
 pub mod claude;
 pub mod codex;
+pub mod direct_firewall;
 mod edits;
 pub mod executable;
 pub mod guidance;

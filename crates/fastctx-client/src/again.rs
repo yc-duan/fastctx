@@ -1,21 +1,20 @@
 //! Opening again what broke (`world-network.md`, 断开不是结束). A stream an
 //! interface still holds is never over because its connection broke: it is
-//! opened again at once, then after waits that double up to a minute, each a
-//! random part of that, as the link to the hub waits; once it stayed up for a
-//! minute, the next break starts over from at once. A wait ends early when
-//! this device is told to try now: its network changed, it woke, an
-//! interface came to the front (`World::retry_now`).
+//! opened again at once, then after the waits everything that reconnects
+//! keeps (`fastctx_net::again`); once it stayed up a while, the next break
+//! starts over from at once. A wait ends early when this device is told to
+//! try now, as when its network changed, it woke or an interface came to
+//! the front (`World::retry_now`), and when a way to the machine the stream
+//! comes from opens: through this computer's node, or on a device that
+//! holds its own links, through them.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime};
 
+use fastctx_net::again::{STABLE, backoff};
 use fastctx_types::MachineName;
-use tokio::sync::Notify;
 
 use crate::World;
-
-/// A stream that stays up this long counts as healthy, as a link does.
-const STABLE: Duration = Duration::from_secs(60);
 
 /// A stream that broke and is being opened again.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,26 +53,31 @@ impl Again {
         self.since.take().is_some()
     }
 
-    /// The wait before the next try, as a future of its own: it ends after
-    /// the backoff, or as soon as this device is told to try now or, on a
-    /// device that holds its own links, the link that reaches `machine`
-    /// changes.
+    /// The wait before the next try, as a future of its own (`pause`).
     pub fn pause(&self, world: &World, machine: Option<&MachineName>) -> impl Future<Output = ()> + Send + 'static {
-        let wait = fastctx_net::dial::backoff(self.tries);
-        let told: Arc<Notify> = world.retry.clone();
-        let mut link = world.device().and_then(|device| device.machine_changes(machine).ok()).map(|(_, link)| link);
-        async move {
-            let now = told.notified();
-            tokio::select! {
-                () = tokio::time::sleep(wait) => {}
-                () = now => {}
-                () = async {
-                    match link.as_mut() {
-                        Some(link) => { let _ = link.changed().await; }
-                        None => std::future::pending().await,
-                    }
-                } => {}
-            }
+        pause(world, self.tries, machine)
+    }
+}
+
+/// The wait before try number `tries` (the first is 1) of what comes from
+/// `machine`, as a future of its own: it ends after the wait, or as soon as
+/// this device is told to try now or a way to `machine` opens.
+pub fn pause(world: &World, tries: u32, machine: Option<&MachineName>) -> impl Future<Output = ()> + Send + 'static {
+    let wait = backoff(tries);
+    // Listening from now, not from when the future is first polled.
+    let mut now = Box::pin(Arc::clone(&world.retry).notified_owned());
+    now.as_mut().enable();
+    let opened = machine.map(|machine| world.reopened(machine));
+    async move {
+        tokio::select! {
+            () = tokio::time::sleep(wait) => {}
+            () = now => {}
+            () = async {
+                match opened {
+                    Some(opened) => opened.await,
+                    None => std::future::pending().await,
+                }
+            } => {}
         }
     }
 }

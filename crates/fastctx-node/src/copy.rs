@@ -21,18 +21,21 @@
 //! a key only the two ends hold; a sent manifest is pinned besides by the
 //! digest the signed call carries.
 //!
-//! A copy whose connection broke once it was under way is not over
-//! (`world-network.md`, 断开不是结束): it is made again, paced as everything
-//! that reconnects, and the destination asks for each file from the byte
-//! the earlier tries brought it to, so what arrived is not sent twice. One
-//! that could not begin, as to a machine that is not online, fails at once,
-//! as `on` does.
+//! A copy that began is not over until its machines say so
+//! (`world-network.md`, 断开不是结束): whatever breaks after, the line to the
+//! hub, a data connection, the machine at the other end, it is made again,
+//! paced as everything that reconnects and at once when a way to its
+//! machines opens, and the destination asks for each file from the byte the
+//! earlier tries brought it to, so what arrived is not sent twice. One that
+//! never began, as to a machine that is not online, fails at once, as `on`
+//! does.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
-use fastctx_hands::copy::{Receiver, Wanted, walk};
+use fastctx_hands::copy::{Receiver, Wanted, walk_knowing};
 use fastctx_net::data::Stream;
 use fastctx_net::link::{CallFailure, Feed};
 use fastctx_types::access::{Acting, Purpose, Written};
@@ -45,6 +48,8 @@ use tokio::io::AsyncReadExt as _;
 use tokio::sync::oneshot;
 
 use crate::Node;
+use crate::again::Again;
+use crate::learned::Holding;
 
 /// What the destination says once it has the manifest.
 #[derive(Serialize, Deserialize)]
@@ -77,43 +82,91 @@ fn broke(reason: impl std::fmt::Display) -> Failure {
     Failure::unanswered(reason.to_string())
 }
 
-/// What a call failing says: that the copy broke when its connection had
-/// opened, so it goes on; otherwise that it could not begin.
-fn ended(failure: CallFailure, opened: &AtomicBool) -> Failure {
+/// Whether a copy began, in any of its tries: one of their data connections
+/// opened, or a copy asked of another machine may have reached it. From
+/// then on every break is one the copy goes on through.
+#[derive(Clone, Default)]
+struct Began(Arc<AtomicBool>);
+
+impl Began {
+    fn now(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    fn yes(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// What a call of the copy failing says: once the copy began, that it broke
+/// and goes on; before, that it could not begin.
+fn ended(failure: CallFailure, began: &Began) -> Failure {
     let failure = match failure {
         CallFailure::Unknown { name, reason } if reason.starts_with("sending its data failed: ") => {
             format!("the copy with {name} stopped: {}", &reason["sending its data failed: ".len()..])
         }
         other => other.to_string(),
     };
-    if opened.load(Ordering::Relaxed) { broke(failure) } else { Failure::new(failure) }
+    if began.yes() { broke(failure) } else { Failure::new(failure) }
+}
+
+/// A copy asked of `machine` that it did not answer: it may have reached
+/// the machine, which copies on, so the copy began.
+fn asked(failure: CallFailure, began: &Began) -> Failure {
+    if matches!(failure, CallFailure::Unknown { .. }) {
+        began.now();
+    }
+    ended(failure, began)
 }
 
 /// Copies `from` to `to`, asked of this machine by whoever works for
-/// `acting`; a copy whose connection broke on the way is made again until
-/// it is done.
+/// `acting`; a copy that broke on the way is made again until it is done.
+/// It holds the node back from handing the World on only while a try runs:
+/// between tries, a node on its way out lets it go, and asked again, the
+/// node after it goes on with it.
 pub async fn copy(node: &Arc<Node>, acting: &Acting, from: Place, to: Place) -> Result<CopyReport, Failure> {
-    let mut delay = crate::on::Backoff::default();
-    let started = std::time::Instant::now();
+    let machines: Vec<Written> =
+        [from.written(), to.written()].into_iter().flatten().filter(|machine| !node.is_here(machine)).collect();
+    let began = Began::default();
+    let mut again = Again::default();
+    let started = Instant::now();
     loop {
-        match Box::pin(copy_once(node, acting, from.clone(), to.clone())).await {
-            Err(failure) if failure.is_unanswered() => {
-                let wait = delay.next();
-                node.log.line(format_args!(
-                    "the copy of {} broke after {}: {}; going on in {:.1} s",
-                    from.path,
-                    crate::talk::lasted(started),
-                    failure.message,
-                    wait.as_secs_f64()
-                ));
-                tokio::time::sleep(wait).await;
-            }
-            done => return done,
+        let handing_over = || {
+            let why = format!("the node on {} is handing over to its successor; ask again in a moment", node.machine());
+            if began.yes() { broke(why) } else { Failure::new(why) }
+        };
+        if began.yes() && node.handoff.yielding() {
+            return Err(handing_over());
         }
+        let Some(busy) = node.handoff.call() else { return Err(handing_over()) };
+        let tried = Instant::now();
+        let failure = match Box::pin(copy_once(node, acting, from.clone(), to.clone(), &began)).await {
+            Err(failure) if failure.is_unanswered() => failure,
+            done => return done,
+        };
+        drop(busy);
+        // A try that went on a while was the copy moving: the next break is
+        // tried again at once, as a line that held is dialed again.
+        if tried.elapsed() >= fastctx_net::again::STABLE {
+            again.reset();
+        }
+        node.log.line(format_args!(
+            "the copy of {} broke after {}: {}; going on",
+            from.path,
+            crate::talk::lasted(started),
+            failure.message
+        ));
+        again.pause(node, &machines).await;
     }
 }
 
-async fn copy_once(node: &Arc<Node>, acting: &Acting, from: Place, to: Place) -> Result<CopyReport, Failure> {
+async fn copy_once(
+    node: &Arc<Node>,
+    acting: &Acting,
+    from: Place,
+    to: Place,
+    began: &Began,
+) -> Result<CopyReport, Failure> {
     let here = node.machine();
     let at = |place: &Place| place.written().unwrap_or_else(|| (&here).into());
     let (from_machine, to_machine) = (at(&from), at(&to));
@@ -126,35 +179,35 @@ async fn copy_once(node: &Arc<Node>, acting: &Acting, from: Place, to: Place) ->
             .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)));
     }
     if same_machine(node, &from_machine, &to_machine)? {
-        let call = RemoteCall::CopySend {
-            from: from.path,
-            to: Place { machine: Some(to_machine.name.clone()), hub: to_machine.hub.clone(), path: to.path },
-        };
-        return match node
-            .call(acting, &from_machine, Purpose::Hands, call)
-            .await
-            .map_err(|failure| Failure::new(failure.to_string()))?
-        {
-            Ok(RemoteReply::Copied(report)) => Ok(report),
-            Ok(_) => Err(Failure::new(format!("{from_machine} answered something other than a copy"))),
-            Err(error) => Err(error),
-        };
+        let to = Place { machine: Some(to_machine.name.clone()), hub: to_machine.hub.clone(), path: to.path };
+        return asked_of(node, acting, &from_machine, from.path, to, began).await;
     }
     if node.is_here(&from_machine) {
-        return send(node, acting, &from.path, &to_machine, &to.path).await;
+        return send(node, acting, &from.path, &to_machine, &to.path, began).await;
     }
     if node.is_here(&to_machine) {
-        return fetch(node, acting, &from_machine, &from.path, &to.path).await;
+        return fetch(node, acting, &from_machine, &from.path, &to.path, began).await;
     }
     if !trusted(node, acting, &from_machine) {
-        return Box::pin(relay(node, acting, &from_machine, &from.path, &to_machine, &to.path)).await;
+        return Box::pin(relay(node, acting, &from_machine, &from.path, &to_machine, &to.path, began)).await;
     }
     let to = Place { machine: Some(to_machine.name), hub: to_machine.hub, path: to.path };
-    let call = RemoteCall::CopySend { from: from.path, to };
-    let answer = node.call(acting, &from_machine, Purpose::Hands, call).await;
-    match answer.map_err(|failure| Failure::new(failure.to_string()))? {
+    asked_of(node, acting, &from_machine, from.path, to, began).await
+}
+
+/// Asks `source` to send `from` to `to` itself.
+async fn asked_of(
+    node: &Node,
+    acting: &Acting,
+    source: &Written,
+    from: String,
+    to: Place,
+    began: &Began,
+) -> Result<CopyReport, Failure> {
+    let call = RemoteCall::CopySend { from, to };
+    match node.call(acting, source, Purpose::Hands, call).await.map_err(|failure| asked(failure, began))? {
         Ok(RemoteReply::Copied(report)) => Ok(report),
-        Ok(_) => Err(Failure::new(format!("{from_machine} answered something other than a copy"))),
+        Ok(_) => Err(Failure::new(format!("{source} answered something other than a copy"))),
         Err(failure) => Err(failure),
     }
 }
@@ -211,9 +264,12 @@ async fn relay(
     from: &str,
     to_machine: &Written,
     to: &str,
+    began: &Began,
 ) -> Result<CopyReport, Failure> {
+    if let Some(failure) = offline(node, to_machine) {
+        return Err(ended(failure, began));
+    }
     let (giving, given) = oneshot::channel();
-    let opened = AtomicBool::new(false);
     let (source_written, destination_written) = (from_machine.clone(), to_machine.clone());
     let call = RemoteCall::CopyFetch { from: from.to_string() };
     // Each of the two calls is a large future; on the heap, the relay does
@@ -227,7 +283,7 @@ async fn relay(
     ));
     let passing = Box::pin(async {
         let mut source = given.await.map_err(|_| Failure::new(format!("{from_machine} did not send the copy")))?;
-        opened.store(true, Ordering::Relaxed);
+        began.now();
         let offer: Offer = source.hear().await.map_err(broke)?;
         let mut manifest = Vec::new();
         source
@@ -274,7 +330,7 @@ async fn relay(
             Ok(Ok(RemoteReply::Copied(report))) => Ok(report),
             Ok(Ok(_)) => Err(Failure::new(format!("{to_machine} answered something other than a copy"))),
             Ok(Err(failure)) => Err(failure),
-            Err(failure) => Err(broke(failure)),
+            Err(failure) => Err(ended(failure, began)),
         };
         match (received, piped) {
             (Ok(report), _) => Ok(report),
@@ -287,7 +343,7 @@ async fn relay(
         Ok(Ok(RemoteReply::Copied(report))) => Ok(report),
         Ok(Ok(_)) => Err(Failure::new(format!("{from_machine} answered something other than a copy"))),
         Ok(Err(failure)) => Err(failure),
-        Err(failure) => Err(ended(failure, &opened)),
+        Err(failure) => Err(ended(failure, began)),
     };
     match (sent, passed) {
         (Ok(sent), Ok(mut report)) => {
@@ -313,21 +369,25 @@ async fn relay(
     }
 }
 
-/// What a source has to send: its manifest, the files behind it, and what
-/// it could not read.
-struct Walked {
+/// What a source has to send: its manifest, the files behind it, what it
+/// could not read, and its hold on what it read, for a try after this one.
+struct Walked<'a> {
     manifest: Vec<u8>,
     files: Vec<(PathBuf, Option<u64>)>,
     problems: Vec<String>,
+    holding: Holding<'a>,
 }
 
-/// Walks `from`, on this machine, for sending.
-async fn walked(node: &Node, from: &str) -> Result<Walked, Failure> {
+/// Walks `from`, on this machine, for sending; what an earlier try read of
+/// it, and is as it was then, is not read again (`learned`).
+async fn walked<'a>(node: &'a Node, from: &str) -> Result<Walked<'a>, Failure> {
     let root = fastctx_platform::local_path(from).map_err(|error| Failure::new(error.to_string()))?;
     if !root.is_absolute() {
         return Err(Failure::new(format!("{from} is not an absolute path on {}", node.machine())));
     }
-    let walked = tokio::task::spawn_blocking(move || walk(&root))
+    let holding = node.learned.hold(&root);
+    let known = holding.known.clone();
+    let walked = tokio::task::spawn_blocking(move || walk_knowing(&root, &mut known.lock().expect("never poisoned")))
         .await
         .map_err(|error| Failure::new(format!("reading {from}: {error}")))?
         .map_err(|error| Failure::new(format!("{from} on {}: {error}", node.machine())))?;
@@ -341,7 +401,7 @@ async fn walked(node: &Node, from: &str) -> Result<Walked, Failure> {
             _ => (path.clone(), None),
         })
         .collect();
-    Ok(Walked { manifest, files, problems: walked.problems })
+    Ok(Walked { manifest, files, problems: walked.problems, holding })
 }
 
 /// What a source that is fetched from says first: how long its manifest
@@ -356,7 +416,7 @@ struct Offer {
 /// The source's side when it is fetched from: walks `from`, here, and sends
 /// it back over the caller's data connection.
 pub async fn give(node: &Arc<Node>, from: &str, mut stream: Stream) -> Result<CopyReport, Failure> {
-    let Walked { manifest, files, problems } = walked(node, from).await?;
+    let Walked { manifest, files, problems, holding: _held } = walked(node, from).await?;
     stream.say(&Offer { manifest_bytes: manifest.len() as u64, resumes: true }).await.map_err(broke)?;
     feed(stream, manifest, files).await.map_err(broke)?;
     Ok(CopyReport {
@@ -381,16 +441,16 @@ async fn fetch(
     from_machine: &Written,
     from: &str,
     to: &str,
+    began: &Began,
 ) -> Result<CopyReport, Failure> {
     // The feed keeps what it took before it sends its receipt; the source
     // answers only after the receipt, so the answer never comes first.
     let taken: Arc<std::sync::Mutex<Option<CopyReport>>> = Arc::default();
-    let opened = Arc::new(AtomicBool::new(false));
     let feed = || -> Feed {
-        let (here, to, kept, opened) = (node.clone(), to.to_string(), taken.clone(), opened.clone());
+        let (here, to, kept, began) = (node.clone(), to.to_string(), taken.clone(), began.clone());
         Box::new(move |mut stream| {
             Box::pin(async move {
-                opened.store(true, Ordering::Relaxed);
+                began.now();
                 let offer: Offer = stream.hear().await?;
                 let report = take_files(&here, to, offer.manifest_bytes, None, offer.resumes, &mut stream)
                     .await
@@ -402,7 +462,7 @@ async fn fetch(
     };
     let call = RemoteCall::CopyFetch { from: from.to_string() };
     let answer = node.call_with_stream(acting, from_machine, Purpose::Hands, call, feed).await;
-    let answer = answer.map_err(|failure| ended(failure, &opened))?;
+    let answer = answer.map_err(|failure| ended(failure, began))?;
     let sent = match answer {
         Ok(RemoteReply::Copied(report)) => report,
         Ok(_) => return Err(Failure::new(format!("{from_machine} answered something other than a copy"))),
@@ -422,30 +482,35 @@ async fn fetch(
 }
 
 /// The source's side: walks `from`, here, and sends it to `to` on `to_machine`.
-pub async fn send(
+async fn send(
     node: &Arc<Node>,
     acting: &Acting,
     from: &str,
     to_machine: &Written,
     to: &str,
+    began: &Began,
 ) -> Result<CopyReport, Failure> {
-    let Walked { manifest, files, problems: walk_problems } = walked(node, from).await?;
+    // A destination the hub says is not connected is said so before the
+    // source is read, as `on` says it before it runs (`world-run.md`).
+    if let Some(failure) = offline(node, to_machine) {
+        return Err(ended(failure, began));
+    }
+    let Walked { manifest, files, problems: walk_problems, holding: _held } = walked(node, from).await?;
     let call = RemoteCall::CopyReceive {
         to: to.to_string(),
         manifest_bytes: manifest.len() as u64,
         manifest_sha256: format!("{:x}", Sha256::digest(&manifest)),
         resumes: true,
     };
-    let opened = Arc::new(AtomicBool::new(false));
     let sending = || -> Feed {
-        let (manifest, files, opened) = (manifest.clone(), files.clone(), opened.clone());
+        let (manifest, files, began) = (manifest.clone(), files.clone(), began.clone());
         Box::new(move |stream| {
-            opened.store(true, Ordering::Relaxed);
+            began.now();
             Box::pin(feed(stream, manifest, files))
         })
     };
     let answer = node.call_with_stream(acting, to_machine, Purpose::Hands, call, sending).await;
-    let answer = answer.map_err(|failure| ended(failure, &opened))?;
+    let answer = answer.map_err(|failure| ended(failure, began))?;
     let mut report = match answer {
         Ok(RemoteReply::Copied(report)) => report,
         Ok(_) => return Err(Failure::new(format!("{to_machine} answered something other than a copy"))),
@@ -457,6 +522,22 @@ pub async fn send(
     problems.append(&mut report.problems);
     report.problems = problems;
     Ok(report)
+}
+
+/// That `machine` is not connected, when every hub it is on says so while
+/// this machine's line to that hub is up and nothing links the two
+/// directly; then a call to it would come back with just that.
+fn offline(node: &Node, machine: &Written) -> Option<CallFailure> {
+    let mut last_seen = None;
+    for link in node.locate(machine).ok()? {
+        let member = link.view().member(&machine.name).cloned()?;
+        let heard = matches!(link.status(), fastctx_net::link::Status::Online { .. });
+        if member.online || !heard || link.way_to(&machine.name).is_some() {
+            return None;
+        }
+        last_seen = last_seen.max(member.since);
+    }
+    Some(CallFailure::Offline { name: machine.name.clone(), last_seen })
 }
 
 /// A path as the World writes it: on Windows with forward slashes.
@@ -563,20 +644,49 @@ async fn take_files(
             return Err(Failure::new(reason));
         }
     };
-    // Looking at what is there already reads every file it has.
-    let (mut receiver, wanted) = tokio::task::spawn_blocking(move || {
+    // One copy at a time writes a destination: the try before this one may
+    // still be taking what was on its way when it broke, and two adding to
+    // the same file's part would mix their bytes. A try that broke ends
+    // once its connection is heard to be gone.
+    let _writing = node.copying.lock(receiver.destination()).await;
+    // What earlier tries read of what is there, and what they left of a
+    // file that arrived in part.
+    let holding = node.learned.hold(receiver.destination());
+    // Looking at what is there already reads every file it has, but those
+    // an earlier try read and that are as they were then.
+    let known = holding.known.clone();
+    let (mut receiver, wanted) = blocking(move || {
         let mut receiver = receiver;
-        let wanted = receiver.wanted(resumes);
+        let wanted = receiver.wanted(resumes, &mut known.lock().expect("never poisoned"));
         (receiver, wanted)
     })
-    .await
-    .map_err(|error| Failure::new(format!("looking at the destination: {error}")))?;
+    .await?;
     stream.say(&Answer::want(&wanted, resumes)).await.map_err(failure)?;
     for Wanted { index, from } in wanted {
         let from = if resumes { from } else { 0 };
-        let (left, mut arriving) = receiver.arrive(index, from);
-        stream.take(left, |piece| arriving.write(piece)).await.map_err(failure)?;
-        receiver.arrived(index, arriving);
+        // Going on with a file may read what is here of it.
+        let known = holding.known.clone();
+        let (back, (left, mut arriving)) = blocking(move || {
+            let arrival = receiver.arrive(index, from, &mut known.lock().expect("never poisoned"));
+            (receiver, arrival)
+        })
+        .await?;
+        receiver = back;
+        let taken = stream.take(left, |piece| arriving.write(piece)).await;
+        // Putting a file in place makes it lasting; one the copy broke off
+        // in is kept as it stands, for the try after this one.
+        let (known, broke_off) = (holding.known.clone(), taken.is_err());
+        receiver = blocking(move || {
+            let known = &mut known.lock().expect("never poisoned");
+            if broke_off {
+                receiver.broke(index, arriving, known);
+            } else {
+                receiver.arrived(index, arriving, known);
+            }
+            receiver
+        })
+        .await?;
+        taken.map_err(failure)?;
     }
     receiver.link();
     Ok(CopyReport {
@@ -591,4 +701,9 @@ async fn take_files(
         unchanged: receiver.unchanged,
         problems: receiver.problems,
     })
+}
+
+/// Runs `work`, which reads and writes files, off the runtime's threads.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Result<T, Failure> {
+    tokio::task::spawn_blocking(work).await.map_err(|error| Failure::new(format!("at the destination: {error}")))
 }

@@ -14,12 +14,14 @@
 //! them again (`world-network.md`, 断开不是结束): beside the target, under a
 //! name made of the contents promised and the target's name, so the next try
 //! asks only for the bytes after them, and a file whose contents changed
-//! between the tries starts over.
+//! between the tries starts over. What the tries read of the files is kept
+//! as well (`Known`), so the next one reads only what changed.
 
-use std::collections::BTreeSet;
-use std::fs::File;
+use std::collections::{BTreeSet, HashMap};
+use std::fs::{File, Metadata};
 use std::io::{self, Read as _};
 use std::path::{Component, Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 pub mod local;
 
@@ -36,100 +38,191 @@ pub struct Walked {
     pub problems: Vec<String>,
 }
 
+/// What copying on this machine learned of files' contents, so that a copy
+/// going on after a break does not read again what it read before: the hash
+/// of each file read whole, with the file's size and the time it was last
+/// written then, and the hash so far of each file that arrived in part.
+///
+/// A file that still has that size and time is taken to hold the bytes it
+/// held. Were it written again under the same time all the same, the check
+/// of every byte that arrives against its hash turns it away and says so:
+/// what is known spares reading, and never lets a wrong file be kept.
+#[derive(Default)]
+pub struct Known {
+    files: HashMap<PathBuf, Read>,
+    parts: HashMap<PathBuf, Part>,
+}
+
+/// A file as it was when it was read whole.
+struct Read {
+    size: u64,
+    modified: SystemTime,
+    sha256: [u8; 32],
+}
+
+/// What arrived of a file before a copy broke, as it was left.
+struct Part {
+    size: u64,
+    modified: SystemTime,
+    hasher: Sha256,
+}
+
+/// How coarsely a file system may keep the time a file was written: FAT
+/// keeps it to two seconds. A file written that shortly before it was read
+/// may be written again under the same time, so what was read of it is not
+/// taken to last.
+const COARSEST_TIME: Duration = Duration::from_secs(2);
+
+impl Known {
+    /// The size and hash of the file at `path`, whose metadata is `metadata`:
+    /// as `was` knew it, while the file has that size and time still, or
+    /// read now; learned either way.
+    fn hash(&mut self, path: &Path, metadata: &Metadata, was: Option<Read>) -> io::Result<(u64, [u8; 32])> {
+        if let Some(was) = was
+            && was.size == metadata.len()
+            && metadata.modified().is_ok_and(|modified| modified == was.modified)
+        {
+            let known = (was.size, was.sha256);
+            self.files.insert(path.to_path_buf(), was);
+            return Ok(known);
+        }
+        let reading = SystemTime::now();
+        let (size, sha256) = digest(path)?;
+        self.learn(path, size, sha256, reading);
+        Ok((size, sha256))
+    }
+
+    /// Learns that the file at `path` held `size` bytes hashing to `sha256`
+    /// at `then`, when it was last written well before.
+    fn learn(&mut self, path: &Path, size: u64, sha256: [u8; 32], then: SystemTime) {
+        let read = std::fs::metadata(path).ok().and_then(|now| {
+            let modified = now.modified().ok()?;
+            let settled = modified.checked_add(COARSEST_TIME).is_some_and(|after| after <= then);
+            (now.len() == size && settled).then_some(Read { size, modified, sha256 })
+        });
+        match read {
+            Some(read) => self.files.insert(path.to_path_buf(), read),
+            None => self.files.remove(path),
+        };
+    }
+}
+
 /// Walks `root`, a file or a directory, hashing every file. A link given
 /// as the root is followed; links inside it are not.
 pub fn walk(root: &Path) -> io::Result<Walked> {
+    walk_knowing(root, &mut Known::default())
+}
+
+/// Walks `root` as `walk` does, reading only the files that are not as
+/// `known` knows them, and learning what it reads.
+pub fn walk_knowing(root: &Path, known: &mut Known) -> io::Result<Walked> {
     let metadata = std::fs::metadata(root)?;
     let name = root.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-    let mut walked = Walked {
-        manifest: Manifest { directory: metadata.is_dir(), name, entries: Vec::new() },
-        sources: Vec::new(),
-        problems: Vec::new(),
+    let mut walk = Walk {
+        walked: Walked {
+            manifest: Manifest { directory: metadata.is_dir(), name, entries: Vec::new() },
+            sources: Vec::new(),
+            problems: Vec::new(),
+        },
+        // What is no longer there is forgotten: the walk keeps what it finds.
+        was: std::mem::take(&mut known.files),
+        known,
     };
     if metadata.is_dir() {
-        add(&mut walked, root, String::new(), &metadata);
-        descend(&mut walked, root, "");
+        walk.add(root, String::new(), &metadata);
+        walk.descend(root, "");
     } else if metadata.is_file() {
-        add(&mut walked, root, String::new(), &metadata);
-        if walked.manifest.entries.is_empty() {
-            return Err(io::Error::other(walked.problems.join("; ")));
+        walk.add(root, String::new(), &metadata);
+        if walk.walked.manifest.entries.is_empty() {
+            return Err(io::Error::other(walk.walked.problems.join("; ")));
         }
     } else {
         return Err(io::Error::other(format!("{} is not a file or a directory", root.display())));
     }
-    Ok(walked)
+    Ok(walk.walked)
 }
 
-fn descend(walked: &mut Walked, directory: &Path, relative: &str) {
-    let mut children: Vec<_> = match std::fs::read_dir(directory) {
-        Ok(children) => children.filter_map(Result::ok).collect(),
-        Err(error) => {
-            walked.problems.push(format!("{}: {error}", directory.display()));
-            return;
+/// One walk under way.
+struct Walk<'a> {
+    walked: Walked,
+    /// What was known before the walk, of files it has not come to yet.
+    was: HashMap<PathBuf, Read>,
+    known: &'a mut Known,
+}
+
+impl Walk<'_> {
+    fn descend(&mut self, directory: &Path, relative: &str) {
+        let mut children: Vec<_> = match std::fs::read_dir(directory) {
+            Ok(children) => children.filter_map(Result::ok).collect(),
+            Err(error) => {
+                self.walked.problems.push(format!("{}: {error}", directory.display()));
+                return;
+            }
+        };
+        children.sort_by_key(|child| child.file_name());
+        for child in children {
+            let path = child.path();
+            let name = child.file_name().to_string_lossy().into_owned();
+            let relative = if relative.is_empty() { name } else { format!("{relative}/{name}") };
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => {
+                    self.add(&path, relative.clone(), &metadata);
+                    if metadata.is_dir() {
+                        self.descend(&path, &relative);
+                    }
+                }
+                Err(error) => self.walked.problems.push(format!("{}: {error}", path.display())),
+            }
         }
-    };
-    children.sort_by_key(|child| child.file_name());
-    for child in children {
-        let path = child.path();
-        let name = child.file_name().to_string_lossy().into_owned();
-        let relative = if relative.is_empty() { name } else { format!("{relative}/{name}") };
-        match std::fs::symlink_metadata(&path) {
-            Ok(metadata) => {
-                add(walked, &path, relative.clone(), &metadata);
-                if metadata.is_dir() {
-                    descend(walked, &path, &relative);
+    }
+
+    fn add(&mut self, path: &Path, relative: String, metadata: &Metadata) {
+        let kind = if metadata.is_symlink() {
+            match std::fs::read_link(path) {
+                Ok(target) => EntryKind::Symlink { target: target.to_string_lossy().into_owned() },
+                Err(error) => {
+                    self.walked.problems.push(format!("{}: {error}", path.display()));
+                    return;
                 }
             }
-            Err(error) => walked.problems.push(format!("{}: {error}", path.display())),
-        }
+        } else if metadata.is_dir() {
+            EntryKind::Directory
+        } else if metadata.is_file() {
+            let was = self.was.remove(path);
+            match self.known.hash(path, metadata, was) {
+                Ok((size, sha256)) => EntryKind::File { size, sha256: hex(&sha256) },
+                Err(error) => {
+                    self.walked.problems.push(format!("{}: {error}", path.display()));
+                    return;
+                }
+            }
+        } else {
+            self.walked.problems.push(format!("{}: not a file, a directory or a link", path.display()));
+            return;
+        };
+        self.walked.manifest.entries.push(Entry {
+            path: relative,
+            kind,
+            mode: mode(metadata),
+            modified: metadata.modified().ok().and_then(|time| Timestamp::try_from(time).ok()),
+        });
+        self.walked.sources.push(path.to_path_buf());
     }
 }
 
-fn add(walked: &mut Walked, path: &Path, relative: String, metadata: &std::fs::Metadata) {
-    let kind = if metadata.is_symlink() {
-        match std::fs::read_link(path) {
-            Ok(target) => EntryKind::Symlink { target: target.to_string_lossy().into_owned() },
-            Err(error) => {
-                walked.problems.push(format!("{}: {error}", path.display()));
-                return;
-            }
-        }
-    } else if metadata.is_dir() {
-        EntryKind::Directory
-    } else if metadata.is_file() {
-        match hash(path) {
-            Ok((size, sha256)) => EntryKind::File { size, sha256 },
-            Err(error) => {
-                walked.problems.push(format!("{}: {error}", path.display()));
-                return;
-            }
-        }
-    } else {
-        walked.problems.push(format!("{}: not a file, a directory or a link", path.display()));
-        return;
-    };
-    walked.manifest.entries.push(Entry {
-        path: relative,
-        kind,
-        mode: mode(metadata),
-        modified: metadata.modified().ok().and_then(|time| Timestamp::try_from(time).ok()),
-    });
-    walked.sources.push(path.to_path_buf());
-}
-
 #[cfg(unix)]
-fn mode(metadata: &std::fs::Metadata) -> Option<u32> {
+fn mode(metadata: &Metadata) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt as _;
     Some(metadata.permissions().mode() & 0o7777)
 }
 
 #[cfg(not(unix))]
-fn mode(_metadata: &std::fs::Metadata) -> Option<u32> {
+fn mode(_metadata: &Metadata) -> Option<u32> {
     None
 }
 
-/// A file's size and the hex SHA-256 of its bytes.
-fn hash(path: &Path) -> io::Result<(u64, String)> {
+/// A file's size and the SHA-256 of its bytes.
+fn digest(path: &Path) -> io::Result<(u64, [u8; 32])> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 1 << 20];
@@ -142,7 +235,16 @@ fn hash(path: &Path) -> io::Result<(u64, String)> {
         hasher.update(&buffer[..read]);
         size += read as u64;
     }
-    Ok((size, format!("{:x}", hasher.finalize())))
+    Ok((size, hasher.finalize().into()))
+}
+
+/// A hash as a manifest writes it.
+fn hex(sha256: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    sha256.iter().fold(String::with_capacity(64), |mut text, byte| {
+        let _ = write!(text, "{byte:02x}");
+        text
+    })
 }
 
 /// A file the destination needs: which entry, and from which byte, where
@@ -238,11 +340,13 @@ impl Receiver {
     /// Makes the directories and says which files to send: those not here
     /// already with the same contents. When `resumes`, a file an earlier try
     /// brought part of is asked for from where that part ends.
-    pub fn wanted(&mut self, resumes: bool) -> Vec<Wanted> {
+    pub fn wanted(&mut self, resumes: bool, known: &mut Known) -> Vec<Wanted> {
         self.resumes = resumes;
         let mut wanted = Vec::new();
         // Two names that differ only in case are one file on Windows.
         let mut names = BTreeSet::new();
+        // The parts earlier tries left, listed once for each directory.
+        let mut parts = HashMap::new();
         for (index, entry) in self.manifest.entries.clone().iter().enumerate() {
             let Some(target) = self.target(&entry.path) else { continue };
             if cfg!(windows) && !names.insert(entry.path.to_lowercase()) {
@@ -257,13 +361,15 @@ impl Receiver {
                     Ok(()) => self.directories += 1,
                     Err(error) => self.problems.push(format!("{}: {error}", target.display())),
                 },
-                EntryKind::File { size, sha256 } => match hash(&target) {
-                    Ok((existing, digest)) if existing == *size && digest == *sha256 => {
+                EntryKind::File { size, sha256 } => {
+                    if holds(&target, *size, sha256, known) {
                         self.unchanged += 1;
                         let _ = std::fs::remove_file(partial(&target, sha256));
+                    } else {
+                        let beside = parts_beside(&mut parts, &target);
+                        wanted.push(Wanted { index, from: self.held(&target, *size, sha256, beside) });
                     }
-                    _ => wanted.push(Wanted { index, from: self.held(&target, *size, sha256) }),
-                },
+                }
                 EntryKind::Symlink { .. } => {}
             }
         }
@@ -272,17 +378,13 @@ impl Receiver {
 
     /// How many bytes of the file for `target` an earlier try left, when
     /// they can be gone on with; the parts other tries left for other
-    /// contents of it are removed.
-    fn held(&self, target: &Path, size: u64, sha256: &str) -> u64 {
+    /// contents of it, among those `beside` it, are removed.
+    fn held(&self, target: &Path, size: u64, sha256: &str, beside: &[PathBuf]) -> u64 {
         let ours = partial(target, sha256);
-        let mine = |name: &str| name.starts_with(".fastctx-part-") && name.ends_with(&suffix(target));
-        if let Some(parent) = target.parent()
-            && let Ok(children) = std::fs::read_dir(parent)
-        {
-            for child in children.filter_map(Result::ok) {
-                if mine(&child.file_name().to_string_lossy()) && child.path() != ours {
-                    let _ = std::fs::remove_file(child.path());
-                }
+        let mine = suffix(target);
+        for part in beside {
+            if *part != ours && part.file_name().is_some_and(|name| name.to_string_lossy().ends_with(&mine)) {
+                let _ = std::fs::remove_file(part);
             }
         }
         match std::fs::metadata(&ours) {
@@ -297,7 +399,7 @@ impl Receiver {
 
     /// How many bytes of the file at `index` are still to come, from
     /// `from`, and where they go.
-    pub fn arrive(&mut self, index: usize, from: u64) -> (u64, Arriving) {
+    pub fn arrive(&mut self, index: usize, from: u64, known: &mut Known) -> (u64, Arriving) {
         let entry = self.manifest.entries[index].clone();
         let EntryKind::File { size, sha256 } = entry.kind else { unreachable!("only files are wanted") };
         let target = self.target(&entry.path).expect("checked when wanted");
@@ -307,20 +409,32 @@ impl Receiver {
                 return Staged::create(&target, entry.mode);
             }
             let at = partial(&target, &sha256);
+            // What the try that left the part had hashed of it, while the
+            // part is as it was left.
+            let left = known.parts.remove(&at).filter(|part| {
+                std::fs::metadata(&at).is_ok_and(|now| {
+                    now.len() == part.size && now.modified().is_ok_and(|modified| modified == part.modified)
+                })
+            });
             let (staged, held) = Staged::resume(&target, at.clone(), entry.mode)?;
             if held != from {
                 staged.discard();
                 return Err(io::Error::other("what an earlier try left of it changed meanwhile"));
             }
             // The bytes already here count toward the file's hash.
-            let mut kept = File::open(&at)?.take(from);
-            let mut buffer = vec![0u8; 1 << 20];
-            loop {
-                let read = kept.read(&mut buffer)?;
-                if read == 0 {
-                    break;
+            match left.filter(|part| part.size == held) {
+                Some(part) => hasher = part.hasher,
+                None => {
+                    let mut kept = File::open(&at)?.take(from);
+                    let mut buffer = vec![0u8; 1 << 20];
+                    loop {
+                        let read = kept.read(&mut buffer)?;
+                        if read == 0 {
+                            break;
+                        }
+                        hasher.update(&buffer[..read]);
+                    }
                 }
-                hasher.update(&buffer[..read]);
             }
             Ok(staged)
         });
@@ -332,7 +446,7 @@ impl Receiver {
     }
 
     /// Puts an arrived file in place if its bytes are the ones promised.
-    pub fn arrived(&mut self, index: usize, arriving: Arriving) {
+    pub fn arrived(&mut self, index: usize, arriving: Arriving, known: &mut Known) {
         let entry = self.manifest.entries[index].clone();
         let EntryKind::File { size, sha256 } = &entry.kind else { unreachable!("only files are wanted") };
         let target = self.target(&entry.path).expect("checked when wanted");
@@ -343,7 +457,8 @@ impl Receiver {
             self.problems.push(failure);
             return;
         }
-        if format!("{:x}", arriving.hasher.finalize()) != *sha256 {
+        let digest: [u8; 32] = arriving.hasher.finalize().into();
+        if hex(&digest) != *sha256 {
             if let Some(staged) = arriving.staged {
                 staged.discard();
             }
@@ -361,8 +476,26 @@ impl Receiver {
         {
             let _ = file.set_modified(modified.into());
         }
+        known.learn(&target, *size, digest, SystemTime::now());
         self.files += 1;
         self.bytes += size;
+    }
+
+    /// Keeps what arrived of the file at `index` before the copy broke, with
+    /// its hash so far, for the try that goes on with it.
+    pub fn broke(&mut self, index: usize, arriving: Arriving, known: &mut Known) {
+        let Arriving { staged, hasher, failure } = arriving;
+        let (Some(staged), None, true) = (staged, failure, self.resumes) else { return };
+        // Closed, it is kept as it stands.
+        drop(staged);
+        let entry = self.manifest.entries[index].clone();
+        let EntryKind::File { sha256, .. } = &entry.kind else { unreachable!("only files are wanted") };
+        let at = partial(&self.target(&entry.path).expect("checked when wanted"), sha256);
+        if let Ok(now) = std::fs::metadata(&at)
+            && let Ok(modified) = now.modified()
+        {
+            known.parts.insert(at, Part { size: now.len(), modified, hasher });
+        }
     }
 
     /// Makes the links, once everything they may point to is in place.
@@ -399,6 +532,32 @@ impl Receiver {
         }
         Some(target)
     }
+}
+
+/// Whether the file at `target` is there with `size` bytes hashing to
+/// `sha256`.
+fn holds(target: &Path, size: u64, sha256: &str, known: &mut Known) -> bool {
+    let Ok(metadata) = std::fs::metadata(target) else { return false };
+    if !metadata.is_file() || metadata.len() != size {
+        return false;
+    }
+    let was = known.files.remove(target);
+    known.hash(target, &metadata, was).is_ok_and(|(_, digest)| hex(&digest) == sha256)
+}
+
+/// The parts earlier tries left in the directory of `target`, listed the
+/// first time a file of that directory is asked about.
+fn parts_beside<'a>(listed: &'a mut HashMap<PathBuf, Vec<PathBuf>>, target: &Path) -> &'a [PathBuf] {
+    let Some(parent) = target.parent() else { return &[] };
+    listed.entry(parent.to_path_buf()).or_insert_with(|| {
+        std::fs::read_dir(parent)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|child| child.file_name().to_string_lossy().starts_with(".fastctx-part-"))
+            .map(|child| child.path())
+            .collect()
+    })
 }
 
 /// Where the bytes of `target`'s file with the contents `sha256` are

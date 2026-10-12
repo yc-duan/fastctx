@@ -128,7 +128,7 @@ async fn run(hub: &Arc<Hub>) {
         }
         failures += 1;
         tokio::select! {
-            () = tokio::time::sleep(dial::backoff(failures)) => {}
+            () = tokio::time::sleep(fastctx_net::again::backoff(failures)) => {}
             () = poked => failures = 0,
         }
     }

@@ -13,7 +13,7 @@
 //! application's own directory.
 
 mod address;
-mod again;
+pub mod again;
 mod artifact_sink;
 pub mod attachments;
 pub mod cache;
@@ -69,6 +69,22 @@ pub enum ConnectError {
          and `fastctx service node status` says how it stands"
     )]
     KeptByService { endpoint: String },
+}
+
+/// Whether a node holds the World now, opening its endpoint or on its way
+/// out. Asking takes the lock for a moment when it is free; a node waiting
+/// for it takes it right after.
+fn held(world: &WorldDir) -> std::io::Result<bool> {
+    Ok(fastctx_platform::FileLock::try_acquire(&world.node_lock())?.is_none())
+}
+
+/// Whether a node waits to take the World, by what it said of itself, while
+/// its process lives (`WorldDir::node_successor`).
+fn successor_waiting(world: &WorldDir) -> bool {
+    std::fs::read(world.node_successor())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<fastctx_types::ProcessIdentity>(&bytes).ok())
+        .is_some_and(|successor| fastctx_platform::is_alive(&successor).unwrap_or(false))
 }
 
 /// A failed call: the node said no, or the connection broke on the way.
@@ -158,9 +174,23 @@ impl Client {
             });
         }
         match Self::connect(world, peer.clone()).await {
-            Err(ConnectError::NoNode { endpoint }) if world.node_service().exists() => {
-                Err(ConnectError::KeptByService { endpoint })
-            }
+            // The service's node is on its way while a node holds the World,
+            // opening its endpoint once it has looked at what the last one
+            // left, or while a successor waits to take it from one handing it
+            // over: their ownership and their lives, not a guessed delay,
+            // keep the client waiting.
+            Err(ConnectError::NoNode { endpoint }) if world.node_service().exists() => loop {
+                if !(held(world).map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?
+                    || successor_waiting(world))
+                {
+                    return Err(ConnectError::KeptByService { endpoint });
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                match Self::connect(world, peer.clone()).await {
+                    Err(ConnectError::NoNode { .. }) => {}
+                    connected => return connected,
+                }
+            },
             Err(ConnectError::NoNode { endpoint }) => {
                 let started = start_node(world, program, &peer)
                     .map_err(|error| ConnectError::Io { endpoint: endpoint.clone(), error })?;

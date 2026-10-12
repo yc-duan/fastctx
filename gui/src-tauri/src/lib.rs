@@ -160,6 +160,28 @@ fn reconnect(shell: tauri::State<'_, Shell>) {
     shell.world().retry_now();
 }
 
+/// The wait before try number `tries` of what the page asks of `machine`,
+/// paced as the core paces everything that tries again
+/// (`fastctx_client::again::pause`): `done` hears once when it is over,
+/// which is early when the page is told to try now or a way to the machine
+/// opens. `unwatch` with the id this returns calls it off.
+#[fastctx_gui_command::command]
+async fn pause(
+    shell: tauri::State<'_, Shell>,
+    tries: u32,
+    machine_name: Option<String>,
+    done: Channel<()>,
+) -> Result<u64, String> {
+    let page = shell.page.load(Ordering::Relaxed);
+    let pause = fastctx_client::again::pause(&shell.world(), tries, machine(machine_name)?.as_ref());
+    let id = shell.next.fetch_add(1, Ordering::Relaxed);
+    shell.follow(page, id, async move {
+        pause.await;
+        let _ = done.send(());
+    })?;
+    Ok(id)
+}
+
 /// Native network and foreground-service callbacks use this after shell
 /// setup. It interrupts an old dial/socket and the retry backoff immediately.
 pub fn reconnect_device(app: &tauri::AppHandle) -> Result<(), String> {
@@ -957,6 +979,7 @@ pub fn run() {
             connection_state,
             select_connection,
             reconnect,
+            pause,
             names::name_problem,
             accounts::login,
             accounts::login_token,

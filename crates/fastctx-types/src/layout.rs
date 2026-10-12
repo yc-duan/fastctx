@@ -54,6 +54,14 @@ impl WorldDir {
         self.root.join("node.service")
     }
 
+    /// The process of the node waiting to take this World from the one
+    /// serving it, as it handed itself in: one goes before the next opens
+    /// its endpoint, and a client that finds nobody listening then waits
+    /// for that node while it lives.
+    pub fn node_successor(&self) -> PathBuf {
+        self.root.join("node.successor")
+    }
+
     /// The node's own diagnostics.
     pub fn node_log(&self) -> PathBuf {
         self.root.join("node.log")

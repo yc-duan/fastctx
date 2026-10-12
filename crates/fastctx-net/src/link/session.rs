@@ -20,15 +20,12 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use super::letters::{self, Outbox, Receipt};
 use super::outgoing::Outgoing;
 use super::{CallEvent, CallOn, Connection, Inner, Replier, Status};
+use crate::again::{STABLE, backoff};
 use crate::dial::{self, HubSocket, Upstream};
 use crate::envelope::{Envelope, Kind};
 use crate::message::LetterBody;
 use crate::sign::{Domain, sha256};
 use crate::wire::{self, Down, HEARTBEAT, Intent, Letters, Refusal, SILENCE, Up};
-
-/// A connection that stays up this long counts as healthy: the next failure
-/// is tried again at once.
-const STABLE: Duration = Duration::from_secs(60);
 
 /// How often a machine on a later way to the hub asks the earlier ones
 /// whether they take sessions again: the longest it stays on the later way
@@ -79,7 +76,7 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
                     Status::Connecting { since, .. } if !was_online => *since,
                     _ => Timestamp::now(),
                 };
-                let wait = dial::backoff(failures);
+                let wait = backoff(failures);
                 // Every try leaves a line: which ways it took and why each
                 // failed, how long it took and when the next one is, so a
                 // long absence shows whether the machine kept trying.
@@ -258,12 +255,13 @@ async fn connected(
     tokio::pin!(rerouted);
     rerouted.as_mut().enable();
 
-    let generation = inner.next_id();
+    let generation = super::ways::connection_number();
     let (up, mut outgoing) = Outgoing::channel();
     *inner.connection.lock().expect("never poisoned") =
         Some(Connection { generation, up: up.clone(), upstream: upstream.clone(), address, tried: tried.to_vec() });
     let through = upstream.through().map(ToString::to_string);
     inner.status.send_replace(Status::Online { since: Timestamp::now(), address, through, route: route.clone() });
+    inner.ways_changed();
     *online_since = Some(Instant::now());
     match upstream.through() {
         Some(through) => inner.node.log(format!("connected to the hub through {through}, at {address} {route}")),
@@ -444,10 +442,16 @@ struct Connected<'a> {
 impl Drop for Connected<'_> {
     fn drop(&mut self) {
         let mut connection = self.inner.connection.lock().expect("never poisoned");
-        if connection.as_ref().is_some_and(|connection| connection.generation == self.generation) {
+        let ended = connection.as_ref().is_some_and(|connection| connection.generation == self.generation);
+        if ended {
             *connection = None;
         }
         drop(connection);
+        // The way through the hub is gone before the calls on it hear so:
+        // whoever pauses to try again sees it closed, not still there.
+        if ended {
+            self.inner.ways_changed();
+        }
         self.inner.fail_calls_on(&CallOn::Hub(self.generation), &self.reason);
         self.inner.asks.lock().expect("never poisoned").clear();
     }

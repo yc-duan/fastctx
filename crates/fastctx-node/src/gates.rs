@@ -1,15 +1,16 @@
-//! Serialize completion claims and delivery for one job without holding other jobs.
+//! One at a time for each path: what holds a path's gate goes on alone,
+//! what comes for that path meanwhile waits, and other paths are not held.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
 #[derive(Default)]
-pub(crate) struct Ends {
+pub(crate) struct Gates {
     gates: Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>,
 }
 
-impl Ends {
+impl Gates {
     pub(crate) async fn lock(&self, path: &Path) -> tokio::sync::OwnedMutexGuard<()> {
         let gate = {
             let mut gates = self.gates.lock().expect("never poisoned");

@@ -41,6 +41,9 @@ pub struct Device {
     lifecycle: tokio::sync::Mutex<()>,
     managed: bool,
     features: features::Switches,
+    /// Moves whenever the ways to the machines may have changed, on any of
+    /// its links (`fastctx_net::link::Way`).
+    ways: Arc<tokio::sync::watch::Sender<u64>>,
 }
 
 pub(super) struct Session {
@@ -83,6 +86,7 @@ impl Device {
             lifecycle: tokio::sync::Mutex::new(()),
             managed,
             features: features::Switches::default(),
+            ways: Arc::new(tokio::sync::watch::channel(0).0),
         });
         for membership in memberships {
             device.start(membership)?;
@@ -210,6 +214,7 @@ impl Device {
             let id = session.link.membership().id.clone();
             device.sessions.write().expect("device sessions").remove(&id);
             drop(session);
+            changed(&device.ways);
             device.store.forget(&id)?;
             Ok(())
         })
@@ -222,11 +227,30 @@ impl Device {
         let key = self.store.key()?;
         let id = membership.id.clone();
         let arrivals = self.store.arrivals(&id);
-        let handler = Arc::new(Handler { _store: self.store.clone(), link: std::sync::OnceLock::new(), arrivals });
+        let handler = Arc::new(Handler {
+            _store: self.store.clone(),
+            link: std::sync::OnceLock::new(),
+            arrivals,
+            ways: self.ways.clone(),
+        });
         let link = Arc::new(start(self.store.net(&id), membership, key, handler.clone())?);
         let _ = handler.link.set(Arc::downgrade(&link));
         self.sessions.write().expect("device sessions").insert(id, Arc::new(Session { link }));
+        // What the link said of its ways before it was among the sessions
+        // was not seen in them.
+        changed(&self.ways);
         Ok(())
+    }
+
+    /// Resolves once a way to `machine` opens that was not there when this
+    /// was asked, as a pause before trying again waits for one
+    /// (`crate::again`).
+    pub(crate) fn reopened(self: &Arc<Self>, machine: &MachineName) -> impl Future<Output = ()> + Send + 'static {
+        let (device, machine) = (Arc::downgrade(self), machine.clone());
+        fastctx_net::again::reopened(self.ways.subscribe(), move || match device.upgrade() {
+            Some(device) => device.sessions().iter().filter_map(|session| session.link.way_to(&machine)).collect(),
+            None => Vec::new(),
+        })
     }
 
     fn sessions(&self) -> Vec<Arc<Session>> {
@@ -291,6 +315,11 @@ fn failed(reason: impl std::fmt::Display) -> Error {
     crate::CallError::Failed(Failure::new(reason.to_string())).into()
 }
 
+/// The ways to the machines may have changed.
+fn changed(ways: &tokio::sync::watch::Sender<u64>) {
+    ways.send_modify(|changes| *changes = changes.wrapping_add(1));
+}
+
 struct Handler {
     // Watches can outlive World; cancelled network tasks can still be
     // finishing disk writes. The link's handler lives with its last task,
@@ -300,6 +329,8 @@ struct Handler {
     link: std::sync::OnceLock<std::sync::Weak<Link>>,
     /// Where who came into this device's accounts there is kept.
     arrivals: std::path::PathBuf,
+    /// The device's, moved when this link's ways may have changed.
+    ways: Arc<tokio::sync::watch::Sender<u64>>,
 }
 
 impl fastctx_net::link::Node for Handler {
@@ -328,6 +359,10 @@ impl fastctx_net::link::Node for Handler {
         if let Err(error) = fastctx_net::arrivals::notice(&self.arrivals, &link.view()) {
             eprintln!("World device: keeping who came into this device's accounts: {error}");
         }
+    }
+
+    fn ways_changed(&self) {
+        changed(&self.ways);
     }
 
     fn log(&self, line: String) {

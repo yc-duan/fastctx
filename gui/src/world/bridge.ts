@@ -134,6 +134,15 @@ export function talk(who: Address, text: string, attachments: Attachment[] = [],
   return invoke("talk", { residentId: who.resident, machineName: who.machine, text, attachments, filesOn, id });
 }
 
+/** The wait before try number `tries` of what goes to `machine`, as the
+ *  core paces it: `done` runs once it is over, early when told to try now
+ *  or when a way to the machine opens. `unwatch` with the id calls it off. */
+export function pause(tries: number, machine: MachineName | null, done: () => void): Promise<number> {
+  const over = new Channel<null>();
+  over.onmessage = () => done();
+  return invoke("pause", { tries, machineName: machine, done: over });
+}
+
 /** Everything that broke is tried again now: the window came to the front,
  *  or the system says the network is back. */
 export function retryNow(): Promise<void> {

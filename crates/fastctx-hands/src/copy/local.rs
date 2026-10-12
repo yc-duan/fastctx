@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{self, Read as _};
 use std::path::Path;
 
-use super::{Receiver, walk};
+use super::{Known, Receiver, walk};
 use fastctx_types::MachineName;
 use fastctx_types::copy::CopyReport;
 
@@ -21,10 +21,12 @@ pub fn copy(from: &Path, to: &str, machine: &MachineName) -> io::Result<CopyRepo
         )));
     }
     receiver.problems.extend(walked.problems);
+    // One pass, with nothing to go on after: nothing is kept for later.
+    let known = &mut Known::default();
     let mut buffer = vec![0; 1 << 20];
-    for wanted in receiver.wanted(false) {
+    for wanted in receiver.wanted(false, known) {
         let index = wanted.index;
-        let (_, mut arriving) = receiver.arrive(index, 0);
+        let (_, mut arriving) = receiver.arrive(index, 0, known);
         let read = (|| {
             let mut file = File::open(&walked.sources[index])?;
             loop {
@@ -37,7 +39,7 @@ pub fn copy(from: &Path, to: &str, machine: &MachineName) -> io::Result<CopyRepo
             Ok::<_, io::Error>(())
         })();
         match read {
-            Ok(()) => receiver.arrived(index, arriving),
+            Ok(()) => receiver.arrived(index, arriving, known),
             Err(error) => receiver.problems.push(format!("{}: {error}", walked.sources[index].display())),
         }
     }

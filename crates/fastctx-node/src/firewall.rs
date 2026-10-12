@@ -47,25 +47,17 @@ fn look() -> Firewall {
 #[cfg(windows)]
 mod windows {
     use std::collections::BTreeSet;
-    use std::process::Command;
 
+    use fastctx_install::direct_firewall;
     use fastctx_net::ids::HubId;
     use fastctx_net::wire::Firewall;
 
-    /// The rule's name: one per user and hub, so two users' Worlds on one
-    /// computer, and one machine's direct connections on two hubs, keep
-    /// their own.
-    fn rule(hub: &HubId) -> String {
-        let user = std::env::var("USERNAME").unwrap_or_default();
-        format!("name=fastctx direct connections ({user}, {hub})")
-    }
-
     /// Allows inbound TCP at `ports` to this very program, replacing the
-    /// rule this World had for the hub; with no ports, only removes it.
-    /// Changing Windows Firewall takes an administrator's rights, which a
-    /// node running as a user without them does not have: it then says so
-    /// and leaves the firewall as it is. `netsh` answers in the system's
-    /// language, so only its exit status is read.
+    /// rule this World had for the hub, under the name nodes gave it before
+    /// as well; with no ports, only removes it. Changing Windows Firewall
+    /// takes an administrator's rights, which a node running as a user
+    /// without them does not have: it then says so and leaves the firewall
+    /// as it is.
     pub fn open(hub: &HubId, ports: &BTreeSet<u16>) -> Result<Firewall, String> {
         let listed = ports.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
         let tcp = if ports.len() == 1 { format!("TCP port {listed}") } else { format!("TCP ports {listed}") };
@@ -81,45 +73,25 @@ mod windows {
                 why: format!("this node does not run as an administrator, so the World cannot {cannot}"),
             });
         }
-        let present = netsh(&["advfirewall", "firewall", "show", "rule", &rule(hub)])?;
-        if present.is_ok() {
-            netsh(&["advfirewall", "firewall", "delete", "rule", &rule(hub)])?
+        let sid = fastctx_platform::current_user_sid().map_err(|error| format!("finding this user: {error}"))?;
+        let rule = direct_firewall::rule(&sid, hub.as_str());
+        let earlier =
+            std::env::var("USERNAME").ok().map(|account| direct_firewall::earlier_rule(&account, hub.as_str()));
+        for name in [Some(&rule), earlier.as_ref()].into_iter().flatten() {
+            direct_firewall::remove(name)
+                .map_err(|error| format!("running netsh: {error}"))?
                 .map_err(|code| format!("removing the earlier Windows Firewall rule failed (netsh exit {code:?})"))?;
         }
         if ports.is_empty() {
             return Ok(Firewall::Opened);
         }
         let program = std::env::current_exe().map_err(|error| format!("finding this program: {error}"))?;
-        let added = netsh(&[
-            "advfirewall",
-            "firewall",
-            "add",
-            "rule",
-            &rule(hub),
-            "dir=in",
-            "action=allow",
-            "protocol=TCP",
-            &format!("localport={listed}"),
-            &format!("program={}", program.display()),
-            "enable=yes",
-            "profile=any",
-        ])?;
-        match added {
+        match direct_firewall::allow(&rule, &program, ports).map_err(|error| format!("running netsh: {error}"))? {
             Ok(()) => Ok(Firewall::Opened),
             Err(code) => Ok(Firewall::Unknown {
                 why: format!("Windows Firewall did not take the rule letting {tcp} in (netsh exit {code:?})"),
             }),
         }
-    }
-
-    /// Runs `netsh` with `args`: whether it succeeded, else its exit code.
-    fn netsh(args: &[&str]) -> Result<Result<(), Option<i32>>, String> {
-        let output = Command::new("netsh")
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .output()
-            .map_err(|error| format!("running netsh: {error}"))?;
-        Ok(if output.status.success() { Ok(()) } else { Err(output.status.code()) })
     }
 }
 

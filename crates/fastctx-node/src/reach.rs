@@ -32,6 +32,32 @@ impl Node {
         !self.links.read().expect("never poisoned").is_empty()
     }
 
+    /// The ways to other machines may have changed: a link said so, or one
+    /// came or went with a login.
+    pub(crate) fn ways_changed(&self) {
+        self.ways.send_modify(|changes| *changes = changes.wrapping_add(1));
+    }
+
+    /// The ways there are now to `machines`, through every hub each is on.
+    fn ways(&self, machines: &[Written]) -> Vec<fastctx_net::link::Way> {
+        machines
+            .iter()
+            .filter_map(|machine| Some((machine, self.locate(machine).ok()?)))
+            .flat_map(|(machine, links)| links.into_iter().filter_map(|link| link.way_to(&machine.name)))
+            .collect()
+    }
+
+    /// Resolves once a way to one of `machines` opens that was not there
+    /// when this was asked (`fastctx_net::again::reopened`): what broke on
+    /// the way to them goes on at once then (`crate::again`).
+    pub(crate) fn reopened(self: &Arc<Self>, machines: Vec<Written>) -> impl Future<Output = ()> + Send + 'static {
+        let node = Arc::downgrade(self);
+        fastctx_net::again::reopened(self.ways.subscribe(), move || match node.upgrade() {
+            Some(node) => node.ways(&machines),
+            None => Vec::new(),
+        })
+    }
+
     /// The links of the hubs `machine` is on. A computer has one name and
     /// one key on every hub it is on, so a name the views of several hubs
     /// hold for one key is one machine, reached through any of them; held

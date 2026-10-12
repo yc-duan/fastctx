@@ -11,7 +11,8 @@ use fastctx_types::run::JobOwner;
 use fastctx_types::{Address, JobId, MachineName, NoticeId, ResidentId};
 
 use crate::Node;
-use crate::on::{Backoff, LOOK_AGAIN};
+use crate::again::Again;
+use crate::on::LOOK_AGAIN;
 
 /// A stop of a job on another machine that has not reached it yet.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -66,13 +67,13 @@ pub(crate) async fn send(node: &Arc<Node>, written: &crate::reach::Written, orig
         .expect("a stop names its request or job");
     let path = pending_path(node, &origin.resident, machine, identity);
     let keeping = async {
-        let mut delay = Backoff::default();
+        let mut again = Again::default();
         loop {
             match keep_stop(&pending, &path).await {
                 Ok(()) => return,
                 Err(error) => node.log.line(format_args!("keeping {} for after a restart: {error}", path.display())),
             }
-            tokio::time::sleep(delay.next()).await;
+            tokio::time::sleep(again.next()).await;
         }
     };
     // Failure of local storage must neither lose the retry nor prevent an
@@ -97,7 +98,7 @@ async fn keep_stop(pending: &PendingStop, path: &Path) -> std::io::Result<()> {
 }
 
 async fn settle_stop(node: &Node, pending: &PendingStop, path: &Path) {
-    let mut delay = Backoff::default();
+    let mut again = Again::default();
     loop {
         let settled = crate::on_delivery::cancelled(node, &pending.origin, &pending.machine).and_then(|()| {
             match std::fs::remove_file(path) {
@@ -109,13 +110,13 @@ async fn settle_stop(node: &Node, pending: &PendingStop, path: &Path) {
             Ok(()) => return,
             Err(error) => node.log.line(format_args!("settling {}: {error}", path.display())),
         }
-        tokio::time::sleep(delay.next()).await;
+        tokio::time::sleep(again.next()).await;
     }
 }
 
 async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) -> Result<(), Failure> {
     if node.is_here(&pending.written()) {
-        let mut delay = Backoff::default();
+        let mut again = Again::default();
         loop {
             match serve(node, pending.origin.clone(), pending.job.clone()).await {
                 Ok(_) => return Ok(()),
@@ -123,10 +124,10 @@ async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) -> Result<(), Fai
                     node.log.line(format_args!("the local stop of {:?} remains pending: {error}", pending.job))
                 }
             }
-            tokio::time::sleep(delay.next()).await;
+            tokio::time::sleep(again.next()).await;
         }
     }
-    let mut delay = Backoff::default();
+    let mut again = Again::default();
     let acting = crate::on::acting(node, &pending.origin);
     loop {
         let call = RemoteCall::StopOn { origin: pending.origin.clone(), job: pending.job.clone() };
@@ -143,7 +144,7 @@ async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) -> Result<(), Fai
                 .log
                 .line(format_args!("the stop of {:?} on {} remains pending: {error}", pending.job, pending.machine)),
         }
-        tokio::time::sleep(delay.next()).await;
+        again.pause(node, &[pending.written()]).await;
     }
 }
 
@@ -151,24 +152,24 @@ async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) -> Result<(), Fai
 pub(crate) async fn resume(node: &Arc<Node>) {
     let recovering = node.clone();
     tokio::spawn(async move {
-        let mut delay = Backoff::default();
+        let mut again = Again::default();
         loop {
             match resume_local_stops(&recovering) {
                 Ok(()) => break,
                 Err(error) => recovering.log.line(format_args!("recovering local on stops: {error}")),
             }
-            tokio::time::sleep(delay.next()).await;
+            tokio::time::sleep(again.next()).await;
         }
     });
     let recovering = node.clone();
     tokio::spawn(async move {
-        let mut delay = Backoff::default();
+        let mut again = Again::default();
         loop {
             match resume_pending_stops(&recovering).await {
                 Ok(()) => break,
                 Err(error) => recovering.log.line(format_args!("recovering outgoing on stops: {error}")),
             }
-            tokio::time::sleep(delay.next()).await;
+            tokio::time::sleep(again.next()).await;
         }
     });
 }
@@ -318,7 +319,7 @@ fn stop_worker(node: &Arc<Node>, path: &Path, request: fastctx_types::run::StopR
     }
     let (node, path) = (node.clone(), path.to_path_buf());
     tokio::spawn(async move {
-        let mut delay = Backoff::default();
+        let mut again = Again::default();
         loop {
             match crate::jobs::stop(&node, &path, &request.by, &request.reason).await {
                 Ok(record) => match stopped(&record) {
@@ -327,7 +328,7 @@ fn stop_worker(node: &Arc<Node>, path: &Path, request: fastctx_types::run::StopR
                 },
                 Err(error) => node.log.line(format_args!("stopping {}: {error}", path.display())),
             }
-            tokio::time::sleep(delay.next()).await;
+            tokio::time::sleep(again.next()).await;
         }
         node.on_stopping.lock().expect("never poisoned").remove(&path);
     });

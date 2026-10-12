@@ -145,6 +145,23 @@ impl World {
         self.retry.notify_waiters();
     }
 
+    /// Resolves once a way to `machine` opens that was not there when this
+    /// was asked (`crate::again`): on a device, through its own links; else
+    /// as this computer's node says, which is not started for it. Without
+    /// a node that answers, it never resolves, and the wait keeps the pace.
+    pub(crate) fn reopened(&self, machine: &MachineName) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> {
+        if let Some(device) = &self.device {
+            return Box::pin(device.reopened(machine));
+        }
+        let (dir, peer, machine) = (self.dir.clone(), self.peer.clone(), machine.clone());
+        Box::pin(async move {
+            let asked = async { Client::connect(&dir, peer).await.ok()?.call(Call::Reopened { machine }).await.ok() };
+            if !matches!(asked.await, Some(Reply::Done)) {
+                std::future::pending::<()>().await;
+            }
+        })
+    }
+
     /// The same World, whose node, when none runs, is started from
     /// `program`: for an interface that is not itself fastctx.
     pub fn starting_node_from(mut self, program: std::path::PathBuf) -> Self {

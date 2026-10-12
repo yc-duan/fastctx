@@ -38,6 +38,8 @@ pub enum Action {
     },
     Service(service::Registration),
     ServicePart(String),
+    /// The inbound rules, by name, a node kept for direct connections.
+    DirectRules(Vec<String>),
     Legacy(fastctx_install::uninstall::Legacy),
     Trust {
         home: PathBuf,
@@ -56,6 +58,16 @@ pub enum Action {
     Application,
     ApplicationData(PathBuf),
     Package,
+}
+
+/// The hubs whose directories a World keeps under `net`, by id.
+#[cfg(windows)]
+fn hub_ids(net: &std::path::Path) -> anyhow::Result<Vec<String>> {
+    Ok(crate::entries(net)?
+        .into_iter()
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|name| fastctx_net::ids::HubId::try_from(name.clone()).is_ok())
+        .collect())
 }
 
 pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Result<Request> {
@@ -212,6 +224,30 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
                 format!("fastctx-{}", registration.name),
                 true,
                 Action::ServicePart(registration.name.clone()),
+            );
+        }
+    }
+    // The rules a node kept for direct connections go in either removal:
+    // they let in a program that goes too, and a node put back makes its
+    // own again when the hub says so.
+    #[cfg(windows)]
+    for hub in hub_ids(&world.net())? {
+        let earlier = fastctx_platform::account_name(&installation.user_sid)
+            .ok()
+            .map(|account| fastctx_install::direct_firewall::earlier_rule(&account, &hub));
+        let names: Vec<String> = [Some(fastctx_install::direct_firewall::rule(&installation.user_sid, &hub)), earlier]
+            .into_iter()
+            .flatten()
+            // A rule that cannot be looked for is removed if it is there.
+            .filter(|name| fastctx_install::direct_firewall::present(name).unwrap_or(true))
+            .collect();
+        if !names.is_empty() {
+            add(
+                "firewall",
+                "Remove the inbound firewall rule for direct connections",
+                names.join("; "),
+                true,
+                Action::DirectRules(names),
             );
         }
     }

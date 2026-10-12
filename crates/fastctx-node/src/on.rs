@@ -469,7 +469,7 @@ async fn follow_there(
     waiting: &Arc<Mutex<crate::on_delivery::Following>>,
 ) -> Result<bool, Failure> {
     let machine = &written.name;
-    let mut delay = Backoff::default();
+    let mut again = crate::again::Again::default();
     loop {
         if let Some(failure) = followed.lock().expect("never poisoned").refused.clone() {
             return Err(failure);
@@ -488,7 +488,7 @@ async fn follow_there(
             return Err(Failure::new("the local connection to the on follower broke; its end remains owed"));
         }
         tokio::select! {
-            () = tokio::time::sleep(delay.next()) => {}
+            () = again.pause(node, std::slice::from_ref(written)) => {}
             () = pieces.closed() => continue,
         }
         let (out_from, err_from) = {
@@ -503,7 +503,7 @@ async fn follow_there(
             followed.out != out_from || followed.err != err_from
         };
         if progressed {
-            delay.reset();
+            again.reset();
         }
         // A control reply can fail after the data stream already offered
         // the end. Only that handover's CLI receipt decides its outcome.
@@ -732,28 +732,6 @@ async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &J
 fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
     std::fs::OpenOptions::new().create(true).append(true).open(path)?.write_all(bytes)
-}
-
-/// The waits between attempts to reach a machine again: the one pacing of
-/// everything that reconnects (`world-network.md`, 断开不是结束), at once,
-/// then up to twice as long each time, at most a minute, each a random
-/// part of that.
-#[derive(Default)]
-pub(crate) struct Backoff {
-    failures: u32,
-}
-
-impl Backoff {
-    pub(crate) fn next(&mut self) -> Duration {
-        self.failures = self.failures.saturating_add(1);
-        fastctx_net::dial::backoff(self.failures)
-    }
-
-    /// The machine was reached and the work went on: the next break is
-    /// tried again at once.
-    pub(crate) fn reset(&mut self) {
-        self.failures = 0;
-    }
 }
 
 // The receiving side.

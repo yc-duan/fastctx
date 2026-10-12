@@ -29,6 +29,7 @@ mod moving;
 mod outgoing;
 mod session;
 pub mod state;
+mod ways;
 
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
@@ -55,6 +56,7 @@ pub use direct::DataWay;
 pub use ledger::{Page, PageItem};
 use state::{Counter, LettersFile};
 pub use state::{Membership, NetDir};
+pub use ways::Way;
 
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
@@ -95,6 +97,10 @@ pub trait Node: Send + Sync + 'static {
     /// This machine's view of the directory may have changed: the link has
     /// just asked the hub.
     fn directory_changed(&self) {}
+    /// The ways to other machines may have changed (`Link::way_to`): the
+    /// line to the hub came or went, the hub said anew who is online, or a
+    /// direct link came up or went down.
+    fn ways_changed(&self) {}
     /// Lets other computers reach this machine at exactly the TCP `ports`
     /// through its own firewall, as far as the World does that, and says
     /// what it knows of that firewall: this machine takes direct connections
@@ -356,6 +362,7 @@ impl Link {
         self.inner.direct.stop();
         *self.inner.connection.lock().expect("never poisoned") = None;
         self.inner.status.send_replace(Status::Stopped { reason: "the link was stopped".to_string() });
+        self.inner.ways_changed();
     }
 
     /// This machine's place on the hub. Its addresses are those it logged
@@ -670,6 +677,7 @@ impl Inner {
             if let Some(this) = self.this.upgrade() {
                 this.follow_view();
             }
+            self.ways_changed();
         }
         self.reroute_if_changed();
         Ok(())

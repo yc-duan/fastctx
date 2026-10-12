@@ -18,6 +18,11 @@ export interface ProblemWords {
   weakPassword: string;
   notAllowed: string;
   offline: string;
+  /** This computer's own service is not running, and nothing brings it back
+   *  now. */
+  serviceDown: string;
+  /** This computer's own service is passing its work to its next self. */
+  serviceSwitching: string;
   /** Codex's output limit, shared by every tool, is below what the World's
    *  answers need; raising it is the user's to ask for. */
   outputLimit: string;
@@ -39,6 +44,8 @@ export const zhProblems: ProblemWords = {
   weakPassword: "密码不符合要求",
   notAllowed: "没有权限",
   offline: "机器离线",
+  serviceDown: "本机服务没有运行",
+  serviceSwitching: "本机服务正在切换，请稍后再试",
   outputLimit: "Codex 的工具输出上限不够",
   somethingElse: "操作未完成",
 };
@@ -58,6 +65,8 @@ export const enProblems: ProblemWords = {
   weakPassword: "The password doesn't meet the requirements",
   notAllowed: "You don't have permission",
   offline: "The machine is offline",
+  serviceDown: "The local service isn't running",
+  serviceSwitching: "The local service is switching over. Try again in a moment",
   outputLimit: "Codex's tool output limit is too low",
   somethingElse: "Something went wrong",
 };
@@ -77,6 +86,8 @@ const KNOWN: [RegExp, keyof ProblemWords][] = [
   [/a password has at least|a password mixes|a password does not contain|first ones anyone tries/i, "weakPassword"],
   [/not allowed|may not|forbidden|only the super administrator|permission denied/i, "notAllowed"],
   [/is offline|not online|went offline/i, "offline"],
+  [/the node is not running|the node was started but exited/i, "serviceDown"],
+  [/handing over to its successor/i, "serviceSwitching"],
   [/connect|timed out|unreachable|refused|no route|dns|resolve|no such host/i, "unreachable"],
 ];
 

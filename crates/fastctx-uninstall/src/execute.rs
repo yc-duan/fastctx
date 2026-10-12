@@ -719,6 +719,19 @@ fn record_event(
     Ok(())
 }
 
+/// Removes the firewall rules named `names` that are there.
+fn remove_rules(names: &[String]) -> anyhow::Result<()> {
+    #[cfg(windows)]
+    for name in names {
+        if let Err(code) = fastctx_install::direct_firewall::remove(name)? {
+            anyhow::bail!("Windows Firewall did not remove {name} (netsh exit {code:?})");
+        }
+    }
+    #[cfg(not(windows))]
+    anyhow::ensure!(names.is_empty(), "firewall rules are removed only on Windows");
+    Ok(())
+}
+
 pub fn run_system(request: &Request, mut events: impl FnMut(Event)) {
     run_system_phase(request, true, &mut events);
     run_system_phase(request, false, &mut events);
@@ -765,6 +778,7 @@ pub(crate) fn run_system_phase(request: &Request, early: bool, mut events: impl 
                     Ok(())
                 }
                 Action::Legacy(legacy) => legacy.uninstall(&request.installation),
+                Action::DirectRules(names) => remove_rules(names),
                 Action::Package => Ok(()),
                 Action::HubData(directory) => {
                     if !directory.try_exists()? {

@@ -12,6 +12,7 @@
 pub mod activity;
 mod admission;
 mod admitted;
+mod again;
 mod agents;
 mod around;
 mod asked;
@@ -37,6 +38,7 @@ mod file_read;
 mod file_search;
 mod firewall;
 mod focus;
+mod gates;
 mod gather;
 pub mod handoff;
 mod held_history;
@@ -45,11 +47,11 @@ mod homes;
 mod hub_arrival;
 mod hub_moving;
 mod inbox;
-mod job_ends;
 mod job_reader;
 mod job_receipts;
 mod job_watch;
 mod jobs;
+mod learned;
 mod leases;
 mod ledger;
 mod letters;
@@ -151,6 +153,9 @@ pub(crate) struct Node {
     log: Arc<log::Log>,
     /// The link to each hub this computer is logged in to (`reach`).
     links: RwLock<std::collections::BTreeMap<HubId, Arc<Link>>>,
+    /// Moves whenever the ways to other machines may have changed, on any
+    /// link (`Node::reopened`).
+    ways: tokio::sync::watch::Sender<u64>,
     /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: tokio::sync::Mutex<()>,
     /// Held while a town's record or journals are written from here, from
@@ -162,7 +167,12 @@ pub(crate) struct Node {
     /// The `on` jobs here whose sender is following them now: their end
     /// goes to it, not in a letter, unless it leaves first (`on`).
     following: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
-    job_ends: job_ends::Ends,
+    /// Each job's end is claimed and told by one at a time.
+    job_ends: gates::Gates,
+    /// Each destination of a copy is written by one copy at a time (`copy`).
+    copying: gates::Gates,
+    /// What copies here read of files, for the tries that go on after them.
+    learned: learned::Learned,
     /// Words coming for residents here, and for residents elsewhere that
     /// work here, for the `run` calls waiting.
     words: words::Words,
@@ -258,6 +268,17 @@ fn legacy(node: &Node) {
     }
 }
 
+/// This node took the World: the successor it said it was is not waiting
+/// any more, unless another said so since.
+fn no_longer_waiting(world: &WorldDir) {
+    let named = std::fs::read(world.node_successor())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<fastctx_types::ProcessIdentity>(&bytes).ok());
+    if named.is_some_and(|named| fastctx_platform::current_identity().is_ok_and(|me| me == named)) {
+        let _ = std::fs::remove_file(world.node_successor());
+    }
+}
+
 /// Runs the node for the World under `fastctx_root`; `supervision` is the
 /// guardian's channel when a guardian keeps it (`handoff`).
 pub async fn run(fastctx_root: &Path, supervision: Option<handoff::Supervision>) -> anyhow::Result<()> {
@@ -294,6 +315,16 @@ pub async fn run_prepared(
     }
     let world = WorldDir::under(fastctx_root);
     let mut renewal = renewal::Startup::prepare(fastctx_root, successor, coordinator.is_some()).await?;
+    // A node that waits to take the World says so first: between the node
+    // before it going and this one listening, nobody answers, and a client
+    // that comes then waits for this one rather than giving up.
+    let waits = supervision.is_some() || renewal.successor;
+    if waits {
+        ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
+        let me = serde_json::to_vec(&fastctx_platform::current_identity()?).expect("identities serialize");
+        fastctx_platform::publish(&world.node_successor(), &me, fastctx_platform::Permissions::Private)
+            .context("saying this node waits to take the World")?;
+    }
     let supervision = match supervision {
         Some(supervision) => {
             Some(tokio::task::block_in_place(|| supervision.prepare()).context("talking to the guardian")?)
@@ -301,7 +332,7 @@ pub async fn run_prepared(
         None => None,
     };
     ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
-    let _lock = match supervision.is_some() || renewal.successor {
+    let _lock = match waits {
         // A successor prepares, then waits to be let in, then waits for the
         // node before it to let the World go.
         true => {
@@ -364,6 +395,9 @@ pub async fn run_prepared(
     let endpoint = Endpoint::for_world(world.path())?;
     let mut listener = Listener::bind(&endpoint)?;
     log.line(format_args!("listening at {endpoint}"));
+    if waits {
+        no_longer_waiting(&world);
+    }
     drop(startup_gate);
 
     // The app-server runs with the user's own environment, as every program
@@ -409,11 +443,14 @@ pub async fn run_prepared(
         line_sources: lines::Sources::default(),
         log,
         links: RwLock::new(std::collections::BTreeMap::new()),
+        ways: tokio::sync::watch::channel(0).0,
         syncing: tokio::sync::Mutex::new(()),
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),
         following: Default::default(),
         job_ends: Default::default(),
+        copying: Default::default(),
+        learned: Default::default(),
         words: Default::default(),
         dispatched: Default::default(),
         births: Default::default(),
@@ -477,7 +514,7 @@ pub async fn run_prepared(
     retention::start(&node).context("starting command artifact retention")?;
     let jobs_node = node.clone();
     tokio::spawn(async move {
-        let mut delay = on::Backoff::default();
+        let mut again = again::Again::default();
         loop {
             match inbox::settle_jobs(&jobs_node).await {
                 Ok(problems) if problems.is_empty() => break,
@@ -488,7 +525,7 @@ pub async fn run_prepared(
                 }
                 Err(error) => jobs_node.log.line(format_args!("recovering job notifications: {error}")),
             }
-            tokio::time::sleep(delay.next()).await;
+            tokio::time::sleep(again.next()).await;
         }
     });
 

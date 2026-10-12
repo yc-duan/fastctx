@@ -76,6 +76,56 @@ pub fn object_owner_sid(handle: HANDLE) -> io::Result<String> {
     sid
 }
 
+/// The name of the account `sid` names, as its own sessions see it in
+/// `USERNAME`.
+pub fn account_name(sid: &str) -> io::Result<String> {
+    use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
+    use windows_sys::Win32::Security::LookupAccountSidW;
+    let wide: Vec<u16> = OsStr::new(sid).encode_wide().chain([0]).collect();
+    let mut raw: PSID = ptr::null_mut();
+    // SAFETY: a NUL-terminated string; the SID made from it is freed below.
+    if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &mut raw) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let named = (|| {
+        let (mut name_length, mut domain_length, mut kind) = (0u32, 0u32, 0);
+        // SAFETY: measures the two buffers; the SID stays live.
+        unsafe {
+            LookupAccountSidW(
+                ptr::null(),
+                raw,
+                ptr::null_mut(),
+                &mut name_length,
+                ptr::null_mut(),
+                &mut domain_length,
+                &mut kind,
+            )
+        };
+        let mut name = vec![0u16; name_length as usize];
+        let mut domain = vec![0u16; domain_length as usize];
+        // SAFETY: the buffers have the measured lengths.
+        if unsafe {
+            LookupAccountSidW(
+                ptr::null(),
+                raw,
+                name.as_mut_ptr(),
+                &mut name_length,
+                domain.as_mut_ptr(),
+                &mut domain_length,
+                &mut kind,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        name.truncate(name_length as usize);
+        Ok(String::from_utf16_lossy(&name))
+    })();
+    // SAFETY: allocated by ConvertStringSidToSidW.
+    unsafe { LocalFree(raw) };
+    named
+}
+
 fn sid_text(sid: PSID) -> io::Result<String> {
     let mut text: *mut u16 = ptr::null_mut();
     // SAFETY: a valid SID; the string is freed below.

@@ -485,19 +485,6 @@ pub fn describe(error: &tokio_tungstenite::tungstenite::Error) -> String {
     }
 }
 
-/// How long to wait before dialing again after `failures` failures in a
-/// row: the first retry is at once; after that a random wait up to a ceiling
-/// that doubles with each failure, to a minute, so machines that lost their
-/// upstream together do not all return in the same instant.
-pub fn backoff(failures: u32) -> std::time::Duration {
-    if failures <= 1 {
-        return std::time::Duration::ZERO;
-    }
-    let ceiling_ms = 1000_u64.saturating_mul(1 << (failures - 2).min(6)).min(60_000);
-    let random = u64::from_le_bytes(crate::sign::random::<8>().unwrap_or([0; 8]));
-    std::time::Duration::from_millis(250 + random % ceiling_ms.saturating_sub(250).max(1))
-}
-
 /// Asks the hub `hub` by `upstream` whether it takes sessions now
 /// (`wire::Intent::Probe`).
 pub async fn probe(upstream: &Upstream, hub: &HubId, pin: CertPin) -> Result<(), String> {

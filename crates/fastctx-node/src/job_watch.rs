@@ -83,7 +83,7 @@ pub(crate) fn start(node: &Arc<Node>, path: &Path, identity: Option<ProcessIdent
     }
     let (node, path) = (node.clone(), path.to_path_buf());
     tokio::spawn(async move {
-        let mut delay = crate::on::Backoff::default();
+        let mut again = crate::again::Again::default();
         loop {
             let result: Result<bool, Failure> = async {
                 let alive = identity
@@ -110,7 +110,7 @@ pub(crate) fn start(node: &Arc<Node>, path: &Path, identity: Option<ProcessIdent
                 Ok(false) => tokio::time::sleep(crate::on::LOOK_AGAIN).await,
                 Err(error) => {
                     node.log.line(format_args!("recovering {} after its supervisor: {error}", path.display()));
-                    tokio::time::sleep(delay.next()).await;
+                    tokio::time::sleep(again.next()).await;
                 }
             }
         }

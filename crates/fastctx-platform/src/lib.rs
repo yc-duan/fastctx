@@ -77,4 +77,4 @@ pub use private::ensure_private_dir;
 #[cfg(any(target_os = "linux", windows))]
 pub use tree::ProcessTree;
 #[cfg(windows)]
-pub use windows_user::current_user_sid;
+pub use windows_user::{account_name, current_user_sid};
