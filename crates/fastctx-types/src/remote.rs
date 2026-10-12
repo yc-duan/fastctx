@@ -174,6 +174,41 @@ pub enum RemoteCall {
     Homes {
         change: crate::agents::HomeChange,
     },
+    /// What that machine's node keeps of its agents' logins.
+    AgentLogins,
+    /// Scan that machine for its agents, or stop the walk of its disks; only
+    /// for the machine's owner.
+    ScanAgents {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stop: bool,
+    },
+    /// Take up a directory there as a candidate login; only for the
+    /// machine's owner.
+    AddAgentLogin {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+    },
+    /// What a change of a login there would do; only for the machine's
+    /// owner.
+    PreviewAgentChange {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        into: bool,
+    },
+    /// Put the World's tools into a login there, or take them out; only for
+    /// the machine's owner.
+    ChangeAgentLogin {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        into: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raise_output_limit: bool,
+    },
+    /// Read a login's limits there afresh.
+    ReadAgentLimits {
+        agent: AgentName,
+        dir: std::path::PathBuf,
+    },
     /// The documents of a canon there, for a town's map.
     Canon {
         path: String,
@@ -337,7 +372,11 @@ impl RemoteCall {
             | RemoteCall::PipeOut { .. }
             | RemoteCall::PageAction { .. }
             | RemoteCall::ClaudeConsent { .. }
-            | RemoteCall::Homes { .. } => Purpose::Hands,
+            | RemoteCall::Homes { .. }
+            | RemoteCall::ScanAgents { .. }
+            | RemoteCall::AddAgentLogin { .. }
+            | RemoteCall::PreviewAgentChange { .. }
+            | RemoteCall::ChangeAgentLogin { .. } => Purpose::Hands,
             RemoteCall::Composer { .. }
             | RemoteCall::AttachmentThumbnail { .. }
             | RemoteCall::ReadAttachment { .. }
@@ -352,6 +391,8 @@ impl RemoteCall {
             | RemoteCall::Offers { .. }
             | RemoteCall::Upload { .. } => Purpose::Agents,
             RemoteCall::Agents
+            | RemoteCall::AgentLogins
+            | RemoteCall::ReadAgentLimits { .. }
             | RemoteCall::Look { .. }
             | RemoteCall::Find { .. }
             | RemoteCall::Who { .. }
@@ -396,6 +437,9 @@ pub enum RemoteReply {
     Who(WhoReply),
     Since(crate::since::SinceReply),
     Agents(AgentsReply),
+    AgentLogins(Box<crate::logins::MachineLogins>),
+    AgentChangePreview(Box<crate::logins::ChangePreview>),
+    AgentLoginChanged(Box<crate::logins::LoginChange>),
     FileRead {
         result: crate::file_read::FileReadResult,
     },

@@ -50,6 +50,7 @@ mod lifetime;
 mod lines;
 mod log;
 mod login_identity;
+mod logins;
 mod look;
 mod machine;
 mod management;
@@ -125,7 +126,9 @@ pub(crate) struct Node {
     /// This machine's Codex app-server, holding the Codex residents the
     /// World started.
     codex: codex::hosts::CodexHosts,
-    home_changes: std::sync::Mutex<()>,
+    /// What this machine knows of its agents' logins, and the scans and
+    /// changes of them under way (`logins`).
+    logins: logins::Logins,
     unclaimed: codex::Unclaimed,
     /// Claude sessions, as the World's plugin reports them.
     claude: claude::Claude,
@@ -351,7 +354,7 @@ pub async fn run_prepared(
     }
     let home = fastctx_platform::user_home().context("finding the home directory")?;
     let codex_log = log.clone();
-    let (codex, codex_events) = codex::hosts::CodexHosts::new(
+    let (codex, codex_events, codex_limits) = codex::hosts::CodexHosts::new(
         launch::codex_home(&home, &environment),
         world.path().join("codex"),
         environment,
@@ -371,7 +374,7 @@ pub async fn run_prepared(
         job_readers: Default::default(),
         residents,
         codex,
-        home_changes: Default::default(),
+        logins: logins::Logins::default(),
         unclaimed: codex::Unclaimed::default(),
         claude,
         desk: desk::Desk::default(),
@@ -426,6 +429,7 @@ pub async fn run_prepared(
     on_stop::resume(&node).await;
     codex::adopt(&node).await;
     codex::listen(node.clone(), codex_events);
+    logins::limits::listen(node.clone(), codex_limits);
     codex::replay(&node).await;
     let mut unfinished: std::collections::BTreeSet<_> = unfinished.into_iter().collect();
     unfinished.extend(node.residents.unfinished());

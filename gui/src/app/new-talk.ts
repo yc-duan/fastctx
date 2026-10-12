@@ -42,7 +42,7 @@ import type { Attachment, UploadTarget } from "../world/attachments";
 import type { WorldNow } from "../world/bridge";
 import type { Offers } from "../world/control";
 import type { Address } from "../world/events";
-import { accountOf, homeChoice, homeLabel, homesOf, installed, loggedOut, windowsShort, type HomeWords } from "./agent-homes";
+import { accountOf, homeChoice, homeLabel, homesOf, installed, listed, loggedOut, windowsShort, type HomeWords } from "./agent-homes";
 import type { ConsentHome } from "./claude-consent";
 import {
   borrowedOf,
@@ -522,7 +522,8 @@ export class NewTalk {
       const options = facts
         ? agentsKnown.flatMap((agent) =>
             homesOf(facts, agent)
-              .filter(installed)
+              // The World uses only the logins in a machine's agent list.
+              .filter((home) => installed(home) && listed(home))
               .map((home) => this.option(machine.name, machine.written, agent, homeChoice(home), null)),
           )
         : agentsKnown.map((agent) => this.option(machine.name, machine.written, agent, null, null));

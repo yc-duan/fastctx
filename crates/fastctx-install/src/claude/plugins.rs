@@ -497,3 +497,26 @@ fn paths_match(a: &Path, b: &Path) -> bool {
     };
     normalize(a) == normalize(b)
 }
+
+/// The commands withdrawing the reserved product would run against
+/// `state`, as `unapply_managed` runs them: the user installation
+/// uninstalled, then the marketplace removed when nothing else of it is
+/// installed.
+pub fn withdrawal(plan: &ClaudePlan, state: &PluginState) -> Result<Vec<PluginCommand>, String> {
+    let target = Target::new(plan)?;
+    target.preflight(state)?;
+    let mut commands = Vec::new();
+    let installed = target.installation(state).is_some();
+    if installed {
+        commands.push(target.command(Mutation::UninstallPlugin));
+    }
+    if target.market(state).is_some() {
+        let others =
+            target.members(state).any(|plugin| !(installed && plugin.id == target.id() && plugin.scope == "user"));
+        if others {
+            return Err("The fastctx marketplace contains another plugin; it was left unchanged".into());
+        }
+        commands.push(target.command(Mutation::RemoveMarketplace));
+    }
+    Ok(commands)
+}

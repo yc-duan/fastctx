@@ -10,7 +10,7 @@
 //! Opening a project is the one change a machine acting for an account may
 //! make for it, as a resident working there opens one.
 
-use fastctx_net::directory::{Account, Lend, Level, Project, Share};
+use fastctx_net::directory::{Account, Lend, Level, LoginPlan, Project, Share};
 use fastctx_net::login::HubSecrets;
 use fastctx_net::sign::Bytes;
 use fastctx_net::token::{Token, TokenSecret};
@@ -137,6 +137,18 @@ fn apply(
             }
             Ok(Told::Done)
         }
+        Change::Plan { machine, agent, home, plan } => {
+            need_super()?;
+            let directory = &mut store.book.directory;
+            if !directory.member(&machine).is_some_and(|member| member.is_machine()) {
+                return Err(format!("there is no machine {machine} on this hub"));
+            }
+            directory.plans.retain(|known| !(known.machine == machine && known.agent == agent && known.home == home));
+            if let Some(plan) = plan {
+                directory.plans.push(LoginPlan { machine, agent, home, plan });
+            }
+            Ok(Told::Done)
+        }
         Change::StopActing { machine } => {
             let directory = &mut store.book.directory;
             directory.acting.retain(|acting| !(acting.account == *account && acting.machine == machine));
@@ -165,10 +177,13 @@ fn apply(
             if expires <= Timestamp::now() {
                 return Err("the token would have expired already".to_string());
             }
-            if let Some(name) = &name
-                && store.book.directory.member(name).is_some()
-            {
-                return Err(format!("the name {name} is taken on this hub"));
+            if let Some(name) = &name {
+                if let Some(taken) = store.book.directory.member(name) {
+                    return Err(crate::login::taken_by(name, &taken.name));
+                }
+                if let Some(reason) = crate::login::unread(store, name, None) {
+                    return Err(reason);
+                }
             }
             let secret = TokenSecret::generate().map_err(|error| format!("making the token: {error}"))?;
             store.book.tokens.push(TokenRecord {
@@ -379,6 +394,7 @@ fn log_out(
 fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &MachineName) {
     directory.shares.retain(|share| share.machine != *name);
     directory.lends.retain(|lend| lend.machine != *name);
+    directory.plans.retain(|plan| plan.machine != *name);
     directory.acting.retain(|acting| acting.machine != *name);
 }
 

@@ -269,13 +269,7 @@ fn legacy_delivery(
     {
         return Ok(None);
     }
-    let id = match job.on.as_ref().and_then(|on| on.request.as_ref()) {
-        Some(request) => crate::speech::fixed_id(
-            "on-end",
-            &[job.machine.as_str(), owner.machine.as_str(), owner.resident.as_str(), job.id.as_str(), request.as_str()],
-        ),
-        None => format!("{}-{}", job.machine, job.id).parse().map_err(io::Error::other)?,
-    };
+    let id = crate::inbox::end_id(owner, &job.machine, &job.id, job.on.as_ref().and_then(|on| on.request.as_ref()));
     for parent in world.resident_parents()? {
         let resident = parent.join(owner.resident.as_str());
         for directory in [resident.clone(), resident.join("archive")] {

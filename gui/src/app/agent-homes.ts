@@ -39,6 +39,12 @@ export function loggedOut(facts: AgentFacts): boolean {
   return facts.login.kind === "known" && facts.login.value.kind === "logged_out";
 }
 
+/** A login in its machine's agent list: one the World's tools are put
+ *  into, the only kind the World uses. */
+export function listed(facts: AgentFacts): boolean {
+  return facts.integration.kind === "known" && facts.integration.value === "in";
+}
+
 /** A login an agent can start in: its program is there and it is not
  *  known to be logged out. */
 export function usableHome(facts: AgentFacts): boolean {

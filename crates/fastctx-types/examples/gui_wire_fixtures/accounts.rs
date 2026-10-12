@@ -121,6 +121,12 @@ fn hub() -> HubAccounts {
                 home: Some("/home/bo/.claude-team".into()),
             },
         ],
+        plans: vec![PlanSeen {
+            machine: "gpu".parse().unwrap(),
+            agent: "claude".parse().unwrap(),
+            home: Some("/home/bo/.claude-team".into()),
+            plan: PlanLabel::Max,
+        }],
         acting: vec![ActingSeen { machine: "gpu".parse().unwrap(), account: "ada".parse().unwrap(), since: at() }],
         projects: vec![ProjectSeen {
             name: "mark50".parse().unwrap(),
@@ -154,6 +160,18 @@ pub fn fixtures() -> Fixtures {
                 agent: "codex".parse().unwrap(),
                 home: Some("C:/Users/ada/.codex-work".into()),
                 lent: true,
+            },
+            AccountChange::Plan {
+                machine: "gpu".parse().unwrap(),
+                agent: "claude".parse().unwrap(),
+                home: None,
+                plan: Some(PlanLabel::Pro),
+            },
+            AccountChange::Plan {
+                machine: "gpu".parse().unwrap(),
+                agent: "claude".parse().unwrap(),
+                home: Some("/home/bo/.claude-team".into()),
+                plan: None,
             },
             AccountChange::StopActing { machine: "gpu".parse().unwrap() },
             AccountChange::Direct {

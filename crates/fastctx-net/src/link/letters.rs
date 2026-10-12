@@ -76,7 +76,7 @@ pub struct Receipt {
 }
 
 pub fn receipt(net: &NetDir, from: &MachineName, id: &LetterId) -> io::Result<Option<Receipt>> {
-    match read(&net.received(from).join(id.as_str())) {
+    match read(&net.received(from)?.join(id.as_str())) {
         Ok(receipt) => Ok(Some(receipt)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -84,7 +84,7 @@ pub fn receipt(net: &NetDir, from: &MachineName, id: &LetterId) -> io::Result<Op
 }
 
 pub fn keep_receipt(net: &NetDir, from: &MachineName, id: &LetterId, receipt: &Receipt) -> io::Result<()> {
-    let directory = net.received(from);
+    let directory = net.received(from)?;
     ensure_private_dir(&directory)?;
     let bytes = serde_json::to_vec(receipt).map_err(io::Error::other)?;
     publish(&directory.join(id.as_str()), &bytes, Permissions::Private)

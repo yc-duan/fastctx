@@ -3,7 +3,7 @@
 
 use fastctx_types::AccountName;
 use fastctx_types::accounts::{
-    AccountChange, AccountSeen, ActingSeen, HubAccounts, LendSeen, MemberSeen, ProjectSeen, ShareSeen,
+    AccountChange, AccountSeen, ActingSeen, HubAccounts, LendSeen, MemberSeen, PlanSeen, ProjectSeen, ShareSeen,
 };
 use fastctx_types::world::LinkState;
 
@@ -37,6 +37,7 @@ impl Link {
         let wire = match change {
             AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
             AccountChange::Lend { machine, to, agent, home, lent } => Change::Lend { machine, to, agent, home, lent },
+            AccountChange::Plan { machine, agent, home, plan } => Change::Plan { machine, agent, home, plan },
             AccountChange::StopActing { machine } => Change::StopActing { machine },
             // An older hub would not read the change, and would end the
             // connection that asked it.
@@ -140,6 +141,16 @@ impl Link {
                     account: lend.account.clone(),
                     agent: lend.agent.clone(),
                     home: lend.home.clone(),
+                })
+                .collect(),
+            plans: view
+                .plans
+                .iter()
+                .map(|plan| PlanSeen {
+                    machine: plan.machine.clone(),
+                    agent: plan.agent.clone(),
+                    home: plan.home.clone(),
+                    plan: plan.plan,
                 })
                 .collect(),
             acting: view

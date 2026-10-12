@@ -115,6 +115,20 @@ export interface LendSeen {
   home: string | null;
 }
 
+/** A plan a login names none of (a Claude Code long-lived token), set by
+ *  the hub's super administrator by hand; only shown. */
+export type PlanLabel = "max" | "pro" | "free";
+
+/** The plan set on one login of an agent on a machine. */
+export interface PlanSeen {
+  machine: MachineName;
+  agent: string;
+  /** The login's directory as that machine writes it; null for the
+   *  agent's default login there. */
+  home: string | null;
+  plan: PlanLabel;
+}
+
 /** A machine of another whose agents may reach an account's machines,
  *  since the account first used one of them. */
 export interface ActingSeen {
@@ -152,6 +166,8 @@ export interface HubAccounts {
   members: MemberSeen[];
   shares: ShareSeen[];
   lends: LendSeen[];
+  /** Plans the super administrator set on logins that name none. */
+  plans: PlanSeen[];
   acting: ActingSeen[];
   projects: ProjectSeen[];
   arrivals: Arrival[];
@@ -169,6 +185,7 @@ export interface AccountsReply {
 export type AccountChange =
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
   | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home?: string; lent: boolean }
+  | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null }
   | { change: "stop_acting"; machine: MachineName }
   /** The administrator's change: the server checks it reaches the machine
    *  at `at` before it counts; none, no longer. */

@@ -109,6 +109,7 @@ import { specimens, type Specimen } from "./specimen/sessions";
 import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
 import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
 import { specimenRemote } from "./specimen/remote";
+import { specimenNameProblem } from "./specimen/names";
 import { specimenMachineLog } from "./specimen/machine-log";
 import type { RemoteSeams } from "./app/remote-world";
 import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
@@ -132,7 +133,9 @@ import { agentName, titleOf } from "./world/names";
 import { mapOf } from "./app/map-of";
 import { NetworkMap } from "./app/network-map";
 import {
-  applyHosts,
+  agentLogins,
+  changeAgentLogin,
+  scanAgents,
   control,
   offers,
   placeFastctx,
@@ -172,6 +175,7 @@ import {
   type WorldNow,
   login,
   loginToken,
+  nameProblem,
   openAccount,
   createWorld,
   hereAddresses,
@@ -403,6 +407,7 @@ const remoteSeams: RemoteSeams = {
   join: remoteJoin,
   close: remoteClose,
   login: (address, admin, password, name) => login(address, admin, password, true, name),
+  nameProblem,
   token: async (hub, admin, machine) => {
     // An hour is the time the server has to use it: it does at once.
     const token = await accountChange(hub, admin, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString() });
@@ -428,6 +433,7 @@ const tokens = new Tokens({
   server: (login, name, hours) =>
     live ? serverCommand(login.hubName, login.account, name, hours) : Promise.resolve("echo 'Specimen: no real token or download'"),
   when: (at) => when(at, new Date()),
+  nameProblem: live ? nameProblem : specimenNameProblem,
   // Over SSH only from a computer: a phone carries no Linux program.
   remote:
     live && !onComputer()
@@ -1314,7 +1320,15 @@ function show(next: Place): void {
         machine: next.machine,
         when,
         agents: () => agentsOn(null),
-        applyHere: (agent, into, home, raise = false) => (live ? applyHosts(agent === "codex", agent === "claude", raise, into, home) : notLive()),
+        changeLogin: (machine, agent, dir, into, raise = false) => (live ? changeAgentLogin(machine, agent, dir, into, raise) : notLive()),
+        logins: (machine) =>
+          live
+            ? agentLogins(machine).then((world) => {
+                const one = world.machines.find((heard) => heard.kind === "answered" && heard.logins.machine === machine);
+                return one?.kind === "answered" ? one.logins : null;
+              })
+            : Promise.resolve(null),
+        scan: (machine, stop) => (live ? scanAgents(machine, stop) : notLive()),
         consent: {
           allow: (machine, home) => consent.allow(machine, (english ? enConsent : zhConsent).allow, home),
           withdraw: (machine, home) => consent.withdraw(machine, home),
@@ -1371,6 +1385,7 @@ function show(next: Place): void {
         // shows the button when asked as a phone.
         scan: canScan() ? scanToken : !live && params.has("phone") ? async () => "FX5SPECIMEN" : undefined,
         keep: asDevice ? undefined : () => (live ? keepHere() : notLive()),
+        nameProblem: live ? nameProblem : specimenNameProblem,
         drawing: {
           element: loginMap.element,
           mark: (machine) => {

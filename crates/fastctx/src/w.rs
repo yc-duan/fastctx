@@ -101,7 +101,10 @@ pub fn run(args: WArgs) -> anyhow::Result<()> {
                     Looked::Job { record } => record.machine == machine,
                 });
                 if JobId::try_from(one.id.as_str()).is_ok() {
-                    one.unasked.retain(|unasked| unasked.split_whitespace().next() == Some(machine.as_str()));
+                    one.unasked.retain(|unasked| {
+                        unasked.split_whitespace().next().and_then(|first| MachineName::try_from(first).ok())
+                            == Some(machine.clone())
+                    });
                 }
                 one.jobs.retain(|job| job.owner.resident().is_some_and(|owner| owner.machine == machine));
             }

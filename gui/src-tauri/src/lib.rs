@@ -58,6 +58,8 @@ mod binary_reading;
 mod desktop_presence;
 mod line_reading;
 mod local_files;
+mod logins;
+mod names;
 mod pages;
 mod reading;
 mod save_as;
@@ -886,6 +888,7 @@ pub fn run() {
             connection_state,
             select_connection,
             reconnect,
+            names::name_problem,
             accounts::login,
             accounts::login_token,
             accounts::open_account,
@@ -900,6 +903,12 @@ pub fn run() {
             accounts::server_command,
             accounts::agent_homes,
             accounts::works_on,
+            logins::agent_logins,
+            logins::scan_agents,
+            logins::add_agent_login,
+            logins::preview_agent_change,
+            logins::change_agent_login,
+            logins::read_agent_limits,
             world_now,
             since,
             agents,

@@ -82,7 +82,7 @@ pub(crate) struct Elsewhere {
 }
 
 fn elsewhere_path(node: &Node, resident: &ResidentId, machine: &MachineName, job: &JobId) -> PathBuf {
-    node.world.path().join("elsewhere").join(resident.as_str()).join(format!("{machine}-{job}.json"))
+    node.world.path().join("elsewhere").join(resident.as_str()).join(format!("{}-{job}.json", machine.key()))
 }
 
 fn left_running(node: &Node, resident: &ResidentId, kept: &Elsewhere) {
@@ -284,7 +284,7 @@ pub(crate) async fn run(
     if let Some(consumed) = &reply.consumed {
         crate::job_receipts::apply_consumed(&directory, consumed).map_err(|error| Failure::new(error.to_string()))?;
         for id in consumed.iter().filter(|id| !id.as_str().starts_with("letter-")) {
-            let letter = crate::speech::fixed_id("letter", &[reply.machine.as_str(), id.as_str()]);
+            let letter = crate::speech::fixed_id("letter", &[reply.machine.key(), id.as_str()]);
             crate::inbox::consume(&directory, &letter).map_err(|error| Failure::new(error.to_string()))?;
         }
     }

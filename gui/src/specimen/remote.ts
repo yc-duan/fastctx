@@ -2,6 +2,7 @@
 // step after a moment, and signs in as the World would have.
 
 import type { RemoteSeams, RemoteStep } from "../app/remote-world";
+import { specimenNameProblem } from "./names";
 
 export function specimenRemote(): RemoteSeams {
   const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -15,11 +16,11 @@ export function specimenRemote(): RemoteSeams {
     probe: async (host, port) => ({ address: `203.0.113.20:${port}`, fingerprint: "SHA256:q1mWkC3Pz0b0n5yVZpA8k7m2sQ0Jt9eYxH4fR6uLwNc", known: host === "known" ? "known" : "unknown" }),
     hub: async (request, step) => {
       await steps(["connect", "check", "upload", "hub"], step);
-      return { session: 1, address: `203.0.113.20:${request.hubPort}`, hostname: "hz-light-01" };
+      return { session: 1, address: `203.0.113.20:${request.hubPort}`, machine: "hz-light-01" };
     },
     open: async (_server, step) => {
       await steps(["connect", "check", "upload"], step);
-      return { session: 2, hostname: "gz-cvm-07" };
+      return { session: 2, machine: "gz-cvm-07" };
     },
     join: async (_session, _token, step) => steps(["join"], step),
     close: async () => {},
@@ -28,5 +29,6 @@ export function specimenRemote(): RemoteSeams {
       return { hub: "home", name: "desktop", account: admin, kept: { kind: "installed" as const } };
     },
     token: async () => "FX5SPECIMEN",
+    nameProblem: specimenNameProblem,
   };
 }

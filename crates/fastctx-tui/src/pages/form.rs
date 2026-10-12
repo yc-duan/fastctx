@@ -319,14 +319,14 @@ impl FormPage {
             }));
             *index = options.iter().position(|(_, value)| *value == chosen).unwrap_or(0);
         }
-        let machine = self.value(Key::Machine);
+        let machine = MachineName::try_from(self.value(Key::Machine)).ok();
         if let Some(Field { value: Value::Choice { options, index }, .. }) = self.field(Key::Project) {
             let chosen = options.get(*index).map(|(_, value)| value.clone()).or(preset.map(|town| town.to_string()));
             let mut list = vec![(words.no_project().to_string(), String::new())];
             list.extend(
                 towns
                     .iter()
-                    .filter(|town| town.record.machines.iter().any(|spans| spans.as_str() == machine))
+                    .filter(|town| machine.as_ref().is_some_and(|machine| town.record.machines.contains(machine)))
                     .map(|town| (town.record.name.clone(), town.town.to_string())),
             );
             *options = list;
@@ -535,11 +535,7 @@ impl FormPage {
     fn job(&self, ctx: &Ctx) -> Result<Job, String> {
         let words = &ctx.words;
         let optional_machine = |text: String| -> Result<Option<MachineName>, String> {
-            if text.is_empty() {
-                Ok(None)
-            } else {
-                MachineName::try_from(text).map(Some).map_err(|error| error.to_string())
-            }
+            if text.is_empty() { Ok(None) } else { machine_named(ctx, &text).map(Some) }
         };
         Ok(match &self.kind {
             Kind::OpenAgent { .. } => {
@@ -629,7 +625,7 @@ impl FormPage {
             Some(Field { value: Value::Ticks { options, .. }, .. }) => options
                 .iter()
                 .filter(|(_, on)| *on)
-                .map(|(name, _)| MachineName::try_from(name.as_str()).map_err(|error| error.to_string()))
+                .map(|(name, _)| machine_named(ctx, name))
                 .collect::<Result<_, _>>()?,
             _ => Vec::new(),
         };
@@ -639,7 +635,7 @@ impl FormPage {
             let [what, machine, path] = parts[..] else {
                 return Err(words.place_wrong(line));
             };
-            let machine = MachineName::try_from(machine).map_err(|error| error.to_string())?;
+            let machine = machine_named(ctx, machine)?;
             places.push(Listing { what: what.to_string(), location: Location { machine, path: path.to_string() } });
         }
         let canon = match self.value(Key::Canon) {
@@ -648,7 +644,7 @@ impl FormPage {
                 let Some((machine, path)) = canon.split_once('|') else {
                     return Err(words.canon_wrong(&canon));
                 };
-                let machine = MachineName::try_from(machine.trim()).map_err(|error| error.to_string())?;
+                let machine = machine_named(ctx, machine.trim())?;
                 Some(Location { machine, path: path.trim().to_string() })
             }
         };
@@ -831,6 +827,14 @@ impl FormPage {
             ));
         }
     }
+}
+
+/// `text` as a machine name, or what is wrong with it in the user's words.
+fn machine_named(ctx: &Ctx, text: &str) -> Result<MachineName, String> {
+    MachineName::try_from(text).map_err(|error| match &error.problem {
+        Some(problem) => ctx.words.name_problem(problem),
+        None => error.to_string(),
+    })
 }
 
 /// The accounts to choose from, each shown as `account · hub`.

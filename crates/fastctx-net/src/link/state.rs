@@ -84,8 +84,8 @@ impl NetDir {
         self.root.join("outbox")
     }
 
-    pub fn received(&self, from: &MachineName) -> PathBuf {
-        self.root.join("received").join(from.as_str())
+    pub fn received(&self, from: &MachineName) -> io::Result<PathBuf> {
+        from.entry_in(&self.root.join("received"))
     }
 
     pub fn failures(&self) -> PathBuf {

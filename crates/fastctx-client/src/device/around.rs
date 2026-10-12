@@ -10,6 +10,7 @@ use std::sync::Arc;
 use fastctx_net::link::{CallFailure, Link};
 use fastctx_types::access::HubAccount;
 use fastctx_types::agents::{MachineAgents, WorldAgents};
+use fastctx_types::logins::{MachineLoginsHeard, WorldLogins};
 use fastctx_types::project::TownSummary;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::since::{MachineSince, SinceEvent, SinceIssue, SinceKind, SinceTown, WorldSince};
@@ -296,6 +297,37 @@ impl Device {
         Ok(WorldAgents { machine: self.here(), machines })
     }
 
+    pub(super) async fn agent_logins(&self, machine: Option<MachineName>) -> Result<WorldLogins, Error> {
+        let reachable = self.reachable();
+        let asked: Vec<Reachable> = match machine {
+            Some(machine) => {
+                let asked: Vec<Reachable> = reachable.into_iter().filter(|one| one.name == machine).collect();
+                if asked.is_empty() {
+                    return Err(failed(format!("{machine} is not a machine this device may use")));
+                }
+                asked
+            }
+            None => reachable,
+        };
+        let machines = self
+            .ask_each(asked, |_| RemoteCall::AgentLogins)
+            .await
+            .into_iter()
+            .map(|(machine, heard)| match heard {
+                Heard::Answered(RemoteReply::AgentLogins(logins)) if logins.machine == machine => {
+                    MachineLoginsHeard::Answered { logins }
+                }
+                Heard::Answered(_) => MachineLoginsHeard::NoAnswer {
+                    machine,
+                    reason: "it answered something else; the World there may be older".into(),
+                },
+                Heard::Offline(since) => MachineLoginsHeard::Offline { machine, since },
+                Heard::NoAnswer(reason) => MachineLoginsHeard::NoAnswer { machine, reason },
+            })
+            .collect();
+        Ok(WorldLogins { machine: self.here(), machines })
+    }
+
     pub(super) async fn nodes(&self) -> Result<NodesReply, Error> {
         let mut hubs = Vec::new();
         for session in self.sessions() {
@@ -349,7 +381,7 @@ impl Device {
 /// The id a machine's node gives the same presence fact, so copies merge.
 fn presence_id(machine: &MachineName, at: Timestamp, online: bool) -> String {
     let mut bytes = Vec::new();
-    for part in [machine.as_str(), &at.to_string(), if online { "on" } else { "off" }] {
+    for part in [machine.key(), &at.to_string(), if online { "on" } else { "off" }] {
         bytes.extend_from_slice(part.as_bytes());
         bytes.push(0);
     }

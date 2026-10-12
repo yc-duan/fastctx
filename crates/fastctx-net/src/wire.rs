@@ -114,6 +114,11 @@ pub enum Intent {
         /// address may be chosen from.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         interfaces: Vec<std::net::IpAddr>,
+        /// The machine reads machine and hub names of any language
+        /// (`world-network.md`, 机器的名字). Earlier releases do not say so,
+        /// and cannot read such a name in anything the hub sends them.
+        #[serde(default)]
+        any_names: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -143,6 +148,9 @@ pub struct Joining {
     pub proof: Signature,
     pub kind: Kind,
     pub register: bool,
+    /// As on a session: the device reads names of any language.
+    #[serde(default)]
+    pub any_names: bool,
 }
 
 /// Where a machine's letters stand, as it remembers: the hub's letters to it
@@ -391,6 +399,15 @@ pub enum Change {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         home: Option<std::path::PathBuf>,
         lent: bool,
+    },
+    /// The super administrator sets the plan shown for `agent`'s login
+    /// `home` on `machine`, or takes it away.
+    Plan {
+        machine: MachineName,
+        agent: fastctx_types::AgentName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<std::path::PathBuf>,
+        plan: Option<fastctx_types::accounts::PlanLabel>,
     },
     /// `machine` no longer acts for the account.
     StopActing {

@@ -133,6 +133,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       ],
       shares: [{ machine: "lab", account: "ada" }],
       lends: [{ machine: "desktop", account: "ada", agent: "codex", home: "C:/Users/me/.codex-work" }],
+      plans: [],
       acting: [{ machine: "gpu", account: "me", since: at("03:42:00") }],
       projects: [
         { name: "mark50", owner: "me", granted: ["ada"] },
@@ -170,6 +171,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       ],
       shares: [{ machine: "build", account: "yc" }],
       lends: [{ machine: "render", account: "yc", agent: "claude", home: null }],
+      plans: [{ machine: "render", agent: "claude", home: null, plan: "max" }],
       acting: [{ machine: "build", account: "yc", since: at("09:15:00") }],
       projects: [{ name: "ingest", owner: "yc", granted: [] }],
       arrivals: [],

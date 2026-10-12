@@ -25,6 +25,7 @@ pub mod ipc;
 pub mod kernel;
 pub mod layout;
 pub mod lines;
+pub mod logins;
 pub mod machine_log;
 pub mod management;
 pub mod names;
@@ -49,7 +50,7 @@ pub mod write;
 
 pub use calls::{Attach, Call, JournalCall, ProjectCall, Reply};
 pub use names::{
-    AccountName, Address, AgentName, EntryId, HubName, JobId, JournalName, MachineName, NameError, NoticeId, PageName,
-    ResidentId, TownName,
+    AccountName, Address, AgentName, EntryId, HubName, JobId, JournalName, MachineName, NameError, NameProblem,
+    NoticeId, PageName, ResidentId, TownName,
 };
 pub use process::ProcessIdentity;

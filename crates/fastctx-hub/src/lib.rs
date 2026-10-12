@@ -392,8 +392,8 @@ pub(crate) async fn connected(
         return;
     }
     match (path.as_str(), intent) {
-        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through, direct, interfaces }) => {
-            let said = control::Said { through, direct, interfaces };
+        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through, direct, interfaces, any_names }) => {
+            let said = control::Said { through, direct, interfaces, any_names };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
         (wire::CONTROL_PATH, Intent::Login { account, request }) => {

@@ -182,6 +182,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             through: upstream.through().map(ToString::to_string),
             direct: computer,
             interfaces,
+            any_names: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
