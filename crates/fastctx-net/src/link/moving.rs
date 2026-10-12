@@ -13,6 +13,12 @@ impl Link {
     /// the move, so this machine sees it as it stands.
     pub async fn hub_move(&self, account: &AccountName, request: HubMoveRequest) -> Result<HubMoveReply, String> {
         let changes = !matches!(request, HubMoveRequest::Targets | HubMoveRequest::Status);
+        // An earlier hub reads the question as a broken frame and ends the
+        // session; the view says whether it takes it.
+        self.inner.refresh().await?;
+        if !self.inner.view().moving {
+            return Err("this hub runs a fastctx that cannot be moved; it moves once it runs this one".to_string());
+        }
         let told = self.inner.ask(Question::HubMove { account: account.clone(), request }).await?;
         let Told::HubMove { reply } = told else { return Err("the hub answered something else".to_string()) };
         if changes && let Err(error) = self.inner.refresh().await {

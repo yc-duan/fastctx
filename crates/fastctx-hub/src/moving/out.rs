@@ -73,8 +73,8 @@ enum Tried {
 
 async fn run(hub: &Arc<Hub>) {
     let mut failures = 0;
-    // What was last said of each called-off move's new place, so a place
-    // that stays away is said once, and again when that changes.
+    // What was last said of each move's new place, so a place that stays
+    // away is said once, and again when that changes.
     let mut said: BTreeMap<String, String> = BTreeMap::new();
     loop {
         let poked = hub.moving.poke.notified();
@@ -117,7 +117,11 @@ async fn run(hub: &Arc<Hub>) {
                 continue;
             }
             Some((Tried::Failed { reason, quiet }, record)) => {
-                hub.log.line(format_args!("the move {} to {}: {reason}", record.id, record.to));
+                // A new place that stays away is said once, and again when that changes.
+                if said.get(&record.id) != Some(&reason) {
+                    hub.log.line(format_args!("the move {} to {}: {reason}", record.id, record.to));
+                    said.insert(record.id.clone(), reason.clone());
+                }
                 noted(hub, &record.id, if quiet { None } else { Some(reason) });
             }
             None => {}

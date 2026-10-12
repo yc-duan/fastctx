@@ -33,10 +33,12 @@ use crate::{Kept, Leave, Next, Socket, log::Log, refuse};
 /// Makes the directory of a hub arriving here from `identity`, for the move
 /// `id` to the machine `to`: the hub's identity, its settings with its new
 /// addresses, and the record of the move. A directory made for the same
-/// move before is made again; one that holds another hub, or this hub's
-/// old data, is refused. The service that runs it is the caller's.
+/// move before is made again, keeping how far the move got there; one that
+/// holds another hub, or this hub's old data, is refused. The service that
+/// runs it is the caller's.
 pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> anyhow::Result<()> {
-    if let Some(found) = arriving_in(dir)? {
+    let found = arriving_in(dir)?;
+    if let Some(found) = &found {
         if found.id != id {
             anyhow::bail!("{} holds a hub arriving by another move", dir.display());
         }
@@ -74,7 +76,7 @@ pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> a
         to: to.clone(),
         addresses: identity.addresses.clone(),
         from: identity.from.clone(),
-        committed: false,
+        committed: found.is_some_and(|found| found.committed),
     };
     ensure_private_dir(dir)?;
     ensure_private_dir(&dir.join("tls"))?;

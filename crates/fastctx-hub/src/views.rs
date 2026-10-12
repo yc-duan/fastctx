@@ -45,6 +45,7 @@ pub(crate) fn view_for(
         hub_name: store.hub.name.clone(),
         me: me.clone(),
         self_registration: store.hub.self_registration,
+        moving: true,
         hub_addresses: crate::moving::addresses_for(store, me),
         hub_moves: crate::moving::requests::told(hub, store, me, whole),
         directory,

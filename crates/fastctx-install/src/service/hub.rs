@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use super::{Kind, Kept, Service};
+use super::{Kept, Kind, Service};
 use crate::apply::{Places, place_executable};
 
 /// Has a system service run the hub kept in `dir`.
@@ -16,21 +16,40 @@ pub fn keep_hub(places: &Places, dir: &Path) -> anyhow::Result<Kept> {
         return Ok(Kept::Unsupported);
     }
     let (executable, _) = place_executable(places)?;
+    keep_hub_at(places, dir, &executable)
+}
+
+/// Has a system service run the hub kept in `dir` from `executable`, a World
+/// program already in place, as on a machine whose node runs from it: placing
+/// another would wait for that node to hand over.
+pub fn keep_hub_at(places: &Places, dir: &Path, executable: &Path) -> anyhow::Result<Kept> {
+    if !cfg!(any(windows, target_os = "linux")) {
+        return Ok(Kept::Unsupported);
+    }
     super::hub_registry::remember(&places.root, dir)?;
     if fastctx_platform::elevation::is_elevated()? {
-        Service::new(Kind::Hub, &executable, dir).install()?;
+        Service::new(Kind::Hub, executable, dir).install()?;
         return Ok(Kept::Installed);
     }
-    elevated(dir, &executable)
+    elevated(dir, executable)
 }
 
 #[cfg(windows)]
 fn elevated(dir: &Path, executable: &Path) -> anyhow::Result<Kept> {
-    let args: Vec<std::ffi::OsString> =
-        vec!["service".into(), "hub".into(), "install".into(), "--dir".into(), dir.into(), "--executable".into(), executable.into()];
+    let args: Vec<std::ffi::OsString> = vec![
+        "service".into(),
+        "hub".into(),
+        "install".into(),
+        "--dir".into(),
+        dir.into(),
+        "--executable".into(),
+        executable.into(),
+    ];
     match fastctx_platform::elevation::run_elevated(executable, &args) {
         Ok(0) => Ok(Kept::Installed),
-        Ok(code) => anyhow::bail!("`fastctx service hub install` failed (exit {code}); run as administrator, it says why"),
+        Ok(code) => {
+            anyhow::bail!("`fastctx service hub install` failed (exit {code}); run as administrator, it says why")
+        }
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(Kept::Declined),
         Err(error) => Err(error.into()),
     }

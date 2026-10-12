@@ -388,6 +388,11 @@ pub struct View {
     /// Whether accounts may be opened by anyone who reaches the hub.
     #[serde(default)]
     pub self_registration: bool,
+    /// Whether this hub can be moved (`crate::moving`): it takes
+    /// `Question::HubMove`. Earlier hubs omit it, and would end the session
+    /// of a member that asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub moving: bool,
     /// Where this member reaches the hub now, given by a hub that was moved
     /// to where it runs (`crate::moving`); a hub never moved gives none, and
     /// the member keeps the addresses it logged in with.
@@ -411,6 +416,7 @@ impl View {
             hub_name,
             me,
             self_registration: false,
+            moving: false,
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),
             directory: Directory::default(),

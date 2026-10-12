@@ -421,7 +421,7 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             let Some((hub, id)) = fastctx_hub::arriving(&dir)? else {
                 anyhow::bail!("no hub is moving to this computer in {}", dir.display());
             };
-            if !keep_hub(&dir)? {
+            if !keep_arriving_hub(&dir)? {
                 anyhow::bail!("the hub's service is not running here, so the move waits");
             }
             println!("the hub's service runs here from {}", dir.display());
@@ -516,6 +516,30 @@ fn remove_hub_service(dir: &std::path::Path) -> Result<String, String> {
     Ok(format!("removing the hub's system service {} (process {pid}){bound}", status.name))
 }
 
+/// Runs the hub moving to this computer, kept in `dir`, as a system service
+/// from the World program this computer's node runs from; whether it runs
+/// now.
+fn keep_arriving_hub(dir: &std::path::Path) -> anyhow::Result<bool> {
+    use fastctx_install::service::Kept;
+    let places = fastctx_install::apply::Places::here()?;
+    let installed = places.installed();
+    if !installed.is_file() {
+        return keep_hub(dir);
+    }
+    match fastctx_install::service::keep_hub_at(&places, dir, &installed)? {
+        Kept::Installed | Kept::Already => Ok(true),
+        Kept::Declined => anyhow::bail!("administrator rights were declined; the hub's service is not installed"),
+        Kept::Command(command) => {
+            eprintln!("Its service needs administrator rights: {command}");
+            sudo_hub_at(dir, &installed)
+        }
+        Kept::Unsupported => {
+            eprintln!("This system has no service for it.");
+            Ok(false)
+        }
+    }
+}
+
 /// Runs the hub in `dir` as a system service; whether it runs now.
 fn keep_hub(dir: &std::path::Path) -> anyhow::Result<bool> {
     use fastctx_install::service::Kept;
@@ -538,8 +562,15 @@ fn keep_hub(dir: &std::path::Path) -> anyhow::Result<bool> {
 /// node's: asked at the terminal, or without one read from standard input.
 #[cfg(unix)]
 fn sudo_hub(places: &fastctx_install::apply::Places, dir: &std::path::Path) -> anyhow::Result<bool> {
-    use std::io::IsTerminal as _;
     let (executable, _) = fastctx_install::apply::place_executable(places)?;
+    sudo_hub_at(dir, &executable)
+}
+
+/// Installs the service of the hub in `dir`, run from `executable`, through
+/// sudo, as `sudo_hub` does.
+#[cfg(unix)]
+fn sudo_hub_at(dir: &std::path::Path, executable: &std::path::Path) -> anyhow::Result<bool> {
+    use std::io::IsTerminal as _;
     let mut sudo = std::process::Command::new("sudo");
     if !std::io::stdin().is_terminal() {
         sudo.args(["-S", "-p", ""]);
@@ -558,6 +589,11 @@ fn sudo_hub(places: &fastctx_install::apply::Places, dir: &std::path::Path) -> a
 
 #[cfg(not(unix))]
 fn sudo_hub(_: &fastctx_install::apply::Places, _: &std::path::Path) -> anyhow::Result<bool> {
+    Ok(false)
+}
+
+#[cfg(not(unix))]
+fn sudo_hub_at(_: &std::path::Path, _: &std::path::Path) -> anyhow::Result<bool> {
     Ok(false)
 }
 
