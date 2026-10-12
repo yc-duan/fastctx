@@ -3,6 +3,7 @@
 // changed, and whether it was done. On a phone it rises from below.
 
 import { glyph } from "../conversation/glyphs";
+import { layerOpened } from "./back";
 import { escape } from "../conversation/prose";
 import type { Login } from "../world/accounts";
 import type { MachineLogPage, MachineLogRecord } from "../world/machine-log";
@@ -69,6 +70,7 @@ export class MachineLog {
 
   private open(): void {
     this.panel.classList.toggle("as-sheet", matchMedia("(max-width: 760px)").matches);
+    layerOpened({ isOpen: () => !this.panel.hidden && this.panel.isConnected, close: () => this.close() });
     this.panel.hidden = false;
     this.button.setAttribute("aria-expanded", "true");
     this.records = [];

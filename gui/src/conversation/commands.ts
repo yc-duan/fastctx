@@ -8,6 +8,7 @@
 // instructions). The model chip opens the models the host lists, each with
 // the reasoning efforts it takes.
 
+import { layerOpened } from "../app/back";
 import { escape } from "./prose";
 import type { CommandArguments, CommandOffer, ControlKind, ModelOffer, Offers } from "../world/control";
 
@@ -119,6 +120,7 @@ export class Menu<T> {
   show(items: T[], empty: string): void {
     this.items = items;
     this.chosen = Math.min(this.chosen, Math.max(0, items.length - 1));
+    if (!this.open) layerOpened({ isOpen: () => this.open && this.element.isConnected, close: () => this.hide() });
     this.element.hidden = false;
     this.field?.setAttribute("aria-controls", this.id);
     this.draw(empty);

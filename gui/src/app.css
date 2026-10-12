@@ -80,7 +80,7 @@
   flex: none;
   position: relative;
   z-index: 2;
-  padding: 0 var(--gutter) calc(var(--space-4) + env(safe-area-inset-bottom));
+  padding: 0 var(--gutter) calc(var(--space-4) + var(--safe-bottom));
   background: var(--bg);
 }
 
@@ -373,10 +373,10 @@
 .details {
   position: absolute;
   z-index: 3;
-  top: calc(52px + env(safe-area-inset-top));
+  top: calc(52px + var(--safe-top));
   right: var(--space-4);
   width: min(420px, 100% - 2 * var(--space-4));
-  max-height: calc(100% - 52px - env(safe-area-inset-top) - var(--space-6));
+  max-height: calc(100% - 52px - var(--safe-top) - var(--space-6));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;

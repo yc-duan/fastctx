@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The same theme at night; its colour resources are the night ones. -->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.fastctx_gui" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/world_background</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="s">@color/world_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o">false</item>
+        <item name="android:enforceStatusBarContrast" tools:targetApi="q">false</item>
+        <item name="android:enforceNavigationBarContrast" tools:targetApi="q">false</item>
+        <item name="android:windowDisablePreview">@bool/world_disable_preview</item>
+    </style>
+</resources>

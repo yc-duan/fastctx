@@ -132,7 +132,7 @@ export class LoginPage implements Page {
       if (said === shown) return;
       shown = said;
       this.drawHere();
-      if (this.step === "password" || this.step === "open" || this.step === "create") this.drawName();
+      if (this.step === "password" || this.step === "open" || this.step === "create" || this.step === "scan") this.drawName();
     });
   }
 
@@ -249,10 +249,12 @@ export class LoginPage implements Page {
       case "scan":
         this.body.innerHTML = `
           <div class="welcome-form scan-form">
+            <div class="login-name"></div>
             <button class="scan-code" type="button">${scanMark()}<span>${escape(words.scan)}</span></button>
             <p class="sheet-note" role="alert" hidden></p>
             <footer class="welcome-foot"><span class="login-ways">${way("password", words.withPassword)}</span><span></span></footer>
           </div>`;
+        this.drawName();
         break;
       case "create":
         this.body.innerHTML = `
@@ -360,7 +362,7 @@ export class LoginPage implements Page {
     const slot = this.body.querySelector<HTMLElement>(".login-name");
     if (!slot) return;
     const { words, store } = this.options;
-    const world = store.world.peek();
+    const world = store.whole.peek();
     const first = !loginsOf(world?.accounts).length;
     const typed = slot.querySelector<HTMLInputElement>("[name=name]")?.value ?? "";
     if (!first) {
@@ -476,12 +478,15 @@ export class LoginPage implements Page {
       return;
     }
     if (target.closest(".scan-code") && this.options.scan && !this.busy) {
-      // A phone logs in with the code the camera read, under its own name.
+      // A phone logs in with the code the camera read, under its own name:
+      // the first time, the one asked for beside the button.
+      const named = this.body.querySelector<HTMLInputElement>("[name=name]");
+      if (named && !named.reportValidity()) return;
+      this.busy = true;
       try {
         const token = await this.options.scan();
         if (!token) return;
-        this.busy = true;
-        this.done = await this.options.loginToken(token, null);
+        this.done = await this.options.loginToken(token, named?.value.trim() || null);
         this.created = false;
         await this.options.store.refresh();
         await this.arrived();

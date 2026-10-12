@@ -280,7 +280,7 @@
   justify-content: flex-end;
   gap: var(--space-3);
   margin-top: var(--space-6);
-  padding: var(--space-3) 0 calc(var(--space-3) + env(safe-area-inset-bottom));
+  padding: var(--space-3) 0 calc(var(--space-3) + var(--safe-bottom));
   background: var(--bg);
   opacity: 0;
   pointer-events: none;
@@ -482,7 +482,7 @@
 
 .film-theater-close {
   position: absolute;
-  top: calc(env(safe-area-inset-top) + var(--space-3));
+  top: calc(var(--safe-top) + var(--space-3));
   right: var(--space-3);
   width: 40px;
   height: 40px;

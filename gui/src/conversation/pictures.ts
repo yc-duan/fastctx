@@ -6,7 +6,9 @@
 // element carries: a file the user sent (`data-attachment`), a file on a
 // machine (`data-path`), or bytes already in the page (`src`).
 
+import { layerOpened } from "../app/back";
 import { CanvasCamera } from "../map-canvas";
+import { darkUnderBars, safeBottom, safeTop } from "../system-bars";
 import type { MachineName } from "../world/events";
 import type { AttachmentSource } from "../world/files";
 import { glyph } from "./glyphs";
@@ -197,6 +199,8 @@ class PictureViewer {
   private swipe: { start: [number, number]; fitted: boolean } | null = null;
   private readonly resize: ResizeObserver;
   private readonly keys: (event: KeyboardEvent) => void;
+  /** Lets the phone's bars go back to the theme's icons. */
+  private readonly undarken: () => void;
 
   constructor(
     private readonly pictures: Picture[],
@@ -259,6 +263,10 @@ class PictureViewer {
       else this.paint();
     });
     this.resize.observe(this.stage);
+    this.resize.observe(this.element.querySelector(".pv-bar")!);
+    this.undarken = darkUnderBars();
+    // The system back closes it, as Esc does.
+    layerOpened({ isOpen: () => this.element.isConnected, close: () => this.close() });
     this.show();
     this.element.querySelector<HTMLElement>("[data-pv=close]")!.focus({ preventScroll: true });
   }
@@ -266,6 +274,7 @@ class PictureViewer {
   close(): void {
     document.removeEventListener("keydown", this.keys, true);
     this.resize.disconnect();
+    this.undarken();
     if (this.original) URL.revokeObjectURL(this.original);
     this.element.remove();
     this.closed();
@@ -333,7 +342,7 @@ class PictureViewer {
 
   private fitScale(): number {
     const padding = Math.max(16, Math.min(64, Math.min(this.stage.clientWidth, this.stage.clientHeight) * 0.06));
-    return Math.min((this.stage.clientWidth - padding * 2) / this.size[0], (this.stage.clientHeight - padding * 2) / this.size[1], 4);
+    return Math.min((this.stage.clientWidth - padding * 2) / this.size[0], (this.stage.clientHeight - safeTop() - safeBottom() - padding * 2) / this.size[1], 4);
   }
 
   private fit(): void {
@@ -341,7 +350,7 @@ class PictureViewer {
     this.fitted = this.fitScale();
     const view = this.camera.view;
     const scale = this.fitted;
-    this.camera.set({ ...view, scale, x: (view.width - this.size[0] * scale) / 2, y: (view.height - this.size[1] * scale) / 2 });
+    this.camera.set({ ...view, scale, x: (view.width - this.size[0] * scale) / 2, y: safeTop() + (view.height - safeTop() - safeBottom() - this.size[1] * scale) / 2 });
     this.paint();
   }
 

@@ -4,6 +4,7 @@
 // Highlight API, so the conversation's own elements are never touched and
 // a stream of words keeps flowing while it is open.
 
+import { layerOpened } from "../app/back";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
 import { FindIndex, type FindChanges, type FindMatch } from "./find-index";
@@ -101,6 +102,7 @@ export class Finder {
 
   show(): void {
     if (this.element.hidden && document.activeElement instanceof HTMLElement) this.before = document.activeElement;
+    if (this.element.hidden) layerOpened({ isOpen: () => !this.element.hidden && this.element.isConnected, close: () => this.close() });
     this.element.hidden = false;
     // What is selected is what is looked for, as browsers do.
     const selected = window.getSelection()?.toString().trim();

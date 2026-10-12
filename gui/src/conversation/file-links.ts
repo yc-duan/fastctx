@@ -4,6 +4,7 @@
 // menu shows it in its folder, where it is on this computer, or copies its
 // path as that machine writes it.
 
+import { layerOpened } from "../app/back";
 import type { MachineName } from "../world/events";
 import type { AttachmentSource } from "../world/files";
 import { glyph } from "./glyphs";
@@ -114,6 +115,7 @@ export class FileLinks {
       document.addEventListener("keydown", escape_, true);
     });
     this.menu = menu;
+    layerOpened({ isOpen: () => menu.isConnected, close: () => this.closeMenu() });
     this.forget = () => {
       document.removeEventListener("pointerdown", away, true);
       document.removeEventListener("keydown", escape_, true);

@@ -2,6 +2,7 @@
 // conversation itself in a region that scrolls on its own, and the words
 // the user is about to send, always at the foot.
 
+import { layerOpened } from "../app/back";
 import type { ComposerWords } from "../app/words";
 import type { Words } from "../words";
 import type { Control, Controlled, Offers } from "../world/control";
@@ -592,6 +593,7 @@ export class ConversationPage {
     if (!details) return;
     const toggle = this.element.querySelector<HTMLElement>(".details-toggle");
     const inside = details.card.element.contains(document.activeElement);
+    if (open && !details.card.open) layerOpened({ isOpen: () => details.card.open && this.element.isConnected, close: () => this.toggleDetails(false) });
     details.card.open = open;
     toggle?.setAttribute("aria-expanded", String(open));
     clearTimeout(this.looking);
@@ -740,6 +742,7 @@ export class ConversationPage {
     const close = this.options.controls!.words.said.close;
     pop.innerHTML = `<div class="said-head"><span class="usage-title">${escape(title)}</span><button class="icon-button said-close" type="button" aria-label="${escape(close)}" title="${escape(close)}">${glyph("close", 16)}</button></div><div class="said-body">${html}</div>`;
     pop.setAttribute("aria-label", title);
+    if (pop.hidden) layerOpened({ isOpen: () => !pop.hidden && pop.isConnected, close: () => this.hideSaid() });
     pop.hidden = false;
     pop.querySelector(".said-close")!.addEventListener("click", () => this.hideSaid(), { once: true });
   }
@@ -1002,6 +1005,7 @@ export class ConversationPage {
       rows.push(`<div class="usage-row"><span class="usage-fact">${escape(words.cost(String(usage.cost_usd)))}</span></div>`);
     }
     pop.innerHTML = `<div class="usage-title">${escape(words.title)}</div>${rows.join("") || `<div class="menu-empty">${escape(words.none)}</div>`}`;
+    layerOpened({ isOpen: () => !pop.hidden && pop.isConnected, close: () => this.toggleUsage() });
     pop.hidden = false;
     this.context.setAttribute("aria-expanded", "true");
   }
@@ -1013,7 +1017,6 @@ export class ConversationPage {
     if (!controls) return;
     const said = controls.words;
     const confirm = this.element.querySelector<HTMLElement>(".composer-confirm")!;
-    confirm.hidden = false;
     const ask = act === "rewind" ? said.rewindAsk : act === "regenerate" ? said.regenerateAsk : said.forkAsk;
     const go = act === "rewind" ? said.rewindGo : act === "regenerate" ? said.regenerateGo : said.forkGo;
     confirm.innerHTML = `<p>${escape(ask)}</p><div class="composer-confirm-acts"><button type="button" class="ask-button ask-primary" data-go>${escape(go)}</button><button type="button" class="ask-button" data-never>${escape(said.never)}</button></div>`;
@@ -1022,6 +1025,8 @@ export class ConversationPage {
       confirm.innerHTML = "";
       confirm.onkeydown = null;
     };
+    layerOpened({ isOpen: () => !confirm.hidden && confirm.isConnected, close });
+    confirm.hidden = false;
     confirm.querySelector("[data-never]")!.addEventListener("click", close, { once: true });
     confirm.onkeydown = (event) => {
       if (event.key !== "Escape") return;

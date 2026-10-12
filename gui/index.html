@@ -16,7 +16,18 @@
           asked = themes.indexOf(asked) >= 0 ? asked : localStorage.getItem("theme");
         } catch (e) {}
         var light = matchMedia("(prefers-color-scheme: light)").matches;
-        document.documentElement.dataset.theme = themes.indexOf(asked) >= 0 ? asked : light ? "warm-white" : "warm-black";
+        var chosen = themes.indexOf(asked) >= 0;
+        var theme = chosen ? asked : light ? "warm-white" : "warm-black";
+        document.documentElement.dataset.theme = theme;
+        // On a phone the page runs under the system bars: their heights, and
+        // the theme for the window behind the page (`system-bars.ts`).
+        var shell = window.WorldWindow;
+        if (shell) {
+          var safe = JSON.parse(shell.insets());
+          document.documentElement.style.setProperty("--safe-top", safe.top + "px");
+          document.documentElement.style.setProperty("--safe-bottom", safe.bottom + "px");
+          shell.paint(theme, chosen, theme === "warm-white", false);
+        }
         try {
           var size = localStorage.getItem("bodySize");
           if (["14", "15", "16", "17"].indexOf(size) >= 0) document.documentElement.style.setProperty("--body-size", size + "px");

@@ -4,6 +4,9 @@
 // finger, and the tap that would have followed does nothing
 // (`world-gui.md`, 界面的结构: 指针停住才出现的说明，换成长按出现).
 
+import { safeTop } from "../system-bars";
+import { layerOpened } from "./back";
+
 /** How long a finger rests before it is a long press, as Android counts it. */
 const LONG_PRESS_MS = 500;
 /** How far a finger may drift and still be resting, in CSS pixels. */
@@ -50,7 +53,10 @@ export function installHints(): void {
         const left = Math.min(Math.max(8, box.left + box.width / 2 - width / 2), innerWidth - width - 8);
         const above = box.top - bubble.offsetHeight - 8;
         bubble.style.left = `${left}px`;
-        bubble.style.top = `${above >= 8 ? above : box.bottom + 8}px`;
+        // Not under the status bar, which a phone draws over the page.
+        bubble.style.top = `${above >= safeTop() + 8 ? above : box.bottom + 8}px`;
+        const shown = bubble;
+        layerOpened({ isOpen: () => shown.isConnected, close: hide });
         navigator.vibrate?.(8);
       }, LONG_PRESS_MS);
     },

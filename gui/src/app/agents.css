@@ -291,7 +291,7 @@
 
 @media (max-width: 760px) {
   .agents-body {
-    padding-bottom: calc(var(--space-10) + env(safe-area-inset-bottom));
+    padding-bottom: calc(var(--space-10) + var(--safe-bottom));
   }
 
   .agent-card-uses .text-button,

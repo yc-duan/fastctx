@@ -11,6 +11,7 @@
 // pointer's rest, not on the page.
 
 import { glyph } from "../conversation/glyphs";
+import { layerOpened, type Layer } from "./back";
 import { escape } from "../conversation/prose";
 import type { Bounds, Point } from "../map-canvas";
 import type { AccountChange, HubAccounts, Login, Relay } from "../world/accounts";
@@ -133,6 +134,14 @@ export class MachinesPage implements Page {
   /** When the sheet was last pulled, so the press that pulled it is not
    *  also taken for a tap. */
   private pulled = 0;
+  /** The details, the menu and the card over the drawing, as the system
+   *  back closes them. */
+  private readonly detailsLayer: Layer = {
+    isOpen: () => !!this.selected && !this.panel.hidden && this.element.isConnected,
+    close: () => this.closeDetails(),
+  };
+  private readonly menuLayer: Layer = { isOpen: () => !!this.menuFor && this.element.isConnected, close: () => this.closeMenu() };
+  private readonly cardLayer: Layer = { isOpen: () => !!this.cardFor && this.element.isConnected, close: () => this.closeCard() };
   /** Redraws when the page turns narrow or wide: the sheet and what floats
    *  beside the one chosen depend on it. */
   private readonly resized: ResizeObserver;
@@ -310,12 +319,7 @@ export class MachinesPage implements Page {
         if (login) this.remove(login, machine);
         return;
       case "close-details":
-        // On a narrow page the sheet is the choice itself.
-        if (this.narrow()) {
-          this.selected = null;
-          this.grown = false;
-        } else this.detailsOpen = false;
-        this.redraw();
+        this.closeDetails();
         return;
       case "grow":
         if (Date.now() - this.pulled < 400) return;
@@ -378,6 +382,15 @@ export class MachinesPage implements Page {
     this.grown = false;
     this.redraw();
     if (key && this.narrow()) requestAnimationFrame(() => this.bringIntoView(key));
+  }
+
+  private closeDetails(): void {
+    // On a narrow page the sheet is the choice itself.
+    if (this.narrow()) {
+      this.selected = null;
+      this.grown = false;
+    } else this.detailsOpen = false;
+    this.redraw();
   }
 
   private details(key: string): void {
@@ -528,6 +541,7 @@ export class MachinesPage implements Page {
     // at once, its actions a row in it.
     const narrow = this.narrow();
     const open = !!spot && (narrow || this.detailsOpen);
+    if (open && this.panel.hidden) layerOpened(this.detailsLayer);
     this.panel.hidden = !open;
     this.panel.classList.toggle("peek", narrow && !this.grown);
     const alone = !loginsOf(world.accounts).length && isComputer(world);
@@ -891,6 +905,7 @@ export class MachinesPage implements Page {
     const sheet = matchMedia("(max-width: 760px)").matches;
     this.card.classList.toggle("as-sheet", sheet);
     this.card.hidden = false;
+    layerOpened(this.cardLayer);
     if (!sheet) {
       const x = Math.min(this.canvas.clientWidth - this.card.offsetWidth - 8, at[0] + 16);
       const y = Math.min(this.canvas.clientHeight - this.card.offsetHeight - 8, at[1] + 16);
@@ -1126,6 +1141,7 @@ export class MachinesPage implements Page {
       .join("");
     this.menu.classList.toggle("as-sheet", sheet);
     this.menu.hidden = false;
+    layerOpened(this.menuLayer);
     if (!sheet) {
       const x = Math.min(this.canvas.clientWidth - this.menu.offsetWidth - 8, at[0]);
       const y = Math.min(this.canvas.clientHeight - this.menu.offsetHeight - 8, at[1]);

@@ -1,7 +1,10 @@
 // Which of the three themes the page is in: the one chosen, or the
 // system's light or dark. Named on the root before anything paints
 // (`index.html`), and again whenever the choice or the system changes. The
-// text size is kept the same way.
+// text size is kept the same way. A phone's shell is told each time, for the
+// window behind the page and its bars (`system-bars.ts`).
+
+import { paintBars } from "./system-bars";
 
 export type Theme = "warm-black" | "ink-black" | "warm-white";
 
@@ -43,6 +46,7 @@ let changed: () => void = () => {};
 
 function apply(): void {
   const theme = currentTheme();
+  paintBars(theme, chosenTheme() !== null);
   if (document.documentElement.dataset.theme === theme) return;
   document.documentElement.dataset.theme = theme;
   changed();
@@ -52,6 +56,7 @@ function apply(): void {
 export function applyTheme(onChange: () => void): void {
   changed = onChange;
   document.documentElement.dataset.theme = currentTheme();
+  paintBars(currentTheme(), chosenTheme() !== null);
   light.addEventListener("change", apply);
 }
 

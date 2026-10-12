@@ -4,10 +4,16 @@
 // settles away. On a phone the same panel is a sheet from the bottom, and
 // the shade behind it is "outside".
 
+import { layerOpened, type Layer } from "../app/back";
+
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
 export class Popover {
   private leaving = false;
+  private readonly layer: Layer = {
+    isOpen: () => this.panel.isConnected && !this.panel.hidden,
+    close: () => this.hide(),
+  };
 
   constructor(
     private readonly panel: HTMLElement,
@@ -41,6 +47,7 @@ export class Popover {
     this.panel.classList.remove("popover-leaving");
     this.panel.hidden = false;
     this.button.setAttribute("aria-expanded", "true");
+    layerOpened(this.layer);
   }
 
   hide(): void {

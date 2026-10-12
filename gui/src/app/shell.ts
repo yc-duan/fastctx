@@ -5,6 +5,7 @@
 // region.
 
 import type { Login } from "../world/accounts";
+import { layerOpened, type Layer } from "./back";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Place } from "./places";
@@ -45,6 +46,11 @@ export class Shell {
   private place: Place = { kind: "home" };
   /** What had focus when the drawer opened, given it back on closing. */
   private beforeDrawer: HTMLElement | null = null;
+  /** The open drawer, as the system back closes it. */
+  private readonly drawerLayer: Layer = {
+    isOpen: () => this.element.classList.contains("drawer-open"),
+    close: () => this.closeDrawer(),
+  };
 
   constructor(private readonly options: ShellOptions) {
     this.element = document.createElement("div");
@@ -135,6 +141,7 @@ export class Shell {
     if (open === was) return;
     if (open) this.beforeDrawer = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.element.classList.toggle("drawer-open", open);
+    if (open) layerOpened(this.drawerLayer);
     this.reach();
     // The drawer takes focus while it is open, and gives it back.
     if (open) this.sidebar.element.querySelector<HTMLElement>("a.current, a, button")?.focus({ preventScroll: true });
