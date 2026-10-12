@@ -18,9 +18,14 @@ pub async fn codex(
     }
     let (about, _) = node.residents.about(resident).ok_or_else(|| std::io::Error::other("unknown picture resident"))?;
     let host = node.codex.of(&about).map_err(|error| std::io::Error::other(error.message))?;
-    host.locate_user_images(thread, &Address { machine: node.machine(), resident: resident.clone() }, event)
+    let mut events = host
+        .locate_user_images(thread, &Address { machine: node.machine(), resident: resident.clone() }, event)
         .await
-        .map_err(std::io::Error::other)
+        .map_err(std::io::Error::other)?;
+    crate::held_history::picture_fingerprints(node, &mut events)
+        .await
+        .map_err(|error| std::io::Error::other(error.message))?;
+    Ok(events)
 }
 
 pub fn claude(node: &Node, resident: &ResidentId, event: &mut SessionEvent) {

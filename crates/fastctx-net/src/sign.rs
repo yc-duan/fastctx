@@ -250,6 +250,19 @@ impl Signed {
         key.verify(domain, &self.data.0, &self.sig).map_err(|BadSignature| Invalid::Signature)?;
         self.claim()
     }
+
+    /// Signs `bytes` as they are, for a statement in a form other than
+    /// plain JSON, such as a packed history (`crate::history::pack`).
+    pub fn of_bytes(key: &SecretKey, domain: Domain, bytes: Vec<u8>) -> Self {
+        let sig = key.sign(domain, &bytes);
+        Self { data: Bytes(bytes), sig }
+    }
+
+    /// The signed bytes, if `key` signed them in `domain`.
+    pub fn verified(&self, key: &PublicKey, domain: Domain) -> Result<&[u8], Invalid> {
+        key.verify(domain, &self.data.0, &self.sig).map_err(|BadSignature| Invalid::Signature)?;
+        Ok(&self.data.0)
+    }
 }
 
 /// Bytes carried in JSON as unpadded URL-safe base64.

@@ -5,6 +5,7 @@
 import type { ConversationSpace, DataCall, DataReply, Space } from "../world/data";
 
 const MB = 1024 * 1024;
+let cacheBytes = 240 * MB;
 const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
 
 const conversations: ConversationSpace[] = [
@@ -77,8 +78,8 @@ function space(): Space {
     machine: "desktop",
     at: new Date().toISOString(),
     root: "C:\\Users\\me\\.fastctx",
-    root_bytes: listed + output + 240 * MB + 96 * MB,
-    kinds: { conversations: listed, host_records: hosts, command_output: output, cache: 240 * MB, program: 96 * MB, other: 4 * MB },
+    root_bytes: listed + output + cacheBytes + 96 * MB,
+    kinds: { conversations: listed, host_records: hosts, command_output: output, cache: cacheBytes, program: 96 * MB, other: 4 * MB },
     conversations: conversations.map((one) => ({ ...one })),
     output_days: outputDays,
     claude_logins: [{ set: false, days: 30 }, { home: "C:\\Users\\me\\.claude-work", set: true, days: 90 }],
@@ -88,6 +89,12 @@ function space(): Space {
 export async function specimenData(call: DataCall): Promise<DataReply> {
   await new Promise((done) => setTimeout(done, 300));
   switch (call.do) {
+    case "clear_cache": {
+      const bytes = cacheBytes;
+      cacheBytes = 0;
+      cached = 0;
+      return { data: "cache_cleared", bytes };
+    }
     case "list":
       return { data: "listed", ...space() };
     case "output_days":
@@ -112,5 +119,6 @@ export const specimenCache = {
   size: async () => cached,
   clear: async () => {
     cached = 0;
+    cacheBytes = 0;
   },
 };

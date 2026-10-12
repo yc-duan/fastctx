@@ -879,10 +879,30 @@ fn tool_details(ctx: &Ctx, tool: &Tool, width: usize) -> Vec<Line<'static>> {
         }
     }
     let mut output: Vec<String> = Vec::new();
+    // A World run that went slimmed carries the model's copy of its output
+    // as facts alone (`fastctx_net::history::slim`).
+    if let Some(run) = &tool.run
+        && !tool.output.iter().any(|piece| matches!(piece, fastctx_types::session::Content::Text { .. }))
+    {
+        use fastctx_types::run_facts::DisplayPiece;
+        for span in &run.spans {
+            match &span.piece {
+                DisplayPiece::Text { text, .. } | DisplayPiece::PartOfLine { text, .. } => {
+                    output.extend(text.lines().map(str::to_string))
+                }
+                DisplayPiece::Omitted { first_line, last_line } => {
+                    output.push(words.more_lines_after((last_line.saturating_sub(*first_line) + 1) as usize))
+                }
+                DisplayPiece::Image { .. } => {}
+                DisplayPiece::Unreadable { reason, .. } => output.push(reason.clone()),
+            }
+        }
+    }
     for piece in &tool.output {
         match piece {
             fastctx_types::session::Content::Text { text } => output.extend(text.lines().map(str::to_string)),
-            fastctx_types::session::Content::Image { mime, .. } => output.push(words.image(mime)),
+            fastctx_types::session::Content::Image { mime, .. }
+            | fastctx_types::session::Content::ImageRef { mime, .. } => output.push(words.image(mime)),
             fastctx_types::session::Content::ImageUrl { url } | fastctx_types::session::Content::AudioUrl { url } => {
                 output.push(url.clone())
             }

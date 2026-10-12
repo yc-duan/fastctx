@@ -47,6 +47,8 @@ export interface WorldNow {
 }
 
 export type Piece =
+  | { kind: "resumed" }
+  | { kind: "extended"; history: SessionEvent[] }
   | { kind: "event"; event: SessionEvent }
   | { kind: "ended"; error: string | null }
   /** On a phone: the stream was read again from the start after the
@@ -89,6 +91,30 @@ export async function watch(
 
 export function unwatch(id: number): Promise<void> {
   return invoke("unwatch", { id });
+}
+
+/** What this device keeps of the conversations it viewed: every byte, the
+ *  pictures and files shared by them, and each conversation, the largest
+ *  first (`fastctx_client::cache::Usage`). */
+export interface KeptUsage {
+  bytes: number;
+  pictures: number;
+  conversations: { address: Address; bytes: number; updated: string }[];
+}
+
+export function keptUsage(): Promise<KeptUsage> {
+  return invoke("kept_usage");
+}
+
+/** Lets go of everything this device keeps of conversations. */
+export function keptClear(): Promise<void> {
+  return invoke("kept_clear");
+}
+
+/** Lets go of one conversation this device keeps, and of the pictures only
+ *  it showed. */
+export function keptForget(address: Address): Promise<void> {
+  return invoke("kept_forget", { address });
 }
 
 /** The user's words to a resident, with the files uploaded for them;
@@ -497,6 +523,11 @@ export function control(who: Address, what: Control): Promise<Controlled> {
 /** What a resident's conversation offers now. */
 export function offers(who: Address): Promise<Offers> {
   return invoke("offers", { residentId: who.resident, machineName: who.machine });
+}
+
+/** The host's original record of one item; null when it no longer exists. */
+export function itemDetail(address: Address, turn: string | null, item: string): Promise<unknown | null> {
+  return invoke("item_detail", { address, turn, item });
 }
 
 /** Whether this interface runs in the Android shell, which reads QR codes

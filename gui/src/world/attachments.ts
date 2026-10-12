@@ -36,4 +36,9 @@ export type AttachmentSource = Attachment | {
   host_image:
     | { host: "codex"; turn: string; message: number; image: number }
     | { host: "claude"; message: string; image: number };
+} | {
+  /** An image a tool gave back, by the tool's item and the image's place
+   *  among the images it gave. */
+  owner: Address;
+  tool_image: { turn?: string; item: string; image: number };
 };

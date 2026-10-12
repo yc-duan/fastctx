@@ -6,8 +6,21 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Decoding {
-    File { encoding: Option<String> },
-    Output { job: JobId },
+    File {
+        encoding: Option<String>,
+    },
+    Output {
+        job: JobId,
+    },
+    /// A history's immutable artifact; reject a changed file before serving it.
+    Immutable {
+        content: crate::session::Fingerprint,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        policy: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        annotation: Option<String>,
+        decoding: Box<Decoding>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +94,9 @@ pub enum Result {
 pub struct Part {
     pub line: u64,
     pub text: String,
+    /// Metadata-only reads carry the decoded length without repeating text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utf16_length: Option<u64>,
     pub ended: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<crate::run_facts::OutputNote>,

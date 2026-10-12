@@ -85,10 +85,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 .await?;
             return writer.drain().await;
         }
-        if let Call::Watch { resident, machine, composer } = call {
+        if let Call::Watch { resident, machine, composer, held } = call {
             // A watch keeps the connection until one end leaves.
             let opening = tokio::select! {
-                result = crate::talk::watch(node, resident, machine, composer) => result,
+                result = crate::talk::watch(node, resident, machine, composer, held) => result,
                 _ = reader.recv() => return Ok(()),
             };
             let ended = match opening {
@@ -324,12 +324,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             return crate::file_read::serve_attachment_local(node, attachment, id, &mut reader, &mut writer).await;
         }
-        if let Call::ReadLines { machine, request } = call {
+        let only_notes = matches!(call, Call::ReadLineNotes { .. });
+        if let Call::ReadLines { machine, request } | Call::ReadLineNotes { machine, request } = call {
             if let Err(error) = users_voice(node, &hello.peer) {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(error) })).await?;
                 return writer.drain().await;
             }
-            return crate::lines::reading::local(node, machine, request, id, &mut reader, &mut writer).await;
+            return crate::lines::reading::local(node, machine, request, only_notes, id, &mut reader, &mut writer)
+                .await;
         }
         if let Call::Lines { machine, request: fastctx_types::lines::Request::Open { path, decoding } } = call {
             if let Err(error) = users_voice(node, &hello.peer) {
@@ -865,6 +867,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|updated| Reply::Composer(Box::new(updated)))
         }
+        Call::ItemDetail { resident, machine, turn, item } => {
+            crate::held_history::item_detail(node, resident, machine, turn, item)
+                .await
+                .map(|(resident, detail)| Reply::ItemDetail { resident, detail })
+        }
         Call::Offers { resident, machine } => crate::control::offers(node, resident, machine)
             .await
             .map(|(resident, offers)| Reply::Offers { resident, offers: Box::new(offers) }),
@@ -876,7 +883,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::On { .. } => Err(Failure::new("an on is answered as it goes, not at once")),
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
         Call::ReadAttachment { .. } => Err(Failure::new("an attachment read is answered as a byte stream")),
-        Call::ReadLines { .. } => Err(Failure::new("logical rows are answered as a text stream")),
+        Call::ReadLines { .. } | Call::ReadLineNotes { .. } => {
+            Err(Failure::new("logical rows are answered as a text stream"))
+        }
         Call::Thumbnail { machine, request } => {
             users_voice(node, peer)?;
             crate::thumbnail::call(node, machine, request).await.map(Reply::Thumbnail)

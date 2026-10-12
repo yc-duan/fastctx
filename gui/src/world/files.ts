@@ -11,6 +11,7 @@ export type { AttachmentSource } from "./attachments";
 
 /** A picture made small on the machine holding it, never kept there. */
 export interface Thumbnail {
+  content?: import("./events").Fingerprint;
   width: number;
   height: number;
   mime: string;

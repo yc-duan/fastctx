@@ -160,6 +160,18 @@ fn tools() -> Vec<Tool> {
                     Content::Text { text: "output".into() },
                     Content::Image { mime: "image/png".into(), base64: "aW1hZ2U=".into() },
                     Content::ImageUrl { url: "https://example.test/image.png".into() },
+                    Content::ImageRef {
+                        mime: "image/png".into(),
+                        content: fastctx_types::session::Fingerprint { size: 5, sha256: "1".repeat(64) },
+                        source: Box::new(fastctx_types::attachments::AttachmentSource::ToolImage {
+                            owner: address(),
+                            tool_image: fastctx_types::attachments::ToolImage {
+                                turn: Some("turn-1".into()),
+                                item: "tool-1".into(),
+                                image: 0,
+                            },
+                        }),
+                    },
                     Content::AudioUrl { url: "https://example.test/audio.wav".into() },
                     Content::Other { block: json!({"type": "resource_link", "uri": "file:///example.txt"}) },
                     Content::Other { block: Value::Null },
@@ -203,6 +215,7 @@ pub fn fixtures() -> Fixtures {
                     },
                     name: Some("image.png".into()),
                     media_type: Some("image/png".into()),
+                    content: Some(fastctx_types::session::Fingerprint { size: 68, sha256: "0".repeat(64) }),
                 }],
                 id: "message-1".into(),
                 client_id: Some("client-1".into()),
@@ -274,6 +287,7 @@ pub fn fixtures() -> Fixtures {
                     },
                     name,
                     media_type,
+                    content: None,
                 }],
                 id: id.into(),
                 client_id: None,
@@ -424,6 +438,16 @@ pub fn fixtures() -> Fixtures {
         Watched::History { events: vec![] },
         Watched::History { events: vec![events[0].clone()] },
         Watched::Live { event: events[1].clone() },
+        Watched::Unchanged { version: "version-1".into() },
+        Watched::Segments {
+            version: "version-2".into(),
+            layout: vec![fastctx_types::session::held::SegmentId::of(&[7; 32])],
+            segments: vec![fastctx_types::session::held::Segment {
+                id: fastctx_types::session::held::SegmentId::of(&[7; 32]),
+                events: vec![events[0].clone()],
+            }],
+            complete: true,
+        },
     ];
     Fixtures { events, watched, health_cases }
 }

@@ -34,11 +34,12 @@ impl Device {
         resident: ResidentId,
         machine: Option<MachineName>,
         composer: Option<String>,
+        held: Option<fastctx_types::session::held::Held>,
     ) -> Result<Watching, Error> {
         let machine = self.find(&resident, machine).await?;
         let session = self.reaching(&machine)?;
         let account = session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
-        Watching::start(session, machine, account, resident, composer)
+        Watching::start(session, machine, account, resident, composer, held)
     }
 }
 
@@ -49,6 +50,7 @@ impl Watching {
         account: fastctx_types::AccountName,
         resident: ResidentId,
         composer: Option<String>,
+        held: Option<fastctx_types::session::held::Held>,
     ) -> Result<Self, Error> {
         let watch = u64::from_le_bytes(fastctx_net::sign::random::<8>()?);
         let (sender, pieces) = mpsc::unbounded_channel();
@@ -57,7 +59,7 @@ impl Watching {
         let task = tokio::spawn(async move {
             let ended = tokio::select! {
                 () = sender.closed() => return,
-                result = session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, RemoteCall::Watch { resident, watch, composer }, feed) => result,
+                result = session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, RemoteCall::Watch { resident, watch, composer, held }, feed) => result,
             };
             let error = match ended {
                 Ok(Ok(RemoteReply::Watched)) => return,
@@ -95,7 +97,7 @@ fn feed(
                     () = sender.closed() => return Ok(()),
                     signed = fastctx_net::watch_stream::receive(&mut stream) => signed?,
                 };
-                let piece: Piece = link.unseal(&from, Domain::Event, &signed).await?;
+                let piece: Piece = link.unseal_packed(&from, Domain::Event, &signed).await?;
                 if piece.watch != watch || piece.n != n {
                     return Err(format!(
                         "{from} sent a piece out of place (watch {:x}, number {}; expected {watch:x}, {n})",

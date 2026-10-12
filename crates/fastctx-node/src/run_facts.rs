@@ -3,7 +3,9 @@
 mod log;
 mod storage;
 mod updates;
-pub(crate) use storage::{begin as begin_for, discard_unlaunched, failed as failed_for, receive, record_failure};
+pub(crate) use storage::{
+    begin as begin_for, discard_unlaunched, failed as failed_for, receive, record_failure, stamp,
+};
 pub(crate) use updates::job as update_job;
 
 use crate::Node;
@@ -77,6 +79,12 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
         state: reply.state.clone(),
         job: Some(reply.job.clone()),
         output: Some(OutputRef {
+            policy: Some(fastctx_hands::lines::output_policy()),
+            content: if fastctx_hands::run::record::read(record)?.output_ended_at.is_some() {
+                Some(fastctx_hands::files::content_fingerprint(Path::new(&reply.output.log))?)
+            } else {
+                None
+            },
             machine: reply.machine.clone(),
             path: reply.output.log.clone(),
             bytes: reply.output.bytes,

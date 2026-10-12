@@ -42,7 +42,7 @@ const BREATH: Duration = Duration::from_millis(100);
 
 /// Runs the TUI until the user leaves it.
 pub fn run() -> anyhow::Result<()> {
-    let world = World::here().context("finding this user's World")?;
+    let world = World::here_keeping().context("finding this user's World")?;
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     runtime.block_on(live(world))
 }

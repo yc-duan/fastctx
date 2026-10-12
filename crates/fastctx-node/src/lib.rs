@@ -35,6 +35,7 @@ mod file_read;
 mod file_search;
 mod firewall;
 pub mod handoff;
+mod held_history;
 mod here;
 mod homes;
 mod hub_arrival;

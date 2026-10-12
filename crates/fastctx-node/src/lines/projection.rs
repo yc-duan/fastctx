@@ -3,12 +3,23 @@
 use super::State;
 use fastctx_hands::run::projection::CapturedNotes;
 use fastctx_types::run_facts::WriteFact;
+use sha2::{Digest as _, Sha256};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
 type Revision = Option<(u64, SystemTime)>;
 type Opened = (Option<CapturedNotes>, Vec<WriteFact>, Revision);
+
+pub(super) fn verify(projection: Option<&CapturedNotes>, expected: Option<&str>) -> Result<(), String> {
+    let Some(expected) = expected else { return Ok(()) };
+    let notes = projection.map(CapturedNotes::matches).unwrap_or_default();
+    let bytes = serde_json::to_vec(&notes).map_err(|error| error.to_string())?;
+    if format!("{:x}", Sha256::digest(bytes)) != expected {
+        return Err("the output annotations changed since its history was read".into());
+    }
+    Ok(())
+}
 
 pub(super) fn revision(record: Option<&Path>) -> Result<Revision, String> {
     let Some(record) = record else { return Ok(None) };

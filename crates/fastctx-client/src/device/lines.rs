@@ -12,6 +12,7 @@ impl super::Device {
         source: String,
         start: u64,
         count: u64,
+        only_notes: bool,
     ) -> Result<Reading, Error> {
         let session = self.reaching(&machine)?;
         let account = session.account_for(&machine, Purpose::Hands)?;
@@ -19,7 +20,7 @@ impl super::Device {
         let task = tokio::spawn(async move {
             tokio::select! {
                 () = sender.closed() => {},
-                result = fastctx_net::lines_read::read(&session.link, machine, account, fastctx_types::lines::ReadRequest { source, start, count }, &sender) => {
+                result = fastctx_net::lines_read::read(&session.link, machine, account, fastctx_types::lines::ReadRequest { source, start, count }, &sender, only_notes) => {
                     let _ = sender.send(result.map(fastctx_net::lines_read::Received::Finished)).await;
                 }
             }

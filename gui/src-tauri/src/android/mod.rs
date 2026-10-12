@@ -32,6 +32,7 @@ fn start(directory: PathBuf, bridge: Arc<bridge::Bridge>) -> Result<(), String> 
     let world = {
         let _entered = runtime.enter();
         World::from_device(Device::open_managed(directory.join("device")).map_err(|error| error.to_string())?)
+            .keeping(crate::connection::kept(&directory)?)
     };
     WORLD.set(world.clone()).map_err(|_| "World's Android runtime was already started")?;
     tauri::async_runtime::set(runtime.handle().clone());

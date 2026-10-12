@@ -19,6 +19,7 @@ async fn here(
     start: u64,
     count: u64,
     sender: &Sender,
+    only_notes: bool,
 ) -> Result<Reply, Failure> {
     let key = (from, source);
     let source = node
@@ -48,18 +49,18 @@ async fn here(
         let count = if let Some(projection) = projection {
             index.visit_projected(start, count, &cancel, projection, |line, text, ended, note| {
                 sender
-                    .blocking_send(Ok(Received::Text(Part { line, text, ended, note })))
+                    .blocking_send(Ok(Received::Text(part(line, text, ended, note, only_notes))))
                     .map_err(|error| error.to_string())
             })?
         } else {
             index.visit(start, count, &cancel, |line, text, ended| {
                 sender
-                    .blocking_send(Ok(Received::Text(Part { line, text, ended, note: None })))
+                    .blocking_send(Ok(Received::Text(part(line, text, ended, None, only_notes))))
                     .map_err(|error| error.to_string())
             })?
         };
         let snapshot = observe(&source.path).map_err(|error| error.to_string())?;
-        if source.job_record.is_none() && snapshot != state.snapshot
+        if (source.job_record.is_none() || source.immutable) && snapshot != state.snapshot
             || !snapshot.same_file(&state.snapshot)
             || snapshot.size < state.snapshot.size
         {
@@ -80,6 +81,7 @@ fn start(
     source: String,
     start: u64,
     count: u64,
+    only_notes: bool,
 ) -> mpsc::Receiver<Result<Received, Failure>> {
     let (sender, receiver) = mpsc::channel(1);
     tokio::spawn(async move {
@@ -88,9 +90,9 @@ fn start(
             result = async {
                 if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
                     let (link, account) = node.speaking(&Acting::Here, &(&machine).into(), Purpose::Hands).map_err(failed)?;
-                    fastctx_net::lines_read::read(&link, machine, account, fastctx_types::lines::ReadRequest { source, start, count }, &sender).await
+                    fastctx_net::lines_read::read(&link, machine, account, fastctx_types::lines::ReadRequest { source, start, count }, &sender, only_notes).await
                 } else {
-                    here(&node, from, source, start, count, &sender).await
+                    here(&node, from, source, start, count, &sender, only_notes).await
                 }
             } => { let _ = sender.send(result.map(Received::Finished)).await; }
         }
@@ -102,12 +104,13 @@ pub(crate) async fn local(
     node: &Arc<Node>,
     machine: Option<MachineName>,
     request: fastctx_types::lines::ReadRequest,
+    only_notes: bool,
     id: u64,
     reader: &mut FrameReader,
     writer: &mut FrameWriter,
 ) -> std::io::Result<()> {
     let fastctx_types::lines::ReadRequest { source, start: start_line, count } = request;
-    let mut parts = start(node.clone(), node.machine(), machine, source, start_line, count);
+    let mut parts = start(node.clone(), node.machine(), machine, source, start_line, count, only_notes);
     let reply = loop {
         let part = tokio::select! { part = parts.recv() => part, _ = reader.recv() => return Ok(()) };
         match part {
@@ -128,11 +131,12 @@ pub(crate) async fn remote(
     link: &Arc<fastctx_net::link::Link>,
     from: MachineName,
     request: fastctx_types::lines::ReadRequest,
+    only_notes: bool,
     read: u64,
     mut stream: fastctx_net::data::Stream,
 ) -> Result<RemoteReply, Failure> {
     let fastctx_types::lines::ReadRequest { source, start: start_line, count } = request;
-    let mut parts = start(node.clone(), from, None, source.clone(), start_line, count);
+    let mut parts = start(node.clone(), from, None, source.clone(), start_line, count, only_notes);
     let mut n = 0;
     loop {
         let part = tokio::select! { part = parts.recv() => part, () = stream.closed() => return Err(failed("line reader disconnected")) };
@@ -157,4 +161,15 @@ pub(crate) async fn remote(
         }
         n += 1;
     }
+}
+
+fn part(
+    line: u64,
+    text: String,
+    ended: bool,
+    note: Option<fastctx_types::run_facts::OutputNote>,
+    only_notes: bool,
+) -> Part {
+    let utf16_length = only_notes.then(|| text.encode_utf16().count() as u64);
+    Part { line, text: if only_notes { String::new() } else { text }, utf16_length, ended, note }
 }

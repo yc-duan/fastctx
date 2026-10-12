@@ -586,10 +586,10 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|landed| RemoteReply::Said { landed })
                 }
-                RemoteCall::Watch { resident, watch, composer } => {
+                RemoteCall::Watch { resident, watch, composer, held } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
-                    crate::talk::serve_watch(&node, &link, resident, watch, composer, stream).await
+                    crate::talk::serve_watch(&node, &link, resident, watch, composer, held, stream).await
                 }
                 RemoteCall::Agents => crate::agents::here(&node)
                     .await
@@ -642,7 +642,11 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::ReadLines { request, read } => {
                     let stream = stream.ok_or_else(|| Failure::new("logical rows require a data connection"))?;
-                    crate::lines::reading::remote(&node, &link, from, request, read, stream).await
+                    crate::lines::reading::remote(&node, &link, from, request, false, read, stream).await
+                }
+                RemoteCall::ReadLineNotes { request, read } => {
+                    let stream = stream.ok_or_else(|| Failure::new("logical rows require a data connection"))?;
+                    crate::lines::reading::remote(&node, &link, from, request, true, read, stream).await
                 }
                 RemoteCall::Open {
                     agent,
@@ -677,6 +681,11 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Composer { resident, request } => crate::composer::here(&node, &from, &resident, request)
                     .await
                     .map(|updated| RemoteReply::Composer(Box::new(updated))),
+                RemoteCall::ItemDetail { resident, turn, item } => {
+                    crate::held_history::item_detail_here(&node, &resident, turn.as_deref(), &item)
+                        .await
+                        .map(|detail| RemoteReply::ItemDetail { detail })
+                }
                 RemoteCall::Offers { resident } => crate::control::offers_here(&node, &resident)
                     .await
                     .map(|offers| RemoteReply::Offers(Box::new(offers))),

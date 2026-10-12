@@ -344,8 +344,12 @@ export class DataPage implements Page {
     const act = target.closest<HTMLElement>("[data-act]")?.dataset.act;
     if (act === "delete") this.confirmDelete();
     else if (act === "clear" && this.options.cache) {
-      await this.options.cache.clear().catch(() => {});
-      this.said = { text: this.options.words.cleared, detail: "" };
+      try {
+        await this.options.cache.clear();
+        this.said = { text: this.options.words.cleared, detail: "" };
+      } catch (error) {
+        this.said = { text: this.options.words.failed, detail: detailOf(error) };
+      }
       await this.read();
     }
   }

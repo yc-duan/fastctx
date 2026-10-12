@@ -12,13 +12,13 @@ use storage::{event, load, publish};
 pub use submissions::resume;
 pub use submissions::{bound, turn_ended, uncertain};
 use submissions::{dispatch, schedule};
-pub use watching::{snapshot, watch};
+pub use watching::{Lease, snapshot, watch};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use fastctx_types::composer::{Change, Request, Updated};
 use fastctx_types::access::{Acting, Purpose};
+use fastctx_types::composer::{Change, Request, Updated};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{Activity, Landed};

@@ -26,6 +26,8 @@ use crate::{Address, MachineName, NoticeId};
 pub mod attachments;
 pub mod control;
 mod details;
+pub mod held;
+pub use held::Fingerprint;
 pub mod images;
 pub use details::*;
 mod host;
@@ -165,8 +167,27 @@ impl Happened {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Watched {
-    History { events: Vec<SessionEvent> },
-    Live { event: SessionEvent },
+    History {
+        events: Vec<SessionEvent>,
+    },
+    Live {
+        event: SessionEvent,
+    },
+    /// For a viewer that said what it holds (`held::Held`): the history is
+    /// still the version it holds.
+    Unchanged {
+        version: String,
+    },
+    /// For a viewer that said what it holds: the history is the segments
+    /// `layout` names, in that order, and these are the ones it did not
+    /// hold. Not `complete`, the latest of them came first and the rest
+    /// follow in the next piece.
+    Segments {
+        version: String,
+        layout: Vec<held::SegmentId>,
+        segments: Vec<held::Segment>,
+        complete: bool,
+    },
 }
 
 /// Who said words that went into a session.
@@ -344,6 +365,13 @@ pub enum Content {
     },
     ImageUrl {
         url: String,
+    },
+    /// An image, kept where the session lives and fetched when it is shown;
+    /// `content` names its bytes, so a viewer fetches them once.
+    ImageRef {
+        mime: String,
+        content: Fingerprint,
+        source: Box<crate::attachments::AttachmentSource>,
     },
     AudioUrl {
         url: String,

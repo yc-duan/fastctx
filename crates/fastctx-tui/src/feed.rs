@@ -187,7 +187,8 @@ async fn watch(
     resident: fastctx_types::ResidentId,
     machine: fastctx_types::MachineName,
 ) {
-    let (mut conversation, history) = match Conversation::watch(&world, resident, Some(machine)).await {
+    let address = fastctx_types::Address { machine, resident };
+    let (mut conversation, history) = match Conversation::open(&world, address).await {
         Ok(watching) => watching,
         Err(error) => {
             let _ = sender.send((page, Data::Unwatched(Some(error.to_string()))));
@@ -198,8 +199,18 @@ async fn watch(
         return;
     }
     loop {
-        let data = match conversation.next().await {
-            Ok(Some(moment)) => Data::Event(moment.event),
+        let data = match conversation.update().await {
+            Ok(Some(fastctx_client::Update::Current)) => continue,
+            Ok(Some(fastctx_client::Update::Moment(moment))) => Data::Event(moment.event),
+            Ok(Some(fastctx_client::Update::History(history))) => Data::History(history),
+            Ok(Some(fastctx_client::Update::Extended(history))) => {
+                for event in history {
+                    if sender.send((page, Data::Event(event))).is_err() {
+                        return;
+                    }
+                }
+                continue;
+            }
             Ok(None) => Data::Unwatched(None),
             Err(error) => Data::Unwatched(Some(error.to_string())),
         };

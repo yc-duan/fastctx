@@ -34,8 +34,11 @@ mod notifications;
 mod offers;
 mod presentation;
 mod server;
+mod tool_images;
 mod transport;
 mod user_images;
+mod user_picture;
+pub use user_picture::UserPicture;
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -604,18 +607,32 @@ impl CodexHost {
         Ok(true)
     }
 
-    /// The thread's history so far, as session events. A turn still running
-    /// is not ended in it, whatever the record says.
-    pub async fn history(self: &Arc<Self>, thread: &str) -> Result<Vec<SessionEvent>, String> {
+    /// The thread's history so far, as session events, its user pictures
+    /// addressed as `owner`'s. A turn still running is not ended in it,
+    /// whatever the record says. The thread need not be one this host
+    /// holds: Codex reads any thread of its home from its own record, such
+    /// as one the user opened in the Codex command line.
+    pub async fn history(
+        self: &Arc<Self>,
+        thread: &str,
+        owner: &fastctx_types::Address,
+    ) -> Result<Vec<SessionEvent>, String> {
         let server = self.server().await?;
         // A new thread is durable, but has no completed items to read yet.
         if self.lock().threads.get(thread).is_some_and(|t| t.created_here && !t.completed_item) {
             return Ok(Vec::new());
         }
         let running = self.running_turn(thread);
-        let owner =
-            self.lock().threads.get(thread).and_then(|entry| entry.spec.as_ref()).map(|spec| spec.owner.clone());
-        history::read(&server, thread, running.as_deref(), owner.as_ref()).await
+        history::read(&server, thread, running.as_deref(), Some(owner)).await
+    }
+
+    /// What the thread is like now, as Codex says without reading its turns:
+    /// it changes whenever the thread does, so equal stamps mean its history
+    /// is as it was. A turn this host runs in it is part of it.
+    pub async fn stamp(self: &Arc<Self>, thread: &str) -> Result<String, String> {
+        let server = self.server().await?;
+        let answer = server.request("thread/read", json!({"threadId": thread, "includeTurns": false})).await?;
+        Ok(format!("{}|{:?}", answer["thread"], self.running_turn(thread)))
     }
 
     /// The rollout belongs to this host's thread. Only this host chooses

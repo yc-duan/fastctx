@@ -57,6 +57,7 @@ import { link, placeOf, talkLink, type Place } from "./app/places";
 import { SettingsPage } from "./app/settings";
 import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
+import { keptUsage, keptClear } from "./world/bridge";
 import { specimenCache, specimenData } from "./specimen/data";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
@@ -1451,8 +1452,8 @@ function show(next: Place): void {
       page = new DataPage({
         words: english ? enData : zhData,
         head,
-        data: live ? (onComputer() ? data : undefined) : params.has("phone") ? undefined : specimenData,
-        cache: live ? undefined : specimenCache,
+        data: live ? (onComputer() && !asDevice ? data : undefined) : params.has("phone") ? undefined : specimenData,
+        cache: live ? { size: async () => (await keptUsage()).bytes, clear: asDevice ? keptClear : async () => { await data({ do: "clear_cache" }); } } : specimenCache,
         confirm: accountConfirm,
         now: () => new Date(),
       });
@@ -1684,6 +1685,8 @@ show(specimenPlace() ?? placeOf(location.hash));
 if (live) {
   void connectionState().then((state) => {
     asDevice = state.mode === "device";
+    // The data page shows a device only its cache, which it knows now.
+    if (place.kind === "data") show(place);
     if (asDevice && !state.device?.hubs.length && (place.kind === "home" || place.kind === "agents")) location.replace(link({ kind: "login" }));
     else if (place.kind === "login") show(place);
   });

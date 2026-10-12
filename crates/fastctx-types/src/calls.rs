@@ -153,6 +153,10 @@ pub enum Call {
         machine: Option<MachineName>,
         request: crate::lines::ReadRequest,
     },
+    ReadLineNotes {
+        machine: Option<MachineName>,
+        request: crate::lines::ReadRequest,
+    },
     /// File-name completion, with scope checked on the machine holding it.
     FindFiles {
         machine: Option<MachineName>,
@@ -320,6 +324,10 @@ pub enum Call {
         machine: Option<MachineName>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         composer: Option<String>,
+        /// What this viewer keeps of the history (`session::held`): the
+        /// history then comes as segments, only those it does not hold.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        held: Option<crate::session::held::Held>,
     },
     /// Opens a session for the user: a resident of `agent` started on this
     /// machine or on `node`, in `town`, with the user's words as its first.
@@ -358,6 +366,16 @@ pub enum Call {
     Offers {
         resident: ResidentId,
         machine: Option<MachineName>,
+    },
+    /// The host's own record of one item of a resident's conversation, as
+    /// its host keeps it: what a slimmed history leaves out
+    /// (`session::held`), asked for when the user would see it. A user's
+    /// words are named by their message id, with no turn.
+    ItemDetail {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        turn: Option<String>,
+        item: String,
     },
     /// How to open a resident of this machine in its host's own interface,
     /// for the user (`fastctx attach`).
@@ -557,6 +575,12 @@ pub enum Reply {
     Offers {
         resident: Address,
         offers: Box<Offers>,
+    },
+    /// The host's record of the item asked for; none when its history now
+    /// holds no such item.
+    ItemDetail {
+        resident: Address,
+        detail: Option<serde_json::Value>,
     },
     /// The command that opens the resident in its host's own interface,
     /// run in the user's terminal.

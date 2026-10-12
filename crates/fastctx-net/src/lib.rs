@@ -20,6 +20,7 @@ pub mod directory;
 pub mod envelope;
 pub mod file_read;
 pub mod file_search;
+pub mod history;
 pub mod ids;
 pub mod ledger;
 pub mod lines;

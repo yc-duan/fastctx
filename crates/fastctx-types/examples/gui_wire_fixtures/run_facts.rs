@@ -24,6 +24,8 @@ pub fn example() -> RunFacts {
         state: RunState::Ended { status: ExitStatus::Code(0) },
         job: Some("j-abc123".parse().unwrap()),
         output: Some(OutputRef {
+            policy: None,
+            content: None,
             machine: "laptop".parse().unwrap(),
             path: "/tmp/output.log".into(),
             bytes: 90000,
@@ -50,7 +52,11 @@ pub fn example() -> RunFacts {
                 added: Some(1),
                 removed: Some(1),
                 unavailable: None,
-                diff: Some(DiffRef { machine: "gpu".parse().unwrap(), path: format!("/tmp/diff-{i}.jsonl") }),
+                diff: Some(DiffRef {
+                    content: None,
+                    machine: "gpu".parse().unwrap(),
+                    path: format!("/tmp/diff-{i}.jsonl"),
+                }),
             })
             .collect(),
         spans: vec![
@@ -145,8 +151,9 @@ pub fn fixtures() -> Fixtures {
             }],
         }],
         parts: vec![
-            fastctx_types::lines::Part { line: 3, text: "😀 ".into(), ended: false, note: None },
+            fastctx_types::lines::Part { utf16_length: None, line: 3, text: "😀 ".into(), ended: false, note: None },
             fastctx_types::lines::Part {
+                utf16_length: None,
                 line: 3,
                 text: "note".into(),
                 ended: true,
@@ -157,6 +164,7 @@ pub fn fixtures() -> Fixtures {
             },
         ],
         updates: vec![JobFacts {
+            notes: None,
             call_id: "host-call-1".into(),
             primary: true,
             output: example().output,

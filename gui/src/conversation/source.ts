@@ -46,13 +46,19 @@ export const watched: ConversationSource = {
     let closed = false;
     const take = (piece: Piece) => {
       switch (piece.kind) {
+        case "resumed":
+          feed.resumed();
+          return;
         case "event":
           feed.resumed();
           feed.happened(piece.event);
           return;
         case "reset":
-          feed.resumed();
           feed.replaced(piece.history);
+          return;
+        case "extended":
+          feed.resumed();
+          feed.extended(piece.history);
           return;
         case "interrupted":
           feed.interrupted(piece.error);

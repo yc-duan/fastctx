@@ -38,10 +38,19 @@ export type Does =
   | { as: "colleague"; to: string | null; task: string | null }
   | { as: "call" };
 
+/** Bytes named by their content: how many, and their SHA-256. */
+export interface Fingerprint {
+  size: number;
+  sha256: string;
+}
+
 export type Content =
   | { type: "text"; text: string }
   | { type: "image"; mime: string; base64: string }
   | { type: "image_url"; url: string }
+  /** An image kept where the session lives, asked for when it is shown,
+   *  as a picture the user sent is. */
+  | { type: "image_ref"; mime: string; content: Fingerprint; source: AttachmentSource }
   | { type: "audio_url"; url: string }
   | { type: "other"; block: JsonValue };
 
@@ -116,6 +125,8 @@ export interface UserImage {
   source: AttachmentSource;
   name: string | null;
   media_type: string | null;
+  /** The picture's bytes, where its machine read them. */
+  content?: Fingerprint;
 }
 
 export interface UserMessage {
@@ -257,4 +268,6 @@ export type SessionEvent = { at: Timestamp } & Happened;
 
 export type Watched =
   | { kind: "history"; events: SessionEvent[] }
-  | { kind: "live"; event: SessionEvent };
+  | { kind: "live"; event: SessionEvent }
+  | { kind: "unchanged"; version: string }
+  | { kind: "segments"; version: string; layout: string[]; segments: { id: string; events: SessionEvent[] }[]; complete: boolean };

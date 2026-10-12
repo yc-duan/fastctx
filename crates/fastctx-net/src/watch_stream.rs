@@ -35,6 +35,14 @@ pub async fn send(stream: &mut Stream, signed: &Signed) -> Result<(), String> {
     stream.send(&signed.data.0).await
 }
 
+/// Sends a signed piece as its exact bytes, announced by length and
+/// signature, whatever its size: for packed pieces, which base64 would grow
+/// by a third.
+pub async fn send_bytes(stream: &mut Stream, signed: &Signed) -> Result<(), String> {
+    stream.say(&Carried { watch_bytes: signed.data.0.len() as u64, sig: signed.sig }).await?;
+    stream.send(&signed.data.0).await
+}
+
 /// Reassembles a complete signed event before the caller verifies its signature
 /// and subscription sequence. A partial transfer fails without exposing a piece.
 pub async fn receive(stream: &mut Stream) -> Result<Signed, String> {
