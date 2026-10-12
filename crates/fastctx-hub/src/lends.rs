@@ -28,10 +28,12 @@ use crate::store::Store;
 /// whose deadline passed while the hub was down is taken back as it starts.
 pub(crate) async fn expire(hub: &Hub) -> io::Result<()> {
     loop {
+        // Nothing changes while the hub hands its records over.
+        hub.moving.unfrozen().await;
         let changed = hub.lends_changed.notified();
         let (ended, next) = {
             let mut store = hub.store();
-            let ended = end_due(&mut store, Timestamp::now())?;
+            let ended = !hub.moving.frozen() && end_due(&mut store, Timestamp::now())?;
             (ended, store.book.directory.lends.iter().filter_map(|lend| lend.until).min())
         };
         hub.next_lend_end.0.store(next.map_or(i64::MAX, |next| next.as_second()), Ordering::Relaxed);

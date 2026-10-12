@@ -11,6 +11,7 @@ mod collab;
 mod composer;
 mod connection;
 mod features;
+mod hub_moving;
 
 #[cfg(desktop)]
 mod founding;
@@ -884,6 +885,8 @@ pub fn run() {
             #[cfg(desktop)]
             remote_world::remote_join,
             #[cfg(desktop)]
+            remote_world::remote_arrive,
+            #[cfg(desktop)]
             remote_world::remote_close,
             #[cfg(desktop)]
             retention::retention_read,
@@ -905,6 +908,9 @@ pub fn run() {
             features::features_watch,
             accounts::account_change,
             accounts::server_command,
+            hub_moving::hub_move,
+            #[cfg(desktop)]
+            hub_moving::arrive_hub,
             accounts::agent_homes,
             accounts::works_on,
             logins::agent_logins,

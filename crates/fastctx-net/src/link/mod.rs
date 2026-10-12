@@ -15,6 +15,7 @@
 //! each call asks.
 
 mod accounts;
+mod addresses;
 mod answering;
 mod calls;
 mod changes;
@@ -24,6 +25,7 @@ mod kernel;
 mod ledger;
 mod letters;
 mod machine_log;
+mod moving;
 mod outgoing;
 mod session;
 pub mod state;
@@ -184,6 +186,9 @@ pub(crate) struct Inner {
     this: Weak<Inner>,
     dir: NetDir,
     membership: Membership,
+    /// Where the hub is reached now (`addresses`): the membership's, until
+    /// a hub that moved says otherwise.
+    addresses: Mutex<Vec<SocketAddr>>,
     key: SecretKey,
     node: Arc<dyn Node>,
     counter: Counter,
@@ -227,6 +232,8 @@ pub(crate) struct Connection {
     generation: u64,
     up: outgoing::Outgoing,
     upstream: Upstream,
+    /// The address it was dialed at: one of the hub's, or a forwarder's.
+    address: SocketAddr,
     /// The ways this machine tried, through the one it is on.
     tried: Vec<Upstream>,
 }
@@ -299,6 +306,7 @@ impl Link {
         let inner = Arc::new_cyclic(|this| Inner {
             this: this.clone(),
             dir,
+            addresses: Mutex::new(membership.addresses.clone()),
             membership,
             key,
             node,
@@ -350,8 +358,16 @@ impl Link {
         self.inner.status.send_replace(Status::Stopped { reason: "the link was stopped".to_string() });
     }
 
+    /// This machine's place on the hub. Its addresses are those it logged
+    /// in with; where the hub is reached now is `hub_addresses`.
     pub fn membership(&self) -> &Membership {
         &self.inner.membership
+    }
+
+    /// Where the hub is reached now, in the order to try: what this machine
+    /// logged in with, or, once the hub moved, what the hub said since.
+    pub fn hub_addresses(&self) -> Vec<SocketAddr> {
+        self.inner.hub_addresses()
     }
 
     pub fn status(&self) -> Status {
@@ -511,12 +527,6 @@ impl Inner {
         crate::directory::Paths { hub_ms: *self.hub_ms.lock().expect("never poisoned"), links: self.direct.seen() }
     }
 
-    /// The hub's addresses as this machine knows them. Everything that dials
-    /// the hub by this machine's own line reads them here.
-    pub(crate) fn hub_addresses(&self) -> Vec<SocketAddr> {
-        self.membership.addresses.clone()
-    }
-
     /// The ways to the hub, in order: this machine's own line, then through
     /// each machine that allows direct connections, in the hub's order.
     fn upstreams(&self) -> Vec<Upstream> {
@@ -633,6 +643,7 @@ impl Inner {
         let changed = *self.view() != *view;
         if changed {
             state::write(&self.dir.view(), &*view).map_err(|error| format!("keeping the view: {error}"))?;
+            self.follow_addresses(&view);
             *self.view.lock().expect("never poisoned") = Arc::from(view);
             if let Some(this) = self.this.upgrade() {
                 this.follow_view();

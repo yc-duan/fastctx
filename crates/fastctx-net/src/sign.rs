@@ -35,6 +35,9 @@ pub enum Domain {
     /// A machine proving to another, on a direct link between them, that it
     /// holds its key, bound to one TLS connection.
     Peer,
+    /// An old hub proving to the place its hub moves to that it holds the
+    /// move's key, bound to one TLS connection.
+    Handover,
 }
 
 impl Domain {
@@ -45,6 +48,7 @@ impl Domain {
             Domain::FileRead => "file-read",
             Domain::Ledger => "ledger",
             Domain::Peer => "peer",
+            Domain::Handover => "handover",
         }
     }
 }

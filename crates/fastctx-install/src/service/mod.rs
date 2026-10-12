@@ -30,7 +30,7 @@ mod local_network;
 #[cfg(any(windows, target_os = "linux"))]
 mod transaction;
 
-pub use hub::keep_hub;
+pub use hub::{keep_hub, keep_hub_at};
 pub use hub_registry::registered_hubs;
 pub use inventory::{Registration, registrations};
 pub use keep::{Kept, Released, keep_connected, stop_keeping};

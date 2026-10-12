@@ -23,8 +23,14 @@ pub async fn command(
     let version = env!("CARGO_PKG_VERSION");
     let (release, certificate) = link.kernel_release(version).await.map_err(Failure::new)?;
     let pin = certificate_pin(&certificate).map_err(|error| Failure::new(error.to_string()))?;
-    let address =
-        link.membership().addresses.first().ok_or_else(|| Failure::new("this membership has no hub address"))?;
+    // The server downloads from where the hub is reached, not from this
+    // machine's own way to it when the hub runs here.
+    let addresses = link.hub_addresses();
+    let address = addresses
+        .iter()
+        .find(|address| !address.ip().is_loopback())
+        .or(addresses.first())
+        .ok_or_else(|| Failure::new("this membership has no hub address"))?;
     let directory = format!("https://{address}{}/v{version}", fastctx_types::kernel::RELEASE_PATH);
     let kernel = Kernel {
         version,

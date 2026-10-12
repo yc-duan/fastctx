@@ -10,8 +10,10 @@
 //! machine, and how its lines go; and every machine that allows direct
 //! connections, whatever its account, since a member whose own line is down
 //! reaches the hub through one. A device logged in to the super
-//! administrator's account sees the whole directory, and what each online
-//! machine's direct address may be chosen from.
+//! administrator's account sees the whole directory, what each online
+//! machine's direct address may be chosen from, and the moves of the hub
+//! (`crate::moving`), as the machine the hub moves to sees its move. Once
+//! the hub was moved, every member is told where it reaches the hub now.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -32,6 +34,7 @@ pub(crate) struct Presence {
 /// `me`'s view of the directory; `trial`, the addresses the hub checks it
 /// at for direct connections now, if it does.
 pub(crate) fn view_for(
+    hub: &crate::Hub,
     store: &Store,
     online: &HashMap<MachineName, Presence>,
     me: &MachineName,
@@ -61,6 +64,9 @@ pub(crate) fn view_for(
         direct_links: true,
         trial,
         forwarders,
+        moving: true,
+        hub_addresses: crate::moving::addresses_for(store, me),
+        hub_moves: crate::moving::requests::told(hub, store, me, whole),
         directory,
     }
 }

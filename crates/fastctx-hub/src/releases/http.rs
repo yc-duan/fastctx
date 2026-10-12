@@ -23,10 +23,29 @@ use tokio_util::io::ReaderStream;
 
 use crate::Hub;
 
+/// Who answers what comes in on the hub's port: the hub, or the new place
+/// of a move standing by (`crate::moving::standby`), which serves no
+/// releases and takes only the old hub.
+#[derive(Clone)]
+pub(crate) enum Host {
+    Hub(Arc<Hub>),
+    Standby(Arc<crate::moving::standby::Standby>),
+}
+
+impl Host {
+    /// Where what went wrong with a connection is written.
+    fn log(&self) -> &crate::log::Log {
+        match self {
+            Host::Hub(hub) => &hub.log,
+            Host::Standby(standby) => standby.log(),
+        }
+    }
+}
+
 type Body = UnsyncBoxBody<Bytes, io::Error>;
 type TlsStream = tokio_rustls::server::TlsStream<TcpStream>;
 
-pub(crate) async fn serve(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: TcpStream, peer: SocketAddr) {
+pub(crate) async fn serve(host: Host, tls: tokio_rustls::TlsAcceptor, tcp: TcpStream, peer: SocketAddr) {
     // Keep the existing initial handshake budget. File transfer itself has
     // no deadline: a slow download must not be cut off by a session policy.
     let deadline = Instant::now() + wire::SILENCE;
@@ -36,31 +55,31 @@ pub(crate) async fn serve(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: Tc
     let stream = match tokio::time::timeout_at(deadline, tls.accept(tcp)).await {
         Ok(Ok(stream)) => stream,
         Ok(Err(error)) => {
-            hub.log.line(format_args!("{peer}: the TLS handshake failed: {error}"));
+            host.log().line(format_args!("{peer}: the TLS handshake failed: {error}"));
             return;
         }
         Err(_) => {
-            hub.log.line(format_args!("{peer}: no TLS handshake within {} s", wire::SILENCE.as_secs()));
+            host.log().line(format_args!("{peer}: no TLS handshake within {} s", wire::SILENCE.as_secs()));
             return;
         }
     };
     let mut binding = [0; 32];
     if let Err(error) = stream.get_ref().1.export_keying_material(&mut binding, wire::EXPORTER_LABEL, None) {
-        hub.log.line(format_args!("{peer}: the TLS exporter failed: {error}"));
+        host.log().line(format_args!("{peer}: the TLS exporter failed: {error}"));
         return;
     }
-    let log = hub.clone();
-    let service = service_fn(move |request| respond(hub.clone(), request, peer, binding, deadline));
+    let log = host.clone();
+    let service = service_fn(move |request| respond(host.clone(), request, peer, binding, deadline));
     let mut builder = hyper::server::conn::http1::Builder::new();
     builder.timer(TokioTimer::new()).header_read_timeout(deadline.saturating_duration_since(Instant::now()));
     // keep_alive(false) rewrites Connection: Upgrade and breaks WebSockets.
     if let Err(error) = builder.serve_connection(TokioIo::new(stream), service).with_upgrades().await {
-        log.log.line(format_args!("{peer}: the connection ended before a complete request: {error}"));
+        log.log().line(format_args!("{peer}: the connection ended before a complete request: {error}"));
     }
 }
 
 async fn respond(
-    hub: Arc<Hub>,
+    host: Host,
     mut request: Request<Incoming>,
     peer: SocketAddr,
     binding: [u8; 32],
@@ -72,7 +91,7 @@ async fn respond(
         let response = match tokio_tungstenite::tungstenite::handshake::server::create_response(&request.map(|_| ())) {
             Ok(response) => response.map(|_| full(Bytes::new())),
             Err(error) => {
-                hub.log.line(format_args!("{peer}: refused a WebSocket upgrade on {path}: {error}"));
+                host.log().line(format_args!("{peer}: refused a WebSocket upgrade on {path}: {error}"));
                 return Ok(text(StatusCode::BAD_REQUEST, "Invalid WebSocket upgrade"));
             }
         };
@@ -92,9 +111,14 @@ async fn respond(
                 Ok::<_, String>((socket, hello))
             };
             match tokio::time::timeout_at(deadline, opened).await {
-                Ok(Ok((socket, hello))) => crate::connected(hub, socket, path, binding, hello, peer).await,
-                Ok(Err(error)) => hub.log.line(format_args!("{peer}: the WebSocket on {path} did not open: {error}")),
-                Err(_) => hub.log.line(format_args!(
+                Ok(Ok((socket, hello))) => match host {
+                    Host::Hub(hub) => crate::connected(hub, socket, path, binding, hello, peer).await,
+                    Host::Standby(standby) => {
+                        crate::moving::standby::connected(standby, socket, path, binding, hello, peer).await;
+                    }
+                },
+                Ok(Err(error)) => host.log().line(format_args!("{peer}: the WebSocket on {path} did not open: {error}")),
+                Err(_) => host.log().line(format_args!(
                     "{peer}: no hello on {path} within {} s of the connection",
                     wire::SILENCE.as_secs()
                 )),
@@ -102,6 +126,9 @@ async fn respond(
         });
         return Ok(response);
     }
+    let Host::Hub(hub) = host else {
+        return Ok(text(StatusCode::NOT_FOUND, "Not found"));
+    };
     if request.uri().query().is_some() || !matches!(*request.method(), Method::GET | Method::HEAD) {
         return Ok(text(StatusCode::NOT_FOUND, "Not found"));
     }

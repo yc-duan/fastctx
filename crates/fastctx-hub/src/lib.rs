@@ -18,6 +18,10 @@
 //! with it does not come here, and a machine whose own line is down reaches
 //! the hub through it, the TLS between that machine and the hub passing
 //! through it whole.
+//!
+//! The hub can move to another machine with all it keeps (`moving`): the
+//! directory it runs from then stands by for the move, serves, or, at the
+//! old place, forwards to the new one, as its files say.
 
 mod control;
 mod data;
@@ -28,6 +32,7 @@ mod log;
 mod login;
 mod machine_log;
 mod manage;
+mod moving;
 mod releases;
 mod store;
 pub mod third;
@@ -55,6 +60,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
+pub use moving::standby::prepare as prepare_arrival;
 pub use store::HubFile;
 use store::{Book, Store};
 
@@ -82,6 +88,10 @@ pub struct New {
 pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
     if Store::hub_file(dir).exists() {
         anyhow::bail!("{} already holds a hub", dir.display());
+    }
+    // A hub that moved away left only its log and a note here.
+    if moving::retired(dir)? {
+        std::fs::remove_file(dir.join(moving::RETIRED))?;
     }
     let certificate = HubCertificate::generate().map_err(anyhow::Error::msg)?;
     let secrets = HubSecrets::generate();
@@ -153,6 +163,25 @@ pub fn describe(dir: &Path) -> anyhow::Result<(HubFile, CertPin)> {
     Ok((store.hub, CertPin::of(&certificate)))
 }
 
+/// What the hub needs of the program that runs it when it leaves a
+/// machine: a hub that moved away, once its old data is deleted, has its
+/// system service removed, and says what came of that.
+pub struct Leave {
+    pub remove_service: Box<RemoveService>,
+}
+
+/// Removes the system service of the hub kept in the directory given, and
+/// says what came of that.
+pub type RemoveService = dyn Fn(&Path) -> Result<String, String> + Send + Sync;
+
+/// The id of the hub and of the move arriving in `dir`, while one stands by
+/// there to take over.
+pub fn arriving(dir: &Path) -> io::Result<Option<(fastctx_net::ids::HubId, String)>> {
+    let Some(arriving) = moving::standby::arriving_in(dir)? else { return Ok(None) };
+    let hub: HubFile = store::read(&Store::hub_file(dir))?;
+    Ok(Some((hub.id, arriving.id)))
+}
+
 /// What every connection shares.
 pub(crate) struct Hub {
     releases: Arc<releases::Releases>,
@@ -169,8 +198,9 @@ pub(crate) struct Hub {
     ledgers: Mutex<ledger::Ledgers>,
     limits: Mutex<login::Limits>,
     next: AtomicU64,
-    log: log::Log,
+    log: Arc<log::Log>,
     machine_log_changed: tokio::sync::Notify,
+    moving: moving::Moving,
     /// Told when the directory changes, so the loans' deadlines are read again.
     lends_changed: tokio::sync::Notify,
     next_lend_end: lends::NextEnd,
@@ -256,7 +286,7 @@ impl Hub {
             })
             .collect();
         let trial = self.trial_of(name);
-        views::view_for(&self.store(), &presence, name, trial)
+        views::view_for(self, &self.store(), &presence, name, trial)
     }
 
     /// Resolves once `name`'s session ends, at once when it has none.
@@ -289,11 +319,63 @@ impl Hub {
         }
         control::cut_calls(self);
         data::cut_streams(self);
+        moving::follow::settle(self);
     }
 }
 
-/// Runs the hub kept in `dir` until the process is stopped.
-pub async fn serve(dir: &Path) -> anyhow::Result<()> {
+/// What a mode of the hub's directory ends with.
+pub(crate) enum Next {
+    /// The process is stopped.
+    Stop,
+    /// The directory changed what it runs as; the listener goes on to it.
+    Again(Option<Kept>),
+}
+
+/// A listener one mode leaves to the next, and where it listens.
+pub(crate) struct Kept {
+    pub listener: TcpListener,
+    pub at: SocketAddr,
+}
+
+/// The listener on `listen`: the one kept, when it listens there.
+pub(crate) async fn bind(kept: Option<Kept>, listen: SocketAddr) -> anyhow::Result<Kept> {
+    match kept {
+        Some(kept) if kept.at == listen => Ok(kept),
+        _ => {
+            let listener =
+                TcpListener::bind(listen).await.map_err(|error| anyhow::anyhow!("listening on {listen}: {error}"))?;
+            Ok(Kept { listener, at: listen })
+        }
+    }
+}
+
+/// Runs the hub kept in `dir` until the process is stopped: serving, or
+/// standing by for a move here, or forwarding after a move away.
+pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
+    let log = Arc::new(log::Log::open(&dir.join("hub.log"))?);
+    let mut kept = None;
+    loop {
+        let next = match moving::mode(dir)? {
+            moving::Mode::Serving => serving(dir, kept.take(), log.clone()).await?,
+            moving::Mode::Standby(arriving) => {
+                moving::standby::run(dir, kept.take(), arriving, log.clone(), &leave).await?
+            }
+            moving::Mode::Old(outgoing) => moving::old::run(dir, kept.take(), outgoing, log.clone(), &leave).await?,
+            moving::Mode::Retired => {
+                drop(kept.take());
+                log.line(format_args!("no hub runs here: its data was deleted ({})", moving::RETIRED));
+                shutdown_signal().await;
+                Next::Stop
+            }
+        };
+        match next {
+            Next::Stop => return Ok(()),
+            Next::Again(listener) => kept = listener,
+        }
+    }
+}
+
+async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::Result<Next> {
     let mut store = Store::open(dir)?;
     // A loan whose deadline passed while the hub was stopped is taken back
     // before any member is heard.
@@ -304,11 +386,9 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
     };
     let secrets = HubSecrets::from_bytes(&std::fs::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
     let tls = tokio_rustls::TlsAcceptor::from(certificate.server_config().map_err(anyhow::Error::msg)?);
-    let log = log::Log::open(&dir.join("hub.log"))?;
     let ledgers = ledger::Ledgers::open(dir)?;
     let listen = store.hub.listen;
-    let listener =
-        TcpListener::bind(listen).await.map_err(|error| anyhow::anyhow!("listening on {listen}: {error}"))?;
+    let kept = bind(kept, listen).await?;
     log.line(format_args!(
         "hub {} ({}) {} listening on {listen}; certificate {}",
         store.hub.name,
@@ -319,6 +399,11 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
     for line in &store.upgraded {
         log.line(format_args!("took up the directory of an earlier fastctx: {line}"));
     }
+    // A move under way goes on; one called off is told to the new place.
+    let driven = store.outgoing.as_ref().is_some_and(|outgoing| {
+        outgoing.pending() || (outgoing.stage == fastctx_types::hub_move::MoveStage::Cancelled && outgoing.prepared)
+    });
+    let (switched, mut switch) = tokio::sync::oneshot::channel();
     let hub = Arc::new(Hub {
         releases: Arc::new(releases::Releases::new(dir, certificate.certificate.clone())?),
         store: Mutex::new(store),
@@ -333,15 +418,20 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
         next: AtomicU64::new(0),
         log,
         machine_log_changed: tokio::sync::Notify::new(),
+        moving: moving::Moving::new(switched),
         lends_changed: tokio::sync::Notify::new(),
         next_lend_end: lends::NextEnd::default(),
     });
-    loop {
+    if driven {
+        moving::out::drive(&hub);
+    }
+    let switched = loop {
         tokio::select! {
-            accepted = listener.accept() => match accepted {
+            accepted = kept.listener.accept() => match accepted {
                 Ok((tcp, peer)) => {
                     fastctx_net::dial::configure(&tcp);
-                    tokio::spawn(releases::http::serve(hub.clone(), tls.clone(), tcp, peer));
+                    let host = releases::http::Host::Hub(hub.clone());
+                    tokio::spawn(releases::http::serve(host, tls.clone(), tcp, peer));
                 }
                 // Out of descriptors, for one: the next accept may succeed.
                 Err(error) => {
@@ -349,10 +439,17 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
             },
-            () = shutdown_signal() => break,
+            () = shutdown_signal() => break false,
             expired = machine_log::expire(&hub) => expired?,
             ended = lends::expire(&hub) => ended?,
+            Ok(()) = &mut switch => break true,
         }
+    };
+    if switched {
+        // The hub moved away: every connection still open here ends, and the
+        // old place forwards on the same port.
+        hub.moving.stop();
+        return Ok(Next::Again(Some(kept)));
     }
     hub.log.line(format_args!("shutting down"));
     let sessions: Vec<mpsc::UnboundedSender<Out>> =
@@ -365,10 +462,10 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
     while !hub.sessions().is_empty() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    Ok(())
+    Ok(Next::Stop)
 }
 
-async fn shutdown_signal() {
+pub(crate) async fn shutdown_signal() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
@@ -402,9 +499,43 @@ pub(crate) async fn connected(
         refuse(&mut socket, Refusal::Protocol { hub: PROTOCOL, version: env!("CARGO_PKG_VERSION").to_string() }).await;
         return;
     }
+    let stopped = hub.clone();
+    tokio::select! {
+        () = intended(hub, socket, path, binding, intent, peer) => {}
+        // The hub moved away: what is still open here ends.
+        () = stopped.moving.stopped() => {}
+    }
+}
+
+async fn intended(
+    hub: Arc<Hub>,
+    mut socket: Socket,
+    path: String,
+    binding: [u8; 32],
+    intent: Intent,
+    peer: SocketAddr,
+) {
+    // What may change the records is not taken while the hub hands over.
+    let changes = matches!(
+        intent,
+        Intent::Session { .. }
+            | Intent::Login { .. }
+            | Intent::Token { .. }
+            | Intent::Register { .. }
+            | Intent::Probe
+            | Intent::Handover { .. }
+    );
+    let _active = match changes.then(|| moving::Moving::enter(&hub)) {
+        Some(None) => {
+            refuse(&mut socket, Refusal::ShuttingDown).await;
+            return;
+        }
+        Some(Some(active)) => Some(active),
+        None => None,
+    };
     match (path.as_str(), intent) {
-        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through, direct, interfaces, any_names }) => {
-            let said = control::Said { through, direct, interfaces, any_names };
+        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through, direct, interfaces, any_names, dialed }) => {
+            let said = control::Said { through, direct, interfaces, any_names, dialed };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
         (wire::CONTROL_PATH, Intent::Login { account, request }) => {
@@ -422,6 +553,9 @@ pub(crate) async fn connected(
         }
         (wire::DATA_PATH, Intent::Data { key, proof, stream, end }) => {
             data::end(hub, socket, binding, key, proof, stream, end).await;
+        }
+        (wire::CONTROL_PATH, Intent::Handover { id, role, proof }) => {
+            moving::follow::old_connected(hub, socket, binding, id, role, proof).await;
         }
         _ => {
             hub.log.line(format_args!("{peer}: refused a hello that is not said on {path}"));

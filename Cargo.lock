@@ -1455,6 +1455,7 @@ dependencies = [
  "fastctx-file-search",
  "fastctx-hands",
  "fastctx-hosts",
+ "fastctx-hub",
  "fastctx-install",
  "fastctx-net",
  "fastctx-platform",

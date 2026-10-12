@@ -449,6 +449,21 @@ pub struct View {
     /// the hub through one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forwarders: Vec<crate::dial::Forwarder>,
+    /// Whether this hub can be moved (`crate::moving`): it takes
+    /// `Question::HubMove`. Earlier hubs omit it, and would end the session
+    /// of a member that asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub moving: bool,
+    /// Where this member reaches the hub now, given by a hub that was moved
+    /// to where it runs (`crate::moving`); a hub never moved gives none, and
+    /// the member keeps the addresses it logged in with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hub_addresses: Vec<std::net::SocketAddr>,
+    /// The moves of the hub this member is told of: the super
+    /// administrator's devices of every one, the machine a hub moves to of
+    /// its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hub_moves: Vec<fastctx_types::hub_move::HubMove>,
     #[serde(flatten)]
     pub directory: Directory,
 }
@@ -465,6 +480,9 @@ impl View {
             direct_links: false,
             trial: Vec::new(),
             forwarders: Vec::new(),
+            moving: false,
+            hub_addresses: Vec::new(),
+            hub_moves: Vec::new(),
             directory: Directory::default(),
         }
     }

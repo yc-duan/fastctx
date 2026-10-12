@@ -182,6 +182,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             through: upstream.through().map(ToString::to_string),
             direct: computer,
             interfaces,
+            dialed: Some(address),
             any_names: true,
         },
     };
@@ -209,7 +210,11 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             // The hub's short name is the hub's to say: a membership kept
             // before it was known takes it from the welcome.
             if hub_name != membership.hub_name {
-                let corrected = super::Membership { hub_name: hub_name.clone(), ..membership.clone() };
+                let corrected = super::Membership {
+                    hub_name: hub_name.clone(),
+                    addresses: inner.hub_addresses(),
+                    ..membership.clone()
+                };
                 match super::state::write(&inner.dir.membership(), &corrected) {
                     Ok(()) => inner.node.log(format!("the hub {hub} is called {hub_name}")),
                     Err(error) => inner.node.log(format!("recording that the hub is called {hub_name}: {error}")),
@@ -256,7 +261,7 @@ async fn connected(
     let generation = inner.next_id();
     let (up, mut outgoing) = Outgoing::channel();
     *inner.connection.lock().expect("never poisoned") =
-        Some(Connection { generation, up: up.clone(), upstream: upstream.clone(), tried: tried.to_vec() });
+        Some(Connection { generation, up: up.clone(), upstream: upstream.clone(), address, tried: tried.to_vec() });
     let through = upstream.through().map(ToString::to_string);
     inner.status.send_replace(Status::Online { since: Timestamp::now(), address, through, route: route.clone() });
     *online_since = Some(Instant::now());
@@ -295,9 +300,18 @@ async fn connected(
         tokio::spawn(take_letters(inner.clone(), up.clone(), hub_letters, delivered, letter_failed)),
     ]);
     let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
-    if tried.len() > 1 {
+    let mut preferred = tried[..tried.len() - 1].to_vec();
+    // On a later address of the hub's own, as one a moved hub's old place
+    // forwards from, the earlier ones are asked too.
+    if let Upstream::Hub(addresses) = upstream
+        && let Some(position) = addresses.iter().position(|dialed| *dialed == address)
+        && position > 0
+    {
+        preferred.push(Upstream::Hub(addresses[..position].to_vec()));
+    }
+    if !preferred.is_empty() {
         let (hub, cert) = (inner.membership.id.clone(), inner.membership.cert);
-        tasks.0.push(tokio::spawn(ask_preferred(tried[..tried.len() - 1].to_vec(), hub, cert, returned)));
+        tasks.0.push(tokio::spawn(ask_preferred(preferred, hub, cert, returned)));
     }
     {
         let inner = inner.clone();

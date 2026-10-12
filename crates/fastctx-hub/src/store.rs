@@ -11,6 +11,9 @@
 //! <hub>/letters.json          where each member's letters stand
 //! <hub>/outbox/<name>/<seq>   letters waiting for a member, one file each
 //! <hub>/ledger/<town>/<seq>.json   the projects' ledgers (`crate::ledger`)
+//! <hub>/moves.json            the moves that brought the hub here (`crate::moving`)
+//! <hub>/moving-out.json       a move of the hub away from here, while and after it goes
+//! <hub>/called-off.json       moves called off whose new place may still hold the hub
 //! ```
 //!
 //! Every file is replaced whole, so a crash leaves the old state or the new
@@ -129,6 +132,13 @@ pub struct Store {
     /// What reading a directory kept in an earlier shape into today's
     /// changed, when this opening did it (`crate::upgrade`).
     pub upgraded: Vec<String>,
+    /// A move of the hub away from here (`crate::moving`).
+    pub outgoing: Option<crate::moving::Outgoing>,
+    /// The moves that brought the hub here, oldest first.
+    pub moves: Vec<crate::moving::Incoming>,
+    /// Moves called off whose new place may still hold the hub's identity,
+    /// until it gives it up (`crate::moving::out`).
+    pub called_off: Vec<crate::moving::Outgoing>,
 }
 
 impl Store {
@@ -191,7 +201,14 @@ impl Store {
             }
         }
         let worked = read_or_default(&dir.join("worked.json"))?;
-        let store = Self { dir: dir.to_path_buf(), hub, book, letters, worked, upgraded };
+        let outgoing = match read(&dir.join(crate::moving::OUTGOING)) {
+            Ok(outgoing) => Some(outgoing),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let moves = read_or_default(&dir.join(crate::moving::MOVES))?;
+        let called_off = read_or_default(&dir.join(crate::moving::CALLED_OFF))?;
+        let store = Self { dir: dir.to_path_buf(), hub, book, letters, worked, upgraded, outgoing, moves, called_off };
         if changed {
             store.save_letters()?;
         }
@@ -226,6 +243,29 @@ impl Store {
             publish(&dir.join("directory.upgraded.txt"), notes.as_bytes(), Permissions::Private)?;
         }
         Ok((book, said))
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    pub fn save_outgoing(&self) -> io::Result<()> {
+        let path = self.dir.join(crate::moving::OUTGOING);
+        match &self.outgoing {
+            Some(outgoing) => publish(&path, &json(outgoing)?, Permissions::Private),
+            None => match std::fs::remove_file(&path) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+                _ => Ok(()),
+            },
+        }
+    }
+
+    pub fn save_called_off(&self) -> io::Result<()> {
+        publish(&self.dir.join(crate::moving::CALLED_OFF), &json(&self.called_off)?, Permissions::Private)
+    }
+
+    pub fn save_moves(&self) -> io::Result<()> {
+        publish(&self.dir.join(crate::moving::MOVES), &json(&self.moves)?, Permissions::Private)
     }
 
     pub fn save_hub(&self) -> io::Result<()> {
@@ -343,7 +383,7 @@ pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }
 
-fn read_or_default<T: DeserializeOwned + Default>(path: &Path) -> io::Result<T> {
+pub(crate) fn read_or_default<T: DeserializeOwned + Default>(path: &Path) -> io::Result<T> {
     match read(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(T::default()),
         other => other,

@@ -33,6 +33,9 @@ pub(crate) struct Said {
     pub interfaces: Vec<std::net::IpAddr>,
     /// Whether it reads machine and hub names of any language.
     pub any_names: bool,
+    /// The address it dialed: a hub that moved tells by it whether the
+    /// member still comes through the old place (`crate::moving`).
+    pub dialed: Option<SocketAddr>,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -76,6 +79,7 @@ pub(crate) async fn session(
     said: Said,
 ) {
     let through = said.through.clone();
+    let dialed = said.dialed;
     let name = match hub.member(&key, &proof, &binding) {
         Ok(name) => name,
         Err(reason) => {
@@ -91,6 +95,12 @@ pub(crate) async fn session(
         refuse(&mut socket, reason).await;
         return;
     }
+    // A hub that began handing over after this session was let in, but
+    // before it was registered, did not end it.
+    if hub.moving.frozen() {
+        let _ = out.send(Out::End(Refusal::ShuttingDown));
+    }
+    crate::moving::follow::came(&hub, &name, dialed);
     match &through {
         Some(through) => hub.log.line(format_args!("{name} connected through {through}, from {peer}")),
         None => hub.log.line(format_args!("{name} connected from {peer}")),
@@ -161,6 +171,7 @@ pub(crate) async fn session(
 
 /// Registers the session, replacing an older one of the same member, and
 /// queues the welcome and every letter waiting for the member, in order.
+#[allow(clippy::too_many_arguments)]
 fn open(
     hub: &Hub,
     name: &MachineName,
@@ -636,7 +647,7 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
     }
 }
 
-fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String> {
+fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
         Question::MachineLog { account, before } => {
             let store = hub.store();
@@ -674,6 +685,8 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
                 .collect();
             Ok(Told::Towns { towns })
         }
+        Question::HubMove { account, request } => crate::moving::requests::ask(hub, name, &account, request),
+        Question::HubArrival { request } => crate::moving::requests::arrival(hub, name, request),
         Question::LedgerRead { town, after } => {
             if !hub.store().book.directory.member_in_project(name, &town) {
                 return Err(format!("{name} acts for no account that may read {town}"));

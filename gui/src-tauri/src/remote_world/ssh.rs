@@ -266,6 +266,15 @@ impl Remote {
         Ok(())
     }
 
+    /// Installs the system service of the hub moving to the server, which
+    /// its node has made the directory of, and tells the node.
+    pub async fn arrive(&self) -> Result<(), String> {
+        run(&self.handle, &format!("cd {} && ./fastctx hub arrive", quote(&self.dir)), self.sudo.line().into_bytes())
+            .await?
+            .ok("installing the hub's service on the server")?;
+        Ok(())
+    }
+
     /// Takes the temporary directory away and ends the session.
     pub async fn close(&self) -> Result<(), String> {
         run(&self.handle, &format!("rm -rf {}", quote(&self.dir)), Vec::new()).await?.ok("tidying the server")?;

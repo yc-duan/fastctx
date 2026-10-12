@@ -573,6 +573,20 @@ impl World {
         }
     }
 
+    /// Asks the hub named `hub`, or the one hub, for `request` of a move of
+    /// it, as `account`, its super administrator.
+    pub async fn hub_move(
+        &self,
+        hub: Option<HubName>,
+        account: AccountName,
+        request: fastctx_types::hub_move::HubMoveRequest,
+    ) -> Result<fastctx_types::hub_move::HubMoveReply, Error> {
+        match self.ask(Call::HubMove { hub, account, request }).await? {
+            Reply::HubMove(reply) => Ok(reply),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Asks the node to hand the World over once idle and exit: a service
     /// now keeps this World's node.
     pub async fn hand_over(&self) -> Result<(), Error> {

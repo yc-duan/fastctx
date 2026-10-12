@@ -950,6 +950,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|command| Reply::ServerInvitation { command })
         }
+        Call::HubMove { hub, account, request } => {
+            users_voice(node, peer)?;
+            crate::hub_moving::request(node, hub.as_ref(), &account, request).await.map(Reply::HubMove)
+        }
+        Call::HubArrived { hub } => {
+            users_voice(node, peer)?;
+            crate::hub_arrival::installed(node, &hub).await.map(|()| Reply::Done)
+        }
         Call::HandOver => {
             users_voice(node, peer)?;
             crate::handoff::hand_over(node.clone());

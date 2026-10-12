@@ -114,6 +114,11 @@ pub enum Intent {
         /// address may be chosen from.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         interfaces: Vec<std::net::IpAddr>,
+        /// The address this connection was dialed to, as the machine dialed
+        /// it: a hub that moved tells by it which machines still come
+        /// through the old place (`crate::moving`). Older machines omit it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dialed: Option<std::net::SocketAddr>,
         /// The machine reads machine and hub names of any language
         /// (`world-network.md`, 机器的名字). Earlier releases do not say so,
         /// and cannot read such a name in anything the hub sends them.
@@ -136,6 +141,10 @@ pub enum Intent {
     /// `Down::Ready`, and closed. A machine on a later address of its list
     /// asks the earlier ones.
     Probe,
+    /// The old hub of the move `id`, dialing the new place for `role`;
+    /// `proof` is the move's key's signature of the TLS exporter
+    /// (`crate::moving`).
+    Handover { id: String, role: crate::moving::HandoverRole, proof: Signature },
 }
 
 /// A computer or phone logging in: the name it asks for, its key, and
@@ -347,6 +356,11 @@ pub enum Question {
     /// A project's entries after the one numbered `after`, as many as fit
     /// in one frame.
     LedgerRead { town: TownId, after: u64 },
+    /// Moving the hub, asked as `account`, which must be the super
+    /// administrator's and logged in on the asking member.
+    HubMove { account: AccountName, request: fastctx_types::hub_move::HubMoveRequest },
+    /// What the machine the hub moves to asks of it.
+    HubArrival { request: crate::moving::ArrivalRequest },
     /// This member called `to` directly, for `account`, to work for the
     /// resident `resident`: what the hub notes of a call it passes on, for
     /// the letters that tell of that work later (`world-network.md`, 寄信).
@@ -531,6 +545,13 @@ pub enum Told {
     Entries {
         entries: Vec<(u64, Signed)>,
         more: bool,
+    },
+    HubMove {
+        reply: fastctx_types::hub_move::HubMoveReply,
+    },
+    /// The hub's identity, for the machine it moves to.
+    HubIdentity {
+        identity: Box<crate::moving::Identity>,
     },
 }
 
