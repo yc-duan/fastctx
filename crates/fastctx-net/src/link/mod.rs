@@ -445,7 +445,10 @@ impl Link {
         purpose: Purpose,
         call: RemoteCall,
     ) -> Result<RemoteResult, CallFailure> {
-        self.inner.call(to, account, purpose, call, None).await
+        // A call's future is tens of kilobytes; on the heap it does not grow
+        // every future that makes a call, which a build without
+        // optimizations keeps whole on the stack, once for each.
+        Box::pin(self.inner.call(to, account, purpose, call, None)).await
     }
 
     /// Calls `to` with a data connection, whose source end `feed` is given
@@ -458,7 +461,7 @@ impl Link {
         call: RemoteCall,
         feed: Feed,
     ) -> Result<RemoteResult, CallFailure> {
-        self.inner.call(to, account, purpose, call, Some(feed)).await
+        Box::pin(self.inner.call(to, account, purpose, call, Some(feed))).await
     }
 
     /// Sends a letter to `to`, for `account`. It is on this machine's disk
