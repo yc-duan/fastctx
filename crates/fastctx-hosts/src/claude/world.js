@@ -890,9 +890,9 @@ export function register(on) {
     const context = await route($, registry, 'session.measure', e)
     if (Array.isArray(e.changed) && e.changed.includes('rateLimits')) {
       try {
-        await limits($, registry, context, e.rateLimits, true)
+        await keepLimits($, context, e.rateLimits)
       } catch (error) {
-        // Showing the limits is for the user; the report goes on regardless.
+        // The node then shows the last reading it has; the report goes on.
       }
     }
     return context.shown.measure(reports($, context), e, next)
@@ -917,57 +917,18 @@ export function register(on) {
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
     await transcript($, context, e.transcript_path)
     await observeTitle($, context, e)
-    // What this process already read of the account's limits, shown at once;
-    // usage() asks Anthropic nothing. It says nothing of when they were read,
-    // so the node keeps only what a measure reports.
-    try {
-      await limits($, registry, context, (await $.session.usage()).rateLimits, false)
-    } catch (error) {
-      // A session start must not fail for the World's sake.
-    }
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'classic.SessionStart', e, next))
 }
 
-// The account's limits as Claude Code read them from its own answers, shown
-// in a line below the prompt, with a toast once a window passes 90%, once
-// per window and reset. A measure's reading is kept for the node with when
-// it came (the host gives no time, and reads them only while a session
-// works); an empty one is no reading and is not kept.
-async function limits($, registry, context, rateLimits, keep) {
-  if (!Array.isArray(rateLimits)) return
-  if (keep && rateLimits.length && context.dir) {
-    try {
-      await $.fs.write(context.dir + '/limits.json', JSON.stringify({ at: new Date().toISOString(), rateLimits }))
-    } catch (error) {
-      // The node then shows the last reading it has, with its age.
-    }
-  }
-  const shown = rateLimits.filter((limit) => typeof limit.percentUsed === 'number')
-  $.ui.status(shown.length ? shown.map((limit) => windowName(limit.kind) + ' ' + percent(limit.percentUsed)).join(' · ') : undefined)
-  registry.warned = registry.warned || new Set()
-  for (const limit of shown) {
-    const key = limit.kind + '@' + (limit.resetsAt || '')
-    if (limit.percentUsed < 90 || registry.warned.has(key)) continue
-    registry.warned.add(key)
-    const resets = limit.resetsAt ? ', resets ' + untilReset(limit.resetsAt) : ''
-    $.ui.toast('Claude usage: ' + windowName(limit.kind) + ' at ' + percent(limit.percentUsed) + resets, { timeoutMs: 10000 })
-  }
-}
-
-function windowName(kind) {
-  return { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' }[kind] || kind
-}
-
-function percent(used) {
-  return (Math.round(used * 10) / 10) + '%'
-}
-
-function untilReset(resetsAt) {
-  const minutes = Math.max(0, Math.round((Date.parse(resetsAt) - Date.now()) / 60000))
-  if (minutes < 60) return 'in ' + minutes + 'm'
-  const hours = Math.floor(minutes / 60)
-  return hours < 48 ? 'in ' + hours + 'h ' + (minutes % 60) + 'm' : 'in ' + Math.round(hours / 24) + 'd'
+// The account's limits as Claude Code read them from its own answers, kept
+// for the node with when they came: the host gives no time, and reads them
+// only while a session works. An empty reading is none and is not kept.
+// Nothing is shown in Claude Code's own interface: the World's interface
+// shows them (`world.md`, 不改官方程序自己的界面).
+async function keepLimits($, context, rateLimits) {
+  if (!Array.isArray(rateLimits) || !rateLimits.length || !context.dir) return
+  await $.fs.write(context.dir + '/limits.json', JSON.stringify({ at: new Date().toISOString(), rateLimits }))
 }
 
 // The file is whole before the call leaves the host, so the node reads it

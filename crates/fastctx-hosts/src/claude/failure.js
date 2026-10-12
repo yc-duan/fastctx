@@ -4,9 +4,13 @@ function worldFailure($, name, error) {
   worldNotice($, 'fastctx could not complete its ' + name + ' hook: ' + String(error?.message ?? error))
 }
 
+// A World hook that failed is told to Claude Code's debug log alone: the
+// World adds nothing to Claude Code's own interface (`world.md`), and a
+// World tool that cannot run is refused with the reason, which the model
+// reads.
 function worldNotice($, text) {
   try {
-    $.ui.log(text)
+    $.ui.log(text, { to: 'debug' })
   } catch (_) {
     // Reporting cannot become another dependency of the native operation.
   }
