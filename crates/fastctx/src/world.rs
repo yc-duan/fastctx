@@ -608,6 +608,9 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
     let logins = hub.logins.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
     let home = hub.home.as_ref().map(|home| format!("; registered under {home}")).unwrap_or_default();
     let mut text = format!("\n--- hub {} ({}) · logged in to {logins}{home}\n", hub.name, link(&hub.link, now));
+    if hub.machines.is_empty() {
+        text.push_str(&format!("no other machine is in {}: this computer is the only machine\n", hub.name));
+    }
     // Names line up by the columns they take in a terminal: a Chinese
     // character takes two.
     let width = hub.machines.iter().map(|node| fastctx_tui::text::width(&node.written.to_string())).max().unwrap_or(0);

@@ -14,6 +14,7 @@ import { PhoneRow, type PhoneSeam } from "./phone";
 import { desktopAvailable } from "../world/desktop";
 import { chooseNotifying, notifying } from "./presence";
 import type { Page } from "./shell";
+import { bytesSaid } from "./data-page";
 import { effect } from "./signals";
 import type { Store } from "./store";
 import type { SettingsWords } from "./words";
@@ -40,9 +41,8 @@ export interface SettingsOptions {
     renewing: Renewing;
     /** The app's own version, and a newer one from its releases. */
     updating?: Updating | undefined;
-    /** How many days this computer keeps a command's output once its end
-     *  was delivered; none before its node first ran. */
-    retention?: { read(): Promise<number | null>; write(days: number): Promise<void> } | undefined;
+    /** How much World keeps on this computer, in bytes. */
+    dataSize?(): Promise<number>;
   } | undefined;
   /** Told of a newer app version, so the sidebar can mark the way to it. */
   appUpdate?(version: string | null): void;
@@ -83,12 +83,19 @@ export class SettingsPage implements Page {
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
       <div class="settings scroller">
         <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
-        <section class="home-section settings-device"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-renewal" hidden></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data">${escape(words.dataOpen)}${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl></section>
+        <section class="home-section settings-device"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-renewal" hidden></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl></section>
         <section class="home-section settings-keys"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
         ${options.computer ? `<section class="home-section"><h2 class="section-title">${escape(options.removalWords.title)}</h2><button class="text-button danger-text settings-uninstall" type="button" data-uninstall>${glyph("logout", 16)}<span>${escape(options.removalWords.open)}</span></button></section>` : ""}
       </div>`;
+    void options.computer?.dataSize?.().then(
+      (bytes) => {
+        const size = this.element.querySelector(".settings-data-size");
+        if (size) size.textContent = bytesSaid(bytes);
+      },
+      () => {},
+    );
     this.device = this.element.querySelector<HTMLElement>(".device")!;
     this.service = this.element.querySelector<HTMLElement>(".settings-service")!;
     this.drawLook();

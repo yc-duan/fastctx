@@ -785,7 +785,6 @@
 
 .diff-add {
   background: var(--add-line);
-  box-shadow: inset 3px 0 0 var(--add-bar);
 }
 
 .diff-add .diff-sign {
@@ -794,7 +793,6 @@
 
 .diff-del {
   background: var(--del-line);
-  box-shadow: inset 3px 0 0 var(--del-bar);
 }
 
 .diff-del .diff-sign {

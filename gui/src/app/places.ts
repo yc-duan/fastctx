@@ -27,6 +27,8 @@ export type Place =
    *  has no room for among them. */
   | { kind: "talks"; town: string | null }
   | { kind: "settings" }
+  /** What World keeps on this computer, and deleting it. */
+  | { kind: "data" }
   /** Into a network: joining one, or making a new one; with neither, the
    *  page asks which. */
   | { kind: "login"; way?: "join" | "new" }
@@ -70,6 +72,8 @@ export function link(place: Place): string {
       return place.town === null ? "#/talks" : `#/talks/${part(place.town)}`;
     case "settings":
       return "#/settings";
+    case "data":
+      return "#/data";
     case "login":
       return place.way ? `#/login/${place.way}` : "#/login";
     case "network":
@@ -123,6 +127,8 @@ export function placeOf(hash: string): Place {
       return { kind: "talks", town: parts[1] || null };
     case "settings":
       return { kind: "settings" };
+    case "data":
+      return { kind: "data" };
     // An address from before accounts, kept so old links still open.
     case "welcome":
     case "login":

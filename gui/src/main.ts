@@ -23,6 +23,7 @@ import "./app/machines.css";
 import "./app/agents.css";
 import "./app/features.css";
 import "./app/removal.css";
+import "./app/data-page.css";
 import "./app.css";
 import "./home/home.css";
 import "./project/project.css";
@@ -49,6 +50,9 @@ import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
 import { SettingsPage } from "./app/settings";
+import { DataPage, enData, totalOf, zhData } from "./app/data-page";
+import { data } from "./world/data";
+import { specimenCache, specimenData } from "./specimen/data";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { effect, signal } from "./app/signals";
@@ -151,8 +155,6 @@ import {
   remoteJoin,
   remoteOpen,
   remoteProbe,
-  retentionRead,
-  retentionWrite,
   journal as readJournal,
   journalAdd,
   look,
@@ -1433,6 +1435,16 @@ function show(next: Place): void {
         ago: (at) => homeWords.ago(Date.now() - at.getTime()),
       });
       break;
+    case "data":
+      page = new DataPage({
+        words: english ? enData : zhData,
+        head,
+        data: live ? (onComputer() ? data : undefined) : params.has("phone") ? undefined : specimenData,
+        cache: live ? undefined : specimenCache,
+        confirm: accountConfirm,
+        now: () => new Date(),
+      });
+      break;
     case "settings":
       page = new SettingsPage({
         store,
@@ -1462,7 +1474,10 @@ function show(next: Place): void {
                 setup: setupState,
                 keep: keepHere,
                 removing: { plan: removalPlan, run: removeHere, finish: removeApp },
-                retention: { read: retentionRead, write: retentionWrite },
+                dataSize: async () => {
+                  const reply = await data({ do: "list" });
+                  return reply.data === "listed" ? totalOf(reply) : 0;
+                },
                 renewing: {
                   state: renewalState,
                   // The program the interface carries is put in place,
@@ -1512,6 +1527,8 @@ function specimenPlace(): Place | null {
       return { kind: "admin" };
     case "settings":
       return { kind: "settings" };
+    case "data":
+      return { kind: "data" };
     case "codex":
       return { kind: "talk", address: { resident: "codex-7f3a", machine: "laptop" } };
     case "asks":
