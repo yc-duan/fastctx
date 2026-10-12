@@ -11,6 +11,7 @@ mod collab;
 mod composer;
 mod connection;
 mod features;
+mod item_details;
 mod kept;
 
 #[cfg(desktop)]
@@ -59,12 +60,12 @@ mod binary_reading;
 mod desktop_presence;
 #[cfg(windows)]
 mod installer_lines;
-#[cfg(windows)]
-mod package_removal;
 mod line_reading;
 mod local_files;
 mod logins;
 mod names;
+#[cfg(windows)]
+mod package_removal;
 mod pages;
 mod reading;
 mod save_as;
@@ -183,6 +184,10 @@ struct WorldNow {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum Piece {
+    Resumed,
+    Extended {
+        history: Vec<SessionEvent>,
+    },
     /// What came before is now this, in place of all that was given: the
     /// rest of what this device keeps, the history as its machine has it
     /// now, or the history read again on a phone that came back.
@@ -271,8 +276,10 @@ async fn watch(
         let mut conversation = conversation;
         loop {
             let piece = match conversation.update().await {
+                Ok(Some(fastctx_client::Update::Current)) => Piece::Resumed,
                 Ok(Some(fastctx_client::Update::Moment(moment))) => Piece::Event { event: moment.event },
                 Ok(Some(fastctx_client::Update::History(history))) => Piece::Reset { history },
+                Ok(Some(fastctx_client::Update::Extended(history))) => Piece::Extended { history },
                 Ok(None) => {
                     let _ = pieces.send(Piece::Ended { error: None });
                     return;
@@ -602,7 +609,10 @@ async fn fetch_file(
     machine_name: Option<String>,
     path: String,
 ) -> Result<String, String> {
-    let cache = app.path().app_cache_dir().map_err(|error| error.to_string())?;
+    let cache = match shell.world().cache() {
+        Some(cache) => cache.root().join("files"),
+        None => app.path().app_cache_dir().map_err(|error| error.to_string())?,
+    };
     local_files::fetch(&shell.world(), machine(machine_name)?, path, &cache).await
 }
 
@@ -946,6 +956,7 @@ pub fn run() {
             kept::kept_usage,
             kept::kept_clear,
             kept::kept_forget,
+            item_details::item_detail,
             composer::composer_read,
             composer::composer_watch,
             composer::composer_update,

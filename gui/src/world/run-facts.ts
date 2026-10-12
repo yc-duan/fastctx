@@ -2,6 +2,8 @@ import type { RunState } from "./pages";
 import type { MachineName } from "./wire";
 
 export interface OutputRef {
+  policy?: string;
+  content?: import("./events").Fingerprint;
   machine: MachineName;
   path: string;
   bytes: number;
@@ -10,7 +12,7 @@ export interface OutputRef {
 }
 
 /** UTF-8 JSON lines, one DiffLine per row, read through the line-source APIs. */
-export interface DiffRef { machine: MachineName; path: string }
+export interface DiffRef { machine: MachineName; path: string; content?: import("./events").Fingerprint }
 
 export interface DiffLine {
   kind: "context" | "added" | "removed" | "hunk";
@@ -60,7 +62,7 @@ export interface OutputNoteMatch { note: OutputNote; from: number; to: number }
 /** Lazy full-output reader positions use 0-based indexed rows and UTF-16 units. */
 export interface LineNote { line: number; from: number; to: number; note: OutputNote }
 export interface ProjectedLines { start: number; lines: string[]; notes: LineNote[] }
-export interface LinePart { line: number; text: string; ended: boolean; note?: OutputNote }
+export interface LinePart { line: number; text: string; ended: boolean; note?: OutputNote; utf16_length?: number }
 
 /** lines_open rejects with this object; other failures have no code. */
 export interface LineOpenError {
@@ -85,6 +87,7 @@ export interface JobFacts {
   call_id: string;
   primary: boolean;
   output: OutputRef | null;
+  notes?: OutputNoteMatch[];
   visited: [MachineName, string][];
   machine: MachineName;
   job: string;

@@ -149,5 +149,10 @@ impl Connection {
 /// What a device keeps of the conversations it views, in its application's
 /// own directory.
 pub fn kept(directory: &std::path::Path) -> Result<std::sync::Arc<fastctx_client::cache::Cache>, String> {
-    fastctx_client::cache::Cache::open(directory.join("cache").join("viewed")).map_err(|error| error.to_string())
+    if cfg!(desktop) {
+        let root = fastctx_platform::fastctx_root().map_err(|error| error.to_string())?;
+        fastctx_client::cache::Cache::under(&root).map_err(|error| error.to_string())
+    } else {
+        fastctx_client::cache::Cache::open(directory.join("cache").join("viewed")).map_err(|error| error.to_string())
+    }
 }

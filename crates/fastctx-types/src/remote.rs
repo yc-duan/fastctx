@@ -159,6 +159,10 @@ pub enum RemoteCall {
         request: crate::lines::ReadRequest,
         read: u64,
     },
+    ReadLineNotes {
+        request: crate::lines::ReadRequest,
+        read: u64,
+    },
     FindFiles {
         request: crate::file_search::FileSearchRequest,
     },
@@ -376,6 +380,7 @@ impl RemoteCall {
             | RemoteCall::Thumbnail { .. }
             | RemoteCall::Lines { .. }
             | RemoteCall::ReadLines { .. }
+            | RemoteCall::ReadLineNotes { .. }
             | RemoteCall::Canon { .. }
             | RemoteCall::CopySend { .. }
             | RemoteCall::CopyFetch { .. }

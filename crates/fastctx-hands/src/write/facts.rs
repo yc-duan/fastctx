@@ -145,7 +145,11 @@ impl Capture {
             unavailable: None,
             added: Some(diff.count_additions()),
             removed: Some(diff.count_removals()),
-            diff: Some(DiffRef { machine: self.machine.clone(), path: artifact.to_string_lossy().into_owned() }),
+            diff: Some(DiffRef {
+                content: Some(crate::files::content_fingerprint(&artifact).map_err(|error| error.to_string())?),
+                machine: self.machine.clone(),
+                path: artifact.to_string_lossy().into_owned(),
+            }),
         }))
     }
 }

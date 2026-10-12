@@ -37,6 +37,7 @@ pub async fn read(
     account: AccountName,
     request: fastctx_types::lines::ReadRequest,
     sender: &Sender,
+    only_notes: bool,
 ) -> Result<Reply, Failure> {
     let source = request.source.clone();
     let read = u64::from_le_bytes(crate::sign::random::<8>().map_err(|error| Failure::new(error.to_string()))?);
@@ -64,8 +65,10 @@ pub async fn read(
             }
         })
     });
+    let call =
+        if only_notes { RemoteCall::ReadLineNotes { request, read } } else { RemoteCall::ReadLines { request, read } };
     let reply = link
-        .call_with_stream(&machine, &account, Purpose::Hands, RemoteCall::ReadLines { request, read }, feed)
+        .call_with_stream(&machine, &account, Purpose::Hands, call, feed)
         .await
         .map_err(|error| Failure::new(error.to_string()))??;
     let RemoteReply::Lines(reply) = reply else {

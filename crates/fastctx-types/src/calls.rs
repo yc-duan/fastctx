@@ -153,6 +153,10 @@ pub enum Call {
         machine: Option<MachineName>,
         request: crate::lines::ReadRequest,
     },
+    ReadLineNotes {
+        machine: Option<MachineName>,
+        request: crate::lines::ReadRequest,
+    },
     /// File-name completion, with scope checked on the machine holding it.
     FindFiles {
         machine: Option<MachineName>,

@@ -89,6 +89,31 @@ pub(crate) async fn resolve(
             .await
             .map_err(failed)?;
     }
+    if let AttachmentSource::HostImage { host_image: HostImage::Codex { turn, message, image }, .. } = &source {
+        let thread = about.session.as_deref().ok_or_else(Failure::original_gone)?;
+        if let Some(picture) =
+            node.codex.of(&about)?.user_picture(thread, turn, *message, *image).await.map_err(failed)?
+        {
+            let picture = picture.ok_or_else(Failure::original_gone)?;
+            let temporary = node.world.path().join("image-reading");
+            let cancel = cancel.clone();
+            let resolved = tokio::task::spawn_blocking(move || match picture {
+                fastctx_hosts::codex::UserPicture::Local(path) => match local_image(path, &cancel) {
+                    Ok(file) => Ok(Some(file)),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                    Err(error) => Err(failed(error)),
+                },
+                fastctx_hosts::codex::UserPicture::Inline { mime, base64 } => {
+                    decoded(&temporary, &mime, &base64).map(Some).map_err(failed)
+                }
+            })
+            .await
+            .map_err(failed)??;
+            if let Some(file) = resolved {
+                return Ok(file);
+            }
+        }
+    }
     let paths = match about.host.agent.as_str() {
         "codex" => {
             let thread = about.session.as_deref().ok_or_else(Failure::original_gone)?;
@@ -398,6 +423,33 @@ fn claude_tool_image<'a>(blocks: &'a [Value], wanted: &ToolImage) -> Option<(&'a
         })
         .nth(wanted.image as usize)?;
     Some((&image["source"]["data"], false, image["source"]["media_type"].as_str().unwrap_or_default().into()))
+}
+
+/// A local picture named by the host's authoritative user item.
+fn local_image(path: PathBuf, cancel: &AtomicBool) -> io::Result<File> {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "the picture read was cancelled"));
+    }
+    let file = fastctx_platform::file_read::open(&path)?;
+    let snapshot = fastctx_platform::file_read::snapshot(&file, &file.metadata()?)?;
+    let format = image::ImageReader::new(BufReader::new(file)).with_guessed_format()?.format().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "the host's local picture has no recognized image format")
+    })?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "the host's local picture has no UTF-8 file name"))?
+        .to_string();
+    Ok(File {
+        path,
+        snapshot,
+        description: AttachmentFile {
+            name,
+            media_type: format.to_mime_type().into(),
+            source: AttachmentFileSource::Original,
+        },
+        _temporary: None,
+    })
 }
 
 /// An image a host gave as base64, written where it can be read as a file.

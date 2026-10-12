@@ -3,7 +3,7 @@
 //! Where a segment ends depends only on what comes before that point, so a
 //! history that grows keeps its earlier segments, and a change in the middle
 //! makes new segments only around it: a segment ends before each turn
-//! begins, once it holds at least `SMALLEST` bytes; after an event whose own
+//! begins; after an event whose own
 //! digest falls in one part in `SPREAD`, once it holds that much; and when it
 //! reaches `LARGEST`. The second rule puts ends in the same places again
 //! after a change, where a history has no turns the World saw.
@@ -14,9 +14,7 @@ use fastctx_types::session::held::{Held, Segment, SegmentId};
 use fastctx_types::session::{Happened, SessionEvent, Watched};
 use sha2::{Digest as _, Sha256};
 
-/// Below this a segment goes on past a turn's start: a viewer keeps each
-/// segment in a file, and a history of many short turns would otherwise
-/// make as many tiny files.
+/// Below this a segment does not end at a content-selected boundary.
 const SMALLEST: usize = 64 * 1024;
 /// Past this a segment ends, so that a change rarely sends much again.
 const LARGEST: usize = 1024 * 1024;
@@ -67,7 +65,7 @@ pub fn cut(events: Vec<SessionEvent>) -> Cut {
             _ => false,
         };
         previous_started = matches!(event.happened, Happened::TurnStarted { .. });
-        if starts && size >= SMALLEST {
+        if starts {
             close(&mut events_here, &mut digests, &mut size);
         }
         let bytes = serde_json::to_vec(&event).expect("session events serialize");
@@ -109,6 +107,10 @@ pub fn pieces(cut: Cut, held: &Held, version: String) -> Vec<Watched> {
         events += missing[first].events.len();
         bytes += sizes[first];
     }
+    let boundaries = turn_boundaries(&missing);
+    while first > 0 && !boundaries[first] {
+        first -= 1;
+    }
     if first == 0 {
         return vec![Watched::Segments { version, layout, segments: missing, complete: true }];
     }
@@ -117,4 +119,39 @@ pub fn pieces(cut: Cut, held: &Held, version: String) -> Vec<Watched> {
         Watched::Segments { version: version.clone(), layout: layout.clone(), segments: latest, complete: false },
         Watched::Segments { version, layout, segments: missing, complete: true },
     ]
+}
+
+/// Whether a segment begins before any words or items of its first turn.
+/// Turnless words without a delivery or message identity share one ordinal
+/// sequence, so their first occurrence is the only usable boundary.
+pub fn turn_boundaries(segments: &[Segment]) -> Vec<bool> {
+    let mut seen = HashSet::new();
+    segments
+        .iter()
+        .map(|segment| {
+            let mut boundary = false;
+            for (at, event) in segment.events.iter().enumerate() {
+                let turn = match &event.happened {
+                    Happened::TurnStarted { turn }
+                    | Happened::Began { turn, .. }
+                    | Happened::Grew { turn, .. }
+                    | Happened::Finished { turn, .. }
+                    | Happened::Updated { turn, .. }
+                    | Happened::TurnEnded { turn, .. }
+                    | Happened::Steps { turn, .. } => Some(turn.clone()),
+                    Happened::Heard { turn: None, delivery: Some(delivery), .. } => Some(format!("heard:{delivery}")),
+                    Happened::Heard { turn: None, message: Some(message), .. } => Some(format!("heard:{}", message.id)),
+                    Happened::Heard { turn, .. } => Some(turn.clone().unwrap_or_default()),
+                    _ => None,
+                };
+                if let Some(turn) = turn {
+                    let first = seen.insert(turn);
+                    if at == 0 {
+                        boundary = first;
+                    }
+                }
+            }
+            boundary
+        })
+        .collect()
 }

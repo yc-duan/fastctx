@@ -21,7 +21,17 @@ impl World {
         let Some(cache) = self.cache().cloned() else { return Ok(None) };
         let (root, key) = (cache.root().to_path_buf(), cache.picture_key(&attachment));
         let (looking, named) = (root.clone(), key.clone());
-        if let Some(found) = blocking(move || pictures::original(&looking, &named)).await? {
+        let fallback = cache.source_key(&attachment);
+        let locked = cache.clone();
+        let (request, generation, found) = blocking(move || {
+            let request = locked.request(&format!("original:{named}"))?;
+            let turn = locked.turn()?;
+            let found = pictures::original(&looking, &named)?;
+            let found = if found.is_none() { pictures::original(&looking, &fallback)? } else { found };
+            Ok((request, turn.generation(), found))
+        })
+        .await?;
+        if let Some(found) = found {
             return Ok(Some(found));
         }
         let mut reading = self.read_attachment(attachment.clone()).await?;
@@ -31,7 +41,7 @@ impl World {
             .clone()
             .ok_or_else(|| Error::Unexpected("the node supplied no attachment metadata".into()))?;
         let random = fastctx_net::sign::random::<8>().map_err(Error::Kept)?;
-        let incoming = root.join("originals").join(format!(".incoming-{:016x}", u64::from_le_bytes(random)));
+        let incoming = root.join(".incoming").join(format!("original-{:016x}", u64::from_le_bytes(random)));
         let Some(path) = pictures::place(&incoming, &file.name) else {
             return Err(Error::Kept(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -41,6 +51,7 @@ impl World {
         let folder = path.parent().expect("an original has a folder").to_path_buf();
         let making = folder.clone();
         blocking(move || fastctx_platform::ensure_private_dir(&making)).await?;
+        let pending = Pending(incoming.clone());
         let mut digest = Sha256::new();
         let written = async {
             let mut out = tokio::fs::File::create(&path).await?;
@@ -52,16 +63,34 @@ impl World {
         }
         .await;
         if let Err(error) = written {
-            let _ = std::fs::remove_dir_all(&incoming);
             return Err(Error::Kept(error));
         }
         let sha256 = format!("{:x}", digest.finalize());
         // Bytes named by a digest that are not those bytes, such as a host's
         // own copy of a picture whose original is gone, are kept by their
         // source instead.
-        let key = if key.len() == 64 && key != sha256 { cache.source_key(&attachment) } else { key };
+        let key = if key.len() == 64 && key != sha256 {
+            if file.source == fastctx_types::attachments::AttachmentFileSource::Original {
+                return Err(Error::Other("the original changed since its history was read".into()));
+            }
+            cache.source_key(&attachment)
+        } else {
+            key
+        };
         blocking(move || {
+            let _pending = pending;
+            let _request = request;
+            let turn = cache.turn()?;
+            if turn.generation() != generation {
+                std::fs::remove_dir_all(&incoming)?;
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "the viewed cache was cleared during the original read",
+                ));
+            }
             let target = root.join("originals").join(&key);
+            fastctx_platform::ensure_private_dir(&root.join("originals"))?;
+            pictures::kept_original(&path, &file)?;
             match std::fs::rename(&folder, &target) {
                 Ok(()) => {}
                 // Fetched meanwhile by another viewer on this device.
@@ -73,11 +102,21 @@ impl World {
                 Err(error) => return Err(error),
             }
             let path = target.join(&file.name);
-            pictures::kept_original(&path, &file)?;
             Ok((path, file))
         })
         .await
         .map(Some)
+    }
+}
+
+struct Pending(PathBuf);
+impl Drop for Pending {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.0)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!("discarding an unfinished original cache: {error}");
+        }
     }
 }
 

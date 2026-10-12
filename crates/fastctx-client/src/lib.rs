@@ -13,6 +13,7 @@
 //! application's own directory.
 
 mod address;
+mod artifact_sink;
 pub mod attachments;
 pub mod cache;
 mod collab;
@@ -22,7 +23,10 @@ pub mod device;
 pub mod features;
 pub mod file_read;
 mod file_search;
+mod frozen_lines;
+mod frozen_output;
 pub mod host;
+mod line_rows;
 mod lines;
 mod lines_read;
 mod management;

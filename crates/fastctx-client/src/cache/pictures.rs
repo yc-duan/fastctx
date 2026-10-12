@@ -31,20 +31,23 @@ impl Pictures {
         for event in events {
             match &event.happened {
                 Happened::Heard { message: Some(message), .. } => {
-                    for attachment in message.attachments.iter().filter(|attachment| attachment.is_image()) {
+                    for attachment in &message.attachments {
+                        keys.push(source_key(&AttachmentSource::Upload(attachment.clone())));
                         keys.push(self.know(&AttachmentSource::Upload(attachment.clone()), &attachment.file.sha256));
                     }
                     for image in &message.images {
+                        keys.push(source_key(&image.source));
                         keys.push(match &image.content {
                             Some(print) => self.know(&image.source, &print.sha256),
                             None => source_key(&image.source),
                         });
                     }
                 }
-                Happened::Finished { item, .. } => {
+                Happened::Began { item, .. } | Happened::Finished { item, .. } | Happened::Updated { item, .. } => {
                     if let What::Tool(tool) = &item.what {
                         for content in &tool.output {
                             if let Content::ImageRef { content, source, .. } = content {
+                                keys.push(source_key(source));
                                 keys.push(self.know(source, &content.sha256));
                             }
                         }
@@ -91,6 +94,8 @@ fn is_digest(text: &str) -> bool {
 
 #[derive(Serialize, Deserialize)]
 struct Shape {
+    #[serde(default)]
+    content: Option<fastctx_types::session::Fingerprint>,
     width: u32,
     height: u32,
     mime: String,
@@ -112,6 +117,7 @@ pub(crate) fn thumbnail(root: &Path, key: &str, max: u32) -> io::Result<Option<T
     let shape: Shape = serde_json::from_slice(&bytes[..split]).map_err(|_| damaged())?;
     use base64::Engine as _;
     Ok(Some(Thumbnail {
+        content: shape.content,
         width: shape.width,
         height: shape.height,
         mime: shape.mime,
@@ -125,7 +131,12 @@ pub(crate) fn keep_thumbnail(root: &Path, key: &str, max: u32, thumbnail: &Thumb
     let picture = base64::engine::general_purpose::STANDARD
         .decode(&thumbnail.base64)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("the picture sent: {error}")))?;
-    let shape = Shape { width: thumbnail.width, height: thumbnail.height, mime: thumbnail.mime.clone() };
+    let shape = Shape {
+        content: thumbnail.content.clone(),
+        width: thumbnail.width,
+        height: thumbnail.height,
+        mime: thumbnail.mime.clone(),
+    };
     let mut bytes = serde_json::to_vec(&shape)?;
     bytes.push(b'\n');
     bytes.write_all(&picture)?;
@@ -144,7 +155,8 @@ pub(crate) fn original(root: &Path, key: &str) -> io::Result<Option<(PathBuf, At
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let path = folder.join(&file.name);
+    let path = place(&folder, &file.name)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "the kept original's name is not a file name"))?;
     Ok(path.try_exists()?.then_some((path, file)))
 }
 
@@ -167,6 +179,14 @@ pub(crate) fn kept_original(path: &Path, file: &AttachmentFile) -> io::Result<()
 
 /// Lets go of the pictures and files kept under `keys`.
 pub(crate) fn forget(root: &Path, keys: &HashSet<String>) -> io::Result<()> {
+    if keys.iter().any(|key| {
+        !(is_digest(key)
+            || key.strip_prefix('s').is_some_and(|key| {
+                key.len() == 32 && key.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            }))
+    }) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the cache index contains an invalid picture key"));
+    }
     if keys.is_empty() {
         return Ok(());
     }

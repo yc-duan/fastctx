@@ -16,6 +16,12 @@ use fastctx_types::lines::{Direction, Match, Position};
 
 const RECORD: u64 = 40;
 
+/// The canonical output decoder, including its ordered native fallbacks.
+pub fn output_policy() -> String {
+    let pages: Vec<_> = fastctx_platform::legacy_text::code_pages().into_iter().map(|page| page.name()).collect();
+    format!("terminal-v1:{pages:?}")
+}
+
 struct Row {
     start: u64,
     end: u64,

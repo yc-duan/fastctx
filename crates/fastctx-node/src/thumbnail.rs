@@ -126,6 +126,17 @@ async fn here(
     .await
     .map_err(|error| Failure::new(error.to_string()))?
     .map_err(Failure::new)?;
+    let content = if uploaded.is_some() {
+        let source = path.clone();
+        Some(
+            tokio::task::spawn_blocking(move || fastctx_hands::files::content_fingerprint(&source))
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?
+                .map_err(|error| Failure::new(error.to_string()))?,
+        )
+    } else {
+        None
+    };
     let args =
         ["thumbnail-worker".into(), path.as_os_str().to_owned(), max.to_string().into(), budget.to_string().into()];
     let borrowed: Vec<_> = args.iter().map(|arg| arg.as_os_str()).collect();
@@ -166,7 +177,10 @@ async fn here(
     if before != after {
         return Err(Failure::new("the image changed while decoding"));
     }
-    serde_json::from_slice(&output).map_err(|error| Failure::new(format!("invalid thumbnail result: {error}")))
+    let mut thumbnail: Thumbnail =
+        serde_json::from_slice(&output).map_err(|error| Failure::new(format!("invalid thumbnail result: {error}")))?;
+    thumbnail.content = content;
+    Ok(thumbnail)
 }
 
 fn dimensions(file: &mut std::fs::File, cancelled: &AtomicBool) -> Result<(u32, u32), String> {
@@ -288,8 +302,13 @@ pub fn worker(path: &Path, max: u32, budget: u64) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         "image/jpeg"
     };
-    let thumbnail =
-        Thumbnail { width, height, mime: mime.into(), base64: base64::engine::general_purpose::STANDARD.encode(bytes) };
+    let thumbnail = Thumbnail {
+        content: None,
+        width,
+        height,
+        mime: mime.into(),
+        base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+    };
     serde_json::to_writer(std::io::stdout().lock(), &thumbnail).map_err(|error| error.to_string())?;
     std::io::stdout().flush().map_err(|error| error.to_string())
 }

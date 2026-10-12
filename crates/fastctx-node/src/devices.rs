@@ -55,6 +55,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::ReadAttachment { .. }
             | RemoteCall::Lines { .. }
             | RemoteCall::ReadLines { .. }
+            | RemoteCall::ReadLineNotes { .. }
             | RemoteCall::Upload { .. }
             // Names of the user's files for an `@` in their words: the
             // machine that has them limits the search to the conversation's

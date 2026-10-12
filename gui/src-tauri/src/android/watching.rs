@@ -17,10 +17,16 @@ pub(crate) async fn open(
     machine: Option<MachineName>,
     again: bool,
 ) -> Result<(Conversation, Vec<SessionEvent>), String> {
-    if let (Some(machine), Some(cache)) = (&machine, world.cache()) {
+    if let Some(machine) = &machine
+        && let Some(cache) = world.cache().cloned()
+    {
         let address = Address { machine: machine.clone(), resident: resident.clone() };
-        if cache.holds(&address).map_err(|error| error.to_string())? {
-            return opening(world, resident, Some(address.machine), again).await.map_err(|error| error.to_string());
+        let held = tokio::task::spawn_blocking(move || cache.holds(&address))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
+        if held {
+            return opening(world, resident, machine.clone().into(), again).await.map_err(|error| error.to_string());
         }
     }
     let (_, mut connection) =
@@ -65,9 +71,23 @@ pub(crate) async fn stream(
     world: World,
     resident: ResidentId,
     machine: Option<MachineName>,
-    initial: Conversation,
+    mut initial: Conversation,
     pieces: Channel<Piece>,
 ) {
+    if initial.has_cached_rest() {
+        match initial.update().await {
+            Ok(Some(Update::History(history))) => {
+                if pieces.send(Piece::Reset { history }).is_err() {
+                    return;
+                }
+            }
+            Err(error) => {
+                let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
+                return;
+            }
+            _ => unreachable!("cached rest precedes network updates"),
+        }
+    }
     let mut connection = match world.device().expect("Android device").machine_changes(machine.as_ref()) {
         Ok((_, connection)) => connection,
         Err(error) => {
@@ -84,8 +104,28 @@ pub(crate) async fn stream(
             let _ = pieces.send(Piece::Ended { error: Some("this device's connection has stopped".into()) });
             return;
         }
+        if shown
+            && !online
+            && let Some(kept) = conversation.as_mut()
+            && kept.has_cached_rest()
+        {
+            match kept.update().await {
+                Ok(Some(Update::History(history))) => {
+                    if pieces.send(Piece::Reset { history }).is_err() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
+                    return;
+                }
+                _ => unreachable!("cached rest precedes network updates"),
+            }
+        }
         if !online || !shown {
-            conversation = None;
+            if conversation.take().is_some() && pieces.send(Piece::Interrupted { error: None }).is_err() {
+                return;
+            }
         } else if conversation.is_none() {
             let read = tokio::select! {
                 changed = connection.changed() => { if changed.is_err() { return } continue; }
@@ -108,7 +148,7 @@ pub(crate) async fn stream(
         tokio::select! {
             changed = connection.changed() => {
                 if changed.is_err() { return; }
-                conversation = None;
+                if conversation.take().is_some() && pieces.send(Piece::Interrupted { error: None }).is_err() { return; }
             }
             changed = visible.changed() => { if changed.is_err() { return; } }
             piece = async {
@@ -118,8 +158,10 @@ pub(crate) async fn stream(
                 }
             } => {
                 match piece {
+                    Ok(Some(Update::Current)) => if pieces.send(Piece::Resumed).is_err() { return; },
                     Ok(Some(Update::Moment(moment))) => if pieces.send(Piece::Event { event: moment.event }).is_err() { return; },
                     Ok(Some(Update::History(history))) => if pieces.send(Piece::Reset { history }).is_err() { return; },
+                    Ok(Some(Update::Extended(history))) => if pieces.send(Piece::Extended { history }).is_err() { return; },
                     ended => {
                         conversation = None;
                         let error = ended.err().map(|error| error.to_string());

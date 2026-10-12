@@ -24,14 +24,20 @@ pub enum Pictures<'a> {
     Referenced { owner: &'a Address },
 }
 
+/// Current requests are supplied by each watch, never restored from disk.
+pub fn transient(event: &SessionEvent) -> bool {
+    matches!(
+        event.happened,
+        Happened::Changed { change: SessionChange::Request { .. } | SessionChange::Resolved { .. }, .. }
+    )
+}
+
 /// Slims `event` to what an interface draws; false when it draws nothing of
 /// it.
 pub fn slim(event: &mut SessionEvent, pictures: &Pictures) -> bool {
     match &mut event.happened {
         Happened::Heard { message: Some(message), .. } => {
-            if matches!(pictures, Pictures::Referenced { .. }) {
-                fingerprints(message);
-            }
+            fingerprints(message);
             // The host's own blocks repeat the words and carry the pictures'
             // bytes; the words are in the event's text and the pictures are
             // named by `images`.
@@ -145,6 +151,8 @@ fn fingerprints(message: &mut UserMessage) {
                 .map(|(_, data)| data),
             HostImage::Codex { .. } => None,
         };
-        image.content = data.and_then(fingerprint);
+        if let Some(content) = data.and_then(fingerprint) {
+            image.content = Some(content);
+        }
     }
 }

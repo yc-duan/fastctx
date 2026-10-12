@@ -628,7 +628,11 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::ReadLines { request, read } => {
                     let stream = stream.ok_or_else(|| Failure::new("logical rows require a data connection"))?;
-                    crate::lines::reading::remote(&node, &link, from, request, read, stream).await
+                    crate::lines::reading::remote(&node, &link, from, request, false, read, stream).await
+                }
+                RemoteCall::ReadLineNotes { request, read } => {
+                    let stream = stream.ok_or_else(|| Failure::new("logical rows require a data connection"))?;
+                    crate::lines::reading::remote(&node, &link, from, request, true, read, stream).await
                 }
                 RemoteCall::Open {
                     agent,

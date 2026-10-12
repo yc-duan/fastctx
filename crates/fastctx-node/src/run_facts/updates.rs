@@ -12,6 +12,8 @@ static EMITTING: Mutex<()> = Mutex::new(());
 struct Emitted {
     sequence: u64,
     state: Option<RunState>,
+    #[serde(default)]
+    output_ended: bool,
 }
 
 pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io::Result<()> {
@@ -40,17 +42,51 @@ pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io
         Err(error) if error.kind() == io::ErrorKind::NotFound => Emitted::default(),
         Err(error) => return Err(error),
     };
-    if writes.is_empty() && emitted.state.as_ref() == Some(&state) {
+    let output_ended = record.output_ended_at.is_some();
+    // A stopped capture can finish draining without changing its RunState.
+    if writes.is_empty() && emitted.state.as_ref() == Some(&state) && emitted.output_ended == output_ended {
         return Ok(());
     }
     emitted.sequence =
         emitted.sequence.checked_add(1).ok_or_else(|| io::Error::other("job facts sequence exhausted"))?;
     emitted.state = Some(state.clone());
+    emitted.output_ended = output_ended;
+    let (output, notes) = if record.output_ended_at.is_some() {
+        let content = fastctx_hands::files::content_fingerprint(Path::new(&record.output))?;
+        let index = fastctx_hands::lines::Index::open(
+            Path::new(&record.output),
+            node.world.path(),
+            true,
+            None,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .map_err(io::Error::other)?;
+        let notes = fastctx_hands::run::projection::CapturedNotes::read(
+            Path::new(&record.output),
+            content.size,
+            &super::writes(record_path)?,
+        )?
+        .matches();
+        (
+            Some(OutputRef {
+                policy: Some(fastctx_hands::lines::output_policy()),
+                machine: record.machine.clone(),
+                path: record.output.clone(),
+                bytes: content.size,
+                lines: index.length,
+                cut: false,
+                content: Some(content),
+            }),
+            Some(notes),
+        )
+    } else {
+        (None, None)
+    };
     let update = JobFacts {
         call_id,
         primary: record.on.is_none(),
-        // Job records have no measured output extent; the fitted call answer supplies it.
-        output: None,
+        output,
+        notes,
         visited: crate::jobs::visited(record_path.parent().expect("job record has a directory"), &record.id),
         machine: record.machine.clone(),
         job: record.id.clone(),

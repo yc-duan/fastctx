@@ -11,6 +11,8 @@ pub struct ThumbnailRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Thumbnail {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<crate::session::Fingerprint>,
     pub width: u32,
     pub height: u32,
     pub mime: String,

@@ -250,6 +250,16 @@ impl Session {
                     facts,
                     regions,
                     full_output: fastctx_types::run_facts::OutputRef {
+                        policy: reply
+                            .run
+                            .as_ref()
+                            .and_then(|run| run.output.as_ref())
+                            .and_then(|output| output.policy.clone()),
+                        content: reply
+                            .run
+                            .as_ref()
+                            .and_then(|run| run.output.as_ref())
+                            .and_then(|output| output.content.clone()),
                         machine: reply.machine.clone(),
                         path: reply.output.log.clone(),
                         bytes: reply.output.bytes,
@@ -268,16 +278,15 @@ impl Session {
                         fastctx_hands::run::present::display_path(&reply.output.log)
                     )),
                     shown: shown_whole(&reply).then(|| reply.job.clone()),
-                completed: (!matches!(
-                    reply.state,
-                    fastctx_types::run::RunState::Running | fastctx_types::run::RunState::Exited { .. }
-                ))
-                .then(|| fastctx_types::run::CompletedJob {
-                    machine: reply.machine.clone(),
-                    job: reply.job.clone(),
-                    output: reply.output.log.clone(),
-                }),
-
+                    completed: (!matches!(
+                        reply.state,
+                        fastctx_types::run::RunState::Running | fastctx_types::run::RunState::Exited { .. }
+                    ))
+                    .then(|| fastctx_types::run::CompletedJob {
+                        machine: reply.machine.clone(),
+                        job: reply.job.clone(),
+                        output: reply.output.log.clone(),
+                    }),
                 }
             }
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),

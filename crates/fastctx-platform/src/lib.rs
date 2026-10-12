@@ -52,6 +52,7 @@ pub mod uninstall_gate;
 #[cfg(unix)]
 mod unix_fds;
 pub mod unix_socket;
+pub mod viewed_cache;
 #[cfg(windows)]
 mod windows_job;
 #[cfg(windows)]

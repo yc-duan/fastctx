@@ -37,6 +37,8 @@ mod server;
 mod tool_images;
 mod transport;
 mod user_images;
+mod user_picture;
+pub use user_picture::UserPicture;
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;

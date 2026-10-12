@@ -14,8 +14,8 @@ use fastctx_types::session::{Happened, SessionChange, SessionEvent, Watched};
 use fastctx_types::{Address, MachineName, ResidentId};
 use tokio::sync::mpsc;
 
+use crate::Watching;
 use crate::world::{Error, Said, World};
-use crate::{CallError, Watching};
 
 /// A watched session, and the turn the latest words went into.
 ///
@@ -23,7 +23,7 @@ use crate::{CallError, Watching};
 /// raced against typing or a timer: a frame half read from the node is never
 /// dropped by a `select!`. Dropping the conversation ends the watch.
 pub struct Conversation {
-    pieces: mpsc::UnboundedReceiver<Result<Option<Watched>, CallError>>,
+    pieces: mpsc::UnboundedReceiver<Result<Option<Watched>, Error>>,
     following: Option<Following>,
     queued: VecDeque<SessionEvent>,
     seen: HashSet<String>,
@@ -40,17 +40,25 @@ pub struct Conversation {
     again: Option<(World, Address)>,
     /// Why the watch could not start, said once what was kept was shown.
     failed: Option<Error>,
+    recording: Option<Recording>,
+    refresh_due: bool,
+    current_due: bool,
 }
 
 type Working = tokio::task::JoinHandle<(kept::Keeping, Result<Option<Vec<SessionEvent>>, Error>)>;
+type Recording = tokio::task::JoinHandle<(kept::Keeping, Moment, Result<(), Error>)>;
 
 /// What [`Conversation::update`] hands over.
 #[derive(Clone, Debug)]
 pub enum Update {
+    /// The host's initial history is reconciled, even when nothing changed.
+    Current,
     /// Something happened.
     Moment(Moment),
     /// The history is now this, in place of what was handed over before.
     History(Vec<SessionEvent>),
+    /// New history after what was handed over; the preceding history agrees.
+    Extended(Vec<SessionEvent>),
 }
 
 /// What the latest words are waiting on.
@@ -89,6 +97,7 @@ impl Conversation {
         };
         let mut conversation = Self::reading(watching);
         conversation.reset(&history);
+        conversation.current_due = true;
         Ok((conversation, history))
     }
 
@@ -108,41 +117,44 @@ impl Conversation {
         Self::opening(world, address, true).await
     }
 
+    /// Local history is still due even while a device has no connection.
+    pub fn has_cached_rest(&self) -> bool {
+        self.keeping.as_ref().is_some_and(|keeping| keeping.rest_due())
+    }
+
     async fn opening(world: &World, address: Address, whole: bool) -> Result<(Self, Vec<SessionEvent>), Error> {
         let Some(cache) = world.cache().cloned() else {
             return Self::watch(world, address.resident, Some(address.machine)).await;
         };
         let (mut keeping, latest) = kept::Keeping::open(cache, address.clone(), whole).await?;
-        let watching = world.watch_held(address.resident.clone(), Some(address.machine.clone()), keeping.held()).await;
+        let held = keeping.held();
+        let world_to_read = world.clone();
+        let at = address.clone();
+        let watching = async move { world_to_read.watch_held(at.resident, Some(at.machine), held).await };
         if let Some(latest) = latest {
-            let mut conversation = match watching {
-                Ok(watching) => Self::reading(watching),
-                Err(error) => {
-                    let mut conversation = Self::reading_nothing();
-                    conversation.failed = Some(error);
-                    conversation
-                }
-            };
+            let mut conversation = Self::reading_after(watching);
             conversation.reset(&latest);
             conversation.keeping = Some(keeping);
             conversation.again = Some((world.clone(), address));
             return Ok((conversation, latest));
         }
-        let mut conversation = Self::reading(watching?);
+        let mut conversation = Self::reading_after(watching);
         let history = loop {
             match conversation.pieces.recv().await {
                 Some(Ok(Some(Watched::Live { event }))) => conversation.queued.push_back(event),
                 Some(Ok(Some(watched))) => {
+                    let watched = conversation.pending_from(watched);
                     if let Some(history) = keeping.take(watched).await? {
                         break history;
                     }
                 }
                 Some(Ok(None)) | None => break Vec::new(),
-                Some(Err(error)) => return Err(error.into()),
+                Some(Err(error)) => return Err(error),
             }
         };
         conversation.reset(&history);
         conversation.keeping = Some(keeping);
+        conversation.current_due = conversation.keeping.as_mut().expect("kept history").current();
         conversation.again = Some((world.clone(), address));
         Ok((conversation, history))
     }
@@ -150,6 +162,19 @@ impl Conversation {
     /// The next thing to hand over of a conversation [`Conversation::open`]
     /// opened; `None` once the watch ended. Safe to cancel, as `next` is.
     pub async fn update(&mut self) -> Result<Option<Update>, Error> {
+        if std::mem::take(&mut self.current_due) {
+            return Ok(Some(Update::Current));
+        }
+        if std::mem::take(&mut self.refresh_due)
+            && let Some((world, address)) = self.again.clone()
+        {
+            let held = self.keeping.as_ref().expect("a kept conversation can be watched again").held();
+            self.pieces =
+                Self::reading_after(
+                    async move { world.watch_held(address.resident, Some(address.machine), held).await },
+                )
+                .pieces;
+        }
         if self.working.is_none()
             && self.keeping.as_ref().is_some_and(|keeping| keeping.rest_due())
             && let Some(mut keeping) = self.keeping.take()
@@ -160,6 +185,18 @@ impl Conversation {
             }));
         }
         loop {
+            if let Some(recording) = &mut self.recording {
+                let (keeping, moment, saved) =
+                    recording.await.map_err(|error| Error::Kept(std::io::Error::other(error)))?;
+                self.recording = None;
+                self.keeping = Some(keeping);
+                saved?;
+                self.refresh_due = matches!(
+                    moment.event.happened,
+                    Happened::Changed { change: SessionChange::HistoryChanged | SessionChange::HistoryCut { .. }, .. }
+                );
+                return Ok(Some(Update::Moment(moment)));
+            }
             if let Some(working) = &mut self.working {
                 let done = working.await;
                 self.working = None;
@@ -167,12 +204,26 @@ impl Conversation {
                     done.map_err(|error| Error::Kept(std::io::Error::other(format!("keeping the history: {error}"))))?;
                 match done {
                     Ok(Some(history)) => {
+                        self.current_due = keeping.current();
+                        let extended = keeping.extended();
                         self.keeping = Some(keeping);
+                        if extended {
+                            self.remember(&history);
+                            return Ok(Some(Update::Extended(history)));
+                        }
                         self.reset(&history);
                         return Ok(Some(Update::History(history)));
                     }
-                    Ok(None) => self.keeping = Some(keeping),
+                    Ok(None) => {
+                        let current = keeping.current();
+                        self.keeping = Some(keeping);
+                        if current {
+                            return Ok(Some(Update::Current));
+                        }
+                    }
                     Err(error) if keeping.lost(&error) => {
+                        keeping.discard_damage(&error)?;
+                        keeping.renew_generation()?;
                         let (world, address) = self.again.clone().expect("a kept conversation can be watched again");
                         let held = keeping.held();
                         self.keeping = Some(keeping);
@@ -191,13 +242,24 @@ impl Conversation {
                 return Err(error);
             }
             if let Some(moment) = self.queued_moment() {
-                if let Happened::Changed {
-                    change: SessionChange::HistoryChanged | SessionChange::HistoryCut { .. },
-                    ..
-                } = &moment.event.happened
-                    && let Some(keeping) = &self.keeping
-                {
-                    keeping.rewritten()?;
+                if let Some(mut keeping) = self.keeping.take() {
+                    self.recording = Some(tokio::spawn(async move {
+                        let saved = async {
+                            if matches!(
+                                moment.event.happened,
+                                Happened::Changed {
+                                    change: SessionChange::HistoryChanged | SessionChange::HistoryCut { .. },
+                                    ..
+                                }
+                            ) {
+                                keeping.rewritten(&moment.event)?;
+                            }
+                            keeping.record(moment.event.clone()).await
+                        }
+                        .await;
+                        (keeping, moment, saved)
+                    }));
+                    continue;
                 }
                 return Ok(Some(Update::Moment(moment)));
             }
@@ -208,8 +270,9 @@ impl Conversation {
                 }
                 Some(Ok(Some(watched))) => watched,
                 Some(Ok(None)) | None => return Ok(None),
-                Some(Err(error)) => return Err(error.into()),
+                Some(Err(error)) => return Err(error),
             };
+            let watched = self.pending_from(watched);
             let Some(mut keeping) = self.keeping.take() else {
                 let Watched::History { events } = watched else {
                     return Err(Error::Unexpected("segments of a history no one asked for".into()));
@@ -225,9 +288,34 @@ impl Conversation {
     }
 
     /// A conversation read from `watching`, in a task of its own.
-    fn reading(mut watching: Watching) -> Self {
+    fn reading(watching: Watching) -> Self {
+        Self::reading_after(async { Ok(watching) })
+    }
+
+    fn pending_from(&mut self, mut watched: Watched) -> Watched {
+        if let Watched::History { events } = &mut watched {
+            events.retain(|event| {
+                if fastctx_net::history::transient(event) {
+                    self.queued.push_back(event.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        watched
+    }
+
+    fn reading_after(open: impl std::future::Future<Output = Result<Watching, Error>> + Send + 'static) -> Self {
         let (sender, pieces) = mpsc::unbounded_channel();
         tokio::spawn(async move {
+            let mut watching = tokio::select! {
+                () = sender.closed() => return,
+                watching = open => match watching {
+                    Ok(watching) => watching,
+                    Err(error) => { let _ = sender.send(Err(error)); return; }
+                }
+            };
             loop {
                 tokio::select! {
                     // Nobody reads on: the watch ends with this task, and a
@@ -235,7 +323,7 @@ impl Conversation {
                     () = sender.closed() => return,
                     piece = watching.next() => {
                         let ended = !matches!(piece, Ok(Some(_)));
-                        if sender.send(piece).is_err() || ended {
+                        if sender.send(piece.map_err(Error::from)).is_err() || ended {
                             return;
                         }
                     }
@@ -245,12 +333,7 @@ impl Conversation {
         Self::from(pieces)
     }
 
-    /// A conversation whose watch did not start.
-    fn reading_nothing() -> Self {
-        Self::from(mpsc::unbounded_channel().1)
-    }
-
-    fn from(pieces: mpsc::UnboundedReceiver<Result<Option<Watched>, CallError>>) -> Self {
+    fn from(pieces: mpsc::UnboundedReceiver<Result<Option<Watched>, Error>>) -> Self {
         Self {
             pieces,
             following: None,
@@ -263,33 +346,35 @@ impl Conversation {
             working: None,
             again: None,
             failed: None,
+            recording: None,
+            refresh_due: false,
+            current_due: false,
         }
     }
 
     /// What came before is now `history`: what is live is told apart from it.
     fn reset(&mut self, history: &[SessionEvent]) {
-        self.seen = history.iter().filter_map(identity).collect();
-        self.finished_voice = history
-            .iter()
-            .filter_map(|event| match &event.happened {
-                Happened::Realtime { item, complete: true } => item["id"].as_str().map(str::to_string),
-                _ => None,
-            })
-            .collect();
-        self.finished = history
-            .iter()
-            .filter_map(|event| match &event.happened {
-                Happened::Finished { turn, item } => Some((turn.clone(), item.id.clone())),
-                _ => None,
-            })
-            .collect();
-        self.ended = history
-            .iter()
-            .filter_map(|event| match &event.happened {
-                Happened::TurnEnded { turn, .. } => Some(turn.clone()),
-                _ => None,
-            })
-            .collect();
+        self.seen.clear();
+        self.finished_voice.clear();
+        self.finished.clear();
+        self.ended.clear();
+        self.remember(history);
+    }
+
+    fn remember(&mut self, history: &[SessionEvent]) {
+        self.seen.extend(history.iter().filter_map(identity));
+        self.finished_voice.extend(history.iter().filter_map(|event| match &event.happened {
+            Happened::Realtime { item, complete: true } => item["id"].as_str().map(str::to_string),
+            _ => None,
+        }));
+        self.finished.extend(history.iter().filter_map(|event| match &event.happened {
+            Happened::Finished { turn, item } => Some((turn.clone(), item.id.clone())),
+            _ => None,
+        }));
+        self.ended.extend(history.iter().filter_map(|event| match &event.happened {
+            Happened::TurnEnded { turn, .. } => Some(turn.clone()),
+            _ => None,
+        }));
     }
 
     /// Words were said with `text` and landed as `said` says: what they go
@@ -330,7 +415,7 @@ impl Conversation {
                     return Err(Error::Unexpected("segments of a history no one asked for".into()));
                 }
                 Some(Ok(None)) | None => return Ok(None),
-                Some(Err(error)) => return Err(error.into()),
+                Some(Err(error)) => return Err(error),
             }
         }
     }

@@ -22,6 +22,10 @@ pub struct RunFacts {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<crate::session::Fingerprint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
     pub machine: MachineName,
     pub path: String,
     pub bytes: u64,
@@ -62,6 +66,8 @@ pub enum WriteNote {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<crate::session::Fingerprint>,
     pub machine: MachineName,
     /// UTF-8 JSON lines, one DiffLine per displayed row.
     pub path: String,
@@ -168,6 +174,8 @@ pub struct JobFacts {
     pub call_id: String,
     pub primary: bool,
     pub output: Option<OutputRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<Vec<OutputNoteMatch>>,
     pub visited: Vec<(MachineName, JobId)>,
     pub machine: MachineName,
     pub job: JobId,

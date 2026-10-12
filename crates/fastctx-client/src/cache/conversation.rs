@@ -3,7 +3,7 @@
 //! which make up the history now and which version that is.
 
 use std::collections::{HashMap, HashSet};
-use std::io;
+use std::io::{self, Write as _};
 use std::path::PathBuf;
 
 use fastctx_platform::{FileLock, Permissions, publish};
@@ -22,8 +22,18 @@ pub(crate) struct Index {
     pub layout: Vec<SegmentId>,
     /// How many events each segment of the layout holds.
     pub events: Vec<usize>,
+    #[serde(default)]
+    pub boundaries: Vec<bool>,
     /// The pictures the history shows, by their keys (`super::pictures`).
     pub pictures: Vec<String>,
+    #[serde(default)]
+    pub blobs: Vec<String>,
+    #[serde(default)]
+    pub live_sequence: u64,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub rewrite: Option<String>,
     pub updated: jiff::Timestamp,
     /// Its machine said the history was rewritten since.
     #[serde(default)]
@@ -41,6 +51,14 @@ pub(crate) struct Whole {
     pub events: Vec<SessionEvent>,
     /// How many events each segment of the layout holds.
     pub counts: Vec<usize>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct Live {
+    #[serde(default)]
+    pub sequence: u64,
+    #[serde(flatten)]
+    pub event: SessionEvent,
 }
 
 impl Entry {
@@ -66,6 +84,58 @@ impl Entry {
         let bytes = std::fs::read(&path)?;
         fastctx_net::history::unpack(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
+    }
+
+    pub fn live(&self) -> io::Result<Vec<SessionEvent>> {
+        let mut seen = HashSet::new();
+        Ok(self
+            .live_records()?
+            .into_iter()
+            .filter_map(|record| {
+                seen.insert(serde_json::to_vec(&record.event).expect("session events serialize"))
+                    .then_some(record.event)
+            })
+            .collect())
+    }
+
+    pub fn live_records(&self) -> io::Result<Vec<Live>> {
+        let bytes = match std::fs::read(self.directory.join("live.jsonl")) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)))
+            .collect()
+    }
+
+    pub fn record(&self, event: &SessionEvent, sequence: u64) -> io::Result<()> {
+        let mut bytes = serde_json::to_vec(&Live { sequence, event: event.clone() })?;
+        bytes.push(b'\n');
+        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(self.directory.join("live.jsonl"))?;
+        file.write_all(&bytes)?;
+        file.sync_data()
+    }
+
+    pub fn keep_live(&self, live: &[Live]) -> io::Result<()> {
+        if live.is_empty() {
+            return self.clear_live();
+        }
+        let mut bytes = Vec::new();
+        for record in live {
+            serde_json::to_writer(&mut bytes, record)?;
+            bytes.push(b'\n');
+        }
+        publish(&self.directory.join("live.jsonl"), &bytes, Permissions::Private)
+    }
+
+    pub fn clear_live(&self) -> io::Result<()> {
+        match std::fs::remove_file(self.directory.join("live.jsonl")) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
     }
 
     /// Writers of one conversation take turns, from the first segment they
@@ -104,7 +174,7 @@ impl Entry {
     /// Keeps `index`, and lets go of the segments it no longer names. Call
     /// it in turn (`Entry::turn`).
     pub fn keep_index(&self, index: &Index) -> io::Result<()> {
-        publish(&self.directory.join("index.json"), &serde_json::to_vec(index)?, Permissions::Private)?;
+        self.write_index(index)?;
         let named: HashSet<String> = index.layout.iter().map(|id| format!("{id}.zst")).collect();
         for entry in std::fs::read_dir(&self.directory)? {
             let entry = entry?;
@@ -117,6 +187,10 @@ impl Entry {
             }
         }
         Ok(())
+    }
+
+    pub fn write_index(&self, index: &Index) -> io::Result<()> {
+        publish(&self.directory.join("index.json"), &serde_json::to_vec(index)?, Permissions::Private)
     }
 
     pub fn remove(&self) -> io::Result<()> {

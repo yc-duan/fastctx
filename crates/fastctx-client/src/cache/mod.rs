@@ -19,6 +19,7 @@
 //! hashed into the names above.
 
 mod conversation;
+pub(crate) mod lines;
 pub(crate) mod pictures;
 
 use std::collections::HashSet;
@@ -37,6 +38,7 @@ use pictures::Pictures;
 pub struct Cache {
     root: PathBuf,
     pictures: Mutex<Pictures>,
+    lines: Mutex<lines::Known>,
 }
 
 /// How much the cache holds.
@@ -68,7 +70,11 @@ impl Cache {
     /// The cache under `root`, made on first use.
     pub fn open(root: PathBuf) -> io::Result<Arc<Self>> {
         fastctx_platform::ensure_private_dir(&root)?;
-        Ok(Arc::new(Self { root, pictures: Mutex::new(Pictures::default()) }))
+        Ok(Arc::new(Self {
+            root,
+            pictures: Mutex::new(Pictures::default()),
+            lines: Mutex::new(lines::Known::default()),
+        }))
     }
 
     pub fn root(&self) -> &Path {
@@ -76,7 +82,7 @@ impl Cache {
     }
 
     pub(crate) fn entry(&self, address: &Address) -> Entry {
-        Entry::new(self.conversations().join(key(&format!("{}\n{}", address.machine, address.resident))))
+        Entry::new(self.conversations().join(key(&format!("{}\n{}", address.machine.key(), address.resident))))
     }
 
     fn conversations(&self) -> PathBuf {
@@ -86,6 +92,7 @@ impl Cache {
     /// Learns what the pictures `events` show are, so they are kept by
     /// their bytes; returns their keys.
     pub(crate) fn learn(&self, events: &[fastctx_types::session::SessionEvent]) -> Vec<String> {
+        self.lines.lock().expect("known lines").learn(events);
         self.pictures.lock().expect("never poisoned").learn(events)
     }
 
@@ -102,11 +109,13 @@ impl Cache {
 
     /// Whether the conversation at `address` is kept here.
     pub fn holds(&self, address: &Address) -> io::Result<bool> {
+        let _turn = self.turn()?;
         Ok(self.entry(address).index()?.is_some())
     }
 
     /// How much is kept, conversation by conversation.
     pub fn usage(&self) -> io::Result<Usage> {
+        let _turn = self.turn()?;
         let mut usage = Usage::default();
         for name in ["pictures", "originals"] {
             usage.pictures += size_of(&self.root.join(name))?;
@@ -121,39 +130,115 @@ impl Cache {
             });
         }
         usage.conversations.sort_by(|a, b| b.bytes.cmp(&a.bytes));
-        usage.bytes = size_of(&self.root)?;
+        usage.bytes = usage.pictures
+            + size_of(&self.conversations())?
+            + size_of(&self.root.join("blobs"))?
+            + size_of(&self.root.join("files"))?;
         Ok(usage)
     }
 
     /// Lets go of everything kept; what is open draws again from the
     /// machines its conversations live on.
     pub fn clear(&self) -> io::Result<()> {
-        for name in ["conversations", "pictures", "originals"] {
-            match std::fs::remove_dir_all(self.root.join(name)) {
-                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-                _ => {}
-            }
-        }
+        self.turn()?.clear()?;
         self.pictures.lock().expect("never poisoned").clear();
+        self.lines.lock().expect("known lines").clear();
         Ok(())
     }
 
     /// Lets go of one conversation, as when it is removed or deleted, and of
     /// the pictures no other conversation kept here shows.
     pub fn forget(&self, address: &Address) -> io::Result<()> {
+        let mut turn = self.turn()?;
         let entry = self.entry(address);
-        let gone: HashSet<String> = match entry.index()? {
-            Some(index) => index.pictures.into_iter().collect(),
+        let (gone, blobs): (HashSet<String>, HashSet<String>) = match entry.index()? {
+            Some(index) => (index.pictures.into_iter().collect(), index.blobs.into_iter().collect()),
             None => return Ok(()),
         };
+        turn.invalidate()?;
         entry.remove()?;
         let mut shown = HashSet::new();
+        let mut held_blobs = HashSet::new();
         for directory in directories(&self.conversations())? {
             if let Some(index) = Entry::new(directory).index()? {
                 shown.extend(index.pictures);
+                held_blobs.extend(index.blobs);
             }
         }
-        pictures::forget(&self.root, &gone.difference(&shown).cloned().collect())
+        pictures::forget(&self.root, &gone.difference(&shown).cloned().collect())?;
+        for key in blobs.difference(&held_blobs) {
+            if !lines::valid_key(key) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "the cache index contains an invalid artifact key",
+                ));
+            }
+            match std::fs::remove_dir_all(self.root.join("blobs").join(key)) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn turn(&self) -> io::Result<fastctx_platform::viewed_cache::Turn> {
+        fastctx_platform::viewed_cache::Turn::acquire(&self.root)
+    }
+
+    pub(crate) fn request(&self, name: &str) -> io::Result<fastctx_platform::FileLock> {
+        let directory = self.root.join(".requests");
+        fastctx_platform::ensure_private_dir(&directory)?;
+        fastctx_platform::FileLock::acquire(&directory.join(key(name)))
+    }
+
+    pub(crate) fn line_keys(&self, events: &[fastctx_types::session::SessionEvent]) -> Vec<String> {
+        self.lines.lock().expect("known lines").learn(events)
+    }
+
+    /// Called with the cache turn held, after a replacement index is published.
+    pub(crate) fn retire(&self, previous: &Index, current: &Index) -> io::Result<()> {
+        let old_pictures: HashSet<_> = previous.pictures.iter().cloned().collect();
+        let new_pictures: HashSet<_> = current.pictures.iter().cloned().collect();
+        let old_blobs: HashSet<_> = previous.blobs.iter().cloned().collect();
+        let new_blobs: HashSet<_> = current.blobs.iter().cloned().collect();
+        let mut pictures: HashSet<_> = old_pictures.difference(&new_pictures).cloned().collect();
+        let mut blobs: HashSet<_> = old_blobs.difference(&new_blobs).cloned().collect();
+        if pictures.is_empty() && blobs.is_empty() {
+            return Ok(());
+        }
+        for directory in directories(&self.conversations())? {
+            if let Some(index) = Entry::new(directory).index()? {
+                for key in index.pictures {
+                    pictures.remove(&key);
+                }
+                for key in index.blobs {
+                    blobs.remove(&key);
+                }
+            }
+        }
+        pictures::forget(&self.root, &pictures)?;
+        for key in blobs {
+            if !lines::valid_key(&key) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "the cache index contains an invalid artifact key",
+                ));
+            }
+            match std::fs::remove_dir_all(self.root.join("blobs").join(key)) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn frozen(
+        &self,
+        machine: &fastctx_types::MachineName,
+        path: &str,
+        decoding: &fastctx_types::lines::Decoding,
+    ) -> Option<lines::Frozen> {
+        self.lines.lock().expect("known lines").get(machine, path, decoding)
     }
 }
 

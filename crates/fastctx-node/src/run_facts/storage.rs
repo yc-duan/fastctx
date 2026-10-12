@@ -75,6 +75,22 @@ fn apply(stored: &mut StoredCall, update: &JobFacts) -> io::Result<()> {
         && stored.facts.job.as_ref() == Some(&update.job)
         && update.sequence >= stored.sequence
     {
+        if let Some(output) = &update.output {
+            if let Some(previous) = &mut stored.facts.output {
+                if previous.machine == output.machine && previous.path == output.path {
+                    previous.cut |= output.bytes > previous.bytes;
+                    previous.content = output.content.clone();
+                    previous.policy = output.policy.clone();
+                    previous.bytes = output.bytes;
+                    previous.lines = output.lines;
+                }
+            } else {
+                stored.facts.output = Some(output.clone());
+            }
+        }
+        if let Some(notes) = &update.notes {
+            stored.facts.notes = notes.clone();
+        }
         if let Some(state) = &update.state
             && (!terminal(&stored.facts.state) || terminal(state))
         {
@@ -139,6 +155,19 @@ pub(super) fn keep(directory: &ResidentDir, id: &str, facts: &RunFacts, display:
         stored.facts.spans.clear();
     }
     if let Some(previous) = previous {
+        if let (Some(output), Some(kept)) = (&mut stored.facts.output, &previous.facts.output)
+            && output.content.is_none()
+            && kept.content.is_some()
+            && output.machine == kept.machine
+            && output.path == kept.path
+        {
+            output.content = kept.content.clone();
+            output.policy = kept.policy.clone();
+            output.bytes = kept.bytes;
+            output.lines = kept.lines;
+            output.cut |= kept.cut;
+            stored.facts.notes = previous.facts.notes.clone();
+        }
         merge_writes(&mut stored.facts.writes, &previous.facts.writes)?;
         if terminal(&previous.facts.state) && !terminal(&stored.facts.state) {
             stored.facts.state = previous.facts.state;

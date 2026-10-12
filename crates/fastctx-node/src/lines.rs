@@ -24,6 +24,8 @@ type Key = (MachineName, String);
 pub(crate) struct Sources(Mutex<HashMap<Key, Arc<Source>>>);
 struct Source {
     path: PathBuf,
+    immutable: bool,
+    annotation: Option<String>,
     job_record: Option<PathBuf>,
     notes_record: Option<PathBuf>,
     state: Mutex<State>,
@@ -91,6 +93,19 @@ pub(crate) async fn open(
         let (reply, lease) = fastctx_net::lines::open(link, machine, account, path, decoding).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
+    let (decoding, expected, policy, annotation) = match decoding {
+        Decoding::Immutable { content, policy, annotation, decoding } => {
+            if matches!(*decoding, Decoding::Immutable { .. }) {
+                return Err(failed("an immutable line decoding cannot be nested"));
+            }
+            (*decoding, Some(content), policy, annotation)
+        }
+        decoding => (decoding, None, None, None),
+    };
+    let immutable = expected.is_some();
+    if policy.is_some_and(|policy| policy != fastctx_hands::lines::output_policy()) {
+        return Err(failed("the output decoding changed since its history was read"));
+    }
     let path = fastctx_platform::local_path(&path).map_err(failed)?;
     if !path.is_absolute() {
         return Err(failed("the text path must be absolute"));
@@ -111,6 +126,7 @@ pub(crate) async fn open(
             (Some(job_record), notes_record)
         }
         Decoding::File { .. } => (None, None),
+        Decoding::Immutable { .. } => unreachable!("unwrapped immutable decoding"),
     };
     let (events, event_rx) = tokio::sync::watch::channel(Ok(0u64));
     let notices = events.clone();
@@ -142,22 +158,30 @@ pub(crate) async fn open(
     let cancel = cancelled.0.clone();
     let (read_path, directory, record_path) = (path.clone(), node.world.path().to_path_buf(), job_record.clone());
     let note_path = notes_record.clone();
+    let expected_annotation = annotation.clone();
     let opened = tokio::task::spawn_blocking(move || {
         let snapshot = observe(&read_path).map_err(source_failed)?;
+        if let Some(expected) = expected
+            && fastctx_hands::files::content_fingerprint(&read_path).map_err(failed)? != expected
+        {
+            return Err(failed("the artifact no longer matches the history's content fingerprint"));
+        }
         let (output, selection) = match &decoding {
             Decoding::File { encoding } => (false, encoding.as_deref()),
             Decoding::Output { .. } => (true, None),
+            Decoding::Immutable { .. } => unreachable!("unwrapped immutable decoding"),
         };
         let index = fastctx_hands::lines::Index::open(&read_path, &directory, output, selection, cancel.clone())
             .map_err(failed)?;
         let after = observe(&read_path).map_err(source_failed)?;
-        if (!output && snapshot != after) || !snapshot.same_file(&after) || after.size < snapshot.size {
+        if ((immutable || !output) && snapshot != after) || !snapshot.same_file(&after) || after.size < snapshot.size {
             return Err(failed("the text source changed during indexing"));
         }
         let complete = complete(record_path.as_deref()).map_err(failed)?;
         let extent = Extent { length: index.length, complete, version: 0 };
         let (projection, writes, writes_revision) =
             projection::open(&read_path, snapshot.size, note_path.as_deref(), &cancel).map_err(failed)?;
+        projection::verify(projection.as_ref(), expected_annotation.as_deref()).map_err(failed)?;
         Ok::<_, Failure>(State {
             index: Some(index),
             snapshot,
@@ -173,6 +197,8 @@ pub(crate) async fn open(
     .map_err(failed)??;
     let source = Arc::new(Source {
         path: path.clone(),
+        immutable,
+        annotation,
         job_record,
         notes_record,
         state: Mutex::new(opened),
@@ -234,6 +260,7 @@ async fn refresh(source: Arc<Source>) -> std::result::Result<(), Failure> {
                 return Ok(None);
             }
             if source.job_record.is_none()
+                || source.immutable && state.snapshot != snapshot
                 || !state.snapshot.same_file(&snapshot)
                 || snapshot.size < state.snapshot.size
             {
@@ -254,6 +281,7 @@ async fn refresh(source: Arc<Source>) -> std::result::Result<(), Failure> {
             )? {
                 first = 0;
             }
+            projection::verify(state.projection.as_ref(), source.annotation.as_deref())?;
             state.snapshot = snapshot;
             let length = state.index.as_ref().expect("index").length;
             Ok(Some((length, ended, first)))

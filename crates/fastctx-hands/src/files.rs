@@ -9,6 +9,26 @@ pub fn content_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+/// Fingerprints an unchanged file without keeping its contents in memory.
+pub fn content_fingerprint(path: &Path) -> io::Result<fastctx_types::session::Fingerprint> {
+    use std::io::Read as _;
+    let mut file = fastctx_platform::file_read::open(path)?;
+    let before = fastctx_platform::file_read::snapshot(&file, &file.metadata()?)?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0; crate::spool::BLOCK];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    if fastctx_platform::file_read::snapshot(&file, &file.metadata()?)? != before {
+        return Err(io::Error::other("the artifact changed while its content was fingerprinted"));
+    }
+    Ok(fastctx_types::session::Fingerprint { size: before.size, sha256: format!("{:x}", hash.finalize()) })
+}
+
 /// Resolves links and existing ancestors, also for a file not yet created.
 /// Callers must use this same identity for the keys in `SeenFiles`.
 pub fn canonical_path(path: &Path) -> io::Result<PathBuf> {

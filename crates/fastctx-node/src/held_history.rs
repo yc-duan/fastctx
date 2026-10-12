@@ -20,21 +20,25 @@ use crate::talk::Opening;
 
 /// Named in every version, so that a viewer's copy made by an older way of
 /// slimming or cutting is never taken for the history as it is sent now.
-const FORM: &str = "fastctx history segments 1";
+const FORM: &str = "fastctx history segments: turn boundaries, artifact identities and shared output text";
 
 /// The first pieces of a watch of `resident` for a viewer that holds
 /// `held`, and the events after them, slimmed.
 pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held) -> Result<Opening, Failure> {
     let owner = Address { machine: node.machine(), resident: resident.clone() };
+    // Subscribe before checking a held version: a rewrite between the check
+    // and subscription must still reach the viewer that gets "unchanged".
+    let subscribed = held.version.as_ref().map(|_| crate::talk::subscribe(node, resident)).transpose()?;
     let version = stamp(node, resident).await?;
     if let Some(version) = &version
         && held.version.as_ref() == Some(version)
     {
-        let (events, pending) = crate::talk::subscribe(node, resident)?;
+        let (events, pending) = subscribed.expect("a held version subscribed before its stamp");
         let mut pieces = vec![Watched::Unchanged { version: version.clone() }];
         pieces.extend(live(pending, &owner));
         return Ok(Opening { pieces, events, slim: Some(owner) });
     }
+    drop(subscribed);
     let read = crate::talk::history_here(node, resident).await?;
     // Never repeated: a viewer that holds it is sent the history next time.
     let version = match version {
@@ -42,16 +46,51 @@ pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held
         None => format!("unstamped {:x}", u128::from_le_bytes(random()?)),
     };
     let (history, held_now, slimmed_for) = (read.history, held.clone(), owner.clone());
-    let mut pieces = tokio::task::spawn_blocking(move || {
+    let mut history = tokio::task::spawn_blocking(move || {
         let pictures = Pictures::Referenced { owner: &slimmed_for };
         let mut history = history;
         history.retain_mut(|event| history::slim(event, &pictures));
-        history::pieces(history::cut(history), &held_now, version)
+        history
     })
     .await
     .map_err(|error| Failure::new(format!("cutting the history into segments: {error}")))?;
+    picture_fingerprints(node, &mut history).await?;
+    let mut pieces = tokio::task::spawn_blocking(move || history::pieces(history::cut(history), &held_now, version))
+        .await
+        .map_err(|error| Failure::new(format!("cutting the history into segments: {error}")))?;
     pieces.extend(live(read.pending, &owner));
     Ok(Opening { pieces, events: read.events, slim: Some(owner) })
+}
+
+pub(crate) async fn picture_fingerprints(node: &Arc<Node>, events: &mut [SessionEvent]) -> Result<(), Failure> {
+    for event in events {
+        let fastctx_types::session::Happened::Heard { message: Some(message), .. } = &mut event.happened else {
+            continue;
+        };
+        for image in &mut message.images {
+            if image.content.is_some() {
+                continue;
+            }
+            let file = match crate::attachment_files::resolve(
+                node,
+                image.source.clone(),
+                Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            )
+            .await
+            {
+                Ok(file) => file,
+                Err(error) if error.code == Some(fastctx_types::ipc::FailureCode::OriginalGone) => continue,
+                Err(error) => return Err(error),
+            };
+            image.content = Some(
+                tokio::task::spawn_blocking(move || fastctx_hands::files::content_fingerprint(&file.path))
+                    .await
+                    .map_err(|error| Failure::new(error.to_string()))?
+                    .map_err(|error| Failure::new(error.to_string()))?,
+            );
+        }
+    }
+    Ok(())
 }
 
 /// What the resident's host waits on someone to answer now, sent as it
