@@ -17,6 +17,7 @@ pub mod collab_prompt;
 pub mod composer;
 pub mod copy;
 pub mod device;
+pub mod features;
 pub mod file_read;
 pub mod file_search;
 pub mod files;

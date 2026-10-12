@@ -487,3 +487,56 @@
     transition: none;
   }
 }
+
+/* Off, a feature's page is its story and its switch, held in the middle of
+   the page rather than stacked at its top with the rest left empty. */
+.features-body:has(> .feature-intro) {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100%;
+}
+
+.feature-intro {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-5) var(--space-7);
+  gap: var(--space-5);
+}
+
+/* What a feature gives, in a line each under its story. */
+.feature-gives {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3) var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.feature-gives li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: 360px;
+}
+
+.feature-give-mark {
+  flex: none;
+  color: var(--accent);
+  padding-top: 2px;
+}
+
+.feature-trouble {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.feature-after {
+  margin: var(--space-4) 0 0;
+}

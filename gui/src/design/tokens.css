@@ -60,6 +60,11 @@
   --radius-l: 16px;
   --radius-full: 999px;
 
+  /* Glyphs are drawn at their nominal size times this, rounded to whole
+     pixels: a size up from the nominal everywhere, more under a finger
+     (below). */
+  --icon-scale: 1.2;
+
   /* The activity rail: a 20px column of glyphs, then 10px. */
   --rail-glyph: 20px;
   --rail-gap: 10px;
@@ -277,5 +282,20 @@
     --write: 0ms;
     --write-after: 0ms;
     --send: 0ms;
+  }
+}
+
+/* Every glyph at its nominal size times the scale, in whole pixels; where
+   rounding is not understood, the glyph keeps its nominal size. */
+.glyph {
+  width: round(nearest, calc(var(--glyph, 20) * var(--icon-scale) * 1px), 1px);
+  height: round(nearest, calc(var(--glyph, 20) * var(--icon-scale) * 1px), 1px);
+}
+
+/* Under a finger the glyphs are larger again: read at arm's length, pressed
+   with a thumb. */
+@media (hover: none) and (pointer: coarse) {
+  :root {
+    --icon-scale: 1.4;
   }
 }

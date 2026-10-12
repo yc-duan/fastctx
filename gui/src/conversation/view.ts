@@ -1405,13 +1405,17 @@ export class ConversationView {
       surface.append(holder);
     };
     // What the model got, and beside it in the full-screen view the whole
-    // output on its machine, where the model got less than the whole.
+    // output on its machine, where the model got less than the whole or the
+    // command went on after the model had its answer.
     let printed: string | LongLines = output;
     if (run && shown) {
       const others: OtherSource[] = [];
       const kept = run.output;
       const going = stillGoing(run.state);
-      if (kept && run.job && this.context.lines && (kept.cut || going)) {
+      // A command that went on in the background gave the model only what it
+      // wrote before then; the rest is in the file, after it ended as well.
+      const wentOn = tool.does.as === "command" && tool.does.job !== null;
+      if (kept && run.job && this.context.lines && (kept.cut || going || wentOn)) {
         const open = this.context.lines;
         const job = run.job;
         const whole = new WholeOutput(

@@ -69,13 +69,14 @@ impl Caller {
             return Ok(town);
         }
         Err(Failure::new(match self {
-            Caller::Resident(address) if address.machine != node.machine() => {
-                format!("name the town: {} lives on {}, which knows where it lives", address.resident, address.machine)
+            Caller::Resident(address) if address.machine != node.machine() => format!(
+                "name the project: this session's project is known on {}, where it runs; `fastctx project list` lists the projects",
+                address.machine
+            ),
+            Caller::Resident(_) => {
+                "this session is not in a project yet; name one (`fastctx project list` lists them)".to_string()
             }
-            Caller::Resident(address) => {
-                format!("name the town: {} lives in none yet (fastctx project list lists the towns)", address.resident)
-            }
-            _ => "name the town (fastctx project list lists them)".to_string(),
+            _ => "name the project (`fastctx project list` lists them)".to_string(),
         }))
     }
 }

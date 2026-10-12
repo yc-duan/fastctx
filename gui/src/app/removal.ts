@@ -36,6 +36,9 @@ export class RemovalSection {
     private readonly host: HTMLElement,
     private readonly words: RemovalWords,
     private readonly seam: Removing,
+    /** Told when steps start running and when they have ended: the dialog
+     *  around it does not close in between. */
+    private readonly working: (on: boolean) => void = () => {},
   ) {
     host.addEventListener("click", (event) => {
       const target = (event.target as HTMLElement).closest<HTMLElement>("[data-removal]");
@@ -124,6 +127,7 @@ export class RemovalSection {
   private run(plan: RemovalPlan): void {
     const results = new Map<string, Result>();
     this.state = { at: "running", plan, results };
+    this.working(true);
     this.draw();
     let left: { kind: string; what: string; where: string | null; why: string }[] = [];
     this.seam
@@ -141,6 +145,7 @@ export class RemovalSection {
       )
       .then(({ error }) => {
         this.state = { at: "finished", plan, results, left, error };
+        this.working(false);
         this.draw();
       });
   }

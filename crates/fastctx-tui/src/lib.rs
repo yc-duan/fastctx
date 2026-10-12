@@ -58,6 +58,8 @@ async fn live(world: World) -> anyhow::Result<()> {
     let (answer_sender, mut answers) = mpsc::unbounded_channel();
     let mut app = App::new(look, words, Page::World(WorldPage::new()));
     let mut feeds = Feeds::new(world.clone(), answer_sender.clone());
+    let (features_sender, mut features) = mpsc::unbounded_channel();
+    let following = tokio::spawn(feed::features(world.clone(), features_sender));
     let mut breath = tokio::time::interval(BREATH);
     breath.set_missed_tick_behavior(MissedTickBehavior::Delay);
     // Times on the screen are read to the minute and counted in seconds.
@@ -78,6 +80,10 @@ async fn live(world: World) -> anyhow::Result<()> {
                 None => break,
             },
             Some((page, data)) = answers.recv() => app.data(page, data),
+            Some(changed) = features.recv() => {
+                app.features(changed);
+                Vec::new()
+            }
             _ = breath.tick(), if app.animating() => Vec::new(),
             _ = clock.tick() => Vec::new(),
         };
@@ -103,6 +109,7 @@ async fn live(world: World) -> anyhow::Result<()> {
         }
     }
     drop(feeds);
+    following.abort();
     drop(screen);
     match failed {
         Some(why) => anyhow::bail!("the terminal's input could not be read: {why}"),

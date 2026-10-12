@@ -155,7 +155,9 @@ pub fn place() -> Result<String, String> {
 
 /// First placement finishes before the interface makes its first World
 /// calls. The CLI stages an asynchronous handover even on a fresh root.
-#[cfg(target_os = "linux")]
+/// Where nothing put fastctx in place yet, opening the interface does: a
+/// node is started from it, here as on a computer in no network.
+#[cfg(desktop)]
 pub fn place_initial() -> Result<(), String> {
     use fastctx_types::renewal::Phase;
     place()?;

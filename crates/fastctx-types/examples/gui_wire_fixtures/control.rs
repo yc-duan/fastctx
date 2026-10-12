@@ -95,6 +95,7 @@ pub fn fixtures() -> Fixtures {
                         description: "Faster responses".into(),
                     }],
                     default_service_tier: None,
+                    context_window: Some(1_000_000),
                 }],
                 model: Some("model".into()),
                 effort: Some("custom-effort".into()),

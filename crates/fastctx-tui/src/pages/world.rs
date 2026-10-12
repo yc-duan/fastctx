@@ -1,5 +1,6 @@
 //! The World: every project with who is in it, the agents in none, what
-//! still runs with nobody here who started it, and the machines.
+//! still runs with nobody here who started it, and the machines. Projects
+//! and agents belong to conversations, and show only while they are on.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use fastctx_client::TownView;
@@ -30,6 +31,8 @@ pub struct WorldPage {
     /// Whether an old fastctx's tools are still in this machine's Codex.
     old_tools: bool,
     program: Option<Result<fastctx_types::renewal::Status, String>>,
+    /// Whether conversations were on as the page was last drawn.
+    conversations: bool,
 }
 
 /// What an item of the page is.
@@ -57,7 +60,7 @@ impl WorldPage {
     }
 
     fn items(&self) -> Vec<Item> {
-        let Some(view) = &self.view else { return Vec::new() };
+        let Some(view) = self.view.as_ref().filter(|_| self.conversations) else { return Vec::new() };
         let towns = match &view.scope {
             Scope::World { towns } => towns.len(),
             Scope::Town { .. } => 0,
@@ -66,6 +69,10 @@ impl WorldPage {
     }
 
     pub fn data(&mut self, data: Data) -> Act {
+        if let Data::Done { job: crate::app::Job::Conversations { .. }, result: Err(why) } = data {
+            self.failed = Some(why);
+            return Act::Stay;
+        }
         if let Data::Program(status) = data {
             self.program = Some(status);
             return Act::Stay;
@@ -94,12 +101,15 @@ impl WorldPage {
         Act::Stay
     }
 
-    pub fn key(&mut self, _ctx: &Ctx, key: KeyEvent) -> Act {
+    pub fn key(&mut self, ctx: &Ctx, key: KeyEvent) -> Act {
+        self.conversations = ctx.features.conversations;
         let items = self.items();
         if self.list.key(&key, items.len()) {
             return Act::Stay;
         }
         match key.code {
+            KeyCode::Char('c') => Act::Do(crate::app::Job::Conversations { on: !self.conversations }),
+            KeyCode::Enter | KeyCode::Char('n' | 'p' | 'a') if !self.conversations => Act::Stay,
             KeyCode::Enter => match (items.get(self.list.selected), &self.view) {
                 (Some(Item::Town(index)), Some(TownView { scope: Scope::World { towns }, .. })) => {
                     Act::Push(Page::Project(Box::new(project::ProjectPage::new(towns[*index].town.clone()))))
@@ -124,6 +134,7 @@ impl WorldPage {
     }
 
     pub fn draw(&mut self, ctx: &Ctx, frame: &mut Frame, area: Rect) {
+        self.conversations = ctx.features.conversations;
         let words = &ctx.words;
         let width = paint::column(area).width as usize;
         let mut rows = Vec::new();
@@ -132,7 +143,9 @@ impl WorldPage {
         }
         let mut item = 0;
         if let Some(view) = &self.view {
-            if let Scope::World { towns } = &view.scope {
+            if let Scope::World { towns } = &view.scope
+                && self.conversations
+            {
                 paint::open_section(&mut rows, paint::section(words.projects(), &ctx.look));
                 if towns.is_empty() {
                     rows.push(Row::new(quiet(ctx, words.no_projects())));
@@ -169,7 +182,7 @@ impl WorldPage {
                     item += 1;
                 }
             }
-            if !view.residents.is_empty() {
+            if !view.residents.is_empty() && self.conversations {
                 paint::open_section(&mut rows, paint::section(words.outside(), &ctx.look));
                 for resident in &view.residents {
                     let (left, right) = who::first_line(ctx, resident);
@@ -231,14 +244,19 @@ impl WorldPage {
             crumbs: vec![words.world().to_string()],
             right: link_line(ctx, self.nodes.as_ref()),
             rows,
-            keys: vec![
-                ("Enter", words.key_open()),
-                ("n", words.key_new_agent()),
-                ("p", words.key_new_project()),
-                ("m", words.key_machines()),
-                ("a", if self.all { words.key_present_only() } else { words.key_all() }),
-                ("q", words.key_quit()),
-            ],
+            keys: if self.conversations {
+                vec![
+                    ("Enter", words.key_open()),
+                    ("n", words.key_new_agent()),
+                    ("p", words.key_new_project()),
+                    ("m", words.key_machines()),
+                    ("a", if self.all { words.key_present_only() } else { words.key_all() }),
+                    ("c", words.key_conversations(true)),
+                    ("q", words.key_quit()),
+                ]
+            } else {
+                vec![("m", words.key_machines()), ("c", words.key_conversations(false)), ("q", words.key_quit())]
+            },
             note,
         };
         sheet(ctx, frame, area, &page, &mut self.list);

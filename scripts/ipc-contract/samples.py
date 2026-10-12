@@ -33,6 +33,12 @@ def replies(fixtures):
     yield {"reply": "machines", "here": "desktop", "others": ["laptop"], "collab": {
         "callees": [{"name": "deep", "account": "ada", "use_when": "Check a precise point", "lives_on": "laptop"}],
         "prompt": "The account's collaboration text"}}
+    # A computer in no network offers its own callees, which work for no
+    # account; an older reader is offered only those that do.
+    yield {"reply": "machines", "here": "desktop", "others": [], "collab": {
+        "callees": [{"name": "quick", "use_when": "Check one file", "lives_on": "desktop"},
+                    {"name": "deep", "account": "ada", "use_when": "Check a precise point", "lives_on": "laptop"}],
+        "prompt": "This computer's collaboration text"}}
     yield {"reply": "asked", "colleague": ADDRESS}
     for landed in [{"kind": "uncertain", "why": "interrupted"}, {"kind": "new_turn", "turn": "a"},
                    {"kind": "joined_turn", "turn": "b"}, {"kind": "waiting", "why": "offline", "answered": True},

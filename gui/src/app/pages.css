@@ -1150,3 +1150,91 @@ a.details-job {
     display: none;
   }
 }
+
+/* This computer's facts in settings: one column of labels for every row of
+   the group, whichever part of the page draws it, the same space between
+   all of them, and what a row says of itself beside its value. */
+.settings-device .facts + .facts {
+  margin-top: var(--space-2);
+}
+
+.settings-device .facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  row-gap: 2px;
+}
+
+.settings-device .facts dd > .settings-said {
+  flex: 0 1 auto;
+  margin: 0;
+}
+
+.settings-device .facts dd > .settings-notes,
+.settings-device .facts dd > .settings-steps {
+  flex: 1 1 100%;
+}
+
+.settings-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.settings-link .glyph {
+  color: var(--text-3);
+  transform: rotate(-90deg);
+}
+
+.settings-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.settings-device .facts {
+  align-items: baseline;
+}
+
+/* In: the drawing, the line that says where, who, and the way in, held
+   together in the middle of the page. The drawing is a picture only. */
+.login-page.in .welcome {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.login-page.in .welcome-body {
+  width: min(560px, 100%);
+  margin: 0 auto;
+}
+
+.welcome-done .welcome-drawing {
+  height: clamp(200px, 30dvh, 300px);
+  margin-top: 0;
+  pointer-events: none;
+}
+
+.welcome-done-who {
+  font-family: var(--font-body, inherit);
+  letter-spacing: 0.02em;
+}
+
+.welcome-done-acts {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+
+.welcome-done-acts .sheet-go {
+  min-width: 160px;
+}
+
+.welcome-done .welcome-slips {
+  width: auto;
+  max-width: 100%;
+}

@@ -75,7 +75,13 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     }
     let mut offers = if running {
         let value = invoke(node, resident, json!({"do":"offers"})).await?;
-        serde_json::from_value::<Offers>(value).map_err(|error| Failure::new(format!("Claude offers: {error}")))?
+        let mut offers =
+            serde_json::from_value::<Offers>(value).map_err(|error| Failure::new(format!("Claude offers: {error}")))?;
+        // The mod lists the aliases this login's Claude Code offers; the
+        // World offers its own table's rows of those families.
+        let aliases: Vec<String> = offers.models.drain(..).map(|model| model.id).collect();
+        offers.models = fastctx_hosts::claude::models::model_offers(Some(&aliases));
+        offers
     } else {
         let selected = about
             .session
@@ -125,6 +131,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
                 .and_then(|value| value["effort"].as_str())
                 .map(str::to_owned)
                 .or(initial.reasoning_effort),
+            models: fastctx_hosts::claude::models::model_offers(None),
             ..Default::default()
         }
     };

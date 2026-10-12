@@ -43,12 +43,15 @@ export interface CollabView {
   default_prompt: string;
 }
 
-export function readCollab(hub: string, account: string): Promise<CollabView> {
+/** An account's settings at a hub, or, with no account, this computer's
+ *  own, which apply while it is in no network. */
+export function readCollab(hub: string | null, account: string | null): Promise<CollabView> {
   return invoke("collab_read", { hub, account });
 }
 
-/** Writes the settings over the version they were read at; the new version. */
-export function writeCollab(hub: string, account: string, collab: Collab): Promise<number> {
+/** Writes the settings over the version they were read at; the new version.
+ *  This computer's own are written only while it is in no network. */
+export function writeCollab(hub: string | null, account: string | null, collab: Collab): Promise<number> {
   return invoke("collab_write", { hub, account, collab });
 }
 
