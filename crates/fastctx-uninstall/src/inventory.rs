@@ -24,11 +24,30 @@ pub enum Action {
     Stop,
     Host(apply::Integration),
     ClaudeCache(PathBuf),
+    ClaudeWorkCache {
+        directory: PathBuf,
+        diagnostics: PathBuf,
+        working_directories: Vec<String>,
+        sessions: Vec<String>,
+        temporary: bool,
+    },
+    ClaudeSessionCache {
+        path: PathBuf,
+        job: Option<PathBuf>,
+        sessions: Vec<String>,
+    },
     Service(service::Registration),
     ServicePart(String),
     Legacy(fastctx_install::uninstall::Legacy),
-    Trust { home: PathBuf, key: String },
-    Logout { identity: PathBuf, directory: PathBuf, account: Option<fastctx_types::AccountName> },
+    Trust {
+        home: PathBuf,
+        key: String,
+    },
+    Logout {
+        identity: PathBuf,
+        directory: PathBuf,
+        account: Option<fastctx_types::AccountName>,
+    },
     Programs,
     WorldData,
     HubData(PathBuf),
@@ -69,6 +88,8 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
         request.installation.graphical = installation.graphical;
         retain_legacy_archives(&mut request);
         crate::claude_cache::include_steps(&mut request);
+        crate::claude_work_cache::include_steps(&mut request)?;
+        crate::claude_session_cache::include_steps(&mut request)?;
         let marker = fastctx_types::layout::WorldDir::under(&request.installation.root).node_service();
         if marker.try_exists()?
             && !request.steps.iter().any(|step| matches!(&step.action, Action::Delete(path) if path == &marker))
@@ -447,6 +468,8 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
     plan.other = programs.first().cloned();
     let mut request = Request { installation, plan, steps, system_results: Vec::new() };
     crate::claude_cache::include_steps(&mut request);
+    crate::claude_work_cache::include_steps(&mut request)?;
+    crate::claude_session_cache::include_steps(&mut request)?;
     Ok(request)
 }
 

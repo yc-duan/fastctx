@@ -61,6 +61,8 @@ export function groupOf(kind: string): RemovalGroup {
     case "codex":
     case "claude":
     case "claude-cache":
+    case "claude-work-cache":
+    case "claude-shared-cache":
     case "claude-trust":
       return "agents";
     case "data":
@@ -106,6 +108,8 @@ export const zhRemoval: RemovalWords = {
     codex: "Codex 接入",
     claude: "Claude Code 接入",
     "claude-cache": "Claude Code 插件缓存",
+    "claude-work-cache": "Claude Code 缓存、日志与临时文件",
+    "claude-shared-cache": "归属不明的 Claude Code 缓存",
     "claude-trust": "Claude Code 目录信任",
     program: "fastctx 程序",
     path: "PATH 条目",
@@ -126,6 +130,8 @@ export const zhRemoval: RemovalWords = {
   },
   leftWhy: {
     data: "按你的选择保留",
+    "claude-work-cache": "按你的选择保留",
+    "claude-shared-cache": "归属不能确定，原样保留",
     legacy: "按你的选择保留",
     "other-program": "不归 World 管理，保持不变",
     "user-files": "保留你文件的原始版本，避免丢失之后的写入",
@@ -188,6 +194,8 @@ export const enRemoval: RemovalWords = {
     codex: "Codex integration",
     claude: "Claude Code integration",
     "claude-cache": "Claude Code plugin cache",
+    "claude-work-cache": "Claude Code cache, logs and temporary files",
+    "claude-shared-cache": "Claude Code cache with unproven ownership",
     "claude-trust": "Claude Code folder trust",
     program: "fastctx program",
     path: "PATH entry",
@@ -208,6 +216,8 @@ export const enRemoval: RemovalWords = {
   },
   leftWhy: {
     data: "Kept as you chose",
+    "claude-work-cache": "Kept as you chose",
+    "claude-shared-cache": "Ownership is unproven; kept unchanged",
     legacy: "Kept as you chose",
     "other-program": "Not managed by World, so it stays",
     "user-files": "Kept so later writes to your files aren't lost",

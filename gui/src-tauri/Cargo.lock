@@ -2024,6 +2024,7 @@ version = "1.0.0"
 dependencies = [
  "argon2 0.5.3",
  "base64 0.22.1",
+ "bytes",
  "ed25519-dalek",
  "fastctx-platform",
  "fastctx-types",

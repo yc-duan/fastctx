@@ -1,6 +1,9 @@
 //! Uninstall is independent of node startup and installation migration.
 
 mod claude_cache;
+mod claude_cache_paths;
+mod claude_session_cache;
+mod claude_work_cache;
 mod execute;
 mod helper;
 mod inventory;
