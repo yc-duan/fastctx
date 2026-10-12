@@ -64,6 +64,14 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             // which only the user gives, on the machine it is about.
             | RemoteCall::ClaudeConsent { .. }
             | RemoteCall::Relay { .. }
+            // The agents' logins of the user's own machines: scanned, taken
+            // up, changed and read only for the user, on the machine itself.
+            | RemoteCall::AgentLogins
+            | RemoteCall::ScanAgents { .. }
+            | RemoteCall::AddAgentLogin { .. }
+            | RemoteCall::PreviewAgentChange { .. }
+            | RemoteCall::ChangeAgentLogin { .. }
+            | RemoteCall::ReadAgentLimits { .. }
             // What is there, as the account may see it.
             | RemoteCall::Agents
             | RemoteCall::Look { .. }

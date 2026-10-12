@@ -110,6 +110,17 @@ impl Device {
                 (machine, RemoteCall::ClaudeConsent { accept, home }, None)
             }
             Call::Homes { machine, change } => (machine, RemoteCall::Homes { change }, None),
+            Call::ScanAgents { machine, stop } => (machine, RemoteCall::ScanAgents { stop }, None),
+            Call::AddAgentLogin { machine, agent, dir } => (machine, RemoteCall::AddAgentLogin { agent, dir }, None),
+            Call::PreviewAgentChange { machine, agent, dir, into } => {
+                (machine, RemoteCall::PreviewAgentChange { agent, dir, into }, None)
+            }
+            Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit } => {
+                (machine, RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit }, None)
+            }
+            Call::ReadAgentLimits { machine, agent, dir } => {
+                (machine, RemoteCall::ReadAgentLimits { agent, dir }, None)
+            }
             Call::Talk { to, machine, text, attachments, files_on } => {
                 let machine = self.find(&to, machine).await?;
                 (machine, RemoteCall::Talk { to: to.clone(), text, attachments, files_on }, Some(to))
@@ -161,6 +172,9 @@ impl Device {
             Call::Since { since, town } => return Ok((Reply::Since(self.since(since, town).await?), here())),
             Call::Look { ids } => return Ok((Reply::Looked { looked: self.look(ids).await? }, here())),
             Call::Agents { machine } => return Ok((Reply::Agents(self.agents(machine).await?), here())),
+            Call::AgentLogins { machine } => {
+                return Ok((Reply::AgentLogins(self.agent_logins(machine).await?), here()));
+            }
             Call::Nodes => return Ok((Reply::Nodes(self.nodes().await?), here())),
             // What only the projects' ledgers hold, one machine answers from
             // its own copy, for what this device's account may use.
@@ -208,6 +222,16 @@ impl Device {
             (RemoteCall::AttachmentThumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::Lines { .. }, RemoteReply::Lines(reply)) => Reply::Lines(reply),
             (RemoteCall::Homes { .. }, RemoteReply::Set) => Reply::Done,
+            (
+                RemoteCall::ScanAgents { .. } | RemoteCall::AddAgentLogin { .. } | RemoteCall::ReadAgentLimits { .. },
+                RemoteReply::AgentLogins(logins),
+            ) => Reply::MachineAgentLogins(logins),
+            (RemoteCall::PreviewAgentChange { .. }, RemoteReply::AgentChangePreview(preview)) => {
+                Reply::AgentChangePreview(preview)
+            }
+            (RemoteCall::ChangeAgentLogin { .. }, RemoteReply::AgentLoginChanged(change)) => {
+                Reply::AgentLoginChanged(change)
+            }
             (RemoteCall::ClaudeConsent { .. }, RemoteReply::ClaudeConsent { accepted, changed }) => {
                 Reply::ClaudeConsent { machine: machine.clone(), accepted, changed }
             }

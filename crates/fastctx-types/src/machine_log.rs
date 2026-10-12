@@ -43,6 +43,12 @@ pub enum Action {
         home: Option<PathBuf>,
         lent: bool,
     },
+    Plan {
+        machine: MachineName,
+        agent: AgentName,
+        home: Option<PathBuf>,
+        plan: Option<crate::accounts::PlanLabel>,
+    },
     StopActing {
         machine: MachineName,
     },

@@ -585,7 +585,15 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|(accepted, changed)| RemoteReply::ClaudeConsent { accepted, changed })
                 }
-                RemoteCall::Homes { change } => crate::homes::change(&node, change).map(|()| RemoteReply::Set),
+                RemoteCall::Homes { change } => crate::homes::change(&node, change).await.map(|()| RemoteReply::Set),
+                call @ (RemoteCall::AgentLogins
+                | RemoteCall::ScanAgents { .. }
+                | RemoteCall::AddAgentLogin { .. }
+                | RemoteCall::PreviewAgentChange { .. }
+                | RemoteCall::ChangeAgentLogin { .. }
+                | RemoteCall::ReadAgentLimits { .. }) => {
+                    crate::logins::remote::answer(&node, &link.view(), &asker, call).await
+                }
                 RemoteCall::FindFiles { request } => {
                     if let fastctx_types::file_search::FileSearchRequest::Open { scope } = request {
                         let stream =

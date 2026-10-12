@@ -177,17 +177,9 @@ pub async fn ask_here(
     if started.callee.login.machine != node.machine() {
         return Err(Failure::not_run("the configured callee lives on another machine"));
     }
-    let home = match started.callee.login.home.clone() {
-        None => None,
-        Some(dir) => {
-            let env = crate::claude::environment()?;
-            let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
-            let home = crate::homes::find(node, &env, &user_home, "codex", Some(&dir)).map_err(|failure| {
-                Failure::not_run(format!("{}; the user changes it on the Model collaboration page", failure.message))
-            })?;
-            (home.found != fastctx_types::agents::HomeFound::Default).then_some(home.dir)
-        }
-    };
+    let home = crate::homes::listed(node, "codex", started.callee.login.home.as_deref()).map_err(|failure| {
+        Failure::not_run(format!("{}; the user changes it on the Model collaboration page", failure.message))
+    })?;
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
     node.codex.home(home.as_deref())?.require_login().await.map_err(|error| {

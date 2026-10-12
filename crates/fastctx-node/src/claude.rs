@@ -1052,8 +1052,7 @@ struct Command {
 fn command(node: &Node, home: Option<&Path>) -> Result<Command, Failure> {
     let mut env = environment()?;
     if let Some(home) = home {
-        let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
-        crate::homes::find(node, &env, &user_home, "claude", Some(home))?;
+        crate::homes::listed(node, "claude", Some(home))?;
         env.retain(|(name, _)| !name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"));
         env.push(("CLAUDE_CONFIG_DIR".into(), home.as_os_str().to_owned()));
     }

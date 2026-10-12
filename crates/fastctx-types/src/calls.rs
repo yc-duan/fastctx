@@ -238,6 +238,53 @@ pub enum Call {
         machine: MachineName,
         change: crate::agents::HomeChange,
     },
+    /// What the nodes of one machine, or of every machine the asker may
+    /// use, keep of their agents' logins (`logins`); no process starts.
+    AgentLogins {
+        machine: Option<MachineName>,
+    },
+    /// Scans `machine`, one of the user's own, for its agents: answered
+    /// once the usual places are done, while the walk of every disk goes
+    /// on; or, with `stop`, stops that walk.
+    ScanAgents {
+        machine: MachineName,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stop: bool,
+    },
+    /// Takes up a directory on `machine` as a candidate login of `agent`,
+    /// asking the agent who is logged in there: one the user wrote, or one
+    /// the walk of every disk found.
+    AddAgentLogin {
+        machine: MachineName,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+    },
+    /// What putting the World's tools into a login on `machine` (`into`),
+    /// or taking them out, would change, with nothing written.
+    PreviewAgentChange {
+        machine: MachineName,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        into: bool,
+    },
+    /// Puts the World's tools into a login on `machine`, listing it, or
+    /// takes them out, removing it from the list; done by that machine's
+    /// node. Codex's shared output limit is raised only with
+    /// `raise_output_limit`.
+    ChangeAgentLogin {
+        machine: MachineName,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+        into: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raise_output_limit: bool,
+    },
+    /// Reads a login's usage limits afresh on its machine.
+    ReadAgentLimits {
+        machine: MachineName,
+        agent: AgentName,
+        dir: std::path::PathBuf,
+    },
     /// One resident or job in detail, by its id, from every machine that
     /// has it (`fastctx w <id>`).
     Look {
@@ -534,6 +581,10 @@ pub enum Reply {
     Who(WorldWho),
     Since(crate::since::WorldSince),
     Agents(WorldAgents),
+    AgentLogins(crate::logins::WorldLogins),
+    MachineAgentLogins(Box<crate::logins::MachineLogins>),
+    AgentChangePreview(Box<crate::logins::ChangePreview>),
+    AgentLoginChanged(Box<crate::logins::LoginChange>),
     Towns {
         towns: Vec<TownSummary>,
     },

@@ -1,4 +1,4 @@
-use fastctx_types::accounts::{MemberKind, Relay};
+use fastctx_types::accounts::{MemberKind, PlanLabel, Relay};
 use fastctx_types::machine_log::{Action, Actor, LoginMethod, Outcome, Page, Record};
 
 pub fn fixtures() -> Vec<Page> {
@@ -17,6 +17,7 @@ pub fn fixtures() -> Vec<Page> {
             home: Some("/home/me/agent".into()),
             lent: false,
         },
+        Action::Plan { machine: machine(), agent: "claude".parse().unwrap(), home: None, plan: Some(PlanLabel::Free) },
         Action::StopActing { machine: machine() },
         Action::Relays {
             machine: machine(),

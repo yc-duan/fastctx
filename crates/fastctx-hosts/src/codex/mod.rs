@@ -13,6 +13,7 @@
 //! `environments: []` disables the thread's own shell and file editing.
 
 mod account;
+pub use account::{LimitsHow, LimitsReport, buckets, limits_of, merge};
 mod accounting;
 pub use accounting::recorded_turn_facts;
 mod agents;
@@ -23,6 +24,7 @@ mod commands;
 mod contract;
 mod controls;
 mod history;
+pub mod identify;
 mod image_position;
 mod items;
 pub mod launch;
@@ -262,6 +264,8 @@ pub struct CodexHost {
     /// Woken whenever the app-server says how a thread's World tools
     /// started.
     tools_changed: Notify,
+    /// Where what the app-server reads or pushes of the login's limits goes.
+    limits: Mutex<Option<mpsc::UnboundedSender<account::LimitsReport>>>,
 }
 
 struct State {
@@ -368,6 +372,7 @@ impl CodexHost {
             starting: tokio::sync::Mutex::new(()),
             loading: tokio::sync::Mutex::new(()),
             tools_changed: Notify::new(),
+            limits: Mutex::new(None),
         });
         (host, receiver)
     }
@@ -906,6 +911,11 @@ impl CodexHost {
 
     /// Reads one notification about a thread.
     fn notified(&self, method: &str, params: &Value, at: Timestamp) {
+        // The login's limits, which no thread owns.
+        if method == "account/rateLimits/updated" {
+            self.limits_heard(at, account::LimitsHow::Updated(params["rateLimits"].clone()));
+            return;
+        }
         self.observe_controls(method, params);
         let revision = {
             let mut state = self.lock();

@@ -540,6 +540,8 @@ export const zhMachines: MachinesWords = {
         return a.shared ? `把 ${a.machine} 共享给 ${a.to}` : `收回 ${a.machine} 对 ${a.to} 的共享`;
       case "lend":
         return a.lent ? `把 ${a.machine} 上的 ${agentName(a.agent)} 借给 ${a.to}` : `收回借给 ${a.to} 的 ${agentName(a.agent)}`;
+      case "plan":
+        return a.plan ? `把 ${a.machine} 上 ${agentName(a.agent)} 的套餐标为 ${a.plan}` : `去掉 ${a.machine} 上 ${agentName(a.agent)} 的套餐标记`;
       case "stop_acting":
         return `撤销 ${a.machine} 访问的权限`;
       case "relays":
@@ -682,6 +684,8 @@ export const enMachines: MachinesWords = {
         return a.shared ? `Shared ${a.machine} with ${a.to}` : `Stopped sharing ${a.machine} with ${a.to}`;
       case "lend":
         return a.lent ? `Lent ${agentName(a.agent)} on ${a.machine} to ${a.to}` : `Took back ${agentName(a.agent)} from ${a.to}`;
+      case "plan":
+        return a.plan ? `Marked ${agentName(a.agent)} on ${a.machine} as ${a.plan}` : `Cleared the plan of ${agentName(a.agent)} on ${a.machine}`;
       case "stop_acting":
         return `Revoked ${a.machine}'s access`;
       case "relays":

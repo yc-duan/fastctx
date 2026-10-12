@@ -3,7 +3,7 @@
     {
       "records": [
         {
-          "id": 24,
+          "id": 25,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -20,7 +20,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 24,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -39,7 +39,7 @@
           }
         },
         {
-          "id": 22,
+          "id": 23,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -58,6 +58,26 @@
           "outcome": {
             "kind": "refused",
             "reason": "the machine is another account's"
+          }
+        },
+        {
+          "id": 22,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "plan",
+            "machine": "laptop",
+            "agent": "claude",
+            "home": null,
+            "plan": "free"
+          },
+          "outcome": {
+            "kind": "done"
           }
         },
         {
@@ -195,10 +215,10 @@
           "id": 14,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
-            "account": "ada",
-            "authenticated": true,
-            "member": "laptop",
-            "peer": null
+            "account": null,
+            "authenticated": false,
+            "member": null,
+            "peer": "203.0.113.10:4567"
           },
           "action": {
             "change": "password_finish",
@@ -212,10 +232,10 @@
           "id": 13,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
-            "account": null,
-            "authenticated": false,
-            "member": null,
-            "peer": "203.0.113.10:4567"
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
           },
           "action": {
             "change": "open_account",
@@ -1484,6 +1504,14 @@
                 "home": "/home/bo/.claude-team"
               }
             ],
+            "plans": [
+              {
+                "machine": "gpu",
+                "agent": "claude",
+                "home": "/home/bo/.claude-team",
+                "plan": "max"
+              }
+            ],
             "acting": [
               {
                 "machine": "gpu",
@@ -1531,6 +1559,19 @@
         "agent": "codex",
         "home": "C:/Users/ada/.codex-work",
         "lent": true
+      },
+      {
+        "change": "plan",
+        "machine": "gpu",
+        "agent": "claude",
+        "plan": "pro"
+      },
+      {
+        "change": "plan",
+        "machine": "gpu",
+        "agent": "claude",
+        "home": "/home/bo/.claude-team",
+        "plan": null
       },
       {
         "change": "stop_acting",
@@ -13200,6 +13241,1025 @@
       },
       {
         "reply": "set"
+      }
+    ]
+  },
+  "logins": {
+    "calls": [
+      {
+        "call": "agent_logins",
+        "machine": null
+      },
+      {
+        "call": "scan_agents",
+        "machine": "desktop"
+      },
+      {
+        "call": "add_agent_login",
+        "machine": "desktop",
+        "agent": "codex",
+        "dir": "D:/backup/.codex"
+      },
+      {
+        "call": "preview_agent_change",
+        "machine": "desktop",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "into": true
+      },
+      {
+        "call": "change_agent_login",
+        "machine": "desktop",
+        "agent": "codex",
+        "dir": "C:/Users/me/.codex",
+        "into": true,
+        "raise_output_limit": true
+      },
+      {
+        "call": "read_agent_limits",
+        "machine": "desktop",
+        "agent": "codex",
+        "dir": "C:/Users/me/.codex"
+      }
+    ],
+    "replies": [
+      {
+        "reply": "agent_logins",
+        "machine": "desktop",
+        "machines": [
+          {
+            "kind": "answered",
+            "logins": {
+              "machine": "desktop",
+              "scan": {
+                "started_at": "2026-10-11T12:00:00Z",
+                "usual": {
+                  "state": "done",
+                  "at": "2026-10-11T12:00:00Z"
+                },
+                "disks": {
+                  "stage": {
+                    "state": "running"
+                  },
+                  "disks": [
+                    {
+                      "root": "C:/",
+                      "directories": 12345,
+                      "unreadable": 2,
+                      "done": false
+                    }
+                  ]
+                },
+                "unreadable": [
+                  "C:/Program Files/WindowsApps: access denied"
+                ]
+              },
+              "codex": {
+                "programs": [
+                  {
+                    "path": "C:/app/codex.exe",
+                    "how": "desktop_app",
+                    "within": {
+                      "name": "ChatGPT",
+                      "id": "OpenAI.Codex",
+                      "version": "26.1007.2314.0",
+                      "path": "C:/Program Files/WindowsApps/OpenAI.Codex"
+                    },
+                    "on_path": false
+                  },
+                  {
+                    "path": "C:/npm/codex.cmd",
+                    "how": "npm",
+                    "version": "0.162.1",
+                    "on_path": true
+                  }
+                ],
+                "listed": [
+                  {
+                    "dir": "C:/Users/me/.codex",
+                    "default": true,
+                    "found": "default",
+                    "identity": {
+                      "at": "2026-10-11T12:00:00Z",
+                      "who": {
+                        "kind": "known",
+                        "value": {
+                          "logged_in": true,
+                          "method": "chatgpt",
+                          "email": "me@example.com",
+                          "plan": "pro"
+                        }
+                      }
+                    },
+                    "limits": {
+                      "kind": "known",
+                      "value": {
+                        "observed_at": "2026-10-11T12:00:00Z",
+                        "windows": [
+                          {
+                            "name": "codex",
+                            "minutes": 10080,
+                            "used_tenths": 1000,
+                            "resets_at": "2026-10-14T00:00:00Z"
+                          }
+                        ],
+                        "credits": {
+                          "balance": "52086",
+                          "unlimited": false
+                        }
+                      }
+                    },
+                    "programs": [
+                      0,
+                      1
+                    ],
+                    "integration": "in",
+                    "launcher": {
+                      "path": "C:/app/codex.exe",
+                      "version": "0.162.0",
+                      "desktop_app": true
+                    },
+                    "models": [
+                      {
+                        "id": "gpt-6-luna",
+                        "model": "gpt-6-luna",
+                        "display_name": "GPT-6 Luna",
+                        "description": "",
+                        "is_default": true,
+                        "default_reasoning_effort": "low",
+                        "reasoning_efforts": [
+                          {
+                            "effort": "low",
+                            "description": ""
+                          }
+                        ]
+                      }
+                    ],
+                    "change": {
+                      "into": true,
+                      "started_at": "2026-10-11T12:00:00Z",
+                      "steps": [
+                        {
+                          "step": {
+                            "step": "program"
+                          },
+                          "state": {
+                            "state": "done"
+                          }
+                        },
+                        {
+                          "step": {
+                            "step": "files",
+                            "changed": [
+                              "C:/Users/me/.codex/config.toml"
+                            ]
+                          },
+                          "state": {
+                            "state": "done"
+                          }
+                        },
+                        {
+                          "step": {
+                            "step": "check",
+                            "scope": "effective Codex features"
+                          },
+                          "state": {
+                            "state": "failed",
+                            "reason": "still enabled: shell_tool"
+                          }
+                        }
+                      ],
+                      "end": {
+                        "end": "done",
+                        "at": "2026-10-11T12:00:00Z",
+                        "kept": [
+                          {
+                            "location": "AGENTS.md",
+                            "reason": "changed since apply; left untouched"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ],
+                "candidates": [
+                  {
+                    "dir": "C:/Users/me/CodexHomes/b",
+                    "default": false,
+                    "found": "elsewhere",
+                    "limits": {
+                      "kind": "failed",
+                      "reason": "account/rateLimits/read: refused"
+                    },
+                    "programs": [],
+                    "integration": "old",
+                    "change": {
+                      "into": true,
+                      "started_at": "2026-10-11T12:00:00Z",
+                      "steps": [],
+                      "end": {
+                        "end": "failed",
+                        "at": "2026-10-11T12:00:00Z",
+                        "reason": "the limit is lower",
+                        "output_limit": {
+                          "location": "config.toml",
+                          "current": 1000,
+                          "requested": 26000
+                        }
+                      }
+                    }
+                  }
+                ],
+                "elsewhere": [
+                  {
+                    "dir": "D:/backup/.codex",
+                    "traces": [
+                      "auth.json",
+                      "sessions"
+                    ]
+                  }
+                ]
+              },
+              "claude": {
+                "programs": [
+                  {
+                    "how": "desktop_app",
+                    "within": {
+                      "name": "Claude",
+                      "id": "Claude",
+                      "path": "C:/apps/Claude"
+                    },
+                    "on_path": false
+                  }
+                ],
+                "listed": [],
+                "candidates": [
+                  {
+                    "dir": "/home/me/.claude-work",
+                    "default": false,
+                    "found": "home",
+                    "identity": {
+                      "at": "2026-10-11T12:00:00Z",
+                      "who": {
+                        "kind": "known",
+                        "value": {
+                          "logged_in": true,
+                          "method": "oauth_token"
+                        }
+                      }
+                    },
+                    "limits": {
+                      "kind": "unavailable",
+                      "reason": "no session in this login has reported its limits yet"
+                    },
+                    "programs": [],
+                    "integration": "out",
+                    "unattended": false,
+                    "launcher": {
+                      "path": "/home/me/.local/bin/claude",
+                      "desktop_app": false
+                    },
+                    "change": {
+                      "into": true,
+                      "started_at": "2026-10-11T12:00:00Z",
+                      "steps": [
+                        {
+                          "step": {
+                            "step": "command",
+                            "command": "claude plugin install fastctx-world@fastctx --scope user"
+                          },
+                          "state": {
+                            "state": "running"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "elsewhere": []
+              }
+            }
+          },
+          {
+            "kind": "answered",
+            "logins": {
+              "machine": "laptop",
+              "scan": {
+                "started_at": "2026-10-11T12:00:00Z",
+                "usual": {
+                  "state": "failed",
+                  "at": "2026-10-11T12:00:00Z",
+                  "reason": "the node stopped during it"
+                }
+              },
+              "codex": {
+                "programs": [],
+                "listed": [],
+                "candidates": [],
+                "elsewhere": []
+              },
+              "claude": {
+                "programs": [],
+                "listed": [],
+                "candidates": [],
+                "elsewhere": []
+              }
+            }
+          },
+          {
+            "kind": "offline",
+            "machine": "gpu",
+            "since": "2026-10-11T12:00:00Z"
+          },
+          {
+            "kind": "no_answer",
+            "machine": "old",
+            "reason": "it answered something else"
+          }
+        ]
+      },
+      {
+        "reply": "machine_agent_logins",
+        "machine": "desktop",
+        "scan": {
+          "started_at": "2026-10-11T12:00:00Z",
+          "usual": {
+            "state": "done",
+            "at": "2026-10-11T12:00:00Z"
+          },
+          "disks": {
+            "stage": {
+              "state": "running"
+            },
+            "disks": [
+              {
+                "root": "C:/",
+                "directories": 12345,
+                "unreadable": 2,
+                "done": false
+              }
+            ]
+          },
+          "unreadable": [
+            "C:/Program Files/WindowsApps: access denied"
+          ]
+        },
+        "codex": {
+          "programs": [
+            {
+              "path": "C:/app/codex.exe",
+              "how": "desktop_app",
+              "within": {
+                "name": "ChatGPT",
+                "id": "OpenAI.Codex",
+                "version": "26.1007.2314.0",
+                "path": "C:/Program Files/WindowsApps/OpenAI.Codex"
+              },
+              "on_path": false
+            },
+            {
+              "path": "C:/npm/codex.cmd",
+              "how": "npm",
+              "version": "0.162.1",
+              "on_path": true
+            }
+          ],
+          "listed": [
+            {
+              "dir": "C:/Users/me/.codex",
+              "default": true,
+              "found": "default",
+              "identity": {
+                "at": "2026-10-11T12:00:00Z",
+                "who": {
+                  "kind": "known",
+                  "value": {
+                    "logged_in": true,
+                    "method": "chatgpt",
+                    "email": "me@example.com",
+                    "plan": "pro"
+                  }
+                }
+              },
+              "limits": {
+                "kind": "known",
+                "value": {
+                  "observed_at": "2026-10-11T12:00:00Z",
+                  "windows": [
+                    {
+                      "name": "codex",
+                      "minutes": 10080,
+                      "used_tenths": 1000,
+                      "resets_at": "2026-10-14T00:00:00Z"
+                    }
+                  ],
+                  "credits": {
+                    "balance": "52086",
+                    "unlimited": false
+                  }
+                }
+              },
+              "programs": [
+                0,
+                1
+              ],
+              "integration": "in",
+              "launcher": {
+                "path": "C:/app/codex.exe",
+                "version": "0.162.0",
+                "desktop_app": true
+              },
+              "models": [
+                {
+                  "id": "gpt-6-luna",
+                  "model": "gpt-6-luna",
+                  "display_name": "GPT-6 Luna",
+                  "description": "",
+                  "is_default": true,
+                  "default_reasoning_effort": "low",
+                  "reasoning_efforts": [
+                    {
+                      "effort": "low",
+                      "description": ""
+                    }
+                  ]
+                }
+              ],
+              "change": {
+                "into": true,
+                "started_at": "2026-10-11T12:00:00Z",
+                "steps": [
+                  {
+                    "step": {
+                      "step": "program"
+                    },
+                    "state": {
+                      "state": "done"
+                    }
+                  },
+                  {
+                    "step": {
+                      "step": "files",
+                      "changed": [
+                        "C:/Users/me/.codex/config.toml"
+                      ]
+                    },
+                    "state": {
+                      "state": "done"
+                    }
+                  },
+                  {
+                    "step": {
+                      "step": "check",
+                      "scope": "effective Codex features"
+                    },
+                    "state": {
+                      "state": "failed",
+                      "reason": "still enabled: shell_tool"
+                    }
+                  }
+                ],
+                "end": {
+                  "end": "done",
+                  "at": "2026-10-11T12:00:00Z",
+                  "kept": [
+                    {
+                      "location": "AGENTS.md",
+                      "reason": "changed since apply; left untouched"
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "candidates": [
+            {
+              "dir": "C:/Users/me/CodexHomes/b",
+              "default": false,
+              "found": "elsewhere",
+              "limits": {
+                "kind": "failed",
+                "reason": "account/rateLimits/read: refused"
+              },
+              "programs": [],
+              "integration": "old",
+              "change": {
+                "into": true,
+                "started_at": "2026-10-11T12:00:00Z",
+                "steps": [],
+                "end": {
+                  "end": "failed",
+                  "at": "2026-10-11T12:00:00Z",
+                  "reason": "the limit is lower",
+                  "output_limit": {
+                    "location": "config.toml",
+                    "current": 1000,
+                    "requested": 26000
+                  }
+                }
+              }
+            }
+          ],
+          "elsewhere": [
+            {
+              "dir": "D:/backup/.codex",
+              "traces": [
+                "auth.json",
+                "sessions"
+              ]
+            }
+          ]
+        },
+        "claude": {
+          "programs": [
+            {
+              "how": "desktop_app",
+              "within": {
+                "name": "Claude",
+                "id": "Claude",
+                "path": "C:/apps/Claude"
+              },
+              "on_path": false
+            }
+          ],
+          "listed": [],
+          "candidates": [
+            {
+              "dir": "/home/me/.claude-work",
+              "default": false,
+              "found": "home",
+              "identity": {
+                "at": "2026-10-11T12:00:00Z",
+                "who": {
+                  "kind": "known",
+                  "value": {
+                    "logged_in": true,
+                    "method": "oauth_token"
+                  }
+                }
+              },
+              "limits": {
+                "kind": "unavailable",
+                "reason": "no session in this login has reported its limits yet"
+              },
+              "programs": [],
+              "integration": "out",
+              "unattended": false,
+              "launcher": {
+                "path": "/home/me/.local/bin/claude",
+                "desktop_app": false
+              },
+              "change": {
+                "into": true,
+                "started_at": "2026-10-11T12:00:00Z",
+                "steps": [
+                  {
+                    "step": {
+                      "step": "command",
+                      "command": "claude plugin install fastctx-world@fastctx --scope user"
+                    },
+                    "state": {
+                      "state": "running"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "elsewhere": []
+        }
+      },
+      {
+        "reply": "agent_change_preview",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "into": true,
+        "files": [
+          {
+            "path": "/home/me/.claude-work/settings.json",
+            "how": "changed",
+            "items": [
+              {
+                "item": "env.MAX_MCP_OUTPUT_TOKENS",
+                "how": "created",
+                "after": "\"26000\""
+              },
+              {
+                "item": "skipDangerousModePermissionPrompt",
+                "how": "created",
+                "after": "true"
+              },
+              {
+                "item": "env.SOMETHING",
+                "how": "changed",
+                "withheld": true
+              }
+            ]
+          },
+          {
+            "path": "/home/me/.claude-work/CLAUDE.md",
+            "how": "created",
+            "items": [
+              {
+                "item": "fastctx",
+                "how": "created",
+                "after": "<!-- fastctx:begin -->"
+              }
+            ]
+          }
+        ],
+        "commands": [
+          "claude plugin marketplace add /home/me/.fastctx/world/claude-marketplace --scope user"
+        ]
+      },
+      {
+        "reply": "agent_change_preview",
+        "agent": "codex",
+        "dir": "C:/Users/me/.codex",
+        "into": false,
+        "files": [
+          {
+            "path": "C:/Users/me/.codex/AGENTS.md",
+            "how": "removed",
+            "items": []
+          }
+        ],
+        "output_limit": {
+          "location": "config.toml: tool_output_token_limit",
+          "current": 1000,
+          "requested": 26000
+        },
+        "kept": [
+          {
+            "location": "config.toml: features.shell_tool",
+            "reason": "changed since apply; left untouched"
+          }
+        ]
+      },
+      {
+        "reply": "agent_login_changed",
+        "into": false,
+        "started_at": "2026-10-11T12:00:00Z",
+        "steps": [
+          {
+            "step": {
+              "step": "files"
+            },
+            "state": {
+              "state": "done"
+            }
+          }
+        ],
+        "end": {
+          "end": "done",
+          "at": "2026-10-11T12:00:00Z"
+        }
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "agent_logins"
+      },
+      {
+        "call": "scan_agents",
+        "stop": true
+      },
+      {
+        "call": "add_agent_login",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work"
+      },
+      {
+        "call": "preview_agent_change",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "into": false
+      },
+      {
+        "call": "change_agent_login",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "into": false
+      },
+      {
+        "call": "read_agent_limits",
+        "agent": "codex",
+        "dir": "C:/Users/me/.codex"
+      }
+    ],
+    "remote_replies": [
+      {
+        "reply": "agent_logins",
+        "machine": "desktop",
+        "scan": {
+          "started_at": "2026-10-11T12:00:00Z",
+          "usual": {
+            "state": "done",
+            "at": "2026-10-11T12:00:00Z"
+          },
+          "disks": {
+            "stage": {
+              "state": "running"
+            },
+            "disks": [
+              {
+                "root": "C:/",
+                "directories": 12345,
+                "unreadable": 2,
+                "done": false
+              }
+            ]
+          },
+          "unreadable": [
+            "C:/Program Files/WindowsApps: access denied"
+          ]
+        },
+        "codex": {
+          "programs": [
+            {
+              "path": "C:/app/codex.exe",
+              "how": "desktop_app",
+              "within": {
+                "name": "ChatGPT",
+                "id": "OpenAI.Codex",
+                "version": "26.1007.2314.0",
+                "path": "C:/Program Files/WindowsApps/OpenAI.Codex"
+              },
+              "on_path": false
+            },
+            {
+              "path": "C:/npm/codex.cmd",
+              "how": "npm",
+              "version": "0.162.1",
+              "on_path": true
+            }
+          ],
+          "listed": [
+            {
+              "dir": "C:/Users/me/.codex",
+              "default": true,
+              "found": "default",
+              "identity": {
+                "at": "2026-10-11T12:00:00Z",
+                "who": {
+                  "kind": "known",
+                  "value": {
+                    "logged_in": true,
+                    "method": "chatgpt",
+                    "email": "me@example.com",
+                    "plan": "pro"
+                  }
+                }
+              },
+              "limits": {
+                "kind": "known",
+                "value": {
+                  "observed_at": "2026-10-11T12:00:00Z",
+                  "windows": [
+                    {
+                      "name": "codex",
+                      "minutes": 10080,
+                      "used_tenths": 1000,
+                      "resets_at": "2026-10-14T00:00:00Z"
+                    }
+                  ],
+                  "credits": {
+                    "balance": "52086",
+                    "unlimited": false
+                  }
+                }
+              },
+              "programs": [
+                0,
+                1
+              ],
+              "integration": "in",
+              "launcher": {
+                "path": "C:/app/codex.exe",
+                "version": "0.162.0",
+                "desktop_app": true
+              },
+              "models": [
+                {
+                  "id": "gpt-6-luna",
+                  "model": "gpt-6-luna",
+                  "display_name": "GPT-6 Luna",
+                  "description": "",
+                  "is_default": true,
+                  "default_reasoning_effort": "low",
+                  "reasoning_efforts": [
+                    {
+                      "effort": "low",
+                      "description": ""
+                    }
+                  ]
+                }
+              ],
+              "change": {
+                "into": true,
+                "started_at": "2026-10-11T12:00:00Z",
+                "steps": [
+                  {
+                    "step": {
+                      "step": "program"
+                    },
+                    "state": {
+                      "state": "done"
+                    }
+                  },
+                  {
+                    "step": {
+                      "step": "files",
+                      "changed": [
+                        "C:/Users/me/.codex/config.toml"
+                      ]
+                    },
+                    "state": {
+                      "state": "done"
+                    }
+                  },
+                  {
+                    "step": {
+                      "step": "check",
+                      "scope": "effective Codex features"
+                    },
+                    "state": {
+                      "state": "failed",
+                      "reason": "still enabled: shell_tool"
+                    }
+                  }
+                ],
+                "end": {
+                  "end": "done",
+                  "at": "2026-10-11T12:00:00Z",
+                  "kept": [
+                    {
+                      "location": "AGENTS.md",
+                      "reason": "changed since apply; left untouched"
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "candidates": [
+            {
+              "dir": "C:/Users/me/CodexHomes/b",
+              "default": false,
+              "found": "elsewhere",
+              "limits": {
+                "kind": "failed",
+                "reason": "account/rateLimits/read: refused"
+              },
+              "programs": [],
+              "integration": "old",
+              "change": {
+                "into": true,
+                "started_at": "2026-10-11T12:00:00Z",
+                "steps": [],
+                "end": {
+                  "end": "failed",
+                  "at": "2026-10-11T12:00:00Z",
+                  "reason": "the limit is lower",
+                  "output_limit": {
+                    "location": "config.toml",
+                    "current": 1000,
+                    "requested": 26000
+                  }
+                }
+              }
+            }
+          ],
+          "elsewhere": [
+            {
+              "dir": "D:/backup/.codex",
+              "traces": [
+                "auth.json",
+                "sessions"
+              ]
+            }
+          ]
+        },
+        "claude": {
+          "programs": [
+            {
+              "how": "desktop_app",
+              "within": {
+                "name": "Claude",
+                "id": "Claude",
+                "path": "C:/apps/Claude"
+              },
+              "on_path": false
+            }
+          ],
+          "listed": [],
+          "candidates": [
+            {
+              "dir": "/home/me/.claude-work",
+              "default": false,
+              "found": "home",
+              "identity": {
+                "at": "2026-10-11T12:00:00Z",
+                "who": {
+                  "kind": "known",
+                  "value": {
+                    "logged_in": true,
+                    "method": "oauth_token"
+                  }
+                }
+              },
+              "limits": {
+                "kind": "unavailable",
+                "reason": "no session in this login has reported its limits yet"
+              },
+              "programs": [],
+              "integration": "out",
+              "unattended": false,
+              "launcher": {
+                "path": "/home/me/.local/bin/claude",
+                "desktop_app": false
+              },
+              "change": {
+                "into": true,
+                "started_at": "2026-10-11T12:00:00Z",
+                "steps": [
+                  {
+                    "step": {
+                      "step": "command",
+                      "command": "claude plugin install fastctx-world@fastctx --scope user"
+                    },
+                    "state": {
+                      "state": "running"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "elsewhere": []
+        }
+      },
+      {
+        "reply": "agent_change_preview",
+        "agent": "claude",
+        "dir": "/home/me/.claude-work",
+        "into": true,
+        "files": [
+          {
+            "path": "/home/me/.claude-work/settings.json",
+            "how": "changed",
+            "items": [
+              {
+                "item": "env.MAX_MCP_OUTPUT_TOKENS",
+                "how": "created",
+                "after": "\"26000\""
+              },
+              {
+                "item": "skipDangerousModePermissionPrompt",
+                "how": "created",
+                "after": "true"
+              },
+              {
+                "item": "env.SOMETHING",
+                "how": "changed",
+                "withheld": true
+              }
+            ]
+          },
+          {
+            "path": "/home/me/.claude-work/CLAUDE.md",
+            "how": "created",
+            "items": [
+              {
+                "item": "fastctx",
+                "how": "created",
+                "after": "<!-- fastctx:begin -->"
+              }
+            ]
+          }
+        ],
+        "commands": [
+          "claude plugin marketplace add /home/me/.fastctx/world/claude-marketplace --scope user"
+        ]
+      },
+      {
+        "reply": "agent_login_changed",
+        "into": false,
+        "started_at": "2026-10-11T12:00:00Z",
+        "steps": [
+          {
+            "step": {
+              "step": "files"
+            },
+            "state": {
+              "state": "done"
+            }
+          }
+        ],
+        "end": {
+          "end": "done",
+          "at": "2026-10-11T12:00:00Z"
+        }
       }
     ]
   },

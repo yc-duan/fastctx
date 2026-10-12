@@ -10,7 +10,7 @@
 //! Opening a project is the one change a machine acting for an account may
 //! make for it, as a resident working there opens one.
 
-use fastctx_net::directory::{Account, Lend, Level, Project, Share};
+use fastctx_net::directory::{Account, Lend, Level, LoginPlan, Project, Share};
 use fastctx_net::login::HubSecrets;
 use fastctx_net::sign::Bytes;
 use fastctx_net::token::{Token, TokenSecret};
@@ -134,6 +134,18 @@ fn apply(
             directory.lends.retain(|existing| *existing != lend);
             if lent {
                 directory.lends.push(lend);
+            }
+            Ok(Told::Done)
+        }
+        Change::Plan { machine, agent, home, plan } => {
+            need_super()?;
+            let directory = &mut store.book.directory;
+            if !directory.member(&machine).is_some_and(|member| member.is_machine()) {
+                return Err(format!("there is no machine {machine} on this hub"));
+            }
+            directory.plans.retain(|known| !(known.machine == machine && known.agent == agent && known.home == home));
+            if let Some(plan) = plan {
+                directory.plans.push(LoginPlan { machine, agent, home, plan });
             }
             Ok(Told::Done)
         }
@@ -393,6 +405,7 @@ fn log_out(
 fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &MachineName) {
     directory.shares.retain(|share| share.machine != *name);
     directory.lends.retain(|lend| lend.machine != *name);
+    directory.plans.retain(|plan| plan.machine != *name);
     directory.acting.retain(|acting| acting.machine != *name);
 }
 

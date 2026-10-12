@@ -60,7 +60,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     // The residents that arrived on this connection are here until it
     // closes, however it closes; what was collected for them and not taken
     // is free to be handed over again then.
-    let mut arrived = Arrived { node, residents: Vec::new(), collected: Vec::new(), notes: Vec::new(), completed: None };
+    let mut arrived =
+        Arrived { node, residents: Vec::new(), collected: Vec::new(), notes: Vec::new(), completed: None };
     while let Some(frame) = reader.recv().await? {
         let ClientFrame::Call { id, call } = match parse(&frame) {
             Ok(call) => call,
@@ -374,7 +375,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             &call,
             Call::Offers { .. } | Call::Lines { .. } | Call::Thumbnail { .. } | Call::AttachmentThumbnail { .. }
         );
-        let run_resident = match &call { Call::Run { resident, .. } => Some(resident.clone()), _ => None };
+        let run_resident = match &call {
+            Call::Run { resident, .. } => Some(resident.clone()),
+            _ => None,
+        };
         if run_resident.is_some() {
             arrived.completed = None;
         }
@@ -400,9 +404,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             && !matches!(run.state, fastctx_types::run::RunState::Running | fastctx_types::run::RunState::Exited { .. })
             && let Some(owner) = run_resident
         {
-            arrived.completed = Some((owner, fastctx_types::run::CompletedJob {
-                machine: run.machine.clone(), job: run.job.clone(), output: run.output.log.clone(),
-            }));
+            arrived.completed = Some((
+                owner,
+                fastctx_types::run::CompletedJob {
+                    machine: run.machine.clone(),
+                    job: run.job.clone(),
+                    output: run.output.log.clone(),
+                },
+            ));
         }
         if legacy && let Ok(reply) = &mut reply {
             crate::renewal_legacy::reply(hello.protocol, reply);
@@ -631,10 +640,19 @@ async fn taken(
     });
     if let Some(completed) = completed {
         let owner = fastctx_types::Address { machine: node.machine(), resident: resident.clone() };
-        crate::retention::confirmed(node, owner, completed.machine, fastctx_types::run::JobDelivery {
-            shown_whole: shown.as_ref() == Some(&completed.job), job: completed.job,
-            output: completed.output, at: jiff::Timestamp::now(),
-        }, None).map_err(|error| Failure::new(format!("recording job delivery: {error}")))?;
+        crate::retention::confirmed(
+            node,
+            owner,
+            completed.machine,
+            fastctx_types::run::JobDelivery {
+                shown_whole: shown.as_ref() == Some(&completed.job),
+                job: completed.job,
+                output: completed.output,
+                at: jiff::Timestamp::now(),
+            },
+            None,
+        )
+        .map_err(|error| Failure::new(format!("recording job delivery: {error}")))?;
     } else if let Some(job) = shown
         && !crate::here::forget(node, &resident, &job)
     {
@@ -777,6 +795,40 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::Homes { machine, change } => {
             users_voice(node, peer)?;
             crate::homes::call(node, machine, change).await.map(|()| Reply::Done)
+        }
+        Call::AgentLogins { machine } => {
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            crate::logins::query(node, &acting, machine).await.map(Reply::AgentLogins)
+        }
+        Call::ScanAgents { machine, stop } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::scan(node, machine, stop)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
+        Call::AddAgentLogin { machine, agent, dir } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::add(node, machine, agent, dir)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
+        Call::PreviewAgentChange { machine, agent, dir, into } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::preview(node, machine, agent, dir, into)
+                .await
+                .map(|preview| Reply::AgentChangePreview(Box::new(preview)))
+        }
+        Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::change(node, machine, agent, dir, into, raise_output_limit)
+                .await
+                .map(|change| Reply::AgentLoginChanged(Box::new(change)))
+        }
+        Call::ReadAgentLimits { machine, agent, dir } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::read_limits(node, machine, agent, dir)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
         Call::FindFiles { machine, request } => {
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);

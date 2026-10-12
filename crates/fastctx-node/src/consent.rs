@@ -25,7 +25,10 @@ pub async fn call(
         return here(node, accept, home, format!("the user on {machine}")).await;
     }
     let call = RemoteCall::ClaudeConsent { accept, home };
-    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|error| Failure::new(error.to_string()))??
+    match node
+        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))??
     {
         RemoteReply::ClaudeConsent { accepted, changed } => Ok((accepted, changed)),
         _ => Err(Failure::new(format!("{machine} answered something other than Claude Code's consent"))),
@@ -40,9 +43,14 @@ pub async fn here(node: &Arc<Node>, accept: bool, home: Option<PathBuf>, by: Str
     let (changed, dir) = tokio::task::spawn_blocking(move || {
         let env = crate::claude::environment().map_err(|failure| failure.message)?;
         let user_home = fastctx_platform::user_home().map_err(|error| error.to_string())?;
-        let dir = crate::homes::find(&local, &env, &user_home, "claude", home.as_deref())
-            .map_err(|failure| failure.message)?
-            .dir;
+        let dir = match home {
+            Some(dir) => {
+                let agent = fastctx_types::AgentName::try_from("claude").expect("an agent name");
+                crate::logins::known(&local, &agent, &dir).map_err(|failure| failure.message)?;
+                dir
+            }
+            None => crate::homes::claude_default(&env, &user_home),
+        };
         let places = crate::agents::places(&local, &env, &user_home, None);
         let changed = apply::consent_claude_at(&places, &dir, accept).map_err(|error| error.to_string())?;
         Ok::<_, String>((changed, dir))

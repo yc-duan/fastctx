@@ -56,7 +56,13 @@ type Inputs = (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf, Vec<O
 static LAST: std::sync::Mutex<Option<(Inputs, Result<(), String>)>> = std::sync::Mutex::new(None);
 
 fn codex_in(home: &Path, cwd: &Path) -> Result<(), String> {
-    let launch = fastctx_hosts::codex::launch::resolve(home, std::env::var_os("PATH").as_ref())?;
+    // The program the World starts for this login: a home the desktop app
+    // does not use runs the app's program the default home records.
+    let environment: Vec<_> = std::env::vars_os().collect();
+    let default =
+        fastctx_platform::user_home().ok().map(|user| fastctx_hosts::codex::launch::codex_home(&user, &environment));
+    let launch =
+        fastctx_hosts::codex::launch::resolve_for(home, default.as_deref(), std::env::var_os("PATH").as_ref())?;
     let stamp = |path: &Path| {
         std::fs::metadata(path).ok().map(|meta| (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len()))
     };
