@@ -65,6 +65,13 @@ pub enum Call {
         host: Host,
         hints: Hints,
     },
+    /// Reserves a Claude exchange directory before the mod writes through it.
+    ClaudeSessionDirectory {
+        session: String,
+        previous: Option<String>,
+        cwd: Option<String>,
+        process: Option<crate::ProcessIdentity>,
+    },
     /// Run a script for a resident of this machine, on this machine or on
     /// the machine `node` names.
     Run {
@@ -355,6 +362,9 @@ pub enum Call {
         machine: Option<MachineName>,
         control: Control,
     },
+    /// What the World keeps on this machine, and deleting it. Answered here,
+    /// never by another machine.
+    Data(crate::data::DataCall),
     /// Manage this resident as the user, on its own machine.
     Manage {
         resident: ResidentId,
@@ -567,6 +577,10 @@ pub enum Reply {
     Managed {
         resident: Address,
         managed: Managed,
+    },
+    Data(crate::data::DataReply),
+    ClaudeSessionDirectory {
+        path: String,
     },
     Controlled {
         resident: Address,

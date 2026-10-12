@@ -3,14 +3,14 @@
 use std::io;
 use std::path::Path;
 
-use fastctx_types::layout::{ResidentDir, WorldDir};
+use fastctx_types::layout::{ConversationDir, WorldDir};
 use fastctx_types::project::TownSummary;
 use fastctx_types::town::{MachineWho, WhoScope, WorldWho};
 use fastctx_types::{Address, MachineName, TownName};
 use jiff::Timestamp;
 
 /// The latest recorded terminal boundary, using the host's timestamp when kept.
-pub fn last_turn(directory: &ResidentDir) -> io::Result<Option<Timestamp>> {
+pub fn last_turn(directory: &ConversationDir) -> io::Result<Option<Timestamp>> {
     Ok(crate::delivery::terminals(directory)?
         .into_iter()
         .map(|finished| finished.ended_at.unwrap_or(finished.at))
@@ -33,28 +33,26 @@ pub(crate) fn read<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T>
 fn recorded(world: &WorldDir) -> io::Result<(Vec<crate::residents::OnRecord>, Vec<crate::residents::Former>)> {
     let mut residents = Vec::new();
     let mut former = Vec::new();
-    for parent in world.resident_parents()? {
-        let town = crate::residents::town_of(world, &parent);
-        for path in entries(&parent)? {
-            if !path.join("about").exists() {
-                continue;
-            }
-            let about: fastctx_types::residents::About = read(&path.join("about"))?;
-            if path.join("moved").exists() {
-                let moved: fastctx_types::residents::Moved = read(&path.join("moved"))?;
-                former.push(crate::residents::Former { id: about.id, town: town.clone(), to: moved.to, at: moved.at });
-                continue;
-            }
-            let now = crate::residents::read_now(&world.resident(town.as_ref(), &about.id))?;
-            residents.push(crate::residents::OnRecord {
-                removed: crate::residents::removal(world, &about.id)?,
-                id: about.id.clone(),
-                town: town.clone(),
-                here: false,
-                about,
-                now,
-            });
+    for kept in world.kept()? {
+        let fastctx_types::layout::Kind::Home(id) = &kept.kind else { continue };
+        let directory = &kept.directory;
+        if !directory.about().exists() {
+            continue;
         }
+        let about: fastctx_types::residents::About = read(&directory.about())?;
+        let places = crate::residents::read_places(directory, &about)?;
+        for (town, moved) in places.departures() {
+            former.push(crate::residents::Former { id: id.clone(), town, to: moved.to, at: moved.at });
+        }
+        let now = crate::residents::read_now(directory)?;
+        residents.push(crate::residents::OnRecord {
+            removed: crate::residents::read_removed(directory)?,
+            id: about.id.clone(),
+            town: places.now().cloned(),
+            here: false,
+            about,
+            now,
+        });
     }
     Ok((residents, former))
 }
@@ -78,7 +76,7 @@ pub fn who(
     let town = town.or_else(|| caller.and_then(|r| r.town.clone()));
     let since = match (since, caller) {
         (Some(at), _) => Some(at),
-        (None, Some(caller)) => last_turn(&world.resident(caller.town.as_ref(), &caller.id))?,
+        (None, Some(caller)) => last_turn(&world.conversation(&caller.id))?,
         _ => None,
     };
     let scope = match &town {

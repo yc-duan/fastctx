@@ -19,6 +19,7 @@ pub mod cache;
 mod collab;
 pub mod composer;
 pub mod conversation;
+mod data;
 pub mod device;
 pub mod features;
 pub mod file_read;

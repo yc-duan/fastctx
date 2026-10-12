@@ -25,12 +25,12 @@ pub(crate) async fn write(
         town
     };
     let world = node.world.clone();
-    let record_path = job.as_ref().map(|job| node.world.owner(&here, town.as_ref(), &owner).job_record(job));
+    let record_path = job.as_ref().map(|job| node.world.job_record(&here, town.as_ref(), &owner.clone().into(), job));
     let result = tokio::task::spawn_blocking(move || {
         let at = jiff::Timestamp::now();
         let outcome = crate::write::write_job(&world, &here, &owner, town.as_ref(), op.clone(), job.as_ref())?;
         let action = crate::write::action(&op, &outcome, &here, at);
-        let recorded = crate::residents::record_owned_action(&world, &here, &owner, town.as_ref(), &action);
+        let recorded = crate::residents::record_owned_action(&world, &here, &owner, &action);
         std::io::Result::Ok((outcome, recorded))
     })
     .await

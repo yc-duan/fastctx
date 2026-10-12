@@ -61,28 +61,24 @@ pub(crate) fn include_at(request: &mut Request, roots: &Roots) -> anyhow::Result
     let mut sessions = BTreeSet::new();
     let mut residents = BTreeSet::new();
     let layout = fastctx_types::layout::WorldDir::at(&world);
-    for parent in layout.resident_parents()? {
-        for resident in crate::entries(&parent)? {
-            for file in [resident.path().join("about"), resident.path().join("archive/about")] {
-                if let Some(about) = crate::read::<fastctx_types::residents::About>(&file)?
-                    && about.world_started
-                    && about.host.agent.as_str() == "claude"
-                    && let Some(session) = about.session
-                {
-                    anyhow::ensure!(single_component(&session), "Claude session identity is not a directory component");
-                    if session.len() != 8 || !session.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                        sessions.insert(session.clone());
-                    }
-                    residents.insert(about.id);
-                    if let Some(registration) =
-                        crate::read::<serde_json::Value>(&world.join("claude").join(&session).join("session.json"))?
-                        && let Some(cwd) = registration.get("cwd").and_then(serde_json::Value::as_str)
-                    {
-                        let cwd = PathBuf::from(cwd);
-                        if own_cwd(&cwd, &world_cwd) {
-                            working_directories.push(cwd.to_str().expect("a JSON cwd is Unicode").to_owned());
-                        }
-                    }
+    for file in crate::inventory::abouts(&layout)? {
+        if let Some(about) = crate::read::<fastctx_types::residents::About>(&file)?
+            && about.world_started
+            && about.host.agent.as_str() == "claude"
+            && let Some(session) = about.session
+        {
+            anyhow::ensure!(single_component(&session), "Claude session identity is not a directory component");
+            if session.len() != 8 || !session.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                sessions.insert(session.clone());
+            }
+            residents.insert(about.id);
+            if let Some(registration) =
+                crate::read::<serde_json::Value>(&world.join("claude").join(&session).join("session.json"))?
+                && let Some(cwd) = registration.get("cwd").and_then(serde_json::Value::as_str)
+            {
+                let cwd = PathBuf::from(cwd);
+                if own_cwd(&cwd, &world_cwd) {
+                    working_directories.push(cwd.to_str().expect("a JSON cwd is Unicode").to_owned());
                 }
             }
         }

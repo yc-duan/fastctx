@@ -27,30 +27,17 @@ pub fn who(
         if town.is_some_and(|town| resident.town.as_ref() != Some(town)) {
             continue;
         }
-        let mut last = last_action(world, &resident.id, resident.town.as_ref())?;
+        let last_action = last_action(world, &resident.id)?;
         // A conversation the World started is listed from its first words on;
         // a session the user opened elsewhere once it has done something here.
-        let mut participated = last.is_some()
+        // A first World run is already work before it has an action result.
+        let participated = last_action.is_some()
             || resident.about.world_started
             || matches!(resident.about.origin, fastctx_types::residents::Origin::Colleague { .. })
-            || resident.now.as_ref().is_some_and(|now| now.last_tool_at.is_some() || now.desk || !now.owed.is_empty());
-        for parent in world.resident_parents()? {
-            let place = crate::residents::town_of(world, &parent);
-            if let Some(action) = last_action(world, &resident.id, place.as_ref())? {
-                participated = true;
-                if last.as_ref().is_none_or(|prior| action.at > prior.at) {
-                    last = Some(action);
-                }
-            }
-            // A first World run is already work before it has an action result.
-            if read_dir(&parent.join(resident.id.as_str()).join("jobs"))?
+            || resident.now.as_ref().is_some_and(|now| now.last_tool_at.is_some() || now.desk || !now.owed.is_empty())
+            || read_dir(&world.conversation(&resident.id).jobs())?
                 .iter()
-                .any(|path| path.extension().is_some_and(|ext| ext == "json"))
-            {
-                participated = true;
-            }
-        }
-        let last_action = last;
+                .any(|path| path.extension().is_some_and(|ext| ext == "json"));
         if !participated
             || (!all && (!resident.here || resident.now.as_ref().is_some_and(|now| now.activity != Activity::Busy)))
         {
@@ -67,12 +54,31 @@ pub fn who(
             removed: resident.removed,
         });
     }
-    // Those who moved away are listed in the town they left, with all.
+    // Those who moved away are listed in the town they left, with all: once,
+    // as they last left it, with what they last did there.
     if all && let Some(town) = town {
+        let mut left: Vec<Former> = Vec::new();
         for former in former.into_iter().filter(|former| former.town.as_ref() == Some(town)) {
-            let directory = world.resident(Some(town), &former.id);
-            let last_action = last_action(world, &former.id, Some(town))?;
+            match left.iter_mut().find(|prior| prior.id == former.id) {
+                Some(prior) if prior.at < former.at => *prior = former,
+                Some(_) => {}
+                None => left.push(former),
+            }
+        }
+        for former in left {
+            let directory = world.conversation(&former.id);
             let about = crate::residents::read_about(&directory)?;
+            let places = crate::residents::read_places(&directory, &about)?;
+            if places.now() == Some(town) {
+                continue;
+            }
+            let mut last_action = None;
+            for (from, until) in places.spans(Some(town)).into_iter().rev() {
+                last_action = crate::residents::last_action_before(&directory.actions(), Some(from), until)?;
+                if last_action.is_some() {
+                    break;
+                }
+            }
             let now = crate::residents::read_now(&directory)?;
             if last_action.is_none()
                 && !matches!(about.origin, fastctx_types::residents::Origin::Colleague { .. })
@@ -92,15 +98,14 @@ pub fn who(
             });
         }
     }
-    let parents = match town {
-        Some(town) => vec![world.town(town).path().join("residents"), world.town(town).path().join("pages")],
-        None => world.job_parents()?,
-    };
     let mut jobs = Vec::new();
-    for parent in parents {
+    for parent in world.job_parents()? {
         for directory in read_dir(&parent)? {
             running_jobs(&directory.join("jobs"), &mut jobs)?;
         }
+    }
+    if let Some(town) = town {
+        jobs.retain(|job| job.town.as_ref() == Some(town));
     }
     jobs.sort_by_key(|job| job.started_at);
     Ok(WhoReply { machine: machine.clone(), residents, jobs, history: None })

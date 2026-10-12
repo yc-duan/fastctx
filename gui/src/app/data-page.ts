@@ -312,7 +312,7 @@ export class DataPage implements Page {
   private cacheSection(bytes: number): string {
     const { words } = this.options;
     return `<section class="home-section data-section"><h2 class="section-title">${escape(words.cache)}<span class="data-size">${escape(size(bytes))}</span></h2>
-      <p class="data-said">${escape(words.cacheSaid)}${this.options.cache ? `<button class="text-button quiet-button" type="button" data-act="clear">${escape(words.clear)}</button>` : ""}</p></section>`;
+      <p class="data-said">${escape(words.cacheSaid)}${this.options.data || this.options.cache ? `<button class="text-button quiet-button" type="button" data-act="clear">${escape(words.clear)}</button>` : ""}</p></section>`;
   }
 
   private async click(event: Event): Promise<void> {
@@ -343,9 +343,10 @@ export class DataPage implements Page {
     }
     const act = target.closest<HTMLElement>("[data-act]")?.dataset.act;
     if (act === "delete") this.confirmDelete();
-    else if (act === "clear" && this.options.cache) {
+    else if (act === "clear" && (this.options.data || this.options.cache)) {
       try {
-        await this.options.cache.clear();
+        if (this.options.data) await this.options.data({ do: "clear_cache" });
+        await this.options.cache?.clear();
         this.said = { text: this.options.words.cleared, detail: "" };
       } catch (error) {
         this.said = { text: this.options.words.failed, detail: detailOf(error) };

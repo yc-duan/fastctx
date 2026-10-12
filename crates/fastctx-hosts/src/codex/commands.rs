@@ -67,7 +67,7 @@ impl CodexHost {
         let selected = if toggle && current.is_some_and(|current| current == id) { "default" } else { id };
         let mut selection = entry.selection.clone();
         selection.service_tier = Some(selected.into());
-        selection.write(&self.workdir, thread)?;
+        selection.write(&entry.spec.as_ref().ok_or("how the Codex thread was started is not known")?.choices)?;
         entry.selection = selection;
         Ok(selected.into())
     }

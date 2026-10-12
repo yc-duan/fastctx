@@ -7,7 +7,7 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::management::{Managed, Management, ManagementOutcome as Outcome, ManagementStep};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{Activity, Delivery, Notice, WorldFact};
-use fastctx_types::{Address, MachineName, ResidentId};
+use fastctx_types::{Address, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 use std::sync::Arc;
 
@@ -110,16 +110,15 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 );
             }
             match node.residents.remove(&node.world, id) {
-                Ok(paths) => step(
+                Ok(path) => step(
                     &mut result,
                     "records",
                     Outcome::Done,
                     format!(
-                        "Records archived in {}. Jobs and output retain their original paths so running jobs continue. This session's subsequent World tool calls are refused.",
-                        paths.join(", ")
+                        "Records kept in {path} until the conversation is deleted. Its jobs keep running. This session's subsequent World tool calls are refused."
                     ),
                 ),
-                Err(error) => step(&mut result, "records", Outcome::Failed, format!("Archiving records: {error}")),
+                Err(error) => step(&mut result, "records", Outcome::Failed, format!("Recording the removal: {error}")),
             }
             result.removed = node.residents.removed(id);
             if result.removed.is_some() {
@@ -226,12 +225,15 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             let changed = match node.residents.relocate(&node.world, id, town.as_ref()) {
                 Ok(changed) => changed,
                 Err(error) => {
+                    let current = node.residents.town_of(id).flatten();
+                    result.town = current.clone();
                     step(
                         &mut result,
                         "records",
                         Outcome::Failed,
                         format!(
-                            "The project move did not finish: {error}. Completed filesystem steps remain recorded for recovery on restart."
+                            "Saving project membership failed: {error}; current project: {}",
+                            current.as_ref().map_or("outside", TownName::as_str)
                         ),
                     );
                     return Ok(result);

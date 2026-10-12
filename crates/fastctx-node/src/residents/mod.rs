@@ -13,8 +13,8 @@
 //! through to its `now` on every change, so a node that restarts knows whom
 //! to tell.
 //!
-//! A resident has a directory in each town it lived in; all but the one it
-//! lives in now are marked as left (`records::move_to`).
+//! A resident has one directory, its conversation's home; which project it
+//! is in is one record there (`town`), so changing projects moves nothing.
 
 pub(crate) mod cache;
 mod records;
@@ -29,11 +29,14 @@ use std::sync::Mutex;
 use fastctx_types::access::Written;
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
-use fastctx_types::residents::{About, Activity, Hints, Host, Moved, Now, Origin, Trouble, Whereabouts};
+use fastctx_types::residents::{About, Activity, Hints, Host, Now, Origin, Places, Trouble, Whereabouts};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 
-pub use records::{append_message, last_action, read_about, read_now, record_action, record_owned_action, record_seen};
+pub use records::{
+    append_message, last_action, last_action_before, read_about, read_now, read_places, read_removed, record_action,
+    record_owned_action, record_seen,
+};
 
 pub struct Residents {
     state: Mutex<State>,
@@ -88,6 +91,15 @@ impl State {
         let count = self.current_sessions.get::<u64>(after).unwrap_or(0);
         self.current_sessions.insert(after, count + 1);
     }
+
+    /// A resident that held `session` is no longer on record.
+    fn forget_session(&self, session: &str) {
+        match self.current_sessions.get::<u64>(session) {
+            Some(count) if count > 1 => self.current_sessions.insert(session, count - 1),
+            Some(_) => self.current_sessions.remove(&session),
+            None => {}
+        }
+    }
 }
 
 struct StateGuard<'a>(std::sync::MutexGuard<'a, State>);
@@ -115,10 +127,6 @@ impl Drop for StateGuard<'_> {
     }
 }
 
-/// The directories a resident has, one in each town it lived in, and for
-/// each where it moved from there.
-type Homes = Vec<(Option<TownName>, Option<Moved>)>;
-
 /// A town a resident lived in and moved away from.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Former {
@@ -140,7 +148,7 @@ pub struct Heard {
 struct Live {
     removed: Option<Timestamp>,
     about: About,
-    town: Option<TownName>,
+    places: Places,
     /// A Claude session's inbox address, for commands from its native shell.
     inbox: Option<String>,
     /// Open connections the resident arrived on.
@@ -155,28 +163,20 @@ struct Live {
     /// to exactly those whose words went into it.
     /// `None` until it is told who and where it is.
     heard: Option<Heard>,
-    former: Vec<Former>,
 }
 
 impl Live {
-    fn new(about: About, town: Option<TownName>, now: Option<Now>) -> Self {
+    fn new(about: About, places: Places, now: Option<Now>) -> Self {
         let owed = now
             .iter()
             .flat_map(|now| now.owed.iter())
             .map(|(turn, readers)| (turn.clone(), readers.iter().cloned().collect()))
             .collect();
-        Self {
-            removed: None,
-            about,
-            town,
-            inbox: None,
-            connections: 0,
-            claude_here: false,
-            now,
-            owed,
-            heard: None,
-            former: Vec::new(),
-        }
+        Self { removed: None, about, places, inbox: None, connections: 0, claude_here: false, now, owed, heard: None }
+    }
+
+    fn town(&self) -> Option<TownName> {
+        self.places.now().cloned()
     }
 }
 
@@ -191,10 +191,12 @@ pub struct OnRecord {
 }
 
 impl Residents {
+    pub(crate) fn host_open(&self, id: &ResidentId) -> bool {
+        self.lock().live.get(id).is_some_and(|live| live.claude_here || live.connections > 0)
+    }
     /// Reads every resident this machine has a record of. A record that
     /// cannot be read is reported and left as it is.
     pub fn load(world: &WorldDir) -> io::Result<(Self, Vec<(PathBuf, io::Error)>)> {
-        removal::recover(world)?;
         let root = cache::prepare(world.path())?;
         let mut state = State {
             live: cache::Cache::new(root.join("residents"))?,
@@ -205,82 +207,40 @@ impl Residents {
             colleagues: HashMap::new(),
         };
         let mut problems = Vec::new();
-        // Each resident's directories, one in each town it lived in.
-        let home_index = root.join("homes");
-        fastctx_platform::ensure_private_dir(&home_index)?;
-        for parent in world.resident_parents()? {
-            let town = town_of(world, &parent);
-            let entries = match std::fs::read_dir(&parent) {
-                Ok(entries) => entries,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
-            };
-            for entry in entries {
-                let path = entry?.path();
-                // A visitor's directory holds what a resident of another
-                // machine did here; it has no `about`.
-                let Some(id) = path.file_name().and_then(|name| ResidentId::try_from(name.to_str()?).ok()) else {
-                    continue;
-                };
-                let directory = world.resident(town.as_ref(), &id);
-                if !directory.about().exists() {
-                    continue;
-                }
-                match records::read_moved(&directory) {
-                    Ok(moved) => {
-                        let path = home_index.join(format!("{id}.json"));
-                        let mut homes: Homes = match std::fs::read(&path) {
-                            Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
-                            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
-                            Err(error) => return Err(error),
-                        };
-                        homes.push((town.clone(), moved));
-                        fastctx_platform::publish(
-                            &path,
-                            &serde_json::to_vec(&homes).map_err(io::Error::other)?,
-                            fastctx_platform::Permissions::Private,
-                        )?;
-                    }
-                    Err(error) => problems.push((directory.moved(), error)),
-                }
+        for kept in world.kept()? {
+            let fastctx_types::layout::Kind::Home(id) = &kept.kind else { continue };
+            let directory = &kept.directory;
+            // Files attached for a conversation not opened yet have a home
+            // and no resident.
+            if !directory.about().try_exists()? {
+                continue;
             }
-        }
-        for entry in std::fs::read_dir(&home_index)? {
-            let path = entry?.path();
-            let id: ResidentId = path
-                .file_stem()
-                .and_then(|id| id.to_str())
-                .expect("resident index name")
-                .parse()
-                .map_err(io::Error::other)?;
-            let homes: Homes = serde_json::from_slice(&std::fs::read(path)?).map_err(io::Error::other)?;
-            let mut former = Vec::new();
-            let town = match live_town(world, &id, &homes) {
-                Ok(town) => town,
-                Err(error) => {
-                    problems.push((world.resident(None, &id).path().to_path_buf(), error));
+            let about = match records::read_about(directory) {
+                Ok(about) if about.id == *id => about,
+                Ok(about) => {
+                    problems.push((directory.about(), io::Error::other(format!("it is the record of {}", about.id))));
                     continue;
                 }
-            };
-            for (left, moved) in &homes {
-                if *left != town && removal(world, &id)?.is_none() {
-                    records::carry_obligations(world, &id, left.as_ref(), town.as_ref())?;
-                }
-                if let Some(moved) = moved
-                    && *left != town
-                {
-                    former.push(Former { id: id.clone(), town: left.clone(), to: moved.to.clone(), at: moved.at });
-                }
-            }
-            let directory = world.resident(town.as_ref(), &id);
-            let about = match records::read_about(&directory) {
-                Ok(about) => about,
                 Err(error) => {
                     problems.push((directory.about(), error));
                     continue;
                 }
             };
-            let now = records::read_now(&directory)?;
+            let places = match records::read_places(directory, &about) {
+                Ok(places) => places,
+                Err(error) => {
+                    problems.push((directory.town(), error));
+                    continue;
+                }
+            };
+            let removed = match records::read_removed(directory) {
+                Ok(removed) => removed,
+                Err(error) => {
+                    problems.push((directory.removed(), error));
+                    continue;
+                }
+            };
+            let now = records::read_now(directory)?;
             if let Some(session) = &about.session {
                 state.threads.insert(session.clone(), about.id.clone());
                 state.record_session(None, session);
@@ -293,13 +253,11 @@ impl Residents {
             });
             // Who is owed the turns the node stopped under: they are told how
             // those turns ended once the node is up (`unfinished`).
-            let mut live = Live::new(about, town.clone(), now);
-            live.removed = removal(world, &id)?;
-            live.former = former;
+            let mut live = Live::new(about, places, now);
+            live.removed = removed;
             state.admit(live);
             state.live.release()?;
         }
-        std::fs::remove_dir_all(home_index)?;
         state.live.release()?;
         Ok((
             Self {
@@ -318,27 +276,43 @@ impl Residents {
         self.relocate(world, id, Some(town))
     }
 
+    /// The resident `id` is in `town` from now on, or in no project. Only its
+    /// `town` record changes, in one write: the move is done or not done.
     pub fn relocate(&self, world: &WorldDir, id: &ResidentId, town: Option<&TownName>) -> io::Result<bool> {
         self.active(id).map_err(io::Error::other)?;
         let mut state = self.lock();
         let Some(live) = state.live.get_mut(id) else {
             return Err(io::Error::new(io::ErrorKind::NotFound, format!("no resident {id} lives here")));
         };
-        if live.town.as_ref() == town {
+        let mut places = live.places.clone();
+        if !places.enter(town.cloned(), Timestamp::now()) {
             return Ok(false);
         }
-        let from = live.town.clone();
-        records::move_to(world, id, from.as_ref(), town, &live.about, live.now.as_ref())?;
-        live.town = town.cloned();
-        live.former.retain(|former| former.town.as_ref() != town);
-        live.former.push(Former { id: id.clone(), town: from, to: town.cloned(), at: Timestamp::now() });
+        let directory = world.conversation(id);
+        let bytes = serde_json::to_vec_pretty(&places).map_err(io::Error::other)?;
+        if let Err(failure) = fastctx_platform::atomic::publish_checked(
+            &directory.town(),
+            &bytes,
+            fastctx_platform::Permissions::Private,
+            true,
+            || Ok(()),
+        ) {
+            if failure.published {
+                live.places = places;
+            }
+            return Err(failure.error);
+        }
+        live.places = places;
         Ok(true)
     }
 
     /// Where residents lived before they moved.
     pub fn former(&self) -> Vec<Former> {
         let ids = self.lock().live.ids();
-        ids.flat_map(|id| self.lock().live.get(&id).map(|live| live.former.clone()).unwrap_or_default()).collect()
+        ids.flat_map(|id| {
+            self.lock().live.get(&id).map(|live| former(&live.about.id, &live.places)).unwrap_or_default()
+        })
+        .collect()
     }
 
     /// What the resident has been told of where it lives.
@@ -356,7 +330,7 @@ impl Residents {
     /// cursor backwards or acknowledge news from a town the resident left.
     pub fn acknowledge_heard(&self, id: &ResidentId, heard: Heard) {
         if let Some(live) = self.lock().live.get_mut(id)
-            && live.town == heard.town
+            && live.town() == heard.town
             && live.heard.as_ref().is_none_or(|prior| prior.town != heard.town || prior.ledger <= heard.ledger)
         {
             live.heard = Some(heard);
@@ -383,7 +357,7 @@ impl Residents {
                         return Err(removal::refused(&resident));
                     }
                     live.connections += 1;
-                    Ok(Whereabouts { resident, town: live.town.clone() })
+                    Ok(Whereabouts { resident, town: live.town() })
                 }
                 None => Err(Failure::new(format!(
                     "this session says it is {resident}, but {machine} has no record of that resident"
@@ -398,7 +372,7 @@ impl Residents {
                 return Err(removal::refused(&resident));
             }
             live.connections += 1;
-            return Ok(Whereabouts { resident, town: live.town.clone() });
+            return Ok(Whereabouts { resident, town: live.town() });
         }
         if let Some(resident) = hints.was
             && let Some(live) = state.live.get_mut(&resident)
@@ -407,7 +381,7 @@ impl Residents {
                 return Err(removal::refused(&resident));
             }
             live.connections += 1;
-            return Ok(Whereabouts { resident, town: live.town.clone() });
+            return Ok(Whereabouts { resident, town: live.town() });
         }
         let resident = new_id(&host.agent, &state)?;
         let about = About {
@@ -424,13 +398,14 @@ impl Residents {
             home: None,
             callee: None,
         };
-        records::create(&world.resident(None, &resident), &about)
+        let places = Places::born(None, about.born_at);
+        records::create(&world.conversation(&resident), &about, &places)
             .map_err(|error| Failure::new(format!("recording a new resident: {error}")))?;
         if let Some(thread) = hints.thread {
             state.record_session(None, &thread);
             state.threads.insert(thread, resident.clone());
         }
-        let mut live = Live::new(about, None, None);
+        let mut live = Live::new(about, places, None);
         live.connections = 1;
         state.admit(live);
         Ok(Whereabouts { resident, town: None })
@@ -454,8 +429,14 @@ impl Residents {
 
     /// Records a resident the World started, with what it is doing.
     pub fn create(&self, world: &WorldDir, about: About, town: Option<TownName>, now: Now) -> io::Result<()> {
-        let directory = world.resident(town.as_ref(), &about.id);
-        records::create(&directory, &about)?;
+        let directory = world.conversation(&about.id);
+        let places = Places::born(town, about.born_at);
+        records::create(&directory, &about, &places)?;
+        // Files attached before it was opened are its own now.
+        match std::fs::remove_file(directory.draft()) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
         let recorded = records::write_now(&directory, &now);
         let mut state = self.lock();
         if let Some(session) = &about.session {
@@ -464,7 +445,7 @@ impl Residents {
         }
         // The durable identity already exists even if its initial activity
         // could not be written. Retain it so a retry cannot create a second one.
-        state.admit(Live::new(about, town, recorded.as_ref().ok().map(|()| now)));
+        state.admit(Live::new(about, places, recorded.as_ref().ok().map(|()| now)));
         recorded
     }
 
@@ -528,7 +509,7 @@ impl Residents {
         if about == live.about {
             return Ok(());
         }
-        records::write_about(&world.resident(live.town.as_ref(), id), &about)?;
+        records::write_about(&world.conversation(id), &about)?;
         live.about = about;
         state.record_session(prior_session.as_deref(), session);
         state.threads.insert(session.to_string(), id.clone());
@@ -547,7 +528,7 @@ impl Residents {
         }
         let mut about = live.about.clone();
         about.works_on = works_on;
-        records::write_about(&world.resident(live.town.as_ref(), id), &about)?;
+        records::write_about(&world.conversation(id), &about)?;
         live.about = about;
         Ok(())
     }
@@ -557,14 +538,19 @@ impl Residents {
         new_id(agent, &self.lock())
     }
 
+    /// Whether the resident `id` lives on this machine, removed or not.
+    pub fn knows(&self, id: &ResidentId) -> bool {
+        self.lock().live.contains_key(id)
+    }
+
     /// The town of the resident `id` living on this machine; `None` when no
     /// such resident lives here.
     pub fn town_of(&self, id: &ResidentId) -> Option<Option<TownName>> {
-        self.lock().live.get(id).map(|live| live.town.clone())
+        self.lock().live.get(id).map(Live::town)
     }
 
     pub fn about(&self, id: &ResidentId) -> Option<(About, Option<TownName>)> {
-        self.lock().live.get(id).map(|live| (live.about.clone(), live.town.clone()))
+        self.lock().live.get(id).map(|live| (live.about.clone(), live.town()))
     }
 
     pub fn now(&self, id: &ResidentId) -> Option<Now> {
@@ -599,7 +585,7 @@ impl Residents {
         state.live.get(id).map(|live| OnRecord {
             id: id.clone(),
             removed: live.removed,
-            town: live.town.clone(),
+            town: live.town(),
             here: here(live),
             about: live.about.clone(),
             now: live.now.clone(),
@@ -666,7 +652,7 @@ impl Residents {
         }
         let mut now = live.now.clone().unwrap_or_else(|| idle(Timestamp::now()));
         change(&mut now);
-        records::write_now(&world.resident(live.town.as_ref(), id), &now)?;
+        records::write_now(&world.conversation(id), &now)?;
         live.now = Some(now);
         Ok(())
     }
@@ -792,7 +778,7 @@ impl Residents {
         let mut now = live.now.clone().unwrap_or_else(|| idle(Timestamp::now()));
         let previous_owed = live.owed.clone();
         change(live, &mut now);
-        if let Err(error) = records::write_now(&world.resident(live.town.as_ref(), id), &now) {
+        if let Err(error) = records::write_now(&world.conversation(id), &now) {
             // A receipt or terminal record is authoritative even while its
             // replaceable now projection cannot be written.
             if proven {
@@ -871,40 +857,13 @@ fn new_id(agent: &AgentName, state: &State) -> Result<ResidentId, Failure> {
     }
 }
 
-/// The town a resident lives in: the one of its directories not marked as
-/// left. A move cut short after it marked the old directory left none such;
-/// it is finished now, to the town of the latest move.
-fn live_town(world: &WorldDir, id: &ResidentId, homes: &Homes) -> io::Result<Option<TownName>> {
-    let unmarked: Vec<&Option<TownName>> =
-        homes.iter().filter(|(_, moved)| moved.is_none()).map(|(town, _)| town).collect();
-    match unmarked.as_slice() {
-        [town] => Ok((*town).clone()),
-        [] => {
-            let (from, moved) = homes
-                .iter()
-                .filter_map(|(town, moved)| Some((town, moved.as_ref()?)))
-                .max_by_key(|(_, moved)| moved.at)
-                .ok_or_else(|| io::Error::other(format!("{id} has no directory")))?;
-            let about = records::read_about(&world.resident(from.as_ref(), id))?;
-            records::move_to(world, id, from.as_ref(), moved.to.as_ref(), &about, None)?;
-            Ok(moved.to.clone())
-        }
-        several => Err(io::Error::other(format!(
-            "{id} has a home in more than one town ({}); each but one should say where it moved",
-            several
-                .iter()
-                .map(|town| town.as_ref().map_or("outside", |town| town.as_str()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))),
-    }
-}
-
-/// The town a directory of residents belongs to, from where it lies.
-pub(crate) fn town_of(world: &WorldDir, parent: &std::path::Path) -> Option<TownName> {
-    let towns = world.path().join("towns");
-    let town = parent.parent()?.strip_prefix(&towns).ok()?;
-    TownName::try_from(town.to_str()?).ok()
+/// Each time the resident left a project, as `fastctx w` lists it there.
+fn former(id: &ResidentId, places: &Places) -> Vec<Former> {
+    places
+        .departures()
+        .into_iter()
+        .map(|(town, moved)| Former { id: id.clone(), town, to: moved.to, at: moved.at })
+        .collect()
 }
 
 #[cfg(test)]

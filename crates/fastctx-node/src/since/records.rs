@@ -1,16 +1,17 @@
-//! Read existing records without following a moved resident into another town.
-//! Actions and messages stay where they were written; turn records travel with
-//! a resident and therefore need identity-based merging and explicit town gaps.
+//! Read existing records. Each conversation keeps them in one directory; the
+//! project a fact belongs to is the one the conversation was in when it
+//! happened, from its `town` record. Turn records can be written more than
+//! once, by different paths, and are merged by identity.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
 use fastctx_net::ledger::Entry;
 use fastctx_net::sign::Signed;
-use fastctx_types::layout::WorldDir;
+use fastctx_types::layout::{ConversationDir, Kind, WorldDir};
 use fastctx_types::project::{Description, EntryStamp, Location, Record, version_of};
-use fastctx_types::residents::{About, Action, Activity, MessageKind, MessageLine, Moved};
+use fastctx_types::residents::{About, Action, Activity, MessageKind, MessageLine, Places};
 use fastctx_types::run::JobRecord;
 use fastctx_types::session::{Happened, SessionEvent, TurnEnd};
 use fastctx_types::since::*;
@@ -44,64 +45,63 @@ pub(super) fn read(
     let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
     let mut residents = BTreeMap::<ResidentId, ResidentFiles>::new();
     for parent in world.job_parents()? {
-        let place = crate::residents::town_of(world, &parent);
         for directory in scan.dirs(&parent) {
             scan.jobs(&directory.join("jobs"));
-            let original_directory = directory;
-            let archived = original_directory
-                .file_name()
-                .and_then(|name| name.to_str())
-                .and_then(|name| name.parse::<ResidentId>().ok())
-                .is_some_and(|id| world.removed(&id).exists());
-            let directory = if archived { original_directory.join("archive") } else { original_directory.clone() };
-            let path = directory.join("about");
-            if let Some(about) = scan.optional::<About>(&path) {
-                let files = residents.entry(about.id.clone()).or_default();
-                let moved = read_optional::<Moved>(&directory.join("moved"));
-                let active = matches!(moved, Ok(None));
-                if files.about.is_none() || active {
-                    files.about = Some(about.clone());
-                }
-                files.homes.insert(place.clone());
-                files.birth_sources.push(scan.location(&path));
-                if let Err(error) = &moved {
-                    scan.issue(&directory.join("moved"), error);
-                }
-                if let Ok(Some(moved)) = moved {
-                    scan.events.push(SinceEvent {
-                        id: identity(
-                            "moved",
-                            &[
-                                &Address { machine: machine.clone(), resident: about.id.clone() }.key(),
-                                &original_directory.to_string_lossy(),
-                                &moved.at.to_string(),
-                            ],
-                        ),
-                        at: moved.at,
-                        machine: machine.clone(),
-                        town: known(place.as_ref()),
-                        sources: vec![scan.location(&directory.join("moved"))],
-                        what: SinceKind::ResidentMoved {
-                            resident: Address { machine: machine.clone(), resident: about.id.clone() },
-                            from: place.clone(),
-                            to: moved.to,
-                        },
-                    });
-                } else if active && !archived {
-                    match crate::residents::read_now(&world.resident(place.as_ref(), &about.id)) {
-                        Ok(Some(now)) if now.activity == Activity::Asleep => scan.undated.push(UndatedFact {
-                            resident: Address { machine: machine.clone(), resident: about.id.clone() },
-                            town: known(place.as_ref()),
-                            source: scan.location(&directory.join("now")),
-                            what: UndatedKind::Asleep,
-                        }),
-                        Ok(_) => {}
-                        Err(error) => scan.issue(&directory.join("now"), error),
-                    }
-                }
-                scan.resident(&about, &directory, &original_directory, place.as_ref(), files);
+        }
+    }
+    let kept = match world.kept() {
+        Ok(kept) => kept,
+        Err(error) => {
+            scan.issue(&world.conversations(), error);
+            Vec::new()
+        }
+    };
+    for kept in kept {
+        let Kind::Home(_) = &kept.kind else { continue };
+        let directory = &kept.directory;
+        let Some(about) = scan.optional::<About>(&directory.about()) else { continue };
+        let places = match crate::residents::read_places(directory, &about) {
+            Ok(places) => places,
+            Err(error) => {
+                scan.issue(&directory.town(), error);
+                continue;
+            }
+        };
+        let removed = match crate::residents::read_removed(directory) {
+            Ok(removed) => removed.is_some(),
+            Err(error) => {
+                scan.issue(&directory.removed(), error);
+                false
+            }
+        };
+        let address = Address { machine: machine.clone(), resident: about.id.clone() };
+        for (from, moved) in places.departures() {
+            scan.events.push(SinceEvent {
+                id: identity("moved", &[&address.key(), &directory.path().to_string_lossy(), &moved.at.to_string()]),
+                at: moved.at,
+                machine: machine.clone(),
+                town: known(from.as_ref()),
+                sources: vec![scan.location(&directory.town())],
+                what: SinceKind::ResidentMoved { resident: address.clone(), from, to: moved.to },
+            });
+        }
+        if !removed {
+            match crate::residents::read_now(directory) {
+                Ok(Some(now)) if now.activity == Activity::Asleep => scan.undated.push(UndatedFact {
+                    resident: address.clone(),
+                    town: known(places.now()),
+                    source: scan.location(&directory.now()),
+                    what: UndatedKind::Asleep,
+                }),
+                Ok(_) => {}
+                Err(error) => scan.issue(&directory.now(), error),
             }
         }
+        let files = residents.entry(about.id.clone()).or_default();
+        files.birth_sources.push(scan.location(&directory.about()));
+        files.about = Some(about.clone());
+        files.places = Some(places);
+        scan.resident(&about, directory, files);
     }
     for (id, files) in &residents {
         scan.finish_resident(id, files);
@@ -150,11 +150,22 @@ pub(super) fn ledger(
 #[derive(Default)]
 struct ResidentFiles {
     about: Option<About>,
-    homes: BTreeSet<Option<TownName>>,
+    places: Option<Places>,
     birth_sources: Vec<Location>,
-    birth_town: Option<Option<TownName>>,
     turns: BTreeMap<String, Turn>,
     uncertain: BTreeMap<NoticeId, Uncertain>,
+}
+
+impl ResidentFiles {
+    /// The project the conversation was in at `at`.
+    fn town_at(&self, at: Timestamp) -> SinceTown {
+        known(self.places.as_ref().and_then(|places| places.at(at)))
+    }
+
+    /// The project it is in now, for what has no time of its own.
+    fn town_now(&self) -> SinceTown {
+        known(self.places.as_ref().and_then(Places::now))
+    }
 }
 
 #[derive(Default)]
@@ -164,7 +175,6 @@ struct Uncertain {
     end: Option<TurnEnd>,
     readers: Option<Vec<Address>>,
     sources: Vec<Location>,
-    homes: BTreeSet<Option<TownName>>,
 }
 
 struct Turn {
@@ -173,9 +183,7 @@ struct Turn {
     readers: Option<Vec<Address>>,
     /// Terminal records precede message rows, which precede legacy events.
     rank: u8,
-    town: Option<Option<TownName>>,
     sources: Vec<Location>,
-    homes: BTreeSet<Option<TownName>>,
 }
 
 struct Scan<'a> {
@@ -254,16 +262,9 @@ impl Scan<'_> {
         }
     }
 
-    fn resident(
-        &mut self,
-        about: &About,
-        directory: &Path,
-        original: &Path,
-        town: Option<&TownName>,
-        files: &mut ResidentFiles,
-    ) {
+    fn resident(&mut self, about: &About, directory: &ConversationDir, files: &mut ResidentFiles) {
         let address = Address { machine: self.machine.clone(), resident: about.id.clone() };
-        for path in self.json_files(&directory.join("turns")) {
+        for path in self.json_files(&directory.turns()) {
             if let Some(finished) = self.optional::<Finished>(&path) {
                 self.turn(
                     files,
@@ -273,41 +274,30 @@ impl Scan<'_> {
                         end: finished.end,
                         readers: Some(finished.readers),
                         rank: 3,
-                        town: None,
                         sources: vec![self.location(&path)],
-                        homes: BTreeSet::from([town.cloned()]),
                     },
                 );
             }
         }
-        for path in self.json_files(&directory.join("session-events")) {
+        for path in self.json_files(&directory.session_events()) {
             if let Some(event) = self.optional::<SessionEvent>(&path) {
                 match event.happened {
                     Happened::TurnEnded { turn, end } => self.turn(
                         files,
                         turn,
-                        Turn {
-                            at: event.at,
-                            end,
-                            readers: None,
-                            rank: 1,
-                            town: None,
-                            sources: vec![self.location(&path)],
-                            homes: BTreeSet::from([town.cloned()]),
-                        },
+                        Turn { at: event.at, end, readers: None, rank: 1, sources: vec![self.location(&path)] },
                     ),
                     Happened::DeliveryUncertain { delivery, why } => {
                         let uncertain = files.uncertain.entry(delivery).or_default();
                         uncertain.at = Some(event.at);
                         uncertain.why = why;
                         uncertain.sources.push(self.location(&path));
-                        uncertain.homes.insert(town.cloned());
                     }
                     _ => {}
                 }
             }
         }
-        for path in self.json_files(&directory.join("handovers")) {
+        for path in self.json_files(&directory.handovers()) {
             if let Some(handover) = self.optional::<crate::delivery::Handover>(&path)
                 && let Some(end) = handover.unresolved
             {
@@ -320,50 +310,35 @@ impl Scan<'_> {
                     readers.sort();
                     readers.dedup();
                     uncertain.sources.push(self.location(&path));
-                    uncertain.homes.insert(town.cloned());
                 }
             }
         }
-        let path = directory.join("messages");
+        let path = directory.messages();
         self.lines::<MessageLine>(&path, |scan, line, number| match line.what {
-            MessageKind::Asked { .. } => files.birth_town = Some(town.cloned()),
             MessageKind::Ended { turn, end, owed } => scan.turn(
                 files,
                 turn,
-                Turn {
-                    at: line.at,
-                    end,
-                    readers: Some(owed),
-                    rank: 2,
-                    town: Some(town.cloned()),
-                    sources: vec![scan.location(&path)],
-                    homes: BTreeSet::from([town.cloned()]),
-                },
+                Turn { at: line.at, end, readers: Some(owed), rank: 2, sources: vec![scan.location(&path)] },
             ),
             MessageKind::Told { to, turn, outcome } => scan.events.push(SinceEvent {
-                id: identity(
-                    "answer-delivery",
-                    &[&address.key(), &original.join("messages").to_string_lossy(), &number.to_string()],
-                ),
+                id: identity("answer-delivery", &[&address.key(), &path.to_string_lossy(), &number.to_string()]),
                 at: line.at,
                 machine: scan.machine.clone(),
-                town: known(town),
+                town: files.town_at(line.at),
                 sources: vec![scan.location(&path)],
                 what: SinceKind::AnswerDelivery { colleague: address.clone(), to, turn, outcome },
             }),
-            MessageKind::Heard { .. } => {}
+            MessageKind::Asked { .. } | MessageKind::Heard { .. } => {}
         });
-        let path = directory.join("actions");
+        let path = directory.actions();
         self.lines::<Action>(&path, |scan, action, number| {
+            let town = files.town_at(action.at);
             if matches!(action.hand.as_str(), "write" | "edit" | "apply_patch") {
                 scan.events.push(SinceEvent {
-                    id: identity(
-                        "write",
-                        &[&address.key(), &original.join("actions").to_string_lossy(), &number.to_string()],
-                    ),
+                    id: identity("write", &[&address.key(), &path.to_string_lossy(), &number.to_string()]),
                     at: action.at,
                     machine: action.machine,
-                    town: known(town),
+                    town,
                     sources: vec![scan.location(&path)],
                     what: SinceKind::FileAction {
                         resident: address.clone(),
@@ -379,13 +354,10 @@ impl Scan<'_> {
             }
             match action.result.parse::<ResidentId>() {
                 Ok(id) => scan.events.push(SinceEvent {
-                    id: identity(
-                        "asked",
-                        &[&address.key(), &original.join("actions").to_string_lossy(), &number.to_string()],
-                    ),
+                    id: identity("asked", &[&address.key(), &path.to_string_lossy(), &number.to_string()]),
                     at: action.at,
                     machine: scan.machine.clone(),
-                    town: known(town),
+                    town,
                     sources: vec![scan.location(&path)],
                     what: SinceKind::ColleagueAsked {
                         asker: address.clone(),
@@ -442,10 +414,6 @@ impl Scan<'_> {
             }
             std::mem::swap(prior, &mut incoming);
         }
-        if incoming.town.is_some() {
-            prior.town = incoming.town;
-        }
-        prior.homes.extend(incoming.homes);
         for source in incoming.sources {
             if !prior.sources.contains(&source) {
                 prior.sources.push(source);
@@ -456,12 +424,11 @@ impl Scan<'_> {
     fn finish_resident(&mut self, id: &ResidentId, files: &ResidentFiles) {
         let about = files.about.as_ref().expect("a resident has an about record");
         let address = Address { machine: self.machine.clone(), resident: id.clone() };
-        let unknown = || SinceTown::Unrecorded { recorded_in: files.homes.iter().cloned().collect() };
         self.events.push(SinceEvent {
             id: identity("born", &[&address.key()]),
             at: about.born_at,
             machine: self.machine.clone(),
-            town: files.birth_town.as_ref().map(|town| known(town.as_ref())).unwrap_or_else(unknown),
+            town: files.town_at(about.born_at),
             sources: files.birth_sources.clone(),
             what: SinceKind::ResidentBorn {
                 resident: address.clone(),
@@ -474,11 +441,7 @@ impl Scan<'_> {
                 id: identity("turn-ended", &[&address.key(), turn]),
                 at: finished.at,
                 machine: self.machine.clone(),
-                town: finished
-                    .town
-                    .as_ref()
-                    .map(|town| known(town.as_ref()))
-                    .unwrap_or_else(|| SinceTown::Unrecorded { recorded_in: finished.homes.iter().cloned().collect() }),
+                town: files.town_at(finished.at),
                 sources: finished.sources.clone(),
                 what: SinceKind::TurnEnded {
                     resident: address.clone(),
@@ -489,7 +452,7 @@ impl Scan<'_> {
             });
         }
         for (delivery, uncertain) in &files.uncertain {
-            let place = SinceTown::Unrecorded { recorded_in: uncertain.homes.iter().cloned().collect() };
+            let place = uncertain.at.map_or_else(|| files.town_now(), |at| files.town_at(at));
             match uncertain.at {
                 Some(at) => self.events.push(SinceEvent {
                     id: identity("submission-uncertain", &[&address.key(), delivery.as_str()]),
@@ -525,10 +488,11 @@ impl Scan<'_> {
             let Some(resident) = self.optional::<ResidentId>(&directory.join("resident.json")) else { continue };
             let Some(files) = residents.get(&resident) else { continue };
             let address = Address { machine: self.machine.clone(), resident };
-            let place = SinceTown::Unrecorded { recorded_in: files.homes.iter().cloned().collect() };
+            let place = files.town_now();
             let path = directory.join("session.json");
             if let Some(registration) = self.optional::<fastctx_hosts::claude::exchange::Registration>(&path) {
                 if let Some(at) = registration.at {
+                    let place = files.town_at(at);
                     self.events.push(SinceEvent {
                         id: identity(
                             "claude-registered",
@@ -587,7 +551,9 @@ impl Scan<'_> {
         for path in self.json_files(&world.town(town).signed()) {
             let Some(signed) = self.optional::<Signed>(&path) else { continue };
             match signed.claim::<Entry>() {
-                Ok(entry) if entry.hub == place.hub && entry.town == place.town => self.ledger_entry(town, &path, entry),
+                Ok(entry) if entry.hub == place.hub && entry.town == place.town => {
+                    self.ledger_entry(town, &path, entry)
+                }
                 Ok(_) => self.issue(&path, "entry belongs to another project"),
                 Err(error) => self.issue(&path, error),
             }
@@ -682,12 +648,4 @@ fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
     serde_json::from_slice(&std::fs::read(path)?).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
-}
-
-fn read_optional<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
-    match read_json(path) {
-        Ok(value) => Ok(Some(value)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
 }

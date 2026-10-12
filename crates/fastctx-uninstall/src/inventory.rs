@@ -228,13 +228,11 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
         let key = fastctx_hosts::claude::trust::uninstall_key(world.path())?;
         let mut claude_homes = vec![installation.claude_home.clone()];
         claude_homes.extend(homes.iter().filter(|home| home.host == apply::Host::Claude).map(|home| home.home.clone()));
-        for parent in world.resident_parents()? {
-            for resident in crate::entries(&parent)? {
-                if let Some(about) = crate::read::<fastctx_types::residents::About>(&resident.path().join("about"))?
-                    && about.host.agent.as_str() == "claude"
-                {
-                    claude_homes.push(about.home.unwrap_or_else(|| installation.claude_home.clone()));
-                }
+        for about in abouts(&world)? {
+            if let Some(about) = crate::read::<fastctx_types::residents::About>(&about)?
+                && about.host.agent.as_str() == "claude"
+            {
+                claude_homes.push(about.home.unwrap_or_else(|| installation.claude_home.clone()));
             }
         }
         claude_homes.sort();
@@ -593,4 +591,26 @@ fn other_programs(places: &apply::Places, application: Option<&std::path::Path>)
         }
     }
     Ok(programs)
+}
+
+/// Where each resident on this machine says who it is: in its conversation's
+/// home, or, in a World no node of this version has started yet, in the
+/// directories of the earlier layout.
+pub(crate) fn abouts(world: &fastctx_types::layout::WorldDir) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut abouts = Vec::new();
+    for kept in world.kept()? {
+        if matches!(kept.kind, fastctx_types::layout::Kind::Home(_)) {
+            abouts.push(kept.directory.about());
+        }
+    }
+    for parent in world.earlier().parents()? {
+        for resident in crate::entries(&parent)? {
+            for about in [resident.path().join("about"), resident.path().join("archive").join("about")] {
+                if about.try_exists()? {
+                    abouts.push(about);
+                }
+            }
+        }
+    }
+    Ok(abouts)
 }

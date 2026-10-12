@@ -226,10 +226,8 @@ pub(crate) fn require(node: &Arc<Node>, resident: &ResidentId, login: Option<&Ca
 
 fn asked_path(node: &Node, asker: &ResidentId, colleague: &fastctx_types::Address) -> PathBuf {
     node.world
-        .path()
-        .join("codex")
-        .join("asked")
-        .join(asker.as_str())
+        .conversation(asker)
+        .asked()
         .join(&*colleague.machine.file_name())
         .join(format!("{}.json", colleague.resident))
 }
@@ -272,7 +270,7 @@ pub(crate) fn asked_account(
 }
 
 fn path(node: &Node, resident: &ResidentId) -> PathBuf {
-    node.world.path().join("codex").join("callees").join(format!("{resident}.json"))
+    node.world.conversation(resident).callee()
 }
 
 pub(crate) fn keep(node: &Node, resident: &ResidentId, started: &Started) -> Result<(), Failure> {

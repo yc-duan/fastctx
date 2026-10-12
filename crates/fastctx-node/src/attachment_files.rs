@@ -124,7 +124,7 @@ pub(crate) async fn resolve(
         "claude" => crate::claude::image_records(node, &about.id)?,
         _ => return Err(Failure::new("the resident's host has no image-record reader")),
     };
-    let temporary = node.world.path().join("image-reading");
+    let temporary = node.world.image_reading();
     let agent = about.host.agent.clone();
     let serial = READING.clone().lock_owned().await;
     tokio::task::spawn_blocking(move || {

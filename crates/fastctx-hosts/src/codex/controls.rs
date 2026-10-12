@@ -1,7 +1,7 @@
 //! Stable conversation controls of app-server 0.160. Choices are local to
 //! the World's next turn; they do not use the experimental settings RPCs.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish};
@@ -19,25 +19,17 @@ pub(super) struct Selection {
 }
 
 impl Selection {
-    fn path(root: &Path, thread: &str) -> PathBuf {
-        // A host ID is opaque input, never a filesystem path component.
-        let key: String = thread.bytes().map(|byte| format!("{byte:02x}")).collect();
-        root.join("choices").join(format!("{key}.json"))
-    }
-
-    pub(super) fn read(root: &Path, thread: &str) -> Result<Self, String> {
-        let path = Self::path(root, thread);
-        match std::fs::read(&path) {
+    pub(super) fn read(path: &Path) -> Result<Self, String> {
+        match std::fs::read(path) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| format!("reading {}: {error}", path.display())),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(format!("reading {}: {error}", path.display())),
         }
     }
 
-    pub(super) fn write(&self, root: &Path, thread: &str) -> Result<(), String> {
-        let path = Self::path(root, thread);
+    pub(super) fn write(&self, path: &Path) -> Result<(), String> {
         ensure_private_dir(path.parent().expect("choices directory"))
-            .and_then(|()| publish(&path, &serde_json::to_vec(self)?, Permissions::Private))
+            .and_then(|()| publish(path, &serde_json::to_vec(self)?, Permissions::Private))
             .map_err(|error| format!("saving the next turn's model: {error}"))
     }
 
@@ -92,7 +84,7 @@ impl CodexHost {
                 "model {selected} does not offer service tier {tier}; select /tier default before changing models"
             ));
         }
-        selection.write(&self.workdir, thread)?;
+        selection.write(&entry.spec.as_ref().ok_or("how the Codex thread was started is not known")?.choices)?;
         entry.selection = selection;
         Ok(())
     }
@@ -158,6 +150,7 @@ impl CodexHost {
         let mut state = self.lock();
         let current = matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, &server));
         let entry = state.threads.entry(thread.clone()).or_default();
+        let choices = spec.choices.clone();
         entry.spec = Some(spec);
         entry.loaded = current;
         entry.completed_item = true;
@@ -166,7 +159,7 @@ impl CodexHost {
         entry.service_tier = answer.get("serviceTier").and_then(Value::as_str).map(str::to_string);
         entry.metadata = metadata(&answer["thread"]);
         selection
-            .write(&self.workdir, &thread)
+            .write(&choices)
             .map_err(|error| format!("Codex created fork {thread}, but saving its choices failed: {error}"))?;
         entry.selection = selection;
         Ok((thread, model))

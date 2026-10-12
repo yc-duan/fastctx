@@ -11,6 +11,8 @@ pub mod awake;
 #[cfg(any(target_os = "linux", windows))]
 pub mod child;
 pub mod detach;
+pub mod directory_alias;
+pub mod disk_usage;
 pub mod disks;
 pub mod elevation;
 pub mod environment;

@@ -192,6 +192,8 @@ async fn fork(
         source.home.as_deref(),
     )
     .await?;
+    // Until it is claimed below, reports of threads nobody claims are kept.
+    let _starting = crate::codex::starting(node);
     let (fork, model) = codex.fork(thread, through.as_deref(), spec).await.map_err(Failure::new)?;
     let at = Timestamp::now();
     let about = About {

@@ -103,7 +103,7 @@ fn live(pending: Vec<SessionEvent>, owner: &Address) -> impl Iterator<Item = Wat
 /// versions read the same history. None while a turn runs, when its host
 /// adds to its record without saying so to any of these.
 async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>, Failure> {
-    let (about, town) = node
+    let (about, _) = node
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
@@ -120,8 +120,8 @@ async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>
     take(&serde_json::to_vec(&about).map_err(|error| Failure::new(error.to_string()))?);
     let failed = |error: std::io::Error| Failure::new(format!("reading {resident}'s records: {error}"));
     {
-        let directory = node.world.resident(town.as_ref(), resident);
-        let (_transaction, directory) = crate::resident_storage::current(&directory).map_err(failed)?;
+        let directory = node.world.conversation(resident);
+        let _transaction = crate::resident_storage::lock();
         crate::session_record::stamp(directory.path(), &mut take).map_err(failed)?;
         crate::run_facts::stamp(&directory, &mut take).map_err(failed)?;
     }

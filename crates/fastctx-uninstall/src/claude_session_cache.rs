@@ -10,16 +10,12 @@ use unicode_normalization::UnicodeNormalization as _;
 pub(crate) fn include_steps(request: &mut Request) -> anyhow::Result<()> {
     let world = fastctx_types::layout::WorldDir::under(&request.installation.root);
     let mut residents = BTreeMap::new();
-    for parent in world.resident_parents()? {
-        for resident in crate::entries(&parent)? {
-            for file in [resident.path().join("about"), resident.path().join("archive/about")] {
-                if let Some(about) = crate::read::<About>(&file)?
-                    && about.world_started
-                    && about.host.agent.as_str() == "claude"
-                {
-                    residents.insert(about.id.clone(), about);
-                }
-            }
+    for file in crate::inventory::abouts(&world)? {
+        if let Some(about) = crate::read::<About>(&file)?
+            && about.world_started
+            && about.host.agent.as_str() == "claude"
+        {
+            residents.insert(about.id.clone(), about);
         }
     }
     let mut homes = BTreeMap::<PathBuf, BTreeSet<String>>::new();

@@ -597,6 +597,7 @@ async fn perform(request: &Request, step: &Step, progress: &mut Progress) -> any
                 if matches!(
                     name.as_ref(),
                     "outside"
+                        | "conversations"
                         | "towns"
                         | "removed-residents"
                         | "net"

@@ -32,13 +32,9 @@ impl PendingStop {
 
 /// Where stops not yet delivered wait, so that a node that restarts still
 /// sends them.
-fn pending_stops(node: &Node) -> PathBuf {
-    node.world.path().join("on-stops")
-}
-
 fn pending_path(node: &Node, owner: &Address, machine: &MachineName, request: &str) -> PathBuf {
     let id = crate::speech::fixed_id("stop", &[owner.machine.key(), owner.resident.as_str(), machine.key(), request]);
-    pending_stops(node).join(format!("{id}.json"))
+    node.world.owner(&node.machine(), owner).book("on-stops").join(format!("{id}.json"))
 }
 
 /// The pending stop itself retains suppression if the separate receipt
@@ -50,7 +46,9 @@ pub(crate) fn pending_cancellation(
     request: &NoticeId,
 ) -> std::io::Result<bool> {
     let owner = Address { machine: node.machine(), resident: to.clone() };
-    pending_path(node, &owner, machine, request.as_str()).try_exists()
+    let path = pending_path(node, &owner, machine, request.as_str());
+    Ok(path.try_exists()?
+        || node.world.path().join("on-stops").join(path.file_name().expect("pending stop name")).try_exists()?)
 }
 
 /// Asks `machine` to stop `job`, until it has or the job is gone: the stop
@@ -70,7 +68,7 @@ pub(crate) async fn send(node: &Arc<Node>, written: &crate::reach::Written, orig
     let keeping = async {
         let mut delay = Backoff::default();
         loop {
-            match keep_stop(node, &pending, &path).await {
+            match keep_stop(&pending, &path).await {
                 Ok(()) => return,
                 Err(error) => node.log.line(format_args!("keeping {} for after a restart: {error}", path.display())),
             }
@@ -86,8 +84,8 @@ pub(crate) async fn send(node: &Arc<Node>, written: &crate::reach::Written, orig
     }
 }
 
-async fn keep_stop(node: &Node, pending: &PendingStop, path: &Path) -> std::io::Result<()> {
-    let directory = pending_stops(node);
+async fn keep_stop(pending: &PendingStop, path: &Path) -> std::io::Result<()> {
+    let directory = path.parent().expect("pending stop directory").to_path_buf();
     let bytes = serde_json::to_vec(pending).map_err(std::io::Error::other)?;
     let written = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -176,55 +174,57 @@ pub(crate) async fn resume(node: &Arc<Node>) {
 }
 
 async fn resume_pending_stops(node: &Arc<Node>) -> std::io::Result<()> {
-    let directory = pending_stops(node);
-    let mut entries = match tokio::fs::read_dir(&directory).await {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
+    let directories = node.world.book_directories("on-stops")?;
     let mut problems = Vec::new();
-    loop {
-        let entry = match entries.next_entry().await {
-            Ok(Some(entry)) => entry,
-            Ok(None) => break,
-            Err(error) => {
-                problems.push(format!("{}: {error}", directory.display()));
-                break;
-            }
-        };
-        let path = entry.path();
-        if path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        if node.on_delivering.lock().expect("never poisoned").contains(&path) {
-            continue;
-        }
-        let read = match tokio::fs::read(&path).await {
+    for directory in directories {
+        let mut entries = match tokio::fs::read_dir(&directory).await {
+            Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            bytes => bytes
-                .map_err(|error| error.to_string())
-                .and_then(|bytes| serde_json::from_slice::<PendingStop>(&bytes).map_err(|error| error.to_string())),
+            Err(error) => return Err(error),
         };
-        let pending = match read {
-            Ok(pending) => pending,
-            Err(error) => {
-                problems.push(format!("{}: {error}", path.display()));
+        loop {
+            let entry = match entries.next_entry().await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(error) => {
+                    problems.push(format!("{}: {error}", directory.display()));
+                    break;
+                }
+            };
+            let path = entry.path();
+            if path.extension().is_none_or(|extension| extension != "json") {
                 continue;
             }
-        };
-        if !node.on_delivering.lock().expect("never poisoned").insert(path.clone()) {
-            continue;
-        }
-        let node = node.clone();
-        tokio::spawn(async move {
-            if let Err(error) = deliver_stop(&node, &pending).await {
-                node.log.line(format_args!("{} remains pending: {error}", path.display()));
-                node.on_delivering.lock().expect("never poisoned").remove(&path);
-                return;
+            if node.on_delivering.lock().expect("never poisoned").contains(&path) {
+                continue;
             }
-            settle_stop(&node, &pending, &path).await;
-            node.on_delivering.lock().expect("never poisoned").remove(&path);
-        });
+            let read = match tokio::fs::read(&path).await {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                bytes => bytes
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| serde_json::from_slice::<PendingStop>(&bytes).map_err(|error| error.to_string())),
+            };
+            let pending = match read {
+                Ok(pending) => pending,
+                Err(error) => {
+                    problems.push(format!("{}: {error}", path.display()));
+                    continue;
+                }
+            };
+            if !node.on_delivering.lock().expect("never poisoned").insert(path.clone()) {
+                continue;
+            }
+            let node = node.clone();
+            tokio::spawn(async move {
+                if let Err(error) = deliver_stop(&node, &pending).await {
+                    node.log.line(format_args!("{} remains pending: {error}", path.display()));
+                    node.on_delivering.lock().expect("never poisoned").remove(&path);
+                    return;
+                }
+                settle_stop(&node, &pending, &path).await;
+                node.on_delivering.lock().expect("never poisoned").remove(&path);
+            });
+        }
     }
     if problems.is_empty() { Ok(()) } else { Err(std::io::Error::other(problems.join("\n"))) }
 }
@@ -234,7 +234,7 @@ async fn resume_pending_stops(node: &Arc<Node>) -> std::io::Result<()> {
 /// end is owed to the resident.
 pub(crate) async fn serve(node: &Arc<Node>, origin: OnOrigin, job: Option<JobId>) -> Result<RemoteReply, Failure> {
     let owner = JobOwner::Resident(origin.resident.clone());
-    let directory = node.world.job_owner(&node.machine(), origin.town.as_ref(), &owner);
+    let directory = node.world.job_owner(&node.machine(), &owner);
     if let Some(request) = &origin.request {
         fastctx_platform::ensure_private_dir(&directory.jobs())
             .and_then(|()| {

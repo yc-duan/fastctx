@@ -1,4 +1,4 @@
-//! Atomic composer checkpoints follow resident relocation.
+//! Atomic composer checkpoints in the conversation's directory.
 
 use super::*;
 
@@ -7,30 +7,30 @@ pub(super) fn existing(node: &Node, id: &ResidentId) -> Result<Option<Cell>, Fai
     if let Some(cell) = node.composers.cells.get(id) {
         return Ok(Some(cell));
     }
-    let Some((_, town)) = node.residents.about(id) else { return Ok(None) };
-    let directory = node.world.resident(town.as_ref(), id);
-    let (_transition, directory) = crate::resident_storage::current(&directory).map_err(failure)?;
-    if directory.path().join("composer.json").try_exists().map_err(failure)? {
-        Ok(Some(node.composers.cell(id)))
-    } else {
-        Ok(None)
+    if !node.residents.knows(id) {
+        return Ok(None);
     }
+    let directory = node.world.conversation(id);
+    let _transition = crate::resident_storage::lock();
+    if directory.composer().try_exists().map_err(failure)? { Ok(Some(node.composers.cell(id))) } else { Ok(None) }
 }
 
 pub(super) fn load(node: &Node, id: &ResidentId, cell: &mut Option<Stored>) -> Result<(), Failure> {
     if cell.is_some() {
         return Ok(());
     }
-    let (_, town) = node.residents.about(id).ok_or_else(|| failure("unknown resident"))?;
-    let directory = node.world.resident(town.as_ref(), id);
-    let (_transition, directory) = crate::resident_storage::current(&directory).map_err(failure)?;
-    let state: Stored = match std::fs::read(directory.path().join("composer.json")) {
+    if !node.residents.knows(id) {
+        return Err(failure("unknown resident"));
+    }
+    let directory = node.world.conversation(id);
+    let _transition = crate::resident_storage::lock();
+    let state: Stored = match std::fs::read(directory.composer()) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(failure)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Stored::default(),
         Err(error) => return Err(failure(error)),
     };
     let mut compacted = state.clone();
-    receipts::compact(directory.path(), &state, &mut compacted)?;
+    receipts::compact(&directory, &state, &mut compacted)?;
     *cell = Some(compacted);
     Ok(())
 }
@@ -42,15 +42,17 @@ pub(super) fn publish(
     mut next: Stored,
 ) -> Result<(), Failure> {
     next.revision = next.revision.checked_add(1).ok_or_else(|| failure("revision overflow"))?;
-    let (_, town) = node.residents.about(id).ok_or_else(|| failure("unknown resident"))?;
-    let directory = node.world.resident(town.as_ref(), id);
-    let (_transition, directory) = crate::resident_storage::current(&directory).map_err(failure)?;
+    if !node.residents.knows(id) {
+        return Err(failure("unknown resident"));
+    }
+    let directory = node.world.conversation(id);
+    let _transition = crate::resident_storage::lock();
     if let Some(previous) = cell.as_ref() {
-        receipts::compact(directory.path(), previous, &mut next)?;
+        receipts::compact(&directory, previous, &mut next)?;
     }
     let bytes = serde_json::to_vec(&next).map_err(failure)?;
     if let Err(error) = fastctx_platform::atomic::publish_checked(
-        &directory.path().join("composer.json"),
+        &directory.composer(),
         &bytes,
         fastctx_platform::Permissions::Private,
         true,
@@ -102,8 +104,8 @@ pub async fn recover(node: &Arc<Node>) -> Result<(), Failure> {
         if resident.removed.is_some() {
             continue;
         }
-        let directory = node.world.resident(resident.town.as_ref(), &resident.id);
-        if !directory.path().join("composer.json").try_exists().map_err(failure)? {
+        let directory = node.world.conversation(&resident.id);
+        if !directory.composer().try_exists().map_err(failure)? {
             continue;
         }
         let cell = node.composers.cell(&resident.id);

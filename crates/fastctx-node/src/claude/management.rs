@@ -101,6 +101,25 @@ async fn settle_stopped(node: &Arc<Node>, resident: &ResidentId, session: &str) 
         .map_err(|error| Failure::new(error.to_string()))
 }
 
+/// Ends Claude Code's background session for good, when it has one: stops
+/// it if it runs, idle only, and removes Claude Code's record of it
+/// (`claude rm`), which keeps the session's own record; that goes with the
+/// conversation.
+pub async fn retire(
+    node: &Arc<Node>,
+    home: Option<&Path>,
+    resident: &ResidentId,
+    session: &str,
+) -> Result<(), Failure> {
+    let Some(agent) = background_session(node, home, session).await? else { return Ok(()) };
+    if agent["pid"].as_u64().is_some() {
+        stop(node, home, resident, session, true).await?;
+    }
+    let id = agent["id"].as_str().ok_or_else(|| Failure::new("Claude Code returned no background id"))?;
+    run(node, home, vec!["rm".into(), id.into()]).await?;
+    Ok(())
+}
+
 pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<(), Failure> {
     let record = background_session(node, home, session)
         .await?

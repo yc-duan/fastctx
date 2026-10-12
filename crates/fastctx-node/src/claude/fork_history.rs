@@ -16,8 +16,10 @@ pub(super) fn retained(
     session: &str,
     through: Option<&str>,
 ) -> Result<Vec<SessionEvent>, Failure> {
-    let (_, town) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
-    let mut recorded = crate::delivery::history(&node.world.resident(town.as_ref(), resident)).map_err(failure)?;
+    if !node.residents.knows(resident) {
+        return Err(Failure::new("unknown resident"));
+    }
+    let mut recorded = crate::delivery::history(&node.world.conversation(resident)).map_err(failure)?;
     let removed: HashSet<_> = recorded
         .iter()
         .flat_map(|event| match &event.happened {
@@ -99,8 +101,10 @@ pub(super) fn retained(
 }
 
 pub(super) fn seed(node: &Arc<Node>, resident: &ResidentId, recorded: &[SessionEvent]) -> Result<(), Failure> {
-    let (_, town) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown fork resident"))?;
-    let directory = node.world.resident(town.as_ref(), resident);
+    if !node.residents.knows(resident) {
+        return Err(Failure::new("unknown fork resident"));
+    }
+    let directory = node.world.conversation(resident);
     for event in recorded {
         let key = serde_json::to_string(event).map_err(|error| Failure::new(error.to_string()))?;
         crate::delivery::event(&directory, &format!("inherited:{key}"), event).map_err(failure)?;

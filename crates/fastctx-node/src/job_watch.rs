@@ -24,17 +24,16 @@ struct Watched {
 }
 
 /// Restores observation of jobs whose launching node has already exited.
-pub(crate) fn restore(node: &Arc<Node>, record: &JobRecord) -> std::io::Result<()> {
-    let path = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_record(&record.id);
+pub(crate) fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -> std::io::Result<()> {
     if record.call_id.is_some() {
-        crate::run_facts::update_job(node, &path, crate::run_facts::writes(&path)?)?;
+        crate::run_facts::update_job(node, path, crate::run_facts::writes(path)?)?;
     }
     if let Some(identity) = &record.supervisor {
-        start(node, &path, Some(identity.clone()));
+        start(node, path, Some(identity.clone()));
     } else if let Some(program) = &record.program
         && program.starter != fastctx_platform::current_identity()?
     {
-        start(node, &path, None);
+        start(node, path, None);
     }
     Ok(())
 }
@@ -43,7 +42,9 @@ pub(crate) fn restore(node: &Arc<Node>, record: &JobRecord) -> std::io::Result<(
 /// scratch await the enclosing answer's host receipt.
 pub(crate) fn copied(node: &Arc<Node>, path: &Path) {
     let _gate = node.disk.lock().expect("never poisoned");
-    if let Err(error) = fastctx_platform::publish(&path.with_extension("copied"), b"", fastctx_platform::Permissions::Private) {
+    if let Err(error) =
+        fastctx_platform::publish(&path.with_extension("copied"), b"", fastctx_platform::Permissions::Private)
+    {
         node.log.line(format_args!("recording transferred command output: {error}"));
         return;
     }

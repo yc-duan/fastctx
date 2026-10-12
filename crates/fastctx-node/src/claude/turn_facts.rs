@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::io;
 
-use fastctx_types::layout::ResidentDir;
+use fastctx_types::layout::ConversationDir;
 use fastctx_types::session::{Happened, RequestUsage, SessionChange, TurnEffort, TurnFacts, TurnTokens};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,8 +14,8 @@ struct Observations {
     responses: BTreeMap<u64, RequestUsage>,
 }
 
-fn path(directory: &ResidentDir, turn: &str) -> std::path::PathBuf {
-    directory.path().join("turn-facts").join(format!("{}.json", crate::speech::fixed_id("turn", &[turn])))
+fn path(directory: &ConversationDir, turn: &str) -> std::path::PathBuf {
+    directory.turn_facts().join(format!("{}.json", crate::speech::fixed_id("turn", &[turn])))
 }
 
 fn read(path: &std::path::Path) -> io::Result<Observations> {
@@ -26,15 +26,15 @@ fn read(path: &std::path::Path) -> io::Result<Observations> {
     }
 }
 
-pub fn observe(directory: &ResidentDir, happened: &Happened) -> io::Result<()> {
+pub fn observe(directory: &ConversationDir, happened: &Happened) -> io::Result<()> {
     let Happened::Changed { turn: Some(turn), change } = happened else { return Ok(()) };
     if !matches!(change, SessionChange::ModelRequest { .. } | SessionChange::ModelResponse { usage: Some(_), .. })
         || crate::delivery::terminal(directory, turn)?.is_some()
     {
         return Ok(());
     }
-    let (_transaction, directory) = crate::resident_storage::current(directory)?;
-    let path = path(&directory, turn);
+    let _transaction = crate::resident_storage::lock();
+    let path = path(directory, turn);
     let mut observations = read(&path)?;
     match change {
         SessionChange::ModelRequest { step, effort, .. } => {
@@ -56,9 +56,9 @@ pub fn observe(directory: &ResidentDir, happened: &Happened) -> io::Result<()> {
     )
 }
 
-pub fn finish(directory: &ResidentDir, turn: &str) -> io::Result<Option<TurnFacts>> {
-    let (_transaction, directory) = crate::resident_storage::current(directory)?;
-    let observations = read(&path(&directory, turn))?;
+pub fn finish(directory: &ConversationDir, turn: &str) -> io::Result<Option<TurnFacts>> {
+    let _transaction = crate::resident_storage::lock();
+    let observations = read(&path(directory, turn))?;
     let mut facts = TurnFacts::default();
     for effort in observations.efforts.into_values() {
         facts.effort(TurnEffort::Requested { value: effort });
@@ -85,9 +85,9 @@ pub fn finish(directory: &ResidentDir, turn: &str) -> io::Result<Option<TurnFact
     Ok((!facts.is_empty()).then_some(facts))
 }
 
-pub fn settled(directory: &ResidentDir, turn: &str) -> io::Result<()> {
-    let (_transaction, directory) = crate::resident_storage::current(directory)?;
-    match std::fs::remove_file(path(&directory, turn)) {
+pub fn settled(directory: &ConversationDir, turn: &str) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
+    match std::fs::remove_file(path(directory, turn)) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),

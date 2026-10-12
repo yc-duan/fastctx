@@ -82,7 +82,7 @@ pub(crate) struct Elsewhere {
 }
 
 fn elsewhere_path(node: &Node, resident: &ResidentId, machine: &MachineName, job: &JobId) -> PathBuf {
-    node.world.path().join("elsewhere").join(resident.as_str()).join(format!("{}-{job}.json", machine.key()))
+    node.world.conversation(resident).elsewhere().join(format!("{}-{job}.json", machine.key()))
 }
 
 fn left_running(node: &Node, resident: &ResidentId, kept: &Elsewhere) {
@@ -107,7 +107,7 @@ pub(crate) fn ended_elsewhere(node: &Node, resident: &ResidentId, machine: &Mach
 
 /// What runs of `resident` left running on the machine it works on.
 pub(crate) fn running_elsewhere(node: &Node, resident: &ResidentId) -> Vec<Elsewhere> {
-    let Ok(entries) = std::fs::read_dir(node.world.path().join("elsewhere").join(resident.as_str())) else {
+    let Ok(entries) = std::fs::read_dir(node.world.conversation(resident).elsewhere()) else {
         return Vec::new();
     };
     entries
@@ -240,7 +240,7 @@ pub(crate) async fn run(
 ) -> Result<RunReply, Failure> {
     let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
     let here = Address { machine: node.machine(), resident: resident.clone() };
-    let directory = node.world.resident(node.residents.town_of(resident).flatten().as_ref(), resident);
+    let directory = node.world.conversation(resident);
     // Listening before the call goes, so words that come meanwhile are not
     // missed here.
     let mut words = node.words.watch(&here);
@@ -316,13 +316,21 @@ pub(crate) fn take_dispatched(node: &Node, resident: &ResidentId, job: &JobId) -
 }
 
 pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bool {
-    let Some((works_on, town)) =
-        take_dispatched(node, resident, job)
-    else {
+    let Some((works_on, town)) = take_dispatched(node, resident, job) else {
         return false;
     };
     let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
-    let (node, call) = (node.clone(), RemoteCall::Forget { resident: resident.clone(), town, job: job.clone(), delivery: None, origin: None, through_exit: false });
+    let (node, call) = (
+        node.clone(),
+        RemoteCall::Forget {
+            resident: resident.clone(),
+            town,
+            job: job.clone(),
+            delivery: None,
+            origin: None,
+            through_exit: false,
+        },
+    );
     tokio::spawn(async move {
         match node.call(&acting, &works_on, Purpose::Hands, call).await {
             Ok(Ok(_)) => {}

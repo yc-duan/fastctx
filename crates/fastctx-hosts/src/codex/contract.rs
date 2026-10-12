@@ -34,6 +34,7 @@ fn dormant_threads_and_completed_turns_release_runtime_state_without_losing_iden
                 developer_instructions: "private fixture".repeat(128),
                 config: json!({}),
                 name: None,
+                choices: host.workdir.join("choices.json"),
             },
         );
         host.notified("turn/started", &json!({"threadId":thread,"turn":{"id":turn}}), at);

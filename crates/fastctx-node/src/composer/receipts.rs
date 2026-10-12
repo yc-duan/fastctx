@@ -2,15 +2,15 @@
 //! acknowledged checkpoints move their old receipts to individually addressed files.
 
 use super::*;
+use fastctx_types::layout::ConversationDir;
 use serde::{Serialize, de::DeserializeOwned};
-use std::path::Path;
 
-fn path(root: &Path, kind: &str, key: &str) -> std::path::PathBuf {
-    root.join(format!("composer-{kind}")).join(format!("{}.json", crate::speech::fixed_id("operation", &[key])))
+fn path(directory: &ConversationDir, kind: &str, key: &str) -> std::path::PathBuf {
+    directory.composer_books(kind).join(format!("{}.json", crate::speech::fixed_id("operation", &[key])))
 }
 
-fn put(root: &Path, kind: &str, key: &str, value: &impl Serialize) -> Result<(), Failure> {
-    let path = path(root, kind, key);
+fn put(directory: &ConversationDir, kind: &str, key: &str, value: &impl Serialize) -> Result<(), Failure> {
+    let path = path(directory, kind, key);
     fastctx_platform::ensure_private_dir(path.parent().expect("receipt directory")).map_err(failure)?;
     fastctx_platform::publish(
         &path,
@@ -21,10 +21,12 @@ fn put(root: &Path, kind: &str, key: &str, value: &impl Serialize) -> Result<(),
 }
 
 fn get<T: DeserializeOwned>(node: &Node, id: &ResidentId, kind: &str, key: &str) -> Result<Option<T>, Failure> {
-    let (_, town) = node.residents.about(id).ok_or_else(|| failure("unknown resident"))?;
-    let directory = node.world.resident(town.as_ref(), id);
-    let (_transition, directory) = crate::resident_storage::current(&directory).map_err(failure)?;
-    match std::fs::read(path(directory.path(), kind, key)) {
+    if !node.residents.knows(id) {
+        return Err(failure("unknown resident"));
+    }
+    let directory = node.world.conversation(id);
+    let _transition = crate::resident_storage::lock();
+    match std::fs::read(path(&directory, kind, key)) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(failure),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(failure(error)),
@@ -61,7 +63,7 @@ pub(super) fn ended(node: &Node, id: &ResidentId, state: &Stored, turn: &str) ->
 
 /// `previous` already has a committed checkpoint. Archive it before removing
 /// identical entries from its successor; a failed successor never invents a receipt.
-pub(super) fn compact(root: &Path, previous: &Stored, next: &mut Stored) -> Result<(), Failure> {
+pub(super) fn compact(root: &ConversationDir, previous: &Stored, next: &mut Stored) -> Result<(), Failure> {
     for (key, receipt) in &previous.receipts {
         put(root, "receipts", key, receipt)?;
         if next.receipts.get(key) == Some(receipt) {

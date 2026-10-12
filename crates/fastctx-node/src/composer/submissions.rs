@@ -162,9 +162,7 @@ pub(super) fn schedule(node: &Arc<Node>, id: &ResidentId) {
 
 pub fn resume(node: &Arc<Node>) {
     for resident in node.residents.everyone() {
-        if resident.removed.is_none()
-            && node.world.resident(resident.town.as_ref(), &resident.id).path().join("composer.json").exists()
-        {
+        if resident.removed.is_none() && node.world.conversation(&resident.id).composer().exists() {
             schedule(node, &resident.id);
         }
     }

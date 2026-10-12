@@ -410,13 +410,73 @@ pub struct Action {
     pub result: String,
 }
 
-/// Left in the directory a resident had in a town when it moved to another
-/// (`world-town.md`): what it did there stays there.
+/// That a resident left a town, and for which (`fastctx w` lists it in the
+/// town it left).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Moved {
     /// The town it went to; `None` for outside every town.
     pub to: Option<TownName>,
     pub at: Timestamp,
+}
+
+/// The projects a resident has been in, oldest first; the last is the one it
+/// is in now. Kept in its `town`: changing projects changes this and nothing
+/// else.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Places {
+    pub stays: Vec<Stay>,
+}
+
+/// From `from` on, until the next stay, the resident was in `town`, or in
+/// no project when it is `None`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stay {
+    pub town: Option<TownName>,
+    pub from: Timestamp,
+}
+
+impl Places {
+    /// A resident born at `at` in `town`.
+    pub fn born(town: Option<TownName>, at: Timestamp) -> Self {
+        Self { stays: vec![Stay { town, from: at }] }
+    }
+
+    /// The project it is in now.
+    pub fn now(&self) -> Option<&TownName> {
+        self.stays.last().and_then(|stay| stay.town.as_ref())
+    }
+
+    /// The project it was in at `at`; the first one for a moment before it.
+    pub fn at(&self, at: Timestamp) -> Option<&TownName> {
+        self.stays.iter().rev().find(|stay| stay.from <= at).or(self.stays.first()).and_then(|stay| stay.town.as_ref())
+    }
+
+    /// It is in `town` from `at` on. Returns whether that changed anything.
+    pub fn enter(&mut self, town: Option<TownName>, at: Timestamp) -> bool {
+        if self.stays.last().is_some_and(|stay| stay.town == town) {
+            return false;
+        }
+        self.stays.push(Stay { town, from: at });
+        true
+    }
+
+    /// Each time it left a project: the project, where it went and when.
+    pub fn departures(&self) -> Vec<(Option<TownName>, Moved)> {
+        self.stays
+            .windows(2)
+            .map(|pair| (pair[0].town.clone(), Moved { to: pair[1].town.clone(), at: pair[1].from }))
+            .collect()
+    }
+
+    /// The stretches of time it was in `town`: from, and until when it left.
+    pub fn spans(&self, town: Option<&TownName>) -> Vec<(Timestamp, Option<Timestamp>)> {
+        self.stays
+            .iter()
+            .enumerate()
+            .filter(|(_, stay)| stay.town.as_ref() == town)
+            .map(|(index, stay)| (stay.from, self.stays.get(index + 1).map(|next| next.from)))
+            .collect()
+    }
 }
 
 /// Something on its way into a resident's session: one file in its

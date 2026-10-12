@@ -90,6 +90,16 @@ impl Threads {
     pub fn values(&self) -> hash_map::Values<'_, String, Thread> {
         self.entries.values()
     }
+    /// Forgets a thread that no longer exists, here and on disk.
+    pub fn remove(&mut self, thread: &str) {
+        self.entries.remove(thread);
+        self.clean.remove(thread);
+        match std::fs::remove_file(self.path(thread)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => failed("removing Codex thread cache", error),
+        }
+    }
     pub fn keys(&self) -> hash_map::Keys<'_, String, Thread> {
         self.entries.keys()
     }

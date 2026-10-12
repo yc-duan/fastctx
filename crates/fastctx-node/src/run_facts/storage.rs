@@ -116,15 +116,17 @@ fn loaded(path: &Path) -> io::Result<Option<StoredCall>> {
     Ok(Some(stored))
 }
 
-pub(super) fn get(directory: &ResidentDir, id: &str) -> io::Result<Option<RunFacts>> {
-    let (_transaction, directory) = crate::resident_storage::current(directory)?;
-    loaded(&path(&directory, id)).map(|stored| stored.map(|stored| stored.facts))
+pub(super) fn get(directory: &ConversationDir, id: &str) -> io::Result<Option<RunFacts>> {
+    let _transaction = crate::resident_storage::lock();
+    loaded(&path(directory, id)).map(|stored| stored.map(|stored| stored.facts))
 }
 
 pub(crate) fn begin(node: &Node, resident: &ResidentId, id: &str, machine: MachineName) -> io::Result<()> {
-    let (_, town) = node.residents.about(resident).ok_or_else(|| io::Error::other("unknown resident"))?;
-    let directory = node.world.resident(town.as_ref(), resident);
-    let (_transaction, directory) = crate::resident_storage::current(&directory)?;
+    if !node.residents.knows(resident) {
+        return Err(io::Error::other("unknown resident"));
+    }
+    let directory = node.world.conversation(resident);
+    let _transaction = crate::resident_storage::lock();
     save(
         &path(&directory, id),
         &StoredCall {
@@ -145,9 +147,9 @@ pub(crate) fn begin(node: &Node, resident: &ResidentId, id: &str, machine: Machi
     )
 }
 
-pub(super) fn keep(directory: &ResidentDir, id: &str, facts: &RunFacts, display: bool) -> io::Result<()> {
-    let (_transaction, directory) = crate::resident_storage::current(directory)?;
-    let file = path(&directory, id);
+pub(super) fn keep(directory: &ConversationDir, id: &str, facts: &RunFacts, display: bool) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
+    let file = path(directory, id);
     let previous = loaded(&file)?;
     let mut stored =
         StoredCall { call_id: id.into(), facts: facts.clone(), sequence: 0, launched: facts.job.is_some() };
@@ -185,9 +187,11 @@ pub(super) fn keep(directory: &ResidentDir, id: &str, facts: &RunFacts, display:
 }
 
 pub(crate) fn failed(node: &Node, resident: &ResidentId, id: &str, error: &str) -> io::Result<()> {
-    let (_, town) = node.residents.about(resident).ok_or_else(|| io::Error::other("unknown resident"))?;
-    let directory = node.world.resident(town.as_ref(), resident);
-    let (_transaction, directory) = crate::resident_storage::current(&directory)?;
+    if !node.residents.knows(resident) {
+        return Err(io::Error::other("unknown resident"));
+    }
+    let directory = node.world.conversation(resident);
+    let _transaction = crate::resident_storage::lock();
     let file = path(&directory, id);
     if let Some(mut stored) = loaded(&file)?
         && !stored.launched
@@ -199,9 +203,11 @@ pub(crate) fn failed(node: &Node, resident: &ResidentId, id: &str, error: &str) 
 }
 
 pub(crate) fn discard_unlaunched(node: &Node, resident: &ResidentId, id: &str) -> io::Result<()> {
-    let (_, town) = node.residents.about(resident).ok_or_else(|| io::Error::other("unknown resident"))?;
-    let directory = node.world.resident(town.as_ref(), resident);
-    let (_transaction, directory) = crate::resident_storage::current(&directory)?;
+    if !node.residents.knows(resident) {
+        return Err(io::Error::other("unknown resident"));
+    }
+    let directory = node.world.conversation(resident);
+    let _transaction = crate::resident_storage::lock();
     let file = path(&directory, id);
     if loaded(&file)?.is_some_and(|stored| !stored.launched) {
         delete_log(&file)?;
@@ -211,12 +217,14 @@ pub(crate) fn discard_unlaunched(node: &Node, resident: &ResidentId, id: &str) -
 }
 
 pub(crate) fn record_failure(node: &Node, resident: &ResidentId, id: &str, error: &str) -> io::Result<()> {
-    let (_, town) = node.residents.about(resident).ok_or_else(|| io::Error::other("unknown resident"))?;
+    if !node.residents.knows(resident) {
+        return Err(io::Error::other("unknown resident"));
+    }
     let machine = crate::here::placed(node, resident)
         .and_then(|(_, works_on)| works_on)
         .map_or_else(|| node.machine(), |works_on| works_on.name);
-    let directory = node.world.resident(town.as_ref(), resident);
-    let (_transaction, directory) = crate::resident_storage::current(&directory)?;
+    let directory = node.world.conversation(resident);
+    let _transaction = crate::resident_storage::lock();
     let file = path(&directory, id);
     let previous = loaded(&file)?;
     if previous.as_ref().is_some_and(|stored| {
@@ -244,10 +252,12 @@ pub(crate) fn record_failure(node: &Node, resident: &ResidentId, id: &str, error
 }
 
 pub(crate) fn receive(node: &Node, resident: &ResidentId, update: &JobFacts) -> io::Result<()> {
-    let (_, town) = node.residents.about(resident).ok_or_else(|| io::Error::other("unknown resident"))?;
-    let directory = node.world.resident(town.as_ref(), resident);
+    if !node.residents.knows(resident) {
+        return Err(io::Error::other("unknown resident"));
+    }
+    let directory = node.world.conversation(resident);
     {
-        let (_transaction, directory) = crate::resident_storage::current(&directory)?;
+        let _transaction = crate::resident_storage::lock();
         let file = path(&directory, &update.call_id);
         if read(&file)?.is_none() {
             return Ok(());
@@ -281,6 +291,6 @@ pub(crate) fn receive(node: &Node, resident: &ResidentId, update: &JobFacts) -> 
 
 /// What `get` reads for any call, told by each file's name, size and time
 /// of change: a call's facts are replaced whole or appended to.
-pub(crate) fn stamp(directory: &ResidentDir, digest: &mut impl FnMut(&[u8])) -> io::Result<()> {
+pub(crate) fn stamp(directory: &ConversationDir, digest: &mut impl FnMut(&[u8])) -> io::Result<()> {
     crate::session_record::stamp_files(&directory.calls(), digest)
 }

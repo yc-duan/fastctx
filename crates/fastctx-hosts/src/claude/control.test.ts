@@ -26,7 +26,7 @@ test('uses the public controls and request return types through the official eng
   on('session.messages', () => ({ value: [] }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.version', () => ({ value: { version: '2.1.294' } }))
-  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify(e.argv[1] === 'claude-control-owner' && !ownerAlive ? null : { pid: 123, token: 'lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify(e.argv[1] === 'claude-session-directory' ? e.argv[2] + '/claude/' + e.argv[3] : e.argv[1] === 'claude-control-owner' && !ownerAlive ? null : { pid: 123, token: 'lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('fs.write', (_, e) => { const path = normalize(e.path); files.set(path, e.text); markers.get(path)?.(); return { value: undefined } })
   on('fs.read', (_, e) => {
     const path = normalize(e.path)

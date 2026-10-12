@@ -10,6 +10,8 @@ mod android;
 mod collab;
 mod composer;
 mod connection;
+#[cfg(desktop)]
+mod data;
 mod features;
 mod hub_moving;
 mod item_details;
@@ -935,6 +937,8 @@ pub fn run() {
             features::features_read,
             features::features_set,
             features::features_watch,
+            #[cfg(desktop)]
+            data::data,
             accounts::account_change,
             accounts::server_command,
             hub_moving::hub_move,

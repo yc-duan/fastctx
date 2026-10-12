@@ -506,15 +506,15 @@ async fn collect(
     if native_delivery(node, &resident) {
         return collect_notes(node, resident, answering, Vec::new(), collected_notes).await;
     }
-    let town = town_of(node, &resident)?;
-    let directory = node.world.resident(town.as_ref(), &resident);
+    present(node, &resident)?;
+    let directory = node.world.conversation(&resident);
     let kept = blocking("reading what waits", move || crate::inbox::pending(&directory)).await?;
     let mut notices = Vec::new();
     {
         let mut taking = node.taking.lock().expect("never poisoned");
         for pending in kept.into_iter().filter(|pending| pending.state == PendingState::Waiting) {
-            let town = town_of(node, &resident)?;
-            let directory = node.world.resident(town.as_ref(), &resident);
+            present(node, &resident)?;
+            let directory = node.world.conversation(&resident);
             if crate::inbox::read(&directory, &pending.delivery.id)
                 .map_err(|error| Failure::new(error.to_string()))?
                 .is_none_or(|current| current.state != PendingState::Waiting)
@@ -595,8 +595,9 @@ async fn taken(
     collected: &mut Vec<(ResidentId, NoticeId, Option<String>)>,
     collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
+    // Where a job an older program ran for it was put: in its project then.
     let town = town_of(node, &resident)?;
-    let directory = node.world.resident(town.as_ref(), &resident);
+    let directory = node.world.conversation(&resident);
     let speaking = node.residents.speaking(&resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let _speaking = speaking.lock().await;
     let mut by_turn: std::collections::BTreeMap<Option<String>, Vec<fastctx_types::residents::Pending>> =
@@ -679,6 +680,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
     }
     active_caller(node, peer)?;
     match call {
+        Call::ClaudeSessionDirectory { session, previous, cwd, process } => {
+            if !matches!(peer, Peer::Session { host } if host.agent.as_str() == "claude") {
+                users_voice(node, peer)?;
+            }
+            crate::claude::pairing::directory(node, session, previous, cwd, process)
+                .await
+                .map(|path| Reply::ClaudeSessionDirectory { path })
+        }
         Call::Arrive { host, hints } => {
             if host.agent.as_str() == "claude" || hints.tool_use_id.is_some() {
                 let id = hints.tool_use_id.as_deref().filter(|id| !id.is_empty()).ok_or_else(|| {
@@ -723,13 +732,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::write_command::write(node, peer, town, op, job).await.map(|outcome| Reply::Written { outcome })
         }
         Call::JobChanged { job, owner, town } => node.jobs.changed(node, job, owner, town).await.map(|()| Reply::Done),
-        Call::Saw { owner, town, seen } => {
+        Call::Saw { owner, town: _, seen } => {
             let (world, here) = (node.world.clone(), node.machine());
-            blocking("recording what was seen", move || {
-                crate::residents::record_seen(&world, &here, &owner, town.as_ref(), &seen)
-            })
-            .await
-            .map(|()| Reply::Done)
+            blocking("recording what was seen", move || crate::residents::record_seen(&world, &here, &owner, &seen))
+                .await
+                .map(|()| Reply::Done)
         }
         Call::Who { all, town, since } => {
             let caller = caller::of(node, peer)?;
@@ -745,9 +752,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     Some(address) if address.machine == node.machine() => {
                         let world = node.world.clone();
                         let id = address.resident.clone();
-                        let town = node.residents.town_of(&id).flatten();
                         blocking("reading the previous turn", move || {
-                            crate::activity::last_turn(&world.resident(town.as_ref(), &id))
+                            crate::activity::last_turn(&world.conversation(&id))
                         })
                         .await?
                     }
@@ -849,6 +855,13 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|(resident, stopped)| Reply::Stopped { resident, stopped })
         }
+        Call::Data(call) => {
+            // Only the user deletes conversations or changes what is kept.
+            if !matches!(call, fastctx_types::data::DataCall::List) {
+                users_voice(node, peer)?;
+            }
+            crate::data::answer(node, call).await.map(Reply::Data)
+        }
         Call::Manage { resident, machine, action } => {
             users_voice(node, peer)?;
             crate::management::manage(node, resident, machine, action)
@@ -908,8 +921,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(|colleague| Reply::Asked { colleague })
         }
         Call::Message { resident, to, machine, text, login } => {
-            let town = town_of(node, &resident)?;
-            crate::colleagues::message(node, resident, town, to, machine, text, login.as_ref())
+            present(node, &resident)?;
+            crate::colleagues::message(node, resident, to, machine, text, login.as_ref())
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed })
         }
@@ -1065,6 +1078,11 @@ fn town_of(node: &Node, resident: &ResidentId) -> Result<Option<TownName>, Failu
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))
 }
 
+/// Fails unless `resident` lives here and was not removed.
+fn present(node: &Node, resident: &ResidentId) -> Result<(), Failure> {
+    town_of(node, resident).map(drop)
+}
+
 /// Runs a script for a resident of this machine and records the action in
 /// the resident's records. Other machines are reached with `on` inside the
 /// script; a session listed before `on` may still name one, and is told so.
@@ -1138,10 +1156,7 @@ async fn run_started(
     }
     let action = crate::jobs::action(&reply, &script, started_at);
     let world = node.world.clone();
-    blocking("recording the action", move || {
-        crate::residents::record_action(&world, &resident, town.as_ref(), &action)
-    })
-    .await?;
+    blocking("recording the action", move || crate::residents::record_action(&world, &resident, &action)).await?;
     Ok(reply)
 }
 
@@ -1179,10 +1194,7 @@ async fn write(
             .await?;
     let action = crate::write::action(&op, &outcome, &here, started_at);
     let world = node.world.clone();
-    blocking("recording the action", move || {
-        crate::residents::record_action(&world, &resident, town.as_ref(), &action)
-    })
-    .await?;
+    blocking("recording the action", move || crate::residents::record_action(&world, &resident, &action)).await?;
     Ok(outcome)
 }
 

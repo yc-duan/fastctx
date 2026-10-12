@@ -44,7 +44,6 @@ pub(super) fn observe(node: &Arc<Node>, resident: &ResidentId, id: NoticeId, com
 pub(super) fn recover(node: &Arc<Node>) {
     for record in node.residents.everyone() {
         let about = record.about;
-        let town = record.town;
         if record.removed.is_some()
             || !about.world_started
             || about.host.agent.as_str() != "claude"
@@ -55,7 +54,7 @@ pub(super) fn recover(node: &Arc<Node>) {
         if about.session.as_ref().is_some_and(|session| session.len() != 8) {
             continue;
         }
-        let directory = node.world.resident(town.as_ref(), &about.id);
+        let directory = node.world.conversation(&about.id);
         let kept = match crate::inbox::pending(&directory) {
             Ok(pending) => pending,
             Err(error) => {
@@ -132,8 +131,10 @@ fn pending(node: &Node, resident: &ResidentId, id: &NoticeId) -> bool {
     if super::paired(node, resident) || node.residents.removed(resident).is_some() {
         return false;
     }
-    let Some((_, town)) = node.residents.about(resident) else { return false };
-    let directory = node.world.resident(town.as_ref(), resident);
+    if node.residents.about(resident).is_none() {
+        return false;
+    }
+    let directory = node.world.conversation(resident);
     match crate::inbox::read(&directory, id) {
         Ok(pending) => pending.is_some(),
         Err(error) => {
@@ -235,8 +236,10 @@ async fn watch(node: &Arc<Node>, resident: &ResidentId, id: &NoticeId, command: 
                         return;
                     }
                     if job.ended() {
-                        let Some((_, town)) = node.residents.about(resident) else { return };
-                        let directory = node.world.resident(town.as_ref(), resident);
+                        if node.residents.about(resident).is_none() {
+                            return;
+                        }
+                        let directory = node.world.conversation(resident);
                         if let Err(error) = super::failed_wake(node, resident, &directory, id, Failure::new(why)).await
                         {
                             node.log.line(format_args!("recording failed Claude startup: {error}"));

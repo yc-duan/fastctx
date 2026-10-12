@@ -34,7 +34,7 @@ pub(crate) async fn wait_for_image(node: &crate::Node, resident: &ResidentId, me
             ))
         }),
     };
-    let temporary = node.world.path().join("image-reading");
+    let temporary = node.world.image_reading();
     fastctx_platform::ensure_private_dir(&temporary)?;
     let scope = tempfile::tempdir_in(temporary)?;
     let mut host_ended = false;

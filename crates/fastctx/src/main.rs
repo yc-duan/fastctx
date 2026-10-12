@@ -11,7 +11,9 @@ mod allocator;
 mod apply;
 mod ask;
 mod attach;
+mod claude_session_directory;
 mod copy;
+mod data;
 mod first_program;
 mod host_change;
 mod journal;
@@ -59,6 +61,16 @@ enum Command {
     /// Identifies the process invoking the World mod helper.
     #[command(hide = true)]
     ParentProcess,
+    #[command(hide = true)]
+    ClaudeSessionDirectory {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+        session: String,
+        #[arg(long)]
+        previous: Option<String>,
+        #[arg(long)]
+        cwd: Option<String>,
+    },
     /// Wait for the person answering one public Claude mod request.
     #[command(hide = true)]
     ClaudeRequest {
@@ -232,6 +244,9 @@ enum Command {
     /// The hub: where the accounts are, and every computer connects to.
     #[command(subcommand)]
     Hub(world::HubCommand),
+    /// What fastctx keeps on this machine, conversation by conversation,
+    /// and deleting it; how long command output is kept.
+    Data(data::DataArgs),
     /// Give the sessions you open on this machine, in Codex and Claude Code,
     /// the World's tools.
     Apply(apply::ApplyArgs),
@@ -317,6 +332,7 @@ fn main() -> ExitCode {
             | Command::Unapply(_)
             | Command::Supervise { .. }
             | Command::ParentProcess
+            | Command::ClaudeSessionDirectory { .. }
             | Command::ClaudeRequest { .. }
             | Command::ClaudeElicitation { .. }
             | Command::ClaudeControlOwner { .. }
@@ -352,6 +368,9 @@ fn main() -> ExitCode {
         Command::Ui => ui(),
         Command::HostChange(args) => host_change::run(args),
         Command::ParentProcess => parent_process(),
+        Command::ClaudeSessionDirectory { world, session, previous, cwd } => {
+            claude_session_directory::run(&world, session, previous, cwd)
+        }
         Command::ClaudeRequest { directory } => {
             fastctx_node::claude_request::run(&directory, false).map_err(Into::into)
         }
@@ -407,6 +426,7 @@ fn main() -> ExitCode {
         Command::Logout(args) => world::logout(args),
         Command::Token(args) => world::token(args),
         Command::Accounts => world::accounts(),
+        Command::Data(args) => data::run(args),
         Command::Share(args) => world::share(args),
         Command::Lend(args) => world::lend(args),
         Command::Disallow(args) => world::disallow(args),
@@ -432,8 +452,9 @@ fn print_licenses() -> ExitCode {
 
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
-const PEOPLE_ONLY: [&str; 21] = [
+const PEOPLE_ONLY: [&str; 22] = [
     "ui",
+    "data",
     "node",
     "renew",
     "service",
