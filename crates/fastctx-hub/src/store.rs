@@ -13,6 +13,7 @@
 //! <hub>/ledger/<town>/<seq>.json   the projects' ledgers (`crate::ledger`)
 //! <hub>/moves.json            the moves that brought the hub here (`crate::moving`)
 //! <hub>/moving-out.json       a move of the hub away from here, while and after it goes
+//! <hub>/called-off.json       moves called off whose new place may still hold the hub
 //! ```
 //!
 //! Every file is replaced whole, so a crash leaves the old state or the new
@@ -135,6 +136,9 @@ pub struct Store {
     pub outgoing: Option<crate::moving::Outgoing>,
     /// The moves that brought the hub here, oldest first.
     pub moves: Vec<crate::moving::Incoming>,
+    /// Moves called off whose new place may still hold the hub's identity,
+    /// until it gives it up (`crate::moving::out`).
+    pub called_off: Vec<crate::moving::Outgoing>,
 }
 
 impl Store {
@@ -203,7 +207,8 @@ impl Store {
             Err(error) => return Err(error),
         };
         let moves = read_or_default(&dir.join(crate::moving::MOVES))?;
-        let store = Self { dir: dir.to_path_buf(), hub, book, letters, worked, upgraded, outgoing, moves };
+        let called_off = read_or_default(&dir.join(crate::moving::CALLED_OFF))?;
+        let store = Self { dir: dir.to_path_buf(), hub, book, letters, worked, upgraded, outgoing, moves, called_off };
         if changed {
             store.save_letters()?;
         }
@@ -246,6 +251,10 @@ impl Store {
                 _ => Ok(()),
             },
         }
+    }
+
+    pub fn save_called_off(&self) -> io::Result<()> {
+        publish(&self.dir.join(crate::moving::CALLED_OFF), &json(&self.called_off)?, Permissions::Private)
     }
 
     pub fn save_moves(&self) -> io::Result<()> {

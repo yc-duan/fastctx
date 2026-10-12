@@ -59,9 +59,12 @@ pub(crate) async fn run(
     };
     let mut record = outgoing;
     let mut failures = 0;
+    // A new hub that stays away is said once, and again when that changes.
+    let mut said = String::new();
     loop {
+        let mut connected = false;
         tokio::select! {
-            talked = talk(dir, &mut record, pin, &log, &stopper) => match talked {
+            talked = talk(dir, &mut record, pin, &log, &stopper, &mut connected) => match talked {
                 Ok(()) => {
                     if let Some(forwarder) = forwarder {
                         forwarder.abort();
@@ -70,8 +73,11 @@ pub(crate) async fn run(
                     return Ok(Next::Again(None));
                 }
                 Err(reason) => {
-                    log.line(format_args!("the connection to the new hub: {reason}"));
-                    failures += 1;
+                    if connected || reason != said {
+                        log.line(format_args!("the connection to the new hub: {reason}"));
+                    }
+                    said = reason;
+                    failures = if connected { 1 } else { failures + 1 };
                     tokio::select! {
                         () = tokio::time::sleep(dial::backoff(failures)) => {}
                         () = crate::shutdown_signal() => return Ok(Next::Stop),
@@ -94,8 +100,10 @@ async fn talk(
     pin: CertPin,
     log: &Log,
     stopper: &watch::Sender<bool>,
+    connected: &mut bool,
 ) -> Result<(), String> {
     let mut socket = super::out::dial_new(record, pin, HandoverRole::Old).await?;
+    *connected = true;
     let forwarding = matches!(record.old, Some(OldPlace::Forwarding) | None);
     frames::send(&mut socket, &ToNew::Old { forwarding, deleted: false }).await?;
     log.line(format_args!("connected to the new hub at {}", list(&record.addresses)));

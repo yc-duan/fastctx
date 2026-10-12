@@ -28,10 +28,14 @@ const LISTING: usize = fastctx_net::wire::MAX_DATA_MESSAGE / 2;
 pub(crate) enum ToNew {
     /// Say what you hold.
     Holds,
-    /// A file, whose bytes follow.
+    /// A file, whose `bytes` follow, then its `Sum`.
     Put {
         path: String,
         bytes: u64,
+    },
+    /// The SHA-256 of the file just sent: the new place keeps it only when
+    /// what came has this digest.
+    Sum {
         sha256: Digest,
     },
     /// A directory, made where it is missing.

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use fastctx_net::moving::{HandoverRole, Identity};
-use fastctx_net::sign::{Domain, sha256};
+use fastctx_net::sign::Domain;
 use fastctx_net::wire::{self, Intent, Refusal, Up};
 use fastctx_platform::{Permissions, ensure_private_dir, publish};
 use fastctx_types::MachineName;
@@ -209,7 +209,7 @@ pub(crate) async fn connected(
     };
     let arriving = standby.arriving();
     if id != arriving.id {
-        refuse(&mut socket, Refusal::Broken { reason: format!("no move {id} arrives here") }).await;
+        refuse(&mut socket, Refusal::Broken { reason: super::NOT_ARRIVING.to_string() }).await;
         return;
     }
     if arriving.mover.verify(Domain::Handover, &binding, &proof).is_err() {
@@ -261,26 +261,7 @@ async fn sync(standby: &Standby, socket: &mut Socket) -> Result<(), String> {
                 frames::send(socket, &ToOld::Holds { committed: standby.arriving().committed }).await?;
                 frames::send_listing(socket, entries).await?;
             }
-            ToNew::Put { path, bytes, sha256: expected } => {
-                let place = files::place(&dir, &path)?;
-                let mut data = Vec::new();
-                while (data.len() as u64) < bytes {
-                    match frames::recv::<_, ToNew>(socket, true).await? {
-                        Got::Bytes(piece) if (data.len() + piece.len()) as u64 <= bytes => data.extend(piece),
-                        _ => return Err(format!("{path} came with more or other than its {bytes} bytes")),
-                    }
-                }
-                if sha256(&data) != expected.0 {
-                    return Err(format!("{path} came with other bytes than its digest says"));
-                }
-                let base = dir.clone();
-                blocking(move || {
-                    make_parents(&base, &place)?;
-                    publish(&place, &data, Permissions::Private)
-                })
-                .await
-                .map_err(|error| format!("writing {path}: {error}"))?;
-            }
+            ToNew::Put { path, bytes } => receive(socket, &dir, &path, bytes).await?,
             ToNew::Dir { path } => {
                 let place = files::place(&dir, &path)?;
                 let base = dir.clone();
@@ -333,6 +314,40 @@ async fn sync(standby: &Standby, socket: &mut Socket) -> Result<(), String> {
             other => return Err(format!("the old hub said {other:?} while handing over")),
         }
     }
+}
+
+/// Takes the file `path` of `bytes`, a piece at a time, beside where it
+/// goes; it replaces what is there only when its digest is the one the old
+/// hub says.
+async fn receive(socket: &mut Socket, dir: &Path, path: &str, bytes: u64) -> Result<(), String> {
+    use sha2::Digest as _;
+    let place = files::place(dir, path)?;
+    let (base, target) = (dir.to_path_buf(), place.clone());
+    let mut staged = blocking(move || {
+        make_parents(&base, &target)?;
+        fastctx_platform::Staged::create(&target, cfg!(unix).then_some(0o600))
+    })
+    .await
+    .map_err(|error| format!("writing {path}: {error}"))?;
+    let mut hasher = sha2::Sha256::new();
+    let mut got = 0;
+    while got < bytes {
+        let piece = match frames::recv::<_, ToNew>(socket, true).await? {
+            Got::Bytes(piece) if got + piece.len() as u64 <= bytes => piece,
+            _ => return Err(format!("{path} came with more or other than its {bytes} bytes")),
+        };
+        got += piece.len() as u64;
+        hasher.update(&piece);
+        staged = blocking(move || staged.write_all(&piece).map(|()| staged))
+            .await
+            .map_err(|error| format!("writing {path}: {error}"))?;
+    }
+    match frames::frame::<_, ToNew>(socket).await? {
+        ToNew::Sum { sha256 } if sha256.0 == <[u8; 32]>::from(hasher.finalize()) => {}
+        ToNew::Sum { .. } => return Err(format!("{path} came with other bytes than its digest says")),
+        other => return Err(format!("the old hub said {other:?} after the bytes of {path}")),
+    }
+    blocking(move || staged.commit()).await.map_err(|error| format!("writing {path}: {error}"))
 }
 
 /// What is here, listed while the old hub is told this end is working.

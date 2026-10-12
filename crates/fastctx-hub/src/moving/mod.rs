@@ -62,6 +62,11 @@ use crate::store::read;
 pub(crate) const OUTGOING: &str = "moving-out.json";
 pub(crate) const ARRIVING: &str = "arriving.json";
 pub(crate) const MOVES: &str = "moves.json";
+/// A record like the others: a new hub tells what the old one could not.
+pub(crate) const CALLED_OFF: &str = "called-off.json";
+/// How a new place standing by refuses a move that does not arrive there,
+/// as one called off and replaced by another.
+pub(crate) const NOT_ARRIVING: &str = "this move does not arrive here";
 /// Left where a hub's data was deleted: a hub that moved away, or a move
 /// that was to bring it here and was called off.
 pub(crate) const RETIRED: &str = "retired.json";

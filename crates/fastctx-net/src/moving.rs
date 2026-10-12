@@ -37,6 +37,8 @@ pub enum ArrivalReport {
     Installed,
     /// The directory could not be made, and why.
     Failed { reason: String },
+    /// Nothing of the move, called off, is here any more.
+    Gone,
 }
 
 /// The hub's identity, for the machine it moves to: everything a hub is

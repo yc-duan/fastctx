@@ -89,8 +89,9 @@ fn targets(hub: &Hub, account: &AccountName) -> Result<HubMoveReply, String> {
     Ok(HubMoveReply::Targets { machines, port: Some(store.hub.listen.port()) })
 }
 
-/// The move under way or last called off, then the moves that brought the
-/// hub here, newest first.
+/// The move under way or last called off, the moves called off whose new
+/// place has not given the hub up yet, then the moves that brought the hub
+/// here, newest first.
 pub(crate) fn moves(hub: &Hub) -> HubMoveReply {
     let store = hub.store();
     HubMoveReply::Moves { moves: listed(hub, &store) }
@@ -98,6 +99,9 @@ pub(crate) fn moves(hub: &Hub) -> HubMoveReply {
 
 pub(crate) fn listed(hub: &Hub, store: &Store) -> Vec<HubMove> {
     let mut moves: Vec<HubMove> = store.outgoing.iter().map(Outgoing::view).collect();
+    let current = store.outgoing.as_ref().map(|outgoing| outgoing.id.as_str());
+    moves
+        .extend(store.called_off.iter().rev().filter(|untold| Some(untold.id.as_str()) != current).map(Outgoing::view));
     moves.extend(
         store
             .moves
@@ -137,6 +141,11 @@ fn start(
         // a hub.
         if store.moves.last().is_some_and(|incoming| incoming.to == to) {
             return Err(format!("the hub runs on {to} already"));
+        }
+        if store.called_off.iter().any(|untold| untold.to == to) {
+            return Err(format!(
+                "a move to {to} was called off and {to} has not given the hub up yet; it does once the hub reaches it, or once {to} is online"
+            ));
         }
         if addresses.iter().all(|address| store.hub.public.contains(address)) {
             return Err("the hub is reached at these addresses already".to_string());
@@ -195,7 +204,14 @@ fn cancel(hub: &Arc<Hub>) -> Result<HubMoveReply, String> {
         outgoing.waiting = None;
         outgoing.error = None;
         hub.log.line(format_args!("the move {} to {} is called off", outgoing.id, outgoing.to));
+        // The new place made the hub's directory: it gives it up when the hub
+        // reaches it, or deletes it itself when no service runs it.
+        let untold = outgoing.prepared.then(|| outgoing.clone());
         store.save_outgoing().map_err(|error| format!("recording the move: {error}"))?;
+        if let Some(untold) = untold {
+            store.called_off.push(untold);
+            store.save_called_off().map_err(|error| format!("recording the move: {error}"))?;
+        }
     }
     hub.changed();
     super::out::drive(hub);
@@ -208,6 +224,17 @@ pub(crate) fn arrival(hub: &Arc<Hub>, asker: &MachineName, request: ArrivalReque
         ArrivalRequest::Take { id } | ArrivalRequest::Report { id, .. } => id.clone(),
     };
     let mut store = hub.store();
+    if let ArrivalRequest::Report { report: ArrivalReport::Gone, .. } = &request {
+        let before = store.called_off.len();
+        store.called_off.retain(|untold| !(untold.id == id && untold.to == *asker));
+        if store.called_off.len() != before {
+            hub.log.line(format_args!("{asker} holds nothing of the move {id}, called off"));
+            store.save_called_off().map_err(|error| format!("recording the move: {error}"))?;
+            drop(store);
+            hub.changed();
+        }
+        return Ok(Told::Done);
+    }
     let outgoing = store
         .outgoing
         .as_ref()
@@ -257,6 +284,7 @@ pub(crate) fn arrival(hub: &Arc<Hub>, asker: &MachineName, request: ArrivalReque
                     hub.log.line(format_args!("{asker} could not take the hub: {reason}"));
                     record.error = Some(reason);
                 }
+                ArrivalReport::Gone => unreachable!("answered above"),
             }
             store.save_outgoing().map_err(|error| format!("recording the move: {error}"))?;
             drop(store);
@@ -274,7 +302,14 @@ pub(crate) fn told(hub: &Hub, store: &Store, me: &MachineName, whole: bool) -> V
     if whole {
         return listed(hub, store);
     }
-    store.outgoing.iter().filter(|outgoing| outgoing.to == *me).map(Outgoing::view).collect()
+    let current = store.outgoing.as_ref().map(|outgoing| outgoing.id.as_str());
+    store
+        .outgoing
+        .iter()
+        .chain(store.called_off.iter().filter(|untold| Some(untold.id.as_str()) != current))
+        .filter(|moving| moving.to == *me)
+        .map(Outgoing::view)
+        .collect()
 }
 
 /// What the old place of `incoming` does now, as the new hub has it.

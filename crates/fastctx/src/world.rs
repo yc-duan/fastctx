@@ -511,7 +511,9 @@ fn remove_hub_service(dir: &std::path::Path) -> Result<String, String> {
     let started = fastctx_platform::spawn_detached(&program, &args, cwd, &env)
         .map_err(|error| format!("starting the removal of the service {}: {error}", status.name))?;
     let pid = started.identity.map(|identity| identity.pid.to_string()).unwrap_or_else(|| "ended".to_string());
-    Ok(format!("removing the hub's system service {} (process {pid})", status.name))
+    // Still in the service's own job, the removal may end with the service it stops.
+    let bound = if started.ends_with_starters_job { "; it could not leave the service's job" } else { "" };
+    Ok(format!("removing the hub's system service {} (process {pid}){bound}", status.name))
 }
 
 /// Runs the hub in `dir` as a system service; whether it runs now.

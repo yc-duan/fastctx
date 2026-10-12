@@ -16,7 +16,7 @@ use std::sync::atomic::Ordering;
 
 use fastctx_net::dial::{self, HubSocket};
 use fastctx_net::moving::HandoverRole;
-use fastctx_net::sign::{Digest, Domain, sha256};
+use fastctx_net::sign::{Digest, Domain};
 use fastctx_net::wire::{self, Intent, Up};
 use fastctx_types::hub_move::{MoveStage, OldPlace};
 use jiff::Timestamp;
@@ -30,8 +30,8 @@ use crate::Hub;
 /// part of a listing, with room to spare.
 pub(crate) const HANDOVER_MESSAGE: usize = wire::MAX_DATA_MESSAGE + wire::MAX_CONTROL_FRAME;
 
-/// Drives the move under way, unless a task does already; that one is woken
-/// to try again now.
+/// Drives the move under way, and tells the new places of moves called off,
+/// unless a task does already; that one is woken to try again now.
 pub(crate) fn drive(hub: &Arc<Hub>) {
     hub.moving.poke.notify_one();
     if hub.moving.driving.swap(true, Ordering::SeqCst) {
@@ -39,15 +39,30 @@ pub(crate) fn drive(hub: &Arc<Hub>) {
     }
     let hub = hub.clone();
     tokio::spawn(async move {
-        run(&hub).await;
-        hub.moving.driving.store(false, Ordering::SeqCst);
+        loop {
+            run(&hub).await;
+            hub.moving.driving.store(false, Ordering::SeqCst);
+            // Work that came while the task was ending would wait for no one.
+            if !driven(&hub) || hub.moving.driving.swap(true, Ordering::SeqCst) {
+                return;
+            }
+        }
     });
+}
+
+/// Whether there is anything to drive: a move under way, or a new place of
+/// a move called off to tell.
+pub(crate) fn driven(hub: &Hub) -> bool {
+    let store = hub.store();
+    store.outgoing.as_ref().is_some_and(Outgoing::pending) || !store.called_off.is_empty()
 }
 
 /// How one try ended.
 enum Tried {
     Switched,
-    CalledOff,
+    /// The move was called off, or another took its place, while it was
+    /// tried.
+    Gone,
     /// It failed, and why; `quiet` while the failure is what waiting for
     /// the new place's service looks like.
     Failed {
@@ -58,34 +73,59 @@ enum Tried {
 
 async fn run(hub: &Arc<Hub>) {
     let mut failures = 0;
+    // What was last said of each called-off move's new place, so a place
+    // that stays away is said once, and again when that changes.
+    let mut said: BTreeMap<String, String> = BTreeMap::new();
     loop {
         let poked = hub.moving.poke.notified();
-        let Some(record) = hub.store().outgoing.clone() else { return };
-        if record.stage == MoveStage::Cancelled {
-            if record.prepared {
-                tell_called_off(hub, &record).await;
-            }
-            return;
-        }
-        if !record.pending() {
-            return;
-        }
-        if record.stage == MoveStage::Preparing {
-            // The new place has not made its directory yet; it says when.
-            poked.await;
-            continue;
-        }
-        match handover(hub, &record).await {
-            Tried::Switched | Tried::CalledOff => return,
-            Tried::Failed { reason, quiet } => {
-                hub.log.line(format_args!("the move {} to {}: {reason}", record.id, record.to));
-                noted(hub, &record.id, if quiet { None } else { Some(reason) });
-                failures += 1;
-                tokio::select! {
-                    () = tokio::time::sleep(dial::backoff(failures)) => {}
-                    () = poked => failures = 0,
+        let untold = hub.store().called_off.clone();
+        for record in &untold {
+            match tell_called_off(hub, record).await {
+                Ok(()) => {
+                    said.remove(&record.id);
+                }
+                Err(error) => {
+                    if said.get(&record.id) != Some(&error) {
+                        hub.log.line(format_args!(
+                            "the new place of the move {}, called off, is still to give the hub up: {error}",
+                            record.id
+                        ));
+                        said.insert(record.id.clone(), error);
+                    }
                 }
             }
+        }
+        let record = hub.store().outgoing.clone().filter(Outgoing::pending);
+        let still_untold = !hub.store().called_off.is_empty();
+        let tried = match record {
+            None if !still_untold => return,
+            None => None,
+            // The new place has not made its directory yet; it says when.
+            Some(record) if record.stage == MoveStage::Preparing => {
+                if !still_untold {
+                    poked.await;
+                    continue;
+                }
+                None
+            }
+            Some(record) => Some((handover(hub, &record).await, record)),
+        };
+        match tried {
+            Some((Tried::Switched, _)) => return,
+            Some((Tried::Gone, _)) => {
+                failures = 0;
+                continue;
+            }
+            Some((Tried::Failed { reason, quiet }, record)) => {
+                hub.log.line(format_args!("the move {} to {}: {reason}", record.id, record.to));
+                noted(hub, &record.id, if quiet { None } else { Some(reason) });
+            }
+            None => {}
+        }
+        failures += 1;
+        tokio::select! {
+            () = tokio::time::sleep(dial::backoff(failures)) => {}
+            () = poked => failures = 0,
         }
     }
 }
@@ -150,6 +190,9 @@ pub(crate) async fn dial_new(
 }
 
 async fn handover(hub: &Arc<Hub>, record: &Outgoing) -> Tried {
+    if called_off(hub, &record.id) {
+        return Tried::Gone;
+    }
     let quiet = record.stage == MoveStage::Service && !record.installed;
     let mut socket = match dial_new(record, hub.pin, HandoverRole::Sync).await {
         Ok(socket) => socket,
@@ -187,8 +230,11 @@ async fn copy(hub: &Arc<Hub>, record: &Outgoing, socket: &mut HubSocket) -> Resu
     }
     if called_off(hub, &record.id) {
         frames::send(socket, &ToNew::Cancel).await?;
-        frames::frame::<_, ToOld>(socket).await?;
-        return Ok(Tried::CalledOff);
+        match frames::frame::<_, ToOld>(socket).await? {
+            ToOld::Cancelled => given_up(hub, &record.id),
+            other => return Err(format!("the new place answered {other:?}")),
+        }
+        return Ok(Tried::Gone);
     }
 
     reached(hub, &record.id, MoveStage::Switching);
@@ -269,14 +315,22 @@ async fn listing(socket: &mut HubSocket, dir: &std::path::Path) -> Result<Vec<En
         .map_err(|error| format!("listing the records: {error}"))
 }
 
-/// Sends what makes `theirs` into `mine`: the directories and files that
-/// differ, then the removals, deepest first.
+/// Sends what makes `theirs` into `mine`: first the removals of what is
+/// not here, or is here as a directory where it is a file there or the
+/// other way round, deepest first; then the directories and files that
+/// differ.
 async fn send_difference(
     socket: &mut HubSocket,
     dir: &std::path::Path,
     mine: &[Entry],
     theirs: &[Entry],
 ) -> Result<(), String> {
+    let kept: BTreeMap<&str, bool> = mine.iter().map(|entry| (entry.path.as_str(), entry.file.is_some())).collect();
+    for entry in theirs.iter().rev() {
+        if kept.get(entry.path.as_str()) != Some(&entry.file.is_some()) {
+            frames::send(socket, &ToNew::Remove { path: entry.path.clone() }).await?;
+        }
+    }
     let held: BTreeMap<&str, &Option<Sum>> = theirs.iter().map(|entry| (entry.path.as_str(), &entry.file)).collect();
     for entry in mine {
         if held.get(entry.path.as_str()) == Some(&&entry.file) {
@@ -284,61 +338,69 @@ async fn send_difference(
         }
         match &entry.file {
             None => frames::send(socket, &ToNew::Dir { path: entry.path.clone() }).await?,
-            Some(_) => {
-                let place = files::place(dir, &entry.path)?;
-                let bytes = match tokio::fs::read(&place).await {
-                    Ok(bytes) => bytes,
-                    // Gone since it was listed; the next listing says so.
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                    Err(error) => return Err(format!("reading {}: {error}", entry.path)),
-                };
-                let put =
-                    ToNew::Put { path: entry.path.clone(), bytes: bytes.len() as u64, sha256: Digest(sha256(&bytes)) };
-                frames::send(socket, &put).await?;
-                for piece in bytes.chunks(frames::CHUNK) {
-                    frames::send_bytes(socket, piece.to_vec()).await?;
-                }
-            }
-        }
-    }
-    let kept: std::collections::BTreeSet<&str> = mine.iter().map(|entry| entry.path.as_str()).collect();
-    for entry in theirs.iter().rev() {
-        if !kept.contains(entry.path.as_str()) {
-            frames::send(socket, &ToNew::Remove { path: entry.path.clone() }).await?;
+            Some(_) => send_file(socket, dir, &entry.path).await?,
         }
     }
     Ok(())
 }
 
-/// Tells the new place the move is called off, if it can be reached.
-async fn tell_called_off(hub: &Hub, record: &Outgoing) {
+/// Sends the file at `path` as it is now, a piece at a time: what was
+/// listed may have been replaced since, while the hub still serves.
+async fn send_file(socket: &mut HubSocket, dir: &std::path::Path, path: &str) -> Result<(), String> {
+    use sha2::Digest as _;
+    use tokio::io::AsyncReadExt as _;
+    let place = files::place(dir, path)?;
+    let mut file = match tokio::fs::File::open(&place).await {
+        Ok(file) => file,
+        // Gone since it was listed; the next listing says so.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("reading {path}: {error}")),
+    };
+    let bytes = file.metadata().await.map_err(|error| format!("reading {path}: {error}"))?.len();
+    frames::send(socket, &ToNew::Put { path: path.to_string(), bytes }).await?;
+    let mut hasher = sha2::Sha256::new();
+    let mut left = bytes;
+    while left > 0 {
+        let mut piece = vec![0; usize::try_from(left).unwrap_or(usize::MAX).min(frames::CHUNK)];
+        file.read_exact(&mut piece).await.map_err(|error| format!("reading {path}: {error}"))?;
+        hasher.update(&piece);
+        left -= piece.len() as u64;
+        frames::send_bytes(socket, piece).await?;
+    }
+    frames::send(socket, &ToNew::Sum { sha256: Digest(hasher.finalize().into()) }).await
+}
+
+/// Tells the new place of a move called off to give the hub up. It did
+/// when it says so, or when it stands by for no such move any more.
+async fn tell_called_off(hub: &Hub, record: &Outgoing) -> Result<(), String> {
     let told = async {
         let mut socket = dial_new(record, hub.pin, HandoverRole::Sync).await?;
         frames::send(&mut socket, &ToNew::Cancel).await?;
-        loop {
-            match frames::frame::<_, ToOld>(&mut socket).await? {
-                ToOld::Cancelled => return Ok::<_, String>(()),
-                ToOld::Holds { .. } | ToOld::Files { .. } | ToOld::End => {}
-                other => return Err(format!("the new place answered {other:?}")),
-            }
+        match frames::frame::<_, ToOld>(&mut socket).await? {
+            ToOld::Cancelled => Ok(()),
+            other => Err(format!("the new place answered {other:?}")),
         }
     };
     match told.await {
-        Ok(()) => {
-            hub.log.line(format_args!("the new place gave the move {} up", record.id));
-            let mut store = hub.store();
-            if let Some(outgoing) = store.outgoing.as_mut().filter(|outgoing| outgoing.id == record.id) {
-                // Nothing stands by there any more.
-                outgoing.prepared = false;
-                if let Err(error) = store.save_outgoing() {
-                    hub.log.line(format_args!("recording the move: {error}"));
-                }
-            }
+        Err(error) if !error.contains(super::NOT_ARRIVING) => Err(error),
+        _ => {
+            given_up(hub, &record.id);
+            Ok(())
         }
-        Err(error) => hub
-            .log
-            .line(format_args!("the new place of the move {} could not be told it is called off: {error}", record.id)),
     }
+}
+
+/// The new place of the move `id`, called off, holds nothing of it any more.
+fn given_up(hub: &Hub, id: &str) {
+    hub.log.line(format_args!("the new place gave the move {id} up"));
+    {
+        let mut store = hub.store();
+        store.called_off.retain(|untold| untold.id != id);
+        if let Err(error) = store.save_called_off() {
+            hub.log.line(format_args!("recording the move: {error}"));
+        }
+    }
+    hub.changed();
 }
 
 fn list(addresses: &[std::net::SocketAddr]) -> String {
