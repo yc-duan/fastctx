@@ -30,6 +30,9 @@ export class Finder {
     private readonly words: FindWords,
     /** The reader moved through the conversation by finding. */
     private readonly moved: () => void,
+    /** The whole conversation is to be drawn, as long as the bar is open,
+     *  so that all of it can be found. */
+    private readonly whole: (whole: boolean) => void = () => {},
   ) {
     this.element = document.createElement("div");
     this.element.className = "find-bar";
@@ -69,6 +72,7 @@ export class Finder {
   show(): void {
     if (this.element.hidden && document.activeElement instanceof HTMLElement) this.before = document.activeElement;
     this.element.hidden = false;
+    this.whole(true);
     // What is selected is what is looked for, as browsers do.
     const selected = window.getSelection()?.toString().trim();
     if (selected && !selected.includes("\n")) this.input.value = selected;
@@ -85,6 +89,7 @@ export class Finder {
     this.matches = [];
     this.current = -1;
     this.paint();
+    this.whole(false);
   }
 
   /** The conversation changed while open: matches are found again, the

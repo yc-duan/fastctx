@@ -84,6 +84,9 @@ import { specimenComposer } from "./specimen/composer";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/model";
 import { ConversationPage, type Someone } from "./conversation/page";
+import { KeptPages, type KeepablePage } from "./conversation/kept";
+import type { Seed } from "./conversation/starting";
+import { watched } from "./conversation/source";
 import { redrawDiagrams } from "./conversation/diagrams";
 import { HomePage } from "./home/page";
 import type { Away, Happening, WorldState } from "./home/model";
@@ -98,7 +101,8 @@ import { ProjectPage } from "./project/page";
 import { enProject, zhProject } from "./project/words";
 import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
-import { specimens } from "./specimen/sessions";
+import { specimens, type Specimen } from "./specimen/sessions";
+import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
 import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
 import { specimenRemote } from "./specimen/remote";
 import { specimenMachineLog } from "./specimen/machine-log";
@@ -118,7 +122,7 @@ import { toolsFor } from "./pages/tools";
 import { enPages, zhPages } from "./pages/words";
 import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
 import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
-import type { Address } from "./world/events";
+import type { Address, SessionEvent } from "./world/events";
 import { ownerResident, type ResidentDetail } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { mapOf } from "./app/map-of";
@@ -163,9 +167,6 @@ import {
   stop,
   stopJob,
   talk,
-  unwatch,
-  watch,
-  type Piece,
   type WorldNow,
   login,
   loginToken,
@@ -307,7 +308,7 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   modelWords: english ? enModelPanel : zhModelPanel,
   agents: (machine) => agentsOn(machine),
   async begin({ agent, machine, town, text, model, effort, attachments, account, worksOn, home, filesOn }) {
-    if (!live) throw new Error(specimenSaid);
+    if (!live) return specimenBegin(params.get("start"));
     const { to } = await openAgent(agent, machine, town, text, model, effort, attachments, {
       ...(account ? { account } : {}),
       ...(worksOn ? { works_on: worksOn } : {}),
@@ -317,9 +318,12 @@ const makeNewTalk = (town: string | null) => new NewTalk({
     void store.refresh();
     return to;
   },
-  opened(address) {
+  opened(address, seed) {
+    // The first words open with the conversation, as they were shown.
+    seeds.set(talkKey(address), seed);
     location.hash = talkLink(address);
   },
+  starting: { words, here: () => store.world.peek()?.here ?? "" },
   allowClaude: (machine, go, home) => consent.allow(machine, go, home),
   attach: {
     words: (english ? enComposer : zhComposer).attach,
@@ -335,6 +339,22 @@ const makeNewTalk = (town: string | null) => new NewTalk({
 });
 
 const specimenSaid = english ? "this is a specimen" : "这是样例，没有连着世界";
+/** A specimen conversation begun: `?start=open` opens one that starts
+ *  working, `wait` never hears back, `fail` fails as a machine would say;
+ *  otherwise it says it is a specimen. */
+function specimenBegin(start: string | null): Promise<Address> {
+  if (start === "wait") return new Promise(() => {});
+  if (start === "open") return new Promise((resolve) => setTimeout(() => resolve({ resident: "stream-1", machine: "laptop" }), 1800));
+  if (start === "fail") {
+    return new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("on laptop: starting the session: Claude Code exited before it began: Not logged in · Please run /login")), 2400),
+    );
+  }
+  return Promise.reject(new Error(specimenSaid));
+}
+/** First words of conversations just begun, by conversation, for their
+ *  pages to open with. */
+const seeds = new Map<string, Seed | null>();
 
 const projectForm = new ProjectForm({
   store,
@@ -735,10 +755,30 @@ function home(): Page {
   };
 }
 
-function specimenTalk(address: Address): Page {
+function specimenTalk(address: Address): KeepablePage {
   const name = address.resident;
-  const sample = (specimens[name === "codex-a51c" ? "asking" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
+  const sample: Specimen & { later?: SessionEvent[]; rate?: number } = name.startsWith("stream")
+    ? streamSpecimen(params)
+    : (specimens[name === "codex-a51c" ? "asking" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
+  const seed = seeds.get(talkKey(address));
+  seeds.delete(talkKey(address));
+  if (seed) conversation.sending(seed.text, sample.here, seed.attached);
+  // `?answer`: the specimen agent answers what is sent to it.
+  if (params.has("answer")) {
+    const sending = conversation.sending.bind(conversation);
+    let turns = 0;
+    conversation.sending = (text, here, attached) => {
+      const key = sending(text, here, attached);
+      turns += 1;
+      playTimed(answering(text, `answer-${turns}`), (event) => {
+        conversation.event(event);
+        page.update();
+        return true;
+      });
+      return key;
+    };
+  }
   const known = residentsOf(specimen.world).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
   const page = new ConversationPage({
     words,
@@ -789,7 +829,7 @@ function specimenTalk(address: Address): Page {
     // The shared input kept in the page; `?queued` puts two in its queue.
     composer: () =>
       ComposerSession.open(address, {
-        transport: specimenComposer(address, () => conversation.busy(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : []),
+        transport: specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : []),
       }),
     files: { words: composerWords.files, find: specimenFiles },
     details: detailsOf(address, async () =>
@@ -831,7 +871,7 @@ function specimenTalk(address: Address): Page {
     );
   });
   let left = false;
-  if (params.has("live")) {
+  if (params.has("live") && !sample.later) {
     let index = 0;
     const next = () => {
       const event = sample.events[index++];
@@ -844,10 +884,20 @@ function specimenTalk(address: Address): Page {
   } else {
     conversation.history(sample.events);
     page.update();
+    // What a made-to-measure specimen does next, each event its own task at
+    // its rate, as a shell's channel hands them over.
+    if (sample.later?.length) playLater(sample.later, sample.rate ?? 0, (event) => {
+      if (left) return false;
+      conversation.event(event);
+      page.update();
+      return true;
+    });
   }
   return {
     element: page.element,
     title: sample.title,
+    suspend: () => page.suspend(),
+    resume: () => page.resume(),
     leave() {
       left = true;
       runningJobs();
@@ -872,12 +922,16 @@ function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address)
   };
 }
 
-function liveTalk(address: Address): Page {
+function liveTalk(address: Address): KeepablePage {
   const world = store.world.peek();
   const listed = someoneOf(world, address);
   const someone: Someone = listed ?? { agent: address.resident, machine: address.machine, model: null, project: null };
   const here = world?.here ?? null;
   const conversation = new Conversation();
+  // A conversation just begun here opens with its first words on their way.
+  const seed = seeds.get(talkKey(address));
+  seeds.delete(talkKey(address));
+  if (seed) conversation.sending(seed.text, here, seed.attached);
   // Names of files for an `@`, on the agent's machine, in its places.
   const search = new FileSearch(address.machine, address.resident);
   const page: ConversationPage = new ConversationPage({
@@ -999,7 +1053,6 @@ function liveTalk(address: Address): Page {
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
     lines: (machine, path, decoding) => RemoteLines.open(machine, path, decoding),
   });
-  let watchId: number | null = null;
   let left = false;
   // What it started that still runs, as the World last answered.
   const running = effect(() => {
@@ -1011,65 +1064,30 @@ function liveTalk(address: Address): Page {
     });
     page.running(jobs, now);
   });
-  const take = (piece: Piece) => {
-    switch (piece.kind) {
-      case "event":
-        page.resumed();
-        conversation.event(piece.event);
-        return;
-      case "reset":
-        page.resumed();
-        conversation.history(piece.history);
-        return;
-      case "interrupted":
-        page.broken(piece.error);
-        return;
-      case "ended":
-        page.lost(piece.error);
-    }
-  };
-  // Each watch is one reading of the session; when the host replaces or
-  // removes turns, what is shown is read again from a fresh one.
-  let reading = 0;
-  const read = () => {
-    const mine = ++reading;
-    // Events can come before the history does; they wait for it.
-    let ready = false;
-    const early: Piece[] = [];
-    const settle = () => {
-      if (conversation.stale) {
-        if (watchId !== null) void unwatch(watchId);
-        watchId = null;
-        read();
-      }
+  // The conversation as the World's watch reads it (`conversation/source.ts`):
+  // what is new is shown at once; when the host replaced or removed turns,
+  // all of it is read again.
+  const reading = watched.open(address, {
+    replaced: (history) => {
+      conversation.history(history);
+      page.update({ read: true });
+    },
+    extended: (history) => {
+      conversation.extend(history);
+      page.update({ read: true });
+    },
+    happened: (event) => {
+      conversation.event(event);
+      if (conversation.stale) reading.again();
       page.update();
-    };
-    watch(address, (piece) => {
-      if (left || mine !== reading) return;
-      if (!ready) early.push(piece);
-      else {
-        take(piece);
-        settle();
-      }
-    })
-      .then((started) => {
-        if (left || mine !== reading) {
-          void unwatch(started.id);
-          return;
-        }
-        watchId = started.id;
-        conversation.history(started.history);
-        for (const piece of early) take(piece);
-        ready = true;
-        settle();
-      })
-      .catch((error: unknown) => {
-        if (mine !== reading) return;
-        page.lost(String(error));
-        page.update();
-      });
-  };
-  read();
+    },
+    interrupted: (why) => page.broken(why),
+    resumed: () => page.resumed(),
+    ended: (why) => {
+      page.lost(why);
+      page.update();
+    },
+  });
   // Opened before the World first answered, as from a notification at
   // start: built again once it has, to name the agent and its project.
   // Otherwise the World's listing of it is followed in place, without
@@ -1080,7 +1098,9 @@ function liveTalk(address: Address): Page {
     ? effect(() => {
         if (!store.world.get()) return;
         queueMicrotask(() => {
-          if (!left && place.kind === "talk" && place.address.resident === address.resident && place.address.machine === address.machine) show(place);
+          if (left) return;
+          keptTalks.drop(talkKey(address));
+          if (place.kind === "talk" && place.address.resident === address.resident && place.address.machine === address.machine) show(place);
         });
       })
     : effect(() => {
@@ -1096,16 +1116,22 @@ function liveTalk(address: Address): Page {
   return {
     element: page.element,
     title: `${someone.agent} · ${someone.machine}`,
+    suspend: () => page.suspend(),
+    resume: () => page.resume(),
     leave() {
       left = true;
       named();
       running();
       page.leave();
       search.close();
-      if (watchId !== null) void unwatch(watchId);
+      reading.close();
     },
   };
 }
+
+/** The conversations looked at last, alive (`conversation/kept.ts`). */
+const keptTalks = new KeptPages();
+const talkKey = (address: Address) => `${address.resident}@${address.machine}`;
 
 function projectPage(town: string): Page {
   const page = new ProjectPage({
@@ -1238,9 +1264,11 @@ function show(next: Place): void {
     case "home":
       page = home();
       break;
-    case "talk":
-      page = live ? liveTalk(next.address) : specimenTalk(next.address);
+    case "talk": {
+      const address = next.address;
+      page = keptTalks.page(talkKey(address), () => (live ? liveTalk(address) : specimenTalk(address)));
       break;
+    }
     case "new": {
       const talk = newTalkOf(next.town);
       const chosen = newTalkFor;
@@ -1483,6 +1511,8 @@ function specimenPlace(): Place | null {
       return { kind: "talk", address: { resident: "codex-7f3a", machine: "laptop" } };
     case "asks":
       return { kind: "talk", address: { resident: "codex-a51c", machine: "laptop" } };
+    case "stream":
+      return { kind: "talk", address: { resident: "stream-1", machine: "laptop" } };
     case "decision":
       return { kind: "file", machine: "desktop", path: "D:/work/mark50/specs/控制环.md", tail: false };
     case "log":
