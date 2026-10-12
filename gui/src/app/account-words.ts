@@ -154,7 +154,8 @@ export const zhLogin: LoginWords = {
   name: "电脑名称",
   phoneName: "手机名称",
   nameSaid: zhNameSaid,
-  inField: (field, said) => `${field}：${said}`,
+  // The field takes the place of 名字 in the sentence: 电脑名称里不能有空格.
+  inField: (field, said) => (said.includes("名字") ? said.replace("名字", field) : `${field}：${said}`),
   go: "登录",
   going: "正在登录…",
   signUp: "注册账号",
