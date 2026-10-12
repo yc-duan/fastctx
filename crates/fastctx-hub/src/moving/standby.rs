@@ -63,11 +63,19 @@ pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> a
         (false, IpAddr::V4(_)) => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         (false, IpAddr::V6(_)) => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
     };
+    let listen = SocketAddr::new(ip, port);
+    // A port taken here would keep the hub's service failing to start; a
+    // directory made before for this move may have its service on it already.
+    if found.is_none()
+        && let Err(error) = std::net::TcpListener::bind(listen)
+    {
+        anyhow::bail!("the hub cannot listen on {listen} here: {error}");
+    }
     let hub = HubFile {
         id: identity.id.clone(),
         name: identity.name.clone(),
         public: identity.addresses.clone(),
-        listen: SocketAddr::new(ip, port),
+        listen,
         self_registration: identity.self_registration,
     };
     let arriving = Arriving {
