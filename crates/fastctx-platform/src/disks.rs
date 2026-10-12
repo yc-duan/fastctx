@@ -7,11 +7,20 @@ use std::path::PathBuf;
 
 /// The root of each local fixed disk, each volume once. On Windows, every
 /// drive letter of a fixed volume; a letter that merely aliases a folder
-/// (`subst`) is no volume of its own and is left out. On Linux, each mount
-/// of a filesystem kept on a disk; pseudo, memory and network filesystems
-/// are not disks.
+/// (`subst`) is no volume of its own and is left out. On Linux, one mount
+/// of each filesystem kept on a disk, the one showing the whole of it at
+/// the shortest path; pseudo, memory and network filesystems are not disks.
 pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
     imp::fixed_disks()
+}
+
+/// Every place a filesystem is mounted, which a walk from a disk's root
+/// does not enter: on Linux the same filesystem can be mounted again inside
+/// itself (a bind mount), and walking it there would walk it twice. On
+/// Windows none: a folder a volume is mounted on is a reparse point, which
+/// a walk never enters anyway.
+pub fn mount_points() -> io::Result<Vec<PathBuf>> {
+    imp::mount_points()
 }
 
 /// Puts the calling thread in the background: the lowest processor
@@ -76,6 +85,10 @@ mod imp {
         Ok(disks)
     }
 
+    pub fn mount_points() -> io::Result<Vec<PathBuf>> {
+        Ok(Vec::new())
+    }
+
     pub fn lower_this_thread() -> io::Result<()> {
         // SAFETY: the pseudo handle of the calling thread.
         if unsafe { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN as i32) } == 0 {
@@ -87,7 +100,7 @@ mod imp {
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use std::collections::BTreeSet;
+    use std::collections::BTreeMap;
     use std::io;
     use std::path::PathBuf;
 
@@ -98,27 +111,81 @@ mod imp {
         "ntfs3", "fuseblk", "hfsplus", "apfs",
     ];
 
-    pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
-        let mounts = std::fs::read_to_string("/proc/self/mounts")?;
-        let mut seen = BTreeSet::new();
-        let mut disks = Vec::new();
-        for line in mounts.lines() {
-            let mut fields = line.split_whitespace();
-            let (Some(_source), Some(target), Some(kind)) = (fields.next(), fields.next(), fields.next()) else {
-                continue;
+    /// One line of `/proc/self/mountinfo`.
+    struct Mount {
+        /// The filesystem's device, `major:minor`.
+        device: String,
+        /// Which of the filesystem's directories shows at the mount point;
+        /// `/` for the whole of it.
+        root: String,
+        point: PathBuf,
+        kind: String,
+    }
+
+    /// The mounts this process sees, as `proc(5)` lays out `mountinfo`: the
+    /// mount's id, its parent's, the device, the root, the mount point and
+    /// its options, optional fields up to a lone `-`, then the type.
+    fn mounts() -> io::Result<Vec<Mount>> {
+        let text = std::fs::read_to_string("/proc/self/mountinfo")?;
+        let mut mounts = Vec::new();
+        for line in text.lines() {
+            let fields: Vec<&str> = line.split(' ').collect();
+            let separator = fields.iter().position(|field| *field == "-");
+            let (Some(separator), Some(device), Some(root), Some(point)) =
+                (separator, fields.get(2), fields.get(3), fields.get(4))
+            else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("a mountinfo line not understood: {line}"),
+                ));
             };
-            if !DISK_FILESYSTEMS.contains(&kind) {
-                continue;
-            }
-            let target = PathBuf::from(unescape(target));
-            if seen.insert(target.clone()) {
-                disks.push(target);
+            let Some(kind) = fields.get(separator + 1) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("a mountinfo line not understood: {line}"),
+                ));
+            };
+            mounts.push(Mount {
+                device: (*device).to_string(),
+                root: unescape(root),
+                point: PathBuf::from(unescape(point)),
+                kind: (*kind).to_string(),
+            });
+        }
+        Ok(mounts)
+    }
+
+    pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
+        let mut by_device: BTreeMap<String, Vec<Mount>> = BTreeMap::new();
+        for mount in mounts()? {
+            if DISK_FILESYSTEMS.contains(&mount.kind.as_str()) {
+                by_device.entry(mount.device.clone()).or_default().push(mount);
             }
         }
+        // Of each filesystem, the mounts that together show all of it that
+        // is mounted anywhere, each part once: the widest parts first, at
+        // their shortest paths, and no part inside one already taken.
+        let mut disks = Vec::new();
+        for mut mounts in by_device.into_values() {
+            mounts.sort_by_key(|mount| (std::path::Path::new(&mount.root).components().count(), mount.point.clone()));
+            let mut taken: Vec<PathBuf> = Vec::new();
+            for mount in mounts {
+                let root = PathBuf::from(&mount.root);
+                if !taken.iter().any(|part| root.starts_with(part)) {
+                    taken.push(root);
+                    disks.push(mount.point);
+                }
+            }
+        }
+        disks.sort();
         Ok(disks)
     }
 
-    /// `/proc/self/mounts` writes a space, tab, newline and backslash in a
+    pub fn mount_points() -> io::Result<Vec<PathBuf>> {
+        Ok(mounts()?.into_iter().map(|mount| mount.point).collect())
+    }
+
+    /// `/proc/self/mountinfo` writes a space, tab, newline and backslash in a
     /// path as three octal digits after a backslash.
     fn unescape(field: &str) -> String {
         let bytes = field.as_bytes();
@@ -172,6 +239,10 @@ mod imp {
     }
 
     pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
+        Err(unsupported())
+    }
+
+    pub fn mount_points() -> io::Result<Vec<PathBuf>> {
         Err(unsupported())
     }
 

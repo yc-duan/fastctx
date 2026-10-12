@@ -291,6 +291,13 @@ fn disks(node: &Arc<Node>, running: &Arc<Running>) -> Result<(), Failure> {
     // The World's own directory, and the logins known already, are not
     // walked into.
     let mut skip: HashSet<String> = HashSet::from([walk::key(&node.root)]);
+    // Nor is any place a filesystem is mounted again: each disk is walked
+    // from its own root, once.
+    let mounted = fastctx_platform::disks::mount_points()
+        .map_err(|error| Failure::new(format!("listing where filesystems are mounted: {error}")))?;
+    for point in mounted.iter().filter(|point| !roots.contains(point)) {
+        skip.insert(walk::key(point));
+    }
     for agent in AGENTS {
         for (dir, _) in super::dirs(node, &context, &kept, agent)? {
             skip.insert(walk::key(&dir));
