@@ -3,8 +3,11 @@
 // phone from the bottom. The model's name opens the host's list of models;
 // the effort is the hand-drawn slider, a step for each the model offers;
 // where the model offers a speed, a switch for it; and a way back to the
-// default. What is chosen goes to the host at once and holds from the next
-// turn. The chip names the speed only when it is not the standard one.
+// default. What is chosen shows at once, in the panel and on the chip, and
+// goes to the host, which holds it from the next turn; choices made while
+// one is on its way follow it in turn, the latest of them only. A choice the
+// host refuses gives way to what the host has, and why is said under the
+// input. The chip names the speed only when it is not the standard one.
 
 import { EffortSlider, effortLabel } from "./effort-slider";
 import { Popover } from "./popover";
@@ -34,13 +37,26 @@ export interface ModelChoice {
   tier(id: string): Promise<void>;
 }
 
+/** A choice the host has not taken yet; null leaves that part as it is. */
+interface Wanted {
+  model: string | null;
+  effort: string | null;
+  tier: string | null;
+}
+
 export class ModelPanel {
   readonly element: HTMLElement;
   private readonly slider: EffortSlider;
   private readonly popover: Popover;
   private offered: Offers | null = null;
   private listing = false;
-  private busy = false;
+  private wanted: Wanted | null = null;
+  /** The panel as last drawn: drawn again only when it differs, so a
+   *  slider held by the pointer stays where it is. */
+  private drawn = "";
+  /** The choices on their way to the host, one after another. */
+  private sending: Promise<void> = Promise.resolve();
+  private asked = 0;
 
   constructor(
     private readonly chip: HTMLButtonElement,
@@ -53,7 +69,7 @@ export class ModelPanel {
     this.element.hidden = true;
     this.element.setAttribute("role", "dialog");
     this.element.setAttribute("aria-label", words.model);
-    this.slider = new EffortSlider(words.effort, (effort) => void this.change(() => this.choose.model(this.current()?.id ?? null, effort)));
+    this.slider = new EffortSlider(words.effort, (effort) => this.want({ effort }));
     this.element.addEventListener("click", (event) => this.click(event));
     this.popover = new Popover(this.element, chip, () => (this.listing = false));
     chip.addEventListener("click", () => (this.popover.open ? this.hide() : this.show()));
@@ -88,13 +104,21 @@ export class ModelPanel {
     this.popover.hide();
   }
 
+  /** What the host offers, with what the user chose and the host has not
+   *  taken yet. */
+  private shown(): Offers | null {
+    const { offered, wanted } = this;
+    if (!offered || !wanted) return offered;
+    return { ...offered, model: wanted.model ?? offered.model, effort: wanted.effort ?? offered.effort, service_tier: wanted.tier ?? offered.service_tier };
+  }
+
   private current(): ModelOffer | undefined {
-    const offered = this.offered;
+    const offered = this.shown();
     return offered?.models.find((model) => model.id === offered.model);
   }
 
   private drawChip(): void {
-    const offered = this.offered;
+    const offered = this.shown();
     const shown = !!offered && offered.controls.includes("model");
     this.chip.hidden = !shown;
     if (!shown) return;
@@ -106,7 +130,7 @@ export class ModelPanel {
 
   private draw(): void {
     const { words } = this;
-    const offered = this.offered;
+    const offered = this.shown();
     const model = this.current();
     const models = offered?.models ?? [];
     const used = offered?.usage?.context?.used ?? null;
@@ -130,61 +154,84 @@ export class ModelPanel {
           })
           .join("")}</div>`
       : "";
-    this.element.innerHTML = `
+    const html = `
       <button class="model-name" type="button" data-list aria-expanded="${this.listing}"><span class="model-label">${escape(words.model)}</span><span class="model-value">${escape(model?.name ?? offered?.model ?? "")}</span>${glyph("chevron", 14)}</button>
       ${list}
       ${model && model.efforts.length > 1 ? `<div class="model-effort"><span class="model-label">${escape(words.effort)}</span><div class="model-slider"></div></div>` : ""}
       ${speed}
       <button class="text-button quiet-button model-default" type="button" data-default>${glyph("regenerate", 14)}<span>${escape(words.backToDefault)}</span></button>`;
+    if (html !== this.drawn || !this.element.firstElementChild) {
+      this.element.innerHTML = html;
+      this.drawn = html;
+    }
     const holder = this.element.querySelector<HTMLElement>(".model-slider");
     if (holder && model) {
       this.slider.set(model.efforts.map((value) => ({ value, label: effortLabel(value, this.english) })), offered?.effort ?? model.default_effort);
-      holder.append(this.slider.element);
+      if (this.slider.element.parentElement !== holder) holder.append(this.slider.element);
     }
-    this.element.classList.toggle("busy", this.busy);
   }
 
   private click(event: Event): void {
     const target = (event.target as HTMLElement).closest<HTMLElement>("button");
-    if (!target || this.busy) return;
+    if (!target) return;
     if (target.dataset.list !== undefined) {
       this.listing = !this.listing;
       this.draw();
       return;
     }
+    const offered = this.shown();
     if (target.dataset.model) {
-      const chosen = this.offered?.models.find((one) => one.id === target.dataset.model);
+      const chosen = offered?.models.find((one) => one.id === target.dataset.model);
       if (!chosen) return;
       // A model that has the effort chosen keeps it; one that has not takes
       // its own default.
-      const effort = this.offered?.effort && chosen.efforts.includes(this.offered.effort) ? this.offered.effort : chosen.default_effort;
+      const effort = offered?.effort && chosen.efforts.includes(offered.effort) ? offered.effort : chosen.default_effort;
       this.listing = false;
-      void this.change(() => this.choose.model(chosen.id, effort));
+      this.want({ model: chosen.id, effort });
       return;
     }
     if (target.dataset.tier) {
       const on = target.getAttribute("aria-checked") === "true";
-      void this.change(() => this.choose.tier(on ? "default" : target.dataset.tier!));
+      this.want({ tier: on ? "default" : target.dataset.tier });
       return;
     }
     if (target.dataset.default !== undefined) {
-      const fallback = this.offered?.models.find((one) => one.default) ?? this.offered?.models[0];
+      const fallback = offered?.models.find((one) => one.default) ?? offered?.models[0];
       if (!fallback) return;
-      void this.change(async () => {
-        await this.choose.model(fallback.id, fallback.default_effort);
-        if (this.offered?.service_tier && this.offered.service_tier !== "default") await this.choose.tier("default");
-      });
+      this.want({ model: fallback.id, effort: fallback.default_effort, tier: offered?.service_tier && offered.service_tier !== "default" ? "default" : null });
     }
   }
 
-  private async change(act: () => Promise<void>): Promise<void> {
-    this.busy = true;
-    this.element.classList.add("busy");
+  /** Shows a choice at once and sends it after those on their way. */
+  private want(next: Partial<Wanted>): void {
+    const current = this.current();
+    this.wanted = { model: this.wanted?.model ?? current?.id ?? null, effort: this.wanted?.effort ?? null, tier: this.wanted?.tier ?? null, ...next };
+    this.drawChip();
+    if (this.popover.open) this.draw();
+    const asked = ++this.asked;
+    this.sending = this.sending.then(async () => {
+      // A later choice carries this one along.
+      if (asked !== this.asked) return;
+      await this.send();
+      if (asked !== this.asked) return;
+      this.wanted = null;
+      this.drawChip();
+      if (this.popover.open) this.draw();
+    });
+  }
+
+  /** Gives the host what is wanted and it does not have. Whether it took
+   *  it is the host's to say: the page shows what the host has after. */
+  private async send(): Promise<void> {
+    const { wanted, offered } = this;
+    if (!wanted) return;
     try {
-      await act();
-    } finally {
-      this.busy = false;
-      this.element.classList.remove("busy");
+      if ((wanted.model !== null && wanted.model !== offered?.model) || (wanted.effort !== null && wanted.effort !== offered?.effort)) {
+        await this.choose.model(wanted.model ?? offered?.model ?? null, wanted.effort);
+      }
+      if (wanted.tier !== null && wanted.tier !== (offered?.service_tier ?? "default")) await this.choose.tier(wanted.tier);
+    } catch (error) {
+      console.error("choosing the model", error);
     }
   }
 }

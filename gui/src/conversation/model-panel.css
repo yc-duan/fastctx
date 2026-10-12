@@ -17,11 +17,6 @@
   animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 
-.model-panel.busy {
-  opacity: 0.7;
-  pointer-events: none;
-}
-
 .model-label {
   font-size: var(--size-small);
   color: var(--text-3);

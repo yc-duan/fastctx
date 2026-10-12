@@ -4,8 +4,9 @@
 // a clay knob on it, and the step's name above. The knob follows the
 // finger smoothly and, let go, glides to the nearest step; a press on a
 // step, or the arrow keys, sends it there the same way, the marker drawn
-// along behind it like a pen across the paper. Where the system asks for
-// less motion, the knob lands at once.
+// along behind it like a pen across the paper. The glide is the slider
+// answering the hand, short and along the line, so it is kept where the
+// system asks for less motion too (用户 2026-10-12: 点一档要划过去，不要瞬移).
 
 import { blot, outline, ruled, seeded, type Point } from "../pen/shapes";
 
@@ -31,10 +32,9 @@ const PAD = 10;
  *  a step, in pixels. */
 const SLOP = 4;
 /** How long the knob takes to glide one step, and at most. */
-const GLIDE_STEP_MS = 140;
-const GLIDE_MAX_MS = 420;
+const GLIDE_STEP_MS = 200;
+const GLIDE_MAX_MS = 520;
 
-const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const coarse = matchMedia("(pointer: coarse)");
 
 export class EffortSlider {
@@ -150,7 +150,7 @@ export class EffortSlider {
     cancelAnimationFrame(this.glide);
     const from = this.at;
     const distance = Math.abs(index - from);
-    if (reducedMotion.matches || distance < 0.001) {
+    if (distance < 0.001) {
       this.place(index);
       return;
     }

@@ -812,7 +812,12 @@ export class ConversationPage {
     this.modelPanel = new ModelPanel(this.chip, this.options.words.english ? enModelPanel : zhModelPanel, this.options.words.english, {
       model: (model, effort) => this.setModel(model, effort),
       tier: async (id) => {
-        await this.run({ name: "tier", description: "", args: null, arguments: "optional", control: null, source: null }, id, { do: "command", name: "tier", args: id });
+        const done = await this.run({ name: "tier", description: "", args: null, arguments: "optional", control: null, source: null }, id, { do: "command", name: "tier", args: id });
+        // Taken: shown as the host has it now; its fresh offers follow.
+        if (done && this.offered) {
+          this.offered = { ...this.offered, service_tier: id };
+          this.drawChip();
+        }
       },
     });
     holder.append(this.modelPanel.element);
@@ -1154,7 +1159,12 @@ export class ConversationPage {
   }
 
   private async setModel(model: string | null, effort: string | null): Promise<void> {
-    await this.run({ name: "model", description: "", args: null, arguments: "optional", control: "model", source: null }, "", { do: "model", model, effort });
+    const done = await this.run({ name: "model", description: "", args: null, arguments: "optional", control: "model", source: null }, "", { do: "model", model, effort });
+    // Taken: shown as the host has it now; its fresh offers follow.
+    if (done && this.offered) {
+      this.offered = { ...this.offered, model: model ?? this.offered.model, effort: effort ?? this.offered.effort };
+      this.drawChip();
+    }
   }
 
   /** Does a command, the World's own control or the host's; says whether
