@@ -30,6 +30,7 @@ pub mod management;
 pub(crate) mod pairing;
 mod process;
 mod rewind;
+mod startup;
 mod thoughts;
 mod titles;
 pub(crate) mod turn_facts;
@@ -58,6 +59,7 @@ pub struct Claude {
     bridge: control::Bridge,
     delivering: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
     reading: crate::leases::Registry<String, tokio::sync::Mutex<()>>,
+    startup_listings: startup::Listings,
     changed: tokio::sync::Notify,
     /// Held to read while the World starts a session and learns its id;
     /// to write, while a mod registration is assigned to a resident.
@@ -66,6 +68,7 @@ pub struct Claude {
 
 struct State {
     sessions: HashMap<String, Session>,
+    starting: HashSet<ResidentId>,
     /// Resident to the session it is.
     paired: crate::residents::cache::Index,
     observed: HashSet<fastctx_types::ProcessIdentity>,
@@ -87,6 +90,7 @@ impl Claude {
             thoughts: Default::default(),
             state: Mutex::new(State {
                 sessions: HashMap::new(),
+                starting: HashSet::new(),
                 observed: HashSet::new(),
                 paired: crate::residents::cache::Index::new(root.join("claude-paired"))?,
                 stored: crate::residents::cache::Index::new(root.join("claude-stored"))?,
@@ -95,6 +99,7 @@ impl Claude {
             births: Default::default(),
             delivering: Default::default(),
             reading: Default::default(),
+            startup_listings: Default::default(),
             changed: Default::default(),
         })
     }
@@ -159,6 +164,10 @@ pub async fn replay(node: &Arc<Node>) {
     if directory.exists() {
         look_all(node, &directory).await;
     }
+}
+
+pub(crate) fn recover_startups(node: &Arc<Node>) {
+    startup::recover(node);
 }
 
 /// Publishes what the session's mod waits for before its system prompt and
@@ -879,6 +888,7 @@ async fn pair(node: &Arc<Node>, session: &str) {
         Err(_) => {}
     }
     drop(guard);
+    node.claude.changed.notify_waiters();
     process::observe(node, registration.process);
 }
 
@@ -1057,6 +1067,7 @@ async fn wake(
 /// user's own, as for every program the node starts, naming the home of the
 /// account it works in when that is not the default one: a session, its
 /// supervisor and every command about it must see the same home.
+#[derive(Clone)]
 struct Command {
     program: PathBuf,
     cwd: PathBuf,
@@ -1109,7 +1120,8 @@ pub async fn open_here(
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
     let _birth = crate::here::born(node, &id, opened.acting.clone(), opened.works_on.clone());
-    let Command { program, env, .. } = command(node, opened.home.as_deref())?;
+    let launching = command(node, opened.home.as_deref())?;
+    let Command { program, env, .. } = launching.clone();
     // A login lent to another account starts without the browser of this
     // machine (`background::Start::lent`).
     let lent = node.works_here(&opened.acting).is_err();
@@ -1235,6 +1247,7 @@ pub async fn open_here(
         .map_err(|error| Failure::new(format!("recording which session {id} is: {error}")))?;
     drop(_birth);
     replay(node).await;
+    startup::observe(node, &id, first.delivery.id.clone(), launching);
     Ok((id, Landed::Handed { id: first.delivery.id }))
 }
 

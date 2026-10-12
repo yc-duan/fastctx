@@ -20,6 +20,7 @@ mod context;
 pub mod control;
 pub mod exchange;
 pub mod models;
+pub mod startup;
 pub mod tail;
 pub mod thoughts;
 pub mod titles;

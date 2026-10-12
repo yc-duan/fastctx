@@ -5,6 +5,8 @@ use std::io;
 
 mod asynchronous;
 pub use asynchronous::exited;
+mod status;
+pub use status::exit_status;
 
 /// The process that started this one. A command an entry forwarded to the
 /// World program counts the entry's parent, as it would had the entry

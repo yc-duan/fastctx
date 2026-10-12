@@ -437,6 +437,7 @@ pub async fn run_prepared(
     let mut unfinished: std::collections::BTreeSet<_> = unfinished.into_iter().collect();
     unfinished.extend(node.residents.unfinished());
     claude::replay(&node).await;
+    claude::recover_startups(&node);
     claude::start(&node).context("writing the World's Claude Code plugin")?;
 
     // What a node that stopped left owed, now that letters can be sent: the
