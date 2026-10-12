@@ -47,6 +47,7 @@ mod ledger;
 mod letters;
 mod lifetime;
 mod lines;
+mod loans;
 mod log;
 mod login_identity;
 mod logins;

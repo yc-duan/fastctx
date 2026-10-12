@@ -251,18 +251,25 @@ impl Directory {
     }
 
     /// Whether `member` may act for `account`: the account is logged in on
-    /// it, or used an agent there.
+    /// it, or used an agent there and may still use the agents there. A
+    /// loan past its deadline ends that from the same moment as the loan,
+    /// before the hub drops the record of the use (`settle_acting`).
     pub fn may_act_for(&self, account: &AccountName, member: &MachineName) -> bool {
         self.logged_in(member, account)
-            || self.acting.iter().any(|acting| acting.account == *account && acting.machine == *member)
+            || (self.acting.iter().any(|acting| acting.account == *account && acting.machine == *member)
+                && self.rights(account, member).agents)
     }
 
     /// The accounts `member` may act for.
     pub fn acts_for(&self, member: &MachineName) -> BTreeSet<AccountName> {
         let mut accounts: BTreeSet<AccountName> =
             self.member(member).map(|member| member.logins.clone()).unwrap_or_default();
-        accounts
-            .extend(self.acting.iter().filter(|acting| acting.machine == *member).map(|acting| acting.account.clone()));
+        accounts.extend(
+            self.acting
+                .iter()
+                .filter(|acting| acting.machine == *member && self.rights(&acting.account, member).agents)
+                .map(|acting| acting.account.clone()),
+        );
         accounts
     }
 
