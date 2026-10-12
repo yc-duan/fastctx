@@ -23,8 +23,8 @@ export const specimenOffers: Offers = {
     { name: "fast", description: "Faster responses", args: null, arguments: "none", source: "codex" },
   ],
   models: [
-    { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", description: "The default", efforts: ["low", "medium", "high", "xhigh"], default_effort: "medium", default: true, service_tiers: [{ id: "priority", name: "Fast", description: "Faster responses" }], default_service_tier: null },
-    { id: "gpt-6-astra", name: "GPT-6 Astra", description: "Deeper, slower", efforts: ["medium", "high", "xhigh"], default_effort: "high", default: false, service_tiers: [], default_service_tier: null },
+    { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", description: "The default", efforts: ["low", "medium", "high", "xhigh"], default_effort: "medium", default: true, service_tiers: [{ id: "priority", name: "Fast", description: "Faster responses" }, { id: "ultrafast", name: "Ultrafast", description: "Fastest responses, at a higher cost" }], default_service_tier: null },
+    { id: "gpt-6-astra", name: "GPT-6 Astra", description: "Deeper, slower", efforts: ["medium", "high", "xhigh"], default_effort: "high", default: false, service_tiers: [{ id: "priority", name: "Fast", description: "Faster responses" }], default_service_tier: null },
   ],
   model: "gpt-6.1-sol",
   effort: "medium",

@@ -2,8 +2,9 @@
 // chip under the input says them; pressed, a small panel rises over it, on a
 // phone from the bottom. The model's name opens the host's list of models;
 // the effort is the hand-drawn slider, a step for each the model offers;
-// where the model offers a speed, a switch for it; and a way back to the
-// default. What is chosen shows at once, in the panel and on the chip, and
+// where the model offers a speed, a switch for it, and where it offers more
+// than one, a single choice among them and the standard one, since a turn
+// runs at one speed; and a way back to the default. What is chosen shows at once, in the panel and on the chip, and
 // goes to the host, which holds it from the next turn; choices made while
 // one is on its way follow it in turn, the latest of them only. A choice the
 // host refuses gives way to what the host has, and why is said under the
@@ -19,6 +20,8 @@ export interface ModelPanelWords {
   model: string;
   effort: string;
   speed: string;
+  /** The speed of a turn that asks for none of the faster ones. */
+  standard: string;
   backToDefault: string;
   noModels: string;
   /** The chip's words before the host has said its model. */
@@ -27,8 +30,8 @@ export interface ModelPanelWords {
   tooLong: string;
 }
 
-export const zhModelPanel: ModelPanelWords = { model: "模型", effort: "推理强度", speed: "速度", backToDefault: "回到默认", noModels: "没有可选的模型", chip: "模型", tooLong: "这段对话已超过它的上下文" };
-export const enModelPanel: ModelPanelWords = { model: "Model", effort: "Reasoning", speed: "Speed", backToDefault: "Back to default", noModels: "No models available", chip: "Model", tooLong: "This conversation is longer than its context" };
+export const zhModelPanel: ModelPanelWords = { model: "模型", effort: "推理强度", speed: "速度", standard: "标准", backToDefault: "回到默认", noModels: "没有可选的模型", chip: "模型", tooLong: "这段对话已超过它的上下文" };
+export const enModelPanel: ModelPanelWords = { model: "Model", effort: "Reasoning", speed: "Speed", standard: "Standard", backToDefault: "Back to default", noModels: "No models available", chip: "Model", tooLong: "This conversation is longer than its context" };
 
 export interface ModelChoice {
   /** The model and effort from the next turn on; null keeps what is. */
@@ -146,14 +149,15 @@ export class ModelPanel {
           .join("") : `<li class="model-none">${escape(words.noModels)}</li>`}</ul>`
       : "";
     const tiers = model?.service_tiers ?? [];
-    const speed = tiers.length
-      ? `<div class="model-row">${tiers
-          .map((tier) => {
-            const on = offered?.service_tier === tier.id;
-            return `<button class="model-switch" type="button" role="switch" data-tier="${escape(tier.id)}" aria-checked="${on}" title="${escape(tier.description)}"><span>${escape(tier.name)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>`;
-          })
-          .join("")}</div>`
-      : "";
+    const chosen = tiers.find((tier) => tier.id === offered?.service_tier)?.id ?? "default";
+    const speed =
+      tiers.length === 1
+        ? `<div class="model-row"><button class="model-switch" type="button" role="switch" data-tier="${escape(tiers[0].id)}" aria-checked="${chosen === tiers[0].id}" title="${escape(tiers[0].description)}"><span>${escape(tiers[0].name)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button></div>`
+        : tiers.length > 1
+          ? `<div class="model-speed"><span class="model-label">${escape(words.speed)}</span><div class="segmented model-speeds" role="radiogroup" aria-label="${escape(words.speed)}">${[{ id: "default", name: words.standard, description: "" }, ...tiers]
+              .map((tier) => `<button class="segment${tier.id === chosen ? " chosen" : ""}" type="button" role="radio" data-tier="${escape(tier.id)}" aria-checked="${tier.id === chosen}"${tier.description ? ` title="${escape(tier.description)}"` : ""}>${escape(tier.name)}</button>`)
+              .join("")}</div></div>`
+          : "";
     const html = `
       <button class="model-name" type="button" data-list aria-expanded="${this.listing}"><span class="model-label">${escape(words.model)}</span><span class="model-value">${escape(model?.name ?? offered?.model ?? "")}</span>${glyph("chevron", 14)}</button>
       ${list}
@@ -192,7 +196,10 @@ export class ModelPanel {
     }
     if (target.dataset.tier) {
       const on = target.getAttribute("aria-checked") === "true";
-      this.want({ tier: on ? "default" : target.dataset.tier });
+      // A switch turns its speed off again; a choice among speeds stays.
+      if (target.getAttribute("role") === "radio") {
+        if (!on) this.want({ tier: target.dataset.tier });
+      } else this.want({ tier: on ? "default" : target.dataset.tier });
       return;
     }
     if (target.dataset.default !== undefined) {

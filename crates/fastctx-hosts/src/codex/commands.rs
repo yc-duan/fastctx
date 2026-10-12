@@ -44,8 +44,11 @@ impl CodexHost {
     pub async fn select_tier(self: &Arc<Self>, thread: &str, id: &str, toggle: bool) -> Result<String, String> {
         let server = self.server().await?;
         self.ensure_loaded(&server, thread).await?;
-        if id != "default" && self.read_config(thread).await?["config"]["features"]["fast_mode"] == false {
-            return Err("Codex has fast_mode disabled; it would ignore this service tier".into());
+        if id != "default" && !super::offers::Speeds::of(&self.read_config(thread).await?).on(id) {
+            return Err(format!(
+                "Codex has {} turned off; it would leave this service tier out of its requests",
+                super::offers::Speeds::mode(id)
+            ));
         }
         let models = self.models(&server).await?;
         let mut state = self.lock();

@@ -20,6 +20,7 @@ import { NodeQueue } from "./node-queue";
 import { NodeTray, type LentFiles } from "./node-tray";
 import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
+import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import type { Details } from "./details";
 import { FileLinks } from "./file-links";
@@ -812,11 +813,12 @@ export class ConversationPage {
     this.modelPanel = new ModelPanel(this.chip, this.options.words.english ? enModelPanel : zhModelPanel, this.options.words.english, {
       model: (model, effort) => this.setModel(model, effort),
       tier: async (id) => {
-        const done = await this.run({ name: "tier", description: "", args: null, arguments: "optional", control: null, source: null }, id, { do: "command", name: "tier", args: id });
+        const done = await this.run({ name: "tier", description: "", args: null, arguments: "optional", control: null, source: null }, id, { do: "command", name: "tier", args: id }, true);
         // Taken: shown as the host has it now; its fresh offers follow.
         if (done && this.offered) {
           this.offered = { ...this.offered, service_tier: id };
           this.drawChip();
+          this.sayNextTurn();
         }
       },
     });
@@ -1159,17 +1161,32 @@ export class ConversationPage {
   }
 
   private async setModel(model: string | null, effort: string | null): Promise<void> {
-    const done = await this.run({ name: "model", description: "", args: null, arguments: "optional", control: "model", source: null }, "", { do: "model", model, effort });
+    const done = await this.run({ name: "model", description: "", args: null, arguments: "optional", control: "model", source: null }, "", { do: "model", model, effort }, true);
     // Taken: shown as the host has it now; its fresh offers follow.
     if (done && this.offered) {
       this.offered = { ...this.offered, model: model ?? this.offered.model, effort: effort ?? this.offered.effort };
       this.drawChip();
+      this.sayNextTurn();
     }
   }
 
+  /** What the next turn runs with, said under the input once the host took
+   *  a choice made in the model panel: the model, the effort and a speed
+   *  other than the standard one, in the panel's own words. */
+  private sayNextTurn(): void {
+    const offered = this.offered;
+    const words = this.options.controls?.words.said;
+    if (!offered || !words) return;
+    const model = offered.models.find((one) => one.id === offered.model);
+    const tier = offered.service_tier && offered.service_tier !== "default" ? (model?.service_tiers.find((one) => one.id === offered.service_tier)?.name ?? offered.service_tier) : null;
+    const effort = offered.effort ? effortLabel(offered.effort, this.options.words.english) : null;
+    this.say(words.model(model?.name ?? offered.model ?? "", [effort, tier].filter(Boolean).join(" · ") || null));
+  }
+
   /** Does a command, the World's own control or the host's; says whether
-   *  it was done. */
-  private async run(command: MenuCommand, args: string, given?: Control): Promise<boolean> {
+   *  it was done. A choice made in the model panel is `quiet`: the panel
+   *  shows it at once, so under the input only a refusal is said. */
+  private async run(command: MenuCommand, args: string, given?: Control, quiet = false): Promise<boolean> {
     const controls = this.options.controls;
     if (!controls) return false;
     const words = controls.words;
@@ -1205,9 +1222,14 @@ export class ConversationPage {
             : command.control === "fork"
               ? { do: "fork", through: null }
               : { do: "command", name: command.name, args, ...(command.path ? { path: command.path } : {}) });
-    this.say(words.running(command.name));
+    if (!quiet) this.say(words.running(command.name));
     try {
       const done = await controls.control(what);
+      // The caller says what was taken.
+      if (quiet && (done.kind === "done" || done.kind === "reported")) {
+        void this.askOffers();
+        return true;
+      }
       if (done.kind === "forked") {
         this.say(words.done(command.name));
         controls.forked(done.resident);

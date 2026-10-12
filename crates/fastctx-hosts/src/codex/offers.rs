@@ -40,6 +40,39 @@ pub(super) const COMMANDS: &[(&str, &str, Option<&str>, CommandArguments)] = &[
     ("debug-config", "Read effective configuration and its layers", None, CommandArguments::None),
 ];
 
+/// Which speed tiers this Codex sends, as its configuration has the modes
+/// that govern them (codex-rs `Features::service_tier_enabled`, 0.162): flex
+/// always, Ultrafast by `ultrafast_mode`, any other by `fast_mode`. Both are
+/// on unless the configuration turns them off.
+pub(super) struct Speeds {
+    fast: bool,
+    ultrafast: bool,
+}
+
+impl Speeds {
+    pub(super) fn of(config: &Value) -> Self {
+        let features = &config["config"]["features"];
+        Self { fast: features["fast_mode"] != false, ultrafast: features["ultrafast_mode"] != false }
+    }
+
+    pub(super) fn on(&self, tier: &str) -> bool {
+        match tier {
+            "flex" => true,
+            "ultrafast" => self.ultrafast,
+            _ => self.fast,
+        }
+    }
+
+    fn any(&self) -> bool {
+        self.fast || self.ultrafast
+    }
+
+    /// The mode that turns `tier` off, for saying why it is not taken.
+    pub(super) fn mode(tier: &str) -> &'static str {
+        if tier == "ultrafast" { "ultrafast_mode" } else { "fast_mode" }
+    }
+}
+
 impl CodexHost {
     pub(super) async fn models(&self, server: &AppServer) -> Result<Vec<ModelOffer>, String> {
         let entries = pages(server, "model/list", json!({"includeHidden":false})).await?;
@@ -108,8 +141,15 @@ impl CodexHost {
         let server = self.server().await?;
         // Inspecting a sleeping resident must not subscribe it again.
         // Catalogs are server-wide; unavailable per-thread usage is reported.
-        let models = self.models(&server).await?;
-        let fast_mode = self.read_config(thread).await?["config"]["features"]["fast_mode"] != false;
+        let speeds = Speeds::of(&self.read_config(thread).await?);
+        let mut models = self.models(&server).await?;
+        // A tier whose mode is off is one Codex leaves out of its requests.
+        for model in &mut models {
+            model.service_tiers.retain(|tier| speeds.on(&tier.id));
+            if model.default_service_tier.as_deref().is_some_and(|tier| !speeds.on(tier)) {
+                model.default_service_tier = None;
+            }
+        }
         let skills = self.skills(&server, thread).await?;
         let read_at = jiff::Timestamp::now();
         let limits = server.request("account/rateLimits/read", json!({})).await;
@@ -132,7 +172,7 @@ impl CodexHost {
                 path: None,
             })
             .collect();
-        if !fast_mode {
+        if !speeds.any() {
             commands.retain(|command| command.name != "tier");
         }
         for skill in skills {
@@ -150,7 +190,7 @@ impl CodexHost {
         let mut state = self.lock();
         let entry = state.threads.get(thread).ok_or("unknown Codex thread")?;
         let selected_model = entry.selection.model.as_ref().or(entry.model.as_ref());
-        if fast_mode && let Some(model) = models.iter().find(|model| Some(&model.id) == selected_model) {
+        if let Some(model) = models.iter().find(|model| Some(&model.id) == selected_model) {
             for tier in &model.service_tiers {
                 let name = tier.name.to_lowercase();
                 // A tier name becomes a slash command only when it is a word

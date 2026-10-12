@@ -142,6 +142,18 @@
   transform: translateX(13px);
 }
 
+.model-speed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.model-speeds .segment {
+  min-height: 28px;
+  padding: 3px 12px;
+  font-size: var(--size-small);
+}
+
 .model-default {
   align-self: flex-start;
   margin-left: calc(-1 * var(--space-2));
@@ -183,7 +195,8 @@
 
   .model-name,
   .model-list button,
-  .model-switch {
+  .model-switch,
+  .model-speeds .segment {
     min-height: 44px;
   }
 }
