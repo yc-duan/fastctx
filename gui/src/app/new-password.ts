@@ -19,10 +19,12 @@ export interface NewPasswordWords {
 }
 
 /** The two fields, named `password` and `again`, side by side or one under
- *  the other, and the line under them. */
+ *  the other, and the line under them. They are not left to the browser's
+ *  own checks, which would speak first in a box of the system's: an empty
+ *  one is said on the line under them, as anything else wrong is. */
 export function newPasswordFields(words: NewPasswordWords, { pair = true, password = "", again = "" } = {}): string {
-  const fields = `<label class="field"><span class="field-label">${escape(words.password)}</span><input name="password" type="password" required autocomplete="new-password" value="${escape(password)}"></label>
-    <label class="field"><span class="field-label">${escape(words.passwordAgain)}</span><input name="again" type="password" required autocomplete="new-password" value="${escape(again)}"></label>`;
+  const fields = `<label class="field"><span class="field-label">${escape(words.password)}</span><input name="password" type="password" autocomplete="new-password" value="${escape(password)}"></label>
+    <label class="field"><span class="field-label">${escape(words.passwordAgain)}</span><input name="again" type="password" autocomplete="new-password" value="${escape(again)}"></label>`;
   return `${pair ? `<div class="field-pair">${fields}</div>` : fields}
     <p class="password-meter" aria-live="polite"><span class="password-bars"><i></i><i></i><i></i></span><span class="password-said">${escape(words.passwordFloor)}</span></p>`;
 }

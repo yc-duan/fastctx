@@ -5,7 +5,7 @@
 // region.
 
 import type { Login } from "../world/accounts";
-import { layerOpened, type Layer } from "./back";
+import { layerOpened, leavePage, type Layer } from "./back";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Place } from "./places";
@@ -77,7 +77,12 @@ export class Shell {
     // Any page's menu button brings the sidebar back: as a drawer on a
     // narrow screen, unfolded on a wide one.
     this.main.addEventListener("click", (event) => {
-      if (!(event.target as HTMLElement).closest(".menu-button")) return;
+      const target = event.target as HTMLElement;
+      if (target.closest(".page-back")) {
+        leavePage();
+        return;
+      }
+      if (!target.closest(".menu-button")) return;
       if (narrow.matches) this.drawer(true);
       else this.fold(false);
     });
@@ -164,10 +169,15 @@ export class Shell {
 }
 
 /** The head of a page: the button that brings the sidebar back where it is
- *  hidden, the page's name, and what can be done here. */
-export function pageHead(words: ShellWords, title: string, actions = ""): string {
+ *  hidden, the way back on a page the user came into, named by the page it
+ *  goes to, the page's name, and what can be done here. */
+export function pageHead(words: ShellWords, title: string, actions = "", back: string | null = null): string {
+  const way = back === null
+    ? ""
+    : `<button class="text-button page-back" type="button" aria-label="${escape(words.backTo(back))}">${glyph("back", 18)}<span>${escape(back)}</span></button>`;
   return `<header class="page-head">
     <button class="icon-button menu-button" type="button" aria-label="${escape(words.openSidebar)}">${glyph("menu", 20)}</button>
+    ${way}
     <div class="page-head-title">${title}</div>
     ${actions ? `<div class="page-head-actions">${actions}</div>` : ""}
   </header>`;

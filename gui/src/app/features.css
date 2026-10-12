@@ -93,17 +93,165 @@
   color: var(--text-3);
 }
 
-/* Turned on, a still of the film waits at the top. */
-.feature-top {
+/* "On", wherever it is said: washed in the theme's accent, so it is told
+   from "Off" at a glance. */
+.tag.feature-tag-on {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+.feature-tag-on .glyph {
+  color: var(--accent);
+}
+
+/* On, a feature's page: a still of its film beside what it gave, the
+   settings below, and the light way off at the foot of the page. */
+/* The body already fills what the head leaves; a height of the whole page
+   would push its foot out of sight. */
+.features-body.features-on {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--space-5);
+}
+
+.feature-on {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
+  gap: var(--space-5) var(--space-6);
+  padding-top: var(--space-2);
+}
+
+.feature-on .feature-still {
+  flex: 0 1 440px;
+  min-width: 240px;
+}
+
+.feature-on-said {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: var(--space-3);
 }
 
-.feature-top-acts {
+.feature-on-gained {
+  margin: 0;
+  max-width: 34em;
+  font-size: var(--size-ui);
+  line-height: var(--leading-prose);
+  color: var(--text-2);
+}
+
+.feature-on-said .text-button {
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.feature-on.solo {
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-5);
+  text-align: center;
+}
+
+.feature-on.solo .feature-still {
+  flex: none;
+  width: min(100%, 880px, calc((100dvh - 470px) * 16 / 9));
+  min-width: 0;
+}
+
+.feature-on.solo .feature-on-said {
+  flex: none;
+  align-items: center;
+}
+
+.feature-on.solo .feature-on-said .text-button {
+  margin-left: 0;
+}
+
+.feature-off-way {
+  margin-top: auto;
+  padding-top: var(--space-10);
+}
+
+.feature-on.solo + .feature-off-way {
+  margin-top: 0;
+  padding-top: var(--space-4);
+  text-align: center;
+}
+
+.feature-on.solo + .feature-off-way .text-button {
+  margin-left: 0;
+}
+
+.feature-off-way .text-button {
+  margin-left: calc(-1 * var(--space-3));
+  color: var(--text-3);
+  font-size: var(--size-small);
+}
+
+.feature-off-way .text-button:hover {
+  color: var(--text-2);
+}
+
+/* Once a feature is turned on: the same page for every one, over the whole
+   window and under its caption buttons, its top strip moving the window. */
+.feature-done {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
   display: flex;
-  gap: var(--space-1);
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--safe-top) + 52px) var(--gutter) calc(var(--safe-bottom) + var(--space-8));
+  background: var(--bg);
+  animation: film-theater-in var(--fold) var(--fold-easing) both;
+}
+
+.feature-done-head {
+  position: absolute;
+  inset: 0 0 auto;
+}
+
+.feature-done-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(100%, 640px);
+  text-align: center;
+}
+
+.feature-done-art {
+  width: min(100%, calc((100dvh - 340px) * 16 / 9));
+  border-radius: var(--radius-l);
+  overflow: hidden;
+}
+
+.feature-done-art .film-caption {
+  display: none;
+}
+
+.feature-done-title {
+  margin: var(--space-6) 0 var(--space-2);
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h2);
+  font-weight: 400;
+  color: var(--text-strong);
+}
+
+.feature-done-gained {
+  margin: 0;
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.feature-done-back {
+  min-width: 160px;
+  margin-top: var(--space-8);
 }
 
 .feature-section {
@@ -379,7 +527,6 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-height: 100%;
 }
 
 .feature-intro {
@@ -422,10 +569,6 @@
   gap: var(--space-3);
 }
 
-.feature-after {
-  margin: var(--space-4) 0 0;
-}
-
 /* A feature's film: as large as the page allows, with room under it for
    its words and the button that turns the feature on, all on one screen. */
 .features-body.features-film {
@@ -444,10 +587,8 @@
   width: 100%;
 }
 
-/* On, a still of the film at the top, to be watched again over the page. */
+/* On, a still of the film, to be watched again over the page. */
 .feature-still {
-  flex: 0 1 280px;
-  min-width: 180px;
   padding: 0;
   border-radius: var(--radius-l);
   cursor: pointer;

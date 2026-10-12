@@ -369,17 +369,26 @@
   color: var(--text-3);
 }
 
-/* The change card. */
+/* The change card. It fits the screen whole; only its opened details
+   scroll, in their own place, its head and foot staying put. */
 .agent-change-sheet .sheet-body {
-  width: min(620px, 100vw - 32px);
-  max-height: 86vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  width: min(660px, 100vw - 32px);
+  max-height: 88vh;
+  overflow: hidden;
 }
 
 .agent-change {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+.agent-change > * {
+  flex: none;
 }
 
 .agent-change-drawing {
@@ -420,6 +429,7 @@
 .agent-change-rows > div {
   display: grid;
   grid-template-columns: 4.5em minmax(0, 1fr);
+  align-items: baseline;
   gap: var(--space-3);
 }
 
@@ -429,7 +439,32 @@
 }
 
 .agent-change-rows dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin: 0;
+}
+
+/* What is put in, turned off, left alone: a word or a name each. */
+.agent-change-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 9px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  color: var(--text);
+  font-size: var(--size-small);
+  white-space: nowrap;
+}
+
+.agent-change-tag .glyph {
+  color: var(--text-3);
+}
+
+.agent-change-said {
+  font-size: var(--size-small);
+  color: var(--text-2);
 }
 
 .agent-change-lines {
@@ -446,8 +481,31 @@
   font-size: var(--size-small);
 }
 
+.agent-change-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-change-toggle .glyph {
+  transform: rotate(-90deg);
+  transition: transform var(--hover) ease;
+}
+
+.agent-change-toggle[aria-expanded="true"] .glyph {
+  transform: none;
+}
+
+/* The details, once opened: the files a line each, scrolling here alone. */
+.agent-change > .agent-change-details {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .agent-change-files,
-.agent-change-items,
 .agent-change-kept {
   margin: 0;
   padding: 0;
@@ -455,41 +513,67 @@
   font-size: var(--size-small);
 }
 
-.agent-change-files > li + li {
-  margin-top: var(--space-2);
-}
-
-.agent-change-file {
+.agent-change-file-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  text-align: left;
+  transition: background-color var(--hover) ease;
 }
 
-.agent-change-file code,
+.agent-change-file-line:hover {
+  background: var(--hairline);
+}
+
+.agent-change-file-mark {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+}
+
+.agent-change-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.agent-change-chevron {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+  transform: rotate(-90deg);
+  transition: transform var(--hover) ease;
+}
+
+.agent-change-file.open .agent-change-chevron {
+  transform: none;
+}
+
+.agent-change-diff:not(:empty) {
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+.agent-change-command {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+}
+
+.agent-change-command code,
 .agent-change-kept code {
   overflow-wrap: anywhere;
   font-family: var(--font-code);
   color: var(--text-2);
-}
-
-.agent-change-items {
-  padding-left: var(--space-5);
-  color: var(--text-3);
-}
-
-.agent-change-items li {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.agent-change-items del {
-  color: var(--wrong);
-}
-
-.agent-change-items ins {
-  text-decoration: none;
-  color: var(--text);
 }
 
 .agent-change-stamp {

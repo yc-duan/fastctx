@@ -500,6 +500,27 @@ body {
   display: grid;
 }
 
+/* The way back of a page one came into, named by the page it goes to; it
+   sits before the page's own name and never crowds it out. */
+.page-back {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  margin-left: -10px;
+  padding: 0 var(--space-2);
+}
+
+.page-back.text-button .glyph {
+  flex: none;
+  color: currentColor;
+}
+
+.page-back span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .page-head-title {
   flex: 1;
   min-width: 0;
@@ -662,7 +683,8 @@ html.framed .page-head {
 
 
 /* What a pointer shows on hover, raised by a long press on a touch screen. */
-.touch-hint {
+.touch-hint,
+.pointer-hint {
   position: fixed;
   z-index: 60;
   max-width: min(80vw, 320px);
@@ -678,6 +700,15 @@ html.framed .page-head {
   animation: hint-rise var(--hover) ease-out;
 }
 
+/* The pointer's hint stands in the top layer, over a modal sheet too; the
+   popover's own box is undone. */
+.pointer-hint[popover] {
+  inset: auto;
+  margin: 0;
+  border: 0;
+  overflow: visible;
+}
+
 @keyframes hint-rise {
   from {
     opacity: 0;
@@ -686,7 +717,8 @@ html.framed .page-head {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .touch-hint {
+  .touch-hint,
+  .pointer-hint {
     animation: none;
   }
 }

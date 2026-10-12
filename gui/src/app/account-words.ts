@@ -125,6 +125,11 @@ export interface LoginWords {
 const zhPasswordRule: Record<PasswordProblem, string> = { short: "至少 8 位", "one-kind": "需包含字母、数字、符号中的两种", name: "不能包含账号名", common: "这个密码太常见" };
 
 const enPasswordRule: Record<PasswordProblem, string> = { short: "At least 8 characters", "one-kind": "Use two of letters, digits and symbols", name: "Can't contain the account name", common: "This password is too common" };
+// The bar a new password must clear, and how strong one is, wherever one is set.
+const zhPasswordFloor = "至少 8 位，字母、数字、符号中至少两种";
+const enPasswordFloor = "At least 8 characters, with two of letters, numbers and symbols";
+const zhStrength: [string, string, string] = ["强度一般", "强度较高", "强度高"];
+const enStrength: [string, string, string] = ["Fair", "Good", "Strong"];
 
 export const zhLogin: LoginWords = {
   lede: "你的几台电脑，和电脑上的 Codex、Claude，同在一个世界。",
@@ -147,7 +152,7 @@ export const zhLogin: LoginWords = {
   keyMissing: "选一个私钥文件",
   chooseKey: "选择文件",
   optional: "（可选）",
-  passwordFloor: "至少 8 位，字母、数字、符号中至少两种",
+  passwordFloor: zhPasswordFloor,
   next: "下一步",
   firstTime: "第一次连这台服务器",
   fingerprintWhat: "服务器的指纹",
@@ -171,7 +176,7 @@ export const zhLogin: LoginWords = {
   passwordAgain: "确认密码",
   passwordsDiffer: "两次输入的密码不一致",
   passwordRule: zhPasswordRule,
-  strength: ["强度一般", "强度较高", "强度高"],
+  strength: zhStrength,
   name: "电脑名称",
   phoneName: "手机名称",
   nameSaid: zhNameSaid,
@@ -235,7 +240,7 @@ export const enLogin: LoginWords = {
   keyMissing: "Choose a private key file",
   chooseKey: "Choose a file",
   optional: " (optional)",
-  passwordFloor: "At least 8 characters, with two of letters, numbers and symbols",
+  passwordFloor: enPasswordFloor,
   next: "Next",
   firstTime: "First time on this server",
   fingerprintWhat: "The server's fingerprint",
@@ -259,7 +264,7 @@ export const enLogin: LoginWords = {
   passwordAgain: "Confirm password",
   passwordsDiffer: "Passwords don't match",
   passwordRule: enPasswordRule,
-  strength: ["Fair", "Good", "Strong"],
+  strength: enStrength,
   name: "Computer name",
   phoneName: "Phone name",
   nameSaid: enNameSaid,
@@ -1126,6 +1131,8 @@ export interface AccountWords {
   passwordAgain: string;
   passwordsDiffer: string;
   passwordRule: Record<PasswordProblem, string>;
+  passwordFloor: string;
+  strength: [string, string, string];
   passwordGo: string;
   passwordDone: string;
   logout: string;
@@ -1200,6 +1207,8 @@ export const zhAccount: AccountWords = {
   passwordAgain: "确认新密码",
   passwordsDiffer: "两次输入的密码不一致",
   passwordRule: zhPasswordRule,
+  passwordFloor: zhPasswordFloor,
+  strength: zhStrength,
   passwordGo: "保存",
   passwordDone: "密码已修改",
   logout: "退出账号",
@@ -1276,6 +1285,8 @@ export const enAccount: AccountWords = {
   passwordAgain: "Confirm new password",
   passwordsDiffer: "Passwords don't match",
   passwordRule: enPasswordRule,
+  passwordFloor: enPasswordFloor,
+  strength: enStrength,
   passwordGo: "Save",
   passwordDone: "Password changed",
   logout: "Sign out",
@@ -1415,6 +1426,8 @@ export interface AdminWords {
   passwordAgain: string;
   passwordsDiffer: string;
   passwordRule: Record<PasswordProblem, string>;
+  passwordFloor: string;
+  strength: [string, string, string];
   openGo: string;
   projects: string;
   owner: string;
@@ -1475,6 +1488,8 @@ export const zhAdmin: AdminWords = {
   passwordAgain: "确认密码",
   passwordsDiffer: "两次输入的密码不一致",
   passwordRule: zhPasswordRule,
+  passwordFloor: zhPasswordFloor,
+  strength: zhStrength,
   openGo: "创建",
   projects: "项目",
   owner: "所有者",
@@ -1535,6 +1550,8 @@ export const enAdmin: AdminWords = {
   passwordAgain: "Confirm password",
   passwordsDiffer: "Passwords don't match",
   passwordRule: enPasswordRule,
+  passwordFloor: enPasswordFloor,
+  strength: enStrength,
   openGo: "Create",
   projects: "Projects",
   owner: "Owner",

@@ -81,6 +81,16 @@ button:disabled {
   border-radius: var(--radius-s);
 }
 
+/* A field the user types in or picks from shows its caret or its menu, and
+   is never drawn around when focused: fields do not change on hover, click
+   or press. The ring above is for walking the buttons by keyboard. */
+input:not([type="checkbox"], [type="radio"], [type="range"], [type="button"], [type="submit"], [type="reset"], [type="file"], [type="color"]):focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[contenteditable]:focus-visible {
+  outline: 0;
+}
+
 /* Said to a screen reader, not shown: what changed, announced once. */
 .spoken {
   position: absolute;

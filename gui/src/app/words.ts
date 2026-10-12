@@ -29,6 +29,8 @@ export interface ShellWords {
   edit: string;
   openSidebar: string;
   foldSidebar: string;
+  /** A page head's way back, for a screen reader: to the page named. */
+  backTo(page: string): string;
   /** "Claude · laptop". */
   someone(agent: string, machine: string): string;
   colleagueFor(asker: string): string;
@@ -1458,6 +1460,7 @@ export const zhShell: ShellWords = {
   edit: "编辑",
   openSidebar: "显示侧栏",
   foldSidebar: "隐藏侧栏",
+  backTo: (page) => `返回${page}`,
   someone: (agent, machine) => `${agent} · ${machine}`,
   colleagueFor: (asker) => `${asker} 调用的模型`,
   busy: (lasted) => `工作中 · ${lasted}`,
@@ -1503,6 +1506,7 @@ export const enShell: ShellWords = {
   edit: "Edit",
   openSidebar: "Show sidebar",
   foldSidebar: "Hide sidebar",
+  backTo: (page) => `Back to ${page}`,
   someone: (agent, machine) => `${agent} · ${machine}`,
   colleagueFor: (asker) => `called by ${asker}`,
   busy: (lasted) => `working · ${lasted}`,

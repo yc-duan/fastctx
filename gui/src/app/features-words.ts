@@ -12,12 +12,21 @@ export interface FeaturesWords {
   coming: string;
   turnOn: string;
   turnOff: string;
+  /** The light way off at the foot of a feature's page: "关闭工作台". */
+  turnOffNamed(name: string): string;
+  /** The question asked before it is. */
+  offTitle(name: string): string;
+  /** The page shown once a feature is turned on. */
+  enabled(name: string): string;
+  back: string;
   replay: string;
   /** Closes the film watched over the page. */
   closeFilm: string;
   /** The workbench: talking with the agents in the interface. */
-  conversations: { name: string; line: string; film: WorkbenchWords; after: string };
-  collaboration: { name: string; line: string; film: CollaborationWords; gives: [GlyphName, string][] };
+  /** `after` is what the interface gained with it; `offWhat`, what folds
+   *  away and what carries on once it is off. */
+  conversations: { name: string; line: string; film: WorkbenchWords; after: string; offWhat: string };
+  collaboration: { name: string; line: string; film: CollaborationWords; gives: [GlyphName, string][]; after: string; offWhat: string };
   /** While the settings are being read. */
   reading: string;
   retry: string;
@@ -61,6 +70,10 @@ export const zhFeatures: FeaturesWords = {
   coming: "开发中",
   turnOn: "开启",
   turnOff: "关闭",
+  turnOffNamed: (name) => `关闭${name}`,
+  offTitle: (name) => `关闭${name}？`,
+  enabled: (name) => `${name}已开启`,
+  back: "返回",
   replay: "再看一遍",
   closeFilm: "关闭",
   conversations: {
@@ -79,6 +92,7 @@ export const zhFeatures: FeaturesWords = {
       approve: "等你批准",
     },
     after: "首页、新对话、项目与对话已在侧栏",
+    offWhat: "侧栏里的首页、新对话、项目与对话收起来；已有的对话和它们起的活照常，数据在设置的「本机数据」里管。",
   },
   collaboration: {
     name: "模型协作",
@@ -88,6 +102,8 @@ export const zhFeatures: FeaturesWords = {
       ["page", "附一份现成的协作说明，教智能体怎样用自然的话把局部交出去，你可以改"],
       ["colleague", "交出去、交回来都在对话里，不用你操心步骤"],
     ],
+    after: "选中的调用方，对话里有了请 GPT 的工具",
+    offWhat: "智能体的对话里不再有请 GPT 的工具；这里的设置留着，再开时照旧。",
   },
   reading: "正在读取设置",
   retry: "重试",
@@ -130,6 +146,10 @@ export const enFeatures: FeaturesWords = {
   coming: "In development",
   turnOn: "Turn on",
   turnOff: "Turn off",
+  turnOffNamed: (name) => `Turn off ${name}`,
+  offTitle: (name) => `Turn off ${name}?`,
+  enabled: (name) => `${name} is on`,
+  back: "Back",
   replay: "Watch again",
   closeFilm: "Close",
   conversations: {
@@ -148,6 +168,7 @@ export const enFeatures: FeaturesWords = {
       approve: "Needs your OK",
     },
     after: "Home, new conversations, projects and conversations are in the sidebar",
+    offWhat: "Home, new conversations, projects and conversations leave the sidebar; existing conversations and what they started carry on, and their data stays under Data in Settings.",
   },
   collaboration: {
     name: "Model collaboration",
@@ -157,6 +178,8 @@ export const enFeatures: FeaturesWords = {
       ["page", "A ready collaboration text teaches the agent to hand a part over in plain words; you can edit it"],
       ["colleague", "Handing over and handing back happen in the conversation, with no steps for you"],
     ],
+    after: "The callers you choose get the tools to ask a GPT in their conversations",
+    offWhat: "Conversations no longer get the tools to ask a GPT; these settings stay for when you turn it on again.",
   },
   reading: "Reading the settings",
   retry: "Retry",

@@ -9,7 +9,7 @@
 // shared with; its password; logging out; and, for the super administrator,
 // the way to the hub's page.
 
-import { passwordProblem } from "./password";
+import { newPasswordFields, passwordReady, sayPassword } from "./new-password";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { factRow } from "../design/fact-row";
@@ -167,7 +167,7 @@ export class AccountPage implements Page {
 
   /** A form on a sheet: one button, the sheet open with why until the
    *  World does it. */
-  private form(sheet: Sheet, title: string, fields: string, go: string, act: (form: HTMLElement) => Promise<string | void>): void {
+  private form(sheet: Sheet, title: string, fields: string, go: string, act: (form: HTMLElement) => Promise<string | false | void>): void {
     const { words } = this.options;
     sheet.body.innerHTML = `
       ${sheet.head(title, words.close)}
@@ -188,6 +188,8 @@ export class AccountPage implements Page {
           sheet.busy = false;
           button.disabled = false;
           button.textContent = go;
+          // What is wrong was said beside the field it is about.
+          if (wrong === false) return;
           if (wrong) {
             note.textContent = wrong;
             note.hidden = false;
@@ -211,22 +213,20 @@ export class AccountPage implements Page {
 
   private changePassword(login: Login): void {
     const { words } = this.options;
+    const fields = { ...words, password: words.newPassword };
     this.form(
       this.password,
       words.passwordTitle,
-      `<p class="confirm-what">${escape(words.passwordWhat)}</p>
-      <label class="field"><span class="field-label">${escape(words.newPassword)}</span><input name="password" type="password" required autocomplete="new-password"></label>
-      <label class="field"><span class="field-label">${escape(words.passwordAgain)}</span><input name="again" type="password" required autocomplete="new-password"></label>`,
+      `<p class="confirm-what">${escape(words.passwordWhat)}</p>${newPasswordFields(fields, { pair: false })}`,
       words.passwordGo,
       async (form) => {
+        if (!passwordReady(form, fields, login.account)) return false;
         const password = form.querySelector<HTMLInputElement>("[name=password]")!.value;
-        if (password !== form.querySelector<HTMLInputElement>("[name=again]")!.value) return words.passwordsDiffer;
-        const problem = passwordProblem(login.account, password);
-        if (problem) return words.passwordRule[problem];
         await this.options.change(login, { change: "set_password", target: login.account, password });
         this.said = { login: loginLabel(login), text: words.passwordDone };
       },
     );
+    this.password.body.oninput = () => sayPassword(this.password.body, fields, login.account);
   }
 
   private share(login: Login, town: string): void {

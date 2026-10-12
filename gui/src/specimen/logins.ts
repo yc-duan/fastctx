@@ -76,10 +76,53 @@ export function specimenScan(machine: string, stop: boolean, at: Date): Promise<
 
 export function specimenPreview(machine: string, agent: "codex" | "claude", dir: string, into: boolean): Promise<ChangePreview> {
   void machine;
+  // As the node gives them: the World's own values, any other key named
+  // with its values withheld, and the World's section of the guidance file.
+  const way = (value: string) => (into ? { after: value } : { before: value });
+  const how = into ? "created" : "removed";
+  const section = ["<!-- fastctx:begin -->", "## Fastctx", "", "Run commands, read and edit files and reach the other machines through `run`.", "A long command goes on in the background; you are told when it ends.", "<!-- fastctx:end -->", ""].join("\n");
   return Promise.resolve(
     agent === "codex"
-      ? { agent, dir, into, files: [{ path: `${dir}\\config.toml`, how: "changed", items: [{ item: "mcp_servers.fastctx", how: into ? "created" : "removed" }, { item: "features.shell_tool", how: "changed", before: "true", after: "false" }] }, { path: `${dir}\\AGENTS.md`, how: "changed", items: [{ item: "fastctx guidance", how: into ? "created" : "removed" }] }] }
-      : { agent, dir, into, files: [{ path: `${dir}\\CLAUDE.md`, how: "changed", items: [{ item: "fastctx guidance", how: into ? "created" : "removed" }] }], commands: [`claude plugin ${into ? "install" : "uninstall"} fastctx-world@fastctx`] },
+      ? {
+          agent,
+          dir,
+          into,
+          files: [
+            {
+              path: `\\\\?\\${dir}\\config.toml`,
+              how: "changed",
+              items: [
+                { item: "tool_output_token_limit", how: "changed", before: into ? "10000" : "66708", after: into ? "66708" : "10000" },
+                { item: "features.shell_tool", how, ...way("false") },
+                { item: "features.view_image", how, ...way("false") },
+                { item: "mcp_servers.fastctx.command", how, ...way(JSON.stringify("C:\\Users\\me\\.fastctx\\bin\\fastctx.exe")) },
+                { item: "mcp_servers.fastctx.args", how, ...way(JSON.stringify(["mcp"])) },
+                { item: "mcp_servers.fastctx.tool_timeout_sec", how, ...way("660") },
+                { item: "mcp_servers.fastctx.tools.run.output_token_limit", how, ...way("66708") },
+                { item: "mcp_servers.github.env.GITHUB_TOKEN", how: "changed", withheld: true },
+              ],
+            },
+            { path: `${dir}\\AGENTS.md`, how: "changed", items: [{ item: "fastctx", how, ...way(section) }] },
+          ],
+        }
+      : {
+          agent,
+          dir,
+          into,
+          files: [
+            {
+              path: `${dir}\\settings.json`,
+              how: "changed",
+              items: [
+                { item: "env.MAX_MCP_OUTPUT_TOKENS", how, ...way(JSON.stringify("30000")) },
+                { item: "permissions.deny", how, ...way(JSON.stringify(["Bash", "Grep", "Glob"])) },
+                { item: 'enabledPlugins."fastctx-world@fastctx"', how, ...way("true") },
+              ],
+            },
+            { path: `${dir}\\CLAUDE.md`, how: "changed", items: [{ item: "fastctx", how, ...way(section) }] },
+          ],
+          commands: [`claude plugin ${into ? "install" : "uninstall"} fastctx-world@fastctx`],
+        },
   );
 }
 

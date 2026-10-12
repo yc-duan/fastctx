@@ -1,16 +1,25 @@
 // Hooking an agent's login up to the World, or removing it (`world-gui.md`,
 // 账号、机器、共享与借出): a real change to the agent, so a card of its own.
-// A drawing of its own hands giving way to `run`; three short lines of what
-// is put in, what is turned off and what is left alone; what happens to
-// sessions already open; for Claude, the permission that comes with it;
-// under 「细节」 the real preview, worked out with nothing written. Pressed,
-// each step is ticked off in pencil as the login's node does it, and the
-// card ends on the stamp. Removing is the same card, saying what is put
-// back and what the user changed since that stays.
+// A drawing of its own hands giving way to `run`; what is put in, turned off
+// and left alone, each a short label and a few tags, the sentence behind
+// them on hover; the programs that use the login, as tags; what happens to
+// sessions already open; for Claude, the permission that comes with it.
+// Under 「细节」, folded at first, the real preview, worked out with nothing
+// written: a file to a line with its lines added and removed, opened as a
+// change reads in a conversation; it scrolls in its own place, the card's
+// head and foot staying put. Pressed, each step is ticked off in pencil as
+// the login's node does it, and the card ends on the stamp. Removing is the
+// same card, saying what is put back and what the user changed since that
+// stays.
 
+import { counts, parse } from "../conversation/diff";
+import { diffPaint, memoryDiff } from "../conversation/diff-lines";
 import { glyph } from "../conversation/glyphs";
+import { LongText, type LongTextWords } from "../conversation/long-text";
 import { escape } from "../conversation/prose";
+import { AnchorLayout } from "../longview";
 import type { ChangePreview, ChangeStep, LoginChange, OutputLimit } from "../world/logins";
+import { previewDiff, shortPath } from "./change-diff";
 import { Sheet } from "./confirm";
 import { detailOf } from "./problem";
 import { mark } from "./removal";
@@ -20,16 +29,21 @@ export interface AgentChangeWords {
   removeTitle(who: string, machine: string): string;
   putIn: string;
   putInWhat: string;
+  putInTags: string[];
   turnOff: string;
   turnOffWhat(agent: "codex" | "claude"): string;
+  turnOffTags(agent: "codex" | "claude"): string[];
   leave: string;
   leaveWhat: string;
+  leaveTags: string[];
   restore: string;
   restoreWhat: string;
+  kept: string;
   keepsWhat: string;
   openSessions(agent: "codex" | "claude", into: boolean): string;
   permission: string;
-  programs(names: string): string;
+  programs: string;
+  programsWhat: string;
   details: string;
   hideDetails: string;
   reading: string;
@@ -37,8 +51,9 @@ export interface AgentChangeWords {
   changed: string;
   removed: string;
   withheld: string;
-  kept: string;
   raise(limit: OutputLimit): string;
+  /** A change's lines, as a conversation says them. */
+  lines: LongTextWords & { unchanged(n: number): string };
   steps: { program: string; command(command: string): string; files: string; check(scope: string): string };
   cancel: string;
   apply: string;
@@ -56,13 +71,17 @@ export const zhAgentChange: AgentChangeWords = {
   removeTitle: (who, machine) => `移除 ${who} · ${machine}`,
   putIn: "换上",
   putInWhat: "Fastctx 的 run：跑命令、看文件与图片、改文件、去别的机器",
+  putInTags: ["run"],
   turnOff: "关掉",
   turnOffWhat: (agent) => (agent === "claude" ? "它自带的 Bash、Grep、Glob（Windows 上连同 PowerShell）" : "它自带的 shell 与看图"),
+  turnOffTags: (agent) => (agent === "claude" ? ["Bash", "Grep", "Glob", "PowerShell"] : ["shell", "看图"]),
   leave: "不动",
   leaveWhat: "其余一切：写文件的工具、子代理、插件、联网搜索、你的设置与说明",
+  leaveTags: ["写文件", "子代理", "插件", "联网搜索", "你的设置"],
   restore: "还原",
-  restoreWhat: "接入时改过的，照记录还原成接入之前的样子",
-  keepsWhat: "接入之后你自己改过的，留着",
+  restoreWhat: "接入时改的，照记录还原",
+  kept: "留着",
+  keepsWhat: "你后来改的",
   openSessions: (agent, into) =>
     into
       ? agent === "claude"
@@ -70,7 +89,8 @@ export const zhAgentChange: AgentChangeWords = {
         : "已经开着的 Codex 会话要重新打开才有 run"
       : "已经开着的会话要重新打开才回到自带的工具",
   permission: "Fastctx 开的 Claude 对话从此不再逐条问你批准命令和改文件；你自己开的会话照旧逐条问",
-  programs: (names) => `用这个登录的程序一起有了 run：${names}`,
+  programs: "程序",
+  programsWhat: "用这个登录的程序一起有了 run",
   details: "细节",
   hideDetails: "收起细节",
   reading: "正在算要改什么",
@@ -78,7 +98,7 @@ export const zhAgentChange: AgentChangeWords = {
   changed: "修改",
   removed: "删除",
   withheld: "可能是你自己的值，不显示",
-  kept: "留着",
+  lines: { more: (n) => `+ ${n.toLocaleString("zh-CN")} 行`, less: "− 收起", full: "整屏查看", english: false, unchanged: (n) => `${n} 行未改动` },
   raise: (limit) => `把输出上限从 ${limit.current.toLocaleString("zh-CN")} 调到 ${limit.requested.toLocaleString("zh-CN")}（${limit.location}，所有工具共用）`,
   steps: { program: "放好程序", command: (command) => `运行 ${command}`, files: "改配置与说明", check: (scope) => `核对 ${scope}` },
   cancel: "取消",
@@ -97,13 +117,17 @@ export const enAgentChange: AgentChangeWords = {
   removeTitle: (who, machine) => `Remove ${who} · ${machine}`,
   putIn: "Puts in",
   putInWhat: "Fastctx's run: commands, files and images, edits, other machines",
+  putInTags: ["run"],
   turnOff: "Turns off",
   turnOffWhat: (agent) => (agent === "claude" ? "Its own Bash, Grep and Glob (and PowerShell on Windows)" : "Its own shell and image viewer"),
+  turnOffTags: (agent) => (agent === "claude" ? ["Bash", "Grep", "Glob", "PowerShell"] : ["shell", "image viewer"]),
   leave: "Leaves",
   leaveWhat: "Everything else: its write tools, subagents, plugins, web search, your settings and guidance",
+  leaveTags: ["Write tools", "Subagents", "Plugins", "Web search", "Your settings"],
   restore: "Puts back",
-  restoreWhat: "What hooking up changed, as it was before",
-  keepsWhat: "What you changed since stays",
+  restoreWhat: "What hooking up changed, from its record",
+  kept: "Keeps",
+  keepsWhat: "What you changed since",
   openSessions: (agent, into) =>
     into
       ? agent === "claude"
@@ -111,7 +135,8 @@ export const enAgentChange: AgentChangeWords = {
         : "Codex sessions already open get run once reopened"
       : "Sessions already open get their own tools back once reopened",
   permission: "Claude conversations Fastctx opens stop asking you to approve each command and edit; sessions you open ask as before",
-  programs: (names) => `Programs using this login get run too: ${names}`,
+  programs: "Programs",
+  programsWhat: "Programs using this login get run too",
   details: "Details",
   hideDetails: "Hide details",
   reading: "Working out what changes",
@@ -119,7 +144,7 @@ export const enAgentChange: AgentChangeWords = {
   changed: "Changed",
   removed: "Removed",
   withheld: "May be your own value; not shown",
-  kept: "Kept",
+  lines: { more: (n) => `+ ${n.toLocaleString("en")} lines`, less: "− show less", full: "Full screen", english: true, unchanged: (n) => (n === 1 ? "1 unchanged line" : `${n} unchanged lines`) },
   raise: (limit) => `Raise the output limit from ${limit.current.toLocaleString("en")} to ${limit.requested.toLocaleString("en")} (${limit.location}, shared by every tool)`,
   steps: { program: "Put the program in place", command: (command) => `Run ${command}`, files: "Change settings and guidance", check: (scope) => `Check ${scope}` },
   cancel: "Cancel",
@@ -139,8 +164,9 @@ export interface AgentChangeTarget {
   dir: string;
   /** How the slip names the login. */
   who: string;
-  /** The programs that use this login, as names. */
-  programs: string[];
+  /** The programs that use this login: a name each, what it is and where
+   *  on hover, and whether it comes inside another program. */
+  programs: { name: string; detail: string; within: boolean }[];
   /** Whether the login is on this computer. */
   here: boolean;
   into: boolean;
@@ -156,7 +182,7 @@ export interface AgentChangeSeams {
 }
 
 type State =
-  | { at: "asking"; preview: ChangePreview | null; problem: string | null; open: boolean; raise: boolean }
+  | { at: "asking"; preview: ChangePreview | null; problem: string | null; open: boolean; raise: boolean; files: Set<number> }
   | { at: "running"; steps: ChangeStep[] }
   | { at: "ended"; change: LoginChange | null; problem: string | null };
 
@@ -168,7 +194,7 @@ const FOLLOW_MS = 400;
 export class AgentChangeSheet {
   private readonly sheet = new Sheet("agent-change-sheet");
   private target: AgentChangeTarget | null = null;
-  private state: State = { at: "asking", preview: null, problem: null, open: false, raise: false };
+  private state: State = { at: "asking", preview: null, problem: null, open: false, raise: false, files: new Set() };
 
   constructor(
     private readonly words: AgentChangeWords,
@@ -181,6 +207,11 @@ export class AgentChangeSheet {
       if (act === "details" && this.state.at === "asking") {
         this.state.open = !this.state.open;
         this.draw();
+      } else if (act === "file" && this.state.at === "asking") {
+        const index = Number((event.target as HTMLElement).closest<HTMLElement>("[data-file]")?.dataset.file);
+        if (this.state.files.has(index)) this.state.files.delete(index);
+        else this.state.files.add(index);
+        this.drawDetails();
       } else if (act === "go") void this.go();
       else if (act === "cancel" || act === "close") this.sheet.close();
     });
@@ -192,7 +223,7 @@ export class AgentChangeSheet {
 
   open(target: AgentChangeTarget): void {
     this.target = target;
-    this.state = { at: "asking", preview: null, problem: null, open: false, raise: false };
+    this.state = { at: "asking", preview: null, problem: null, open: false, raise: false, files: new Set() };
     this.draw();
     this.sheet.show();
     this.seams.preview(target).then(
@@ -248,37 +279,47 @@ export class AgentChangeSheet {
     const { words } = this;
     const title = target.into ? words.applyTitle(target.who, target.machine) : words.removeTitle(target.who, target.machine);
     this.sheet.body.innerHTML = `${this.sheet.head(title, words.close)}<div class="agent-change">${this.body(target)}</div>`;
+    this.drawDetails();
   }
 
   private body(target: AgentChangeTarget): string {
     const { words } = this;
     const state = this.state;
+    const tags = (names: string[]) => names.map((name) => `<span class="agent-change-tag">${escape(name)}</span>`).join("");
+    const row = (name: string, what: string, inside: string) => `<div title="${escape(what)}"><dt>${escape(name)}</dt><dd>${inside}</dd></div>`;
     const rows = target.into
       ? [
-          [words.putIn, words.putInWhat],
-          [words.turnOff, words.turnOffWhat(target.agent)],
-          [words.leave, words.leaveWhat],
+          row(words.putIn, words.putInWhat, tags(words.putInTags)),
+          row(words.turnOff, words.turnOffWhat(target.agent), tags(words.turnOffTags(target.agent))),
+          row(words.leave, words.leaveWhat, tags(words.leaveTags)),
+          ...(target.programs.length
+            ? [
+                row(
+                  words.programs,
+                  words.programsWhat,
+                  target.programs
+                    .map((program) => `<span class="agent-change-tag" title="${escape(program.detail)}">${glyph(program.within ? "desktop" : "terminal", 14)}${escape(program.name)}</span>`)
+                    .join(""),
+                ),
+              ]
+            : []),
         ]
-      : [
-          [words.restore, words.restoreWhat],
-          [words.leave, words.keepsWhat],
-        ];
+      : [row(words.restore, words.restoreWhat, `<span class="agent-change-said">${escape(words.restoreWhat)}</span>`), row(words.kept, words.keepsWhat, `<span class="agent-change-said">${escape(words.keepsWhat)}</span>`)];
     const lines = [
       words.openSessions(target.agent, target.into),
       ...(target.into && target.agent === "claude" ? [words.permission] : []),
-      ...(target.into && target.programs.length ? [words.programs(target.programs.join("、"))] : []),
       ...(target.here ? [] : [words.elsewhere(target.machine)]),
     ];
     const head = `${handsDrawing(target.into)}
-      <dl class="agent-change-rows">${rows.map(([name, what]) => `<div><dt>${escape(name!)}</dt><dd>${escape(what!)}</dd></div>`).join("")}</dl>
+      <dl class="agent-change-rows">${rows.join("")}</dl>
       <ul class="agent-change-lines">${lines.map((line) => `<li>${escape(line)}</li>`).join("")}</ul>`;
     if (state.at === "asking") {
       const preview = state.preview;
       const limit = target.into ? preview?.output_limit : undefined;
-      const details = state.open ? this.details(preview, state.problem) : "";
+      const details = state.open ? `<div class="agent-change-details">${this.details(preview, state.problem)}</div>` : "";
       return `${head}
         ${limit ? `<label class="agent-change-raise"><input type="checkbox" data-raise${state.raise ? " checked" : ""}><span>${escape(words.raise(limit))}</span></label>` : ""}
-        <button class="text-button removal-toggle" type="button" data-change="details" aria-expanded="${state.open}">${escape(state.open ? words.hideDetails : words.details)}</button>
+        <button class="text-button removal-toggle agent-change-toggle" type="button" data-change="details" aria-expanded="${state.open}">${glyph("chevron", 14)}<span>${escape(state.open ? words.hideDetails : words.details)}</span></button>
         ${details}
         <div class="removal-go">
           <button class="text-button" type="button" data-change="cancel">${escape(words.cancel)}</button>
@@ -297,24 +338,57 @@ export class AgentChangeSheet {
       <div class="removal-go"><button class="sheet-go" type="button" data-change="close">${escape(words.close)}</button></div>`;
   }
 
+  /** The files that would change, a line each: its short path and the
+   *  lines added and removed; an opened one shows the change. */
   private details(preview: ChangePreview | null, problem: string | null): string {
     const { words } = this;
     if (problem) return `<p class="removal-said removal-wrong" title="${escape(problem)}">${escape(words.previewFailed)}</p>`;
     if (!preview) return `<p class="removal-said">${escape(words.reading)}</p>`;
-    const how = (value: "created" | "changed" | "removed") => (value === "created" ? words.created : value === "removed" ? words.removed : words.changed);
+    const open = this.state.at === "asking" ? this.state.files : new Set<number>();
     const files = preview.files
-      .map(
-        (file) => `<li><div class="agent-change-file"><span class="tag">${escape(how(file.how))}</span><code>${escape(file.path)}</code></div>
-          <ul class="agent-change-items">${file.items
-            .map((item) => {
-              const values = item.withheld ? `<span class="quiet" title="${escape(words.withheld)}">…</span>` : `${item.before !== undefined ? `<del>${escape(item.before)}</del>` : ""}${item.after !== undefined ? `<ins>${escape(item.after)}</ins>` : ""}`;
-              return `<li><span class="agent-change-item">${escape(item.item)}</span>${values}</li>`;
-            })
-            .join("")}</ul></li>`,
-      )
+      .map((file, index) => {
+        const { added, removed } = counts(previewDiff(file, words.withheld).join("\n"));
+        const mark = file.how === "created" ? "plus" : file.how === "removed" ? "minus" : "edit";
+        const said = file.how === "created" ? words.created : file.how === "removed" ? words.removed : words.changed;
+        return `<li class="agent-change-file${open.has(index) ? " open" : ""}" data-file="${index}">
+          <button class="agent-change-file-line" type="button" data-change="file" aria-expanded="${open.has(index)}" title="${escape(said)} · ${escape(file.path)}">
+            <span class="agent-change-file-mark">${glyph(mark, 14)}</span><span class="agent-change-path">${escape(shortPath(file.path))}</span>
+            <span class="row-stats"><span class="add">+${added}</span><span class="del">−${removed}</span></span><span class="agent-change-chevron">${glyph("chevron", 14)}</span>
+          </button>
+          <div class="agent-change-diff"></div>
+        </li>`;
+      })
       .join("");
-    const commands = (preview.commands ?? []).map((command) => `<li><code>${escape(command)}</code></li>`).join("");
+    const commands = (preview.commands ?? []).map((command) => `<li class="agent-change-command"><span class="agent-change-file-mark">${glyph("terminal", 14)}</span><code>${escape(command)}</code></li>`).join("");
     return `<ul class="agent-change-files">${files}${commands}</ul>`;
+  }
+
+  /** The change of each opened file, as a conversation shows a change; it
+   *  scrolls with the details, in their own place on the card. */
+  private drawDetails(): void {
+    const state = this.state;
+    if (state.at !== "asking" || !state.preview) return;
+    const scroller = this.sheet.body.querySelector<HTMLElement>(".agent-change-details");
+    const list = scroller?.querySelector<HTMLElement>(".agent-change-files");
+    if (!scroller || !list) return;
+    const layout = new AnchorLayout(scroller, list);
+    const { words } = this;
+    state.preview.files.forEach((file, index) => {
+      const item = list.querySelector<HTMLElement>(`[data-file="${index}"]`);
+      if (!item) return;
+      const opened = state.files.has(index);
+      item.classList.toggle("open", opened);
+      item.querySelector(".agent-change-file-line")?.setAttribute("aria-expanded", String(opened));
+      const holder = item.querySelector<HTMLElement>(".agent-change-diff")!;
+      if (!opened) {
+        holder.replaceChildren();
+        return;
+      }
+      if (holder.childElementCount) return;
+      const rows = parse(previewDiff(file, words.withheld).join("\n"));
+      const lines = memoryDiff(rows);
+      holder.append(new LongText({ ...lines, paint: diffPaint(file.path, words.lines.unchanged), kind: "diff unnumbered" }, shortPath(file.path), layout, words.lines).element);
+    });
   }
 
   private steps(steps: ChangeStep[]): string {

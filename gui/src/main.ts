@@ -109,6 +109,7 @@ import type { Away, Happening, WorldState } from "./home/model";
 import { happeningsOf } from "./home/since";
 import { enHome, zhHome } from "./home/words";
 import { installHints } from "./app/hint";
+import { installPointerHints } from "./app/pointer-hint";
 import { installPens } from "./pen/filters";
 import { installRules } from "./pen/rules";
 import { JournalPage } from "./project/journal";
@@ -208,7 +209,7 @@ import { updating } from "./world/updater";
 import { desktopAvailable } from "./world/desktop";
 import { notifying, startPresence } from "./app/presence";
 import { installAccess } from "./app/access";
-import { installBack } from "./app/back";
+import { installBack, setPageBack } from "./app/back";
 import { installFrame } from "./app/frame";
 import { nameCodeCopy } from "./conversation/prose";
 
@@ -245,9 +246,73 @@ const live = store.live;
  *  A specimen shows one when asked. The shell's own answer follows. */
 let asDevice = live ? !onComputer() : params.has("phone");
 
-const head = (title: string, actions?: string) => pageHead(shellWords, title, actions);
+const head = (title: string, actions?: string) => pageHead(shellWords, title, actions, backName);
 
 let place: Place = { kind: "home" };
+
+/** The pages one comes into from another, which have a way back in their
+ *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
+function inner(at: Place): boolean {
+  return ["feature", "data", "admin", "network", "journal", "page", "file", "login", "talks"].includes(at.kind);
+}
+
+/** Where a page's back goes when it was not come into from another page,
+ *  as when the window opened on it. */
+function parentOf(at: Place): Place {
+  switch (at.kind) {
+    case "feature":
+      return { kind: "features" };
+    case "data":
+      return { kind: "settings" };
+    case "admin":
+      return { kind: "account" };
+    case "journal":
+    case "page":
+      return { kind: "project", town: at.town };
+    default:
+      return { kind: "home" };
+  }
+}
+
+/** A place's name where its page cannot be asked. */
+function placeName(at: Place): string {
+  switch (at.kind) {
+    case "home":
+      return deviceFeatures.conversations.peek() ? shellWords.world : shellWords.agents;
+    case "agents":
+      return shellWords.agents;
+    case "machines":
+    case "machine":
+      return shellWords.machines;
+    case "features":
+      return shellWords.features;
+    case "settings":
+      return shellWords.settings;
+    case "account":
+      return shellWords.account;
+    case "project":
+      return at.town;
+    default:
+      return "";
+  }
+}
+
+/** The pages the user came through into the one shown, the last first back:
+ *  each was left by going to the next, so the window's history holds them in
+ *  the same order. */
+let trail: { place: Place; title: string }[] = [];
+/** The page shown, whose name the trail keeps as it is left. */
+let shownPage: Page | null = null;
+/** The name of the way back of the page being made, read by `head`. */
+let backName: string | null = null;
+/** The address being replaced to: a redirect replaces the page, and is not
+ *  come back to. */
+let replacedTo: string | null = null;
+
+function replacePlace(to: string): void {
+  replacedTo = to;
+  location.replace(to);
+}
 
 /** A local protocol mismatch reported independently by the carried CLI: the
  *  node refuses an interface of another protocol, and the reason is asked
@@ -348,7 +413,7 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   opened(address, seed) {
     // The first words open with the conversation, as they were shown.
     seeds.set(talkKey(address), seed);
-    location.replace(talkLink(address));
+    replacePlace(talkLink(address));
   },
   starting: { words, here: () => store.world.peek()?.here ?? "" },
   allowClaude: (machine, go, home) => consent.allow(machine, go, home),
@@ -725,7 +790,7 @@ function liveManage(address: Address): Manage {
     remove: () => act({ do: "remove" }),
     towns: townsOn,
     removed: () => {
-      location.replace(link({ kind: "home" }));
+      replacePlace(link({ kind: "home" }));
     },
   };
 }
@@ -742,7 +807,7 @@ function specimenManage(): Manage {
     remove: refuse,
     towns: townsOn,
     removed: () => {
-      location.replace(link({ kind: "home" }));
+      replacePlace(link({ kind: "home" }));
     },
   };
 }
@@ -1365,6 +1430,15 @@ function show(next: Place): void {
   // The front page belongs to the workbench: without it, the interface opens on
   // the agents (`world-gui.md`, 界面的结构).
   if (next.kind === "home" && !deviceFeatures.conversations.peek()) next = { kind: "agents", machine: null };
+  const to = link(next);
+  const replaced = replacedTo === to;
+  replacedTo = null;
+  if (!inner(next)) trail = [];
+  else if (trail.length && link(trail[trail.length - 1]!.place) === to) trail.pop();
+  else if (!replaced && shownPage && link(place) !== to) trail.push({ place, title: shownPage.title || placeName(place) });
+  const came = inner(next) ? trail[trail.length - 1] : undefined;
+  const parent = parentOf(next);
+  backName = !inner(next) ? null : came ? came.title : placeName(parent);
   place = next;
   let page: Page;
   switch (next.kind) {
@@ -1451,7 +1525,7 @@ function show(next: Place): void {
       break;
     case "features":
     case "feature":
-      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.kind === "feature" ? next.feature : null, agents: () => agentsOn(null) });
+      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.kind === "feature" ? next.feature : null, agents: () => agentsOn(null), confirm: accountConfirm });
       break;
     case "login": {
       // The World's drawing, for the moment this computer is in it.
@@ -1504,7 +1578,7 @@ function show(next: Place): void {
         },
         enter() {
           welcomed.now();
-          location.replace(asDevice && !deviceFeatures.conversations.peek() ? link({ kind: "feature", feature: "conversations" }) : link({ kind: "home" }));
+          replacePlace(asDevice && !deviceFeatures.conversations.peek() ? link({ kind: "feature", feature: "conversations" }) : link({ kind: "home" }));
         },
       });
       break;
@@ -1614,6 +1688,8 @@ function show(next: Place): void {
       break;
   }
   shell.show(next, page);
+  shownPage = page;
+  setPageBack(!inner(next) ? null : came ? () => history.back() : () => { location.hash = link(parent); });
 }
 
 /** In a plain browser, `?s=` names what to look at when the address does
@@ -1749,7 +1825,7 @@ if (live) {
     decided = true;
     void setupState()
       .then((setup) => {
-        if (!setup.installed && (place.kind === "home" || place.kind === "agents")) location.replace(link({ kind: "login" }));
+        if (!setup.installed && (place.kind === "home" || place.kind === "agents")) replacePlace(link({ kind: "login" }));
       })
       .catch(() => {});
   });
@@ -1782,6 +1858,7 @@ if (live) {
 
 installPens();
 installHints();
+installPointerHints();
 installRules();
 installAccess();
 installBack();
@@ -1800,7 +1877,7 @@ if (live) {
     asDevice = state.mode === "device";
     // The data page shows a device only its cache, which it knows now.
     if (place.kind === "data") show(place);
-    if (asDevice && !state.device?.hubs.length && (place.kind === "home" || place.kind === "agents")) location.replace(link({ kind: "login" }));
+    if (asDevice && !state.device?.hubs.length && (place.kind === "home" || place.kind === "agents")) replacePlace(link({ kind: "login" }));
     else if (place.kind === "login") show(place);
   });
 }

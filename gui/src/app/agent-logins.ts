@@ -430,7 +430,13 @@ export class AgentLoginsPage implements Page {
       machine: machineName,
       dir,
       who: identity?.email ?? dirName(dir),
-      programs: found.agent.programs.filter((_, index) => found.login?.programs.includes(index)).map((program) => program.within?.name ?? program.path ?? this.options.words[this.agent]),
+      programs: found.agent.programs
+        .filter((_, index) => found.login?.programs.includes(index))
+        .map((program) => ({
+          name: program.within?.name ?? this.options.words.commandLine(program.version ?? null),
+          detail: programLine(program, this.options.words),
+          within: !!program.within,
+        })),
       here: found.machine.here,
       into,
     };

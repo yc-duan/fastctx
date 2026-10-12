@@ -1,8 +1,11 @@
 // The features (`world-gui.md`, 功能): a card for each, and each its own
 // page. A feature is off until turned on; off, its page is the film that
 // tells what it does, playing on a loop, and the button that turns it on
-// under it; on, a still of the film waits at the top, to be watched again
-// over the page, and the settings are below.
+// under it. Turned on, the same page for every feature fills the window: it
+// is on, what the interface gained, and the way back to the features. On,
+// its page shows a still of the film, to be watched again over the page,
+// beside what it gave; the settings below; and, last and light, the way to
+// turn it off, asked once more before it is.
 //
 // The workbench is the first: the agents' work drawn step by step, agents
 // on other computers and in a phone; it is kept per device and has no
@@ -24,6 +27,8 @@ import { readCollab, sameAgentLogin, writeCollab, type AgentLogin, type Collab, 
 import { agentName, titleOf } from "../world/names";
 import { accountOf, homeChoice, homeLabel, homesOf, listed, usableHome, type HomeWords } from "./agent-homes";
 import type { FeaturesWords } from "./features-words";
+import { layerOpened } from "./back";
+import type { Confirm } from "./confirm";
 import { link, type Feature } from "./places";
 import { detailOf } from "./problem";
 import type { Page } from "./shell";
@@ -43,6 +48,8 @@ export interface FeaturesOptions {
   head(title: string, actions?: string): string;
   feature: Feature | null;
   agents(): Promise<WorldAgents>;
+  /** Asks before a feature is turned off. */
+  confirm: Confirm;
 }
 
 /** A login an agent can work in, as the settings name it, with what the
@@ -69,6 +76,8 @@ export class FeaturesPage implements Page {
   private films: Film[] = [];
   /** Ends the film watched over the page, while one is. */
   private unwatch: (() => void) | null = null;
+  /** Takes away the page that says a feature was turned on, while it is up. */
+  private undone: (() => void) | null = null;
 
   constructor(private readonly options: FeaturesOptions) {
     const { words, feature } = options;
@@ -91,6 +100,7 @@ export class FeaturesPage implements Page {
     this.sliders = [];
     this.dropFilms();
     this.unwatch?.();
+    this.undone?.();
   }
 
   /** A film set into `holder`: playing, or `still` on its last frame. */
@@ -135,10 +145,86 @@ export class FeaturesPage implements Page {
     this.unwatch = close;
   }
 
+  /** The page that says a feature was turned on, the same for every one,
+   *  over the whole window: it is on, what the interface gained, and the way
+   *  to the features, which Esc and the system back take as well. */
+  private celebrate(name: string, gained: string, make: (shape: Shape) => Built): void {
+    const { words } = this.options;
+    this.undone?.();
+    const done = document.createElement("div");
+    done.className = "feature-done";
+    done.setAttribute("role", "dialog");
+    done.setAttribute("aria-modal", "true");
+    done.setAttribute("aria-label", words.enabled(name));
+    // The strip at the top moves the window, as a page's head does.
+    done.innerHTML = `<header class="page-head feature-done-head"></header>
+      <div class="feature-done-box"><div class="feature-done-art"></div>
+        <h2 class="feature-done-title">${escape(words.enabled(name))}</h2>
+        <p class="feature-done-gained">${escape(gained)}</p>
+        <button class="sheet-go feature-done-back" type="button">${escape(words.back)}</button></div>`;
+    const film = new Film(make, name, true);
+    done.querySelector(".feature-done-art")!.append(film.element);
+    let open = true;
+    const takeAway = () => {
+      if (!open) return;
+      open = false;
+      film.destroy();
+      done.remove();
+      removeEventListener("keydown", key);
+      this.undone = null;
+    };
+    const close = () => {
+      if (!open) return;
+      takeAway();
+      location.hash = link({ kind: "features" });
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      close();
+    };
+    done.querySelector(".feature-done-back")!.addEventListener("click", close);
+    addEventListener("keydown", key);
+    document.body.append(done);
+    layerOpened({ isOpen: () => open, close });
+    this.undone = takeAway;
+    done.querySelector<HTMLButtonElement>(".feature-done-back")!.focus({ preventScroll: true });
+  }
+
+  /** The top of a feature's page while it is on: a still of its film,
+   *  watched again over the page, beside what it gave; a feature with no
+   *  settings (`solo`) holds them in the middle of the page, as its film is
+   *  while it is off. */
+  private onTop(gained: string, solo = false): string {
+    const { words } = this.options;
+    return `<div class="feature-on${solo ? " solo" : ""}">
+      <button class="feature-still" type="button" data-act="replay" aria-label="${escape(words.replay)}"></button>
+      <div class="feature-on-said">
+        <span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>
+        <p class="feature-on-gained">${escape(gained)}</p>
+        <button class="text-button quiet-button" type="button" data-act="replay">${glyph("regenerate", 14)}<span>${escape(words.replay)}</span></button>
+      </div>
+    </div>`;
+  }
+
+  /** The way to turn a feature off: last on its page, and light, so it is
+   *  never taken for the way back. */
+  private offWay(name: string): string {
+    return `<div class="feature-off-way"><button class="text-button quiet-button feature-turn-off" type="button" data-act="turn-off">${escape(this.options.words.turnOffNamed(name))}</button></div>`;
+  }
+
+  /** Asks before `name` is turned off, saying what folds away and what
+   *  carries on; `off` turns it off, and fails as the World says. */
+  private askOff(name: string, what: string, off: () => Promise<void>, done: () => void): void {
+    const { words, confirm } = this.options;
+    confirm.ask({ title: words.offTitle(name), what, go: words.turnOff, gentle: true, act: off, done });
+  }
+
   /** Every feature, a card each. */
   private cards(): void {
     const { words } = this.options;
-    const tag = (on: boolean | null) => (on === null ? "" : `<span class="tag${on ? " tag-own" : ""}">${escape(on ? words.on : words.off)}</span>`);
+    const tag = (on: boolean | null) =>
+      on === null ? "" : on ? `<span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>` : `<span class="tag">${escape(words.off)}</span>`;
     const draw = (on: boolean | null) => {
       const state = tag(on);
       this.body.innerHTML = `<ul class="feature-cards">
@@ -175,23 +261,32 @@ export class FeaturesPage implements Page {
       this.dropFilms();
       const on = deviceFeatures.conversations.peek();
       this.body.classList.toggle("features-film", !on);
+      this.body.classList.toggle("features-on", on);
       this.body.innerHTML = on
-        ? `<div class="feature-top"><button class="feature-still" type="button" data-act="replay" aria-label="${escape(words.replay)}"></button>
-            <div class="feature-top-acts"><button class="text-button quiet-button" type="button" data-act="replay">${glyph("regenerate", 14)}<span>${escape(words.replay)}</span></button>
-            <button class="text-button quiet-button" type="button" data-turn="0">${escape(words.turnOff)}</button></div></div>
-            <p class="feature-quiet feature-after">${escape(words.conversations.after)}</p>`
+        ? this.onTop(words.conversations.after, true) + this.offWay(label)
         : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1">${escape(words.turnOn)}</button></div>`;
       this.film(this.body.querySelector(on ? ".feature-still" : ".feature-film"), make, label, on);
     };
     draw();
     this.body.addEventListener("click", (event) => {
-      const turn = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-turn]");
+      const target = event.target as HTMLElement;
+      if (target.closest("[data-act='turn-off']")) {
+        this.askOff(label, words.conversations.offWhat, () => deviceFeatures.setConversations(false), draw);
+        return;
+      }
+      const turn = target.closest<HTMLButtonElement>("[data-turn]");
       if (!turn || turn.disabled) return;
       turn.disabled = true;
-      void deviceFeatures.setConversations(turn.dataset.turn === "1").then(draw, (error: unknown) => {
-        turn.disabled = false;
-        turn.title = detailOf(error);
-      });
+      void deviceFeatures.setConversations(true).then(
+        () => {
+          draw();
+          this.celebrate(label, words.conversations.after, make);
+        },
+        (error: unknown) => {
+          turn.disabled = false;
+          turn.title = detailOf(error);
+        },
+      );
     });
   }
 
@@ -274,8 +369,13 @@ export class FeaturesPage implements Page {
         return;
       case "turn":
         if (!draft) return;
-        draft.on = button.dataset.on === "1";
-        void this.save();
+        draft.on = true;
+        void this.save().then(() => {
+          if (this.view?.collab.on && !this.problem) this.celebrate(this.options.words.collaboration.name, this.options.words.collaboration.after, (shape) => collaboration(this.options.words.collaboration.film, shape));
+        });
+        return;
+      case "turn-off":
+        this.askOff(this.options.words.collaboration.name, this.options.words.collaboration.offWhat, () => this.turnOff(), () => this.draw());
         return;
       case "caller": {
         if (!draft) return;
@@ -357,24 +457,45 @@ export class FeaturesPage implements Page {
     this.drawSave();
   }
 
+  /** Saves for the account, or in no network as this computer's own. What
+   *  failed is said where the user acted, after the page reads the
+   *  settings again. */
   private async save(): Promise<void> {
     const account = this.account;
     const draft = this.draft;
-    if (!account || !draft || !this.view) return;
+    if (!draft || !this.view) return;
     const button = this.body.querySelector<HTMLButtonElement>(".feature-save");
     if (button) button.disabled = true;
     try {
-      const version = await writeCollab(account.hub, account.account, draft);
+      const version = await writeCollab(account?.hub ?? null, account?.account ?? null, draft);
       draft.version = version;
       this.view = { ...this.view, collab: structuredClone(draft) };
       this.problem = null;
       this.saved = true;
     } catch (error) {
-      this.problem = { text: this.options.words.failed(detailOf(error)), detail: detailOf(error) };
+      const problem = { text: this.options.words.failed(detailOf(error)), detail: detailOf(error) };
       await this.load();
+      if (this.view) {
+        this.problem = problem;
+        this.draw();
+      }
       return;
     }
     this.draw();
+  }
+
+  /** Turns model collaboration off for the account, or in no network for
+   *  this computer, with what else the draft holds; fails as the World says,
+   *  for the question to show. */
+  private async turnOff(): Promise<void> {
+    const account = this.account;
+    if (!this.draft || !this.view) return;
+    const draft = { ...structuredClone(this.draft), on: false };
+    draft.version = await writeCollab(account?.hub ?? null, account?.account ?? null, draft);
+    this.view = { ...this.view, collab: structuredClone(draft) };
+    this.draft = draft;
+    this.problem = null;
+    this.saved = false;
   }
 
   /** Watches the page's film again, over the page. */
@@ -399,17 +520,15 @@ export class FeaturesPage implements Page {
           : `<p class="feature-note">${escape(words.reading)}</p>`
         : on
           ? ""
-          : `<button class="sheet-go feature-turn" type="button" data-act="turn" data-on="1">${escape(words.turnOn)}</button>`;
-    const top = on
-      ? `<div class="feature-top"><button class="feature-still" type="button" data-act="replay" aria-label="${escape(words.replay)}"></button>
-          <div class="feature-top-acts"><button class="text-button quiet-button" type="button" data-act="replay">${glyph("regenerate", 14)}<span>${escape(words.replay)}</span></button>
-          <button class="text-button quiet-button" type="button" data-act="turn" data-on="0">${escape(words.turnOff)}</button></div></div>`
-      : `<div class="feature-intro with-gives"><div class="feature-film"></div>${gives}${turn}</div>`;
+          : `<button class="sheet-go feature-turn" type="button" data-act="turn" data-on="1">${escape(words.turnOn)}</button>${
+              this.problem ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}</p>` : ""}`;
+    const top = on ? this.onTop(words.collaboration.after) : `<div class="feature-intro with-gives"><div class="feature-film"></div>${gives}${turn}</div>`;
     // The film keeps playing while the page around it is drawn again.
     const playing = !on ? this.body.querySelector(".feature-intro .film") : null;
     if (!playing) this.dropFilms();
     this.body.classList.toggle("features-film", !on);
-    this.body.innerHTML = top + (on && collab ? this.settings(collab) : "");
+    this.body.classList.toggle("features-on", on);
+    this.body.innerHTML = top + (on && collab ? this.settings(collab) + this.offWay(words.collaboration.name) : "");
     const make = (shape: Shape) => collaboration(words.collaboration.film, shape);
     if (playing) this.body.querySelector(".feature-film")?.replaceChildren(playing);
     else this.film(this.body.querySelector(on ? ".feature-still" : ".feature-film"), make, words.collaboration.name, on);

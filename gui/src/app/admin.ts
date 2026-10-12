@@ -7,7 +7,7 @@
 // project is handed to another account. Handing on and deleting say first
 // what they mean.
 
-import { passwordProblem } from "./password";
+import { newPasswordFields, passwordReady, sayPassword } from "./new-password";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { loginsOf, type AccountChange, type HubAccounts, type Login } from "../world/accounts";
@@ -127,16 +127,15 @@ export class AdminPage implements Page {
       case "reset":
         this.form(
           words.resetTitle(name),
-          `<p class="confirm-what">${escape(words.resetWhat)}</p>${this.passwords()}`,
+          `<p class="confirm-what">${escape(words.resetWhat)}</p>${newPasswordFields(words, { pair: false })}`,
           words.resetGo,
           async (form) => {
-            const password = this.password(form);
-            if (password === null) return words.passwordsDiffer;
-            const problem = passwordProblem(name, password);
-            if (problem) return words.passwordRule[problem];
+            if (!passwordReady(form, words, name)) return false;
+            const password = form.querySelector<HTMLInputElement>("[name=password]")!.value;
             await this.options.change(login, { change: "set_password", target: name, password });
           },
         );
+        this.sheet.body.oninput = () => sayPassword(this.sheet.body, words, name);
         return;
       case "delete": {
         const machines = hub.members.filter((member) => member.home === name).map((member) => member.name);
@@ -155,17 +154,17 @@ export class AdminPage implements Page {
           words.openTitle,
           `<p class="confirm-what">${escape(words.openWhat)}</p>
           <label class="field"><span class="field-label">${escape(words.name)}</span><input name="name" required autocomplete="off" spellcheck="false" autocapitalize="off" pattern="${accountRule}"><span class="field-hint">${escape(words.nameHint)}</span></label>
-          ${this.passwords()}`,
+          ${newPasswordFields(words, { pair: false })}`,
           words.openGo,
           async (form) => {
-            const password = this.password(form);
-            if (password === null) return words.passwordsDiffer;
             const name = form.querySelector<HTMLInputElement>("[name=name]")!.value.trim();
-            const problem = passwordProblem(name, password);
-            if (problem) return words.passwordRule[problem];
+            if (!passwordReady(form, words, name)) return false;
+            const password = form.querySelector<HTMLInputElement>("[name=password]")!.value;
             await this.options.change(login, { change: "open_account", name, password });
           },
         );
+        // The account's name counts against its password as it is typed.
+        this.sheet.body.oninput = () => sayPassword(this.sheet.body, words, this.sheet.body.querySelector<HTMLInputElement>("[name=name]")?.value.trim() ?? "");
         return;
       case "hand": {
         const town = button.dataset.town!;
@@ -188,21 +187,9 @@ export class AdminPage implements Page {
     }
   }
 
-  private passwords(): string {
-    const { words } = this.options;
-    return `<label class="field"><span class="field-label">${escape(words.password)}</span><input name="password" type="password" required autocomplete="new-password"></label>
-      <label class="field"><span class="field-label">${escape(words.passwordAgain)}</span><input name="again" type="password" required autocomplete="new-password"></label>`;
-  }
-
-  /** The password typed twice alike, or null. */
-  private password(form: HTMLElement): string | null {
-    const password = form.querySelector<HTMLInputElement>("[name=password]")!.value;
-    return password === form.querySelector<HTMLInputElement>("[name=again]")!.value ? password : null;
-  }
-
   /** A form on the sheet: one button, the sheet open with why until the
    *  hub does it. */
-  private form(title: string, fields: string, go: string, act: (form: HTMLElement) => Promise<string | void>): void {
+  private form(title: string, fields: string, go: string, act: (form: HTMLElement) => Promise<string | false | void>): void {
     const { words } = this.options;
     const { sheet } = this;
     sheet.body.innerHTML = `
@@ -215,6 +202,11 @@ export class AdminPage implements Page {
       if (sheet.busy) return;
       const button = sheet.body.querySelector<HTMLButtonElement>(".sheet-go")!;
       const note = sheet.body.querySelector<HTMLElement>(".sheet-note")!;
+      const stay = () => {
+        sheet.busy = false;
+        button.disabled = false;
+        button.textContent = go;
+      };
       const done = (wrong: string | null) => {
         sheet.busy = false;
         button.disabled = false;
@@ -232,7 +224,8 @@ export class AdminPage implements Page {
       button.textContent = words.working;
       note.hidden = true;
       act(sheet.body).then(
-        (wrong) => done(wrong ?? null),
+        // What is wrong was said beside the field it is about.
+        (wrong) => (wrong === false ? stay() : done(wrong ?? null)),
         (error: unknown) => done(words.failed(error instanceof Error ? error.message : String(error))),
       );
     };
