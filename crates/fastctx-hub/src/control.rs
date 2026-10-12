@@ -156,6 +156,7 @@ pub(crate) async fn session(
 
 /// Registers the session, replacing an older one of the same member, and
 /// queues the welcome and every letter waiting for the member, in order.
+#[allow(clippy::too_many_arguments)]
 fn open(
     hub: &Hub,
     name: &MachineName,

@@ -119,13 +119,13 @@ pub(crate) fn digest(entries: &[Entry]) -> Digest {
 pub(crate) fn place(dir: &Path, path: &str) -> Result<PathBuf, String> {
     let mut place = dir.to_path_buf();
     for (index, name) in path.split('/').enumerate() {
-        let plain = !name.is_empty()
-            && name != "."
-            && name != ".."
-            && !name.starts_with('.')
-            && !name.contains(['\\', ':', '\0'])
-            && !(index == 0 && local(name));
-        if !plain {
+        let odd = name.is_empty()
+            || name == "."
+            || name == ".."
+            || name.starts_with('.')
+            || name.contains(['\\', ':', '\0'])
+            || (index == 0 && local(name));
+        if odd {
             return Err(format!("{path:?} is not the path of a hub's record"));
         }
         place.push(name);

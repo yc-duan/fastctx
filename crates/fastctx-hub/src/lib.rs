@@ -163,8 +163,12 @@ pub fn describe(dir: &Path) -> anyhow::Result<(HubFile, CertPin)> {
 /// machine: a hub that moved away, once its old data is deleted, has its
 /// system service removed, and says what came of that.
 pub struct Leave {
-    pub remove_service: Box<dyn Fn(&Path) -> Result<String, String> + Send + Sync>,
+    pub remove_service: Box<RemoveService>,
 }
+
+/// Removes the system service of the hub kept in the directory given, and
+/// says what came of that.
+pub type RemoveService = dyn Fn(&Path) -> Result<String, String> + Send + Sync;
 
 /// The id of the hub and of the move arriving in `dir`, while one stands by
 /// there to take over.
