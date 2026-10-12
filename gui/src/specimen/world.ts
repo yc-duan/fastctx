@@ -4,7 +4,7 @@
 // interface grouped by account.
 
 import type { Address } from "../world/events";
-import type { AccountChange, HubAccounts } from "../world/accounts";
+import type { AccountChange, HubAccounts, MemberSeen, Paths, Reach } from "../world/accounts";
 import type { About, Action, HubNodes, MachineFacts, Node, ProjectRecord, ResidentNow } from "../world/world";
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
@@ -90,6 +90,23 @@ function node(name: string, online: boolean | null, since: string, owner: string
   };
 }
 
+/** With `?many` in the address, a team's network of about a hundred
+ *  machines: twenty-five more of the account's own and others' shared with
+ *  it, every seventh out of reach. */
+function many(): Node[] {
+  if (!new URLSearchParams(location.search).has("many")) return [];
+  const teams: [string, number][] = [["me", 25], ["ada", 18], ["bo", 21], ["chen", 14], ["dee", 9], ["eva", 7]];
+  let index = 0;
+  return teams.flatMap(([owner, count]) =>
+    Array.from({ length: count }, (_, n) => {
+      index += 1;
+      const linux = index % 3 !== 0;
+      const name = `${owner === "me" ? "node" : owner}-${String(n + 1).padStart(2, "0")}`;
+      return node(name, index % 7 !== 0, "01:00:00", owner, linux ? "linux" : "windows", linux ? `/home/${owner}` : `C:/Users/${owner}`, ["me", true, true]);
+    }),
+  );
+}
+
 /** The hubs this desktop is logged in to, as `nodes` and `accounts` see
  *  them: its own, where it is the super administrator, has shared lab with
  *  ada and lent ada a Codex login of this computer's, and once used an
@@ -110,11 +127,27 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         node("server", true, "00:00:00", "me", "linux", "/root", ["me", true, true]),
         node("studio", false, "12:52:00", "me", "windows", "C:/Users/me", ["me", true, true]),
         node("gpu", true, "03:30:00", "bo", "linux", "/home/bo", ["me", true, true], "la"),
+        ...many(),
       ],
     },
   ];
-  const member = (name: string, kind: "computer" | "phone", logins: string[], home: string | null, added: string, online: boolean, key: string, direct: string[] = []) => ({
+  // How the lines go: desktop and server take direct connections; laptop
+  // and lab hold links with server, laptop one with desktop on the same
+  // network, and lab's with desktop is refused by desktop's firewall.
+  const paths: Record<string, Paths> = {
+    desktop: { hub_ms: 41 },
+    laptop: { hub_ms: 46, links: [{ peer: "server", up: true, ms: 9, since: at("02:05:00") }, { peer: "desktop", up: true, ms: 2, since: at("02:05:00") }] },
+    lab: { hub_ms: 12, links: [{ peer: "server", up: true, ms: 4, since: at("00:31:00") }, { peer: "desktop", up: false, since: at("00:31:00"), why: "desktop 的防火墙没放行 7444" }] },
+    server: { hub_ms: 3 },
+  };
+  const reach: Record<string, Reach> = {
+    lab: { seen: "198.51.100.7:52114", interfaces: ["10.0.0.5", "192.168.1.30"] },
+    laptop: { seen: "203.0.113.77:61002", interfaces: ["192.168.1.41"] },
+  };
+  const member = (name: string, kind: "computer" | "phone", logins: string[], home: string | null, added: string, online: boolean, key: string, direct: string[] = []): MemberSeen => ({
     name, kind, logins, home, direct, added: at(added), online, since: at(added), through: null, key,
+    ...(paths[name] ? { paths: paths[name] } : {}),
+    ...(reach[name] ? { reach: reach[name] } : {}),
   });
   const accounts: HubAccounts[] = [
     {

@@ -311,7 +311,9 @@ export interface MachinesWords {
   registeredUnder(account: string): string;
   onlyLogins(accounts: string): string;
   via(through: string): string;
-  direct: string;
+  /** Under a machine's name on the drawing, when it reaches the hub
+   *  through another. */
+  viaShort(through: string): string;
   yours: string;
   ownedBy(account: string): string;
   /** Another's machine shared with this account; a member's, used as the
@@ -392,10 +394,53 @@ export interface MachinesWords {
   /** A share or loan taken back from the drawing, and giving it again. */
   tookBack(to: string): string;
   undo: string;
-  /** The handle on a machine's line on the drawing. */
-  reroute: string;
   confirm: string;
   more: string;
+  /** On a machine others may connect to directly, for a pointer resting on
+   *  its ring. */
+  takesDirect: string;
+  /** The groups round a hub, written along their arcs: the account's own
+   *  machines, and those an agent is lent on from another. Others' are
+   *  named by `ownedBy`. */
+  mineGroup: string;
+  lentGroup(owner: string): string;
+  /** Under a group's name on the drawing: how many, how many online. */
+  groupSub(count: number, online: number): string;
+  /** A machine's direct links, in its details. */
+  directRow: string;
+  directUp(peer: string, ms: number | undefined): string;
+  directDown(peer: string, why: string | undefined): string;
+  takesDirectAt(addresses: string): string;
+  /** Under the drawing, for a mouse: how to zoom and how to move it. */
+  hintZoom: string;
+  hintPan: string;
+  /** Several machines framed with the mouse, and what is done to them
+   *  together. */
+  framedTitle(n: number): string;
+  framedShare: string;
+  framedRemove: string;
+  framedClear: string;
+  framedShareTitle(n: number): string;
+  framedRemoveTitle(n: number): string;
+  framedRemoveWhat(names: string[]): string;
+  /** Letting other machines connect to one directly, and no longer: the
+   *  administrator's, from beside its ring. */
+  allowDirect: string;
+  stopDirect: string;
+  directTitle(machine: string): string;
+  directAddresses: string;
+  directSeen: string;
+  directCard: string;
+  directPort: string;
+  directPickOne: string;
+  directPortWrong: string;
+  directWhat: string;
+  directGo: string;
+  directChecking: string;
+  directAllowed(machine: string): string;
+  stopDirectTitle(machine: string): string;
+  stopDirectSaid: string;
+  directStopped(machine: string): string;
   /** The hub's record of changes, in the drawing's corner. */
   log: string;
   logEmpty: string;
@@ -430,14 +475,14 @@ export const zhMachines: MachinesWords = {
   levelMember: "成员",
   inviteDevice: "添加设备",
   manageHub: "管理账号",
-  linkOnline: (address) => `直连 · ${address}`,
-  linkVia: (through, address) => `经 ${through} · ${address}`,
+  linkOnline: (address) => `已连上 · ${address}`,
+  linkVia: (through, address) => `经 ${through} 连上 · ${address}`,
   linkConnecting: () => "连接中",
   linkStopped: () => "已被服务器移除",
   registeredUnder: (account) => `${account} 的机器`,
   onlyLogins: (accounts) => `已登录 ${accounts}`,
-  via: (through) => `经 ${through}`,
-  direct: "直连",
+  via: (through) => `经 ${through} 连着服务器`,
+  viaShort: (through) => `经 ${through}`,
   yours: "你的",
   ownedBy: (account) => `${account} 的`,
   sharedInShort: (owner) => `${owner} 共享`,
@@ -502,9 +547,41 @@ export const zhMachines: MachinesWords = {
   actions: "操作",
   tookBack: (to) => `已收回 ${to}`,
   undo: "撤回",
-  reroute: "改连接方式",
   confirm: "确定",
   more: "细节",
+  takesDirect: "别的机器可以直接连到这台",
+  mineGroup: "我的",
+  lentGroup: (owner) => `来自 ${owner}`,
+  groupSub: (count, online) => `${count} 台 · ${online} 在线`,
+  directRow: "直连",
+  directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
+  directDown: (peer, why) => `${peer} 断了${why ? `：${why}` : ""}`,
+  takesDirectAt: (addresses) => `别的机器经 ${addresses} 直接连它`,
+  hintZoom: "缩放",
+  hintPan: "按住拖动",
+  framedTitle: (n) => `选了 ${n} 台`,
+  framedShare: "一起共享",
+  framedRemove: "一起移除",
+  framedClear: "取消选择",
+  framedShareTitle: (n) => `共享这 ${n} 台`,
+  framedRemoveTitle: (n) => `移除这 ${n} 台？`,
+  framedRemoveWhat: (names) => `${names.join("、")} 将断开服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`,
+  allowDirect: "允许直接连到这台",
+  stopDirect: "不再允许直接连到这台",
+  directTitle: (machine) => `允许直接连到 ${machine}`,
+  directAddresses: "别的机器连它的地址",
+  directSeen: "服务器看到的",
+  directCard: "网卡",
+  directPort: "端口",
+  directPickOne: "至少选一个地址",
+  directPortWrong: "端口是 1 到 65535 之间的数",
+  directWhat: "开了之后，别的机器和它之间的往来直接走，不经服务器；哪台自己到服务器的线断了，也可以经它去服务器。按下之后服务器从外面试连一次，连不上会说卡在哪一层。防火墙、安全组或路由器要放行这个端口。",
+  directGo: "允许",
+  directChecking: "服务器正在试着连它",
+  directAllowed: (machine) => `已允许直接连到 ${machine}`,
+  stopDirectTitle: (machine) => `不再允许直接连到 ${machine}？`,
+  stopDirectSaid: "别的机器和它之间改经服务器转。",
+  directStopped: (machine) => `已不再允许直接连到 ${machine}`,
   log: "变更记录",
   logEmpty: "暂无记录",
   logEarlier: "更早",
@@ -525,9 +602,9 @@ export const zhMachines: MachinesWords = {
       case "stop_acting":
         return `撤销 ${a.machine} 访问的权限`;
       case "relays":
-        return a.relays.length ? `让 ${a.machine} 经 ${a.relays.map((r) => r.label).join("、")} 连接` : `让 ${a.machine} 直连`;
+        return `改了 ${a.machine} 连服务器的方式`;
       case "relay_at":
-        return a.addresses.length ? `把 ${a.machine} 设为中转` : `${a.machine} 停止中转`;
+        return `改了 ${a.machine} 对外的地址`;
       case "direct":
         return a.at.length ? `允许直接连到 ${a.machine}` : `不再允许直接连到 ${a.machine}`;
       case "remove":
@@ -568,14 +645,14 @@ export const enMachines: MachinesWords = {
   levelMember: "member",
   inviteDevice: "Add device",
   manageHub: "Accounts",
-  linkOnline: (address) => `direct · ${address}`,
-  linkVia: (through, address) => `via ${through} · ${address}`,
+  linkOnline: (address) => `connected · ${address}`,
+  linkVia: (through, address) => `connected through ${through} · ${address}`,
   linkConnecting: () => "connecting",
   linkStopped: () => "removed by the server",
   registeredUnder: (account) => `${account}'s machine`,
   onlyLogins: (accounts) => `signed in to ${accounts}`,
-  via: (through) => `via ${through}`,
-  direct: "direct",
+  via: (through) => `reaches the server through ${through}`,
+  viaShort: (through) => `via ${through}`,
   yours: "yours",
   ownedBy: (account) => `${account}'s`,
   sharedInShort: (owner) => `shared by ${owner}`,
@@ -640,9 +717,41 @@ export const enMachines: MachinesWords = {
   actions: "Actions",
   tookBack: (to) => `Revoked ${to}`,
   undo: "Undo",
-  reroute: "Change route",
   confirm: "Confirm",
   more: "Details",
+  takesDirect: "Other machines may connect to it directly",
+  mineGroup: "Mine",
+  lentGroup: (owner) => `From ${owner}`,
+  groupSub: (count, online) => `${count} · ${online} online`,
+  directRow: "Direct",
+  directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
+  directDown: (peer, why) => `${peer} down${why ? `: ${why}` : ""}`,
+  takesDirectAt: (addresses) => `Others connect to it directly at ${addresses}`,
+  hintZoom: "Zoom",
+  hintPan: "Hold to move",
+  framedTitle: (n) => `${n} chosen`,
+  framedShare: "Share together",
+  framedRemove: "Remove together",
+  framedClear: "Clear",
+  framedShareTitle: (n) => `Share these ${n}`,
+  framedRemoveTitle: (n) => `Remove these ${n}?`,
+  framedRemoveWhat: (names) => `${names.join(", ")} will leave the server and every account; their shares and loans end. Nothing on the machines is touched.`,
+  allowDirect: "Allow direct connections",
+  stopDirect: "Stop direct connections",
+  directTitle: (machine) => `Allow direct connections to ${machine}`,
+  directAddresses: "Where others connect to it",
+  directSeen: "as the server sees it",
+  directCard: "network card",
+  directPort: "Port",
+  directPickOne: "Choose at least one address",
+  directPortWrong: "A port is a number from 1 to 65535",
+  directWhat: "Once allowed, what goes between it and other machines goes straight, not through the server, and a machine whose own line to the server is down can reach the server through it. The server then tries to connect to it once from outside and says where it was stopped if it can't. Allow the port in the firewall, security group or router.",
+  directGo: "Allow",
+  directChecking: "The server is trying to reach it",
+  directAllowed: (machine) => `Allowed direct connections to ${machine}`,
+  stopDirectTitle: (machine) => `Stop direct connections to ${machine}?`,
+  stopDirectSaid: "What goes between it and other machines will go through the server.",
+  directStopped: (machine) => `No more direct connections to ${machine}`,
   log: "Changes",
   logEmpty: "No changes yet",
   logEarlier: "Earlier",
@@ -663,9 +772,9 @@ export const enMachines: MachinesWords = {
       case "stop_acting":
         return `Revoked ${a.machine}'s access`;
       case "relays":
-        return a.relays.length ? `${a.machine} connects through ${a.relays.map((r) => r.label).join(", ")}` : `${a.machine} connects directly`;
+        return `Changed how ${a.machine} reaches the server`;
       case "relay_at":
-        return a.addresses.length ? `Made ${a.machine} a relay` : `${a.machine} stopped relaying`;
+        return `Changed ${a.machine}'s public address`;
       case "direct":
         return a.at.length ? `Allowed direct connections to ${a.machine}` : `No more direct connections to ${a.machine}`;
       case "remove":

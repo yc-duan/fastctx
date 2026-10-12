@@ -39,8 +39,26 @@ export interface MapNode {
    *  administrator allowed that; others reach the hub through it when their
    *  own line is down. */
   directAt?: string[];
-  /** The relay it is connected through now, by its label. */
+  /** The machine it reaches the hub through now, when its own line is
+   *  down. */
   through?: string | null;
+  /** The round trip of its line to the hub, in milliseconds, as last
+   *  measured. */
+  hubMs?: number | undefined;
+  /** Whose it is, as the drawing groups machines round their hub: the
+   *  account's own, one other's, or lent by one other. */
+  group?: { key: string; label: string } | undefined;
+}
+
+/** A direct link between two machines on the drawing, by their keys. */
+export interface MapLink {
+  a: string;
+  b: string;
+  up: boolean;
+  /** Its round trip in milliseconds while up. */
+  ms?: number | undefined;
+  /** Why it is down. */
+  why?: string | undefined;
 }
 
 interface Placed {

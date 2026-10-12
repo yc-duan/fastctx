@@ -11,9 +11,44 @@
   touch-action: none;
   user-select: none;
   background: var(--canvas-paper);
-  cursor: grab;
+  cursor: default;
 }
-.map-canvas[data-moving="true"] { cursor: grabbing; }
+.map-canvas[data-panning="true"] { cursor: grabbing; }
+/* The frame the left button draws round several: a light wash, no line. */
+.canvas-marquee {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--canvas-selection) 14%, transparent);
+}
+.canvas-marquee[hidden] { display: none; }
+/* How to zoom and move the drawing, for a mouse only. */
+.canvas-hints {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 16px;
+  color: var(--text-3, currentColor);
+  font-size: 12px;
+  line-height: 18px;
+  pointer-events: none;
+}
+.canvas-hint { display: inline-flex; align-items: center; gap: 5px; }
+.canvas-hint kbd {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--fill-strong, transparent);
+  font: inherit;
+  font-size: 11px;
+}
+.canvas-plus { opacity: 0.7; }
+.canvas-mouse { width: 11px; height: 16px; flex: none; }
+.canvas-mouse-wheel { fill: var(--pen-clay, currentColor); }
+@media not ((hover: hover) and (pointer: fine)) {
+  .canvas-hints { display: none; }
+}
 .canvas-ink { position: absolute; transform-origin: 0 0; pointer-events: none; }
 .canvas-overlay, .canvas-hits, .canvas-names { position: absolute; inset: 0; pointer-events: none; }
 .canvas-object, .canvas-handle, .canvas-name { position: absolute; left: 0; top: 0; margin: 0; }
@@ -39,6 +74,8 @@
   text-align: center;
 }
 .canvas-name[hidden] { display: none; }
+.canvas-name[data-side="right"] { text-align: left; }
+.canvas-name[data-side="left"] { text-align: right; }
 .canvas-handle { width: 44px; height: 44px; font-size: 32px; cursor: crosshair; }
 .canvas-controls {
   position: absolute;

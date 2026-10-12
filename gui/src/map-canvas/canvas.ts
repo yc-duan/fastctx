@@ -7,6 +7,9 @@ import "./canvas.css";
 export interface CanvasOptions extends CameraOptions {
   label: string;
   controls: { minus: string; plus: string; fit: string; scale: string };
+  /** The hint under the drawing for a mouse: how to zoom and how to move
+   *  it. */
+  hints?: { zoom: string; pan: string } | undefined;
   /** A live predicate: final release always checks it again. */
   validTarget: ValidTarget;
   event(event: CanvasEvent): void;
@@ -16,7 +19,10 @@ export interface CanvasOptions extends CameraOptions {
   draftLabel?(draft: Draft): string;
 }
 
-interface Pointer { point: Point; start: Point; item: string | null; moved: boolean; touch: boolean; middle?: boolean }
+/** A pointer down on the drawing. With a mouse the left button chooses
+ *  or, dragged, draws a frame round several; the middle button moves the
+ *  drawing. A finger or a pen moves it. */
+interface Pointer { point: Point; start: Point; item: string | null; moved: boolean; touch: boolean; middle?: boolean; frame?: boolean }
 interface ButtonLabel { item: CanvasItem; button: HTMLButtonElement; label: HTMLElement; width: number; height: number }
 
 /** The page owns ink and operations. This surface owns the camera, input, hit
@@ -33,6 +39,7 @@ export class MapCanvas {
   private readonly status = document.createElement("span");
   private readonly control = document.createElement("div");
   private readonly scaleText = document.createElement("output");
+  private readonly marquee = document.createElement("div");
   private readonly media = matchMedia("(prefers-reduced-motion: reduce)");
   private readonly resize: ResizeObserver;
   private readonly buttons = new Map<string, ButtonLabel>();
@@ -89,7 +96,17 @@ export class MapCanvas {
       this.control.append(button);
       if (text === "−") this.control.append(this.scaleText);
     }
+    this.marquee.className = "canvas-marquee";
+    this.marquee.hidden = true;
+    this.overlay.append(this.marquee);
     this.element.append(this.ink, this.overlay, this.hits, this.names, this.control, this.status);
+    if (options.hints) {
+      const hints = document.createElement("div");
+      hints.className = "canvas-hints";
+      hints.setAttribute("aria-hidden", "true");
+      hints.innerHTML = `<span class="canvas-hint"><kbd>Ctrl</kbd><span class="canvas-plus">+</span>${MOUSE}<span>${escapeHtml(options.hints.zoom)}</span></span><span class="canvas-hint">${MOUSE}<span>${escapeHtml(options.hints.pan)}</span></span>`;
+      this.element.append(hints);
+    }
     const signal = this.abort.signal;
     this.element.addEventListener("pointerdown", e => this.down(e), { signal });
     this.element.addEventListener("pointermove", e => this.move(e), { signal });
@@ -151,6 +168,11 @@ export class MapCanvas {
     this.labelObstacles = boxes.map(box => ({ ...box }));
     this.schedule();
   }
+  /** The measured size of an item's name, shown or withheld. */
+  labelSize(key: string): { width: number; height: number } | null {
+    const entry = this.buttons.get(key);
+    return entry ? { width: entry.width, height: entry.height } : null;
+  }
   /** CSS-pixel centre of a grip, kept clear of its source's hit area at far zoom. */
   handlePoint(key: string): Point | null {
     const handle = this.handles.get(key)?.handle;
@@ -194,6 +216,7 @@ export class MapCanvas {
       entry.item = item;
       entry.button.setAttribute("aria-label", [item.label, item.sub].filter(Boolean).join(" · "));
       entry.button.dataset.kind = item.kind;
+      entry.label.dataset.side = item.side ?? "";
       const text = [item.label, item.sub].filter(Boolean).join("\n");
       if (entry.label.textContent !== text) entry.label.textContent = text;
     }
@@ -217,6 +240,8 @@ export class MapCanvas {
     }
     if (this.selected && !kept.has(this.selected)) this.select(null, [0, 0]);
     if (this.pointed && !kept.has(this.pointed)) this.point(null, [0, 0]);
+    // Until the drawing is moved by hand it stays fitted to what it holds.
+    if (this.fitOnResize && this.camera.view.width > 0) this.camera.fit(this.bounds, this.fitPadding());
     if (this.draft) {
       const current = this.handles.get(this.draft.handle.key)?.handle;
       if (!current || current.source !== this.draft.handle.source || current.point.some((n, i) => n !== this.draft!.handle.point[i])) this.cancelDraft("changed");
@@ -281,7 +306,7 @@ export class MapCanvas {
     obstacles.push({ x: view.width - this.controlWidth - 12, y: view.height - 56, width: this.controlWidth + 12, height: 56 });
     const placements = placeLabels([...this.buttons.values()].map(e => ({ key: e.item.key, point: this.camera.toScreen(e.item.point),
       radius: (e.item.labelRadius ?? e.item.radius) * view.scale, width: e.width, height: e.height,
-      priority: e.item.key === this.focused || e.item.key === this.pointed ? 100 : e.item.key === this.selected ? 50 : e.item.priority ?? 0 })),
+      priority: e.item.key === this.focused || e.item.key === this.pointed ? 100 : e.item.key === this.selected ? 50 : e.item.priority ?? 0, side: e.item.side })),
       { x: 8, y: 8, width: Math.max(0, view.width - 16), height: Math.max(0, view.height - 16) }, obstacles);
     const hiddenLabels: string[] = [];
     for (const { key, box } of placements) {
@@ -292,6 +317,7 @@ export class MapCanvas {
     }
     this.scaleText.textContent = `${Math.round(view.scale * 100)}%`;
     this.element.dataset.moving = String(moving);
+    this.element.dataset.panning = String([...this.pointers.values()].some((pointer) => pointer.middle || (!pointer.frame && pointer.moved)));
     this.element.dataset.reducedMotion = String(this.media.matches);
     this.frameState = { view, moving, reducedMotion: this.media.matches, hiddenLabels };
     this.options.frame?.(this.frameState);
@@ -320,10 +346,11 @@ export class MapCanvas {
     this.schedule();
   }
   private down(e: PointerEvent): void {
-    // The middle button drags the paper as the left one does, and never
-    // chooses or opens anything.
+    // The middle button moves the paper and never chooses or opens
+    // anything; with a mouse the left button chooses, or draws a frame.
     const middle = e.button === 1;
     if ((e.button !== 0 && !middle) || this.isControl(e.target)) return;
+    const frame = e.pointerType === "mouse" && !middle;
     e.preventDefault();
     // Capture keyboard cancellation throughout a pointer gesture without moving
     // the camera as focusing an off-screen item would do.
@@ -333,7 +360,7 @@ export class MapCanvas {
     this.longPressed = false;
     this.stopLongPress();
     const item = middle ? null : this.itemAt(point);
-    this.pointers.set(e.pointerId, { point, start: point, item, moved: false, touch: e.pointerType === "touch", middle });
+    this.pointers.set(e.pointerId, { point, start: point, item, moved: false, touch: e.pointerType === "touch", middle, frame });
     this.element.setPointerCapture(e.pointerId);
     if (middle) {
       this.cancelDraft("interrupted");
@@ -377,7 +404,27 @@ export class MapCanvas {
       const distance = (points: Point[]) => Math.hypot(points[0][0] - points[1][0], points[0][1] - points[1][1]);
       if (distance(previous) > 0) this.camera.zoom(distance(now) / distance(previous), before);
       this.pan(after[0] - before[0], after[1] - before[1]);
+    } else if (pointer.frame) {
+      if (pointer.moved) this.drawFrame(pointer.start, p, false);
     } else if ((pointer.moved || pointer.middle) && !this.longPressed) this.pan(p[0] - old[0], p[1] - old[1]);
+  }
+  /** The frame from `from` to `to`, on the screen, and the items inside. */
+  private drawFrame(from: Point, to: Point, done: boolean): void {
+    const x = Math.min(from[0], to[0]);
+    const y = Math.min(from[1], to[1]);
+    const width = Math.abs(to[0] - from[0]);
+    const height = Math.abs(to[1] - from[1]);
+    this.marquee.hidden = done;
+    this.marquee.style.transform = `translate(${x}px,${y}px)`;
+    this.marquee.style.width = `${width}px`;
+    this.marquee.style.height = `${height}px`;
+    const keys = this.items
+      .filter((item) => {
+        const [sx, sy] = this.camera.toScreen(item.point);
+        return sx >= x && sx <= x + width && sy >= y && sy <= y + height;
+      })
+      .map((item) => item.key);
+    this.options.event({ kind: "marquee", keys, done });
   }
   private up(e: PointerEvent): void {
     const pointer = this.pointers.get(e.pointerId);
@@ -387,19 +434,27 @@ export class MapCanvas {
     this.move(e);
     this.stopLongPress();
     if (this.draft && this.draftPointer === e.pointerId) { this.refreshDraft(this.local(e)); this.finishDraft(this.local(e)); }
+    else if (pointer.frame && pointer.moved) this.drawFrame(pointer.start, this.local(e), true);
     else if (!pointer.middle && !pointer.moved && !this.longPressed && this.pointers.size === 1) this.select(pointer.item, this.local(e));
     this.pointers.delete(e.pointerId);
     if (this.element.hasPointerCapture(e.pointerId)) this.element.releasePointerCapture(e.pointerId);
     this.schedule();
   }
-  private cancelPointer(id: number): void { this.stopLongPress(); this.pointers.delete(id); if (this.draftPointer === id) this.cancelDraft("interrupted"); this.schedule(); }
+  private cancelPointer(id: number): void {
+    this.stopLongPress();
+    if (this.pointers.get(id)?.frame) this.marquee.hidden = true;
+    this.pointers.delete(id);
+    if (this.draftPointer === id) this.cancelDraft("interrupted");
+    this.schedule();
+  }
+  /** Ctrl and the wheel zoom (a touchpad's pinch comes as the same); the
+   *  wheel alone moves nothing. */
   private wheel(e: WheelEvent): void {
-    if (this.isControl(e.target)) return;
+    if (this.isControl(e.target) || !(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     this.rect = this.element.getBoundingClientRect();
     const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? parseFloat(getComputedStyle(this.element).fontSize) : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? this.camera.view.height : 1;
-    if (e.ctrlKey || e.metaKey) this.zoom(Math.exp(-e.deltaY * unit / 300), this.local(e));
-    else this.pan(-e.deltaX * unit, -e.deltaY * unit);
+    this.zoom(Math.exp(-e.deltaY * unit / 300), this.local(e));
     if (this.draft && !this.draft.keyboard) this.refreshDraft(this.local(e));
   }
   private beginDraft(handle: CanvasHandle, screen: Point, keyboard: boolean): void {
@@ -478,4 +533,12 @@ export class MapCanvas {
     else if (e.key === "-" || e.key === "_") { e.preventDefault(); this.zoom(1 / 1.25); }
     else if (e.key === "0") { e.preventDefault(); this.fit(); }
   }
+}
+
+/** A mouse, drawn small, its wheel filled: what the hints under the drawing
+ *  point at. */
+const MOUSE = `<svg class="canvas-mouse" viewBox="0 0 12 18" aria-hidden="true"><rect x="1" y="1" width="10" height="16" rx="5" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="6" y1="1.5" x2="6" y2="7" stroke="currentColor" stroke-width="0.9"/><rect class="canvas-mouse-wheel" x="4.9" y="3.4" width="2.2" height="3.6" rx="1.1"/></svg>`;
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]!);
 }

@@ -1,155 +1,268 @@
 // Where the machines page draws each hub and machine (`world-gui.md`, 账号、
-// 机器、共享与借出): computed, never moved by hand, and stable. Each machine
-// holds a numbered place round the hub it hangs on, kept by its key, so a
-// machine stays where it was while others come and go; one on several hubs
-// stands between them. The places are remembered on this device, so the
-// drawing looks the same the next time it opens.
+// 机器、共享与借出), read from the top. The hub stands at the top; under it,
+// joined by a bus of square lines, a box for each group of machines by
+// whose they are, as a comment box gathers nodes in a blueprint: the
+// account's own first, then each other account's shared with it, then those
+// an agent is lent on from another. A box has a title strip with the
+// group's name, and its machines stand in a grid inside, one to a row and a
+// new column every ten, their names to the right. The box lies under the
+// lines and does not break them: the line down from the bus runs on through
+// the title strip as the trunk of the first column, the other columns branch
+// from it under the strip, and a short twig reaches each machine. A box folds to its title
+// strip alone. The account's own end with the dashed ring that adds a
+// machine, so one that comes stands where it waited. On a narrow screen, a
+// phone's, the boxes stand one under another instead, each its machines in
+// one column, joined from the left by a spine down from the hub, so the
+// drawing is read by moving down. Positions are computed,
+// never moved by hand; the order within a group is remembered on this
+// device, so machines keep their order while others come and go.
 
 import type { Bounds, Point } from "../map-canvas";
-import type { MapHub, MapNode } from "./network-map";
+import type { MapHub, MapLink, MapNode } from "./network-map";
 
 /** A machine's ring and a hub's knot, in the drawing's units. */
-export const RING = 26;
+export const RING = 24;
 export const KNOT = 8;
-/** How far the first orbit is from its hub, and how far apart orbits are. */
-const FIRST = 150;
-const PITCH = 110;
-/** Room along an orbit for a ring and its name. */
-const SPACING = 128;
-/** Hubs stand this far apart: two full orbits each, with the space between
- *  for the machines on both. */
-const HUB_GAP = 780;
-/** The golden angle spreads the first few places evenly round a hub, and
- *  every later one between them, without moving any. */
-const GOLDEN = Math.PI * (3 - Math.sqrt(5));
-const START = Math.PI * 1.1;
+/** A box's title strip. */
+export const TITLE = 34;
+/** From the hub down to the bus, and from the bus down to the boxes. */
+const BUS_DROP = 70;
+const BOX_DROP = 44;
+/** Inside a box: the margin round its grid, the trunk down a column and
+ *  the twig from it to a ring, the rows, the columns, and the room a name
+ *  takes to the right of its ring. */
+const PAD = 20;
+export const TRUNK = 16;
+const TWIG = 22;
+const ROW = 74;
+const COLUMN = 230;
+const NAME = 150;
+/** At most this many machines stand in one column before the next. */
+const ROWS = 10;
+/** A folded box: its title strip, this wide. */
+const FOLDED = 200;
+/** On a narrow screen: how far right of the spine the boxes stand. */
+const SIDE = 34;
+/** Room between boxes, and between the trees of two hubs. */
+const BOX_GAP = 36;
+const HUB_GAP = 160;
+
+/** A group of machines under a hub, drawn as a box. */
+export interface GroupNode {
+  key: string;
+  hub: string;
+  /** "mine", "of:<account>" or "lent:<account>". */
+  kind: string;
+  label: string;
+  count: number;
+  online: number;
+  folded: boolean;
+  /** The box; its title strip is its top. */
+  box: Bounds;
+  /** Where the box is chosen: its title. */
+  point: Point;
+}
+
+/** A line of the tree, square at its corners: the hub's down to the
+ *  boxes, a column's trunk, and the twig to each machine, broken where the
+ *  machine is out of reach. */
+export interface Branch {
+  points: Point[];
+  hub: string;
+  /** The machine a twig reaches. */
+  machine?: string | undefined;
+  out?: boolean;
+}
 
 export interface Placement {
   hubs: ReadonlyMap<string, Point>;
   machines: ReadonlyMap<string, Point>;
+  groups: GroupNode[];
+  branches: Branch[];
   bounds: Bounds;
 }
 
 interface Remembered {
   hubs: string[];
+  /** Each machine's place in its group's order. */
   places: Record<string, number>;
 }
 
-/** Where the `index`th place round a hub is, relative to the hub. */
-function around(index: number): Point {
-  let rest = index;
-  for (let orbit = 0; ; orbit += 1) {
-    const radius = FIRST + orbit * PITCH;
-    const room = Math.max(5, Math.floor((2 * Math.PI * radius) / SPACING));
-    if (rest < room) {
-      const angle = START + rest * GOLDEN;
-      return [Math.cos(angle) * radius, Math.sin(angle) * radius];
-    }
-    rest -= room;
-  }
+const HOLD_RANK: Record<MapNode["hold"], number> = { mine: 0, others: 1, lent: 2 };
+
+/** The order a machine first takes in its group: this computer, then by
+ *  name. */
+function firstOrder(a: MapNode, b: MapNode): number {
+  return Number(b.here) - Number(a.here) || HOLD_RANK[a.hold] - HOLD_RANK[b.hold] || a.name.localeCompare(b.name);
 }
 
-/** The `index`th place between two or more hubs, relative to their middle:
- *  in a column, alternately below and above. */
-function between(index: number): Point {
-  const step = Math.ceil(index / 2) * 120;
-  return [0, index % 2 ? step : -step];
+/** The order of groups under a hub: the account's own, others', lent. */
+function groupRank(key: string): number {
+  return key === "mine" ? 0 : key.startsWith("of:") ? 1 : 2;
+}
+
+/** Puts machines linked directly next to each other, keeping the order
+ *  they came in otherwise. */
+function chained(ordered: MapNode[], links: readonly MapLink[]): MapNode[] {
+  const linked = (a: string, b: string) => links.some((link) => (link.a === a && link.b === b) || (link.a === b && link.b === a));
+  const left = [...ordered];
+  const chain: MapNode[] = [];
+  while (left.length) {
+    const last = chain[chain.length - 1];
+    const at = last ? left.findIndex((node) => linked(last.key, node.key)) : -1;
+    chain.push(...left.splice(at >= 0 ? at : 0, 1));
+  }
+  return chain;
 }
 
 export class MapLayout {
   /** Hub order, first seen first; a hub keeps its place on the line. */
   private readonly hubOrder: string[] = [];
-  /** A machine's place: its group (a hub, or several) and its number there. */
-  private readonly places = new Map<string, { group: string; index: number }>();
-  /** As of the last update: each group's numbers in use, and the hubs. */
-  private taken = new Map<string, Set<number>>();
-  private hubPoints = new Map<string, Point>();
+  /** Each machine's number in the order; lower stands earlier. */
+  private readonly order = new Map<string, number>();
+  private next = 0;
+  /** As of the last update: where each hub's dashed ring waits. */
+  private vacancies = new Map<string, Point>();
 
   constructor(private readonly storageKey: string | null) {
     const remembered = this.read();
     if (remembered) {
       this.hubOrder.push(...remembered.hubs);
-      for (const [key, index] of Object.entries(remembered.places)) this.places.set(key, { group: "", index });
+      for (const [key, index] of Object.entries(remembered.places)) {
+        this.order.set(key, index);
+        this.next = Math.max(this.next, index + 1);
+      }
     }
   }
 
-  update(hubs: readonly MapHub[], nodes: readonly MapNode[]): Placement {
+  /** `folded`: the boxes shown as their title strip alone, by key;
+   *  `narrow`: laid one under another for a phone. */
+  update(hubs: readonly MapHub[], nodes: readonly MapNode[], links: readonly MapLink[] = [], folded: ReadonlySet<string> = new Set(), narrow = false): Placement {
     for (const hub of [...hubs].sort((a, b) => a.id.localeCompare(b.id))) if (!this.hubOrder.includes(hub.id)) this.hubOrder.push(hub.id);
     const live = new Set(hubs.map((hub) => hub.id));
     const order = this.hubOrder.filter((id) => live.has(id));
-    const hubPoints = new Map<string, Point>(order.map((id, index) => [id, [index * HUB_GAP, 0]]));
-    const groupOf = (node: MapNode) => node.hubs.filter((id) => live.has(id)).sort().join("+");
-    // A place remembered for a machine stays its own while its group is the
-    // same; a machine that moved to another hub takes a new one there.
-    const taken = new Map<string, Set<number>>();
-    for (const node of nodes) {
-      const place = this.places.get(node.key);
-      if (!place) continue;
-      const group = groupOf(node);
-      if (place.group && place.group !== group) {
-        this.places.delete(node.key);
-        continue;
-      }
-      place.group = group;
-      const used = taken.get(group) ?? new Set<number>();
-      if (used.has(place.index)) this.places.delete(node.key);
-      else used.add(place.index);
-      taken.set(group, used);
+    for (const node of [...nodes].sort(firstOrder)) {
+      if (this.order.has(node.key)) continue;
+      this.order.set(node.key, this.next);
+      this.next += 1;
     }
-    // Places this page gave out keep their number while it is open, so one
-    // that comes back finds its place free.
-    for (const [key, place] of this.places) {
-      if (!nodes.some((node) => node.key === key) && place.group) taken.set(place.group, (taken.get(place.group) ?? new Set()).add(place.index));
-    }
-    for (const node of [...nodes].sort((a, b) => a.key.localeCompare(b.key))) {
-      if (this.places.has(node.key)) continue;
-      const group = groupOf(node);
-      const used = taken.get(group) ?? new Set<number>();
-      let index = 0;
-      while (used.has(index)) index += 1;
-      used.add(index);
-      taken.set(group, used);
-      this.places.set(node.key, { group, index });
-    }
+    const byOrder = (a: MapNode, b: MapNode) => this.order.get(a.key)! - this.order.get(b.key)!;
+    // A machine on several hubs stands under the first of them.
+    const hubOf = (node: MapNode) => order.find((id) => node.hubs.includes(id)) ?? null;
+
+    const hubPoints = new Map<string, Point>();
     const machines = new Map<string, Point>();
-    const loose = nodes.filter((node) => !groupOf(node));
-    for (const node of nodes) {
-      const { group, index } = this.places.get(node.key)!;
-      const ids = group ? group.split("+") : [];
-      if (!ids.length) {
-        // No hub to hang on: a row, as before any World is joined.
-        const at = loose.indexOf(node);
-        machines.set(node.key, [at * (RING * 2 + SPACING), FIRST]);
+    const groups: GroupNode[] = [];
+    const branches: Branch[] = [];
+    this.vacancies = new Map();
+    let left = 0;
+    let below = 0;
+    for (const id of order) {
+      const own = nodes.filter((node) => hubOf(node) === id);
+      const kinds = [...new Set(["mine", ...own.map((node) => node.group?.key ?? "mine")])].sort((a, b) => groupRank(a) - groupRank(b) || a.localeCompare(b));
+      const blocks = kinds.map((kind) => {
+        const members = chained(own.filter((node) => (node.group?.key ?? "mine") === kind).sort(byOrder), links);
+        const key = `group:${id}:${kind}`;
+        const fold = folded.has(key) && members.length > 0;
+        // The account's own end with the dashed ring.
+        const cells = members.length + (kind === "mine" ? 1 : 0);
+        const perColumn = narrow ? Math.max(1, cells) : ROWS;
+        const columns = Math.max(1, Math.ceil(cells / perColumn));
+        const rows = Math.min(cells, perColumn);
+        const width = fold ? FOLDED : TRUNK + TWIG + PAD + (columns - 1) * COLUMN + RING * 2 + NAME;
+        const height = fold ? TITLE : TITLE + PAD * 2 + (rows - 1) * ROW + RING * 2;
+        return { kind, key, members, fold, width, height, perColumn };
+      });
+      if (narrow) {
+        // The hub at the top left, a spine down its left, and each box to
+        // its right, joined at the middle of its title strip.
+        const knot: Point = [0, below];
+        hubPoints.set(id, knot);
+        let y = below + BUS_DROP;
+        let join = y;
+        for (const block of blocks) {
+          const box: Bounds = { x: SIDE, y, width: block.width, height: block.height };
+          const online = block.members.filter((node) => node.online === true).length;
+          groups.push({ key: block.key, hub: id, kind: block.kind, label: block.members[0]?.group?.label ?? "", count: block.members.length, online, folded: block.fold, box, point: [SIDE + TRUNK + 50, y + TITLE / 2] });
+          join = y + TITLE / 2;
+          const trunk = SIDE + TRUNK;
+          branches.push({ points: [[0, join], [trunk, join]], hub: id });
+          if (!block.fold) {
+            const slots: (MapNode | null)[] = [...block.members, ...(block.kind === "mine" ? [null] : [])];
+            branches.push({ points: [[trunk, join], [trunk, y + TITLE + PAD + RING + (slots.length - 1) * ROW]], hub: id });
+            slots.forEach((slot, row) => {
+              const at: Point = [trunk + TWIG + RING, y + TITLE + PAD + RING + row * ROW];
+              branches.push({ points: [[trunk, at[1]], [trunk + TWIG - 3, at[1]]], hub: id, machine: slot?.key, out: !!slot && slot.online !== true });
+              if (slot) machines.set(slot.key, at);
+              else this.vacancies.set(id, at);
+            });
+          }
+          y += block.height + BOX_GAP;
+        }
+        branches.push({ points: [[0, below + KNOT + 4], [0, join]], hub: id });
+        below = y + HUB_GAP;
         continue;
       }
-      const knots = ids.map((id) => hubPoints.get(id)!);
-      const middle: Point = [knots.reduce((sum, p) => sum + p[0], 0) / knots.length, knots.reduce((sum, p) => sum + p[1], 0) / knots.length];
-      const offset = ids.length > 1 ? between(index) : around(index);
-      machines.set(node.key, [middle[0] + offset[0], middle[1] + offset[1]]);
+      const width = blocks.reduce((sum, block) => sum + block.width, 0) + BOX_GAP * (blocks.length - 1);
+      const knot: Point = [left + width / 2, 0];
+      hubPoints.set(id, knot);
+      const busY = BUS_DROP;
+      const top = BUS_DROP + BOX_DROP;
+      let x = left;
+      const drops: number[] = [];
+      for (const block of blocks) {
+        const box: Bounds = { x, y: top, width: block.width, height: block.height };
+        const online = block.members.filter((node) => node.online === true).length;
+        groups.push({ key: block.key, hub: id, kind: block.kind, label: block.members[0]?.group?.label ?? "", count: block.members.length, online, folded: block.fold, box, point: [x + TRUNK + 50, top + TITLE / 2] });
+        // The line from the bus comes down at the first trunk; folded, it
+        // stops in the middle of the title strip.
+        const drop = x + TRUNK;
+        drops.push(drop);
+        if (block.fold) branches.push({ points: [[drop, busY], [drop, top + TITLE / 2]], hub: id });
+        else {
+          const slots: (MapNode | null)[] = [...block.members, ...(block.kind === "mine" ? [null] : [])];
+          const columns = Math.ceil(slots.length / ROWS);
+          const fork = top + TITLE + PAD * 0.55;
+          for (let column = 0; column < columns; column += 1) {
+            const trunk = x + TRUNK + column * COLUMN;
+            const last = Math.min(ROWS, slots.length - column * ROWS) - 1;
+            branches.push({ points: [[trunk, column ? fork : busY], [trunk, top + TITLE + PAD + RING + last * ROW]], hub: id });
+          }
+          if (columns > 1) branches.push({ points: [[drop, fork], [x + TRUNK + (columns - 1) * COLUMN, fork]], hub: id });
+          slots.forEach((slot, index) => {
+            const column = Math.floor(index / ROWS);
+            const row = index % ROWS;
+            const trunk = x + TRUNK + column * COLUMN;
+            const at: Point = [trunk + TWIG + RING, top + TITLE + PAD + RING + row * ROW];
+            branches.push({ points: [[trunk, at[1]], [trunk + TWIG - 3, at[1]]], hub: id, machine: slot?.key, out: !!slot && slot.online !== true });
+            if (slot) machines.set(slot.key, at);
+            else this.vacancies.set(id, at);
+          });
+        }
+        x += block.width + BOX_GAP;
+      }
+      // The hub down to the bus, and the bus across the drops to the boxes.
+      branches.push({ points: [[knot[0], KNOT + 4], [knot[0], busY]], hub: id });
+      if (drops.length) branches.push({ points: [[Math.min(knot[0], ...drops), busY], [Math.max(knot[0], ...drops), busY]], hub: id });
+      left += width + HUB_GAP;
     }
-    this.taken = taken;
-    this.hubPoints = hubPoints;
+    // No hub to hang on: a row, as before any network is joined.
+    nodes.filter((node) => !hubOf(node)).sort(byOrder).forEach((node, index) => machines.set(node.key, [index * COLUMN, TITLE]));
+
     this.write(new Set(nodes.map((node) => node.key)));
-    const points = [...hubPoints.values(), ...machines.values()];
-    const pad = RING + 60;
-    const xs = points.map((p) => p[0]);
-    const ys = points.map((p) => p[1]);
-    const bounds = points.length
-      ? { x: Math.min(...xs) - pad, y: Math.min(...ys) - pad, width: Math.max(...xs) - Math.min(...xs) + pad * 2, height: Math.max(...ys) - Math.min(...ys) + pad * 2 }
-      : { x: -pad, y: -pad, width: pad * 2, height: pad * 2 };
-    return { hubs: hubPoints, machines, bounds };
+    // Room round everything: the hub's name above it, the boxes below.
+    const xs = [...hubPoints.values(), ...machines.values()].map((p) => p[0]).concat(groups.flatMap((group) => [group.box.x, group.box.x + group.box.width]));
+    const ys = [...hubPoints.values(), ...machines.values()].map((p) => p[1]).concat(groups.flatMap((group) => [group.box.y, group.box.y + group.box.height]));
+    const bounds = xs.length
+      ? { x: Math.min(...xs) - 40, y: Math.min(...ys) - 70, width: Math.max(...xs) - Math.min(...xs) + 80, height: Math.max(...ys) - Math.min(...ys) + 110 }
+      : { x: -100, y: -100, width: 200, height: 200 };
+    return { hubs: hubPoints, machines, groups, branches, bounds };
   }
 
   /** Where the next machine to come to `hub` alone will stand, as of the
    *  last update: the place the dashed ring that adds one waits in. */
   vacant(hub: string): Point | null {
-    const knot = this.hubPoints.get(hub);
-    if (!knot) return null;
-    const used = this.taken.get(hub) ?? new Set<number>();
-    let index = 0;
-    while (used.has(index)) index += 1;
-    const offset = around(index);
-    return [knot[0] + offset[0], knot[1] + offset[1]];
+    return this.vacancies.get(hub) ?? null;
   }
 
   private read(): Remembered | null {
@@ -162,12 +275,12 @@ export class MapLayout {
     }
   }
 
-  /** Keeps the places of the machines there now; one gone is laid out
-   *  afresh if it ever comes back on another day. */
+  /** Keeps the order of the machines there now; one gone takes a new place
+   *  if it ever comes back on another day. */
   private write(present: ReadonlySet<string>): void {
     if (!this.storageKey) return;
     const places: Record<string, number> = {};
-    for (const [key, place] of this.places) if (present.has(key)) places[key] = place.index;
+    for (const [key, index] of this.order) if (present.has(key)) places[key] = index;
     try {
       localStorage.setItem(this.storageKey, JSON.stringify({ hubs: this.hubOrder, places } satisfies Remembered));
     } catch {
