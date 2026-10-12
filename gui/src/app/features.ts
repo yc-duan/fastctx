@@ -3,8 +3,10 @@
 // tells what it does and the button that turns it on; on, the drawing waits
 // folded at the top, to be watched again, and the settings are below.
 //
-// Model collaboration is the first: for the whole account, which agents may
-// ask a GPT in (callers), which GPTs they may ask (callees: a Codex login
+// 「对话」 is the first: talking with the agents in the interface, wherever
+// they are; it is kept per device and has no settings. Model collaboration:
+// for the whole account, which agents may hand a part of their work to a
+// GPT (callers), which GPTs they may hand it to (callees: a Codex login
 // each, its model and effort, the name and the line the calling model
 // chooses by, whether it may use the screen), the text the callers are given
 // and the rules every callee is given. Project memory is in development: its
@@ -25,6 +27,7 @@ import { detailOf } from "./problem";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
+import { deviceFeatures } from "./device-features";
 import { storyboard } from "./storyboard";
 
 export interface FeaturesOptions {
@@ -60,12 +63,16 @@ export class FeaturesPage implements Page {
 
   constructor(private readonly options: FeaturesOptions) {
     const { words, feature } = options;
-    this.title = feature === "collaboration" ? words.collaboration.name : feature === "memory" ? words.memory.name : words.title;
+    this.title = feature === "collaboration" ? words.collaboration.name : feature === "memory" ? words.memory.name : feature === "conversations" ? words.conversations.name : words.title;
     this.element = document.createElement("div");
     this.element.className = "features-page";
     this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`)}<div class="features-body scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".features-body")!;
+    this.body.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest("[data-act='replay']")) this.replay();
+    });
     if (feature === null) this.cards();
+    else if (feature === "conversations") this.conversations();
     else if (feature === "memory") this.body.innerHTML = `<p class="feature-coming">${glyph("info", 18)}<span>${escape(words.coming)}</span></p>`;
     else this.collaboration();
   }
@@ -78,9 +85,14 @@ export class FeaturesPage implements Page {
   /** Every feature, a card each. */
   private cards(): void {
     const { words } = this.options;
+    const tag = (on: boolean | null) => (on === null ? "" : `<span class="tag${on ? " tag-own" : ""}">${escape(on ? words.on : words.off)}</span>`);
     const draw = (on: boolean | null) => {
-      const state = on === null ? "" : `<span class="tag${on ? " tag-own" : ""}">${escape(on ? words.on : words.off)}</span>`;
+      const state = tag(on);
       this.body.innerHTML = `<ul class="feature-cards">
+        <li><a class="feature-card" href="${link({ kind: "feature", feature: "conversations" })}">
+          <span class="feature-card-art">${glyph("phone", 22)}${glyph("desktop", 22)}</span>
+          <span class="feature-card-name">${escape(words.conversations.name)}</span>
+          <span class="feature-card-line">${escape(words.conversations.line)}</span>${tag(deviceFeatures.conversations.peek())}</a></li>
         <li><a class="feature-card" href="${link({ kind: "feature", feature: "collaboration" })}">
           <span class="feature-card-art">${glyph("codex", 22)}${glyph("claude", 22)}</span>
           <span class="feature-card-name">${escape(words.collaboration.name)}</span>
@@ -92,11 +104,38 @@ export class FeaturesPage implements Page {
       </ul>`;
     };
     draw(null);
+    // In no network, this computer keeps its own settings.
     const [first] = loginsOf(this.options.store.world.peek()?.accounts);
-    if (first)
-      readCollab(first.hub, first.account)
-        .then((view) => draw(view.collab.on))
-        .catch(() => draw(false));
+    readCollab(first?.hub ?? null, first?.account ?? null)
+      .then((view) => draw(view.collab.on))
+      .catch(() => draw(false));
+  }
+
+  /** 「对话」: its drawing and its switch; on, the drawing folds to the top. */
+  private conversations(): void {
+    const { words } = this.options;
+    const draw = () => {
+      const on = deviceFeatures.conversations.peek();
+      const board = storyboard("conversations", words.conversations.frames, words.conversations.name);
+      this.body.innerHTML = on
+        ? `<div class="feature-top"><div class="storyboard-strip">${board.replace('class="storyboard"', 'class="storyboard folded"')}</div>
+            <div class="feature-top-acts"><button class="text-button quiet-button" type="button" data-act="replay">${glyph("regenerate", 14)}<span>${escape(words.replay)}</span></button>
+            <button class="text-button quiet-button" type="button" data-turn="0">${escape(words.turnOff)}</button></div></div>
+            <p class="feature-quiet feature-after">${escape(words.conversations.after)}</p>`
+        : `<div class="feature-intro">${board}<button class="sheet-go feature-turn" type="button" data-turn="1">${escape(words.turnOn)}</button></div>`;
+      const intro = this.body.querySelector<HTMLElement>(".feature-intro .storyboard");
+      if (intro) drawAsSeen(intro);
+    };
+    draw();
+    this.body.addEventListener("click", (event) => {
+      const turn = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-turn]");
+      if (!turn || turn.disabled) return;
+      turn.disabled = true;
+      void deviceFeatures.setConversations(turn.dataset.turn === "1").then(draw, (error: unknown) => {
+        turn.disabled = false;
+        turn.title = detailOf(error);
+      });
+    });
   }
 
   private collaboration(): void {
@@ -104,7 +143,7 @@ export class FeaturesPage implements Page {
     const logins = loginsOf(store.world.peek()?.accounts);
     this.account = logins[0] ?? null;
     this.draw();
-    if (this.account) void this.load();
+    void this.load();
     void this.ask();
     this.stop = effect(() => {
       store.world.get();
@@ -115,11 +154,11 @@ export class FeaturesPage implements Page {
     this.body.addEventListener("change", (event) => this.input(event));
   }
 
+  /** The account's settings, or in no network this computer's own. */
   private async load(): Promise<void> {
     const account = this.account;
-    if (!account) return;
     try {
-      this.view = await readCollab(account.hub, account.account);
+      this.view = await readCollab(account?.hub ?? null, account?.account ?? null);
       this.draft = structuredClone(this.view.collab);
       this.problem = null;
     } catch (error) {
@@ -170,7 +209,9 @@ export class FeaturesPage implements Page {
     const draft = this.draft;
     switch (button.dataset.act) {
       case "replay":
-        this.replay();
+        return;
+      case "retry":
+        void this.load();
         return;
       case "turn":
         if (!draft) return;
@@ -289,11 +330,16 @@ export class FeaturesPage implements Page {
     const { words } = this.options;
     const collab = this.draft;
     const on = !!collab?.on;
-    const board = storyboard(words.collaboration.frames, words.collaboration.name);
-    const turn = !this.account
-      ? `<p class="feature-note">${escape(words.noAccount)}</p>`
-      : !collab
-        ? `<p class="feature-note"${this.problem ? ` title="${escape(this.problem.detail)}"` : ""}>${escape(this.problem?.text ?? "")}</p>`
+    const board = storyboard("collaboration", words.collaboration.frames, words.collaboration.name);
+    // What it gives the user: a ready text that teaches the calling model to
+    // hand a part over in plain words, and nothing to operate by hand.
+    const gives = `<ul class="feature-gives">${words.collaboration.gives
+      .map(([mark, line]) => `<li><span class="feature-give-mark">${glyph(mark, 16)}</span><span>${escape(line)}</span></li>`)
+      .join("")}</ul>`;
+    const turn = !collab
+        ? this.problem
+          ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}<button class="text-button quiet-button" type="button" data-act="retry">${glyph("regenerate", 14)}<span>${escape(words.retry)}</span></button></p>`
+          : `<p class="feature-note">${escape(words.reading)}</p>`
         : on
           ? ""
           : `<button class="sheet-go feature-turn" type="button" data-act="turn" data-on="1">${escape(words.turnOn)}</button>`;
@@ -301,7 +347,7 @@ export class FeaturesPage implements Page {
       ? `<div class="feature-top"><div class="storyboard-strip">${board.replace('class="storyboard"', 'class="storyboard folded"')}</div>
           <div class="feature-top-acts"><button class="text-button quiet-button" type="button" data-act="replay">${glyph("regenerate", 14)}<span>${escape(words.replay)}</span></button>
           <button class="text-button quiet-button" type="button" data-act="turn" data-on="0">${escape(words.turnOff)}</button></div></div>`
-      : `<div class="feature-intro">${board}${turn}</div>`;
+      : `<div class="feature-intro">${board}${gives}${turn}</div>`;
     this.body.innerHTML = top + (on && collab ? this.settings(collab) : "");
     const intro = this.body.querySelector<HTMLElement>(".feature-intro .storyboard");
     if (intro) drawAsSeen(intro);

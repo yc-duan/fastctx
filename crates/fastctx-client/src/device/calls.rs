@@ -14,6 +14,9 @@ use fastctx_types::{Address, Call, JournalCall, MachineName, ProjectCall, Reply,
 use super::{Device, Session, failed};
 use crate::Error;
 
+/// A device runs no agents, so model collaboration is only its accounts'.
+const NO_OWN_COLLAB: &str = "a device has no model collaboration of its own; name the account";
+
 impl Device {
     pub(crate) async fn call(self: &Arc<Self>, call: Call) -> Result<(Reply, MachineName), Error> {
         // Nested transport futures otherwise share the caller's small stack.
@@ -53,7 +56,8 @@ impl Device {
                 return Ok((Reply::Changed { token }, here()));
             }
             Call::CollabRead { hub, account } => {
-                let session = self.on_hub(Some(&hub))?;
+                let account = account.ok_or_else(|| failed(NO_OWN_COLLAB))?;
+                let session = self.on_hub(hub.as_ref())?;
                 return Ok((Reply::CollabRead(session.link.collab_read(&account).map_err(failed)?), here()));
             }
             Call::MachineLog { hub, account, before } => {
@@ -62,10 +66,13 @@ impl Device {
                 return Ok((Reply::MachineLog(page), here()));
             }
             Call::CollabWrite { hub, account, collab } => {
-                let session = self.on_hub(Some(&hub))?;
+                let account = account.ok_or_else(|| failed(NO_OWN_COLLAB))?;
+                let session = self.on_hub(hub.as_ref())?;
                 let version = session.link.collab_write(&account, collab).await.map_err(failed)?;
                 return Ok((Reply::CollabWritten { version }, here()));
             }
+            Call::Features => return Ok((Reply::Features(self.features()?), here())),
+            Call::SetFeature { feature, on } => return Ok((Reply::Features(self.set_feature(feature, on)?), here())),
             Call::Accounts => {
                 let mut hubs = Vec::new();
                 for session in self.sessions() {

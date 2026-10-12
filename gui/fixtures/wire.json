@@ -13350,7 +13350,8 @@
                 "description": "Faster responses"
               }
             ],
-            "default_service_tier": null
+            "default_service_tier": null,
+            "context_window": 1000000
           }
         ],
         "model": "model",

@@ -1027,7 +1027,7 @@ export class MachinesPage implements Page {
     const html = acts
       .map(
         (act) =>
-          `<button class="map-act${act.danger ? " danger" : ""}" type="button" data-map-act="${act.act}" data-key="${escape(key)}" aria-label="${escape(act.label)}" title="${escape(act.label)}">${glyph(act.icon, 16)}</button>`,
+          `<button class="map-act${act.danger ? " danger" : ""}" type="button" data-map-act="${act.act}" data-key="${escape(key)}" aria-label="${escape(act.label)}" title="${escape(act.label)}">${glyph(act.icon, 18)}</button>`,
       )
       .join("");
     if (html !== this.floated) {

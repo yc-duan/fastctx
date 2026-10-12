@@ -10,6 +10,7 @@ mod android;
 mod collab;
 mod composer;
 mod connection;
+mod features;
 mod kept;
 
 #[cfg(desktop)]
@@ -911,6 +912,9 @@ pub fn run() {
             accounts::machine_log,
             collab::collab_read,
             collab::collab_write,
+            features::features_read,
+            features::features_set,
+            features::features_watch,
             accounts::account_change,
             accounts::server_command,
             accounts::agent_homes,

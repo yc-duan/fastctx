@@ -303,3 +303,14 @@
 .new-talk.current {
   background: color-mix(in srgb, var(--accent-wash) 55%, var(--bg-elevated));
 }
+
+/* Once the first words are sent, the conversation begins where the stage
+   was: the words rise into it, the line beneath says it is starting
+   (`conversation/starting.ts`). */
+.new-talk-page.begun .new-talk-stage {
+  display: none;
+}
+
+.new-talk-page.begun .new-talk-dock::before {
+  display: block;
+}

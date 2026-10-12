@@ -19,6 +19,7 @@ mod content;
 mod context;
 pub mod control;
 pub mod exchange;
+pub mod models;
 pub mod titles;
 mod tools;
 pub mod transcript;

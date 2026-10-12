@@ -129,7 +129,8 @@ impl Connection {
                 {
                     let root = fastctx_platform::fastctx_root().map_err(|error| error.to_string())?;
                     let program = root.join("bin").join(if cfg!(windows) { "fastctx.exe" } else { "fastctx" });
-                    #[cfg(target_os = "linux")]
+                    // The node starts from the World program, which on a
+                    // computer in no network nothing else may have put there.
                     if !program.is_file() && crate::setup::carried().is_some() {
                         crate::setup::place_initial()?;
                     }

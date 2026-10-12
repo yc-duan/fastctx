@@ -5,6 +5,7 @@
 mod around;
 mod calls;
 mod connection_state;
+mod features;
 pub(crate) mod file_read;
 mod file_search;
 mod lines;
@@ -39,6 +40,7 @@ pub struct Device {
     sessions: RwLock<BTreeMap<HubId, Arc<Session>>>,
     lifecycle: tokio::sync::Mutex<()>,
     managed: bool,
+    features: features::Switches,
 }
 
 pub(super) struct Session {
@@ -80,6 +82,7 @@ impl Device {
             sessions: RwLock::new(BTreeMap::new()),
             lifecycle: tokio::sync::Mutex::new(()),
             managed,
+            features: features::Switches::default(),
         });
         for membership in memberships {
             device.start(membership)?;

@@ -29,6 +29,7 @@ import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
 import { usageDetail } from "./usage-detail";
 import { ConversationView } from "./view";
+import { departureOf } from "./flight";
 import { detailOf } from "../app/problem";
 
 export interface Someone {
@@ -196,9 +197,17 @@ export class ConversationPage {
       </footer>`;
     this.scroller = this.element.querySelector<HTMLElement>(".talk-scroller")!;
     const transcript = this.element.querySelector<HTMLElement>(".conversation")!;
-    this.finder = new Finder(transcript, this.scroller, words.find, () => {
-      this.following = false;
-    });
+    this.finder = new Finder(
+      transcript,
+      this.scroller,
+      words.find,
+      () => {
+        this.following = false;
+      },
+      // Finding reads the whole conversation: every block is drawn while
+      // the bar is open.
+      (whole) => this.view.wholly(whole),
+    );
     this.scroller.before(this.finder.element);
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
     document.addEventListener("keydown", this.findKey);
@@ -262,6 +271,8 @@ export class ConversationPage {
       reading: () => {
         this.following = false;
       },
+      // Words being sent leave from where they were typed.
+      departure: () => departureOf(this.input),
       questions: {
         words: words.questions,
         // Answers go in at once, into the turn if one runs: they never wait
@@ -355,24 +366,60 @@ export class ConversationPage {
     });
   }
 
-  /** Brings the page up to the conversation; keeps the newest in view when
-   *  the reader was already there. */
-  update(): void {
-    const follow = this.following;
-    this.view.update();
-    this.drawTurnActs();
+  /** Brings the page up to the conversation: what does not wait for the
+   *  screen at once, and the drawing on the next frame, however many
+   *  changes came before it. Words streaming in at any rate are drawn at
+   *  most once a frame. `read` says history came (a reading of what came
+   *  before, not things happening now): what it adds is drawn as the
+   *  reader comes to it, and nothing of it makes an entrance. */
+  update(how: { read?: boolean } = {}): void {
+    if (how.read) this.read = true;
     // The commands it offers changed (a plugin loaded, a description came).
     if (this.options.conversation.takeOffersChanged()) void this.askOffers();
-    this.finder.refresh();
-    this.drawState();
-    this.drawAction();
-    if (follow) this.scroller.scrollTop = this.scroller.scrollHeight;
     // What it offers is asked again whenever a turn ends: a command, a
     // compaction or a new model may have changed it.
     const moving = this.options.conversation.moving();
     if (this.wasMoving && !moving) void this.askOffers();
     this.wasMoving = moving;
     this.releaseQueued();
+    if (!this.frame) this.frame = requestAnimationFrame(() => this.render());
+  }
+
+  private frame = 0;
+  private read = false;
+
+  /** Draws the page as the conversation now stands; keeps the newest in
+   *  view when the reader was already there. A page not in view is drawn
+   *  when it is shown again. */
+  private render(): void {
+    this.frame = 0;
+    if (!this.element.isConnected) return;
+    const follow = this.following;
+    this.view.update(this.read);
+    this.read = false;
+    this.drawTurnActs();
+    this.finder.refresh();
+    this.drawState();
+    this.drawAction();
+    if (follow) this.scroller.scrollTop = this.scroller.scrollHeight;
+  }
+
+  /** Where the reader was, kept while the page is out of view: following
+   *  the newest, or a block and how far down it they were. */
+  private place: { key: string; offset: number } | null = null;
+
+  /** The page goes out of view and stays alive, its conversation still
+   *  followed. */
+  suspend(): void {
+    this.place = this.following ? null : this.view.anchor();
+  }
+
+  /** The page is shown again, as it was left and as the conversation now
+   *  stands. */
+  resume(): void {
+    this.render();
+    if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
+    else if (this.place) this.view.restore(this.place);
   }
 
   /** Going back to a turn or forking from it, only where the host says it
@@ -390,6 +437,8 @@ export class ConversationPage {
   /** Stops what the page keeps asking for. */
   leave(): void {
     clearTimeout(this.looking);
+    cancelAnimationFrame(this.frame);
+    this.view.destroy();
     this.looking = -1;
     this.left = true;
     document.removeEventListener("keydown", this.findKey);
@@ -1223,6 +1272,7 @@ export class ConversationPage {
   /** The watch on the session is over: what is shown stays, and the bar
    *  says it is no longer live. */
   lost(why: string | null): void {
+    this.view.unfollowed();
     this.gone = this.options.words.watchEnded(why);
     this.goneWhy = why ?? "";
     this.interrupted = false;

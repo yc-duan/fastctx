@@ -6,13 +6,19 @@
 import { inShell, worldNow, type WorldNow } from "../world/bridge";
 import type { Address } from "../world/events";
 import type { ResidentNow, RunningJob, WhoFor } from "../world/world";
+import { keepNetwork, shownNetwork, viewOf } from "./network";
 import { signal, type Signal } from "./signals";
 
 export interface Store {
   /** Whether the World is really there, or a specimen stands in. */
   readonly live: boolean;
-  /** The World as last read; `null` until it first answers. */
+  /** The World as last read, as the network shown sees it (`./network`);
+   *  `null` until it first answers. */
   readonly world: Signal<WorldNow | null>;
+  /** The World as last read, every network this device is in. */
+  readonly whole: Signal<WorldNow | null>;
+  /** Shows another network this device is in. */
+  showNetwork(hub: string): void;
   /** Why the World could not be asked the last time, or `null`. */
   readonly trouble: Signal<string | null>;
   /** When the World was last read, or the specimen's moment. */
@@ -31,6 +37,16 @@ const interval = 2000;
 export function createStore(specimen: () => { world: WorldNow; now: Date }): Store {
   const live = inShell();
   const world = signal<WorldNow | null>(null);
+  const whole = signal<WorldNow | null>(null);
+  const read = (now: WorldNow) => {
+    whole.set(now);
+    world.set(viewOf(now, shownNetwork(now)));
+  };
+  const showNetwork = (hub: string) => {
+    keepNetwork(hub);
+    const now = whole.peek();
+    if (now) world.set(viewOf(now, shownNetwork(now)));
+  };
   const trouble = signal<string | null>(null);
   const clock = signal(new Date());
   const unanswered = signal(0);
@@ -38,9 +54,9 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   if (!live) {
     const shown = specimen();
     remember(shown.world);
-    world.set(shown.world);
+    read(shown.world);
     clock.set(shown.now);
-    return { live, world, trouble, clock, unanswered, refresh: async () => {} };
+    return { live, world, whole, showNetwork, trouble, clock, unanswered, refresh: async () => {} };
   }
 
   recall();
@@ -59,7 +75,7 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
     asking = worldNow()
       .then((now) => {
         remember(now);
-        world.set(now);
+        read(now);
         trouble.set(null);
       })
       .catch((error: unknown) => trouble.set(String(error)))
@@ -80,7 +96,7 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   };
   document.addEventListener("visibilitychange", () => void loop());
   void loop();
-  return { live, world, trouble, clock, unanswered, refresh: ask };
+  return { live, world, whole, showNetwork, trouble, clock, unanswered, refresh: ask };
 }
 
 /** What each machine last answered with about its residents. A machine

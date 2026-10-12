@@ -19,6 +19,7 @@ mod collab;
 pub mod composer;
 pub mod conversation;
 pub mod device;
+pub mod features;
 pub mod file_read;
 mod file_search;
 pub mod host;
@@ -221,9 +222,10 @@ impl Client {
             NodeFrame::Reply { id: answered, .. } => {
                 Err(broken(format!("the node answered call {answered}, not {id}")))
             }
-            NodeFrame::Watched { .. } | NodeFrame::On { .. } | NodeFrame::ToolsChanged { .. } => {
-                Err(broken("the node answered a call as a stream".to_string()))
-            }
+            NodeFrame::Watched { .. }
+            | NodeFrame::On { .. }
+            | NodeFrame::ToolsChanged { .. }
+            | NodeFrame::Features { .. } => Err(broken("the node answered a call as a stream".to_string())),
             NodeFrame::FileRead { .. } => Err(broken("use read_file to consume a file byte stream".to_string())),
             NodeFrame::LinesRead { .. } => Err(broken("use World.lines to consume logical rows".to_string())),
         }
@@ -264,6 +266,29 @@ impl Client {
         let id = self.next;
         self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
         Ok(Watching { transport: WatchingTransport::Local { client: self, id } })
+    }
+
+    /// Sends a `WatchFeatures` call; the connection carries the switches
+    /// from then on.
+    pub(crate) async fn watch_features(mut self) -> Result<(Client, u64), CallError> {
+        self.next += 1;
+        let id = self.next;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchFeatures }))
+            .await
+            .map_err(CallError::Broken)?;
+        Ok((self, id))
+    }
+
+    /// The next frame on a connection given over to one stream.
+    pub(crate) async fn frame(&mut self) -> Result<NodeFrame, CallError> {
+        let frame = self
+            .connection
+            .recv()
+            .await
+            .map_err(CallError::Broken)?
+            .ok_or_else(|| CallError::Broken(std::io::ErrorKind::UnexpectedEof.into()))?;
+        serde_json::from_slice::<NodeFrame>(&frame).map_err(|error| CallError::Broken(std::io::Error::other(error)))
     }
 
     /// Sends a `WatchTools` call; the connection says from then on each

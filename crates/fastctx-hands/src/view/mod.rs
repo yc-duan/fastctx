@@ -21,7 +21,7 @@ mod text;
 pub(crate) use text::visible;
 
 use std::fs::File;
-use std::io::{self, Read as _, Write};
+use std::io::{self, Read as _, Seek as _, Write};
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
@@ -30,7 +30,7 @@ use fastctx_types::residents::Seen;
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
-use crate::image::sniff;
+use crate::image::Header;
 use crate::run::terminal::{VIEW_END, VIEW_MARK};
 use crate::run::window::{BUDGET, IMAGE_COST, RUN_NOTES, bytes};
 
@@ -207,7 +207,10 @@ fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> 
     let mut start = vec![0u8; 512];
     let read = read_up_to(&mut file, &mut start)?;
     start.truncate(read);
-    let detected_image = sniff(&start);
+    // An image is told by walking its header from the start of the file, as
+    // far as its size is: a phone's JPEG has tens of kilobytes before it.
+    let detected_image = crate::image::header(&mut file)?;
+    file.rewind()?;
     if let Some(format) = fastctx_office::format(path) {
         let result = office::look(path, options, budget, file, &metadata, format)?;
         if result.0.cost > budget {
@@ -240,8 +243,25 @@ fn look_file(path: &Path, resolved: &Path, options: &Options, budget: usize) -> 
             None,
         ));
     }
-    if let Some((mime, width, height)) = detected_image {
-        return image(path, options, budget, file, start, mime, width, height, metadata.len());
+    match detected_image {
+        Some(Header::Shown { mime, width, height }) => {
+            return image(path, options, budget, file, mime, width, height, metadata.len());
+        }
+        Some(Header::Other(format)) => {
+            let facts = format!(
+                "not shown: {} {format} image, {}; images are shown as PNG, JPEG, GIF or WebP",
+                article(format),
+                size(metadata.len())
+            );
+            return Ok((Section::note(path, options, &facts), None));
+        }
+        // An encoding asked for explicitly reads the file as text all the same.
+        Some(Header::Unreadable { format, reason }) if options.encoding.is_none() => {
+            let facts =
+                format!("not shown: its first bytes are a {format} image's, but its header cannot be read: {reason}");
+            return Ok((Section::error(path, options, &facts), None));
+        }
+        Some(Header::Unreadable { .. }) | None => {}
     }
     text::look(path, options, budget, file, start, &metadata)
 }
@@ -252,7 +272,6 @@ fn image(
     options: &Options,
     budget: usize,
     mut file: File,
-    start: Vec<u8>,
     mime: &str,
     width: u32,
     height: u32,
@@ -273,7 +292,7 @@ fn image(
         section.partial = true;
         return Ok((section, None));
     }
-    let mut bytes = start;
+    let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
     let seen = Seen {
         path: path.to_string_lossy().into_owned(),
@@ -305,6 +324,11 @@ fn describe_error(error: &io::Error) -> String {
         io::ErrorKind::PermissionDenied => format!("not readable: {error}"),
         _ => format!("could not be read: {error}"),
     }
+}
+
+/// The indefinite article for a format's name, as it is read aloud.
+fn article(name: &str) -> &'static str {
+    if name.starts_with(['A', 'E', 'I', 'O', 'U']) { "an" } else { "a" }
 }
 
 /// `count` with the noun in the number it takes.

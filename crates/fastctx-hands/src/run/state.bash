@@ -28,7 +28,7 @@ if [ "$1" = names ]; then
         if [ "$2" = variables ]; then
             case $name in
                 __fastctx_login | __fastctx_flags | __fastctx_carried_vars | __fastctx_carried_funcs | \
-                __fastctx_carried_opts | __fastctx_incoming | __fastctx_state_helper | \
+                __fastctx_carried_opts | __fastctx_incoming | __fastctx_state_helper | __fastctx_program | \
                 BASH | BASH_ALIASES | BASH_ARGC | BASH_ARGV | BASH_ARGV0 | BASH_CMDS | BASH_COMMAND | \
                 BASH_EXECUTION_STRING | BASH_LINENO | BASH_REMATCH | BASH_SOURCE | BASH_SUBSHELL | \
                 BASH_VERSINFO | BASH_VERSION | BASHOPTS | BASHPID | COLUMNS | COMP_CWORD | COMP_KEY | \

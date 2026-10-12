@@ -1,18 +1,24 @@
-// A conversation drawn in the page (`world-gui.md`, 对话). Each block keeps
-// its element for as long as what it shows does not change, so a stream of
-// words redraws one paragraph, not the conversation.
+// A conversation drawn in the page (`world-gui.md`, 对话). Each block has an
+// element of its own for as long as it is there, and what it shows is drawn
+// again only when it changed: an entry's stamp says when. Words streaming
+// in redraw the paragraph they add to, not the message, not the
+// conversation; a conversation thousands of tool calls long draws only the
+// blocks near the reader (`lazy.ts`).
 //
 // What a turn did between the things it said is a stretch of rows under one
 // heading. The heading stands as long as there is a row under it, keeps its
 // element while rows come and go, and says what is happening, or once done
 // what the stretch did. Everything that folds starts folded and opens only
-// when the reader opens it; it opens and closes in motion, the line that was
-// pressed staying where it is (`../longview/anchor.ts`). Long text under a
-// row shows its first lines, then grows into a box that draws only what is
-// in view.
+// when the reader opens it, and its rows are made only then; it opens and
+// closes in motion, the line that was pressed staying where it is
+// (`../longview/anchor.ts`). Long text under a row shows its first lines,
+// then grows into a box that draws only what is in view.
+//
+// While the model works, the turn's line stands at the foot (`turn-line.ts`).
+// Words the user sends rise from the input into their place (`flight.ts`).
 //
 // What the World told the session is drawn from the facts it carries, as a
-// quiet line on the right; what was done to a turn (copy, ask again, fork)
+// quiet line on the left; what was done to a turn (copy, ask again, fork)
 // appears only once the turn is over.
 
 import type { Content, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
@@ -25,7 +31,7 @@ import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
 import { effortLabel } from "./effort-slider";
-import { visible, withheld, type Activity, type Conversation, type Entry, type SendState, type ShownAttachment } from "./model";
+import { visible, withheld, type Activity, type Block, type Conversation, type Entry, type SendState, type ShownAttachment } from "./model";
 import { escape, plain, render } from "./prose";
 import { counts, numbered, parse } from "./diff";
 import { DiffLines, RemoteDiff, diffPaint, memoryDiff } from "./diff-lines";
@@ -38,6 +44,10 @@ import { FEW, LongText, type LongLines, type LongTextWords, type OtherSource } f
 import { Said, WholeOutput, outputPaint, shownOutput, type OpenedLines } from "./run-output";
 import { replyOf } from "./async-ask";
 import { chosenIn, drawQuestions, type QuestionWords } from "./question-card";
+import { StreamedProse } from "./stream-prose";
+import { TurnLine, time, type LineSays } from "./turn-line";
+import { fly, type Departure } from "./flight";
+import { Lazy, estimate } from "./lazy";
 
 export interface Context {
   words: Words;
@@ -52,6 +62,8 @@ export interface Context {
   /** The reader opened or closed something: the page stops keeping the
    *  newest in view, so nothing moves under their hand. */
   reading(): void;
+  /** Where words being sent leave from (`flight.ts`). */
+  departure?: (() => Departure | null) | undefined;
   /** Where another resident's conversation opens, where it can. */
   link?: ((address: { resident: string; machine: MachineName }) => string) | undefined;
   /** Answering what the session waits on the user for, where the page
@@ -92,21 +104,43 @@ type ToolEntry = Extract<Entry, { kind: "tool" }>;
 type AskEntry = Extract<Entry, { kind: "ask" }>;
 type HeardEntry = Extract<Entry, { kind: "heard" }>;
 type QuestionEntry = Extract<Entry, { kind: "question" }>;
+type ProseEntry = Extract<Entry, { kind: "prose" }>;
 
-/** One stretch on the page: its heading, its box and the rows in it. */
+/** One stretch on the page: its heading, its box and the rows in it, made
+ *  the first time it is opened. */
 interface Stretch {
-  element: HTMLElement;
   head: HTMLButtonElement;
   box: HTMLElement;
   rows: HTMLElement;
   drawn: Map<string, { signature: string; element: HTMLElement }>;
+  /** What its heading was last drawn from. */
+  heading: string;
 }
+
+/** A block's place in the page. */
+interface Slot {
+  key: string;
+  element: HTMLElement;
+  block: Block;
+  /** What it was last drawn from; null while it is not drawn. */
+  signature: string | null;
+  /** A message's words, drawn block by block as they grow. */
+  prose?: StreamedProse;
+  /** What is done to a message's turn, under its words. */
+  acts?: HTMLElement;
+  stretch?: Stretch;
+  /** Its height when it was let go, kept while it is not drawn. */
+  height: number | null;
+}
+
+/** Blocks drawn only near the reader; the others cost too little to wait. */
+const LAZY = new Set<Block["kind"]>(["activity-group", "prose", "heard", "ask", "question", "steps"]);
 
 export class ConversationView {
   private openRows = new Set<string>();
   private openStretches = new Set<string>();
-  private drawn = new Map<string, { signature: string; element: HTMLElement }>();
-  private stretches = new Map<string, Stretch>();
+  private slots = new Map<string, Slot>();
+  private byElement = new WeakMap<HTMLElement, Slot>();
   /** Long texts open under rows, by row, to be let go when the row is. */
   private longs = new Map<string, LongText[]>();
   /** What else a row holds open on another machine (lines being read),
@@ -116,16 +150,21 @@ export class ConversationView {
   /** Rows already on the page once; only rows new to a live conversation
    *  make an entrance. */
   private seen = new Set<string>();
-  private settled = false;
+  /** The page has been drawn once: what comes after is live. */
+  private live = false;
   /** Questions being answered again, and ones the user skipped. */
   private editing = new Set<string>();
   private skipped = new Set<string>();
+  /** Words already sent up from the input, by key. */
+  private flown = new Set<string>();
+  /** Every block is drawn, as finding in the conversation needs. */
+  private whole = false;
   private readonly layout: AnchorLayout;
+  private readonly lazy: Lazy;
+  private readonly line: TurnLine;
+  /** The clocks of stretches running, brought up to date each second. */
+  private clocks = new Set<HTMLElement>();
   private ticking = 0;
-  /** The line at the foot of a turn under way: what it is doing and for how
-   *  long. Above it is what the session has taken in; below it, words sent
-   *  that it has not read yet. */
-  private readonly status: HTMLElement;
 
   constructor(
     private readonly root: HTMLElement,
@@ -134,10 +173,17 @@ export class ConversationView {
   ) {
     root.classList.add("transcript");
     this.layout = new AnchorLayout(context.scroller, root);
-    this.status = document.createElement("div");
-    this.status.className = "turn-status";
-    this.status.setAttribute("role", "status");
-    this.status.innerHTML = `<span class="turn-status-mark" aria-hidden="true"></span><span class="turn-status-step"></span><span class="turn-status-time"></span>`;
+    this.line = new TurnLine(context.words);
+    this.lazy = new Lazy(context.scroller, {
+      near: (element) => {
+        const slot = this.byElement.get(element);
+        if (slot && slot.signature === null && this.root.isConnected) this.draw(slot);
+      },
+      far: (element, height) => {
+        const slot = this.byElement.get(element);
+        if (slot) this.release(slot, height);
+      },
+    });
     root.addEventListener("click", (event) => this.click(event));
     root.addEventListener("input", (event) => {
       // Words of one's own answer a question instead of an option.
@@ -150,7 +196,7 @@ export class ConversationView {
     root.addEventListener("contextmenu", (event) => {
       if (!matchMedia("(hover: none)").matches) return;
       const block = (event.target as HTMLElement).closest<HTMLElement>(".block");
-      const acts = block?.querySelector<HTMLElement>(":scope > .turn-acts:not(.latest)");
+      const acts = block?.querySelector<HTMLElement>(".turn-acts:not(.latest)");
       if (!acts || (event.target as HTMLElement).closest("a, button, input, textarea, pre")) return;
       event.preventDefault();
       this.sheet(acts);
@@ -164,129 +210,325 @@ export class ConversationView {
     });
   }
 
-  /** Brings the page up to the conversation as it now stands. */
-  update(): void {
-    // Words sent and not yet read stand below the turn's line, in order.
-    const all = this.conversation.blocks();
-    const pending = all.filter((block) => block.kind === "heard" && block.sending !== undefined);
-    const settled = all.filter((block) => !pending.includes(block));
-    const blocks = [...settled, ...pending];
+  /** Brings the page up to the conversation as it now stands; `read` when
+   *  what is new came as history rather than as it happened. */
+  update(read = false): void {
+    const blocks = this.conversation.blocks();
+    const says = this.lineSays(blocks);
+    this.reading = read;
+    // Words already on their way when the page is first drawn (the first
+    // words of a conversation just begun) rose where they were sent.
+    if (!this.live) for (const block of blocks) if (block.kind === "heard" && block.sending) this.flown.add(block.key);
     const present = new Set<string>();
+    const drawn: HTMLElement[] = [];
     let previous: HTMLElement | null = null;
-    // A stretch under way at the very end says the step itself, a light
-    // passing over it and its clock running, and a card waiting at the end
-    // says what it waits for: the turn's line beneath would only say it
-    // again. With words waiting below it, the line is still the boundary
-    // they wait at.
-    const last = settled[settled.length - 1];
-    const waiting = this.conversation.waiting();
-    const saidAbove =
-      !pending.length &&
-      (waiting
-        ? last?.kind === "ask" && last.state.state === "waiting"
-        : last?.kind === "activity-group" &&
-          last.members.some((member) => (member.kind === "tool" && member.ended === null) || (member.kind === "prose" && member.writing)));
-    const statusShown = this.drawStatus() && !saidAbove;
-    let statusPlaced = false;
-    const place = (element: HTMLElement) => {
-      const want: Element | null = previous ? previous.nextElementSibling : this.root.firstElementChild;
-      if (want !== element) {
-        if (previous) previous.after(element);
-        else this.root.prepend(element);
-      }
-      previous = element;
-    };
+    // The line stands before the first words waiting below it, else last.
+    let lineBefore: HTMLElement | null = null;
     for (const block of blocks) {
-      if (statusShown && !statusPlaced && pending.includes(block)) {
-        place(this.status);
-        statusPlaced = true;
-      }
       present.add(block.key);
-      let element: HTMLElement;
-      if (block.kind === "activity-group") element = this.stretch(block).element;
-      else {
-        const signature = this.signature(block);
-        let drawn = this.drawn.get(block.key);
-        if (!drawn || drawn.signature !== signature) {
-          const fresh = this.draw(block);
-          if (drawn) {
-            this.letGo(block.key);
-            drawn.element.replaceWith(fresh);
-          }
-          if (this.openRows.has(block.key)) this.fill(block.key, fresh);
-          drawn = { signature, element: fresh };
-          this.drawn.set(block.key, drawn);
-        }
-        element = drawn.element;
+      let slot = this.slots.get(block.key);
+      if (!slot) slot = this.slot(block, read);
+      slot.block = block;
+      // The turn's line between blocks is passed over: it is placed after.
+      let want: Element | null = previous ? previous.nextElementSibling : this.root.firstElementChild;
+      if (want === this.line.element) want = want.nextElementSibling;
+      if (want !== slot.element) {
+        if (previous) previous.after(slot.element);
+        else this.root.prepend(slot.element);
       }
-      place(element);
-    }
-    if (statusShown && !statusPlaced) place(this.status);
-    if (!statusShown) this.status.remove();
-    for (const [key, drawn] of this.drawn) {
-      if (!present.has(key)) {
-        drawn.element.remove();
-        this.drawn.delete(key);
+      previous = slot.element;
+      if (says && !lineBefore && block.kind === "heard" && block.sending !== undefined && block.intoTurn) lineBefore = slot.element;
+      if (slot.signature !== null && slot.signature !== this.signature(block)) {
+        this.draw(slot);
+        drawn.push(slot.element);
       }
     }
-    for (const [key, stretch] of this.stretches) {
-      if (!present.has(key)) {
-        for (const row of stretch.drawn.keys()) this.letGo(row);
-        stretch.element.remove();
-        this.stretches.delete(key);
-      }
+    for (const [key, slot] of this.slots) {
+      if (present.has(key)) continue;
+      this.forget(slot);
+      this.lazy.unwatch(slot.element);
+      slot.element.remove();
+      this.slots.delete(key);
     }
-    this.settled = true;
+    // Words rising this frame land before the line beneath them is drawn.
+    const flying = this.flights(blocks);
+    if (says) {
+      this.line.say(says);
+      this.line.place(this.root, lineBefore, this.live && !read, flying ? time(getComputedStyle(this.root), "--send") * 0.6 : 0);
+    } else this.line.remove();
+    if (!this.live) {
+      this.live = true;
+      this.fillFromEnd(blocks);
+    }
     this.tick();
-    void drawDiagrams(this.root);
+    for (const element of drawn) void drawDiagrams(element);
   }
 
-  private signature(block: Entry): string {
-    switch (block.kind) {
-      case "prose":
-        return `${block.key}p${block.version}${block.writing ? "w" : ""}${this.lastOfTurn(block) ? `l${this.conversation.turnEnded(block.turn) ? "e" : ""}${this.latest(block.turn) ? "n" : ""}` : ""}`;
-      case "heard":
-        return `${block.key}h${JSON.stringify(block.sending ?? null)}${block.attached?.length ?? 0}${block.turn ?? ""}${block.turn && this.conversation.turnEnded(block.turn) ? "e" : ""}${block.turn && this.latest(block.turn) ? "n" : ""}`;
-      case "steps":
-        return `${block.key}s${JSON.stringify(block.steps)}${block.note ?? ""}`;
-      case "ask":
-        return `${block.key}a${block.version}`;
-      case "question":
-        return `${block.key}q${block.version}${this.editing.has(block.key) ? "e" : ""}${this.skipped.has(block.key) ? "s" : ""}`;
-      default:
-        return block.key;
+  /** Draws every block, for finding words anywhere in the conversation;
+   *  none is let go while `whole`. */
+  wholly(whole: boolean): void {
+    this.whole = whole;
+    if (whole) {
+      for (const slot of this.slots.values()) if (slot.signature === null) this.draw(slot);
+      return;
+    }
+    // Watched afresh, each says again where it is: those far away go.
+    for (const slot of this.slots.values()) {
+      if (!LAZY.has(slot.block.kind)) continue;
+      this.lazy.unwatch(slot.element);
+      this.lazy.watch(slot.element);
     }
   }
 
-  private memberSignature(entry: Entry): string {
-    switch (entry.kind) {
-      case "prose":
-        return `${entry.key}p${entry.version}${entry.writing ? "w" : ""}`;
-      case "tool":
-        return `${entry.key}t${entry.tool.status}${entry.ended?.use ?? "-"}${entry.tool.output.length}${runStamp(entry.tool.run)}${this.conversation.agentOf(entry) ? `a${this.conversation.agentStamp}` : ""}`;
-      default:
-        return entry.key;
+  /** Where the reader is: the first block whose foot is below the top of
+   *  the view, and how far its top is above that. */
+  anchor(): { key: string; offset: number } | null {
+    const top = this.context.scroller.getBoundingClientRect().top;
+    for (const element of this.root.children) {
+      const slot = this.byElement.get(element as HTMLElement);
+      if (!slot) continue;
+      const box = element.getBoundingClientRect();
+      if (box.bottom > top) return { key: slot.key, offset: top - box.top };
     }
+    return null;
   }
 
-  /** The turn whose actions stay shown: the last that ended. */
-  private latest(turn: string): boolean {
-    const ended = this.conversation.entries.filter((entry) => entry.kind === "ended");
-    return ended[ended.length - 1]?.kind === "ended" && (ended[ended.length - 1] as Extract<Entry, { kind: "ended" }>).turn === turn;
+  /** Puts the reader back where `anchor` says they were. */
+  restore(anchor: { key: string; offset: number }): void {
+    const slot = this.slots.get(anchor.key);
+    if (!slot) return;
+    const scroller = this.context.scroller;
+    scroller.scrollTop += slot.element.getBoundingClientRect().top - scroller.getBoundingClientRect().top + anchor.offset;
   }
 
-  private draw(block: Entry): HTMLElement {
+  /** Lets go of everything drawn, as the page is left for good. */
+  destroy(): void {
+    for (const slot of this.slots.values()) this.forget(slot);
+    this.slots.clear();
+    this.lazy.close();
+    this.line.remove();
+    clearTimeout(this.ticking);
+  }
+
+  /** A block's place, made the first time it is laid out: drawn at once
+   *  when it comes into a live conversation, otherwise when it comes near. */
+  private slot(block: Block, read: boolean): Slot {
     const element = document.createElement("div");
     element.dataset.key = block.key;
-    element.className = `block block-${block.kind}`;
+    element.className = `block block-${block.kind === "activity-group" ? "activity" : block.kind}`;
     if (block.kind === "prose") element.classList.add(`prose-${block.prose}`);
     if (block.kind === "heard") {
       const notice = this.noticeOf(block);
       element.classList.add(notice ? "from-world" : !block.from || block.from.kind === "user" ? "from-user" : "from-other");
       if (block.reply) element.classList.add("from-reply");
     }
+    const slot: Slot = { key: block.key, element, block, signature: null, height: null };
+    this.slots.set(block.key, slot);
+    this.byElement.set(element, slot);
+    if ((this.live && !read) || !LAZY.has(block.kind) || this.whole) this.draw(slot);
+    else this.wait(slot);
+    if (LAZY.has(block.kind)) this.lazy.watch(element);
+    return slot;
+  }
+
+  /** A slot not drawn, holding the room it would take. */
+  private wait(slot: Slot): void {
+    slot.element.classList.add("lazy");
+    slot.element.style.height = `${Math.round(slot.height ?? this.estimate(slot.block))}px`;
+  }
+
+  /** How tall a block not yet drawn is taken to be (`lazy.ts`), with the
+   *  room its turn's actions take where it has them: under a pointer each
+   *  ended turn's, on a touch screen only the latest's. */
+  private estimate(block: Block): number {
+    const { line, chars } = this.metrics();
+    const conversation = this.conversation;
+    const turn = block.kind === "heard" || block.kind === "prose" ? block.turn : null;
+    const has =
+      !!turn &&
+      conversation.turnEnded(turn) &&
+      ((block.kind === "heard" && !block.notice && !block.sending && (!block.from || block.from.kind === "user")) ||
+        (block.kind === "prose" && block.prose === "message" && conversation.lastMessageOf(turn) === block.key));
+    const touch = matchMedia("(hover: none)").matches;
+    const acts = !has ? 0 : !touch ? 32 : conversation.latestEnded() === turn ? 22 : 0;
+    return estimate(block, line, chars, acts);
+  }
+
+  /** The body's line height and how many of its characters a line of the
+   *  column holds, for blocks not yet drawn. */
+  private metrics(): { line: number; chars: number } {
+    if (this.measured) return this.measured;
+    const style = getComputedStyle(this.root);
+    const size = parseFloat(style.fontSize) || 15;
+    const line = size * (parseFloat(style.getPropertyValue("--leading-prose")) || 1.68);
+    const width = this.root.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    const measured = { line, chars: Math.max(20, Math.floor((width > 0 ? width : size * 46) / (size * 0.55))) };
+    if (width > 0) this.measured = measured;
+    return measured;
+  }
+  private measured: { line: number; chars: number } | null = null;
+
+  /** Draws the last blocks at once, a couple of screens of them, so the
+   *  newest are there the moment the conversation opens; the rest as the
+   *  reader comes to them. */
+  private fillFromEnd(blocks: readonly Block[]): void {
+    // Reckoned in the heights blocks are taken to be, so nothing is laid
+    // out until all of them are drawn.
+    const screen = this.context.scroller.clientHeight || innerHeight;
+    let filled = 0;
+    for (let index = blocks.length - 1; index >= 0 && filled < screen * 2; index -= 1) {
+      const block = blocks[index]!;
+      const slot = this.slots.get(block.key)!;
+      if (slot.signature === null) this.draw(slot);
+      filled += this.estimate(block);
+    }
+  }
+
+  /** Lets a slot far from the reader go, keeping its height; one the
+   *  reader has opened something in, is in, or has selected in, stays. */
+  private release(slot: Slot, height: number): void {
+    // A page out of view keeps what it drew, to be shown again as it was.
+    if (!this.root.isConnected) return;
+    if (slot.signature === null || this.whole || !LAZY.has(slot.block.kind)) return;
+    if (this.openStretches.has(slot.key) || slot.element.querySelector('[aria-expanded="true"]')) return;
+    if (slot.element.contains(document.activeElement)) return;
+    const selection = getSelection();
+    if (selection && selection.rangeCount && !selection.isCollapsed && selection.getRangeAt(0).intersectsNode(slot.element)) return;
+    this.forget(slot);
+    slot.element.replaceChildren();
+    slot.signature = null;
+    slot.height = height;
+    this.wait(slot);
+  }
+
+  /** Lets go of what a slot holds open. */
+  private forget(slot: Slot): void {
+    if (slot.stretch) {
+      for (const row of slot.stretch.drawn.keys()) this.letGo(row);
+      for (const clock of slot.stretch.head.querySelectorAll<HTMLElement>(".group-time")) this.clocks.delete(clock);
+    }
+    this.letGo(slot.key);
+    delete slot.stretch;
+    delete slot.prose;
+    delete slot.acts;
+  }
+
+  /** What a block is drawn from: its stamp, and what it shows of its
+   *  turn. */
+  private signature(block: Block): string {
+    const conversation = this.conversation;
+    switch (block.kind) {
+      case "activity-group":
+        return `${block.stamp}|${block.members.length}|${this.openStretches.has(block.key) ? "o" : ""}${block.agents ? `|${conversation.agentStamp}` : ""}`;
+      case "prose": {
+        const last = block.prose === "message" && conversation.lastMessageOf(block.turn) === block.key;
+        return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}`;
+      }
+      case "heard":
+        return `${block.stamp}|${block.turn && conversation.turnEnded(block.turn) ? "e" : ""}${block.turn && conversation.latestEnded() === block.turn ? "n" : ""}`;
+      case "question":
+        return `${block.stamp}|${this.editing.has(block.key) ? "e" : ""}${this.skipped.has(block.key) ? "s" : ""}`;
+      case "uncertain":
+        return `${block.stamp}|${this.conversation.hasTurns() ? "t" : ""}`;
+      default:
+        return String(block.stamp);
+    }
+  }
+
+  /** Draws what a slot shows, as its block now stands. */
+  private draw(slot: Slot): void {
+    const { block, element } = slot;
+    if (slot.signature === null) {
+      element.classList.remove("lazy");
+      element.style.height = "";
+    }
+    slot.signature = this.signature(block);
+    if (block.kind === "activity-group") {
+      this.stretch(slot, block);
+      return;
+    }
+    if (block.kind === "prose" && block.prose !== "plan") {
+      this.message(slot, block);
+      return;
+    }
+    this.letGo(block.key);
     element.innerHTML = this.entry(block);
-    return element;
+    if (this.openRows.has(block.key)) this.fill(block.key, element);
+  }
+
+  /** A message: its words, drawn as they grow, and once its turn is over,
+   *  what can be done to the turn. */
+  private message(slot: Slot, entry: ProseEntry): void {
+    if (!slot.prose) {
+      slot.prose = new StreamedProse();
+      slot.acts = document.createElement("div");
+      slot.acts.className = "message-acts";
+      slot.element.replaceChildren(slot.prose.element, slot.acts);
+    }
+    slot.prose.update(entry.text, entry.writing);
+    const acts = this.answerActs(entry);
+    if (slot.acts!.innerHTML !== acts) slot.acts!.innerHTML = acts;
+  }
+
+  /** The session is no longer followed: whether its model still works is
+   *  not known, and the line says nothing. */
+  unfollowed(): void {
+    this.followed = false;
+  }
+  private followed = true;
+
+  /** What the line at the foot says, or null when no turn is under way. */
+  private lineSays(blocks: readonly Block[]): LineSays | null {
+    if (!this.followed) return null;
+    const conversation = this.conversation;
+    const waiting = conversation.waiting();
+    const busy = conversation.busy();
+    // The first words are on their way, and nothing has come back.
+    const spoken = blocks.some((block) => block.kind === "heard" && (!block.from || block.from.kind === "user") && !block.notice && block.sending?.state !== "failed");
+    if (!conversation.spoke() && spoken && busy) return { kind: "starting" };
+    if (!waiting && !busy) return null;
+    let last: Block | undefined;
+    for (let index = blocks.length - 1; index >= 0 && !last; index -= 1) {
+      const block = blocks[index]!;
+      if (!(block.kind === "heard" && block.sending !== undefined && block.intoTurn)) last = block;
+    }
+    // A card waiting at the end says what it waits for, and a stretch under
+    // way at the end says the step itself: the line does not say it again.
+    if (waiting) return { kind: "waiting", said: !(last?.kind === "ask" && last.state.state === "waiting") };
+    const since = conversation.turnBegan();
+    const going =
+      last?.kind === "activity-group" &&
+      last.members.some((member) => (member.kind === "tool" && member.ended === null) || (member.kind === "prose" && member.writing));
+    if (going) return { kind: "working", step: null, since };
+    const { words } = this.context;
+    const doing = conversation.doing();
+    let step: string | null = null;
+    if (doing?.kind === "tool") {
+      const line = headline(doing.tool, null, words, (path) => conversation.attachmentName(path));
+      step = [line.action, line.object].filter(Boolean).join(" ");
+    } else if (doing?.kind === "prose" && doing.prose === "thinking") {
+      const titles = [...doing.text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]);
+      step = titles.length ? `${words.thought}：${titles[titles.length - 1]}` : words.thinking;
+    } else if (doing?.kind === "prose") step = words.answering;
+    return { kind: "working", step, since };
+  }
+
+  /** Words just sent rise from the input into their place, once the page
+   *  has laid them out; says whether any do. */
+  private flights(blocks: readonly Block[]): boolean {
+    const departure = this.context.departure;
+    if (!departure) return false;
+    let flying = false;
+    for (const block of blocks) {
+      if (block.kind !== "heard" || block.sending?.state !== "going" || this.flown.has(block.key)) continue;
+      this.flown.add(block.key);
+      const from = departure();
+      if (!from) continue;
+      // Flown once the page has laid this frame out, before it is painted.
+      queueMicrotask(() => fly(() => this.slots.get(block.key)?.element.querySelector<HTMLElement>(".bubble") ?? null, from));
+      flying = true;
+    }
+    return flying;
   }
 
   private entry(entry: Entry): string {
@@ -318,6 +560,11 @@ export class ConversationView {
       case "health":
         return `<div class="note caution" title="${escape(entry.health.text)}">${escape(this.context.words.health[entry.health.kind] ?? entry.health.text)}</div>`;
       case "uncertain":
+        // Words that never began a conversation: it could not start, and
+        // why, as it was given, where the first words wait.
+        if (!this.conversation.hasTurns()) {
+          return `<div class="start-failed"><p class="start-failed-said">${escape(words.startFailed)}</p><p class="start-failed-why">${escape(entry.why)}</p></div>`;
+        }
         return `<div class="note caution" title="${escape(entry.why)}">${escape(words.uncertain(entry.why))}</div>`;
       case "ask":
         return this.ask(entry);
@@ -336,19 +583,23 @@ export class ConversationView {
 
   /** Whether a message is the last its turn said, where what was done to
    *  the turn is offered. */
-  private lastOfTurn(entry: Extract<Entry, { kind: "prose" }>): boolean {
-    const later = this.conversation.entries.slice(this.conversation.entries.indexOf(entry) + 1);
-    return entry.prose === "message" && !later.some((other) => other.kind === "prose" && other.prose === "message" && other.turn === entry.turn);
+  private lastOfTurn(entry: ProseEntry): boolean {
+    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key;
+  }
+
+  /** The turn whose actions stay shown: the last that ended. */
+  private latest(turn: string): boolean {
+    return this.conversation.latestEnded() === turn;
   }
 
   /** Under a turn's last message, once the turn is over: copy its answer,
    *  ask again, fork from here, and what the turn took. The latest turn's
    *  stay shown; earlier ones come with the pointer. */
-  private answerActs(entry: Extract<Entry, { kind: "prose" }>): string {
+  private answerActs(entry: ProseEntry): string {
     if (entry.writing || !this.lastOfTurn(entry) || !this.conversation.turnEnded(entry.turn)) return "";
     const { words } = this.context;
-    const ended = this.conversation.entries.find((other): other is Extract<Entry, { kind: "ended" }> => other.kind === "ended" && other.turn === entry.turn);
-    const info = ended ? turnInfo(ended.end, words, this.context.english) : [];
+    const ended = this.conversation.get(`e:${entry.turn}`);
+    const info = ended?.kind === "ended" ? turnInfo(ended.end, words, this.context.english) : [];
     const icon = (act: string, name: Parameters<typeof glyph>[0], label: string, extra = "") =>
       `<button class="turn-icon" type="button" ${act} aria-label="${escape(label)}" title="${escape(label)}"${extra}>${glyph(name, 16)}</button>`;
     return `<div class="turn-acts answer-acts${this.latest(entry.turn) ? " latest" : ""}">${icon(`data-copy-turn="${escape(entry.turn)}"`, "copy", words.copyAnswer)}${icon(
@@ -391,11 +642,9 @@ export class ConversationView {
     const ask = readAsk(entry.request, entry.params, asks.words);
     // A change waiting for approval is the edit already shown above: its
     // files are named from there.
-    if (ask.kind === "files" && ask.item && !ask.paths.length) {
-      const tool = this.conversation.entries.find(
-        (candidate): candidate is ToolEntry => candidate.kind === "tool" && candidate.item === ask.item && candidate.turn === entry.turn,
-      );
-      if (tool?.tool.does.as === "edit") ask.paths = tool.tool.does.changes.map((change) => change.path);
+    if (ask.kind === "files" && ask.item && !ask.paths.length && entry.turn) {
+      const tool = this.conversation.get(`i:${entry.turn}:${ask.item}`);
+      if (tool?.kind === "tool" && tool.tool.does.as === "edit") ask.paths = tool.tool.does.changes.map((change) => change.path);
     }
     return drawAsk(entry.key, ask, entry.state, this.context.residentMachine, asks.words);
   }
@@ -406,7 +655,7 @@ export class ConversationView {
     const questions = this.context.questions;
     if (!questions) return `<div class="prose">${render(entry.questions.map((q) => q.title).join("\n\n"))}</div>`;
     if (this.skipped.has(entry.key) && !this.editing.has(entry.key)) {
-      return `<div class="question-card skipped"><p class="question-title">${plain(entry.questions[0]!.title)}</p><div class="question-foot"><button class="text-button quiet-button" type="button" data-question-change="${entry.key}">${escape(questions.words.answer)}</button></div></div>`;
+      return `<div class="question-card skipped"><p class="question-title">${plain(entry.questions[0]!.title)}</p><div class="question-foot"><button class="text-button quiet-button" type="button" data-question-change="${escape(entry.key)}">${escape(questions.words.answer)}</button></div></div>`;
     }
     return drawQuestions(entry.key, entry.questions, entry.answers, questions.words, this.editing.has(entry.key));
   }
@@ -415,7 +664,8 @@ export class ConversationView {
     const questions = this.context.questions;
     const card = target.closest<HTMLElement>(".question-card");
     const key = target.dataset.questionSend ?? target.dataset.questionSkip ?? target.dataset.questionChange ?? "";
-    const entry = this.conversation.entries.find((candidate): candidate is QuestionEntry => candidate.kind === "question" && candidate.key === key);
+    const found = this.conversation.get(key);
+    const entry = found?.kind === "question" ? found : undefined;
     if (!questions || !card || !entry) return;
     if (target.dataset.questionChange !== undefined) {
       this.editing.add(key);
@@ -500,7 +750,8 @@ export class ConversationView {
       target.classList.toggle("chosen", pressed);
       return;
     }
-    const entry = this.conversation.entries.find((candidate): candidate is AskEntry => candidate.kind === "ask" && candidate.key === target.dataset.ask);
+    const found = target.dataset.ask ? this.conversation.get(target.dataset.ask) : undefined;
+    const entry = found?.kind === "ask" ? found : undefined;
     if (!entry || entry.state.state !== "waiting") return;
     const ask = readAsk(entry.request, entry.params, asks.words);
     const given = target.dataset.decision !== undefined ? { decision: Number(target.dataset.decision) } : { submit: target.dataset.submit ?? "" };
@@ -553,10 +804,10 @@ export class ConversationView {
    *  take them back to change and send again. */
   private userActs(entry: HeardEntry): string {
     const { words } = this.context;
-    return `<div class="turn-acts user-acts${entry.turn && this.latest(entry.turn) ? " latest" : ""}"><button class="turn-icon" type="button" data-copy="${entry.key}" aria-label="${escape(words.copyMessage)}" title="${escape(words.copyMessage)}">${glyph("copy", 16)}</button><button class="turn-icon" type="button" data-turn-act="rewind" data-turn="${escape(entry.turn!)}" data-key="${entry.key}" data-needs="rewind" aria-label="${escape(words.rewind)}" title="${escape(words.rewind)}">${glyph("edit", 16)}</button></div>`;
+    return `<div class="turn-acts user-acts${entry.turn && this.latest(entry.turn) ? " latest" : ""}"><button class="turn-icon" type="button" data-copy="${escape(entry.key)}" aria-label="${escape(words.copyMessage)}" title="${escape(words.copyMessage)}">${glyph("copy", 16)}</button><button class="turn-icon" type="button" data-turn-act="rewind" data-turn="${escape(entry.turn!)}" data-key="${escape(entry.key)}" data-needs="rewind" aria-label="${escape(words.rewind)}" title="${escape(words.rewind)}">${glyph("edit", 16)}</button></div>`;
   }
 
-  /** A notice as one quiet line on the right, a mark before it; what it
+  /** A notice as one quiet line on the left, a mark before it; what it
    *  holds (last lines, an answer) folded under it until opened. */
   private noticeLine(entry: HeardEntry, notice: Notice): string {
     const { words } = this.context;
@@ -615,7 +866,7 @@ export class ConversationView {
     const line = `<span class="notice-mark${ok ? "" : " wrong"}">${mark}</span><span class="notice-said">${escape(said)}</span>`;
     if (!more) return `<div class="notice-line${ok ? "" : " failed"}">${line}</div>`;
     const open = this.openRows.has(entry.key);
-    return `<div class="notice-line${ok ? "" : " failed"}"><button class="notice-open" type="button" data-open="${entry.key}" aria-expanded="${open}">${line}${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>`;
+    return `<div class="notice-line${ok ? "" : " failed"}"><button class="notice-open" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}">${line}${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>`;
   }
 
   /** What a notice holds, opened: a job's last lines and where its output
@@ -702,26 +953,33 @@ export class ConversationView {
     }
   }
 
-  /** A stretch's element, made once and brought up to date in place: its
-   *  heading's words, and its rows, each drawn again only when it changed. */
-  private stretch(group: Activity): Stretch {
-    let stretch = this.stretches.get(group.key);
+  /** A stretch, made once and brought up to date in place: its heading's
+   *  words, and, while it is open, its rows, each drawn again only when it
+   *  changed. */
+  private stretch(slot: Slot, group: Activity): void {
+    let stretch = slot.stretch;
     if (!stretch) {
-      const element = document.createElement("div");
-      element.className = "block block-activity";
-      element.dataset.key = group.key;
       const open = this.openStretches.has(group.key);
-      element.innerHTML = `<button class="group-head" type="button" data-fold="${group.key}" aria-expanded="${open}"><span class="group-title"></span><span class="row-stats group-stats"></span><span class="group-time"></span>${glyph("chevron", 16)}</button><div class="fold-box group-box"${open ? "" : ' style="height:0" inert'}><div class="rows"></div></div>`;
+      slot.element.innerHTML = `<button class="group-head" type="button" data-fold="${escape(group.key)}" aria-expanded="${open}"><span class="group-title"></span><span class="row-stats group-stats"></span><span class="group-time"></span>${glyph("chevron", 16)}</button><div class="fold-box group-box"${open ? "" : ' style="height:0" inert'}><div class="rows"></div></div>`;
       stretch = {
-        element,
-        head: element.querySelector<HTMLButtonElement>(".group-head")!,
-        box: element.querySelector<HTMLElement>(".group-box")!,
-        rows: element.querySelector<HTMLElement>(".rows")!,
+        head: slot.element.querySelector<HTMLButtonElement>(".group-head")!,
+        box: slot.element.querySelector<HTMLElement>(".group-box")!,
+        rows: slot.element.querySelector<HTMLElement>(".rows")!,
         drawn: new Map(),
+        heading: "",
       };
-      this.stretches.set(group.key, stretch);
+      slot.stretch = stretch;
     }
-    this.heading(stretch, group);
+    const heading = `${group.stamp}|${group.members.length}`;
+    if (stretch.heading !== heading) {
+      stretch.heading = heading;
+      this.heading(stretch, group);
+    }
+    if (this.openStretches.has(group.key)) this.rows(stretch, group);
+  }
+
+  /** A stretch's rows as its members now stand. */
+  private rows(stretch: Stretch, group: Activity): void {
     const rows = group.members.filter(visible).flatMap((member) => this.rowsOf(member));
     const present = new Set<string>();
     let previous: HTMLElement | null = null;
@@ -754,7 +1012,6 @@ export class ConversationView {
         stretch.drawn.delete(key);
       }
     }
-    return stretch;
   }
 
   /** A stretch's heading: while it runs, the step it is on, how many steps
@@ -802,8 +1059,13 @@ export class ConversationView {
       }
       stats = added || removed ? `<span class="add">+${added}</span><span class="del">−${removed}</span>` : "";
     }
-    const began = tools.length ? Math.min(...tools.map((tool) => tool.began)) : null;
-    const ended = !running && tools.length && tools.every((tool) => tool.ended) ? Math.max(...tools.map((tool) => tool.ended!.at)) : null;
+    let began: number | null = null;
+    let last: number | null = null;
+    for (const tool of tools) {
+      if (began === null || tool.began < began) began = tool.began;
+      if (tool.ended && (last === null || tool.ended.at > last)) last = tool.ended.at;
+    }
+    const ended = !running && tools.length && tools.every((tool) => tool.ended) ? last : null;
     const titleElement = stretch.head.querySelector<HTMLElement>(".group-title")!;
     if (titleElement.textContent !== title) {
       // The step in hand changes in place: the new words fade in, the line
@@ -822,59 +1084,29 @@ export class ConversationView {
     if (running && began !== null) {
       time.dataset.since = String(began);
       time.dataset.steps = String(steps);
+      this.clocks.add(time);
     } else {
       delete time.dataset.since;
+      this.clocks.delete(time);
       const said = [running || steps < 2 ? "" : words.steps(steps), began !== null && ended !== null ? words.took(ended - began) : ""].filter(Boolean).join(" · ");
       if (time.textContent !== said) time.textContent = said;
     }
   }
 
-  /** Brings the running stretches' clocks, and the turn's, up to date,
-   *  once a second while any runs. */
+  /** Brings the running stretches' clocks up to date, once a second while
+   *  any runs. */
   private tick(): void {
-    const clocks = [...this.root.querySelectorAll<HTMLElement>(".group-time[data-since]")];
     const { words } = this.context;
-    for (const clock of clocks) {
+    for (const clock of this.clocks) {
+      if (!clock.isConnected || clock.dataset.since === undefined) {
+        this.clocks.delete(clock);
+        continue;
+      }
       const said = [words.steps(Number(clock.dataset.steps)), words.took(Date.now() - Number(clock.dataset.since))].join(" · ");
       if (clock.textContent !== said) clock.textContent = said;
     }
-    const turn = this.status.isConnected ? this.status.querySelector<HTMLElement>(".turn-status-time[data-since]") : null;
-    if (turn) {
-      const said = words.took(Date.now() - Number(turn.dataset.since));
-      if (turn.textContent !== said) turn.textContent = said;
-    }
     clearTimeout(this.ticking);
-    if (clocks.length || turn) this.ticking = window.setTimeout(() => this.tick(), 1000);
-  }
-
-  /** The turn's line: what it is doing now and since when, or that it
-   *  waits on the user; none when no turn runs. */
-  private drawStatus(): boolean {
-    const { words } = this.context;
-    const waiting = this.conversation.waiting();
-    const busy = this.conversation.busy();
-    if (!waiting && !busy) return false;
-    const doing = this.conversation.doing();
-    let step = words.working;
-    if (waiting) step = words.waitingForYou;
-    else if (doing?.kind === "tool") {
-      const line = headline(doing.tool, null, words, (path) => this.conversation.attachmentName(path));
-      step = [line.action, line.object].filter(Boolean).join(" ");
-    } else if (doing?.kind === "prose" && doing.prose === "thinking") {
-      const titles = [...doing.text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]);
-      step = titles.length ? `${words.thought}：${titles[titles.length - 1]}` : words.thinking;
-    } else if (doing?.kind === "prose") step = words.answering;
-    this.status.classList.toggle("waiting", waiting);
-    const stepElement = this.status.querySelector<HTMLElement>(".turn-status-step")!;
-    if (stepElement.textContent !== step) stepElement.textContent = step;
-    const time = this.status.querySelector<HTMLElement>(".turn-status-time")!;
-    const began = this.conversation.turnBegan();
-    if (began !== null && !waiting) time.dataset.since = String(began);
-    else {
-      delete time.dataset.since;
-      time.textContent = "";
-    }
-    return true;
+    if (this.clocks.size) this.ticking = window.setTimeout(() => this.tick(), 1000);
   }
 
   /** The rows a member stands for: a run's writes have one each, after its
@@ -892,12 +1124,16 @@ export class ConversationView {
     ];
   }
 
+  private memberSignature(entry: Entry): string {
+    if (entry.kind === "tool" && this.conversation.agentOf(entry)) return `${entry.stamp}a${this.conversation.agentStamp}`;
+    return String(entry.stamp);
+  }
+
   /** A file a run wrote: made, changed or removed, its lines added and
    *  taken away beside its name, the machine where it was not here; opened,
    *  the change with its line numbers. */
   private writeRow(key: string, write: WriteFact): string {
-    const enter = this.settled && !this.seen.has(key) ? " entering" : "";
-    this.seen.add(key);
+    const enter = this.entering(key);
     const { words } = this.context;
     const line = writeHeadline(write, words);
     const open = this.openRows.has(key);
@@ -911,17 +1147,29 @@ export class ConversationView {
     const fold = expandable ? `<div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>` : "";
     // A change that could not be read line by line says why on hover.
     const why = write.unavailable ? ` title="${escape(write.unavailable)}"` : "";
-    return `<div class="row row-tool row-done${enter}" data-row="${key}"><span class="rail">${glyph(line.glyph)}</span><button class="row-line" type="button" ${expandable ? `data-open="${key}"` : "disabled"} aria-expanded="${open}"${why}><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object" title="${escape(write.path)}">${escape(line.object ?? "")}</span><span class="row-meta">${stats}${elsewhere}${chevron}</span></span></button>${fold}</div>`;
+    return `<div class="row row-tool row-done${enter}" data-row="${escape(key)}"><span class="rail">${glyph(line.glyph)}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(key)}"` : "disabled"} aria-expanded="${open}"${why}><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object" title="${escape(write.path)}">${escape(line.object ?? "")}</span><span class="row-meta">${stats}${elsewhere}${chevron}</span></span></button>${fold}</div>`;
   }
 
+  /** Whether a row comes in as it is first drawn: once, for a row new to a
+   *  conversation already drawn. A stretch opened for the first time shows
+   *  its rows as they are. */
+  private entering(key: string): string {
+    const enter = this.live && this.seenOpen && !this.reading && !this.seen.has(key) ? " entering" : "";
+    this.seen.add(key);
+    return enter;
+  }
+  /** Rows are being drawn into a stretch already open. */
+  private seenOpen = true;
+  /** What is being drawn came as history. */
+  private reading = false;
+
   private member(entry: Entry): string {
-    const enter = this.settled && !this.seen.has(entry.key) ? " entering" : "";
-    this.seen.add(entry.key);
+    const enter = this.entering(entry.key);
     if (entry.kind === "prose") return this.thinking(entry, enter);
     if (entry.kind === "activity") {
-      return `<div class="row${enter}" data-row="${entry.key}"><span class="rail">${glyph("colleague")}</span><div class="row-line static"><span class="row-object">${escape(entry.text)}</span></div></div>`;
+      return `<div class="row${enter}" data-row="${escape(entry.key)}"><span class="rail">${glyph("colleague")}</span><div class="row-line static"><span class="row-object">${escape(entry.text)}</span></div></div>`;
     }
-    if (entry.kind !== "tool") return `<div data-row="${entry.key}"></div>`;
+    if (entry.kind !== "tool") return `<div data-row="${escape(entry.key)}"></div>`;
     const { words } = this.context;
     const line = headline(entry.tool, entry.ended, words, (path) => this.conversation.attachmentName(path), true);
     const tense = tenseOf(entry.ended);
@@ -954,10 +1202,10 @@ export class ConversationView {
     // What it did and on what, its figures beside it, the machine where it
     // was not here; how a command ended is in what it holds.
     const meta = `<span class="row-meta">${stats}${this.outcome(entry, tense)}${elsewhere}${chevron}</span>`;
-    return `<div class="row row-tool row-${tense}${enter}" data-row="${entry.key}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${entry.key}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest">${object}${meta}</span></button>${colleague}${sub}${fold}</div>`;
+    return `<div class="row row-tool row-${tense}${enter}" data-row="${escape(entry.key)}"><span class="rail">${mark}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(entry.key)}"` : "disabled"} aria-expanded="${open}"><span class="row-action">${escape(line.action)}</span><span class="row-rest">${object}${meta}</span></button>${colleague}${sub}${fold}</div>`;
   }
 
-  private thinking(entry: Extract<Entry, { kind: "prose" }>, enter: string): string {
+  private thinking(entry: ProseEntry, enter: string): string {
     const { words } = this.context;
     // Its words are shown only where the host gave them; none are made up.
     const empty = !entry.text.trim();
@@ -971,7 +1219,7 @@ export class ConversationView {
     const object = empty && !entry.writing ? words.thoughtHidden : title;
     const chevron = empty ? "" : `<span class="row-chevron">${glyph("chevron", 16)}</span>`;
     const fold = empty ? "" : `<div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>`;
-    return `<div class="row row-thinking${entry.writing ? " row-running" : ""}${empty ? " withheld" : ""}${enter}" data-row="${entry.key}"><span class="rail">${glyph("thinking")}</span><button class="row-line" type="button" ${empty ? "disabled" : `data-open="${entry.key}"`} aria-expanded="${open}"><span class="row-action">${escape(words.thought)}</span><span class="row-rest">${object ? `<span class="row-object">${escape(object)}</span>` : ""}<span class="row-meta">${chevron}</span></span></button>${fold}</div>`;
+    return `<div class="row row-thinking${entry.writing ? " row-running" : ""}${empty ? " withheld" : ""}${enter}" data-row="${escape(entry.key)}"><span class="rail">${glyph("thinking")}</span><button class="row-line" type="button" ${empty ? "disabled" : `data-open="${escape(entry.key)}"`} aria-expanded="${open}"><span class="row-action">${escape(words.thought)}</span><span class="row-rest">${object ? `<span class="row-object">${escape(object)}</span>` : ""}<span class="row-meta">${chevron}</span></span></button>${fold}</div>`;
   }
 
   private outcome(entry: ToolEntry, tense: string): string {
@@ -1087,12 +1335,12 @@ export class ConversationView {
     content.replaceChildren();
     const split = key.indexOf(WRITE);
     if (split !== -1) {
-      const owner = this.conversation.entries.find((candidate) => candidate.key === key.slice(0, split));
+      const owner = this.conversation.get(key.slice(0, split));
       const write = owner?.kind === "tool" ? owner.tool.run?.writes.find((one) => one.id === key.slice(split + 1)) : undefined;
       if (write) this.fillWrite(key, write, content);
       return;
     }
-    const entry = this.conversation.entries.find((candidate) => candidate.key === key);
+    const entry = this.conversation.get(key);
     if (!entry) return;
     if (entry.kind === "heard") {
       this.noticeDetails(entry, content);
@@ -1157,13 +1405,17 @@ export class ConversationView {
       surface.append(holder);
     };
     // What the model got, and beside it in the full-screen view the whole
-    // output on its machine, where the model got less than the whole.
+    // output on its machine, where the model got less than the whole or the
+    // command went on after the model had its answer.
     let printed: string | LongLines = output;
     if (run && shown) {
       const others: OtherSource[] = [];
       const kept = run.output;
       const going = stillGoing(run.state);
-      if (kept && run.job && this.context.lines && (kept.cut || going)) {
+      // A command that went on in the background gave the model only what it
+      // wrote before then; the rest is in the file, after it ended as well.
+      const wentOn = tool.does.as === "command" && tool.does.job !== null;
+      if (kept && run.job && this.context.lines && (kept.cut || going || wentOn)) {
         const open = this.context.lines;
         const job = run.job;
         const whole = new WholeOutput(
@@ -1212,7 +1464,8 @@ export class ConversationView {
 
   /** Opens or closes a box under the line that was pressed, the line
    *  staying where it is: what is below moves down as it opens, up as it
-   *  closes. Open, it takes the height of what is in it as that grows. */
+   *  closes. Open, it takes the height of what is in it as that grows. The
+   *  same on every screen, with a pointer or a finger. */
   private async fold(box: HTMLElement, anchor: HTMLElement, open: boolean, filled: () => void): Promise<boolean> {
     this.context.reading();
     const motion = this.motionOf(box);
@@ -1261,7 +1514,7 @@ export class ConversationView {
       // Asking again sends the words of the turn's own question.
       const entry =
         target.dataset.turnAct === "rewind"
-          ? this.conversation.entries.find((candidate) => candidate.key === target.dataset.key)
+          ? this.conversation.get(target.dataset.key ?? "")
           : this.conversation.entries.find((candidate) => candidate.kind === "heard" && candidate.turn === turn && (!candidate.from || candidate.from.kind === "user"));
       this.context.turnAct?.(target.dataset.turnAct as "rewind" | "regenerate" | "fork", turn, entry?.kind === "heard" ? entry.text : null, entry?.kind === "heard" ? (entry.kept ?? []) : []);
       return;
@@ -1269,10 +1522,10 @@ export class ConversationView {
     if (target.dataset.copy || target.dataset.copyTurn) {
       // A message is copied as it was written, in its Markdown; a turn's
       // answer as all it said.
-      const entry = this.conversation.entries.find((candidate) => candidate.key === target.dataset.copy);
+      const entry = target.dataset.copy ? this.conversation.get(target.dataset.copy) : undefined;
       const text = target.dataset.copyTurn
         ? this.conversation.entries
-            .filter((candidate): candidate is Extract<Entry, { kind: "prose" }> => candidate.kind === "prose" && candidate.prose === "message" && candidate.turn === target.dataset.copyTurn)
+            .filter((candidate): candidate is ProseEntry => candidate.kind === "prose" && candidate.prose === "message" && candidate.turn === target.dataset.copyTurn)
             .map((candidate) => candidate.text)
             .join("\n\n")
         : entry?.kind === "prose" || entry?.kind === "heard"
@@ -1302,13 +1555,21 @@ export class ConversationView {
     }
     if (target.dataset.fold) {
       const key = target.dataset.fold;
-      const stretch = this.stretches.get(key);
-      if (!stretch) return;
+      const slot = this.slots.get(key);
+      const stretch = slot?.stretch;
+      if (!slot || !stretch || slot.block.kind !== "activity-group") return;
+      const group = slot.block;
       const open = !this.openStretches.has(key);
       if (open) this.openStretches.add(key);
       else this.openStretches.delete(key);
+      slot.signature = this.signature(group);
       target.setAttribute("aria-expanded", String(open));
-      void this.fold(stretch.box, target, open, () => {});
+      void this.fold(stretch.box, target, open, () => {
+        // Its rows are made as it opens, as they now stand.
+        this.seenOpen = false;
+        this.rows(stretch, group);
+        this.seenOpen = true;
+      });
       return;
     }
     const key = target.dataset.open;
@@ -1324,12 +1585,6 @@ export class ConversationView {
       if (done && !open) this.letGo(key);
     });
   }
-}
-
-/** What of a run's facts its row shows, so that the row is drawn again when
- *  they change. */
-function runStamp(run: RunFacts | undefined): string {
-  return run ? `r${run.state.kind}${run.spans.length}${run.writes.length}${run.output?.lines ?? ""}` : "";
 }
 
 /** Whether what a run started still runs, its output still growing. */

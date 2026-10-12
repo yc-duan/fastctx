@@ -6,6 +6,8 @@ import { enProblems, failure, zhProblems } from "./problem";
 
 export interface RemovalWords {
   title: string;
+  /** The settings' row that opens the uninstall dialog. */
+  open: string;
   keep: string;
   keepWhat: string;
   keepMore: string;
@@ -74,6 +76,7 @@ export function groupOf(kind: string): RemovalGroup {
 
 export const zhRemoval: RemovalWords = {
   title: "卸载",
+  open: "卸载 World",
   keep: "保留数据",
   keepWhat: "重新安装后继续使用",
   keepMore: "移除程序、开机服务与 Codex、Claude Code 中的接入；保留记录、登录和机器身份。",
@@ -148,6 +151,7 @@ export const zhRemoval: RemovalWords = {
 
 export const enRemoval: RemovalWords = {
   title: "Uninstall",
+  open: "Uninstall World",
   keep: "Keep data",
   keepWhat: "Pick up where you left off after reinstalling",
   keepMore: "Removes the program, startup service and the Codex and Claude Code integrations; keeps records, logins and this machine's identity.",

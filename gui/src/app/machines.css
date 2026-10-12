@@ -10,6 +10,7 @@
 }
 
 .machines-layout {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -26,10 +27,32 @@
   overflow: hidden;
 }
 
+/* The details lie over the drawing's right side when opened: the drawing
+   keeps its place and its size, so nothing on it jumps. */
 .machines-layout > .machine-panel {
-  flex: 0 0 min(380px, 42%);
-  position: relative;
+  position: absolute;
+  top: 0;
+  right: var(--gutter);
+  bottom: var(--gutter);
+  z-index: 8;
+  width: min(380px, 42%);
   overflow-y: auto;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  animation: map-panel-in var(--fold) var(--fold-easing) both;
+}
+
+@keyframes map-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .machines-layout > .machine-panel {
+    animation: none;
+  }
 }
 
 .machines-canvas.alone .machine-map {

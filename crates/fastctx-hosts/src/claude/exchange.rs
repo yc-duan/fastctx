@@ -145,7 +145,7 @@ pub fn limits(world: &Path) -> Vec<(PathBuf, fastctx_types::agents::AgentLimits)
     readings
 }
 
-/// The newest model row each session's mod observed, attributed by transcript home.
+/// The models each session's login offers, from the aliases its mod observed, attributed by transcript home.
 pub fn models(world: &Path) -> io::Result<Vec<(PathBuf, Timestamp, Vec<fastctx_types::agents::AgentModel>)>> {
     #[derive(Deserialize)]
     struct Reading {
@@ -170,23 +170,8 @@ pub fn models(world: &Path) -> io::Result<Vec<(PathBuf, Timestamp, Vec<fastctx_t
             continue;
         }
         let Some(transcript) = transcript(&directory)? else { continue };
-        let models = reading
-            .models
-            .into_iter()
-            .map(|model| fastctx_types::agents::AgentModel {
-                model: model.id.clone(),
-                display_name: model.name.unwrap_or_else(|| model.id.clone()),
-                id: model.id,
-                description: model.description.unwrap_or_default(),
-                is_default: model.default,
-                default_reasoning_effort: model.default_effort.unwrap_or_default(),
-                reasoning_efforts: model
-                    .efforts
-                    .into_iter()
-                    .map(|effort| fastctx_types::agents::ReasoningEffort { effort, description: String::new() })
-                    .collect(),
-            })
-            .collect();
+        let aliases: Vec<String> = reading.models.into_iter().map(|model| model.id).collect();
+        let models = super::models::agent_models(Some(&aliases));
         readings.push((transcript, reading.at, models));
     }
     readings.sort_by(|(_, a, _), (_, b, _)| b.cmp(a));
