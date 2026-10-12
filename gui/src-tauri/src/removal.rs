@@ -205,11 +205,12 @@ fn finish(_app: &AppHandle, everything: bool) -> Result<(), String> {
     // World's WebView2 processes outlive it by a moment and hold the
     // application data a complete removal deletes, so the uninstaller waits
     // for every process World started, found by parent and by having started
-    // after World, as well as for World itself.
+    // after World, as well as for World itself; this waiting PowerShell is
+    // one of World's children too, and is not waited for.
     let script = format!(
         "$ErrorActionPreference='Stop'; $born=[DateTime]::FromFileTimeUtc([long]{token}); \
          $all=@(Get-CimInstance Win32_Process); $tree=@({pid}); \
-         for ($i=0; $i -lt $tree.Count; $i++) {{ $tree += @($all | Where-Object {{ $_.ParentProcessId -eq $tree[$i] -and $_.CreationDate.ToUniversalTime() -ge $born }} | ForEach-Object {{ [int]$_.ProcessId }}) }}; \
+         for ($i=0; $i -lt $tree.Count; $i++) {{ $tree += @($all | Where-Object {{ $_.ParentProcessId -eq $tree[$i] -and $_.ProcessId -ne $PID -and $_.CreationDate.ToUniversalTime() -ge $born }} | ForEach-Object {{ [int]$_.ProcessId }}) }}; \
          $p=Get-Process -Id {pid} -ErrorAction SilentlyContinue; \
          if ($null -ne $p -and $p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -eq {token}) {{ $p.WaitForExit() }}; \
          @($tree | Select-Object -Skip 1 | ForEach-Object {{ Get-Process -Id $_ -ErrorAction SilentlyContinue }} | Where-Object {{ $_.StartTime.ToUniversalTime() -ge $born }}) | ForEach-Object {{ $_.WaitForExit() }}; \
