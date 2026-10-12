@@ -212,6 +212,7 @@ function reports($, context) {
     event: (kind, fields) => event($, context, kind, fields),
     stream: context.observe,
     stored: context.stored,
+    thought: context.thought,
     save: (state) => {
       context.streamBatch = null
       const body = JSON.stringify({ process: context.hostProcess, ...state })
@@ -547,6 +548,9 @@ async function startSession($, context) {
   // Claude Code keeps a record before its file has it; the node waits for
   // the last one kept when it reads the file.
   context.stored = (uuid) => streamEvent($, context, { kind: 'stored', uuid })
+  // Which live thinking item a stored row ended: the node finds that row in
+  // the file for Claude Code's own measure of it and the request's usage.
+  context.thought = ({ uuid, turn, item }) => streamEvent($, context, { kind: 'thought', uuid, turn, item })
 }
 
 // Whether a turn starting with `started` is the one that took the prompt

@@ -30,6 +30,7 @@ pub mod management;
 pub(crate) mod pairing;
 mod process;
 mod rewind;
+mod thoughts;
 mod titles;
 pub(crate) mod turn_facts;
 
@@ -52,6 +53,7 @@ use crate::Node;
 
 pub struct Claude {
     title_files: titles::Files,
+    thoughts: thoughts::Thoughts,
     state: Mutex<State>,
     bridge: control::Bridge,
     delivering: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
@@ -82,6 +84,7 @@ impl Claude {
         let root = world.path().join("resident-cache");
         Ok(Self {
             title_files: Default::default(),
+            thoughts: Default::default(),
             state: Mutex::new(State {
                 sessions: HashMap::new(),
                 observed: HashSet::new(),
@@ -333,6 +336,17 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                     exchange::Reported::Stored { uuid } => {
                         node.claude.state.lock().expect("never poisoned").stored.insert(session.clone(), uuid);
                     }
+                    exchange::Reported::Thought { uuid, turn, item } => match exchange::transcript(directory)? {
+                        Some(path) => {
+                            let claim = thoughts::Claim { resident: resident.clone(), turn, item };
+                            if let Some(ready) = node.claude.thoughts.claim(&path, uuid, claim) {
+                                thoughts::show(node, ready).await?;
+                            }
+                        }
+                        None => node
+                            .log
+                            .line(format_args!("{session} ended thinking in a record whose file its mod never named")),
+                    },
                     exchange::Reported::Ended { reason, instance } => {
                         let current = node
                             .claude

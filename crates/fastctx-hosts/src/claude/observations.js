@@ -38,7 +38,7 @@ function agentReports(base, agentId) {
       return base.event('agent', { agent_id: agentId, report: { kind, ...fields } })
     },
     stream: (happened) => base.stream(wrap(happened)),
-    stored: () => {}, save: async () => {},
+    stored: () => {}, thought: () => {}, save: async () => {},
   }
 }
 
