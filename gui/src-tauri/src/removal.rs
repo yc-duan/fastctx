@@ -106,16 +106,24 @@ pub async fn removal_run(
         .filter(|step| step.kind != "logout")
         .map(|step| step.id.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    let handoff =
-        tempfile::Builder::new().prefix("world-removal-handoff-").tempdir().map_err(|error| error.to_string())?;
-    fastctx_platform::ensure_private_dir(handoff.path()).map_err(|error| error.to_string())?;
-    command.arg("--application-control").arg(handoff.path().join("finish"));
+    // Only the deb's removal on Linux is handed a control file. Elsewhere
+    // nothing reads it, and its directory would outlive World, which exits
+    // without dropping its state.
+    let handoff = if cfg!(target_os = "linux") {
+        let handoff =
+            tempfile::Builder::new().prefix("world-removal-handoff-").tempdir().map_err(|error| error.to_string())?;
+        fastctx_platform::ensure_private_dir(handoff.path()).map_err(|error| error.to_string())?;
+        command.arg("--application-control").arg(handoff.path().join("finish"));
+        Some(handoff)
+    } else {
+        None
+    };
     command.arg("--application-process").arg(
         serde_json::to_string(&fastctx_platform::current_identity().map_err(|error| error.to_string())?)
             .map_err(|error| error.to_string())?,
     );
     let state = app.state::<State>();
-    *state.0.lock().expect("removal state") = Completed { ready: false, handoff: Some(handoff) };
+    *state.0.lock().expect("removal state") = Completed { ready: false, handoff };
     let result_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         use std::io::{BufRead as _, Read as _};
