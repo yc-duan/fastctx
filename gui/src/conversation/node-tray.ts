@@ -3,7 +3,9 @@
 // device shows the same files; a file goes to that machine as soon as it is
 // attached, and any device can take one out. What this device is still
 // sending, before the node lists it, is shown too, with its picture where
-// the page holds the bytes.
+// the page holds the bytes; once listed, it is one row, as this device's
+// own upload has it. One whose connection broke waits to go on from where
+// it stopped (`world-network.md`, 断开不是结束).
 //
 // For an agent lent to the user, files other than images go to one of the
 // user's machines (`world-run.md`, 借来的智能体没有「这里」), without asking.
@@ -65,17 +67,24 @@ export class NodeTray {
       }
       const id = button.dataset.remove!;
       if (this.sending.has(id)) {
-        this.sending.delete(id);
-        try {
-          this.session.forgetOperation(id);
-        } catch {
-          // Still on its way: it is listed again once the node has it.
-        }
+        this.forget(id);
         this.draw();
         return;
       }
+      // This device's own upload goes no further once taken out.
+      const operation = this.draft()?.uploads.find((one) => one.id === id)?.operation;
+      if (operation && this.sending.has(operation)) this.forget(operation);
       this.session.detach(id, this.document).catch((error: unknown) => this.failed(String(error)));
     });
+  }
+
+  private forget(operation: string): void {
+    this.sending.delete(operation);
+    try {
+      this.session.forgetOperation(operation);
+    } catch {
+      // Still on its way: it is listed again once the node has it.
+    }
   }
 
   /** The words this tray holds the files of: the input's, or a queued
@@ -142,14 +151,16 @@ export class NodeTray {
     const operation = this.session.state.operations.find((one) => !before.has(one.id));
     if (operation) this.sending.set(operation.id, file);
     this.draw();
+    // One the user took out says nothing more.
+    const kept = () => !operation || this.sending.has(operation.id);
     done.then(
       (added) => {
+        if (kept() && "Err" in added.updated) this.failed(this.words.failed(added.updated.Err));
         if (operation) this.sending.delete(operation.id);
-        if ("Err" in added.updated) this.failed(this.words.failed(added.updated.Err));
         this.draw();
       },
       (error: unknown) => {
-        this.failed(this.words.failed(String(error)));
+        if (kept()) this.failed(this.words.failed(String(error)));
         this.draw();
       },
     );
@@ -160,23 +171,34 @@ export class NodeTray {
     const { words } = this;
     const draft = this.draft(state);
     const operations = new Map((state?.operations ?? []).map((operation) => [operation.id, operation]));
-    const item = (key: string, name: string, image: boolean, preview: string | null, fact: string, failed: string | null, retry: string | null) => {
+    const item = (key: string, name: string, image: boolean, preview: string | null, fact: string, failed: string | null, retry: string | null, why: string | null = null) => {
       const picture = preview ? `<img class="attach-thumb" src="${escape(preview)}" alt="">` : `<span class="attach-thumb attach-glyph">${glyph(image ? "image" : "file", 18)}</span>`;
-      const said = failed ? `<span class="attach-fact wrong" title="${escape(failed)}">${escape(words.failed(failed))}</span>` : fact ? `<span class="attach-fact">${escape(fact)}</span>` : "";
+      const said = failed ? `<span class="attach-fact wrong" title="${escape(failed)}">${escape(words.failed(failed))}</span>` : fact ? `<span class="attach-fact"${why ? ` title="${escape(why)}"` : ""}>${escape(fact)}</span>` : "";
       const again = retry ? `<button class="attach-act" type="button" data-retry="${escape(retry)}">${escape(words.retry)}</button>` : "";
-      return `<li class="attach-item ${failed ? "failed" : fact === words.sending ? "sending" : "ready"}">${picture}<span class="attach-text"><span class="attach-name" title="${escape(name)}">${escape(name)}</span>${said}</span>${again}<button class="attach-remove" type="button" data-remove="${escape(key)}" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></li>`;
+      return `<li class="attach-item ${failed ? "failed" : fact === words.sending || fact === words.resuming ? "sending" : "ready"}">${picture}<span class="attach-text"><span class="attach-name" title="${escape(name)}">${escape(name)}</span>${said}</span>${again}<button class="attach-remove" type="button" data-remove="${escape(key)}" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></li>`;
     };
+    // How an upload stands: as this device's own operation has it while it
+    // has one, else as the node says.
+    const standing = (operation: string | null, error: string | null) => {
+      const own = operation === null ? undefined : operations.get(operation);
+      if (own?.status === "failed" && own.broken) return { fact: words.resuming, failed: null, retry: null, why: own.error?.message ?? null };
+      if (own?.status === "failed") return { fact: words.sending, failed: own.error?.message ?? "", retry: operation, why: null };
+      if (own) return { fact: words.sending, failed: null, retry: null, why: null };
+      return { fact: words.sending, failed: error, retry: null, why: null };
+    };
+    const listed = new Set((draft?.uploads ?? []).flatMap((one) => (one.operation ? [one.operation] : [])));
     const rows = [
       ...(draft?.attachments ?? []).map((one) =>
         item(one.id, one.name, one.media_type.startsWith("image/") || IMAGE.test(one.name), this.previews.get(`${one.name}:${one.size}`) ?? null, words.size(one.size), null, null),
       ),
-      ...(draft?.uploads ?? []).map((one) =>
-        item(one.id, one.file.name, one.file.media_type.startsWith("image/"), this.previews.get(`${one.file.name}:${one.file.size}`) ?? null, words.sending, one.error, null),
-      ),
-      ...[...this.sending].map(([id, file]) => {
-        const operation = operations.get(id);
-        const failed = operation?.status === "failed" ? (operation.error?.message ?? "") : null;
-        return item(id, file.name, file.image, file.preview, words.sending, failed, failed !== null ? id : null);
+      ...(draft?.uploads ?? []).map((one) => {
+        const operation = one.operation && this.sending.has(one.operation) ? one.operation : null;
+        const now = standing(operation, one.error);
+        return item(one.id, one.file.name, one.file.media_type.startsWith("image/"), this.previews.get(`${one.file.name}:${one.file.size}`) ?? null, now.fact, now.failed, now.retry, now.why);
+      }),
+      ...[...this.sending].filter(([id]) => !listed.has(id)).map(([id, file]) => {
+        const now = standing(id, null);
+        return item(id, file.name, file.image, file.preview, now.fact, now.failed, now.retry, now.why);
       }),
     ];
     this.element.hidden = rows.length === 0;

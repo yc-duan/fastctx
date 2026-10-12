@@ -142,7 +142,7 @@ pub fn fixtures() -> Fixtures {
                 },
                 max: 96,
             },
-            RemoteCall::Upload { target, file, composer: None },
+            RemoteCall::Upload { target, file, composer: None, resumes: false },
             RemoteCall::Talk {
                 to: owner.resident.clone(),
                 text: text.clone(),

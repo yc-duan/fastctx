@@ -117,3 +117,11 @@ pub enum AttachmentFileSource {
 /// an empty frame. This is a chunk size, not a file-size limit, and equals
 /// the network data message size so forwarding needs only one chunk.
 pub const UPLOAD_CHUNK: usize = 1 << 20;
+
+/// What the machine an upload goes to says first over its data connection
+/// when the call said it `resumes`: how many of the file's bytes it already
+/// holds from an earlier try of the same upload, which the sender skips.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadStart {
+    pub from: u64,
+}

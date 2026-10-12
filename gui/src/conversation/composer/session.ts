@@ -8,7 +8,7 @@ import type { ComposerJournal } from "./document";
 import { composerJournalStore } from "./journal";
 import type { ComposerJournalStore } from "./journal";
 import { composerWriter } from "./writer";
-import { unanswered } from "../../world/again";
+import { after, unanswered } from "../../world/again";
 
 export interface ComposerOperation {
   readonly id: string;
@@ -16,6 +16,8 @@ export interface ComposerOperation {
   readonly status: "pending" | "failed" | "completed";
   readonly error: Error | null;
   readonly result: ComposerUpdated | ComposerAttachmentAdded | null;
+  /** Failed for want of an answer, and goes again by itself. */
+  readonly broken: boolean;
 }
 
 export interface ComposerSessionState {
@@ -37,7 +39,7 @@ export interface ComposerSessionOptions {
   readonly journal?: ComposerJournalStore;
 }
 
-interface Operation extends ComposerOperation {
+interface Operation extends Omit<ComposerOperation, "broken"> {
   status: ComposerOperation["status"];
   error: Error | null;
   result: ComposerOperation["result"];
@@ -124,7 +126,7 @@ export class ComposerSession {
   get state(): ComposerSessionState {
     const entries = [...this.documents.values()];
     return { composer: this.snapshot, connected: this.connected, error: this.error,
-      operations: [...this.operations.values()].map(({ id, change, status, error, result }) => ({ id, change, status, error, result })),
+      operations: [...this.operations.values()].map(({ id, change, status, error, result, broken }) => ({ id, change, status, error, result, broken: !!broken })),
       editors: [...this.editors], recoveryKey: this.recoveryKey,
       saving: entries.some((entry) => entry.saving !== undefined), storageError: entries.find((entry) => entry.error)?.error ?? null,
       canSend: this.canSend(this.draft) };
@@ -203,12 +205,10 @@ export class ComposerSession {
     this.error = null;
     for (const document of this.documents.keys()) document.setConnected(true);
     // What broke with the connection goes again under its own id, so the
-    // node does it once (`world-network.md`, 断开不是结束); an upload is
-    // offered again by the one who made it.
+    // node does it once (`world-network.md`, 断开不是结束); an upload goes
+    // on from what its machine already holds.
     for (const operation of this.operations.values()) {
-      if (operation.status === "failed" && operation.broken && operation.change.do !== "upload") {
-        void this.run(operation).catch(() => {});
-      }
+      if (operation.status === "failed" && operation.broken) void this.run(operation).catch(() => {});
     }
     for (const waiting of this.waiting.splice(0)) waiting.resolve();
     this.emit();
@@ -221,15 +221,19 @@ export class ComposerSession {
     return new Promise((resolve, reject) => this.waiting.push({ resolve, reject }));
   }
 
-  /** Runs an operation until the node answers it: one that broke with the
-   *  connection goes again, as it was, once the connection is back. */
+  /** Runs an operation until the node answers it: one that broke goes
+   *  again, as it was, once the connection is back, or after the core's
+   *  wait when the connection never went (the way beyond it broke). */
   private async lasting(operation: Operation): Promise<ComposerUpdated | ComposerAttachmentAdded> {
-    for (;;) {
+    for (let tries = 1; ; tries += 1) {
       try {
         return await this.run(operation);
       } catch (error) {
-        if (!operation.broken || this.closed || this.closing) throw error;
+        const forgotten = () => this.operations.get(operation.id) !== operation;
+        if (!operation.broken || this.closed || this.closing || forgotten()) throw error;
+        if (this.connected) await new Promise<void>((resolve) => after(tries + 1, resolve));
         await this.untilConnected();
+        if (forgotten()) throw error;
         if (operation.status === "completed") return operation.result!;
         if (operation.flight) {
           try {
@@ -453,7 +457,7 @@ export class ComposerSession {
     const operation: Operation = { id, change: { do: "upload", target, epoch }, status: "pending", error: null, result: null, attempt: 0,
       run: () => run({ operation: id, target, epoch }) };
     this.operations.set(id, operation);
-    return this.run(operation) as Promise<ComposerAttachmentAdded>;
+    return this.lasting(operation) as Promise<ComposerAttachmentAdded>;
   }
 
   private pendingMetadata(target: ComposerTarget, epoch: number): Operation[] {
@@ -526,7 +530,7 @@ export class ComposerSession {
     const operation = this.operations.get(id);
     if (!operation) throw new Error("the composer operation is not retained");
     if (operation.status === "completed") return Promise.resolve(operation.result!);
-    return this.run(operation);
+    return this.lasting(operation);
   }
 
   forgetOperation(id: string): void {

@@ -274,6 +274,7 @@ fn nodes() -> Vec<NodesReply> {
         case_sensitive: os != "windows",
         version: "fixture-version".into(),
         completion_receipts: false,
+        upload_resumes: false,
         shell: String::new(),
         form: None,
         node_lifetime: lifetime.then(|| {

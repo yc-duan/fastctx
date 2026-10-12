@@ -20,6 +20,8 @@ export interface AttachWords {
   drop(agent: string): string;
   remove: string;
   sending: string;
+  /** An upload whose connection broke, waiting to go on from where it stopped. */
+  resuming: string;
   failed(why: string): string;
   retry: string;
   size(bytes: number): string;

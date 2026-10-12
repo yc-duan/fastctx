@@ -363,6 +363,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         case_sensitive: !cfg!(any(windows, target_os = "macos")),
         version: env!("CARGO_PKG_VERSION").to_string(),
         completion_receipts: true,
+        upload_resumes: true,
         shell: shell().clone(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -732,9 +733,9 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(RemoteReply::Uploaded)
                 }
-                RemoteCall::Upload { target, file, composer } => {
+                RemoteCall::Upload { target, file, composer, resumes } => {
                     let stream = stream.ok_or_else(|| Failure::new("an upload requires its data connection"))?;
-                    crate::attachments::receive(&node, &from, target, file, composer, stream)
+                    crate::attachments::receive(&node, &from, target, file, composer, resumes, stream)
                         .await
                         .map(crate::attachments::remote_reply)
                 }

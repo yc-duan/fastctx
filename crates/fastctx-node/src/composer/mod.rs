@@ -163,7 +163,9 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
         mutation.operation.clone(),
         Receipt { from: from.clone(), mutation: mutation.clone(), landed: None, failure: None },
     );
+    let forsaken = uploads::forsaken(state, &next);
     publish(node, id, &mut cell, next)?;
+    crate::attachments::forsake(node, id, &forsaken);
     let view = cell.as_ref().expect("loaded").view();
     drop(cell);
     drop(_reading);

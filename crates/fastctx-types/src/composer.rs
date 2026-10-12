@@ -37,6 +37,10 @@ pub struct Uploading {
     pub id: NoticeId,
     pub file: crate::attachments::UploadFile,
     pub error: Option<String>,
+    /// The upload operation it arrives under: the device sending it knows
+    /// its own. Older nodes do not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
 }
 
 /// Binds an attachment's entire upload lifetime to one shared draft.

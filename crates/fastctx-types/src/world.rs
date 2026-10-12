@@ -33,6 +33,10 @@ pub struct MachineFacts {
     /// Accepts confirmed end delivery separately from CLI consumption.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub completion_receipts: bool,
+    /// Keeps what arrived of a shared-input upload that broke, and takes it
+    /// up again from there (`RemoteCall::Upload::resumes`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub upload_resumes: bool,
     /// The bash `run` uses there, such as `bash 5.2.37 (Git for Windows,
     /// MSYS)`: on MSYS, arguments shaped like Unix paths are rewritten
     /// before a Windows program sees them (`world-run.md`). Empty when the

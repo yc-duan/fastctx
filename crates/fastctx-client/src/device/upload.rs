@@ -1,12 +1,16 @@
 //! Uploads retain the caller's reader and use one queued data block. The
 //! signed destination receipt is authoritative; an uncertain write is never
-//! repeated through a relay or another machine.
+//! repeated through a relay or another machine. A shared input's upload that
+//! broke is made again by its caller under the same operation, and goes on
+//! from what its destination holds: the reader gives the file whole, and
+//! what is held is skipped.
 
 use std::sync::{Arc, Mutex};
 
 use fastctx_net::link::Feed;
 use fastctx_types::MachineName;
-use fastctx_types::attachments::{UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
+use fastctx_types::attachments::{UPLOAD_CHUNK, UploadFile, UploadStart, UploadTarget, Uploaded};
+use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::sync::mpsc;
@@ -29,6 +33,7 @@ impl Device {
         };
         let session = self.reaching(&machine)?;
         let account = session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
+        let resumes = composer.is_some() && resumes_there(&session, &machine).await?;
         let size = file.size;
         let (sender, mut receiver) = mpsc::channel::<Option<Vec<u8>>>(1);
         let stream_error = Arc::new(Mutex::new(None));
@@ -36,9 +41,16 @@ impl Device {
         let feed: Feed = Box::new(move |mut stream| {
             Box::pin(async move {
                 let sending = async {
+                    let mut held = if resumes { stream.hear::<UploadStart>().await?.from } else { 0 };
                     while let Some(bytes) = receiver.recv().await {
                         match bytes {
-                            Some(bytes) => stream.send(&bytes).await?,
+                            Some(bytes) => {
+                                let skipped = held.min(bytes.len() as u64);
+                                held -= skipped;
+                                if (skipped as usize) < bytes.len() {
+                                    stream.send(&bytes[skipped as usize..]).await?;
+                                }
+                            }
                             None => {
                                 stream.say(&"uploaded").await?;
                                 return stream.finish().await;
@@ -56,8 +68,9 @@ impl Device {
                 Ok(())
             })
         });
-        let remote = RemoteCall::Upload { target: target.clone(), file: file.clone(), composer };
-        let answer = session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, remote, feed);
+        let remote = RemoteCall::Upload { target: target.clone(), file: file.clone(), composer, resumes };
+        let answer =
+            session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, remote, feed);
         let sending = async {
             let mut buffer = vec![0u8; UPLOAD_CHUNK];
             let mut sent = 0u64;
@@ -92,15 +105,20 @@ impl Device {
         let reply = match answered {
             Ok(Ok(reply)) => reply,
             error => {
-                let reason = match error {
-                    Ok(Err(error)) => error.to_string(),
-                    Err(error) => error.to_string(),
+                // A refusal keeps what it says of itself; a call that got
+                // no answer is made again.
+                let failure = match error {
+                    Ok(Err(error)) => error,
+                    Err(error) => Failure::unanswered(error.to_string()),
                     Ok(Ok(_)) => unreachable!(),
                 };
-                return Err(failed(match stream_error.lock().expect("never poisoned").take() {
-                    Some(error) => format!("{reason}; source stream: {error}"),
-                    None => reason,
-                }));
+                let failure = match stream_error.lock().expect("never poisoned").take() {
+                    Some(error) => {
+                        Failure { message: format!("{}; source stream: {error}", failure.message), ..failure }
+                    }
+                    None => failure,
+                };
+                return Err(crate::CallError::Failed(failure).into());
             }
         };
         let uploaded = match reply {
@@ -120,5 +138,17 @@ impl Device {
             return Err(failed("the upload receipt differs from the requested file or destination"));
         }
         Ok(uploaded)
+    }
+}
+
+/// Whether `machine` keeps what arrived of an upload that broke, and takes
+/// it up from there. A machine that cannot be asked cannot take the upload
+/// either.
+async fn resumes_there(session: &super::Session, machine: &MachineName) -> Result<bool, Error> {
+    let Ok(account) = session.account_for(machine, fastctx_types::access::Purpose::Look) else { return Ok(false) };
+    match session.link.call(machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
+        Ok(Ok(RemoteReply::Facts(facts))) => Ok(facts.upload_resumes),
+        Ok(_) => Ok(false),
+        Err(error) => Err(crate::CallError::Failed(Failure::unanswered(error.to_string())).into()),
     }
 }

@@ -28,35 +28,62 @@ impl UploadRecord {
     }
 }
 
-pub async fn cached(
+/// What became of an upload operation tried before.
+pub enum Prior {
+    /// None went under it.
+    Fresh,
+    /// It ended, and this was its answer.
+    Ended(fastctx_types::composer::UploadResult),
+    /// It broke while its file is still in the words: it goes on now, as
+    /// this attachment, from what arrived of it (`world-network.md`,
+    /// 断开不是结束).
+    Again(Attachment, Guard),
+}
+
+pub async fn prior(
     node: &Arc<Node>,
     id: &ResidentId,
     from: &MachineName,
     scope: &UploadScope,
     file: &UploadFile,
-) -> Result<Option<fastctx_types::composer::UploadResult>, Failure> {
+) -> Result<Prior, Failure> {
     node.ready().await;
+    let gate = node.residents.management(id)?;
+    let _reading = gate.read().await;
     node.residents.active(id)?;
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
     load(node, id, &mut cell)?;
     let state = cell.as_ref().expect("loaded");
-    let Some(record) = receipts::upload(node, id, state, &scope.operation)? else { return Ok(None) };
-    if record.scope != *scope || record.from != *from || record.attachment.file != *file {
+    let Some(mut record) = receipts::upload(node, id, state, &scope.operation)? else { return Ok(Prior::Fresh) };
+    if record.scope != *scope || record.from != *from {
         return Err(failure("that upload operation ID was reused for another device, file or draft"));
     }
-    match &record.outcome {
-        Outcome::Uploading => Err(failure("this upload operation is already in progress")),
-        outcome => {
-            crate::attachments::resolve(node, id, std::slice::from_ref(&record.attachment)).await?;
-            let updated = match outcome {
-                Outcome::Attached => Ok(Updated { composer: state.view(), landed: None }),
-                Outcome::Failed { why } | Outcome::Detached { why } => Err(Failure::new(why.clone())),
-                Outcome::Uploading => unreachable!(),
-            };
-            Ok(Some(fastctx_types::composer::UploadResult { attachment: record.attachment.clone(), updated }))
-        }
+    if record.attachment.file != *file {
+        return Err(failure(format!("{} changed since it was attached; attach it again", record.attachment.file.name)));
     }
+    let updated = match &record.outcome {
+        // The try before has not yet heard that its connection broke.
+        Outcome::Uploading => {
+            return Err(Failure::unanswered("composer: this upload is still arriving from an earlier try"));
+        }
+        Outcome::Failed { why } => {
+            let why = why.clone();
+            let mut next = state.clone();
+            if !mark(&mut next, scope, &record.attachment.id, None, &why) {
+                return Err(Failure::new(why));
+            }
+            record.outcome = Outcome::Uploading;
+            next.uploads.insert(scope.operation.clone(), record.clone());
+            publish(node, id, &mut cell, next)?;
+            let guard = Guard { node: node.clone(), id: id.clone(), scope: scope.clone(), armed: true };
+            return Ok(Prior::Again(record.attachment, guard));
+        }
+        Outcome::Attached => Ok(Updated { composer: state.view(), landed: None }),
+        Outcome::Detached { why } => Err(Failure::new(why.clone())),
+    };
+    crate::attachments::resolve(node, id, std::slice::from_ref(&record.attachment)).await?;
+    Ok(Prior::Ended(fastctx_types::composer::UploadResult { attachment: record.attachment, updated }))
 }
 
 pub async fn begin(
@@ -83,6 +110,7 @@ pub async fn begin(
         id: attachment.id.clone(),
         file: attachment.file.clone(),
         error: None,
+        operation: Some(scope.operation.clone()),
     });
     next.uploads.insert(
         scope.operation.clone(),
@@ -143,30 +171,58 @@ pub async fn failed(node: &Arc<Node>, id: &ResidentId, scope: &UploadScope, why:
     }
     let attachment = record.attachment.id.clone();
     next.uploads.get_mut(&scope.operation).expect("known upload").outcome = Outcome::Failed { why: why.into() };
-    mark_failed(&mut next, scope, &attachment, why);
+    mark(&mut next, scope, &attachment, Some(why), "");
     if let Err(error) = publish(node, id, &mut cell, next) {
         if let Some(state) = cell.as_mut() {
             if let Some(record) = state.uploads.get_mut(&scope.operation) {
                 record.outcome = Outcome::Failed { why: why.into() };
             }
-            mark_failed(state, scope, &attachment, why);
+            mark(state, scope, &attachment, Some(why), "");
         }
         return Err(error);
     }
     Ok(())
 }
 
-fn mark_failed(state: &mut Stored, scope: &UploadScope, attachment: &fastctx_types::NoticeId, why: &str) {
-    if let Ok(document) = state.document(&scope.target, scope.epoch)
-        && let Some(upload) = document.uploads.iter_mut().find(|upload| &upload.id == attachment)
-    {
-        upload.error = Some(why.into());
-    }
+/// Says `why` on the upload of `attachment` listed in the words of `scope`,
+/// and on the queued message it is in; `None` takes back the failure `was`
+/// of one that goes on again. Whether the words list it.
+fn mark(
+    state: &mut Stored,
+    scope: &UploadScope,
+    attachment: &fastctx_types::NoticeId,
+    why: Option<&str>,
+    was: &str,
+) -> bool {
+    let Ok(document) = state.document(&scope.target, scope.epoch) else { return false };
+    let Some(upload) = document.uploads.iter_mut().find(|upload| &upload.id == attachment) else { return false };
+    upload.error = why.map(Into::into);
     if let Target::Queued { id } = &scope.target
         && let Ok(entry) = state.entry(id)
+        && (why.is_some() || entry.error.as_deref() == Some(was))
     {
-        entry.error = Some(why.into());
+        entry.error = why.map(Into::into);
     }
+    true
+}
+
+/// Uploads the words listed in `before` and no longer list in `after` that
+/// are not arriving now: what arrived of them is left for nothing.
+pub(super) fn forsaken(before: &Stored, after: &Stored) -> Vec<fastctx_types::NoticeId> {
+    let listed = |state: &Stored| -> std::collections::HashSet<fastctx_types::NoticeId> {
+        std::iter::once(&state.draft)
+            .chain(state.queue.iter().chain(&state.unobserved).map(|entry| &entry.document))
+            .flat_map(|document| document.uploads.iter().map(|upload| upload.id.clone()))
+            .collect()
+    };
+    let (was, is) = (listed(before), listed(after));
+    let arriving: std::collections::HashSet<_> = after
+        .uploads
+        .values()
+        .filter(|record| matches!(record.outcome, Outcome::Uploading))
+        .map(|record| &record.attachment.id)
+        .collect();
+    was.into_iter().filter(|upload| !is.contains(upload) && !arriving.contains(upload)).collect()
 }
 
 pub async fn recover(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {

@@ -275,6 +275,12 @@ pub enum RemoteCall {
         file: crate::attachments::UploadFile,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         composer: Option<crate::composer::UploadScope>,
+        /// The caller skips what this machine already holds of an upload
+        /// that broke: this machine first says an `UploadStart`, and the
+        /// bytes from there on follow. Said only to a machine whose facts
+        /// say `upload_resumes`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        resumes: bool,
     },
     /// Watch a resident there: what it hands over goes over the call's data
     /// connection until the caller closes it, each piece signed by the

@@ -19,7 +19,7 @@ use fastctx_net::link::Feed;
 use fastctx_platform::FileLock;
 use fastctx_platform::ipc::FrameReader;
 use fastctx_types::access::{Acting, Purpose, Written};
-use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
+use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadStart, UploadTarget, Uploaded};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::{ConversationDir, Kind};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
@@ -63,8 +63,16 @@ fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(format!("upload: {error}"))
 }
 
+/// A transport failure of an upload: no answer about the file came, and
+/// the same upload goes again (`world-network.md`, 断开不是结束).
+fn broke(why: impl std::fmt::Display) -> Failure {
+    Failure::unanswered(format!("upload: the connection broke: {why}"))
+}
+
 /// Receives from a dedicated user IPC connection. A remote destination is
-/// fed directly from that connection, with no intermediate file.
+/// fed directly from that connection, with no intermediate file. A shared
+/// input's upload that broke goes on from what its destination holds of it:
+/// the uploader sends the file whole again, and what is held is skipped.
 pub async fn upload(
     node: &Arc<Node>,
     target: UploadTarget,
@@ -85,22 +93,23 @@ pub async fn upload(
         None => node.machine(),
     };
     if machine == node.machine() {
-        if let Some(cached) = cached(node, &node.machine(), &target, &file, composer.as_ref()).await? {
-            return Ok(cached);
-        }
-        let mut arriving = prepare(node, target, file).await?;
-        let mut guard = shared(node, &node.machine(), &arriving.attachment, composer.as_ref()).await?;
+        let (mut arriving, mut guard) =
+            match arrival(node, &node.machine(), target, file, composer.as_ref(), true).await? {
+                Arrival::Ended(uploaded) => return Ok(uploaded),
+                Arrival::Going(arriving, guard) => (arriving, guard),
+            };
+        let mut held = Skipping(arriving.received);
         let result = async {
             loop {
                 let piece = source
                     .recv_up_to(UPLOAD_CHUNK)
                     .await
-                    .map_err(failure)?
-                    .ok_or_else(|| failure("the uploader disconnected before ending the file"))?;
+                    .map_err(broke)?
+                    .ok_or_else(|| broke("the uploader disconnected before ending the file"))?;
                 if piece.is_empty() {
                     return finish(arriving, guard.as_mut()).await;
                 }
-                arriving.write(&piece)?;
+                arriving.write(held.past(&piece))?;
             }
         }
         .await;
@@ -113,19 +122,20 @@ pub async fn upload(
     }
     // The bytes come once, so the upload is tried for one account.
     let (link, account) = node.speaking(&Acting::Here, &(&machine).into(), Purpose::Agents).map_err(failure)?;
+    let resumes = composer.is_some() && resumes_there(&link, &machine, &account).await?;
     let size = file.size;
     let source_error = Arc::new(Mutex::new(None));
     let feeding_error = source_error.clone();
     let feed: Feed = Box::new(move |stream| {
         Box::pin(async move {
-            if let Err(reason) = forward(source, stream, size).await {
+            if let Err(reason) = forward(source, stream, size, resumes).await {
                 *feeding_error.lock().expect("never poisoned") = Some(reason);
             }
             // Keep the destination's verified receipt or explicit failure authoritative.
             Ok(())
         })
     });
-    let upload = RemoteCall::Upload { target, file, composer };
+    let upload = RemoteCall::Upload { target, file, composer, resumes };
     let answer = link.call_with_stream(&machine, &account, Purpose::Agents, upload, feed).await;
     let result = match answer {
         Ok(Ok(RemoteReply::Uploaded(attachment))) => return Ok(Uploaded { attachment, composer: None }),
@@ -133,42 +143,85 @@ pub async fn upload(
             return Ok(Uploaded { attachment: result.attachment, composer: Some(result.updated) });
         }
         Ok(Ok(_)) => failure(format!("{machine} answered something other than an upload")),
-        Ok(Err(error)) => Failure::new(format!("on {machine}: {}", error.message)),
-        Err(error) => failure(error),
+        Ok(Err(error)) => Failure { message: format!("on {machine}: {}", error.message), ..error },
+        Err(error) => broke(error),
     };
     match source_error.lock().expect("never poisoned").take() {
-        Some(reason) => Err(Failure::new(format!("{}; source stream: {reason}", result.message))),
+        Some(reason) => Err(Failure { message: format!("{}; source stream: {reason}", result.message), ..result }),
         None => Err(result),
     }
 }
 
-async fn cached(
-    node: &Arc<Node>,
-    from: &MachineName,
-    target: &UploadTarget,
-    file: &UploadFile,
-    scope: Option<&fastctx_types::composer::UploadScope>,
-) -> Result<Option<Uploaded>, Failure> {
-    let Some(scope) = scope else { return Ok(None) };
-    let UploadTarget::Resident { resident } = target else {
-        return Err(failure("a shared composer upload needs an existing resident"));
-    };
-    Ok(crate::composer::uploads::cached(node, resident, from, scope, file)
-        .await?
-        .map(|result| Uploaded { attachment: result.attachment, composer: Some(result.updated) }))
+/// Whether `machine` keeps what arrived of an upload that broke, and takes
+/// it up from there. A machine that cannot be asked cannot take the upload
+/// either.
+async fn resumes_there(
+    link: &fastctx_net::link::Link,
+    machine: &MachineName,
+    account: &fastctx_types::AccountName,
+) -> Result<bool, Failure> {
+    match link.call(machine, account, Purpose::Look, RemoteCall::Facts).await {
+        Ok(Ok(RemoteReply::Facts(facts))) => Ok(facts.upload_resumes),
+        Ok(_) => Ok(false),
+        Err(error) => Err(broke(error)),
+    }
 }
 
-async fn shared(
+/// Where an upload stands before its bytes come.
+enum Arrival {
+    /// It went before under its operation and ended, with this answer.
+    Ended(Uploaded),
+    /// Its bytes go here, from `Arriving::received` on.
+    Going(Arriving, Option<crate::composer::uploads::Guard>),
+}
+
+/// Readies the arrival of `file` for `target`, from `from`: a shared
+/// input's upload is known by its operation, and one that broke goes on
+/// from its part when the sender skips what is held (`resume`).
+async fn arrival(
     node: &Arc<Node>,
     from: &MachineName,
-    attachment: &Attachment,
+    target: UploadTarget,
+    file: UploadFile,
     scope: Option<&fastctx_types::composer::UploadScope>,
-) -> Result<Option<crate::composer::uploads::Guard>, Failure> {
-    match scope {
-        Some(scope) => {
-            crate::composer::uploads::begin(node, &attachment.owner.resident, from, scope, attachment).await.map(Some)
+    resume: bool,
+) -> Result<Arrival, Failure> {
+    use crate::composer::uploads::Prior;
+    let Some(scope) = scope else { return Ok(Arrival::Going(prepare(node, target, file).await?, None)) };
+    let UploadTarget::Resident { resident } = &target else {
+        return Err(failure("a shared composer upload needs an existing resident"));
+    };
+    let resident = resident.clone();
+    match crate::composer::uploads::prior(node, &resident, from, scope, &file).await? {
+        Prior::Ended(result) => {
+            Ok(Arrival::Ended(Uploaded { attachment: result.attachment, composer: Some(result.updated) }))
         }
-        None => Ok(None),
+        Prior::Again(attachment, mut guard) => {
+            let directory = Path::new(&attachment.path).parent().map(Path::to_path_buf);
+            let arriving = match directory {
+                Some(directory) => tokio::task::spawn_blocking(move || arriving_in(&directory, attachment, resume))
+                    .await
+                    .map_err(failure)
+                    .and_then(|arriving| arriving),
+                None => Err(failure("the upload's receipt names no directory")),
+            };
+            match arriving {
+                Ok(mut arriving) => {
+                    arriving.keep = true;
+                    Ok(Arrival::Going(arriving, Some(guard)))
+                }
+                Err(error) => {
+                    guard.fail(&error).await;
+                    Err(error)
+                }
+            }
+        }
+        Prior::Fresh => {
+            let mut arriving = prepare(node, target, file).await?;
+            let guard = crate::composer::uploads::begin(node, &resident, from, scope, &arriving.attachment).await?;
+            arriving.keep = true;
+            Ok(Arrival::Going(arriving, Some(guard)))
+        }
     }
 }
 
@@ -179,6 +232,17 @@ async fn finish(arriving: Arriving, guard: Option<&mut crate::composer::uploads:
         None => None,
     };
     Ok(Uploaded { attachment, composer })
+}
+
+/// The bytes of an upload past those its destination already holds.
+struct Skipping(u64);
+
+impl Skipping {
+    fn past<'a>(&mut self, piece: &'a [u8]) -> &'a [u8] {
+        let skipped = self.0.min(piece.len() as u64);
+        self.0 -= skipped;
+        &piece[skipped as usize..]
+    }
 }
 
 pub fn reply(uploaded: Uploaded) -> fastctx_types::Reply {
@@ -201,7 +265,8 @@ pub fn remote_reply(uploaded: Uploaded) -> RemoteReply {
     }
 }
 
-async fn forward(mut source: FrameReader, mut stream: Stream, size: u64) -> Result<(), String> {
+async fn forward(mut source: FrameReader, mut stream: Stream, size: u64, resumes: bool) -> Result<(), String> {
+    let mut held = Skipping(if resumes { stream.hear::<UploadStart>().await?.from } else { 0 });
     let mut received = 0u64;
     loop {
         let piece = source
@@ -220,30 +285,50 @@ async fn forward(mut source: FrameReader, mut stream: Stream, size: u64) -> Resu
             return Err(format!("the uploader sent more than the declared {size} bytes"));
         }
         received += piece.len() as u64;
-        stream.send(&piece).await?;
+        let rest = held.past(&piece);
+        if !rest.is_empty() {
+            stream.send(rest).await?;
+        }
     }
 }
 
 /// The destination of an authenticated upload call and its data stream.
+/// When the caller `resumes`, it is first told how much of the file is held
+/// here from an earlier try, and sends the rest.
 pub async fn receive(
     node: &Arc<Node>,
     from: &MachineName,
     target: UploadTarget,
     file: UploadFile,
     composer: Option<fastctx_types::composer::UploadScope>,
+    resumes: bool,
     mut stream: Stream,
 ) -> Result<Uploaded, Failure> {
     let _operation = node.data_operations.read().await;
     validate_file(&file)?;
-    if let Some(cached) = cached(node, from, &target, &file, composer.as_ref()).await? {
-        return Ok(cached);
-    }
     let size = file.size;
-    let mut arriving = prepare(node, target, file).await?;
-    let mut guard = shared(node, from, &arriving.attachment, composer.as_ref()).await?;
+    let (mut arriving, mut guard) = match arrival(node, from, target, file, composer.as_ref(), resumes).await? {
+        Arrival::Ended(uploaded) => return Ok(uploaded),
+        Arrival::Going(arriving, guard) => (arriving, guard),
+    };
     let result = async {
-        stream.take(size, |piece| arriving.write(piece).map_err(|error| error.message)).await.map_err(Failure::new)?;
-        let end: String = stream.hear().await.map_err(failure)?;
+        if resumes {
+            stream.say(&UploadStart { from: arriving.received }).await.map_err(broke)?;
+        }
+        let mut refused = None;
+        let taken = stream
+            .take(size - arriving.received, |piece| {
+                arriving.write(piece).map_err(|error| {
+                    let message = error.message.clone();
+                    refused = Some(error);
+                    message
+                })
+            })
+            .await;
+        if let Err(why) = taken {
+            return Err(refused.unwrap_or_else(|| broke(why)));
+        }
+        let end: String = stream.hear().await.map_err(broke)?;
         if end != "uploaded" {
             return Err(failure("the uploader did not end the file"));
         }
@@ -314,21 +399,29 @@ async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Re
     let directory = directory.join(id.as_str());
     std::fs::create_dir(&directory).map_err(failure)?;
     let owner = Address { machine: node.machine(), resident };
-    arriving_in(&directory, Attachment { id, owner, town, path: String::new(), file })
+    arriving_in(&directory, Attachment { id, owner, town, path: String::new(), file }, false)
 }
 
 /// An upload arriving into `directory`, its own, for `attachment`, whose
-/// path it gives.
-fn arriving_in(directory: &Path, mut attachment: Attachment) -> Result<Arriving, Failure> {
+/// path it gives; going on from the part an earlier try left there when
+/// `resume`, else from nothing.
+fn arriving_in(directory: &Path, mut attachment: Attachment, resume: bool) -> Result<Arriving, Failure> {
     let directory = std::fs::canonicalize(directory).map_err(failure)?;
     let temporary = directory.join("upload.part");
-    // A try that stopped before its end may have left its part.
-    if let Err(error) = std::fs::remove_file(&temporary)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        return Err(failure(error));
-    }
-    let output = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(failure)?;
+    let kept = if resume { held(&temporary, attachment.file.size)? } else { None };
+    let (output, received, hash) = match kept {
+        Some(kept) => kept,
+        None => {
+            // A try that stopped before its end may have left its part.
+            if let Err(error) = std::fs::remove_file(&temporary)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(failure(error));
+            }
+            let output = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(failure)?;
+            (output, 0, Sha256::new())
+        }
+    };
     // The original name is metadata, never a path component. The image
     // extension also lets native hosts that dispatch by extension open it.
     let name = match attachment.file.media_type.as_str() {
@@ -340,15 +433,34 @@ fn arriving_in(directory: &Path, mut attachment: Attachment) -> Result<Arriving,
     };
     let path = directory.join(name);
     attachment.path = crate::world::native(&path);
-    Ok(Arriving {
-        attachment,
-        temporary,
-        path,
-        output: Some(output),
-        received: 0,
-        hash: Sha256::new(),
-        unpublished: false,
-    })
+    Ok(Arriving { attachment, temporary, path, output: Some(output), received, hash, unpublished: false, keep: false })
+}
+
+/// The part at `temporary` an earlier try left, open to go on writing, with
+/// its length and the digest of its bytes; none when there is none or it
+/// is longer than the file.
+fn held(temporary: &Path, size: u64) -> Result<Option<(std::fs::File, u64, Sha256)>, Failure> {
+    let mut part = match std::fs::OpenOptions::new().read(true).append(true).open(temporary) {
+        Ok(part) => part,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(failure(error)),
+    };
+    let length = part.metadata().map_err(failure)?.len();
+    if length > size {
+        return Ok(None);
+    }
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0u8; UPLOAD_CHUNK];
+    let mut read = 0u64;
+    loop {
+        let bytes = part.read(&mut buffer).map_err(failure)?;
+        if bytes == 0 {
+            break;
+        }
+        hash.update(&buffer[..bytes]);
+        read += bytes as u64;
+    }
+    Ok((read == length).then_some((part, length, hash)))
 }
 
 struct Arriving {
@@ -359,11 +471,16 @@ struct Arriving {
     received: u64,
     hash: Sha256,
     unpublished: bool,
+    /// Whether its part stays when it ends unfinished: a shared input's
+    /// upload that broke goes on from it. Bytes that could never make the
+    /// file are not kept.
+    keep: bool,
 }
 
 impl Arriving {
     fn write(&mut self, bytes: &[u8]) -> Result<(), Failure> {
         if bytes.len() as u64 > self.attachment.file.size - self.received {
+            self.keep = false;
             return Err(failure("the uploader sent more than the declared size"));
         }
         self.output.as_mut().expect("upload is open").write_all(bytes).map_err(failure)?;
@@ -373,6 +490,7 @@ impl Arriving {
     }
 
     fn finish(mut self) -> Result<Attachment, Failure> {
+        self.keep = false;
         if self.received != self.attachment.file.size {
             return Err(failure(format!("received {} bytes; expected {}", self.received, self.attachment.file.size)));
         }
@@ -396,10 +514,31 @@ impl Drop for Arriving {
         {
             eprintln!("removing unpublished upload {}: {error}", self.path.display());
         }
-        if let Err(error) = std::fs::remove_file(&self.temporary)
+        if !self.keep
+            && let Err(error) = std::fs::remove_file(&self.temporary)
             && error.kind() != std::io::ErrorKind::NotFound
         {
             eprintln!("removing incomplete upload {}: {error}", self.temporary.display());
+        }
+    }
+}
+
+/// Lets go of what arrived of the uploads of `resident` taken out of its
+/// words before they finished: their parts, and the directories they leave
+/// empty.
+pub fn forsake(node: &Node, resident: &ResidentId, uploads: &[fastctx_types::NoticeId]) {
+    let attachments = node.world.conversation(resident).attachments();
+    for upload in uploads {
+        let directory = attachments.join(upload.as_str());
+        let removed = match std::fs::remove_file(directory.join("upload.part")) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+            _ => match std::fs::read_dir(&directory).map(|mut entries| entries.next().is_none()) {
+                Ok(true) => std::fs::remove_dir(&directory),
+                _ => Ok(()),
+            },
+        };
+        if let Err(error) = removed {
+            node.log.line(format_args!("letting go of the upload {upload} of {resident}: {error}"));
         }
     }
 }
@@ -724,7 +863,7 @@ pub async fn take_placed(
     }
     stream.say(&Need { bytes: true }).await.map_err(failure)?;
     let size = wanted.file.size;
-    let mut arriving = arriving_in(&directory, wanted)?;
+    let mut arriving = arriving_in(&directory, wanted, false)?;
     stream.take(size, |piece| arriving.write(piece).map_err(|error| error.message)).await.map_err(Failure::new)?;
     let end: String = stream.hear().await.map_err(failure)?;
     if end != "placed" {

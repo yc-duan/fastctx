@@ -349,6 +349,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         case_sensitive: false,
         version: "1.0.0".into(),
         completion_receipts: false,
+        upload_resumes: false,
         shell: String::new(),
         form: None,
         node_lifetime: None,

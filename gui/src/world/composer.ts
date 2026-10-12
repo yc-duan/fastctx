@@ -19,7 +19,8 @@ export interface ComposerDraft {
   readonly text: string;
   readonly characters: readonly Character[];
   readonly attachments: readonly Attachment[];
-  readonly uploads: readonly { id: NoticeId; file: UploadFile; error: string | null }[];
+  /** `operation` is the upload operation it arrives under; older nodes do not say. */
+  readonly uploads: readonly { id: NoticeId; file: UploadFile; error: string | null; operation?: string }[];
   readonly files_on: string | null;
 }
 
