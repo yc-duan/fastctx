@@ -93,19 +93,31 @@ Var FastctxEverything
     SetShellVarContext current
     DeleteRegKey HKCU "Software\${MANUFACTURER}\${PRODUCTNAME}"
     DeleteRegKey /ifempty HKCU "Software\${MANUFACTURER}"
-    ; NSIS runs an uninstaller from a copy in a folder of its own under the
-    ; temporary folder, which it cannot delete while running. Once this
-    ; process has exited, Windows' PowerShell removes that folder. Started
-    ; with _?= the uninstaller runs in place and there is no copy.
-    ${GetParent} $EXEDIR $R2
-    ${GetFileName} $EXEDIR $R3
-    StrCpy $R4 $R3 4
-    ${If} $R2 == $TEMP
-    ${AndIf} $R4 == "~nsu"
-      System::Call 'kernel32::GetCurrentProcessId() i .R5'
-      ${WordReplace} $EXEDIR "'" "''" "+" $R6
-      ${WordReplace} $EXEPATH "'" "''" "+" $R7
-      ExecShell "" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" "-NoProfile -NonInteractive -WindowStyle Hidden -Command $\"$$p = Get-Process -Id $R5 -ErrorAction SilentlyContinue; if ($$p -and $$p.Path -eq '$R7') { $$p.WaitForExit() }; Remove-Item -LiteralPath '$R6' -Recurse -Force$\"" SW_HIDE
-    ${EndIf}
   ${EndIf}
 !macroend
+
+; NSIS runs an uninstaller from a copy in a folder of its own under the
+; temporary folder, which it cannot delete while running. Once this process
+; has exited, whether the removal finished or stopped, Windows' PowerShell
+; removes that folder. Started with _?= the uninstaller runs in place and
+; there is no copy.
+!macro FASTCTX_RETIRE_UNINSTALLER_COPY
+  ${GetParent} $EXEDIR $R2
+  ${GetFileName} $EXEDIR $R3
+  StrCpy $R4 $R3 4
+  ${If} $R2 == $TEMP
+  ${AndIf} $R4 == "~nsu"
+    System::Call 'kernel32::GetCurrentProcessId() i .R5'
+    ${WordReplace} $EXEDIR "'" "''" "+" $R6
+    ${WordReplace} $EXEPATH "'" "''" "+" $R7
+    ExecShell "" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" "-NoProfile -NonInteractive -WindowStyle Hidden -Command $\"$$p = Get-Process -Id $R5 -ErrorAction SilentlyContinue; if ($$p -and $$p.Path -eq '$R7') { $$p.WaitForExit() }; Remove-Item -LiteralPath '$R6' -Recurse -Force$\"" SW_HIDE
+  ${EndIf}
+!macroend
+
+Function un.onUninstSuccess
+  !insertmacro FASTCTX_RETIRE_UNINSTALLER_COPY
+FunctionEnd
+
+Function un.onUninstFailed
+  !insertmacro FASTCTX_RETIRE_UNINSTALLER_COPY
+FunctionEnd
