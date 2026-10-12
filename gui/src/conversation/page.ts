@@ -204,9 +204,11 @@ export class ConversationPage {
       () => {
         this.following = false;
       },
-      // Finding reads the whole conversation: every block is drawn while
-      // the bar is open.
-      (whole) => this.view.wholly(whole),
+      {
+        findChanges: () => this.view.findChanges(),
+        revealFind: (match) => this.view.revealFind(match),
+        findRange: (match) => this.view.findRange(match),
+      },
     );
     this.scroller.before(this.finder.element);
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
@@ -439,6 +441,7 @@ export class ConversationPage {
     clearTimeout(this.looking);
     cancelAnimationFrame(this.frame);
     this.view.destroy();
+    this.finder.destroy();
     this.looking = -1;
     this.left = true;
     document.removeEventListener("keydown", this.findKey);
