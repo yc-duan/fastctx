@@ -156,15 +156,20 @@ impl Stream {
 
     /// What the other end says next.
     pub async fn hear<T: DeserializeOwned>(&mut self) -> Result<T, String> {
+        self.hear_or_end().await?.ok_or_else(|| "the other end left".to_string())
+    }
+
+    /// What the other end says next; none once it has closed the connection.
+    pub async fn hear_or_end<T: DeserializeOwned>(&mut self) -> Result<Option<T>, String> {
         if !self.pending.is_empty() {
             return Err("bytes came where the other end was to say something".to_string());
         }
         match self.next().await? {
             Some(Message::Word(text)) => {
-                serde_json::from_str(&text).map_err(|error| format!("what the other end said: {error}"))
+                serde_json::from_str(&text).map(Some).map_err(|error| format!("what the other end said: {error}"))
             }
             Some(Message::Bytes(_)) => Err("bytes came where the other end was to say something".to_string()),
-            None => Err("the other end left".to_string()),
+            None => Ok(None),
         }
     }
 

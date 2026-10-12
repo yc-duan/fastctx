@@ -144,6 +144,8 @@ pub async fn watch(
                             signed = fastctx_net::watch_stream::receive(&mut stream) => signed?,
                             () = feeding.closed() => return Ok(()),
                         };
+                        // Closed by the watched machine: its answer to the watch says why.
+                        let Some(signed) = signed else { return Ok(()) };
                         let piece: Piece = unseal(&links, &from, &signed).await?;
                         if piece.watch != watch || piece.n != n {
                             return Err(format!(

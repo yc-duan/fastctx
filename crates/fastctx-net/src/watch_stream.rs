@@ -45,10 +45,13 @@ pub async fn send_bytes(stream: &mut Stream, signed: &Signed) -> Result<(), Stri
 
 /// Reassembles a complete signed event before the caller verifies its signature
 /// and subscription sequence. A partial transfer fails without exposing a piece.
-pub async fn receive(stream: &mut Stream) -> Result<Signed, String> {
-    match stream.hear::<Incoming>().await? {
-        Incoming::Signed(signed) => Ok(signed),
-        Incoming::Carried(carried) => {
+/// None once the watched machine has closed the connection, which it does
+/// only on its way to answering the watch: that answer says why it ended.
+pub async fn receive(stream: &mut Stream) -> Result<Option<Signed>, String> {
+    match stream.hear_or_end::<Incoming>().await? {
+        None => Ok(None),
+        Some(Incoming::Signed(signed)) => Ok(Some(signed)),
+        Some(Incoming::Carried(carried)) => {
             let mut bytes = Vec::new();
             stream
                 .take(carried.watch_bytes, |part| {
@@ -56,7 +59,7 @@ pub async fn receive(stream: &mut Stream) -> Result<Signed, String> {
                     Ok(())
                 })
                 .await?;
-            Ok(Signed { data: Bytes(bytes), sig: carried.sig })
+            Ok(Some(Signed { data: Bytes(bytes), sig: carried.sig }))
         }
     }
 }

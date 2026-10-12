@@ -97,6 +97,8 @@ fn feed(
                     () = sender.closed() => return Ok(()),
                     signed = fastctx_net::watch_stream::receive(&mut stream) => signed?,
                 };
+                // Closed by the watched machine: its answer to the watch says why.
+                let Some(signed) = signed else { return Ok(()) };
                 let piece: Piece = link.unseal_packed(&from, Domain::Event, &signed).await?;
                 if piece.watch != watch || piece.n != n {
                     return Err(format!(
