@@ -47,6 +47,14 @@ pub(crate) async fn logged_in(
     })
 }
 
+#[cfg(windows)]
+pub(crate) fn logged_in_kept(
+    (hub, name, account): (HubName, MachineName, AccountName),
+    kept: crate::setup::KeptNow,
+) -> LoggedIn {
+    LoggedIn { hub, name, account, kept: Some(kept) }
+}
+
 /// Logs in to `account` at the hub written `hub` with its password, and
 /// on a computer registers it as one of the account's machines when
 /// `register`.

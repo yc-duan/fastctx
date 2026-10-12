@@ -34,7 +34,7 @@ pub fn with_current_token<R>(query: impl FnOnce(HANDLE) -> io::Result<R>) -> io:
     result
 }
 
-fn token_user_sid(token: HANDLE) -> io::Result<String> {
+pub(crate) fn token_user_sid(token: HANDLE) -> io::Result<String> {
     let mut needed = 0u32;
     // SAFETY: a size query with no buffer.
     unsafe { GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut needed) };
@@ -130,8 +130,10 @@ impl OwnerOnly {
         let flags = if inherited { "OICI" } else { "" };
         let system = if system { format!("(A;{flags};FA;;;SY)") } else { String::new() };
         let administrators = if administrators { format!("(A;{flags};FA;;;BA)") } else { String::new() };
-        let sddl: Vec<u16> =
-            OsStr::new(&format!("O:{sid}D:P(A;{flags};FA;;;{sid}){system}{administrators}")).encode_wide().chain([0]).collect();
+        let sddl: Vec<u16> = OsStr::new(&format!("O:{sid}D:P(A;{flags};FA;;;{sid}){system}{administrators}"))
+            .encode_wide()
+            .chain([0])
+            .collect();
         let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
         // SAFETY: a NUL-terminated SDDL string; the descriptor is freed on drop.
         if unsafe {

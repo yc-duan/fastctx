@@ -39,6 +39,8 @@ pub mod procfs;
 pub mod registry;
 pub mod rolling_log;
 pub mod service_channel;
+#[cfg(windows)]
+pub mod shell_process;
 #[cfg(any(target_os = "linux", windows))]
 pub mod terminate;
 #[cfg(any(target_os = "linux", windows))]
