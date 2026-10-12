@@ -299,7 +299,10 @@ fn handle(
         let _ = out.send(Out::Frame(frame));
     };
     match frame {
-        Up::Ping { n } => reply(Down::Pong { n }),
+        Up::Ping { n } => {
+            crate::lends::heard(hub);
+            reply(Down::Pong { n });
+        }
         Up::Send { seq, message } => letter(hub, name, seq, message, &reply)?,
         Up::Ack { seq } => {
             let store = hub.store();
