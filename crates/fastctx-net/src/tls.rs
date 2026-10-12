@@ -32,15 +32,20 @@ pub struct HubCertificate {
 impl HubCertificate {
     /// A new self-signed certificate on a new P-256 key.
     pub fn generate() -> Result<Self, String> {
+        Self::generate_for("fastctx-hub")
+    }
+
+    /// A new self-signed certificate on a new P-256 key, naming `name`.
+    pub fn generate_for(name: &str) -> Result<Self, String> {
         let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
-            .map_err(|error| format!("making the hub's TLS key: {error}"))?;
-        let mut params = rcgen::CertificateParams::new(vec!["fastctx-hub".to_string()])
-            .map_err(|error| format!("making the hub's certificate: {error}"))?;
+            .map_err(|error| format!("making a TLS key: {error}"))?;
+        let mut params = rcgen::CertificateParams::new(vec![name.to_string()])
+            .map_err(|error| format!("making a certificate: {error}"))?;
         // Machines pin the certificate itself and never look at its dates;
         // these only keep other TLS tools from calling it expired.
         params.not_before = rcgen::date_time_ymd(2026, 1, 1);
         params.not_after = rcgen::date_time_ymd(4096, 1, 1);
-        let certificate = params.self_signed(&key).map_err(|error| format!("making the hub's certificate: {error}"))?;
+        let certificate = params.self_signed(&key).map_err(|error| format!("making a certificate: {error}"))?;
         Ok(Self { certificate: certificate.der().to_vec(), key: key.serialize_der() })
     }
 

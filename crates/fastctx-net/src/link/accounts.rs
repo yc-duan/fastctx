@@ -17,8 +17,8 @@ impl Link {
     pub fn state(&self) -> LinkState {
         match self.status() {
             Status::Connecting { since, last_error } => LinkState::Connecting { since, last_error },
-            Status::Online { since, address, relay, route } => {
-                LinkState::Online { since, hub: address.to_string(), relay, route }
+            Status::Online { since, address, through, route } => {
+                LinkState::Online { since, hub: address.to_string(), through, route, ms: self.hub_ms() }
             }
             Status::Stopped { reason } => LinkState::Stopped { reason },
         }
@@ -46,8 +46,15 @@ impl Link {
             }
             AccountChange::Plan { machine, agent, home, plan } => Change::Plan { machine, agent, home, plan },
             AccountChange::StopActing { machine } => Change::StopActing { machine },
-            AccountChange::Relays { machine, relays } => Change::Relays { machine, relays },
-            AccountChange::RelayAt { machine, addresses } => Change::RelayAt { machine, addresses },
+            // An older hub would not read the change, and would end the
+            // connection that asked it.
+            AccountChange::Direct { .. } if !self.view().direct_links => {
+                return Err(format!(
+                    "the hub {} runs an older fastctx that does not take direct connections",
+                    self.hub_name()
+                ));
+            }
+            AccountChange::Direct { machine, at } => Change::Direct { machine, at },
             AccountChange::Remove { name, reason } => Change::Remove { name, reason },
             AccountChange::Logout => Change::Logout,
             AccountChange::Token { register, name, kind, expires } => Change::Token { register, name, kind, expires },
@@ -150,12 +157,13 @@ impl Link {
                     kind: member.kind,
                     logins: member.logins.iter().cloned().collect(),
                     home: member.home.clone(),
-                    relays: member.relays.clone(),
-                    relay_at: member.relay_at.clone(),
+                    direct: member.direct.clone(),
                     added: member.added,
                     online: member.online,
                     since: member.since,
                     through: member.through.clone(),
+                    reach: member.reach.clone(),
+                    paths: member.paths.clone(),
                     key: member.key.to_string().chars().take(8).collect(),
                 })
                 .collect(),
@@ -204,6 +212,7 @@ impl Link {
                 })
                 .collect(),
             arrivals: Vec::new(),
+            links: self.direct_links(),
         }
     }
 }

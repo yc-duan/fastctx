@@ -55,9 +55,8 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       reaching,
       marks: marks(machine.name),
       title: [machine.written, owner ? words.ownedBy(owner) : "", reaching ? words.reachingWhat : ""].filter(Boolean).join(" · "),
-      relayAt: member?.relay_at ?? [],
+      directAt: member?.direct ?? [],
       through: machine.through ?? null,
-      relays: (member?.relays ?? []).map((relay) => relay.label),
     });
   }
   const lent = new Set<string>();

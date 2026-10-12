@@ -1,12 +1,14 @@
 //! Machines and the hub (`world-network.md`).
 //!
-//! Every computer or phone logged in to a hub keeps one connection to it and
-//! says everything through it; the hub knows who is who and what each may
-//! do (`directory`), and passes on what members say to each other only when
-//! the directory allows it. This crate holds what both sides share: keys
-//! and signatures, logins and enrollment tokens, the directory and its
-//! judgments, the frames on the wire, and each machine's side of the
-//! connection.
+//! Every computer or phone logged in to a hub keeps one connection to it;
+//! the hub knows who is who and what each may do (`directory`), and passes
+//! on what members say to each other only when the directory allows it.
+//! Machines the network's administrator allowed direct connections to are
+//! also linked with directly, and what passes between two linked machines
+//! does not go through the hub (`peer`). This crate holds what all sides
+//! share: keys and signatures, logins and enrollment tokens, the directory
+//! and its judgments, the frames on the wire, and each machine's side of
+//! its connections.
 
 #[cfg(target_os = "android")]
 pub mod android;
@@ -26,10 +28,12 @@ pub mod link;
 pub mod listen;
 pub mod login;
 pub mod message;
+pub mod peer;
 pub mod proxy;
 pub mod route;
 pub mod sign;
 pub mod tls;
 pub mod token;
+pub mod transport;
 pub mod watch_stream;
 pub mod wire;

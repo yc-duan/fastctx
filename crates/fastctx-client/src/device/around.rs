@@ -351,6 +351,8 @@ impl Device {
                         online: seen.map(|seen| seen.online),
                         since: seen.and_then(|seen| seen.since),
                         through: seen.and_then(|seen| seen.through.clone()),
+                        allows_direct: seen.is_some_and(|seen| !seen.direct.is_empty()),
+                        path: Some(session.link.path_to(&name)),
                         facts: match heard {
                             Heard::Answered(RemoteReply::Facts(facts)) => Ok(facts),
                             Heard::Answered(_) => Err("it answered something else".to_string()),

@@ -20,6 +20,7 @@ crossterm = "0.29"
 fastctx-client = { path = "../fastctx-client" }
 fastctx-hands = { path = "../fastctx-hands" }
 fastctx-hub = { path = "../fastctx-hub" }
+fastctx-net = { path = "../fastctx-net" }
 fastctx-install = { path = "../fastctx-install" }
 fastctx-node = { path = "../fastctx-node" }
 fastctx-platform = { path = "../fastctx-platform" }

@@ -1,4 +1,5 @@
-//! Release information comes from the hub, through a relay as well.
+//! Release information comes from the hub, whichever way this machine
+//! reaches it.
 
 use fastctx_types::kernel::KernelRelease;
 

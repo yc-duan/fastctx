@@ -118,12 +118,13 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
             kind: if machine { Kind::Computer } else { Kind::Phone },
             logins: BTreeSet::from([new.admin.clone()]),
             home: machine.then(|| new.admin.clone()),
-            relays: Vec::new(),
-            relay_at: Vec::new(),
+            direct: Vec::new(),
             added: admitted.joined_at,
             online: false,
             since: None,
             through: None,
+            reach: None,
+            paths: None,
         });
         if machine { report.machines.push(name) } else { report.devices.push(name) }
     }

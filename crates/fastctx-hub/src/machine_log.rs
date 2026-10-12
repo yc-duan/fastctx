@@ -90,6 +90,7 @@ impl History {
             | Action::Plan { machine, .. }
             | Action::Relays { machine, .. }
             | Action::RelayAt { machine, .. }
+            | Action::Direct { machine, .. }
             | Action::AllowActing { machine, .. } => {
                 names.insert(machine.clone());
             }
@@ -278,10 +279,7 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
             Action::Plan { machine: machine.clone(), agent: agent.clone(), home: home.clone(), plan: *plan }
         }
         Change::StopActing { machine } => Action::StopActing { machine: machine.clone() },
-        Change::Relays { machine, relays } => Action::Relays { machine: machine.clone(), relays: relays.clone() },
-        Change::RelayAt { machine, addresses } => {
-            Action::RelayAt { machine: machine.clone(), addresses: addresses.clone() }
-        }
+        Change::Direct { machine, at } => Action::Direct { machine: machine.clone(), at: at.clone() },
         Change::Remove { name, reason } => Action::Remove { name: name.clone(), reason: reason.clone() },
         Change::Logout => Action::Logout,
         Change::Token { register, name, kind, expires } => {

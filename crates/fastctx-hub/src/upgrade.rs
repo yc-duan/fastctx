@@ -138,3 +138,29 @@ fn settle(account: &mut Value, chosen: bool) {
         account.insert("level".to_string(), Value::String(if chosen { "super" } else { "member" }.to_string()));
     }
 }
+
+/// Takes out the relays a directory kept before direct connections replaced
+/// them (`world-network.md`, 直连): which relays each machine connected
+/// through, and where a machine relayed for others. Nothing reads them any
+/// more; a machine whose own line is down now reaches the hub through a
+/// machine that allows direct connections, which the super administrator
+/// allows anew. Says what was taken out.
+pub(crate) fn drop_relays(book: &mut Value) -> Vec<String> {
+    let mut said = Vec::new();
+    let Some(members) = book.get_mut("members").and_then(Value::as_array_mut) else { return said };
+    for member in members {
+        let Some(member) = member.as_object_mut() else { continue };
+        let name = member.get("name").map(text).unwrap_or_default();
+        if let Some(relays) = member.remove("relays")
+            && relays.as_array().is_some_and(|relays| !relays.is_empty())
+        {
+            said.push(format!("{name} no longer connects through the relays it had: {relays}"));
+        }
+        if let Some(at) = member.remove("relay_at")
+            && at.as_array().is_some_and(|at| !at.is_empty())
+        {
+            said.push(format!("{name} no longer relays for others at {at}"));
+        }
+    }
+    said
+}

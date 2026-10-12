@@ -6,13 +6,16 @@
 //! the members that may act for those, which is whom calls to it come from;
 //! the shares, loans, acting and projects of all these accounts; the hub's
 //! super administrator, whom every member is told of, since it may use them
-//! all; and whether each member it sees is online, since when, and through
-//! which relay. A device logged in to the super administrator's account sees
-//! the whole directory.
+//! all; whether each member it sees is online, since when, through which
+//! machine, and how its lines go; and every machine that allows direct
+//! connections, whatever its account, since a member whose own line is down
+//! reaches the hub through one. A device logged in to the super
+//! administrator's account sees the whole directory, and what each online
+//! machine's direct address may be chosen from.
 
 use std::collections::{BTreeSet, HashMap};
 
-use fastctx_net::directory::{Directory, Member, View};
+use fastctx_net::directory::{Directory, Member, Paths, Reach, View};
 use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;
 
@@ -22,22 +25,42 @@ use crate::store::Store;
 pub(crate) struct Presence {
     pub since: Option<Timestamp>,
     pub through: Option<String>,
+    pub reach: Reach,
+    pub paths: Option<Paths>,
 }
 
-pub(crate) fn view_for(store: &Store, online: &HashMap<MachineName, Presence>, me: &MachineName) -> View {
+/// `me`'s view of the directory; `trial`, the addresses the hub checks it
+/// at for direct connections now, if it does.
+pub(crate) fn view_for(
+    store: &Store,
+    online: &HashMap<MachineName, Presence>,
+    me: &MachineName,
+    trial: Vec<std::net::SocketAddr>,
+) -> View {
     let all = &store.book.directory;
     let mine = all.acts_for(me);
     let whole = mine.iter().any(|account| all.logged_in(me, account) && all.is_super(account));
     let mut directory = if whole { all.clone() } else { cut(all, me, &mine) };
     for member in &mut directory.members {
-        present(store, online, member);
+        // Where a machine may be reached is the super administrator's to
+        // choose from, and the machine's own to know.
+        let reach = whole || member.name == *me;
+        present(store, online, member, reach);
     }
+    let forwarders = all
+        .machines()
+        .filter(|member| !member.direct.is_empty() && member.name != *me)
+        .map(|member| fastctx_net::dial::Forwarder { name: member.name.clone(), at: member.direct.clone() })
+        .collect();
     View {
         machine_log: true,
         hub: store.hub.id.clone(),
         hub_name: store.hub.name.clone(),
         me: me.clone(),
         self_registration: store.hub.self_registration,
+        direct_links: true,
+        trial,
+        forwarders,
         directory,
     }
 }
@@ -99,17 +122,21 @@ fn cut(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Direc
     }
 }
 
-fn present(store: &Store, online: &HashMap<MachineName, Presence>, member: &mut Member) {
+fn present(store: &Store, online: &HashMap<MachineName, Presence>, member: &mut Member, reach: bool) {
     match online.get(&member.name) {
         Some(presence) => {
             member.online = true;
             member.since = presence.since;
             member.through = presence.through.clone();
+            member.reach = (reach && member.kind.is_computer()).then(|| presence.reach.clone());
+            member.paths = presence.paths.clone();
         }
         None => {
             member.online = false;
             member.since = store.letters.get(&member.name).and_then(|letters| letters.last_seen);
             member.through = None;
+            member.reach = None;
+            member.paths = None;
         }
     }
 }

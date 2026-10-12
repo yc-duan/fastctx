@@ -30,8 +30,8 @@ pub struct Membership {
     pub id: HubId,
     pub hub_name: HubName,
     pub name: MachineName,
-    /// The hub's own addresses; the relays this machine connects through
-    /// come from its view.
+    /// The hub's own addresses; the machines that forward to the hub when
+    /// this machine's own line is down come from its view.
     pub addresses: Vec<SocketAddr>,
     pub cert: CertPin,
     pub kind: Kind,

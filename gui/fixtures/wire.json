@@ -3,7 +3,7 @@
     {
       "records": [
         {
-          "id": 27,
+          "id": 29,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -20,7 +20,7 @@
           }
         },
         {
-          "id": 26,
+          "id": 28,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -39,7 +39,7 @@
           }
         },
         {
-          "id": 25,
+          "id": 27,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -61,7 +61,7 @@
           }
         },
         {
-          "id": 24,
+          "id": 26,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -83,7 +83,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 25,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -103,7 +103,7 @@
           }
         },
         {
-          "id": 22,
+          "id": 24,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -123,7 +123,7 @@
           }
         },
         {
-          "id": 21,
+          "id": 23,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -140,7 +140,7 @@
           }
         },
         {
-          "id": 20,
+          "id": 22,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -165,7 +165,7 @@
           }
         },
         {
-          "id": 19,
+          "id": 21,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -183,13 +183,51 @@
           }
         },
         {
-          "id": 18,
+          "id": 20,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
             "authenticated": true,
             "member": "laptop",
             "peer": null
+          },
+          "action": {
+            "change": "direct",
+            "machine": "laptop",
+            "at": [
+              "203.0.113.20:7444"
+            ]
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 19,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "direct",
+            "machine": "laptop",
+            "at": []
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 18,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": null,
+            "authenticated": false,
+            "member": null,
+            "peer": "203.0.113.10:4567"
           },
           "action": {
             "change": "remove",
@@ -220,10 +258,10 @@
           "id": 16,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
-            "account": null,
-            "authenticated": false,
-            "member": null,
-            "peer": "203.0.113.10:4567"
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
           },
           "action": {
             "change": "token",
@@ -1464,11 +1502,12 @@
             "link": {
               "kind": "online",
               "since": "2026-10-09T08:30:00Z",
-              "hub": "203.0.113.10:7443",
-              "relay": "la",
+              "hub": "203.0.113.20:7444",
+              "through": "server",
               "route": {
                 "kind": "local"
-              }
+              },
+              "ms": 38
             },
             "logins": [
               "ada"
@@ -1497,19 +1536,58 @@
                   "ada"
                 ],
                 "home": "ada",
-                "relays": [
-                  {
-                    "label": "la",
-                    "addresses": [
-                      "203.0.113.20:7444"
-                    ]
-                  }
+                "added": "2026-10-09T08:30:00Z",
+                "online": true,
+                "since": "2026-10-09T08:30:00Z",
+                "through": "server",
+                "reach": {
+                  "interfaces": [
+                    "192.168.1.20",
+                    "fd00::20"
+                  ]
+                },
+                "paths": {
+                  "hub_ms": 38,
+                  "links": [
+                    {
+                      "peer": "server",
+                      "up": true,
+                      "ms": 41,
+                      "since": "2026-10-09T08:30:00Z"
+                    }
+                  ]
+                },
+                "key": "5be1fcee"
+              },
+              {
+                "name": "server",
+                "kind": "computer",
+                "logins": [
+                  "ada"
+                ],
+                "home": "ada",
+                "direct": [
+                  "203.0.113.20:7444"
                 ],
                 "added": "2026-10-09T08:30:00Z",
                 "online": true,
                 "since": "2026-10-09T08:30:00Z",
-                "through": "la",
-                "key": "5be1fcee"
+                "through": null,
+                "reach": {
+                  "seen": "203.0.113.20"
+                },
+                "paths": {
+                  "hub_ms": 160,
+                  "links": [
+                    {
+                      "peer": "laptop",
+                      "up": false,
+                      "since": "2026-10-09T08:30:00Z",
+                      "why": "203.0.113.20:7444: no answer within 30 s"
+                    }
+                  ]
+                },
+                "key": "71c0de55"
               },
               {
                 "name": "pixel",
@@ -1518,7 +1596,6 @@
                   "ada"
                 ],
                 "home": null,
-                "relays": [],
                 "added": "2026-10-09T08:30:00Z",
                 "online": false,
                 "since": null,
@@ -1580,6 +1657,14 @@
                 "device": true,
                 "noticed_at": "2026-10-09T08:30:00Z"
               }
+            ],
+            "links": [
+              {
+                "peer": "server",
+                "up": true,
+                "ms": 41,
+                "since": "2026-10-09T08:30:00Z"
+              }
             ]
           }
         ]
@@ -1623,23 +1708,16 @@
         "machine": "gpu"
       },
       {
-        "change": "relays",
-        "machine": "desktop",
-        "relays": [
-          {
-            "label": "la",
-            "addresses": [
-              "203.0.113.20:7444"
-            ]
-          }
+        "change": "direct",
+        "machine": "server",
+        "at": [
+          "203.0.113.20:7444"
         ]
       },
       {
-        "change": "relay_at",
-        "machine": "desktop",
-        "addresses": [
-          "203.0.113.20:7444"
-        ]
+        "change": "direct",
+        "machine": "server",
+        "at": []
       },
       {
         "change": "remove",
@@ -1714,11 +1792,12 @@
               "link": {
                 "kind": "online",
                 "since": "2026-10-09T08:30:00Z",
-                "hub": "203.0.113.10:7443",
-                "relay": "la",
+                "hub": "203.0.113.20:7444",
+                "through": "server",
                 "route": {
                   "kind": "local"
-                }
+                },
+                "ms": 38
               },
               "logins": [
                 "ada"
@@ -8766,7 +8845,10 @@
                 "written": "lab",
                 "online": null,
                 "since": null,
-                "through": "la",
+                "through": "server",
+                "path": {
+                  "kind": "hub"
+                },
                 "facts": {
                   "Ok": {
                     "name": "lab",
@@ -8798,6 +8880,40 @@
                 "since": "2026-10-04T12:06:07Z",
                 "facts": {
                   "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "server",
+                "written": "server",
+                "online": true,
+                "since": "2026-10-04T12:06:07Z",
+                "allows_direct": true,
+                "path": {
+                  "kind": "direct",
+                  "ms": 41
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "server",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
                 "owner": "ada",
                 "rights": [
@@ -8869,7 +8985,10 @@
                 "written": "lab.home",
                 "online": null,
                 "since": null,
-                "through": "la",
+                "through": "server",
+                "path": {
+                  "kind": "hub"
+                },
                 "facts": {
                   "Ok": {
                     "name": "lab",
@@ -8901,6 +9020,40 @@
                 "since": "2026-10-04T12:06:07Z",
                 "facts": {
                   "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "server",
+                "written": "server",
+                "online": true,
+                "since": "2026-10-04T12:06:07Z",
+                "allows_direct": true,
+                "path": {
+                  "kind": "direct",
+                  "ms": 41
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "server",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
                 "owner": "ada",
                 "rights": [
@@ -8972,7 +9125,10 @@
                 "written": "lab",
                 "online": null,
                 "since": null,
-                "through": "la",
+                "through": "server",
+                "path": {
+                  "kind": "hub"
+                },
                 "facts": {
                   "Ok": {
                     "name": "lab",
@@ -9004,6 +9160,40 @@
                 "since": "2026-10-04T12:06:07Z",
                 "facts": {
                   "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "server",
+                "written": "server",
+                "online": true,
+                "since": "2026-10-04T12:06:07Z",
+                "allows_direct": true,
+                "path": {
+                  "kind": "hub",
+                  "why": "203.0.113.20:7444: no answer within 30 s"
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "server",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
                 "owner": "ada",
                 "rights": [
@@ -9074,7 +9264,10 @@
                 "written": "lab",
                 "online": null,
                 "since": null,
-                "through": "la",
+                "through": "server",
+                "path": {
+                  "kind": "hub"
+                },
                 "facts": {
                   "Ok": {
                     "name": "lab",
@@ -9106,6 +9299,40 @@
                 "since": "2026-10-04T12:06:07Z",
                 "facts": {
                   "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "server",
+                "written": "server",
+                "online": true,
+                "since": "2026-10-04T12:06:07Z",
+                "allows_direct": true,
+                "path": {
+                  "kind": "direct",
+                  "ms": 41
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "server",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
                 "owner": "ada",
                 "rights": [
@@ -9180,7 +9407,10 @@
                 "written": "lab",
                 "online": null,
                 "since": null,
-                "through": "la",
+                "through": "server",
+                "path": {
+                  "kind": "hub"
+                },
                 "facts": {
                   "Ok": {
                     "name": "lab",
@@ -9212,6 +9442,40 @@
                 "since": "2026-10-04T12:06:07Z",
                 "facts": {
                   "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "server",
+                "written": "server",
+                "online": true,
+                "since": "2026-10-04T12:06:07Z",
+                "allows_direct": true,
+                "path": {
+                  "kind": "direct",
+                  "ms": 41
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "server",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
                 "owner": "ada",
                 "rights": [
@@ -9287,7 +9551,10 @@
                 "written": "lab",
                 "online": null,
                 "since": null,
-                "through": "la",
+                "through": "server",
+                "path": {
+                  "kind": "hub"
+                },
                 "facts": {
                   "Ok": {
                     "name": "lab",
@@ -9319,6 +9586,40 @@
                 "since": "2026-10-04T12:06:07Z",
                 "facts": {
                   "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "server",
+                "written": "server",
+                "online": true,
+                "since": "2026-10-04T12:06:07Z",
+                "allows_direct": true,
+                "path": {
+                  "kind": "direct",
+                  "ms": 41
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "server",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
                 "owner": "ada",
                 "rights": [
@@ -9394,7 +9695,10 @@
                 "written": "lab",
                 "online": null,
                 "since": null,
-                "through": "la",
+                "through": "server",
+                "path": {
+                  "kind": "hub"
+                },
                 "facts": {
                   "Ok": {
                     "name": "lab",
@@ -9426,6 +9730,40 @@
                 "since": "2026-10-04T12:06:07Z",
                 "facts": {
                   "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "server",
+                "written": "server",
+                "online": true,
+                "since": "2026-10-04T12:06:07Z",
+                "allows_direct": true,
+                "path": {
+                  "kind": "direct",
+                  "ms": 41
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "server",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
                 "owner": "ada",
                 "rights": [
@@ -9500,7 +9838,10 @@
                 "written": "lab",
                 "online": null,
                 "since": null,
-                "through": "la",
+                "through": "server",
+                "path": {
+                  "kind": "hub"
+                },
                 "facts": {
                   "Ok": {
                     "name": "lab",
@@ -9532,6 +9873,40 @@
                 "since": "2026-10-04T12:06:07Z",
                 "facts": {
                   "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "server",
+                "written": "server",
+                "online": true,
+                "since": "2026-10-04T12:06:07Z",
+                "allows_direct": true,
+                "path": {
+                  "kind": "direct",
+                  "ms": 41
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "server",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
                 "owner": "ada",
                 "rights": [
@@ -9592,10 +9967,11 @@
               "kind": "online",
               "since": "2026-10-04T12:06:07Z",
               "hub": "203.0.113.5:7444",
-              "relay": "la",
+              "through": "server",
               "route": {
                 "kind": "system"
-              }
+              },
+              "ms": 41
             },
             "logins": [
               "ada"
@@ -9607,7 +9983,10 @@
                 "written": "lab",
                 "online": null,
                 "since": null,
-                "through": "la",
+                "through": "server",
+                "path": {
+                  "kind": "hub"
+                },
                 "facts": {
                   "Ok": {
                     "name": "lab",
@@ -9639,6 +10018,40 @@
                 "since": "2026-10-04T12:06:07Z",
                 "facts": {
                   "Err": "offline"
+                },
+                "owner": "ada",
+                "rights": [
+                  [
+                    "ada",
+                    {
+                      "hands": true,
+                      "agents": true
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "server",
+                "written": "server",
+                "online": true,
+                "since": "2026-10-04T12:06:07Z",
+                "allows_direct": true,
+                "path": {
+                  "kind": "direct",
+                  "ms": 41
+                },
+                "facts": {
+                  "Ok": {
+                    "name": "server",
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "home": "/home/example",
+                    "temp": "/tmp",
+                    "path_separator": "/",
+                    "case_sensitive": true,
+                    "version": "fixture-version",
+                    "shell": ""
+                  }
                 },
                 "owner": "ada",
                 "rights": [

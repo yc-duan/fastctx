@@ -1,10 +1,11 @@
 //! The frames a machine and the hub exchange.
 //!
-//! A machine reaches the hub over TLS, directly or through a relay that
-//! forwards the hub's port as it is, and opens a WebSocket on one of two
-//! paths: the control connection, which each member holds open for as long
-//! as its node runs, and a data connection, opened for one transfer of
-//! bytes too large for a control message. Every frame on either is one
+//! A machine reaches the hub over TLS, by its own line or through a machine
+//! that allows direct connections and forwards the hub's bytes as they are,
+//! and opens a WebSocket on one of two paths: the control connection, which
+//! each member holds open for as long as its node runs, and a data
+//! connection, opened for one transfer of bytes too large for a control
+//! message. Every frame on either is one
 //! JSON value in a binary WebSocket message; after a data connection is
 //! paired, the bytes it carries follow as raw binary messages.
 //!
@@ -19,7 +20,7 @@ use fastctx_types::{AccountName, HubName, MachineName, TownName};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::directory::{Kind, Relay, View};
+use crate::directory::{Kind, Paths, View};
 use crate::envelope::Envelope;
 use crate::ids::HubId;
 use crate::sign::{Bytes, Digest, PublicKey, Signature, Signed};
@@ -62,55 +63,34 @@ pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-Channel-Binding";
 #[serde(rename_all = "snake_case", tag = "f")]
 pub enum Up {
     /// The first frame on every connection.
-    Hello {
-        protocol: u32,
-        version: String,
-        intent: Intent,
-    },
+    Hello { protocol: u32, version: String, intent: Intent },
     Ping {
         n: u64,
+        /// How this machine's lines go, when that changed since it last
+        /// said; older hubs ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        paths: Option<Paths>,
     },
     /// The second half of a password login (`Intent::Login`): the last
     /// OPAQUE message, and the computer or phone that logs in.
-    LoginFinish {
-        finalization: Bytes,
-        member: Joining,
-    },
+    LoginFinish { finalization: Bytes, member: Joining },
     /// The second half of opening an account (`Intent::Register`).
-    RegisterFinish {
-        upload: Bytes,
-    },
+    RegisterFinish { upload: Bytes },
     /// A letter for the hub to keep until its receiver has it. `seq` counts
     /// this machine's letters; the hub acknowledges each once it holds it.
-    Send {
-        seq: u64,
-        message: Envelope,
-    },
+    Send { seq: u64, message: Envelope },
     /// A call for another member, answered once with `Answered`.
-    Call {
-        id: u64,
-        message: Envelope,
-    },
+    Call { id: u64, message: Envelope },
     /// The answer to the call the hub numbered `call`.
-    Answer {
-        call: u64,
-        message: Envelope,
-    },
+    Answer { call: u64, message: Envelope },
     /// The caller no longer waits for its call `id`; an answer that comes
     /// for it is dropped. What the call started runs on.
-    Cancel {
-        id: u64,
-    },
+    Cancel { id: u64 },
     /// This machine holds the letter the hub numbered `seq`, and all
     /// before it.
-    Ack {
-        seq: u64,
-    },
+    Ack { seq: u64 },
     /// A question for the hub itself.
-    Ask {
-        id: u64,
-        question: Question,
-    },
+    Ask { id: u64, question: Question },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -118,14 +98,22 @@ pub enum Up {
 pub enum Intent {
     /// A member's control connection. `proof` is its key's signature of the
     /// TLS exporter, so the signature proves nothing on any other connection.
-    /// `through` names the relay the machine dialed, if any: the hub sees
-    /// only the relay's address.
+    /// `through` names the machine that forwards it to the hub, if any: the
+    /// hub sees only that machine's address.
     Session {
         key: PublicKey,
         proof: Signature,
         letters: Letters,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         through: Option<String>,
+        /// Whether the machine can take direct connections and forward
+        /// others' to the hub (`crate::peer`); older nodes do not say.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        direct: bool,
+        /// The addresses of its own network cards, which its direct
+        /// address may be chosen from.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        interfaces: Vec<std::net::IpAddr>,
         /// The machine reads machine and hub names of any language
         /// (`world-network.md`, 机器的名字). Earlier releases do not say so,
         /// and cannot read such a name in anything the hub sends them.
@@ -359,6 +347,34 @@ pub enum Question {
     /// A project's entries after the one numbered `after`, as many as fit
     /// in one frame.
     LedgerRead { town: TownId, after: u64 },
+    /// This member called `to` directly, for `account`, to work for the
+    /// resident `resident`: what the hub notes of a call it passes on, for
+    /// the letters that tell of that work later (`world-network.md`, 寄信).
+    Worked {
+        to: MachineName,
+        account: AccountName,
+        purpose: fastctx_types::access::Purpose,
+        resident: fastctx_types::Address,
+    },
+    /// This member, being checked for direct connections, listens at the
+    /// ports of `at` now, or could not; with what it knows of its own
+    /// firewall.
+    Listening { at: Vec<std::net::SocketAddr>, outcome: Result<Firewall, String> },
+}
+
+/// What a machine knows of its own firewall when it starts taking direct
+/// connections, which tells the layer that stopped the hub's check.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Firewall {
+    /// The World let the port in through this machine's firewall.
+    Opened,
+    /// A firewall the World does not manage is on.
+    Other { name: String },
+    /// No firewall the World knows of is on.
+    NoneFound,
+    /// Whether this machine's firewall lets the port in is not known.
+    Unknown { why: String },
 }
 
 /// What an account changes on its hub.
@@ -400,16 +416,13 @@ pub enum Change {
     StopActing {
         machine: MachineName,
     },
-    /// The relays `machine`, one of the account's own, connects through.
-    Relays {
+    /// Allows direct connections to `machine` at `at`, or, with none, no
+    /// longer: the super administrator's change. The hub checks from
+    /// outside that it reaches the machine there before it counts; an
+    /// address only machines on the same network reach it cannot check.
+    Direct {
         machine: MachineName,
-        relays: Vec<Relay>,
-    },
-    /// Makes one of the account's own machines a relay reached at
-    /// `addresses`, or, with none, no longer.
-    RelayAt {
-        machine: MachineName,
-        addresses: Vec<std::net::SocketAddr>,
+        at: Vec<std::net::SocketAddr>,
     },
     /// Takes the member `name` out of the account: a device's login of it,
     /// or one of its machines. The super administrator takes it off the

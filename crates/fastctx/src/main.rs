@@ -225,11 +225,10 @@ enum Command {
     Disallow(world::DisallowArgs),
     /// Take a device or a machine out of an account.
     Remove(world::RemoveArgs),
-    /// Set the relays one of an account's machines connects through.
-    Relays(world::RelaysArgs),
-    /// Forward a hub's port for machines that reach this one more easily:
-    /// the bytes pass through, the TLS between them and the hub is theirs.
-    Relay(world::RelayArgs),
+    /// Let other machines connect to a machine directly, at addresses you
+    /// choose, instead of through the hub; or no longer. The network's
+    /// administrator's change.
+    Direct(world::DirectArgs),
     /// The hub: where the accounts are, and every computer connects to.
     #[command(subcommand)]
     Hub(world::HubCommand),
@@ -412,8 +411,7 @@ fn main() -> ExitCode {
         Command::Lend(args) => world::lend(args),
         Command::Disallow(args) => world::disallow(args),
         Command::Remove(args) => world::remove(args),
-        Command::Relays(args) => world::relays(args),
-        Command::Relay(args) => world::relay(args),
+        Command::Direct(args) => world::direct(args),
         Command::Hub(command) => world::hub(command),
         Command::Apply(args) => apply::apply(args),
         Command::Unapply(args) => apply::unapply(args),
@@ -434,7 +432,7 @@ fn print_licenses() -> ExitCode {
 
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
-const PEOPLE_ONLY: [&str; 22] = [
+const PEOPLE_ONLY: [&str; 21] = [
     "ui",
     "node",
     "renew",
@@ -451,8 +449,7 @@ const PEOPLE_ONLY: [&str; 22] = [
     "lend",
     "disallow",
     "remove",
-    "relays",
-    "relay",
+    "direct",
     "hub",
     "apply",
     "unapply",

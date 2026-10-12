@@ -502,8 +502,8 @@ fn hub_rows(
             ),
             Role::Caution,
         ),
-        LinkState::Online { since, hub, relay, route } => {
-            (words.link_online(hub, relay.as_deref(), route, &crate::words::clock(*since, ctx.now)), Role::Muted)
+        LinkState::Online { since, hub, through, route, .. } => {
+            (words.link_online(hub, through.as_deref(), route, &crate::words::clock(*since, ctx.now)), Role::Muted)
         }
         LinkState::Stopped { reason } => (words.link_stopped(&text::first_line(reason)), Role::Wrong),
     };

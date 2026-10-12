@@ -167,20 +167,9 @@ fn apply(
             directory.acting.retain(|acting| !(acting.account == *account && acting.machine == machine));
             Ok(Told::Done)
         }
-        Change::Relays { machine, relays } => {
-            let directory = &mut store.book.directory;
-            own_machine(directory, account, super_, &machine)?;
-            let member = directory.members.iter_mut().find(|member| member.name == machine).expect("checked");
-            member.relays = relays;
-            Ok(Told::Done)
-        }
-        Change::RelayAt { machine, addresses } => {
-            let directory = &mut store.book.directory;
-            own_machine(directory, account, super_, &machine)?;
-            let member = directory.members.iter_mut().find(|member| member.name == machine).expect("checked");
-            member.relay_at = addresses;
-            Ok(Told::Done)
-        }
+        // The hub checks the machine from outside first, which takes time:
+        // the control connection hands it to `crate::direct` instead.
+        Change::Direct { .. } => Err("direct connections are allowed through their own check".to_string()),
         Change::Remove { name, reason } => {
             let directory = &store.book.directory;
             let member = directory.member(&name).cloned().ok_or_else(|| format!("there is no member {name}"))?;
@@ -401,7 +390,7 @@ fn log_out(
     let unregistered = member.home.as_ref() == Some(account);
     if unregistered {
         member.home = None;
-        member.relays.clear();
+        member.direct.clear();
     }
     let left = member.logins.is_empty();
     if unregistered {

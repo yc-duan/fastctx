@@ -359,6 +359,8 @@ fn nodes(now: Timestamp) -> NodesReply {
         online: Some(online),
         since: Some(ago(now, since)),
         through: None,
+        allows_direct: false,
+        path: None,
         facts,
         owner: Some("me".parse().expect("an account")),
         rights: vec![("me".parse().expect("an account"), fastctx_types::access::Rights { hands: true, agents: true })],
@@ -372,7 +374,8 @@ fn nodes(now: Timestamp) -> NodesReply {
             link: LinkState::Online {
                 since: ago(now, 300),
                 hub: "203.0.113.10:7443".into(),
-                relay: None,
+                through: None,
+                ms: None,
                 route: Route::Card { name: "Ethernet".into() },
             },
             logins: vec!["me".parse().expect("an account")],

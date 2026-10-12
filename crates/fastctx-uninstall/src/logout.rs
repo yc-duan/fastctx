@@ -21,20 +21,43 @@ async fn open(world: &WorldDir, directory: &Path) -> anyhow::Result<Option<dial:
         .context("the saved letter numbering is absent; it cannot be invented during uninstall")?;
     let key = sign::SecretKey::load(&world.device_key())?;
     let view = crate::read::<fastctx_net::directory::View>(&directory.join("view.json"))?;
-    let mut addresses = view
-        .as_ref()
-        .and_then(|view| view.me())
-        .map(|me| me.relays.iter().flat_map(|relay| relay.addresses.iter().copied()).collect::<Vec<_>>())
-        .unwrap_or_default();
-    addresses.extend(membership.addresses.iter().copied());
-    let mut connection = dial::dial(&addresses, Some(membership.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
+    // Its own line first, then through each machine that allows direct
+    // connections, as the link reaches the hub.
+    let upstreams: Vec<dial::Upstream> = std::iter::once(dial::Upstream::Hub(membership.addresses.clone()))
+        .chain(
+            view.iter()
+                .flat_map(|view| view.forwarders.iter().filter(|forwarder| forwarder.name != membership.name))
+                .cloned()
+                .map(dial::Upstream::Through),
+        )
+        .collect();
+    let mut failures = Vec::new();
+    let mut reached = None;
+    for upstream in &upstreams {
+        match dial::dial_upstream(
+            upstream,
+            &membership.id,
+            membership.cert,
+            wire::CONTROL_PATH,
+            wire::MAX_CONTROL_FRAME,
+        )
         .await
-        .map_err(anyhow::Error::msg)?;
+        {
+            Ok(connection) => {
+                reached = Some((connection, upstream.through().map(ToString::to_string)));
+                break;
+            }
+            Err(error) => failures.push(format!("{upstream}: {error}")),
+        }
+    }
+    let (mut connection, through) = reached.ok_or_else(|| anyhow::anyhow!("{}", failures.join("; ")))?;
     let intent = wire::Intent::Session {
         key: key.public(),
         proof: key.sign(sign::Domain::Session, &connection.binding),
         letters: wire::Letters { epoch: letters.epoch, taken: letters.taken },
-        through: None,
+        through,
+        direct: false,
+        interfaces: Vec::new(),
         any_names: true,
     };
     dial::send(

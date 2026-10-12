@@ -61,13 +61,23 @@ pub enum Action {
     StopActing {
         machine: MachineName,
     },
+    /// Before direct connections replaced relays: the relays a machine
+    /// connected through.
     Relays {
         machine: MachineName,
         relays: Vec<Relay>,
     },
+    /// Before direct connections replaced relays: a machine made a relay at
+    /// `addresses`, or, with none, no longer.
     RelayAt {
         machine: MachineName,
         addresses: Vec<SocketAddr>,
+    },
+    /// Direct connections to `machine` allowed at `at`, or, with none, no
+    /// longer.
+    Direct {
+        machine: MachineName,
+        at: Vec<SocketAddr>,
     },
     Remove {
         name: MachineName,

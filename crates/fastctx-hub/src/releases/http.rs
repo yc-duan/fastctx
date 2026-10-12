@@ -30,19 +30,33 @@ pub(crate) async fn serve(hub: Arc<Hub>, tls: tokio_rustls::TlsAcceptor, tcp: Tc
     // Keep the existing initial handshake budget. File transfer itself has
     // no deadline: a slow download must not be cut off by a session policy.
     let deadline = Instant::now() + wire::SILENCE;
+    // A connection that never becomes a session or a download is logged
+    // with where it came from and why, so a machine that could not get in
+    // leaves a trace here as well as in its own log.
     let stream = match tokio::time::timeout_at(deadline, tls.accept(tcp)).await {
         Ok(Ok(stream)) => stream,
-        _ => return,
+        Ok(Err(error)) => {
+            hub.log.line(format_args!("{peer}: the TLS handshake failed: {error}"));
+            return;
+        }
+        Err(_) => {
+            hub.log.line(format_args!("{peer}: no TLS handshake within {} s", wire::SILENCE.as_secs()));
+            return;
+        }
     };
     let mut binding = [0; 32];
-    if stream.get_ref().1.export_keying_material(&mut binding, wire::EXPORTER_LABEL, None).is_err() {
+    if let Err(error) = stream.get_ref().1.export_keying_material(&mut binding, wire::EXPORTER_LABEL, None) {
+        hub.log.line(format_args!("{peer}: the TLS exporter failed: {error}"));
         return;
     }
+    let log = hub.clone();
     let service = service_fn(move |request| respond(hub.clone(), request, peer, binding, deadline));
     let mut builder = hyper::server::conn::http1::Builder::new();
     builder.timer(TokioTimer::new()).header_read_timeout(deadline.saturating_duration_since(Instant::now()));
     // keep_alive(false) rewrites Connection: Upgrade and breaks WebSockets.
-    let _ = builder.serve_connection(TokioIo::new(stream), service).with_upgrades().await;
+    if let Err(error) = builder.serve_connection(TokioIo::new(stream), service).with_upgrades().await {
+        log.log.line(format_args!("{peer}: the connection ended before a complete request: {error}"));
+    }
 }
 
 async fn respond(
@@ -57,7 +71,10 @@ async fn respond(
         let upgrade = hyper::upgrade::on(&mut request);
         let response = match tokio_tungstenite::tungstenite::handshake::server::create_response(&request.map(|_| ())) {
             Ok(response) => response.map(|_| full(Bytes::new())),
-            Err(_) => return Ok(text(StatusCode::BAD_REQUEST, "Invalid WebSocket upgrade")),
+            Err(error) => {
+                hub.log.line(format_args!("{peer}: refused a WebSocket upgrade on {path}: {error}"));
+                return Ok(text(StatusCode::BAD_REQUEST, "Invalid WebSocket upgrade"));
+            }
         };
         tokio::spawn(async move {
             let opened = async {
@@ -74,8 +91,13 @@ async fn respond(
                 let hello = crate::recv(&mut socket).await?.ok_or("closed before saying hello")?;
                 Ok::<_, String>((socket, hello))
             };
-            if let Ok(Ok((socket, hello))) = tokio::time::timeout_at(deadline, opened).await {
-                crate::connected(hub, socket, path, binding, hello, peer).await;
+            match tokio::time::timeout_at(deadline, opened).await {
+                Ok(Ok((socket, hello))) => crate::connected(hub, socket, path, binding, hello, peer).await,
+                Ok(Err(error)) => hub.log.line(format_args!("{peer}: the WebSocket on {path} did not open: {error}")),
+                Err(_) => hub.log.line(format_args!(
+                    "{peer}: no hello on {path} within {} s of the connection",
+                    wire::SILENCE.as_secs()
+                )),
             }
         });
         return Ok(response);

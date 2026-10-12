@@ -35,12 +35,12 @@ export interface MapNode {
   marks: ("busy" | "waiting" | "idle")[];
   /** What it is, said whole, for a pointer resting on it. */
   title: string;
-  /** Where it relays to the hub for others, when its owner made it a relay. */
-  relayAt?: string[];
+  /** Where other machines connect to it directly, when the network's
+   *  administrator allowed that; others reach the hub through it when their
+   *  own line is down. */
+  directAt?: string[];
   /** The relay it is connected through now, by its label. */
   through?: string | null;
-  /** The relays it dials, in order, by their labels; the hub after them. */
-  relays?: string[];
 }
 
 interface Placed {

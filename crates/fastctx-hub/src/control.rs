@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use fastctx_net::envelope::{Envelope, Kind};
 use fastctx_net::sign::{PublicKey, Signature};
-use fastctx_net::wire::{self, CallStatus, Down, Letters, Question, Refusal, SILENCE, Told, Up};
+use fastctx_net::wire::{self, CallStatus, Change, Down, Letters, Question, Refusal, SILENCE, Told, Up};
 use fastctx_types::access::Purpose;
 use fastctx_types::remote::RemoteCall;
 use fastctx_types::{AccountName, AgentName, MachineName};
@@ -22,6 +22,18 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use crate::{Hub, Out, Session, Socket, refuse, storage_failure};
+
+/// What a member says of itself when its session opens.
+pub(crate) struct Said {
+    /// The machine that forwards its connection here, if any.
+    pub through: Option<String>,
+    /// Whether it can take direct connections.
+    pub direct: bool,
+    /// The addresses of its network cards.
+    pub interfaces: Vec<std::net::IpAddr>,
+    /// Whether it reads machine and hub names of any language.
+    pub any_names: bool,
+}
 
 /// What a call or a data connection was allowed under: `from` saying it to
 /// `to` for `account`, for `purpose`.
@@ -61,9 +73,9 @@ pub(crate) async fn session(
     key: PublicKey,
     proof: Signature,
     letters: Letters,
-    through: Option<String>,
-    any_names: bool,
+    said: Said,
 ) {
+    let through = said.through.clone();
     let name = match hub.member(&key, &proof, &binding) {
         Ok(name) => name,
         Err(reason) => {
@@ -74,12 +86,13 @@ pub(crate) async fn session(
     };
     let generation = hub.next();
     let (out, mut outgoing) = mpsc::unbounded_channel();
-    if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, through.clone(), any_names) {
+    if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, peer, said) {
+        hub.log.line(format_args!("{peer}: the session of {name} could not open: {reason}"));
         refuse(&mut socket, reason).await;
         return;
     }
     match &through {
-        Some(relay) => hub.log.line(format_args!("{name} connected from {peer} through the relay {relay}")),
+        Some(through) => hub.log.line(format_args!("{name} connected through {through}, from {peer}")),
         None => hub.log.line(format_args!("{name} connected from {peer}")),
     }
     // Whoever sees it sees it online now.
@@ -154,16 +167,16 @@ fn open(
     generation: u64,
     out: mpsc::UnboundedSender<Out>,
     letters: Letters,
-    through: Option<String>,
-    any_names: bool,
+    peer: SocketAddr,
+    said: Said,
 ) -> Result<(), Refusal> {
     // The store's lock is held while the session is registered, so a letter
     // kept meanwhile is either in the backlog below or pushed after it.
     let mut store = hub.store();
     let (world, hub_name) = (store.hub.id.clone(), store.hub.name.clone());
-    let too_old = !any_names && crate::login::beyond_older_releases(&store);
+    let too_old = !said.any_names && crate::login::beyond_older_releases(&store);
     let entry = store.letters_of(name).map_err(|error| storage_failure(hub, "making letter records", &error))?;
-    entry.any_names = any_names;
+    entry.any_names = said.any_names;
     if too_old {
         // A member back on a release from before names of any language,
         // which would fail on the first name it cannot read: it is told why
@@ -201,7 +214,17 @@ fn open(
     for (seq, message) in backlog {
         let _ = out.send(Out::Frame(Down::Deliver { seq, message }));
     }
-    let replaced = hub.sessions().insert(name.clone(), Session { generation, out, since: now, through });
+    let session = Session {
+        generation,
+        out,
+        since: now,
+        peer,
+        through: said.through,
+        direct: said.direct,
+        interfaces: said.interfaces,
+        paths: None,
+    };
+    let replaced = hub.sessions().insert(name.clone(), session);
     drop(store);
     if let Some(old) = replaced {
         let _ = old.out.send(Out::End(Refusal::Replaced));
@@ -289,7 +312,7 @@ pub(crate) fn cut_calls(hub: &Hub) {
 }
 
 fn handle(
-    hub: &Hub,
+    hub: &Arc<Hub>,
     name: &MachineName,
     generation: u64,
     out: &mpsc::UnboundedSender<Out>,
@@ -299,9 +322,19 @@ fn handle(
         let _ = out.send(Out::Frame(frame));
     };
     match frame {
-        Up::Ping { n } => {
+        Up::Ping { n, paths } => {
             crate::lends::heard(hub);
             reply(Down::Pong { n });
+            if let Some(paths) = paths {
+                lines(hub, name, generation, paths);
+            }
+        }
+        Up::Ask { id, question: Question::Manage { account, change: Change::Direct { machine, at } } } => {
+            let (hub, asker, out) = (hub.clone(), name.clone(), out.clone());
+            tokio::spawn(async move {
+                let answer = crate::direct::change(hub, asker, account, machine, at).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
         }
         Up::Send { seq, message } => letter(hub, name, seq, message, &reply)?,
         Up::Ack { seq } => {
@@ -413,20 +446,37 @@ fn letter(hub: &Hub, name: &MachineName, seq: u64, message: Envelope, reply: &im
     Ok(())
 }
 
-/// The resident a call asks the machine it goes to to work for, when it
-/// names one: a hop of an `on`, a run handed over to where its resident
-/// works, a colleague asked, a file placed.
-fn worked_for(message: &Envelope) -> Option<fastctx_types::Address> {
-    let call = match message.body::<fastctx_net::message::Body>().ok()? {
-        fastctx_net::message::Body::Call { call } | fastctx_net::message::Body::StreamCall { call } => call,
-        _ => return None,
-    };
-    let from = |resident| fastctx_types::Address { machine: message.from.clone(), resident };
-    match call {
-        RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } => Some(origin.resident),
-        RemoteCall::Run { resident, .. } | RemoteCall::Place { resident, .. } => Some(from(resident)),
-        RemoteCall::Ask { asker, .. } => Some(from(asker)),
+/// The call an envelope carries, when it carries one whole.
+fn carried_call(message: &Envelope) -> Option<RemoteCall> {
+    match message.body::<fastctx_net::message::Body>().ok()? {
+        fastctx_net::message::Body::Call { call } | fastctx_net::message::Body::StreamCall { call } => Some(call),
         _ => None,
+    }
+}
+
+/// The resident a call asks the machine it goes to to work for, when it
+/// names one (`fastctx_net::message::worked_for`).
+fn worked_for(message: &Envelope) -> Option<fastctx_types::Address> {
+    fastctx_net::message::worked_for(&message.from, &carried_call(message)?)
+}
+
+/// Keeps what `name` says of how its lines go, and tells the members to
+/// look again when which machines it is linked with directly changed.
+fn lines(hub: &Hub, name: &MachineName, generation: u64, paths: fastctx_net::directory::Paths) {
+    let linked = |paths: &fastctx_net::directory::Paths| -> Vec<(MachineName, bool)> {
+        paths.links.iter().map(|link| (link.peer.clone(), link.up)).collect()
+    };
+    let changed = {
+        let mut sessions = hub.sessions();
+        let Some(session) = sessions.get_mut(name).filter(|session| session.generation == generation) else {
+            return;
+        };
+        let changed = session.paths.as_ref().map(linked) != Some(linked(&paths));
+        session.paths = Some(paths);
+        changed
+    };
+    if changed {
+        hub.presence_changed();
     }
 }
 
@@ -452,15 +502,7 @@ fn echoes_work(hub: &Hub, message: &Envelope) -> bool {
 /// session opened for the user, or a colleague asked; none is the agent's
 /// default login there.
 fn login_asked(message: &Envelope) -> Option<(AgentName, Option<std::path::PathBuf>)> {
-    let call = match message.body::<fastctx_net::message::Body>().ok()? {
-        fastctx_net::message::Body::Call { call } | fastctx_net::message::Body::StreamCall { call } => call,
-        _ => return None,
-    };
-    match call {
-        RemoteCall::Open { agent, home, .. } => Some((agent, home)),
-        RemoteCall::Ask { started, .. } => Some((started.callee.login.agent, started.callee.login.home)),
-        _ => None,
-    }
+    fastctx_net::message::login_asked(&carried_call(message)?)
 }
 
 /// Checks that a call starting a session may use that agent's login on the
@@ -639,5 +681,14 @@ fn ask(hub: &Hub, name: &MachineName, question: Question) -> Result<Told, String
             let (entries, more) = hub.ledgers.lock().expect("never poisoned").read(&town, after)?;
             Ok(Told::Entries { entries, more })
         }
+        Question::Worked { to, account, purpose, resident } => {
+            // What the hub notes of a call it passes on, for one made over
+            // a direct link: only while that call is allowed.
+            let mut store = hub.store();
+            store.book.directory.admits(name, &account, &to, purpose)?;
+            store.note_worked(&to, resident).map_err(|error| format!("noting the work: {error}"))?;
+            Ok(Told::Done)
+        }
+        Question::Listening { at, outcome } => hub.listening(name, &at, outcome),
     }
 }

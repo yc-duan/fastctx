@@ -1,20 +1,21 @@
-//! Data connections: one per transfer, between a source and a sink, each
-//! end connected to the hub, which pairs them. Bytes travel as binary
-//! messages; the two ends may also say short things to each other, as
-//! JSON text messages, such as which of the offered files the sink wants.
-//! The hub pairs two ends only for a transfer a call or an answer it passed
-//! on named, and ends the pair when the right that call was made under is
-//! taken back.
-
-use std::net::SocketAddr;
+//! Data connections: one per transfer, between a source and a sink. When
+//! the call they go with went through the hub, each end connects to the
+//! hub, which pairs them; when it went over a direct link, the two machines
+//! connect to each other (`crate::link`). Bytes travel as binary messages;
+//! the two ends may also say short things to each other, as JSON text
+//! messages, such as which of the offered files the sink wants. A transfer
+//! ends when the right its call was made under is taken back: the hub cuts
+//! the pair it relays, and over a direct link the machine answering the
+//! call cuts its own end.
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use crate::dial::{self, HubSocket};
-use crate::ids::CertPin;
+use crate::dial::{self, HubSocket, Upstream};
+use crate::ids::{CertPin, HubId};
 use crate::sign::{Digest, Domain, SecretKey, sha256};
 use crate::wire::{self, Carried, Down, End, Intent, Up};
 
@@ -23,12 +24,14 @@ use crate::wire::{self, Carried, Down, End, Intent, Up};
 /// close of both directions.
 const DONE: &str = "\"done\"";
 
-/// Where a data connection goes: the addresses this machine reaches the hub
-/// at, the one its control connection is on first.
-#[derive(Clone, Debug)]
-pub struct Endpoint {
-    pub addresses: Vec<SocketAddr>,
-    pub cert: CertPin,
+/// Where a data connection goes.
+pub enum Endpoint {
+    /// To the hub, which pairs it with the other end: by the ways this
+    /// machine reaches the hub, the one its control connection is on first.
+    Hub { upstreams: Vec<Upstream>, hub: HubId, cert: CertPin },
+    /// Straight to the machine at the other end of the direct link the call
+    /// went over.
+    Peer(crate::link::DataWay),
 }
 
 /// One end of a paired data connection.
@@ -36,14 +39,35 @@ pub struct Stream {
     socket: HubSocket,
     /// Bytes received and not yet taken.
     pending: Vec<u8>,
+    /// Says why, when this machine cut the call the transfer goes with.
+    cut: Option<watch::Receiver<Option<String>>>,
 }
 
 impl Stream {
     /// Opens this machine's end of the transfer `stream` and waits for the
-    /// other end. The hub ends the wait if the other end's machine leaves.
+    /// other end. The hub ends the wait if the other end's machine leaves;
+    /// over a direct link, the link's end does.
     pub async fn open(endpoint: &Endpoint, key: &SecretKey, stream: u64, end: End) -> Result<Self, String> {
+        let (upstreams, hub, cert) = match endpoint {
+            Endpoint::Hub { upstreams, hub, cert } => (upstreams, hub, *cert),
+            Endpoint::Peer(way) => {
+                let socket = way.open(stream, end).await?;
+                return Ok(Self { socket, pending: Vec::new(), cut: way.cut() });
+            }
+        };
         let limit = wire::MAX_DATA_MESSAGE + wire::MAX_CONTROL_FRAME;
-        let dialed = dial::dial(&endpoint.addresses, Some(endpoint.cert), wire::DATA_PATH, limit).await?;
+        let mut failures = Vec::new();
+        let mut dialed = None;
+        for upstream in upstreams {
+            match dial::dial_upstream(upstream, hub, cert, wire::DATA_PATH, limit).await {
+                Ok(reached) => {
+                    dialed = Some(reached);
+                    break;
+                }
+                Err(error) => failures.push(format!("{upstream}: {error}")),
+            }
+        }
+        let dialed = dialed.ok_or_else(|| failures.join("; "))?;
         let mut socket = dialed.socket;
         let proof = key.sign(Domain::Session, &dialed.binding);
         let hello = Up::Hello {
@@ -53,11 +77,16 @@ impl Stream {
         };
         dial::send(&mut socket, &hello).await?;
         match dial::recv(&mut socket).await? {
-            Some(Down::Paired) => Ok(Self { socket, pending: Vec::new() }),
+            Some(Down::Paired) => Ok(Self { socket, pending: Vec::new(), cut: None }),
             Some(Down::Refused { reason }) => Err(reason.to_string()),
             Some(_) => Err("the hub answered something other than a pairing".to_string()),
             None => Err("the hub closed the connection".to_string()),
         }
+    }
+
+    /// Why the transfer was cut, if it was.
+    fn was_cut(&self) -> Option<String> {
+        self.cut.as_ref().and_then(|cut| cut.borrow().clone())
     }
 
     /// Sends bytes.
@@ -119,6 +148,9 @@ impl Stream {
     }
 
     async fn put(&mut self, message: WsMessage) -> Result<(), String> {
+        if let Some(why) = self.was_cut() {
+            return Err(why);
+        }
         self.socket.send(message).await.map_err(|error| format!("sending: {}", dial::describe(&error)))
     }
 
@@ -167,7 +199,16 @@ impl Stream {
 
     async fn next(&mut self) -> Result<Option<Message>, String> {
         loop {
-            match self.socket.next().await {
+            let next = match &mut self.cut {
+                Some(cut) => tokio::select! {
+                    next = self.socket.next() => next,
+                    cut = cut.wait_for(Option::is_some) => {
+                        return Err(cut.map(|why| why.clone().unwrap_or_default()).unwrap_or_else(|_| "the call was cut".to_string()));
+                    }
+                },
+                None => self.socket.next().await,
+            };
+            match next {
                 None | Some(Ok(WsMessage::Close(_))) => return Ok(None),
                 Some(Ok(WsMessage::Binary(bytes))) => return Ok(Some(Message::Bytes(bytes.to_vec()))),
                 Some(Ok(WsMessage::Text(text))) => return Ok(Some(Message::Word(text.to_string()))),

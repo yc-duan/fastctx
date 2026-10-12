@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::ids::HubId;
 use crate::sign::PublicKey;
 
-pub use fastctx_types::accounts::{Level, MemberKind as Kind, Relay};
+pub use fastctx_types::accounts::{Level, MemberKind as Kind, Paths, Reach};
 
 /// A computer, phone or web AI on the hub, under a name no other member
 /// on the hub has.
@@ -38,13 +38,11 @@ pub struct Member {
     /// among its logins.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<AccountName>,
-    /// The relays it connects through, in order; the hub comes after them.
+    /// Where other machines connect to it directly, when the hub's super
+    /// administrator allowed that and the hub reached it there
+    /// (`world-network.md`, 直连). Its node listens at their ports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub relays: Vec<Relay>,
-    /// Where it relays to the hub for others, when its owner made it a
-    /// relay: the addresses they dial. Its node forwards those ports.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub relay_at: Vec<std::net::SocketAddr>,
+    pub direct: Vec<std::net::SocketAddr>,
     pub added: Timestamp,
     /// Whether it is connected now, as the hub saw when it made the view.
     #[serde(default)]
@@ -52,9 +50,16 @@ pub struct Member {
     /// When it connected, when online; when it was last connected, when not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<Timestamp>,
-    /// The relay it is connected through, when online through one.
+    /// The machine it reaches the hub through, when online through one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<String>,
+    /// What its direct address may be chosen from, as the hub saw when it
+    /// made the view; only in views of the super administrator and its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<Reach>,
+    /// How its lines go, as it last told the hub, while online.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Paths>,
 }
 
 impl Member {
@@ -429,6 +434,21 @@ pub struct View {
     /// Whether accounts may be opened by anyone who reaches the hub.
     #[serde(default)]
     pub self_registration: bool,
+    /// Whether this hub takes direct connections between machines: their
+    /// allowing, the outside check, and what members say of their lines.
+    /// Older hubs omit it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub direct_links: bool,
+    /// While the hub checks whether it reaches this member at these
+    /// addresses, before direct connections to it count: the member
+    /// listens at their ports meanwhile.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trial: Vec<std::net::SocketAddr>,
+    /// Every machine on the hub that allows direct connections, whatever
+    /// account it is of: a member whose own line to the hub is down reaches
+    /// the hub through one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forwarders: Vec<crate::dial::Forwarder>,
     #[serde(flatten)]
     pub directory: Directory,
 }
@@ -436,7 +456,17 @@ pub struct View {
 impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
-        Self { machine_log: false, hub, hub_name, me, self_registration: false, directory: Directory::default() }
+        Self {
+            machine_log: false,
+            hub,
+            hub_name,
+            me,
+            self_registration: false,
+            direct_links: false,
+            trial: Vec::new(),
+            forwarders: Vec::new(),
+            directory: Directory::default(),
+        }
     }
 
     pub fn me(&self) -> Option<&Member> {

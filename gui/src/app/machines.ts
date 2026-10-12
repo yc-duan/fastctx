@@ -6,15 +6,15 @@
 // chosen stands in a panel that opens only when asked for. Beside each hub
 // a dashed ring adds a machine: it says one is on its way once a way in was
 // given, and the machine is circled as it arrives. A machine of the
-// account's own is shared, given its relays and removed from here; whom it
-// is shared with is taken back with a press. Long sayings stand behind a
+// account's own is shared and removed from here; whom it is shared with is
+// taken back with a press. Long sayings stand behind a
 // pointer's rest, not on the page.
 
 import { glyph } from "../conversation/glyphs";
 import { layerOpened, type Layer } from "./back";
 import { escape } from "../conversation/prose";
 import type { Bounds, Point } from "../map-canvas";
-import type { AccountChange, HubAccounts, Login, Relay } from "../world/accounts";
+import type { AccountChange, HubAccounts, Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { LinkState } from "../world/world";
@@ -23,11 +23,9 @@ import type { AccessWords, MachinesWords } from "./account-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { LendSheet, type Loan } from "./lend-sheet";
-import { GiveSheet, RelaysSheet, socketAddress } from "./machine-sheets";
+import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
-import { MachineMap, type Way } from "./machine-map";
-import type { MapNode } from "./network-map";
-import { blot, circle, outline, seeded } from "../pen/shapes";
+import { MachineMap } from "./machine-map";
 import { RING } from "./map-layout";
 import { mapOf } from "./map-of";
 import { link, talkLink } from "./places";
@@ -87,11 +85,6 @@ interface Given {
 /** How long a taking back can be undone from the drawing's corner. */
 const UNDO_MS = 6_000;
 
-/** How long a machine is given to go the way it was asked: it finds its
- *  new address list within a minute (`world-network.md`, 转接站), and its
- *  next try of each address within another. */
-const ROUTE_MS = 120_000;
-
 /** How long a machine that just arrived stays circled: the drawing-in of
  *  the circle and a moment to see it. */
 const ARRIVED_MS = 6_000;
@@ -107,9 +100,6 @@ export class MachinesPage implements Page {
   private readonly acts: HTMLElement;
   private readonly menu: HTMLElement;
   private readonly tags: HTMLElement;
-  /** The order of the chosen machine's ways, a number on each line. */
-  private readonly orders: HTMLElement;
-  private ordered = "";
   private readonly undoBar: HTMLElement;
   private tagged = "";
   private given: Given[] = [];
@@ -119,9 +109,6 @@ export class MachinesPage implements Page {
    *  in what one needs. */
   private readonly card: HTMLElement;
   private cardFor: string | null = null;
-  /** Ways asked for and not yet taken: a machine, what it was asked to go
-   *  through (a relay's machine or its hub), the relay's label, and when. */
-  private readonly pending = new Map<string, { target: string; label: string | null; since: number }>();
   private drawn = "";
   private floated = "";
   private readonly stop: () => void;
@@ -141,7 +128,6 @@ export class MachinesPage implements Page {
     close: () => this.closeDetails(),
   };
   private readonly menuLayer: Layer = { isOpen: () => !!this.menuFor && this.element.isConnected, close: () => this.closeMenu() };
-  private readonly cardLayer: Layer = { isOpen: () => !!this.cardFor && this.element.isConnected, close: () => this.closeCard() };
   /** Redraws when the page turns narrow or wide: the sheet and what floats
    *  beside the one chosen depend on it. */
   private readonly resized: ResizeObserver;
@@ -154,7 +140,6 @@ export class MachinesPage implements Page {
   private note: { machine: string; text: string } | null = null;
   private readonly giving: GiveSheet;
   private readonly lending: LendSheet;
-  private readonly relaying: RelaysSheet;
   /** Hubs a machine is on its way to, with the machines each had when a
    *  way in was given. */
   private readonly waiting = new Map<string, Set<string>>();
@@ -164,7 +149,6 @@ export class MachinesPage implements Page {
     const { words } = options;
     this.giving = new GiveSheet(options.access);
     this.lending = new LendSheet(options.access);
-    this.relaying = new RelaysSheet(options.access);
     this.title = options.focus ?? words.title;
     this.selected = options.focus ? `m:${options.focus}` : null;
     // Come to a machine from elsewhere, what is known of it is open.
@@ -176,14 +160,12 @@ export class MachinesPage implements Page {
         `<h1 class="page-title">${escape(words.title)}</h1>`,
         `<button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
-      <div class="machines-layout"><div class="machines-canvas"><div class="map-tags"></div><div class="map-orders"></div><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
+      <div class="machines-layout"><div class="machines-canvas"><div class="map-tags"></div><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
     this.acts = this.element.querySelector<HTMLElement>(".map-acts")!;
     this.menu = this.element.querySelector<HTMLElement>(".map-menu")!;
     this.tags = this.element.querySelector<HTMLElement>(".map-tags")!;
-    this.orders = this.element.querySelector<HTMLElement>(".map-orders")!;
-    this.orders.addEventListener("pointerdown", (event) => this.dragOrder(event));
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
     this.map = new MachineMap({
@@ -192,9 +174,10 @@ export class MachinesPage implements Page {
       event: (event) => {
         if (event.kind === "select") this.choose(event.key);
         else if (event.kind === "context") this.openMenu(event.key, event.at, event.input !== "mouse" || matchMedia("(max-width: 760px)").matches);
-        else if (event.kind === "drop") this.proposeRoute(event.handle.source, event.target, event.at);
       },
-      validRoute: (source, target) => this.validRoute(source, target),
+      // How a machine reaches its hub is the program's to choose; nothing
+      // on the drawing changes it.
+      validRoute: () => false,
       frame: (frame) => {
         this.scale = frame.view.scale;
         this.level = frame.view.level;
@@ -311,9 +294,6 @@ export class MachinesPage implements Page {
       }
       case "invite":
         if (login) this.invite(login);
-        return;
-      case "relays":
-        if (login) this.relays(login, machine);
         return;
       case "remove":
         if (login) this.remove(login, machine);
@@ -448,17 +428,6 @@ export class MachinesPage implements Page {
     );
   }
 
-  /** The sheet that sets the relays `machine` connects through. */
-  private relays(login: Login, machine: string): void {
-    const member = this.hubOf(login)?.members.find((member) => member.name === machine);
-    this.relaying.open(
-      machine,
-      member?.relays ?? [],
-      (relays) => this.options.change(login, { change: "relays", machine, relays }),
-      () => void this.options.store.refresh(),
-    );
-  }
-
   private remove(login: Login, machine: string): void {
     const { access } = this.options;
     this.options.confirm.ask({
@@ -584,10 +553,6 @@ export class MachinesPage implements Page {
       }
     }
     const adds = hubs.filter((hub) => this.hubLogin(hub.id)).map((hub) => hub.id);
-    this.settleRoutes(nodes);
-    const chosen = this.selected ? nodes.find((node) => node.key === this.selected) : undefined;
-    const route = chosen && this.routable(chosen, world) ? chosen.key : null;
-    const ways = route && chosen ? waysOf(chosen, nodes) : [];
     this.map.update({
       hubs,
       nodes,
@@ -596,15 +561,14 @@ export class MachinesPage implements Page {
       waiting: new Set(this.waiting.keys()),
       selected: this.selected,
       fresh: this.fresh,
-      route,
-      pending: new Map([...this.pending].map(([key, way]) => [key, way.target])),
-      ways,
+      route: null,
+      pending: new Map(),
+      ways: [],
     });
   }
 
-  /** What can be done to a spot, as `world` stands; the menu lists a few
-   *  more than float beside it. */
-  private actsOf(key: string, world: WorldNow, menu = false): Act[] {
+  /** What can be done to a spot, as `world` stands. */
+  private actsOf(key: string, world: WorldNow): Act[] {
     const { words } = this.options;
     const spot = this.spots(world).get(key);
     if (!spot) return [];
@@ -620,13 +584,10 @@ export class MachinesPage implements Page {
     }
     if (spot.kind === "lent") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
     const owners = this.ownersOf(spot.machine, world);
-    const relaying = !!this.memberOf(spot.machine, world)?.relay_at?.length;
     return [
       { act: "talk", label: words.talk, icon: "plus" },
       { act: "agents", label: words.hosts, icon: "agents" },
       ...(owners.length ? [{ act: "share", label: words.share, icon: "colleague" as const }] : []),
-      ...(owners.length ? [relaying ? { act: "stop-relay", label: words.stopRelay, icon: "relay" as const } : { act: "be-relay", label: words.beRelay, icon: "relay" as const }] : []),
-      ...(owners.length && menu ? [{ act: "relays", label: words.relays, icon: "relay" as const }] : []),
       details,
       ...(owners.length && !spot.machine.here ? [{ act: "remove", label: words.remove, icon: "close" as const, danger: true }] : []),
     ];
@@ -635,7 +596,7 @@ export class MachinesPage implements Page {
   /** The actions of the one chosen as a row in its sheet, each with its
    *  name, large enough for a finger. */
   private sheetActs(key: string, world: WorldNow): string {
-    const acts = this.actsOf(key, world, true).filter((act) => act.act !== "details");
+    const acts = this.actsOf(key, world).filter((act) => act.act !== "details");
     return acts.length
       ? `<div class="sheet-acts">${acts
           .map(
@@ -689,244 +650,10 @@ export class MachinesPage implements Page {
       case "share":
         if (login) this.share(login, machine.name);
         return;
-      case "relays":
-        if (login) this.relays(login, machine.name);
-        return;
       case "remove":
         if (login) this.remove(login, machine.name);
         return;
-      case "be-relay":
-        if (login) this.askRelay(login, machine, key);
-        return;
-      case "stop-relay":
-        if (login) void this.setRelay(login, machine, []);
-        return;
     }
-  }
-
-  /** The numbers on the chosen machine's ways, where their lines are; only
-   *  a machine with more than one way has them, and only a relay's number
-   *  can be moved: the hub is always tried last. */
-  private drawOrders(): void {
-    const points = this.menuFor || this.cardFor ? [] : this.map.wayPoints();
-    const shown = points.length > 1 ? points : [];
-    const html = shown
-      .map(({ way }) => `<button class="map-order${way.current ? " current" : ""}" type="button" data-order="${escape(way.to)}"${way.to.startsWith("hub:") ? " disabled" : ""}>${way.order}</button>`)
-      .join("");
-    if (html !== this.ordered) {
-      this.ordered = html;
-      this.orders.innerHTML = html;
-    }
-    const buttons = [...this.orders.children] as HTMLElement[];
-    shown.forEach(({ at }, index) => {
-      const button = buttons[index];
-      if (button && !button.classList.contains("dragging")) button.style.transform = `translate(${(at[0] - 13).toFixed(1)}px, ${(at[1] - 13).toFixed(1)}px)`;
-    });
-  }
-
-  /** A relay's number dragged onto another's swaps their places in the
-   *  order the machine tries them; the card asks before it is changed. */
-  private dragOrder(event: PointerEvent): void {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".map-order");
-    if (!button || button.disabled || !this.selected) return;
-    event.preventDefault();
-    button.setPointerCapture(event.pointerId);
-    button.classList.add("dragging");
-    const box = this.canvas.getBoundingClientRect();
-    const start = button.style.transform;
-    const move = (moved: PointerEvent) => {
-      button.style.transform = `translate(${(moved.clientX - box.left - 13).toFixed(1)}px, ${(moved.clientY - box.top - 13).toFixed(1)}px)`;
-    };
-    const up = (ended: PointerEvent) => {
-      button.removeEventListener("pointermove", move);
-      button.classList.remove("dragging");
-      button.style.transform = start;
-      const under = document.elementsFromPoint(ended.clientX, ended.clientY).find((element) => element !== button && element.classList.contains("map-order")) as HTMLButtonElement | undefined;
-      if (under && !under.disabled && this.selected) this.proposeOrder(this.selected, button.dataset.order!, under.dataset.order!, [ended.clientX - box.left, ended.clientY - box.top]);
-    };
-    button.addEventListener("pointermove", move);
-    button.addEventListener("pointerup", up, { once: true });
-    button.addEventListener("pointercancel", () => {
-      button.removeEventListener("pointermove", move);
-      button.classList.remove("dragging");
-      button.style.transform = start;
-    }, { once: true });
-  }
-
-  /** The card for swapping two relays in a machine's order: the order
-   *  before and after, in words. */
-  private proposeOrder(source: string, first: string, second: string, at: Point): void {
-    const world = this.options.store.world.peek();
-    if (!world) return;
-    const { words } = this.options;
-    const spot = this.spots(world).get(source);
-    const { nodes } = mapOf(world, words);
-    if (spot?.kind !== "machine") return;
-    const login = this.ownersOf(spot.machine, world)[0];
-    const before = this.memberOf(spot.machine, world)?.relays ?? [];
-    const name = (key: string) => nodes.find((node) => node.key === key)?.name;
-    const a = before.findIndex((relay) => relay.label === name(first));
-    const b = before.findIndex((relay) => relay.label === name(second));
-    if (!login || a < 0 || b < 0 || a === b) return;
-    const relays = [...before];
-    [relays[a], relays[b]] = [relays[b]!, relays[a]!];
-    const said = words.routeList(relays.map((relay) => relay.label));
-    this.openCard(
-      source,
-      at,
-      `<p class="map-card-said">${escape(said)}</p>
-       <p class="map-card-was">${escape(words.routeList(before.map((relay) => relay.label)))}</p>
-       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.confirm)}</button></footer>`,
-      async () => {
-        await this.options.change(login, { change: "relays", machine: spot.machine.name, relays });
-        this.offerUndo(said, () => this.options.change(login, { change: "relays", machine: spot.machine.name, relays: before }));
-      },
-    );
-  }
-
-  /** The hub's record of one of the account's machines. */
-  private memberOf(machine: Machine, world: WorldNow) {
-    return world.accounts.hubs.flatMap((hub) => hub.members).find((member) => member.name === machine.name && member.kind === "computer");
-  }
-
-  /** Whether a machine's way to its hub can be changed here: one of the
-   *  account's own, online. */
-  private routable(node: MapNode, world: WorldNow): boolean {
-    const spot = this.spots(world).get(node.key);
-    return spot?.kind === "machine" && node.online === true && this.ownersOf(spot.machine, world).length > 0;
-  }
-
-  /** Where a machine's handle may be dropped: a relay's machine on one of
-   *  its hubs, online, or one of its hubs itself. */
-  private validRoute(source: string, target: string): boolean {
-    const world = this.options.store.world.peek();
-    if (!world) return false;
-    const { nodes } = mapOf(world, this.options.words);
-    const node = nodes.find((one) => one.key === source);
-    if (!node || !this.routable(node, world)) return false;
-    if (target.startsWith("hub:")) return node.hubs.includes(target.slice(4));
-    const relay = nodes.find((one) => one.key === target);
-    return !!relay && relay.key !== source && relay.hold !== "lent" && relay.online === true && !!relay.relayAt?.length && relay.hubs.some((hub) => node.hubs.includes(hub));
-  }
-
-  /** A way taken drops from the pending; one not taken in time is said. */
-  private settleRoutes(nodes: MapNode[]): void {
-    for (const [key, way] of this.pending) {
-      const node = nodes.find((one) => one.key === key);
-      const taken = !!node && node.online === true && (way.label === null ? !node.through : node.through === way.label);
-      if (taken) this.pending.delete(key);
-      else if (Date.now() - way.since > ROUTE_MS) {
-        this.pending.delete(key);
-        this.say(this.options.words.routeFailed(node?.name ?? key.slice(2), way.label ?? this.options.words.hubOnline));
-      }
-    }
-  }
-
-  /** The small card where a handle was dropped: the way before and after,
-   *  in two small drawings, one sentence, and what changes underneath
-   *  folded away; confirmed, the machine is asked to go that way. */
-  private proposeRoute(source: string, target: string, at: Point): void {
-    const world = this.options.store.world.peek();
-    if (!world) return;
-    const { words } = this.options;
-    const spot = this.spots(world).get(source);
-    const { nodes } = mapOf(world, words);
-    const node = nodes.find((one) => one.key === source);
-    if (spot?.kind !== "machine" || !node) return;
-    const login = this.ownersOf(spot.machine, world)[0];
-    if (!login) return;
-    const before = this.memberOf(spot.machine, world)?.relays ?? [];
-    const relay = target.startsWith("hub:") ? null : nodes.find((one) => one.key === target);
-    const relays: Relay[] = relay ? [{ label: relay.name, addresses: relay.relayAt ?? [] }, ...before.filter((one) => one.label !== relay.name)] : [];
-    const now = node.through ?? null;
-    if ((relay?.name ?? null) === now && relays.length === before.length) return;
-    const sentence = relay ? words.routeVia(node.name, relay.name) : words.routeDirect(node.name);
-    this.openCard(
-      source,
-      at,
-      `<div class="map-card-pictures">${routePicture(now, false)}<span aria-hidden="true">→</span>${routePicture(relay?.name ?? null, true)}</div>
-       <p class="map-card-said">${escape(sentence)}</p>
-       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.routeList(relays.map((one) => `${one.label}（${one.addresses.join("、")}）`)))}</p></details>
-       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.confirm)}</button></footer>`,
-      async () => {
-        await this.options.change(login, { change: "relays", machine: spot.machine.name, relays });
-        this.pending.set(source, { target, label: relay?.name ?? null, since: Date.now() });
-        this.offerUndo(sentence, () => this.options.change(login, { change: "relays", machine: spot.machine.name, relays: before }));
-      },
-    );
-  }
-
-  /** The card that makes a machine a relay: the address others dial it
-   *  at, and what being a relay means, folded away. */
-  private askRelay(login: Login, machine: Machine, key: string): void {
-    const { words } = this.options;
-    const at = this.map.screenOf(key) ?? [0, 0];
-    this.openCard(
-      key,
-      at,
-      `<p class="map-card-title">${escape(words.relayTitle(machine.written))}</p>
-       <label class="field"><span class="field-label">${escape(words.relayAddress)}</span><input class="mono" name="address" autocomplete="off" spellcheck="false" placeholder="203.0.113.20:7444" required></label>
-       <p class="map-card-wrong" hidden>${escape(words.relayAddressWrong)}</p>
-       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.relayWhat)}</p></details>
-       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.confirm)}</button></footer>`,
-      async () => {
-        const address = this.card.querySelector<HTMLInputElement>("[name=address]")!.value.trim();
-        if (!socketAddress.test(address)) {
-          this.card.querySelector<HTMLElement>(".map-card-wrong")!.hidden = false;
-          throw new Error("kept open");
-        }
-        await this.setRelay(login, machine, [address], false);
-      },
-    );
-    this.card.querySelector<HTMLInputElement>("[name=address]")?.focus();
-  }
-
-  /** Makes a machine a relay at `addresses`, or with none no longer; taken
-   *  away, it can be given back for a moment. */
-  private async setRelay(login: Login, machine: Machine, addresses: string[], undoable = true): Promise<void> {
-    const world = this.options.store.world.peek();
-    const before = (world && this.memberOf(machine, world)?.relay_at) ?? [];
-    try {
-      await this.options.change(login, { change: "relay_at", machine: machine.name, addresses });
-    } catch (error) {
-      this.say(this.options.access.failed(error instanceof Error ? error.message : String(error)));
-      throw error;
-    }
-    if (undoable && before.length) this.offerUndo(this.options.words.stopRelay, () => this.options.change(login, { change: "relay_at", machine: machine.name, addresses: before }));
-    await this.options.store.refresh();
-    this.redraw();
-  }
-
-  private openCard(key: string, at: Point, html: string, go: () => Promise<void>): void {
-    this.closeMenu();
-    this.cardFor = key;
-    this.float();
-    this.card.innerHTML = html;
-    const sheet = matchMedia("(max-width: 760px)").matches;
-    this.card.classList.toggle("as-sheet", sheet);
-    this.card.hidden = false;
-    layerOpened(this.cardLayer);
-    if (!sheet) {
-      const x = Math.min(this.canvas.clientWidth - this.card.offsetWidth - 8, at[0] + 16);
-      const y = Math.min(this.canvas.clientHeight - this.card.offsetHeight - 8, at[1] + 16);
-      this.card.style.transform = `translate(${Math.max(8, x)}px, ${Math.max(8, y)}px)`;
-    } else this.card.style.transform = "";
-    this.card.onsubmit = (event) => {
-      event.preventDefault();
-      const button = this.card.querySelector<HTMLButtonElement>(".map-card-go");
-      if (button) button.disabled = true;
-      go().then(
-        () => {
-          this.closeCard();
-          void this.options.store.refresh().then(() => this.redraw());
-        },
-        (error: unknown) => {
-          if (button) button.disabled = false;
-          if (!(error instanceof Error && error.message === "kept open")) this.say(this.options.access.failed(error instanceof Error ? error.message : String(error)));
-        },
-      );
-    };
-    this.card.focus({ preventScroll: true });
   }
 
   private closeCard(): void {
@@ -943,14 +670,6 @@ export class MachinesPage implements Page {
     if (this.undoing) clearTimeout(this.undoing.timer);
     this.undoing = { timer: window.setTimeout(() => this.endUndo(), UNDO_MS), redo };
     this.undoBar.innerHTML = `<span>${escape(said)}</span><button class="text-button map-undo-go" type="button">${escape(this.options.words.undo)}</button>`;
-    this.undoBar.hidden = false;
-  }
-
-  /** A line in the drawing's corner for a moment. */
-  private say(text: string): void {
-    if (this.undoing) clearTimeout(this.undoing.timer);
-    this.undoing = { timer: window.setTimeout(() => this.endUndo(), UNDO_MS), redo: async () => {} };
-    this.undoBar.innerHTML = `<span>${escape(text)}</span>`;
     this.undoBar.hidden = false;
   }
 
@@ -1070,7 +789,6 @@ export class MachinesPage implements Page {
   /** The icons beside the one chosen, on an arc round its ring, kept on the
    *  side with room; the names on the drawing keep clear of them. */
   private float(): void {
-    this.drawOrders();
     const world = this.options.store.world.peek();
     const key = this.menuFor || this.cardFor || this.narrow() ? null : this.selected;
     const at = key ? this.map.screenOf(key) : null;
@@ -1129,7 +847,7 @@ export class MachinesPage implements Page {
     if (!world) return;
     const { words } = this.options;
     if (key?.startsWith("add:")) return this.choose(key);
-    const acts: Act[] = key ? this.actsOf(key, world, true) : [{ act: "fit", label: words.fit, icon: "expand" }];
+    const acts: Act[] = key ? this.actsOf(key, world) : [{ act: "fit", label: words.fit, icon: "expand" }];
     if (!acts.length) return;
     if (key) this.selected = key;
     this.menuFor = { key, at, sheet };
@@ -1237,7 +955,7 @@ export class MachinesPage implements Page {
       )
       .join("");
     const own = owners.length
-      ? `<div class="panel-acts" data-hub="${escape(owners[0]!.hub)}" data-account="${escape(owners[0]!.account)}">${this.button("relays", words.relays, "", glyph("relay", 14))}${machine.here ? "" : this.button("remove", words.remove, " data-danger", glyph("close", 14))}</div>`
+      ? `<div class="panel-acts" data-hub="${escape(owners[0]!.hub)}" data-account="${escape(owners[0]!.account)}">${machine.here ? "" : this.button("remove", words.remove, " data-danger", glyph("close", 14))}</div>`
       : "";
     // Whom an agent on it is lent to, taken back here as on the agents page.
     const lending = owners
@@ -1360,7 +1078,7 @@ export function linkWhy(link: LinkState): string {
 export function linkSaid(link: LinkState, words: MachinesWords): string {
   switch (link.kind) {
     case "online":
-      return link.relay ? words.linkVia(link.relay, link.hub) : words.linkOnline(link.hub);
+      return link.through ? words.linkVia(link.through, link.hub) : words.linkOnline(link.hub);
     case "connecting":
       return words.linkConnecting(link.last_error);
     case "stopped":
@@ -1370,30 +1088,3 @@ export function linkSaid(link: LinkState, words: MachinesWords): string {
   }
 }
 
-/** A machine's way to its hub, drawn small for the card: its ring, the
- *  relay it goes through if any, and the hub's knot; the new way in clay. */
-function routePicture(via: string | null, after: boolean): string {
-  const random = seeded(`route:${via ?? ""}:${after}`);
-  const ring = circle([16, 18], 10, 1.6, random);
-  const knot = circle([116, 18], 4, 1.4, random);
-  const dot = blot([116, 18], 1.6, random);
-  const line = (from: number, to: number) => outline([[from, 18], [(from + to) / 2, 16.5], [to, 18]], 1.3, random, { pressure: 0.3, taper: 0.1 });
-  const relay = via ? circle([66, 18], 8, 1.4, random) : "";
-  const lines = via ? `${line(28, 56)} ${line(76, 110)}` : line(28, 110);
-  const tone = after ? "clay" : "graphite";
-  return `<svg class="map-card-picture" viewBox="0 0 132 36" role="img" aria-label="${escape(via ?? "")}"><g class="ink graphite" filter="url(#pen-marker)"><path d="${ring}"/><path d="${knot}"/><path d="${dot}"/></g><g class="ink ${tone}" filter="url(#pen-marker)"><path d="${lines}"/>${relay ? `<path d="${relay}"/>` : ""}</g>${via ? `<text x="66" y="34" text-anchor="middle">${escape(via)}</text>` : ""}</svg>`;
-}
-
-/** A machine's ways to its hub in the order it tries them: the relays of
- *  its list that are machines on the drawing, then the hub. */
-function waysOf(node: MapNode, nodes: MapNode[]): Way[] {
-  const relays = node.relays ?? [];
-  const ways: Way[] = [];
-  relays.forEach((label, index) => {
-    const relay = nodes.find((one) => one.name === label && one.relayAt?.length && one.key !== node.key);
-    if (relay) ways.push({ machine: node.key, to: relay.key, order: index + 1, current: node.through === label });
-  });
-  const hub = node.hubs[0];
-  if (hub) ways.push({ machine: node.key, to: `hub:${hub}`, order: relays.length + 1, current: !node.through || !ways.some((way) => way.current) });
-  return ways;
-}

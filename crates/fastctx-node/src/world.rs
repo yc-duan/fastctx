@@ -141,7 +141,6 @@ pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> 
     if let Some(old) = node.links.write().expect("never poisoned").insert(hub.clone(), link.clone()) {
         old.stop();
     }
-    crate::relaying::follow(node, &hub);
     Ok(link)
 }
 
@@ -312,7 +311,14 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     // The machines each session may use, and who may ask for colleagues,
     // are in its tools.
     node.tools_changed(None);
-    crate::relaying::follow(node, &hub);
+    // What the firewall let in for direct connections on that hub goes with
+    // the membership.
+    let closing = hub.clone();
+    match tokio::task::spawn_blocking(move || crate::firewall::open(&closing, &Default::default())).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(why)) => node.log.line(format_args!("closing the firewall for direct connections: {why}")),
+        Err(error) => node.log.line(format_args!("closing the firewall for direct connections: {error}")),
+    }
     let net = net_dir(&node.world, &hub);
     let aside = node.world.path().join(format!("net-left-{}-{}", hub, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
     std::fs::rename(net.path(), &aside)
@@ -814,9 +820,12 @@ impl fastctx_net::link::Node for Handler {
     fn directory_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
         crate::admitted::notice(&node, &self.hub);
-        crate::relaying::follow(&node, &self.hub);
         // The machines each session may use are in its tools' descriptions.
         node.tools_changed(None);
+    }
+
+    fn open_ports(&self, ports: &std::collections::BTreeSet<u16>) -> Result<fastctx_net::wire::Firewall, String> {
+        crate::firewall::open(&self.hub, ports)
     }
 
     fn log(&self, line: String) {

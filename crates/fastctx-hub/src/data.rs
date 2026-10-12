@@ -129,6 +129,7 @@ pub(crate) async fn end(
     let me = match hub.member(&key, &proof, &binding) {
         Ok(me) => me,
         Err(reason) => {
+            hub.log.line(format_args!("refused a data connection: {reason}"));
             refuse(&mut socket, reason).await;
             return;
         }

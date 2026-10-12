@@ -6,9 +6,9 @@ use tokio::sync::{mpsc, oneshot};
 use crate::wire::Up;
 
 #[derive(Clone)]
-pub(super) struct Outgoing(mpsc::UnboundedSender<Frame>);
+pub(crate) struct Outgoing(mpsc::UnboundedSender<Frame>);
 
-pub(super) struct Frame {
+pub(crate) struct Frame {
     pub value: Up,
     pub written: Option<oneshot::Sender<()>>,
 }

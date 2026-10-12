@@ -1,10 +1,11 @@
 //! The link's connections: dialing an upstream, the welcome, and everything
 //! that passes on one connection until it ends; then dialing again.
 //!
-//! The ways to the hub are tried in order: the relays the machine's view
-//! lists for it, then the hub itself; one that cannot be reached gives way
-//! to the next. A machine on a later way asks the earlier ones now and then
-//! whether they take sessions again, and returns to the first that does.
+//! The ways to the hub are tried in order: this machine's own line, then
+//! through each machine that allows direct connections; one that cannot be
+//! reached gives way to the next. A machine on a later way asks the earlier
+//! ones now and then whether they take sessions again, and returns to the
+//! first that does.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,8 +19,8 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use super::letters::{self, Outbox, Receipt};
 use super::outgoing::Outgoing;
-use super::{CallEvent, Connection, Inner, Status, Upstream};
-use crate::dial::{self, HubSocket};
+use super::{CallEvent, CallOn, Connection, Inner, Replier, Status};
+use crate::dial::{self, HubSocket, Upstream};
 use crate::envelope::{Envelope, Kind};
 use crate::message::LetterBody;
 use crate::sign::{Domain, sha256};
@@ -31,7 +32,7 @@ const STABLE: Duration = Duration::from_secs(60);
 
 /// How often a machine on a later way to the hub asks the earlier ones
 /// whether they take sessions again: the longest it stays on the later way
-/// after a relay it connects through first is back (`world-network.md`).
+/// after its own line is back (`world-network.md`).
 const RETURN: Duration = Duration::from_secs(60);
 
 enum Ended {
@@ -47,6 +48,7 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
     let mut failures: u32 = 0;
     loop {
         let mut online_since = None;
+        let started = Instant::now();
         let ended = tokio::select! {
             ended = connect(&inner, &mut online_since) => ended,
             changed = changed(&inner, &mut changes) => {
@@ -73,16 +75,31 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
                     failures = 0;
                 }
                 failures = failures.saturating_add(1);
-                if was_online || failures == 1 {
-                    inner.node.log(format!("the link to the hub is down: {reason}"));
-                }
                 let since = match &*inner.status.borrow() {
                     Status::Connecting { since, .. } if !was_online => *since,
                     _ => Timestamp::now(),
                 };
+                let wait = dial::backoff(failures);
+                // Every try leaves a line: which ways it took and why each
+                // failed, how long it took and when the next one is, so a
+                // long absence shows whether the machine kept trying.
+                let next = if wait.is_zero() {
+                    "trying again at once".to_string()
+                } else {
+                    format!("trying again in {:.1} s", wait.as_secs_f64())
+                };
+                if was_online {
+                    inner.node.log(format!("the link to the hub is down: {reason}; {next}"));
+                } else {
+                    inner.node.log(format!(
+                        "connecting to the hub failed (try {failures}, offline since {}, the try took {:.1} s): {reason}; {next}",
+                        since.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                        started.elapsed().as_secs_f64(),
+                    ));
+                }
                 inner.status.send_replace(Status::Connecting { since, last_error: Some(reason) });
                 tokio::select! {
-                    _ = tokio::time::sleep(dial::backoff(failures)) => {},
+                    _ = tokio::time::sleep(wait) => {},
                     changed = changed(&inner, &mut changes) => {
                         reconnect(&inner, changed.expect("watching network and resume notifications"));
                         failures = 0;
@@ -110,6 +127,8 @@ fn reconnect(inner: &Inner, reason: &str) {
     inner.node.log(format!("reconnecting immediately: {reason}"));
     inner.status.send_replace(Status::Connecting { since: Timestamp::now(), last_error: Some(reason.to_string()) });
     dial::network_changed();
+    // The direct links dial again at once too.
+    inner.network.send_modify(|changes| *changes = changes.wrapping_add(1));
 }
 
 /// A session the hub welcomed, by one way.
@@ -137,9 +156,10 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
 
 async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
     let membership = &inner.membership;
-    let dialed = dial::dial(&upstream.addresses, Some(membership.cert), wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
-        .await
-        .map_err(Ended::Retry)?;
+    let dialed =
+        dial::dial_upstream(upstream, &membership.id, membership.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
+            .await
+            .map_err(Ended::Retry)?;
     let (address, route) = (dialed.address, dialed.route.clone());
     let mut socket = dialed.socket;
     let proof = inner.key.sign(Domain::Session, &dialed.binding);
@@ -147,6 +167,11 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
         let letters = inner.letters.lock().expect("never poisoned");
         Letters { epoch: letters.file.epoch, taken: letters.file.taken }
     };
+    // A computer can take direct connections; it says the addresses of its
+    // cards, which the network's administrator chooses its direct address
+    // from.
+    let computer = membership.kind.is_computer();
+    let interfaces = if computer { interface_addresses() } else { Vec::new() };
     let hello = Up::Hello {
         protocol: wire::GREETING_PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -154,7 +179,9 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             key: inner.key.public(),
             proof,
             letters: position,
-            through: upstream.relay.clone(),
+            through: upstream.through().map(ToString::to_string),
+            direct: computer,
+            interfaces,
             any_names: true,
         },
     };
@@ -229,11 +256,14 @@ async fn connected(
     let generation = inner.next_id();
     let (up, mut outgoing) = Outgoing::channel();
     *inner.connection.lock().expect("never poisoned") =
-        Some(Connection { generation, up: up.clone(), upstream: upstream.clone(), address, tried: tried.to_vec() });
-    let relay = upstream.relay.clone();
-    inner.status.send_replace(Status::Online { since: Timestamp::now(), address, relay, route: route.clone() });
+        Some(Connection { generation, up: up.clone(), upstream: upstream.clone(), tried: tried.to_vec() });
+    let through = upstream.through().map(ToString::to_string);
+    inner.status.send_replace(Status::Online { since: Timestamp::now(), address, through, route: route.clone() });
     *online_since = Some(Instant::now());
-    inner.node.log(format!("connected to the hub at {address} by {upstream}, {route}"));
+    match upstream.through() {
+        Some(through) => inner.node.log(format!("connected to the hub through {through}, at {address} {route}")),
+        None => inner.node.log(format!("connected to the hub at {address} {route}")),
+    }
 
     // This guard also runs when a network event cancels connect(). Pending
     // callers must learn that their old connection ended before another
@@ -257,16 +287,17 @@ async fn connected(
     let (letter_failed, mut letters_failed) = oneshot::channel::<String>();
     let (outbox_failed, mut outbox_failure) = oneshot::channel::<String>();
     let (deliveries, delivered) = mpsc::unbounded_channel();
+    let pinged: Arc<std::sync::Mutex<std::collections::HashMap<u64, Instant>>> = Arc::default();
     let mut tasks = Tasks(vec![
         writer,
-        tokio::spawn(heartbeat(up.clone())),
+        tokio::spawn(heartbeat(inner.clone(), up.clone(), pinged.clone())),
         tokio::spawn(flush(inner.clone(), up.clone(), taken, outbox_failed)),
         tokio::spawn(take_letters(inner.clone(), up.clone(), hub_letters, delivered, letter_failed)),
     ]);
     let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
     if tried.len() > 1 {
-        let cert = inner.membership.cert;
-        tasks.0.push(tokio::spawn(ask_preferred(tried[..tried.len() - 1].to_vec(), cert, returned)));
+        let (hub, cert) = (inner.membership.id.clone(), inner.membership.cert);
+        tasks.0.push(tokio::spawn(ask_preferred(tried[..tried.len() - 1].to_vec(), hub, cert, returned)));
     }
     {
         let inner = inner.clone();
@@ -274,6 +305,7 @@ async fn connected(
             if let Err(error) = inner.refresh().await {
                 inner.node.log(format!("asking the hub for the view: {error}"));
             }
+            tell_worked(&inner).await;
             inner.node.directory_changed();
             // Whatever the projects' ledgers gained while this machine was
             // away is taken now.
@@ -316,6 +348,12 @@ async fn connected(
                 if n > last_ping {
                     last_ping = n;
                     last_pong = Instant::now();
+                    let mut pinged = pinged.lock().expect("never poisoned");
+                    if let Some(sent) = pinged.remove(&n) {
+                        let ms = u32::try_from(sent.elapsed().as_millis()).unwrap_or(u32::MAX);
+                        *inner.hub_ms.lock().expect("never poisoned") = Some(ms);
+                    }
+                    pinged.retain(|sent, _| *sent > n);
                 }
             }
             Down::Ack { seq, refused } => {
@@ -330,17 +368,11 @@ async fn connected(
                 let _ = deliveries.send((seq, message));
             }
             Down::Incoming { call, message } => {
-                tokio::spawn(super::answering::answer(inner.clone(), up.clone(), call, message));
+                tokio::spawn(super::answering::answer(inner.clone(), Replier::Hub(up.clone(), call), message));
             }
-            Down::Status { id, status } => {
-                if let Some(waiter) = inner.calls.lock().expect("never poisoned").get(&id) {
-                    let _ = waiter.events.send(CallEvent::Status(status));
-                }
-            }
+            Down::Status { id, status } => inner.call_event(&CallOn::Hub(generation), id, CallEvent::Status(status)),
             Down::Answered { id, message } => {
-                if let Some(waiter) = inner.calls.lock().expect("never poisoned").get(&id) {
-                    let _ = waiter.events.send(CallEvent::Answered(message));
-                }
+                inner.call_event(&CallOn::Hub(generation), id, CallEvent::Answered(message));
             }
             Down::Told { id, answer } => {
                 if let Some(asker) = inner.asks.lock().expect("never poisoned").remove(&id) {
@@ -397,9 +429,7 @@ impl Drop for Connected<'_> {
             *connection = None;
         }
         drop(connection);
-        for waiter in self.inner.calls.lock().expect("never poisoned").values() {
-            let _ = waiter.events.send(CallEvent::Disconnected(self.reason.clone()));
-        }
+        self.inner.fail_calls_on(&CallOn::Hub(self.generation), &self.reason);
         self.inner.asks.lock().expect("never poisoned").clear();
     }
 }
@@ -425,11 +455,16 @@ fn refused(reason: Refusal) -> Ended {
 
 /// Asks the ways before the one this machine is on, every `RETURN`, whether
 /// they take sessions; says the first that does.
-async fn ask_preferred(preferred: Vec<Upstream>, cert: crate::ids::CertPin, returned: oneshot::Sender<Upstream>) {
+async fn ask_preferred(
+    preferred: Vec<Upstream>,
+    hub: crate::ids::HubId,
+    cert: crate::ids::CertPin,
+    returned: oneshot::Sender<Upstream>,
+) {
     loop {
         tokio::time::sleep(RETURN).await;
         for upstream in &preferred {
-            if dial::probe(&upstream.addresses, cert).await.is_ok() {
+            if dial::probe(upstream, &hub, cert).await.is_ok() {
                 let _ = returned.send(upstream.clone());
                 return;
             }
@@ -437,14 +472,59 @@ async fn ask_preferred(preferred: Vec<Upstream>, cert: crate::ids::CertPin, retu
     }
 }
 
-async fn heartbeat(up: Outgoing) {
+/// Sends a heartbeat every `HEARTBEAT`, noting when, and with it how this
+/// machine's lines go, to a hub that keeps that.
+async fn heartbeat(
+    inner: Arc<Inner>,
+    up: Outgoing,
+    pinged: Arc<std::sync::Mutex<std::collections::HashMap<u64, Instant>>>,
+) {
     let mut n = 0;
     loop {
         tokio::time::sleep(HEARTBEAT).await;
         n += 1;
-        if up.send(Up::Ping { n }).is_err() {
+        let paths = inner.view().direct_links.then(|| inner.paths());
+        pinged.lock().expect("never poisoned").insert(n, Instant::now());
+        if up.send(Up::Ping { n, paths }).is_err() {
             return;
         }
+    }
+}
+
+/// Tells the hub what this machine noted of the calls it made directly,
+/// as the hub notes of the calls it passes on.
+pub(super) async fn tell_worked(inner: &Arc<Inner>) {
+    if !inner.view().direct_links {
+        return;
+    }
+    for worked in inner.direct.take_worked() {
+        let question = wire::Question::Worked {
+            to: worked.to.clone(),
+            account: worked.account.clone(),
+            purpose: worked.purpose,
+            resident: worked.resident.clone(),
+        };
+        if let Err(error) = inner.ask(question).await {
+            inner.node.log(format!("telling the hub of a direct call to {}: {error}", worked.to));
+            inner.direct.note_worked(worked);
+        }
+    }
+}
+
+/// The addresses of this machine's network cards that others could reach.
+fn interface_addresses() -> Vec<std::net::IpAddr> {
+    match crate::route::interfaces() {
+        Ok(interfaces) => interfaces
+            .iter()
+            .flat_map(|interface| {
+                interface
+                    .ipv4
+                    .iter()
+                    .map(|address| std::net::IpAddr::V4(*address))
+                    .chain(interface.ipv6.iter().map(|address| std::net::IpAddr::V6(*address)))
+            })
+            .collect(),
+        Err(_) => Vec::new(),
     }
 }
 
