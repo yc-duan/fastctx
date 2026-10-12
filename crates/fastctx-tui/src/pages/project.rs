@@ -171,13 +171,17 @@ impl ProjectPage {
             paint::open_section(&mut rows, paint::section(words.places(), look));
             let what_width = map.record.places.iter().map(|place| text::width(&place.what)).max().unwrap_or(0);
             let machine_width =
-                map.record.places.iter().map(|place| place.location.machine.as_str().len()).max().unwrap_or(0);
+                map.record.places.iter().map(|place| text::width(place.location.machine.as_str())).max().unwrap_or(0);
             for place in &map.record.places {
                 let pad = what_width - text::width(&place.what);
                 rows.push(Row::new(Line::from(vec![
                     Span::styled(format!("{}{}   ", place.what, " ".repeat(pad)), look.text(Role::Text)),
                     Span::styled(
-                        format!("{:machine_width$}   ", place.location.machine.as_str()),
+                        format!(
+                            "{}{}   ",
+                            place.location.machine,
+                            " ".repeat(machine_width - text::width(place.location.machine.as_str()))
+                        ),
                         look.text(Role::Muted),
                     ),
                     Span::styled(place.location.path.clone(), look.text(Role::Link)),

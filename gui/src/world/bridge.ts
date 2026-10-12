@@ -266,6 +266,24 @@ export function login(hub: string, account: string, password: string, register: 
   return invoke("login", { hub, accountName: account, password, register, name });
 }
 
+/** What is wrong with a machine or server name as typed, by the World's
+ *  one rule (`fastctx_types::NameProblem`). */
+export type NameProblem =
+  | { problem: "empty" }
+  | { problem: "too_long" }
+  | { problem: "space" }
+  | { problem: "not_allowed"; character: string }
+  | { problem: "bad_start"; character: string }
+  | { problem: "ends_with_hyphen" }
+  | { problem: "mixed_scripts"; first: string; second: string }
+  | { problem: "reserved" };
+
+/** What is wrong with `text` as the name of a machine or of a server;
+ *  null when nothing is. */
+export function nameProblem(kind: "machine" | "hub", text: string): Promise<NameProblem | null> {
+  return invoke("name_problem", { kind, text });
+}
+
 /** Logs in with a one-time token another device made. */
 export function loginToken(token: string, name: string | null): Promise<LoggedIn> {
   return invoke("login_token", { token, name });
@@ -471,13 +489,13 @@ export function remoteProbe(host: string, port: number): Promise<RemoteKey> {
   return invoke("remote_probe", { host, port });
 }
 
-export function remoteHub(request: RemoteHub, step: (step: RemoteStep) => void): Promise<{ session: number; address: string; hostname: string }> {
+export function remoteHub(request: RemoteHub, step: (step: RemoteStep) => void): Promise<{ session: number; address: string; machine: string }> {
   const steps = new Channel<RemoteStep>();
   steps.onmessage = step;
   return invoke("remote_hub", { request, steps });
 }
 
-export function remoteOpen(server: RemoteServer, step: (step: RemoteStep) => void): Promise<{ session: number; hostname: string }> {
+export function remoteOpen(server: RemoteServer, step: (step: RemoteStep) => void): Promise<{ session: number; machine: string }> {
   const steps = new Channel<RemoteStep>();
   steps.onmessage = step;
   return invoke("remote_open", { server, steps });

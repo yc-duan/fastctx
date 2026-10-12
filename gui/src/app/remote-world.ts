@@ -10,7 +10,7 @@
 // done again. Nothing typed here is kept.
 
 import { escape } from "../conversation/prose";
-import type { LoggedIn } from "../world/bridge";
+import type { LoggedIn, NameProblem } from "../world/bridge";
 import type { LoginWords } from "./account-words";
 import { passwordProblem } from "./password";
 import { plainly } from "./problem";
@@ -51,25 +51,25 @@ export interface RemoteSeams {
   probe(host: string, port: number): Promise<RemoteKey>;
   /** Connects, checks the system, uploads the program and makes the hub;
    *  the session stays open for the server to join. */
-  hub(request: RemoteHub, step: (step: RemoteStep) => void): Promise<{ session: number; address: string; hostname: string }>;
+  hub(request: RemoteHub, step: (step: RemoteStep) => void): Promise<{ session: number; address: string; machine: string }>;
   /** Connects, checks the system and uploads the program, for a World there
    *  is; the session stays open for the server to join. */
-  open(server: RemoteServer, step: (step: RemoteStep) => void): Promise<{ session: number; hostname: string }>;
+  open(server: RemoteServer, step: (step: RemoteStep) => void): Promise<{ session: number; machine: string }>;
   join(session: number, token: string, step: (step: RemoteStep) => void): Promise<void>;
   close(session: number): Promise<void>;
   /** This computer signs in to the World just made, as its administrator. */
   login(address: string, admin: string, password: string, name: string | null): Promise<LoggedIn>;
   /** A one-time code for the server to join with, as a machine of `admin`. */
   token(hub: string, admin: string, machine: string): Promise<string>;
+  /** What is wrong with a server name as typed. */
+  nameProblem(kind: "hub", text: string): Promise<NameProblem | null>;
 }
 
 /** What the server's own side says when sudo wants a password it was not
  *  given (`src-tauri/src/remote_world.rs`). */
 const SUDO_WANTED = "sudo needs a password";
 
-const hubRule = "[a-z][a-z0-9\\-]{0,31}";
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
-const machineRule = /^[a-z][a-z0-9-]{0,31}$/;
 
 type Stage = "server" | "key" | "world" | "making";
 
@@ -87,8 +87,8 @@ export class RemoteWorld {
   private wantsSudo = false;
   private progress: Progress[] = [];
   /** Steps already done stay done when the person tries again. */
-  private made: { session: number; address: string; hostname: string } | null = null;
-  private opened: { session: number; hostname: string } | null = null;
+  private made: { session: number; address: string; machine: string } | null = null;
+  private opened: { session: number; machine: string } | null = null;
   private signedIn: LoggedIn | null = null;
   private joined = false;
   private busy = false;
@@ -232,7 +232,7 @@ export class RemoteWorld {
         this.body.innerHTML = `<${form} class="welcome-form remote-form" autocomplete="off">
           <h2 class="welcome-form-title">${escape(words.remote)} · <span class="mono">${escape(this.typed.host)}</span></h2>
           <div class="field-pair">
-            ${field("world", words.worldName, `class="mono" required spellcheck="false" autocapitalize="off" pattern="${hubRule}" placeholder="home"`, this.typed.world)}
+            ${field("world", words.worldName, `class="mono" required spellcheck="false" autocapitalize="off" placeholder="home"`, this.typed.world)}
             ${field("admin", words.admin, `class="mono" required spellcheck="false" autocapitalize="off" pattern="${accountRule}" placeholder="me"`, this.typed.admin)}
           </div>
           <div class="field-pair">
@@ -334,6 +334,9 @@ export class RemoteWorld {
     const { password, again } = this.secret;
     const world = this.typed.world.trim();
     const admin = this.typed.admin.trim();
+    this.busy = true;
+    const named = await seams.nameProblem("hub", world).finally(() => (this.busy = false));
+    if (named) return this.note(words.nameSaid(named));
     const problem = passwordProblem(admin, password);
     if (problem) return this.note(words.passwordRule[problem]);
     if (password !== again) return this.note(words.passwordsDiffer);
@@ -361,7 +364,7 @@ export class RemoteWorld {
       );
       this.mark("login", "doing");
       this.signedIn ??= await seams.login(this.made.address, admin, password, this.options.name());
-      const machine = serverName(this.made.hostname);
+      const machine = this.made.machine;
       if (!this.joined) {
         this.mark("join", "doing");
         const token = await seams.token(this.signedIn.hub, admin, machine);
@@ -407,7 +410,7 @@ export class RemoteWorld {
         },
         step,
       );
-      const machine = serverName(this.opened.hostname);
+      const machine = this.opened.machine;
       if (!this.joined) {
         this.mark("join", "doing");
         const token = await adding.token(machine);
@@ -432,19 +435,6 @@ export class RemoteWorld {
   }
 }
 
-
-/** The server's name in the World: its own host name as the World writes
- *  names, or `server` where that cannot be. */
-function serverName(hostname: string): string {
-  const name = hostname
-    .toLowerCase()
-    .split(".")[0]!
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^[^a-z]+/, "")
-    .slice(0, 32)
-    .replace(/-+$/, "");
-  return machineRule.test(name) ? name : "server";
-}
 
 /** What the server's side said, in the person's words, where it is one of
  *  the things only this way in says (`src-tauri/src/remote_world/ssh.rs`). */

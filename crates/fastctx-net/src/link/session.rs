@@ -150,7 +150,13 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
     let hello = Up::Hello {
         protocol: wire::GREETING_PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
-        intent: Intent::Session { key: inner.key.public(), proof, letters: position, through: upstream.relay.clone() },
+        intent: Intent::Session {
+            key: inner.key.public(),
+            proof,
+            letters: position,
+            through: upstream.relay.clone(),
+            any_names: true,
+        },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
         Ok(Ok(())) => {}

@@ -236,10 +236,13 @@ pub struct Written {
 }
 
 impl Written {
+    /// `name` or `name.hub`, read after NFKC, so a full-width `．` separates
+    /// as `.` does.
     pub fn parse(text: &str) -> Result<Self, NameError> {
+        let text = crate::names::nfkc(text);
         let (name, hub) = match text.split_once('.') {
             Some((name, hub)) => (name, Some(hub)),
-            None => (text, None),
+            None => (&*text, None),
         };
         Ok(Self { name: MachineName::try_from(name)?, hub: hub.map(HubName::try_from).transpose()? })
     }

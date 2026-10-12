@@ -139,7 +139,7 @@ impl WorldDir {
     /// as the jobs it ran: named with its machine, since a resident's id is
     /// only unique on the machine it lives on.
     pub fn visitor(&self, town: Option<&TownName>, owner: &Address) -> ResidentDir {
-        ResidentDir { path: self.residents(town).join(owner.tag()) }
+        ResidentDir { path: self.residents(town).join(owner.key()) }
     }
 
     /// The directory for `owner` on the machine `here`.

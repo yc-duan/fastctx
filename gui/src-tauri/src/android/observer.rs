@@ -116,6 +116,12 @@ struct Seen {
     busy: bool,
 }
 
+/// A resident as the observations know it: the same for every spelling of
+/// its machine.
+fn key_of(about: &fastctx_types::residents::About) -> String {
+    fastctx_types::Address { machine: about.machine.clone(), resident: about.id.clone() }.key()
+}
+
 /// A title from the page's words, `{who}` standing for who it is about.
 fn format(template: &str, resident: &ResidentNow, policy: &Policy) -> String {
     let agent = resident.about.host.agent.to_string();
@@ -132,11 +138,14 @@ async fn observe(world: &World, bridge: &Bridge, observed: &mut Observed) -> Res
     for machine in who.machines {
         let MachineWho::Answered { reply } = machine else { continue };
         let residents: Vec<_> = reply.residents.into_iter().filter(|resident| resident.removed.is_none()).collect();
-        let names: Vec<_> = residents.iter().map(|r| format!("{}@{}", r.about.id, r.about.machine)).collect();
+        let names: Vec<_> = residents.iter().map(|r| key_of(&r.about)).collect();
         let removed: Vec<_> = observed
             .residents
             .iter()
-            .filter(|(key, seen)| seen.machine == reply.machine.as_str() && !names.contains(key))
+            .filter(|(key, seen)| {
+                fastctx_types::MachineName::try_from(seen.machine.as_str()).is_ok_and(|seen| seen == reply.machine)
+                    && !names.contains(key)
+            })
             .map(|(key, _)| key.clone())
             .collect();
         for key in removed {
@@ -144,7 +153,7 @@ async fn observe(world: &World, bridge: &Bridge, observed: &mut Observed) -> Res
             observed.residents.remove(&key);
         }
         for resident in residents {
-            let key = format!("{}@{}", resident.about.id, resident.about.machine);
+            let key = key_of(&resident.about);
             let now = Seen {
                 machine: resident.about.machine.to_string(),
                 asked: asked_key(&resident),

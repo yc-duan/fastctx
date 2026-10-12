@@ -8,6 +8,8 @@ export interface ProblemWords {
   locked: string;
   unreachable: string;
   nameTaken: string;
+  /** Devices on the server that cannot read the name yet. */
+  olderDevices: string;
   accountTaken: string;
   noSelfRegistration: string;
   codeUsed: string;
@@ -28,6 +30,7 @@ export const zhProblems: ProblemWords = {
   locked: "该账号已被锁定，请联系管理员",
   unreachable: "无法连接服务器，请检查地址和网络",
   nameTaken: "这个名称已被使用",
+  olderDevices: "服务器上还有设备在用旧版本，读不了这个名字",
   accountTaken: "这个账号已存在",
   noSelfRegistration: "该服务器不开放注册，请联系管理员",
   codeUsed: "二维码已使用过",
@@ -46,6 +49,7 @@ export const enProblems: ProblemWords = {
   locked: "This account is locked. Contact the administrator",
   unreachable: "Can't reach the server. Check the address and network",
   nameTaken: "That name is already in use",
+  olderDevices: "Some devices on this server run an older version that can't read this name",
   accountTaken: "That account already exists",
   noSelfRegistration: "This server doesn't allow sign-up. Contact the administrator",
   codeUsed: "This code has already been used",
@@ -63,6 +67,7 @@ const KNOWN: [RegExp, keyof ProblemWords][] = [
   [/too many wrong passwords/i, "tooManyTries"],
   [/is locked/i, "locked"],
   [/the name .* is taken/i, "nameTaken"],
+  [/release of fastctx that cannot read such a name/i, "olderDevices"],
   [/account .* exists already/i, "accountTaken"],
   [/opens accounts only through/i, "noSelfRegistration"],
   [/token was used already/i, "codeUsed"],

@@ -111,6 +111,10 @@ pub struct Letters {
     pub last_seen: Option<Timestamp>,
     /// Set while the member is connected.
     pub connected_at: Option<Timestamp>,
+    /// The member's last session said it reads names of any language
+    /// (`fastctx_net::wire::Intent::Session`).
+    #[serde(default)]
+    pub any_names: bool,
 }
 
 pub struct Store {
@@ -247,6 +251,7 @@ impl Store {
                 next: 1,
                 last_seen: None,
                 connected_at: None,
+                any_names: false,
             };
             self.letters.insert(name.clone(), fresh);
         }
@@ -255,7 +260,7 @@ impl Store {
 
     /// Keeps `message` for `to` and returns its number.
     pub fn keep_letter(&mut self, to: &MachineName, message: &Envelope) -> io::Result<u64> {
-        let directory = self.dir.join("outbox").join(to.as_str());
+        let directory = to.entry_in(&self.dir.join("outbox"))?;
         let entry = self.letters_of(to)?;
         let seq = entry.next;
         ensure_private_dir(&directory)?;
@@ -292,7 +297,7 @@ impl Store {
     /// when it is taken off the hub.
     pub fn forget_letters(&mut self, name: &MachineName) -> io::Result<()> {
         self.letters.remove(name);
-        match std::fs::remove_dir_all(self.dir.join("outbox").join(name.as_str())) {
+        match std::fs::remove_dir_all(name.entry_in(&self.dir.join("outbox"))?) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
         }
@@ -301,7 +306,7 @@ impl Store {
 
 /// The letter files waiting for `name`, by number.
 fn outbox_entries(dir: &Path, name: &MachineName) -> io::Result<Vec<(u64, PathBuf)>> {
-    let directory = dir.join("outbox").join(name.as_str());
+    let directory = name.entry_in(&dir.join("outbox"))?;
     let entries = match std::fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),

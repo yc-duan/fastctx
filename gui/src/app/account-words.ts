@@ -11,6 +11,7 @@ import type { PasswordProblem } from "./password";
 import { enProblems, failure, zhProblems, type ProblemWords } from "./problem";
 import type { MachineLogAction } from "../world/machine-log";
 import { agentName } from "../world/names";
+import { enNameSaid, zhNameSaid, type NameSaid } from "./name-words";
 
 export interface LoginWords {
   lede: string;
@@ -60,6 +61,10 @@ export interface LoginWords {
   strength: [string, string, string];
   name: string;
   phoneName: string;
+  /** What is wrong with a machine or server name as typed. */
+  nameSaid: NameSaid;
+  /** `said` about the field labelled `field`, where a form has two names. */
+  inField(field: string, said: string): string;
   go: string;
   going: string;
   signUp: string;
@@ -148,6 +153,8 @@ export const zhLogin: LoginWords = {
   strength: ["强度一般", "强度较高", "强度高"],
   name: "电脑名称",
   phoneName: "手机名称",
+  nameSaid: zhNameSaid,
+  inField: (field, said) => `${field}：${said}`,
   go: "登录",
   going: "正在登录…",
   signUp: "注册账号",
@@ -227,6 +234,8 @@ export const enLogin: LoginWords = {
   strength: ["Fair", "Good", "Strong"],
   name: "Computer name",
   phoneName: "Phone name",
+  nameSaid: enNameSaid,
+  inField: (field, said) => `${field}: ${said}`,
   go: "Log in",
   going: "Logging in…",
   signUp: "Sign up",
@@ -1045,6 +1054,7 @@ export interface TokenWords {
   account: string;
   name: string;
   nameAuto: string;
+  nameSaid: NameSaid;
   valid: string;
   hours(n: number): string;
   makeCode: string;
@@ -1069,6 +1079,7 @@ export const zhToken: TokenWords = {
   account: "账号",
   name: "主机名称",
   nameAuto: "自动",
+  nameSaid: zhNameSaid,
   valid: "有效期",
   hours: (n) => (n < 24 ? `${n} 小时` : `${n / 24} 天`),
   makeCode: "生成二维码",
@@ -1093,6 +1104,7 @@ export const enToken: TokenWords = {
   account: "Account",
   name: "Host name",
   nameAuto: "automatic",
+  nameSaid: enNameSaid,
   valid: "Valid for",
   hours: (n) => (n < 24 ? `${n} hour${n === 1 ? "" : "s"}` : `${n / 24} day${n === 24 ? "" : "s"}`),
   makeCode: "Create QR code",
