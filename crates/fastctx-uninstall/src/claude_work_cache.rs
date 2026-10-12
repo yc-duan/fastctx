@@ -47,9 +47,9 @@ pub(crate) fn include_at(request: &mut Request, roots: &Roots) -> anyhow::Result
             continue;
         }
         for file in log_files(&entry.path())?.0 {
-            for line in BufReader::new(std::fs::File::open(file)?).lines() {
+            for line in BufReader::new(std::fs::File::open(file)?).split(b'\n') {
                 let line = line?;
-                if let Ok(row) = serde_json::from_str::<serde_json::Value>(&line)
+                if let Ok(row) = serde_json::from_slice::<serde_json::Value>(&line)
                     && let Some(cwd) = row.get("cwd").and_then(serde_json::Value::as_str)
                     && own_cwd(Path::new(cwd), &world_cwd)
                 {
@@ -212,9 +212,9 @@ fn owned_log(path: &Path, working_directories: &[String], sessions: &mut BTreeSe
     let mut found = false;
     let mut exclusive = true;
     let mut identities = BTreeSet::new();
-    for line in BufReader::new(file).lines() {
+    for line in BufReader::new(file).split(b'\n') {
         let line = line?;
-        let Ok(row) = serde_json::from_str::<serde_json::Value>(&line) else {
+        let Ok(row) = serde_json::from_slice::<serde_json::Value>(&line) else {
             exclusive = false;
             continue;
         };
