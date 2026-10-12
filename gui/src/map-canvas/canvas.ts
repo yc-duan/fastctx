@@ -240,6 +240,8 @@ export class MapCanvas {
     }
     if (this.selected && !kept.has(this.selected)) this.select(null, [0, 0]);
     if (this.pointed && !kept.has(this.pointed)) this.point(null, [0, 0]);
+    // Until the drawing is moved by hand it stays fitted to what it holds.
+    if (this.fitOnResize && this.camera.view.width > 0) this.camera.fit(this.bounds, this.fitPadding());
     if (this.draft) {
       const current = this.handles.get(this.draft.handle.key)?.handle;
       if (!current || current.source !== this.draft.handle.source || current.point.some((n, i) => n !== this.draft!.handle.point[i])) this.cancelDraft("changed");

@@ -5,10 +5,15 @@
 // account's own first, then each other account's shared with it, then those
 // an agent is lent on from another. A box has a title strip with the
 // group's name, and its machines stand in a grid inside, one to a row and a
-// new column every ten, their names to the right, each joined by a short twig
-// to a trunk down the left of its column. A box folds to its title
+// new column every ten, their names to the right. The box lies under the
+// lines and does not break them: the line down from the bus runs on through
+// the title strip as the trunk of the first column, the other columns branch
+// from it under the strip, and a short twig reaches each machine. A box folds to its title
 // strip alone. The account's own end with the dashed ring that adds a
-// machine, so one that comes stands where it waited. Positions are computed,
+// machine, so one that comes stands where it waited. On a narrow screen, a
+// phone's, the boxes stand one under another instead, each its machines in
+// one column, joined from the left by a spine down from the hub, so the
+// drawing is read by moving down. Positions are computed,
 // never moved by hand; the order within a group is remembered on this
 // device, so machines keep their order while others come and go.
 
@@ -27,7 +32,7 @@ const BOX_DROP = 44;
  *  the twig from it to a ring, the rows, the columns, and the room a name
  *  takes to the right of its ring. */
 const PAD = 20;
-const TRUNK = 16;
+export const TRUNK = 16;
 const TWIG = 22;
 const ROW = 74;
 const COLUMN = 230;
@@ -36,6 +41,8 @@ const NAME = 150;
 const ROWS = 10;
 /** A folded box: its title strip, this wide. */
 const FOLDED = 200;
+/** On a narrow screen: how far right of the spine the boxes stand. */
+const SIDE = 34;
 /** Room between boxes, and between the trees of two hubs. */
 const BOX_GAP = 36;
 const HUB_GAP = 160;
@@ -128,8 +135,9 @@ export class MapLayout {
     }
   }
 
-  /** `folded`: the boxes shown as their title strip alone, by key. */
-  update(hubs: readonly MapHub[], nodes: readonly MapNode[], links: readonly MapLink[] = [], folded: ReadonlySet<string> = new Set()): Placement {
+  /** `folded`: the boxes shown as their title strip alone, by key;
+   *  `narrow`: laid one under another for a phone. */
+  update(hubs: readonly MapHub[], nodes: readonly MapNode[], links: readonly MapLink[] = [], folded: ReadonlySet<string> = new Set(), narrow = false): Placement {
     for (const hub of [...hubs].sort((a, b) => a.id.localeCompare(b.id))) if (!this.hubOrder.includes(hub.id)) this.hubOrder.push(hub.id);
     const live = new Set(hubs.map((hub) => hub.id));
     const order = this.hubOrder.filter((id) => live.has(id));
@@ -148,6 +156,7 @@ export class MapLayout {
     const branches: Branch[] = [];
     this.vacancies = new Map();
     let left = 0;
+    let below = 0;
     for (const id of order) {
       const own = nodes.filter((node) => hubOf(node) === id);
       const kinds = [...new Set(["mine", ...own.map((node) => node.group?.key ?? "mine")])].sort((a, b) => groupRank(a) - groupRank(b) || a.localeCompare(b));
@@ -157,12 +166,43 @@ export class MapLayout {
         const fold = folded.has(key) && members.length > 0;
         // The account's own end with the dashed ring.
         const cells = members.length + (kind === "mine" ? 1 : 0);
-        const columns = Math.max(1, Math.ceil(cells / ROWS));
-        const rows = Math.min(cells, ROWS);
+        const perColumn = narrow ? Math.max(1, cells) : ROWS;
+        const columns = Math.max(1, Math.ceil(cells / perColumn));
+        const rows = Math.min(cells, perColumn);
         const width = fold ? FOLDED : TRUNK + TWIG + PAD + (columns - 1) * COLUMN + RING * 2 + NAME;
         const height = fold ? TITLE : TITLE + PAD * 2 + (rows - 1) * ROW + RING * 2;
-        return { kind, key, members, fold, width, height };
+        return { kind, key, members, fold, width, height, perColumn };
       });
+      if (narrow) {
+        // The hub at the top left, a spine down its left, and each box to
+        // its right, joined at the middle of its title strip.
+        const knot: Point = [0, below];
+        hubPoints.set(id, knot);
+        let y = below + BUS_DROP;
+        let join = y;
+        for (const block of blocks) {
+          const box: Bounds = { x: SIDE, y, width: block.width, height: block.height };
+          const online = block.members.filter((node) => node.online === true).length;
+          groups.push({ key: block.key, hub: id, kind: block.kind, label: block.members[0]?.group?.label ?? "", count: block.members.length, online, folded: block.fold, box, point: [SIDE + TRUNK + 50, y + TITLE / 2] });
+          join = y + TITLE / 2;
+          const trunk = SIDE + TRUNK;
+          branches.push({ points: [[0, join], [trunk, join]], hub: id });
+          if (!block.fold) {
+            const slots: (MapNode | null)[] = [...block.members, ...(block.kind === "mine" ? [null] : [])];
+            branches.push({ points: [[trunk, join], [trunk, y + TITLE + PAD + RING + (slots.length - 1) * ROW]], hub: id });
+            slots.forEach((slot, row) => {
+              const at: Point = [trunk + TWIG + RING, y + TITLE + PAD + RING + row * ROW];
+              branches.push({ points: [[trunk, at[1]], [trunk + TWIG - 3, at[1]]], hub: id, machine: slot?.key, out: !!slot && slot.online !== true });
+              if (slot) machines.set(slot.key, at);
+              else this.vacancies.set(id, at);
+            });
+          }
+          y += block.height + BOX_GAP;
+        }
+        branches.push({ points: [[0, below + KNOT + 4], [0, join]], hub: id });
+        below = y + HUB_GAP;
+        continue;
+      }
       const width = blocks.reduce((sum, block) => sum + block.width, 0) + BOX_GAP * (blocks.length - 1);
       const knot: Point = [left + width / 2, 0];
       hubPoints.set(id, knot);
@@ -173,18 +213,22 @@ export class MapLayout {
       for (const block of blocks) {
         const box: Bounds = { x, y: top, width: block.width, height: block.height };
         const online = block.members.filter((node) => node.online === true).length;
-        groups.push({ key: block.key, hub: id, kind: block.kind, label: block.members[0]?.group?.label ?? "", count: block.members.length, online, folded: block.fold, box, point: [x + PAD + 30, top + TITLE / 2] });
-        const drop = x + block.width / 2;
+        groups.push({ key: block.key, hub: id, kind: block.kind, label: block.members[0]?.group?.label ?? "", count: block.members.length, online, folded: block.fold, box, point: [x + TRUNK + 50, top + TITLE / 2] });
+        // The line from the bus comes down at the first trunk; folded, it
+        // stops in the middle of the title strip.
+        const drop = x + TRUNK;
         drops.push(drop);
-        branches.push({ points: [[drop, busY], [drop, top]], hub: id });
-        if (!block.fold) {
+        if (block.fold) branches.push({ points: [[drop, busY], [drop, top + TITLE / 2]], hub: id });
+        else {
           const slots: (MapNode | null)[] = [...block.members, ...(block.kind === "mine" ? [null] : [])];
           const columns = Math.ceil(slots.length / ROWS);
+          const fork = top + TITLE + PAD * 0.55;
           for (let column = 0; column < columns; column += 1) {
             const trunk = x + TRUNK + column * COLUMN;
             const last = Math.min(ROWS, slots.length - column * ROWS) - 1;
-            branches.push({ points: [[trunk, top + TITLE], [trunk, top + TITLE + PAD + RING + last * ROW]], hub: id });
+            branches.push({ points: [[trunk, column ? fork : busY], [trunk, top + TITLE + PAD + RING + last * ROW]], hub: id });
           }
+          if (columns > 1) branches.push({ points: [[drop, fork], [x + TRUNK + (columns - 1) * COLUMN, fork]], hub: id });
           slots.forEach((slot, index) => {
             const column = Math.floor(index / ROWS);
             const row = index % ROWS;

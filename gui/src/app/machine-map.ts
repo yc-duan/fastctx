@@ -16,7 +16,7 @@
 import { MapCanvas, PenLayer, type Bounds, type CanvasEvent, type CanvasFrame, type CanvasItem, type PenStroke, type Point } from "../map-canvas";
 import { blot, circle, outline, ruled, seeded, ticks } from "../pen/shapes";
 import type { MachinesWords } from "./account-words";
-import { KNOT, MapLayout, RING, TITLE, type Placement } from "./map-layout";
+import { KNOT, MapLayout, RING, TITLE, TRUNK, type Placement } from "./map-layout";
 import type { MapHub, MapLink, MapNode } from "./network-map";
 
 export interface MachineMapOptions {
@@ -76,6 +76,9 @@ export class MachineMap {
   private scene: MachineMapScene | null = null;
   private placement: Placement | null = null;
   private level = -1;
+  /** Whether the drawing is laid for a narrow screen, as of the last
+   *  update. */
+  private narrow = false;
   private composed = "";
   private marked = "";
 
@@ -173,7 +176,8 @@ export class MachineMap {
 
   update(scene: MachineMapScene): void {
     this.scene = scene;
-    this.placement = this.layout.update(scene.hubs, scene.nodes, scene.links, scene.folded);
+    this.narrow = this.isNarrow();
+    this.placement = this.layout.update(scene.hubs, scene.nodes, scene.links, scene.folded, this.narrow);
     this.compose();
     this.place();
     this.mark();
@@ -189,8 +193,16 @@ export class MachineMap {
     return placement.machines.get(key) ?? null;
   }
 
+  /** A phone's screen, or a page as narrow: under 600 pixels across. */
+  private isNarrow(): boolean {
+    const width = this.element.clientWidth;
+    return width > 0 && width < 600;
+  }
+
   private onFrame(frame: CanvasFrame): void {
     this.pens.view(frame);
+    // Laid again when the page becomes narrow or wide.
+    if (this.scene && this.isNarrow() !== this.narrow) this.update(this.scene);
     // The graph paper moves with the drawing, a line every 32 of its units.
     this.element.style.setProperty("--paper-step", `${(32 * frame.view.scale).toFixed(2)}px`);
     this.element.style.setProperty("--paper-x", `${frame.view.x.toFixed(1)}px`);
@@ -223,7 +235,13 @@ export class MachineMap {
         return point ? [{ key: node.key, kind: "machine", point, radius: RING, label: node.name, sub: node.sub }] : [];
       }),
     ];
-    this.surface.setScene(items, [], placement.bounds);
+    // Narrow, the drawing is fitted to the width and read from the top,
+    // moving down for the rest.
+    const view = this.surface.camera.view;
+    // The page's head lies over the top of a phone's drawing: room above.
+    const top = { ...placement.bounds, y: placement.bounds.y - 40, height: placement.bounds.height + 40 };
+    const fitted = this.narrow && view.width > 0 ? { ...top, height: Math.min(top.height, (top.width * view.height) / view.width) } : placement.bounds;
+    this.surface.setScene(items, [], fitted);
     const selected = scene.selected && items.some((item) => item.key === scene.selected) ? scene.selected : null;
     if (this.surface.selection !== selected) this.surface.setSelection(selected);
   }
@@ -276,6 +294,14 @@ export class MachineMap {
       const random = seeded(`knot:${hub.id}`);
       add(circle(knot, KNOT, 1.8, random), around(knot, KNOT + 4), hub.online ? "marker" : "dry", graphite, hub.online ? 0.9 : 0.5);
       if (hub.online) add(blot(knot, 2.4, random), around(knot, 5), "marker", graphite, 0.9);
+    }
+
+    // A folded box: its line ends in a blot on the title strip, for the
+    // machines inside.
+    for (const group of placement.groups) {
+      if (!group.folded) continue;
+      const at: Point = [group.box.x + TRUNK, group.box.y + TITLE / 2];
+      add(blot(at, 4.2, seeded(`folded:${group.key}`)), around(at, 6), "marker", graphite, 0.85);
     }
 
     // The dashed ring that adds a machine, a small cross in it.
@@ -363,7 +389,7 @@ export class MachineMap {
     }
     for (const group of placement.groups) {
       const { x, y } = group.box;
-      text.push(`<text class="box-name" x="${x + 14}" y="${y + TITLE / 2 + 5}"><tspan>${escapeText(group.label)}</tspan><tspan class="box-count" dx="10">${escapeText(words.groupSub(group.count, group.online))}</tspan></text>`);
+      text.push(`<text class="box-name" x="${x + TRUNK + 14}" y="${y + TITLE / 2 + 5}"><tspan>${escapeText(group.label)}</tspan><tspan class="box-count" dx="10">${escapeText(words.groupSub(group.count, group.online))}</tspan></text>`);
     }
     const nameAt = (key: string, point: Point, name: string, sub: string, quiet = false) => {
       const x = point[0] + RING + 15;
