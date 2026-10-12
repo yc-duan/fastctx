@@ -518,9 +518,19 @@ pub(super) async fn tell_worked(inner: &Arc<Inner>) {
             purpose: worked.purpose,
             resident: worked.resident.clone(),
         };
-        if let Err(error) = inner.ask(question).await {
-            inner.node.log(format!("telling the hub of a direct call to {}: {error}", worked.to));
+        // Kept for the next session only when this one ended before the hub
+        // answered; a refusal is the hub's answer, and the same report would
+        // be refused again.
+        let Some(connection) = inner.connected().await else {
             inner.direct.note_worked(worked);
+            continue;
+        };
+        match inner.ask_on(connection, question).await {
+            Ok(Some(_)) => {}
+            Ok(None) => inner.direct.note_worked(worked),
+            Err(refusal) => {
+                inner.node.log(format!("the hub refused the note of a direct call to {}: {refusal}", worked.to));
+            }
         }
     }
 }
