@@ -4,6 +4,15 @@ import { taskSteps } from './steps.js'
 // in world.js; this module never submits a prompt or changes a host result.
 // Each handler receives reporting callbacks bound to its original session.
 // stream queues observations without waiting; event/save confirm persistence.
+//
+// A block of prose begins with its first text or thinking chunk and ends
+// when Claude Code stores its row (session.append), which the engine does as
+// the block closes, before the next block streams (Claude Code 2.1.296).
+// Thinking begins earlier than any chunk shows: the block's start reaches a
+// hook only as an opaque engine chunk, and its first thinking chunk comes
+// with the first progress estimate, with the first summary, or not at all,
+// as the session's thinking display has it. How long it took is Claude
+// Code's own figure on the stored row; the node reads it there (`thought`).
 export function presentation(reserve, currentTurn) {
   const tools = new Map()
   const requests = new Map()
@@ -13,6 +22,7 @@ export function presentation(reserve, currentTurn) {
   const steps = taskSteps()
   const emit = (reports, happened) => reports.event('session', { happened })
   const item = (id, kind, fields = {}) => ({ id, kind, started_at: reserve().at, ...fields })
+  const shownOf = ({ ended, stored, ...shown }) => shown
   const checkpoint = (reports) => reports.save({ tools: [...tools.entries()], requests: [...requests.entries()], tasks: steps.snapshot() })
 
   async function completeTool(reports, call, stored) {
@@ -66,8 +76,12 @@ export function presentation(reserve, currentTurn) {
               blocks.set(key, block)
               reports.stream({ event: 'began', turn: e.turnId, item: { ...block } })
             }
-            block.text += chunk.text
-            reports.stream({ event: 'grew', turn: e.turnId, item: block.id, part: 'text', text: chunk.text })
+            // Thinking whose words are withheld streams empty pieces that
+            // carry only Claude Code's progress estimate.
+            if (chunk.text !== '') {
+              block.text += chunk.text
+              reports.stream({ event: 'grew', turn: e.turnId, item: block.id, part: 'text', text: chunk.text })
+            }
           }
           yield chunk
         }
@@ -77,13 +91,15 @@ export function presentation(reserve, currentTurn) {
         }
         return result
       } finally {
-        // Claude Code 2.1.289 exposes neither attempt withdrawal nor a
-        // binding from stream blocks to stored row UUIDs (2026-10-04).
-        // Keep exactly the pieces observed for this turn/step/block, also
-        // on interruption. A future typed reset/retract event belongs here;
-        // opaque engine refs must never be interpreted as such an event.
+        // A block whose row was never stored (an interruption, a failed
+        // attempt) ends with the step, as exactly the pieces observed.
+        // Claude Code 2.1.296 exposes no attempt withdrawal; a future typed
+        // reset/retract event belongs here; opaque engine refs must never be
+        // interpreted as such an event.
         for (const block of blocks.values()) {
-          reports.stream({ event: 'finished', turn: e.turnId, item: block })
+          if (block.ended) continue
+          block.ended = true
+          reports.stream({ event: 'finished', turn: e.turnId, item: shownOf(block) })
         }
       }
     },
@@ -130,10 +146,6 @@ export function presentation(reserve, currentTurn) {
               hook_fragments: [], presentation: null, detail: { uuid: result.uuid, message: result.message } } })
         }
       }
-      const streamedKinds = new Set()
-      if (latestStep?.turn === turn) {
-        for (const block of latestStep.blocks.values()) streamedKinds.add(block.kind)
-      }
       for (const [index, block] of result.message.content.entries()) {
         if (block.type === 'tool_use') {
           requests.set(block.id, { block, turn, at: reserve().at })
@@ -165,16 +177,32 @@ export function presentation(reserve, currentTurn) {
           }
         } else if (result.message.type === 'assistant' && (block.type === 'text' || block.type === 'thinking' || block.type === 'redacted_thinking')) {
           const kind = block.type === 'text' ? 'message' : 'thinking'
-          if (!streamedKinds.has(kind)) {
-            // The host can return a non-streamed assistant row: its stream
-            // projects only an opaque engine ref. This stored block is the
-            // first observable prose, with its own stable row identity.
-            const prose = item(JSON.stringify([result.uuid, index]), kind, {
-              text: block.type === 'text' ? block.text : block.type === 'thinking' ? block.thinking : '', detail: block,
-            })
-            await emit(reports, { event: 'began', turn: turn ?? '', item: prose })
-            await emit(reports, { event: 'finished', turn: turn ?? '', item: prose })
+          const text = block.type === 'text' ? block.text : block.type === 'thinking' ? block.thinking : ''
+          // The row is that of the earliest block of its kind the step
+          // streamed and no row has claimed: blocks of one response come one
+          // after another, each stored as it closes. One already ended with
+          // its step (an interruption's partial block, stored after the
+          // stream) is not shown again.
+          const streamed = latestStep?.turn === turn
+            ? [...latestStep.blocks.values()].find((shown) => shown.kind === kind && !shown.stored)
+            : undefined
+          let shown
+          if (streamed !== undefined) {
+            streamed.stored = true
+            shown = { ...shownOf(streamed), ...(typeof text === 'string' && { text }), detail: block }
+            if (!streamed.ended) {
+              streamed.ended = true
+              reports.stream({ event: 'finished', turn: turn ?? '', item: shown })
+            }
+          } else {
+            // A block with nothing streamed (thinking whose display sends no
+            // pieces, a non-streamed response) is first seen as it is stored,
+            // with its own stable row identity.
+            shown = item(JSON.stringify([result.uuid, index]), kind, { text: text ?? '', detail: block })
+            await emit(reports, { event: 'began', turn: turn ?? '', item: shown })
+            await emit(reports, { event: 'finished', turn: turn ?? '', item: shown })
           }
+          if (kind === 'thinking') reports.thought({ uuid: result.uuid, turn: turn ?? '', item: shown.id })
         } else if (result.message.type === 'assistant') {
           const other = item(JSON.stringify([result.uuid, index]), 'other', {
             host_kind: block.type, detail: block,

@@ -323,6 +323,7 @@ fn handle(
     };
     match frame {
         Up::Ping { n, paths } => {
+            crate::lends::heard(hub);
             reply(Down::Pong { n });
             if let Some(paths) = paths {
                 lines(hub, name, generation, paths);

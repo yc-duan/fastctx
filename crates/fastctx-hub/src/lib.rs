@@ -173,6 +173,7 @@ pub(crate) struct Hub {
     machine_log_changed: tokio::sync::Notify,
     /// Told when the directory changes, so the loans' deadlines are read again.
     lends_changed: tokio::sync::Notify,
+    next_lend_end: lends::NextEnd,
 }
 
 /// A member's open control connection.
@@ -293,7 +294,10 @@ impl Hub {
 
 /// Runs the hub kept in `dir` until the process is stopped.
 pub async fn serve(dir: &Path) -> anyhow::Result<()> {
-    let store = Store::open(dir)?;
+    let mut store = Store::open(dir)?;
+    // A loan whose deadline passed while the hub was stopped is taken back
+    // before any member is heard.
+    lends::end_due(&mut store, Timestamp::now())?;
     let certificate = HubCertificate {
         certificate: std::fs::read(Store::certificate_file(dir))?,
         key: std::fs::read(Store::key_file(dir))?,
@@ -330,6 +334,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
         log,
         machine_log_changed: tokio::sync::Notify::new(),
         lends_changed: tokio::sync::Notify::new(),
+        next_lend_end: lends::NextEnd::default(),
     });
     loop {
         tokio::select! {
