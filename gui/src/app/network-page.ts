@@ -38,8 +38,8 @@ export interface NetworkWords {
 
 export const zhNetwork: NetworkWords = {
   title: "网络",
-  serverIs: "服务器认出每一台设备，管着谁能用哪台机器，机器之间的话经它转达",
-  address: "服务器地址",
+  serverIs: "中枢服务器认出网络里的每台设备，管着谁能用哪台机器，机器之间的话经它转达",
+  address: "中枢服务器地址",
   you: "你在这里是",
   admin: "管理员",
   member: "成员",
@@ -48,7 +48,7 @@ export const zhNetwork: NetworkWords = {
   state: "连接",
   online: "已连接",
   offline: "未连接",
-  manage: "管理服务器",
+  manage: "管理中枢服务器",
   leave: "离开这个网络",
   leaveTitle: (network) => `离开 ${network}？`,
   leaveWhat: (network, registered) =>
@@ -61,8 +61,8 @@ export const zhNetwork: NetworkWords = {
 
 export const enNetwork: NetworkWords = {
   title: "Network",
-  serverIs: "The server knows every device, keeps who may use which machine, and passes on what the machines say to each other",
-  address: "Server address",
+  serverIs: "The hub knows every device in the network, keeps who may use which machine, and passes on what the machines say to each other",
+  address: "Hub address",
   you: "You are",
   admin: "Administrator",
   member: "Member",
@@ -71,7 +71,7 @@ export const enNetwork: NetworkWords = {
   state: "Connection",
   online: "Connected",
   offline: "Not connected",
-  manage: "Manage server",
+  manage: "Manage hub",
   leave: "Leave this network",
   leaveTitle: (network) => `Leave ${network}?`,
   leaveWhat: (network, registered) =>

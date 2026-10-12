@@ -789,6 +789,7 @@
 }
 
 .panel-facts,
+.panel-what,
 .panel-home {
   margin: var(--space-2) 0 0;
   font-size: var(--size-small);

@@ -77,7 +77,13 @@ export interface LoginWords {
   scanFailed: string;
   alone: string;
   aloneWhat: string;
-  /** Creating a World with this computer as its server. */
+  /** What the hub is, in one line under the ways in. */
+  hubIs: string;
+  /** Under the title of making a World: what it asks of the machine the
+   *  hub goes on. */
+  createHub: string;
+  remoteHub: string;
+  /** Creating a World with this computer as its hub. */
   worldName: string;
   admin: string;
   reach: string;
@@ -117,11 +123,14 @@ export const zhLogin: LoginWords = {
   lede: "你的几台电脑，和电脑上的 Codex、Claude，同在一个世界。",
   title: "登录",
   join: "加入网络",
-  joinWhat: "用服务器地址和账号登录",
+  joinWhat: "用中枢服务器地址和账号登录",
   create: "在这台电脑上建",
-  createWhat: "这台电脑当它的服务器",
+  createWhat: "这台电脑当中枢服务器",
   remote: "建到服务器上",
-  remoteWhat: "用 SSH 在一台服务器上建",
+  remoteWhat: "用 SSH 让一台服务器当中枢服务器",
+  hubIs: "中枢服务器认出网络里的每台设备，管着谁能用哪台机器，机器之间的话经它转达。",
+  createHub: "这台电脑将是中枢服务器，要一直开着；它睡眠或关机时，别的设备都连不上。",
+  remoteHub: "这台服务器将是中枢服务器，要一直开着；它停下时，别的设备都连不上。",
   server: "服务器地址",
   sshPort: "SSH 端口",
   sshUser: "用户名",
@@ -144,9 +153,9 @@ export const zhLogin: LoginWords = {
   notArch: "这台服务器的架构不受支持，只支持 x86_64 与 aarch64",
   addGo: "添加",
   adding: "正在添加…",
-  remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建世界", login: "这台电脑登录", join: "服务器加入", arrive: "服务器搬过去" },
+  remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建世界", login: "这台电脑登录", join: "服务器加入", arrive: "中枢服务器搬过去" },
   another: "登录其他账号",
-  hub: "服务器地址",
+  hub: "中枢服务器地址",
   account: "账号",
   password: "密码",
   passwordAgain: "确认密码",
@@ -199,11 +208,14 @@ export const enLogin: LoginWords = {
   lede: "Your computers, and the Codex and Claude on them, in one World.",
   title: "Log in",
   join: "Join a network",
-  joinWhat: "Log in with a server address and account",
+  joinWhat: "Log in with a hub address and account",
   create: "Make it on this computer",
-  createWhat: "This computer is its server",
+  createWhat: "This computer is its hub",
   remote: "Make it on a server",
-  remoteWhat: "Over SSH, on a server",
+  remoteWhat: "Over SSH, a server becomes its hub",
+  hubIs: "The hub knows every device in the network, keeps who may use which machine, and passes on what the machines say to each other.",
+  createHub: "This computer will be the hub and must stay on: while it sleeps or is off, no other device can connect.",
+  remoteHub: "This server will be the hub and must stay on: while it is down, no other device can connect.",
   server: "Server address",
   sshPort: "SSH port",
   sshUser: "User",
@@ -226,9 +238,9 @@ export const enLogin: LoginWords = {
   notArch: "This server's architecture isn't supported; only x86_64 and aarch64 are",
   addGo: "Add",
   adding: "Adding…",
-  remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Make the World", login: "Sign this computer in", join: "Add the server", arrive: "Move the server there" },
+  remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Make the World", login: "Sign this computer in", join: "Add the server", arrive: "Move the hub there" },
   another: "Log in to another account",
-  hub: "Server address",
+  hub: "Hub address",
   account: "Account",
   password: "Password",
   passwordAgain: "Confirm password",
@@ -295,6 +307,8 @@ export interface MachinesWords {
   hubOnline: string;
   hubConnecting: string;
   hubOff: string;
+  /** What the hub is, in one line in its details. */
+  hubIs: string;
   hubTitle(name: string): string;
   hubMachines(n: number): string;
   /** The account's level on a hub, and what it does there. */
@@ -442,7 +456,7 @@ export interface MachinesWords {
   stopDirectSaid: string;
   directStopped(machine: string): string;
   /** Moving the server to another machine: the administrator's, from beside
-   *  the server on the drawing (`world-gui.md`, 把服务器搬到别处). */
+   *  the server on the drawing (`world-gui.md`, 把中枢服务器搬到别处). */
   moveHub: string;
   moveChoose: string;
   moveNewServer: string;
@@ -509,7 +523,8 @@ export const zhMachines: MachinesWords = {
   hubOnline: "已连接",
   hubConnecting: "连接中",
   hubOff: "未连接",
-  hubTitle: (name) => `服务器 ${name}`,
+  hubIs: "认出网络里的每台设备，管着谁能用哪台机器，机器之间的话经它转达",
+  hubTitle: (name) => `中枢服务器 ${name}`,
   hubMachines: (n) => `${n} 台机器`,
   levelSuper: "管理员",
   levelMember: "成员",
@@ -518,10 +533,10 @@ export const zhMachines: MachinesWords = {
   linkOnline: (address) => `已连上 · ${address}`,
   linkVia: (through, address) => `经 ${through} 连上 · ${address}`,
   linkConnecting: () => "连接中",
-  linkStopped: () => "已被服务器移除",
+  linkStopped: () => "已被中枢服务器移除",
   registeredUnder: (account) => `${account} 的机器`,
   onlyLogins: (accounts) => `已登录 ${accounts}`,
-  via: (through) => `经 ${through} 连着服务器`,
+  via: (through) => `经 ${through} 连着中枢服务器`,
   viaShort: (through) => `经 ${through}`,
   yours: "你的",
   ownedBy: (account) => `${account} 的`,
@@ -605,48 +620,48 @@ export const zhMachines: MachinesWords = {
   framedClear: "取消选择",
   framedShareTitle: (n) => `共享这 ${n} 台`,
   framedRemoveTitle: (n) => `移除这 ${n} 台？`,
-  framedRemoveWhat: (names) => `${names.join("、")} 将断开服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`,
+  framedRemoveWhat: (names) => `${names.join("、")} 将断开中枢服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`,
   allowDirect: "允许直接连到这台",
   stopDirect: "不再允许直接连到这台",
   directTitle: (machine) => `允许直接连到 ${machine}`,
   directAddresses: "别的机器连它的地址",
-  directSeen: "服务器看到的",
+  directSeen: "中枢服务器看到的",
   directCard: "网卡",
   directPort: "端口",
   directPickOne: "至少选一个地址",
   directPortWrong: "端口是 1 到 65535 之间的数",
-  directWhat: "开了之后，别的机器和它之间的往来直接走，不经服务器；哪台自己到服务器的线断了，也可以经它去服务器。按下之后服务器从外面试连一次，连不上会说卡在哪一层。防火墙、安全组或路由器要放行这个端口。",
+  directWhat: "开了之后，别的机器和它之间的往来直接走，不经中枢服务器；哪台到中枢服务器的线断了，也可以经它绕过去。按下之后中枢服务器从外面试连一次，连不上会说卡在哪一层。防火墙、安全组或路由器要放行这个端口。",
   directGo: "允许",
-  directChecking: "服务器正在试着连它",
+  directChecking: "中枢服务器正在试着连它",
   directAllowed: (machine) => `已允许直接连到 ${machine}`,
   stopDirectTitle: (machine) => `不再允许直接连到 ${machine}？`,
-  stopDirectSaid: "别的机器和它之间改经服务器转。",
+  stopDirectSaid: "别的机器和它之间改经中枢服务器转。",
   directStopped: (machine) => `已不再允许直接连到 ${machine}`,
   moveHub: "搬到…",
-  moveChoose: "选一台接手服务器",
+  moveChoose: "选一台接手中枢服务器",
   moveNewServer: "一台新服务器",
   moveWhyNot: {
     offline: "离线",
-    hosts: "服务器就在这台",
+    hosts: "中枢服务器就在这台",
     moving: (to) => `正在搬到 ${to}`,
     older: "这台的 World 版本太旧",
-    system: "服务器只能在 Windows 和 Linux 上",
+    system: "中枢服务器只能装在 Windows 和 Linux 上",
     notOwn: "只有管理员自己的机器能接手",
     other: "不能接手",
   },
-  moveSleeps: "这台会睡眠，睡着时整个网络都连不上服务器",
-  moveTitle: (to) => `把服务器搬到 ${to}？`,
+  moveSleeps: "这台会睡眠，睡着时整个网络都连不上中枢服务器",
+  moveTitle: (to) => `把中枢服务器搬到 ${to}？`,
   moveCarries: ["账号", "机器", "权限", "项目", "信"],
   moveSaid: "谁都不用重新登录。",
-  moveWhat: "服务器的整个目录搬过去，身份不变。拷贝时照常服务，只在切换那一下停一停；之后旧的位置把连过来的机器转过去，直到每台都跟过来。旧的数据停用、不删，在服务器详情里删。",
+  moveWhat: "中枢服务器的整个目录搬过去，身份不变。拷贝时照常服务，只在切换那一下停一停；之后旧的位置把连过来的机器转过去，直到每台都跟过来。旧的数据停用、不删，在中枢服务器详情里删。",
   moveTypeName: (hub) => `输入网络名称 ${hub} 确认`,
   moveGo: "搬过去",
-  moveNewTitle: "把服务器搬到一台新服务器",
+  moveNewTitle: "把中枢服务器搬到一台新服务器",
   moveNext: "下一步",
-  moveStages: { preparing: "准备", service: "装上服务器", reaching: "连上新位置", copying: "拷贝记录", switching: "切换", following: "等各台跟过来", done: "完成", cancelled: "已取消" },
+  moveStages: { preparing: "准备", service: "装上中枢服务器", reaching: "连上新位置", copying: "拷贝记录", switching: "切换", following: "等各台跟过来", done: "完成", cancelled: "已取消" },
   moveTo: (to) => `正在搬到 ${to}`,
   moveMoved: (to) => `已搬到 ${to}`,
-  moveInstallHere: "这台电脑要装上服务器，需要管理员确认一次。",
+  moveInstallHere: "这台电脑要装上中枢服务器，需要管理员确认一次。",
   moveInstall: "装上",
   moveInstallThere: (machine) => `在 ${machine} 上的 World 里点「装上」，或在它的终端里运行：`,
   moveInstallCommand: (os) => (os === "windows" ? "fastctx hub arrive" : "sudo fastctx hub arrive"),
@@ -664,7 +679,7 @@ export const zhMachines: MachinesWords = {
   moveStopSaid: (machines) => `${machines.length ? `${machines.join("、")} 还没跟过来，` : ""}停下之后要在那里重新登录，登录后还是同一台机器。`,
   moveDelete: "删掉旧数据",
   moveDeleteTitle: "删掉旧位置的数据？",
-  moveDeleteSaid: "旧的服务器数据删掉后，就不能退回到旧的位置了。",
+  moveDeleteSaid: "旧位置的中枢服务器数据删掉后，就不能退回去了。",
   log: "变更记录",
   logEmpty: "暂无记录",
   logEarlier: "更早",
@@ -685,7 +700,7 @@ export const zhMachines: MachinesWords = {
       case "stop_acting":
         return `撤销 ${a.machine} 访问的权限`;
       case "relays":
-        return `改了 ${a.machine} 连服务器的方式`;
+        return `改了 ${a.machine} 连中枢服务器的方式`;
       case "relay_at":
         return `改了 ${a.machine} 对外的地址`;
       case "direct":
@@ -722,7 +737,8 @@ export const enMachines: MachinesWords = {
   hubOnline: "connected",
   hubConnecting: "connecting",
   hubOff: "not connected",
-  hubTitle: (name) => `Server ${name}`,
+  hubIs: "It knows every device in the network, keeps who may use which machine, and passes on what the machines say to each other",
+  hubTitle: (name) => `Hub ${name}`,
   hubMachines: (n) => `${n} machine${n === 1 ? "" : "s"}`,
   levelSuper: "administrator",
   levelMember: "member",
@@ -731,10 +747,10 @@ export const enMachines: MachinesWords = {
   linkOnline: (address) => `connected · ${address}`,
   linkVia: (through, address) => `connected through ${through} · ${address}`,
   linkConnecting: () => "connecting",
-  linkStopped: () => "removed by the server",
+  linkStopped: () => "removed by the hub",
   registeredUnder: (account) => `${account}'s machine`,
   onlyLogins: (accounts) => `signed in to ${accounts}`,
-  via: (through) => `reaches the server through ${through}`,
+  via: (through) => `reaches the hub through ${through}`,
   viaShort: (through) => `via ${through}`,
   yours: "yours",
   ownedBy: (account) => `${account}'s`,
@@ -818,48 +834,48 @@ export const enMachines: MachinesWords = {
   framedClear: "Clear",
   framedShareTitle: (n) => `Share these ${n}`,
   framedRemoveTitle: (n) => `Remove these ${n}?`,
-  framedRemoveWhat: (names) => `${names.join(", ")} will leave the server and every account; their shares and loans end. Nothing on the machines is touched.`,
+  framedRemoveWhat: (names) => `${names.join(", ")} will leave the hub and every account; their shares and loans end. Nothing on the machines is touched.`,
   allowDirect: "Allow direct connections",
   stopDirect: "Stop direct connections",
   directTitle: (machine) => `Allow direct connections to ${machine}`,
   directAddresses: "Where others connect to it",
-  directSeen: "as the server sees it",
+  directSeen: "as the hub sees it",
   directCard: "network card",
   directPort: "Port",
   directPickOne: "Choose at least one address",
   directPortWrong: "A port is a number from 1 to 65535",
-  directWhat: "Once allowed, what goes between it and other machines goes straight, not through the server, and a machine whose own line to the server is down can reach the server through it. The server then tries to connect to it once from outside and says where it was stopped if it can't. Allow the port in the firewall, security group or router.",
+  directWhat: "Once allowed, what goes between it and other machines goes straight, not through the hub, and a machine whose own line to the hub is down can reach the hub through it. The hub then tries to connect to it once from outside and says where it was stopped if it can't. Allow the port in the firewall, security group or router.",
   directGo: "Allow",
-  directChecking: "The server is trying to reach it",
+  directChecking: "The hub is trying to reach it",
   directAllowed: (machine) => `Allowed direct connections to ${machine}`,
   stopDirectTitle: (machine) => `Stop direct connections to ${machine}?`,
-  stopDirectSaid: "What goes between it and other machines will go through the server.",
+  stopDirectSaid: "What goes between it and other machines will go through the hub.",
   directStopped: (machine) => `No more direct connections to ${machine}`,
   moveHub: "Move to…",
-  moveChoose: "Choose the machine to take the server",
+  moveChoose: "Choose the machine to take the hub",
   moveNewServer: "A new server",
   moveWhyNot: {
     offline: "Offline",
-    hosts: "The server is on it",
+    hosts: "The hub is on it",
     moving: (to) => `Moving to ${to}`,
     older: "Its World is too old",
-    system: "The server runs on Windows and Linux",
+    system: "The hub runs on Windows and Linux",
     notOwn: "Only the administrator's own machines can take it",
     other: "Cannot take it",
   },
-  moveSleeps: "It sleeps; while it does, no machine reaches the server",
-  moveTitle: (to) => `Move the server to ${to}?`,
+  moveSleeps: "It sleeps; while it does, no machine reaches the hub",
+  moveTitle: (to) => `Move the hub to ${to}?`,
   moveCarries: ["Accounts", "Machines", "Rights", "Projects", "Letters"],
   moveSaid: "Nobody signs in again.",
-  moveWhat: "The server's whole directory moves, its identity unchanged. It keeps serving while it copies and pauses only for the switch; then the old place forwards each machine that comes to it until all have followed. The old data is disabled, not deleted; delete it in the server's details.",
+  moveWhat: "The hub's whole directory moves, its identity unchanged. It keeps serving while it copies and pauses only for the switch; then the old place forwards each machine that comes to it until all have followed. The old data is disabled, not deleted; delete it in the hub's details.",
   moveTypeName: (hub) => `Type ${hub} to confirm`,
   moveGo: "Move",
-  moveNewTitle: "Move the server to a new server",
+  moveNewTitle: "Move the hub to a new server",
   moveNext: "Next",
-  moveStages: { preparing: "Prepare", service: "Install the server", reaching: "Reach the new place", copying: "Copy the records", switching: "Switch", following: "Wait for every machine", done: "Done", cancelled: "Called off" },
+  moveStages: { preparing: "Prepare", service: "Install the hub", reaching: "Reach the new place", copying: "Copy the records", switching: "Switch", following: "Wait for every machine", done: "Done", cancelled: "Called off" },
   moveTo: (to) => `Moving to ${to}`,
   moveMoved: (to) => `Moved to ${to}`,
-  moveInstallHere: "This computer installs the server, after one administrator confirmation.",
+  moveInstallHere: "This computer installs the hub, after one administrator confirmation.",
   moveInstall: "Install",
   moveInstallThere: (machine) => `In World on ${machine}, press Install, or run in its terminal:`,
   moveInstallCommand: (os) => (os === "windows" ? "fastctx hub arrive" : "sudo fastctx hub arrive"),
@@ -877,7 +893,7 @@ export const enMachines: MachinesWords = {
   moveStopSaid: (machines) => `${machines.length ? `${machines.join(", ")} ${machines.length === 1 ? "has" : "have"} not followed; ` : ""}after this they sign in again there, and stay the same machines.`,
   moveDelete: "Delete the old data",
   moveDeleteTitle: "Delete the old place's data?",
-  moveDeleteSaid: "Once the old server's data is deleted, there is no going back to the old place.",
+  moveDeleteSaid: "Once the hub's data at the old place is deleted, there is no going back to it.",
   log: "Changes",
   logEmpty: "No changes yet",
   logEarlier: "Earlier",
@@ -898,7 +914,7 @@ export const enMachines: MachinesWords = {
       case "stop_acting":
         return `Revoked ${a.machine}'s access`;
       case "relays":
-        return `Changed how ${a.machine} reaches the server`;
+        return `Changed how ${a.machine} reaches the hub`;
       case "relay_at":
         return `Changed ${a.machine}'s public address`;
       case "direct":
@@ -981,7 +997,7 @@ export const zhAccess: AccessWords = {
   toHint: "对方的账号名",
   takeBack: "收回",
   removeTitle: (machine) => `移除 ${machine}？`,
-  removeWhat: (machine) => `${machine} 将断开服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`,
+  removeWhat: (machine) => `${machine} 将断开中枢服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`,
   removeGo: "移除",
   reason: "原因",
   reasonDefault: "removed",
@@ -1014,7 +1030,7 @@ export const enAccess: AccessWords = {
   toHint: "Their account name",
   takeBack: "Revoke",
   removeTitle: (machine) => `Remove ${machine}?`,
-  removeWhat: (machine) => `${machine} will disconnect from the server and sign out of every account; its shares and loans end. Data on it is untouched.`,
+  removeWhat: (machine) => `${machine} will disconnect from the hub and sign out of every account; its shares and loans end. Data on it is untouched.`,
   removeGo: "Remove",
   reason: "Reason",
   reasonDefault: "removed",
@@ -1099,7 +1115,7 @@ export interface AccountWords {
 
 export const zhAccount: AccountWords = {
   title: "账号",
-  hub: "服务器",
+  hub: "中枢服务器",
   account: "账号",
   level: { super: "管理员", member: "成员" },
   superNote: (admin) => `管理员 ${admin} 可以访问你的所有机器`,
@@ -1121,11 +1137,11 @@ export const zhAccount: AccountWords = {
   removeDeviceTitle: (name) => `移除 ${name}？`,
   removeDeviceWhat: (name, account, machine) =>
     machine
-      ? `${name} 将断开服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`
+      ? `${name} 将断开中枢服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`
       : `${name} 将退出 ${account}。`,
   removeDeviceGo: "移除",
   invite: "添加设备",
-  inviteWhat: "手机扫码，电脑用服务器地址和账号登录，Linux 主机运行一行命令",
+  inviteWhat: "手机扫码，电脑用中枢服务器地址和账号登录，Linux 主机运行一行命令",
   invitePhone: "手机",
   inviteComputer: "电脑",
   inviteServer: "Linux 主机",
@@ -1164,7 +1180,7 @@ export const zhAccount: AccountWords = {
       ? `这台电脑将退出 ${login}，不再作为它的机器，共享与借出随之失效。电脑上的数据不受影响。`
       : `这台设备将退出 ${login}。`,
   logoutGo: "退出",
-  adminPage: "管理服务器",
+  adminPage: "管理中枢服务器",
   another: "添加账号",
   none: "未加入世界",
   logIn: "加入",
@@ -1175,7 +1191,7 @@ export const zhAccount: AccountWords = {
 
 export const enAccount: AccountWords = {
   title: "Account",
-  hub: "Server",
+  hub: "Hub",
   account: "Account",
   level: { super: "administrator", member: "member" },
   superNote: (admin) => `Administrator ${admin} can access all your machines`,
@@ -1197,11 +1213,11 @@ export const enAccount: AccountWords = {
   removeDeviceTitle: (name) => `Remove ${name}?`,
   removeDeviceWhat: (name, account, machine) =>
     machine
-      ? `${name} will disconnect from the server and sign out of every account; its shares and loans end. Data on it is untouched.`
+      ? `${name} will disconnect from the hub and sign out of every account; its shares and loans end. Data on it is untouched.`
       : `${name} will be signed out of ${account}.`,
   removeDeviceGo: "Remove",
   invite: "Add device",
-  inviteWhat: "Phones scan a code, computers sign in with the server address and account, Linux hosts run one command",
+  inviteWhat: "Phones scan a code, computers sign in with the hub address and account, Linux hosts run one command",
   invitePhone: "Phone",
   inviteComputer: "Computer",
   inviteServer: "Linux host",
@@ -1240,7 +1256,7 @@ export const enAccount: AccountWords = {
       ? `This computer will sign out of ${login} and stop being its machine; its shares and loans end. Data on it is untouched.`
       : `This device will sign out of ${login}.`,
   logoutGo: "Sign out",
-  adminPage: "Manage server",
+  adminPage: "Manage hub",
   another: "Add account",
   none: "Not in a World",
   logIn: "Join",
@@ -1282,7 +1298,7 @@ export const zhToken: TokenWords = {
   kinds: { computer: "电脑", phone: "手机", server: "Linux 主机" },
   ways: { ssh: "经 SSH", line: "一行命令" },
   added: (machine) => `${machine} 已加入`,
-  hub: "服务器地址",
+  hub: "中枢服务器地址",
   account: "账号",
   name: "主机名称",
   nameAuto: "自动",
@@ -1307,7 +1323,7 @@ export const enToken: TokenWords = {
   kinds: { computer: "Computer", phone: "Phone", server: "Linux host" },
   ways: { ssh: "Over SSH", line: "One command" },
   added: (machine) => `${machine} joined`,
-  hub: "Server address",
+  hub: "Hub address",
   account: "Account",
   name: "Host name",
   nameAuto: "automatic",
@@ -1384,21 +1400,21 @@ export interface AdminWords {
 }
 
 export const zhAdmin: AdminWords = {
-  title: "管理服务器",
-  hub: (name) => `服务器 ${name}`,
+  title: "管理中枢服务器",
+  hub: (name) => `中枢服务器 ${name}`,
   superPart: "管理员",
-  superWhat: "可以使用服务器上的所有机器；管理员只有一位，可以转交",
+  superWhat: "可以使用这个网络里的所有机器；管理员只有一位，可以转交",
   transfer: "转交",
   transferTitle: "转交管理员",
-  transferWhat: "转交后你将成为成员，对方可以使用服务器上的所有机器。",
+  transferWhat: "转交后你将成为成员，对方可以使用这个网络里的所有机器。",
   transferTo: "转交给",
   transferGo: "转交",
   noOther: "没有其他账号",
   selfRegistration: "开放注册",
-  selfRegistrationWhat: "能连接服务器的人都可以自行注册，注册的账号为成员。建议关闭，由管理员新建账号",
+  selfRegistrationWhat: "能连上中枢服务器的人都可以自行注册，注册的账号为成员。建议关闭，由管理员新建账号",
   signUpTitle: "开放注册？",
   signUpWhat:
-    "开放后，能连上这台服务器的任何人都能自己注册账号。新账号是成员，可以把自己的电脑加进来、开项目，数据存在这台服务器上。服务器在公网上时，陌生人也能注册。\n\n建议保持关闭，需要时用「新建账号」为对方开一个。",
+    "开放后，能连上这台中枢服务器的任何人都能自己注册账号。新账号是成员，可以把自己的电脑加进来、开项目。中枢服务器在公网上时，陌生人也能注册。\n\n建议保持关闭，需要时用「新建账号」为对方开一个。",
   signUpGo: "仍要开放",
   accounts: "账号",
   opened: (at) => `${at} 创建`,
@@ -1444,21 +1460,21 @@ export const zhAdmin: AdminWords = {
 };
 
 export const enAdmin: AdminWords = {
-  title: "Manage server",
-  hub: (name) => `Server ${name}`,
+  title: "Manage hub",
+  hub: (name) => `Hub ${name}`,
   superPart: "Administrator",
-  superWhat: "Can use every machine on the server; there is one administrator, and the role can be transferred",
+  superWhat: "Can use every machine in the network; there is one administrator, and the role can be transferred",
   transfer: "Transfer",
   transferTitle: "Transfer administrator",
-  transferWhat: "You'll become a member, and they'll be able to use every machine on the server.",
+  transferWhat: "You'll become a member, and they'll be able to use every machine in the network.",
   transferTo: "Transfer to",
   transferGo: "Transfer",
   noOther: "No other accounts",
   selfRegistration: "Open sign-up",
-  selfRegistrationWhat: "Anyone who can reach the server can sign up; new accounts are members. Best kept off, with accounts made by the administrator",
+  selfRegistrationWhat: "Anyone who can reach the hub can sign up; new accounts are members. Best kept off, with accounts made by the administrator",
   signUpTitle: "Open sign-up?",
   signUpWhat:
-    "Anyone who can reach this server will be able to create an account. New accounts are members: they can add their own computers and open projects, kept on this server. If the server is on the internet, strangers can sign up too.\n\nWe recommend keeping it off and making accounts for people with New account.",
+    "Anyone who can reach this hub will be able to create an account. New accounts are members: they can add their own computers and open projects. If the hub is on the internet, strangers can sign up too.\n\nWe recommend keeping it off and making accounts for people with New account.",
   signUpGo: "Open anyway",
   accounts: "Accounts",
   opened: (at) => `created ${at}`,

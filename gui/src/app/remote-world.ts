@@ -198,7 +198,7 @@ export class RemoteWorld {
       case "server": {
         const password = this.typed.by === "password";
         this.body.innerHTML = `<${form} class="welcome-form remote-form" autocomplete="off">
-          ${this.options.adding ? "" : `<h2 class="welcome-form-title">${escape(words.remote)}</h2>`}
+          ${this.options.adding ? "" : `<h2 class="welcome-form-title">${escape(words.remote)}</h2><p class="welcome-form-what">${escape(words.remoteHub)}</p>`}
           <div class="field-pair remote-address">
             ${field("host", words.server, 'class="mono" required spellcheck="false" autocapitalize="off" placeholder="203.0.113.20"', this.typed.host)}
             ${field("sshPort", words.sshPort, 'class="mono" inputmode="numeric" pattern="[0-9]{1,5}" required', this.typed.sshPort)}

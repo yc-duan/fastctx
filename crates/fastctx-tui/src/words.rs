@@ -304,15 +304,15 @@ impl Words {
     }
 
     pub fn connecting(&self) -> &'static str {
-        self.pick("正在连接服务器", "connecting to the server")
+        self.pick("正在连接中枢服务器", "connecting to the hub")
     }
 
     pub fn hub_online(&self) -> &'static str {
-        self.pick("已连接服务器", "connected to the server")
+        self.pick("已连接中枢服务器", "connected to the hub")
     }
 
     pub fn hub_stopped(&self) -> &'static str {
-        self.pick("已被服务器移除", "removed by the server")
+        self.pick("已被中枢服务器移除", "removed by the hub")
     }
 
     pub fn no_record_here(&self, machine: &str) -> String {
@@ -734,8 +734,8 @@ impl Words {
 
     pub fn link_alone(&self) -> String {
         self.pick(
-            "未加入世界 · l 用服务器地址、账号和密码登录",
-            "Not in a World · l to sign in with the server address, account and password",
+            "未加入世界 · l 用中枢服务器地址、账号和密码登录",
+            "Not in a World · l to sign in with the hub address, account and password",
         )
         .to_string()
     }
@@ -761,19 +761,19 @@ impl Words {
             };
         }
         match (self.lang, route) {
-            (Lang::Zh, Route::Local) => format!("已连接本机服务器 {hub} · {since} 起"),
+            (Lang::Zh, Route::Local) => format!("已连接本机的中枢服务器 {hub} · {since} 起"),
             (Lang::Zh, Route::Card { name }) => format!("已连接 {hub} · 网卡「{name}」· {since} 起"),
             (Lang::Zh, Route::Proxy { proxy }) => format!("已连接 {hub} · 代理 {proxy} · {since} 起"),
             (Lang::Zh, Route::System) => format!("已连接 {hub} · {since} 起"),
-            (Lang::En, Route::Local) => format!("connected to the local server {hub} · since {since}"),
+            (Lang::En, Route::Local) => format!("connected to the hub on this machine, {hub} · since {since}"),
             (Lang::En, route) => format!("connected to {hub} · {route} · since {since}"),
         }
     }
 
     pub fn link_stopped(&self, reason: &str) -> String {
         match self.lang {
-            Lang::Zh => format!("已被服务器移除：{reason}"),
-            Lang::En => format!("removed by the server: {reason}"),
+            Lang::Zh => format!("已被中枢服务器移除：{reason}"),
+            Lang::En => format!("removed by the hub: {reason}"),
         }
     }
 
@@ -1182,17 +1182,17 @@ impl Words {
 
     pub fn remove_warning(&self, name: &str, account: &str) -> String {
         match self.lang {
-            Lang::Zh => format!("{name} 将退出 {account}；若是它的机器，还会断开服务器，需重新登录才能回来。"),
+            Lang::Zh => format!("{name} 将退出 {account}；若是它的机器，还会断开中枢服务器，需重新登录才能回来。"),
             Lang::En => format!(
-                "{name} will be signed out of {account}; a machine of the account also disconnects from the server until it signs in again."
+                "{name} will be signed out of {account}; a machine of the account also disconnects from the hub until it signs in again."
             ),
         }
     }
 
     pub fn logout_warning(&self) -> &'static str {
         self.pick(
-            "这台电脑将看不到该账号的机器、对话与项目；若它是该账号的机器，还会断开服务器。",
-            "This computer will no longer see the account's machines, conversations and projects; if it is the account's machine, it also disconnects from the server.",
+            "这台电脑将看不到该账号的机器、对话与项目；若它是该账号的机器，还会断开中枢服务器。",
+            "This computer will no longer see the account's machines, conversations and projects; if it is the account's machine, it also disconnects from the hub.",
         )
     }
 
@@ -1232,13 +1232,13 @@ impl Words {
     }
 
     pub fn login_needs(&self) -> &'static str {
-        self.pick("请填写服务器地址、账号和密码", "Enter the server address, account and password")
+        self.pick("请填写中枢服务器地址、账号和密码", "Enter the hub address, account and password")
     }
 
     pub fn hub_section(&self, hub: &str) -> String {
         match self.lang {
-            Lang::Zh => format!("服务器 {hub}"),
-            Lang::En => format!("Server {hub}"),
+            Lang::Zh => format!("中枢服务器 {hub}"),
+            Lang::En => format!("Hub {hub}"),
         }
     }
 
@@ -1420,8 +1420,8 @@ impl Words {
             (Lang::En, NameProblem::MixedScripts { first, second }) => format!(
                 "\u{201c}{first}\u{201d} and \u{201c}{second}\u{201d} are from scripts that can't be mixed in one name"
             ),
-            (Lang::Zh, NameProblem::Reserved) => "这个名字留给服务器自己用".to_string(),
-            (Lang::En, NameProblem::Reserved) => "That name is reserved for the server".to_string(),
+            (Lang::Zh, NameProblem::Reserved) => "这个名字留给中枢服务器自己用".to_string(),
+            (Lang::En, NameProblem::Reserved) => "That name is reserved for the hub".to_string(),
         }
     }
 
@@ -1451,7 +1451,7 @@ impl Words {
             FieldName::Machines => self.pick("机器", "Machines"),
             FieldName::Places => self.pick("位置", "Locations"),
             FieldName::Canon => self.pick("定论", "Decisions"),
-            FieldName::HubAddress => self.pick("服务器地址", "Server address"),
+            FieldName::HubAddress => self.pick("中枢服务器地址", "Hub address"),
             FieldName::Account => self.pick("账号", "Account"),
             FieldName::Password => self.pick("密码", "Password"),
             FieldName::LoginName => self.pick("本机名称", "Computer name"),

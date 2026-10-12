@@ -286,6 +286,21 @@
   color: var(--text-3);
 }
 
+/* What the hub is, once, under the ways in; and under a form's title,
+   what making a World asks of the machine the hub goes on. */
+.welcome-hub-is {
+  margin: var(--space-4) 0 0;
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+.welcome-form-what {
+  margin: var(--space-1) 0 var(--space-4);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
 .welcome-ways + .login-alone {
   margin-top: var(--space-4);
   text-align: center;

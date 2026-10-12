@@ -1374,6 +1374,7 @@ export class MachinesPage implements Page {
     const machines = hub.members.filter((member) => member.kind === "computer" && member.home).length;
     return `<article class="panel-hub-card">
       <header class="panel-head ${state.kind}"><span class="knot" aria-hidden="true"></span><h2 class="panel-title">${escape(words.hubTitle(hub.name))}</h2><span class="panel-state">${escape(state.said)}</span></header>
+      <p class="panel-what">${escape(words.hubIs)}</p>
       ${acts}
       <p class="panel-facts">${escape(words.hubMachines(machines))}</p>
       <ul class="panel-logins">${rows}</ul>

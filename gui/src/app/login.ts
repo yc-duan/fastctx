@@ -219,7 +219,8 @@ export class LoginPage implements Page {
                 ? `<button class="welcome-way" type="button" data-way="remote">${remoteMark()}<span class="welcome-way-title">${escape(words.remote)}</span><span class="welcome-way-what">${escape(words.remoteWhat)}</span></button>`
                 : ""
             }
-          </div>`;
+          </div>
+          <p class="welcome-hub-is">${escape(words.hubIs)}</p>`;
         break;
       case "password":
       case "open": {
@@ -260,6 +261,7 @@ export class LoginPage implements Page {
         this.body.innerHTML = `
           <form class="create-form welcome-form" autocomplete="off">
             <h2 class="welcome-form-title">${escape(words.create)}</h2>
+            <p class="welcome-form-what">${escape(words.createHub)}</p>
             <div class="field-pair">
               <label class="field"><span class="field-label">${escape(words.worldName)}</span>
                 <input name="world" class="mono" required spellcheck="false" autocapitalize="off" placeholder="home" value="${escape(this.typed.world)}"></label>

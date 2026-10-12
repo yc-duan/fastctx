@@ -26,7 +26,7 @@ export const zhNameSaid: NameSaid = (problem) => {
     case "mixed_scripts":
       return `「${problem.first}」和「${problem.second}」是两种容易看混的文字，不能放在一个名字里`;
     case "reserved":
-      return "这个名字留给服务器自己用";
+      return "这个名字留给中枢服务器自己用";
   }
 };
 
@@ -47,6 +47,6 @@ export const enNameSaid: NameSaid = (problem) => {
     case "mixed_scripts":
       return `“${problem.first}” and “${problem.second}” are from scripts that can't be mixed in one name`;
     case "reserved":
-      return "That name is reserved for the server";
+      return "That name is reserved for the hub";
   }
 };

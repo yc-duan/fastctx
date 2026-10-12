@@ -1,4 +1,4 @@
-// Moving the server to another machine (`world-gui.md`, 把服务器搬到别处).
+// Moving the server to another machine (`world-gui.md`, 把中枢服务器搬到别处).
 // The administrator chooses, on the drawing, a machine of their own that
 // can take it, or a new server over SSH; a red sheet names what goes with
 // it and asks for the network's name. The server's details then follow the
