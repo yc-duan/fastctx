@@ -168,6 +168,11 @@ export class MapCanvas {
     this.labelObstacles = boxes.map(box => ({ ...box }));
     this.schedule();
   }
+  /** The measured size of an item's name, shown or withheld. */
+  labelSize(key: string): { width: number; height: number } | null {
+    const entry = this.buttons.get(key);
+    return entry ? { width: entry.width, height: entry.height } : null;
+  }
   /** CSS-pixel centre of a grip, kept clear of its source's hit area at far zoom. */
   handlePoint(key: string): Point | null {
     const handle = this.handles.get(key)?.handle;
@@ -211,6 +216,7 @@ export class MapCanvas {
       entry.item = item;
       entry.button.setAttribute("aria-label", [item.label, item.sub].filter(Boolean).join(" · "));
       entry.button.dataset.kind = item.kind;
+      entry.label.dataset.side = item.side ?? "";
       const text = [item.label, item.sub].filter(Boolean).join("\n");
       if (entry.label.textContent !== text) entry.label.textContent = text;
     }
@@ -298,7 +304,7 @@ export class MapCanvas {
     obstacles.push({ x: view.width - this.controlWidth - 12, y: view.height - 56, width: this.controlWidth + 12, height: 56 });
     const placements = placeLabels([...this.buttons.values()].map(e => ({ key: e.item.key, point: this.camera.toScreen(e.item.point),
       radius: (e.item.labelRadius ?? e.item.radius) * view.scale, width: e.width, height: e.height,
-      priority: e.item.key === this.focused || e.item.key === this.pointed ? 100 : e.item.key === this.selected ? 50 : e.item.priority ?? 0 })),
+      priority: e.item.key === this.focused || e.item.key === this.pointed ? 100 : e.item.key === this.selected ? 50 : e.item.priority ?? 0, side: e.item.side })),
       { x: 8, y: 8, width: Math.max(0, view.width - 16), height: Math.max(0, view.height - 16) }, obstacles);
     const hiddenLabels: string[] = [];
     for (const { key, box } of placements) {

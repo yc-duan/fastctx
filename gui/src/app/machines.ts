@@ -12,7 +12,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import type { Bounds, Point } from "../map-canvas";
+import type { Point } from "../map-canvas";
 import { blot, circle, outline, ruled, seeded } from "../pen/shapes";
 import type { AccountChange, HubAccounts, Login, MemberSeen } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
@@ -27,6 +27,7 @@ import { MachineLog, type ReadLog } from "./machine-log";
 import { MachineMap, type LineSeen } from "./machine-map";
 import { RING } from "./map-layout";
 import { mapOf } from "./map-of";
+import type { MapNode } from "./network-map";
 import { link, talkLink } from "./places";
 import { borrowedOf, groupsOf, isComputer, isSuper, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Borrowed, type Machine } from "./reach";
 import type { Page } from "./shell";
@@ -68,16 +69,6 @@ interface Act {
   danger?: boolean;
 }
 
-/** Something of a machine's given to another account, hung on its ring:
- *  the change that takes it back, and the one that gives it again. */
-interface Given {
-  key: string;
-  label: string;
-  to: string;
-  login: Login;
-  take: AccountChange;
-  give: AccountChange;
-}
 
 /** How long a taking back can be undone from the drawing's corner. */
 const UNDO_MS = 6_000;
@@ -85,6 +76,9 @@ const UNDO_MS = 6_000;
 /** How long a machine that just arrived stays circled: the drawing-in of
  *  the circle and a moment to see it. */
 const ARRIVED_MS = 6_000;
+
+/** Past this many machines others' groups start folded. */
+const FOLD_PAST = 24;
 
 /** The port offered first for direct connections: the one after the hub's
  *  own, 7443. */
@@ -100,12 +94,8 @@ export class MachinesPage implements Page {
    *  whom each machine is given to, and the moment to undo a taking back. */
   private readonly acts: HTMLElement;
   private readonly menu: HTMLElement;
-  private readonly tags: HTMLElement;
   private readonly undoBar: HTMLElement;
-  private tagged = "";
-  private given: Given[] = [];
   private undoing: { timer: number; redo: () => Promise<void> } | null = null;
-  private level = 0;
   /** The card asking to confirm a change made on the drawing, or to fill
    *  in what one needs. */
   private readonly card: HTMLElement;
@@ -145,6 +135,9 @@ export class MachinesPage implements Page {
    *  while it is drawn. */
   private framed: string[] = [];
   private framing: string[] = [];
+  /** Groups the user folded or opened, by key; the rest follow the
+   *  default. */
+  private readonly folds = new Map<string, boolean>();
 
   constructor(private readonly options: MachinesOptions) {
     const { words } = options;
@@ -160,12 +153,11 @@ export class MachinesPage implements Page {
         `<h1 class="page-title">${escape(words.title)}</h1>`,
         `<button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
-      <div class="machines-layout"><div class="machines-canvas"><div class="map-tags"></div><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form><div class="map-tip" role="tooltip" hidden></div></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
+      <div class="machines-layout"><div class="machines-canvas"><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form><div class="map-tip" role="tooltip" hidden></div></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
     this.acts = this.element.querySelector<HTMLElement>(".map-acts")!;
     this.menu = this.element.querySelector<HTMLElement>(".map-menu")!;
-    this.tags = this.element.querySelector<HTMLElement>(".map-tags")!;
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
     this.tip = this.element.querySelector<HTMLElement>(".map-tip")!;
@@ -179,7 +171,6 @@ export class MachinesPage implements Page {
       },
       frame: (frame) => {
         this.scale = frame.view.scale;
-        this.level = frame.view.level;
         this.float();
         if (this.bring && frame.view.height > 0) {
           const key = this.bring;
@@ -216,11 +207,6 @@ export class MachinesPage implements Page {
     this.panel.addEventListener("pointerdown", (event) => this.pull(event));
     this.acts.addEventListener("click", (event) => this.clickAct(event));
     this.menu.addEventListener("click", (event) => this.clickAct(event));
-    this.tags.addEventListener("click", (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-given]");
-      const given = button ? this.given[Number(button.dataset.given)] : undefined;
-      if (button && given) void this.takeBack(button, given);
-    });
     this.undoBar.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest(".map-undo-go")) void this.undo();
     });
@@ -365,6 +351,23 @@ export class MachinesPage implements Page {
   }
 
   /** The hub or machine chosen on the drawing: its actions float beside it. */
+  /** The groups folded to their knot. Past two dozen machines the drawing
+   *  fitted to the page is too small to read them all, so others' groups
+   *  start folded and the account's own open; what the user opened or
+   *  folded stays so. */
+  private foldedOf(nodes: MapNode[]): Set<string> {
+    const many = nodes.length > FOLD_PAST;
+    const folded = new Set<string>();
+    for (const node of nodes) {
+      const group = node.group?.key ?? "mine";
+      for (const hub of node.hubs) {
+        const key = `group:${hub}:${group}`;
+        if (this.folds.get(key) ?? (many && group !== "mine")) folded.add(key);
+      }
+    }
+    return folded;
+  }
+
   /** A frame drawn round machines: one chosen, or several together. */
   private frame(keys: string[], done: boolean): void {
     const machines = keys.filter((key) => key.startsWith("m:"));
@@ -385,6 +388,14 @@ export class MachinesPage implements Page {
   }
 
   private choose(key: string | null): void {
+    // A group's knot folds its machines away, or opens them again.
+    if (key?.startsWith("group:")) {
+      const world = this.options.store.world.peek();
+      const nodes = world ? mapOf(world, this.options.words).nodes : [];
+      this.folds.set(key, !this.foldedOf(nodes).has(key));
+      this.redraw();
+      return;
+    }
     this.framed = [];
     this.closeMenu();
     // The dashed ring is itself the way to add a machine.
@@ -572,6 +583,7 @@ export class MachinesPage implements Page {
       links,
       opening: this.opening,
       framed: this.framing.length ? this.framing : this.framed,
+      folded: this.foldedOf(nodes),
     });
   }
 
@@ -842,8 +854,6 @@ export class MachinesPage implements Page {
         return words.lineHub(name(seen.machine), seen.ms);
       case "through":
         return words.lineThrough(name(seen.machine), name(seen.through));
-      case "direct":
-        return seen.link.up ? words.lineDirect(name(seen.link.a), name(seen.link.b), seen.link.ms) : words.lineDown(name(seen.link.a), name(seen.link.b), seen.link.why);
     }
   }
 
@@ -862,52 +872,6 @@ export class MachinesPage implements Page {
     this.undoing = { timer: window.setTimeout(() => this.endUndo(), UNDO_MS), redo };
     this.undoBar.innerHTML = `<span>${escape(said)}</span><button class="text-button map-undo-go" type="button">${escape(this.options.words.undo)}</button>`;
     this.undoBar.hidden = false;
-  }
-
-  /** Whom each of the account's own machines is shared with, and whom an
-   *  agent on it is lent to. */
-  private givenOf(world: WorldNow): Given[] {
-    const given: Given[] = [];
-    for (const machine of machinesOf(world)) {
-      for (const login of this.ownersOf(machine, world)) {
-        const hub = world.accounts.hubs.find((one) => one.hub === login.hub);
-        for (const share of hub?.shares ?? []) {
-          if (share.machine !== machine.name || share.account === login.account) continue;
-          given.push({ key: `m:${machine.written}`, label: share.account, to: share.account, login, take: { change: "share", machine: machine.name, to: share.account, shared: false }, give: { change: "share", machine: machine.name, to: share.account, shared: true } });
-        }
-        for (const lend of hub?.lends ?? []) {
-          if (lend.machine !== machine.name) continue;
-          const home = lend.home ? { home: lend.home } : {};
-          given.push({
-            key: `m:${machine.written}`,
-            label: `${agentName(lend.agent)} · ${lend.account}`,
-            to: lend.account,
-            login,
-            take: { change: "lend", machine: machine.name, to: lend.account, agent: lend.agent, ...home, lent: false },
-            give: { change: "lend", machine: machine.name, to: lend.account, agent: lend.agent, ...home, lent: true },
-          });
-        }
-      }
-    }
-    return given;
-  }
-
-  /** Takes back a share or a loan at once; for a moment it can be given
-   *  again from the drawing's corner. */
-  private async takeBack(button: HTMLButtonElement, given: Given): Promise<void> {
-    const { words } = this.options;
-    button.disabled = true;
-    try {
-      await this.options.change(given.login, given.take);
-    } catch (error) {
-      this.note = { machine: given.key.slice(2), text: this.options.access.failed(error instanceof Error ? error.message : String(error)) };
-      button.disabled = false;
-      this.redraw();
-      return;
-    }
-    this.offerUndo(words.tookBack(given.to), () => this.options.change(given.login, given.give));
-    await this.options.store.refresh();
-    this.redraw();
   }
 
   private async undo(): Promise<void> {
@@ -930,55 +894,20 @@ export class MachinesPage implements Page {
     this.undoBar.innerHTML = "";
   }
 
-  /** The tags of whom a machine is given to, hung at its ring's lower right
-   *  when the drawing is near enough to read them; not on the one chosen,
-   *  whose actions float there instead. */
-  private hang(): Bounds[] {
-    const world = this.options.store.world.peek();
-    this.given = world ? this.givenOf(world) : [];
-    // A narrow page has no room for them among the rings; there they are in
-    // the chosen one's sheet.
-    const shown = this.level >= 1 && !this.narrow() ? this.given.map((given, index) => ({ given, index })).filter(({ given }) => given.key !== this.selected) : [];
-    const html = shown
-      .map(
-        ({ given, index }) =>
-          `<span class="map-tag" data-for="${escape(given.key)}">${escape(given.label)}<button class="chip-x" type="button" data-given="${index}" aria-label="${escape(this.options.words.takeBack(given.label))}" title="${escape(this.options.words.takeBack(given.label))}">${glyph("close", 12)}</button></span>`,
-      )
-      .join("");
-    if (html !== this.tagged) {
-      this.tagged = html;
-      this.tags.innerHTML = html;
-    }
-    const below = new Map<string, number>();
-    const boxes: Bounds[] = [];
-    for (const tag of this.tags.children as HTMLCollectionOf<HTMLElement>) {
-      const key = tag.dataset.for!;
-      const at = this.map.screenOf(key);
-      if (!at) continue;
-      const row = below.get(key) ?? 0;
-      below.set(key, row + 1);
-      const x = at[0] + RING * this.scale * 0.7;
-      const y = at[1] + RING * this.scale * 0.7 + row * 28;
-      tag.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
-      boxes.push({ x, y, width: tag.offsetWidth, height: tag.offsetHeight });
-    }
-    return boxes;
-  }
-
-  /** The icons beside the one chosen, on an arc round its ring, kept on the
-   *  side with room; the names on the drawing keep clear of them. */
+  /** The icons beside the one chosen, in a row to the right of its name,
+   *  or under its ring where the right has no room; the names on the
+   *  drawing keep clear of them. */
   private float(): void {
     const world = this.options.store.world.peek();
     const key = this.menuFor || this.cardFor || this.narrow() ? null : this.selected;
     const at = key ? this.map.screenOf(key) : null;
-    const hung = this.hang();
     if (!world || !key || !at) {
       if (!this.acts.hidden) {
         this.acts.hidden = true;
         this.acts.innerHTML = "";
         this.floated = "";
       }
-      this.map.reserve(hung);
+      this.map.reserve([]);
       return;
     }
     const acts = this.actsOf(key, world);
@@ -996,22 +925,21 @@ export class MachinesPage implements Page {
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
     const size = matchMedia("(pointer: coarse)").matches ? 44 : 36;
-    // Clear of the ring, and far enough out that neighbours on the arc do
-    // not touch: 38 degrees apart, with 6 pixels between.
-    const step = (38 * Math.PI) / 180;
-    const reach = Math.max(Math.max(RING * this.scale, 14) + size / 2 + 12, (size + 6) / (2 * Math.sin(step / 2)));
-    // Down the right of the ring, or the left where the right has no room.
-    const left = at[0] + reach + size > width;
-    const centre = left ? Math.PI : 0;
-    const boxes = [...this.acts.children].map((button, index, all) => {
-      const degrees = -((all.length - 1) * 38) / 2 + index * 38;
-      const angle = centre + ((left ? -degrees : degrees) * Math.PI) / 180;
-      const x = Math.min(width - size - 4, Math.max(4, at[0] + Math.cos(angle) * reach - size / 2));
-      const y = Math.min(height - size - 4, Math.max(4, at[1] + Math.sin(angle) * reach - size / 2));
-      (button as HTMLElement).style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+    const gap = 6;
+    const count = this.acts.children.length;
+    const row = count * size + (count - 1) * gap;
+    // Past where its name stands right of its ring, measured from the ring
+    // so the row does not follow the name when the name makes way for it.
+    const right = at[0] + Math.max(RING * this.scale, 14) + 4 + this.map.nameWidth(key) + 14;
+    const beside = right + row <= width - 4;
+    const startX = beside ? right : Math.min(width - row - 4, Math.max(4, at[0] - row / 2));
+    const y = beside ? at[1] - size / 2 : Math.min(height - size - 4, at[1] + Math.max(RING * this.scale, 14) + 10);
+    const boxes = [...this.acts.children].map((button, index) => {
+      const x = startX + index * (size + gap);
+      (button as HTMLElement).style.transform = `translate(${x.toFixed(1)}px, ${Math.max(4, y).toFixed(1)}px)`;
       return { x, y, width: size, height: size };
     });
-    this.map.reserve([...boxes, ...hung]);
+    this.map.reserve(boxes);
   }
 
   /** The menu of a spot, or of the drawing itself, where the right button
@@ -1218,12 +1146,14 @@ export class MachinesPage implements Page {
       .join("");
     const note = this.note?.machine === machine.name ? `<p class="machine-note">${escape(this.note.text)}</p>` : "";
     const state = this.stateOf(machine.online, machine.since, machine.here, now);
+    const direct = this.directSaid(machine, world);
     return `<article class="panel-machine" data-machine="${escape(machine.name)}">
       ${this.panelHead(machine.written, tags, state)}
       ${acts}
       ${factLine ? `<p class="panel-facts">${factLine}</p>` : ""}
       ${facts ? `<p class="panel-home"><span>${escape(words.home)}</span><code>${escape(facts.home)}</code></p>` : ""}
       ${hubs ? `<ul class="panel-hubs">${hubs}</ul>` : ""}
+      ${direct}
       ${sharing}
       ${lending}
       ${this.present(machine.name, world, viewer)}
@@ -1231,6 +1161,23 @@ export class MachinesPage implements Page {
       ${note}
       ${own}
     </article>`;
+  }
+
+  /** A machine's direct links: with whom they are up and how fast, which
+   *  are down and why, and where others connect to it when it takes them. */
+  private directSaid(machine: Machine, world: WorldNow): string {
+    const { words } = this.options;
+    const { nodes, links } = mapOf(world, words);
+    const key = `m:${machine.written}`;
+    const name = (other: string) => nodes.find((node) => node.key === other)?.name ?? other.replace(/^m:/, "");
+    const mine = links.filter((link) => link.a === key || link.b === key).sort((a, b) => Number(b.up) - Number(a.up));
+    const at = nodes.find((node) => node.key === key)?.directAt ?? [];
+    if (!mine.length && !at.length) return "";
+    const said = mine.map((link) => {
+      const peer = name(link.a === key ? link.b : link.a);
+      return link.up ? `<span class="direct-up">${escape(words.directUp(peer, link.ms))}</span>` : `<span class="direct-down">${escape(words.directDown(peer, link.why))}</span>`;
+    });
+    return `<div class="panel-direct"><span class="given-label">${escape(words.directRow)}</span><span class="panel-direct-list">${said.join(`<span class="sep">·</span>`)}</span>${at.length ? `<p class="panel-direct-at">${escape(words.takesDirectAt(at.join("、")))}</p>` : ""}</div>`;
   }
 
   /** What is known of a machine of another's an agent is lent on: whose

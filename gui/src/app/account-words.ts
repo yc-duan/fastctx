@@ -394,6 +394,14 @@ export interface MachinesWords {
    *  named by `ownedBy`. */
   mineGroup: string;
   lentGroup(owner: string): string;
+  /** Under a group's name on the drawing: how many, how many online. */
+  groupSub(count: number, online: number): string;
+  groupFolded(count: number, online: number): string;
+  /** A machine's direct links, in its details. */
+  directRow: string;
+  directUp(peer: string, ms: number | undefined): string;
+  directDown(peer: string, why: string | undefined): string;
+  takesDirectAt(addresses: string): string;
   /** Under the drawing, for a mouse: how to zoom and how to move it. */
   hintZoom: string;
   hintPan: string;
@@ -538,6 +546,12 @@ export const zhMachines: MachinesWords = {
   takesDirect: "别的机器可以直接连到这台",
   mineGroup: "我的",
   lentGroup: (owner) => `借自 ${owner}`,
+  groupSub: (count, online) => `${count} 台 · ${online} 在线`,
+  groupFolded: (count, online) => `${count} 台 · ${online} 在线`,
+  directRow: "直连",
+  directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
+  directDown: (peer, why) => `${peer} 断了${why ? `：${why}` : ""}`,
+  takesDirectAt: (addresses) => `别的机器经 ${addresses} 直接连它`,
   hintZoom: "缩放",
   hintPan: "按住拖动",
   framedTitle: (n) => `选了 ${n} 台`,
@@ -701,6 +715,12 @@ export const enMachines: MachinesWords = {
   takesDirect: "Other machines may connect to it directly",
   mineGroup: "Mine",
   lentGroup: (owner) => `Lent by ${owner}`,
+  groupSub: (count, online) => `${count} · ${online} online`,
+  groupFolded: (count, online) => `${count} · ${online} online`,
+  directRow: "Direct",
+  directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
+  directDown: (peer, why) => `${peer} down${why ? `: ${why}` : ""}`,
+  takesDirectAt: (addresses) => `Others connect to it directly at ${addresses}`,
   hintZoom: "Zoom",
   hintPan: "Hold to move",
   framedTitle: (n) => `${n} chosen`,

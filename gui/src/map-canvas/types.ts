@@ -7,7 +7,7 @@ export interface View extends Bounds { scale: number; level: number }
 /** Keys are unique across machines and hubs. Coordinates belong to the layout. */
 export interface CanvasItem {
   key: string;
-  kind: "hub" | "machine";
+  kind: "hub" | "machine" | "group";
   point: Point;
   radius: number;
   /** Extent of pen marks around the ring, for keeping names clear of details. */
@@ -15,6 +15,8 @@ export interface CanvasItem {
   label: string;
   sub?: string;
   priority?: number;
+  /** The side its name goes first, when there is room there. */
+  side?: "below" | "above" | "right" | "left";
 }
 
 /** A handle starts an intent; the page validates targets and confirms the result. */

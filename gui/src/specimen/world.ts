@@ -82,6 +82,23 @@ function node(name: string, online: boolean | null, since: string, owner: string
   };
 }
 
+/** With `?many` in the address, a team's network of about a hundred
+ *  machines: twenty-five more of the account's own and others' shared with
+ *  it, every seventh out of reach. */
+function many(): Node[] {
+  if (!new URLSearchParams(location.search).has("many")) return [];
+  const teams: [string, number][] = [["me", 25], ["ada", 18], ["bo", 21], ["chen", 14], ["dee", 9], ["eva", 7]];
+  let index = 0;
+  return teams.flatMap(([owner, count]) =>
+    Array.from({ length: count }, (_, n) => {
+      index += 1;
+      const linux = index % 3 !== 0;
+      const name = `${owner === "me" ? "node" : owner}-${String(n + 1).padStart(2, "0")}`;
+      return node(name, index % 7 !== 0, "01:00:00", owner, linux ? "linux" : "windows", linux ? `/home/${owner}` : `C:/Users/${owner}`, ["me", true, true]);
+    }),
+  );
+}
+
 /** The hubs this desktop is logged in to, as `nodes` and `accounts` see
  *  them: its own, where it is the super administrator, has shared lab with
  *  ada and lent ada a Codex login of this computer's, and once used an
@@ -102,6 +119,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         node("server", true, "00:00:00", "me", "linux", "/root", ["me", true, true]),
         node("studio", false, "12:52:00", "me", "windows", "C:/Users/me", ["me", true, true]),
         node("gpu", true, "03:30:00", "bo", "linux", "/home/bo", ["me", true, true], "la"),
+        ...many(),
       ],
     },
   ];

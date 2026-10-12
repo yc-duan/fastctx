@@ -1,25 +1,23 @@
 // The machines page's drawing as a canvas (`world-gui.md`, 账号、机器、共享与
-// 借出): the account's World drawn by hand on graph paper, each hub a knot
-// and each machine a ring at its own place round the hub it hangs on
-// (`map-layout.ts`), moved by the hand and zoomed (`../map-canvas`). What
-// it shows grows as it comes nearer: far off, the rings and their names;
-// nearer, what each machine is, the agents on it, and strokes moving along
-// a line while something on it works. Beside each hub the account may add
-// to, a dashed ring adds a machine. A machine of another whose agent alone
-// is lent is a broken ring of clay; one out of reach is drawn with a dry
-// pen. Only the ways things really go are drawn: each machine's bowed line
-// to its hub, bent through another machine while it reaches the hub that
-// way; between two machines linked directly, a straight thin line, ruled; a
-// direct link that is down, a faint broken one with why beside it when
-// near. A machine others may connect to directly carries a small socket on
-// its ring, in pencil until the hub has checked it. How each goes is the
-// program's to choose: nothing on the drawing is dragged to change it. What
-// floats beside a ring chosen is the page's.
+// 借出): the account's World drawn by hand on graph paper as a tree with
+// square forks (`map-layout.ts`), moved and zoomed (`../map-canvas`). The hub
+// at the top, a knot for each group of machines by whose they are, and the
+// machines hanging from their group's trunk, names to the right. What it
+// shows grows as it comes nearer: far off, the tree and the groups; nearer,
+// what each machine is, the agents on it, and strokes moving along its twig
+// while something on it works. The account's own end with a dashed ring that
+// adds a machine. A machine of another whose agent alone is lent is a broken
+// ring of clay; one out of reach is drawn with a dry pen and hangs by a
+// broken twig. A machine others may connect to directly wears a dashed halo,
+// in pencil until the hub has checked it: every machine that reaches it
+// links with it, so the links are not drawn one by one; which are up is
+// said in its details. A group of many can be folded to its knot, filled.
+// What floats beside a ring chosen is the page's.
 
 import { MapCanvas, PenLayer, type Bounds, type CanvasEvent, type CanvasFrame, type CanvasItem, type PenStroke, type Point } from "../map-canvas";
-import { blot, circle, outline, quadratic, ruled, seeded, ticks } from "../pen/shapes";
+import { blot, circle, outline, ruled, seeded, ticks } from "../pen/shapes";
 import type { MachinesWords } from "./account-words";
-import { KNOT, MapLayout, RING, type Placement } from "./map-layout";
+import { GROUP_KNOT, KNOT, MapLayout, RING, type Branch, type Placement } from "./map-layout";
 import type { MapHub, MapLink, MapNode } from "./network-map";
 
 export interface MachineMapOptions {
@@ -43,20 +41,21 @@ export interface MachineMapScene {
   selected: string | null;
   /** Machines that just came: circled for a moment as they arrive. */
   fresh: ReadonlySet<string>;
-  /** Direct links between machines on the drawing. */
+  /** Direct links between machines, which put linked machines side by side
+   *  in their group. */
   links: MapLink[];
-  /** Machines direct connections were just allowed to, whose socket is in
+  /** Machines direct connections were just allowed to, whose halo is in
    *  pencil until the hub has checked them. */
   opening: ReadonlySet<string>;
   /** Machines framed with the mouse, or inside the frame being drawn. */
   framed: readonly string[];
+  /** The groups folded to their knot, by key. */
+  folded: ReadonlySet<string>;
 }
 
-/** A line on the drawing, as a pointer resting on it is told of it. */
-export type LineSeen =
-  | { kind: "hub"; machine: string; hub: string; ms?: number | undefined }
-  | { kind: "through"; machine: string; through: string }
-  | { kind: "direct"; link: MapLink };
+/** A line on the drawing, as a pointer resting on it is told of it: a
+ *  machine's twig, the end of its way to the hub. */
+export type LineSeen = { kind: "hub"; machine: string; hub: string; ms?: number | undefined } | { kind: "through"; machine: string; through: string };
 
 /** The key of a hub's dashed ring that adds a machine. */
 export const addKey = (hub: string) => `add:${hub}`;
@@ -64,10 +63,6 @@ export const addKey = (hub: string) => `add:${hub}`;
 /** Zoom levels: below the first the drawing is far, above the second near. */
 const LEVELS: [number, number] = [0.55, 1.2];
 const SVG = "http://www.w3.org/2000/svg";
-
-/** How far outside its orbit a group's arc is drawn: clear of the rings'
- *  names, which stand below or beside them. */
-const GROUP_OUT = RING + 78;
 
 /** How long the drawing takes to glide to where it is brought. */
 const GLIDE_MS = 240;
@@ -103,7 +98,7 @@ export class MachineMap {
     this.element.classList.add("machine-map");
     this.pens = new PenLayer(this.surface.ink, "texture");
     // The circle round the one chosen and the strokes moving along a busy
-    // line are few, and drawn live over the ink.
+    // twig are few, and drawn live over the ink.
     this.marks = document.createElementNS(SVG, "svg");
     this.marks.classList.add("map-live");
     this.marks.setAttribute("width", "1");
@@ -119,43 +114,38 @@ export class MachineMap {
     this.themes.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class"] });
   }
 
-  /** The machine or hub's place on the screen, in the canvas's pixels. */
+  /** The machine, group or hub's place on the screen, in the canvas's
+   *  pixels. */
   screenOf(key: string): Point | null {
     const point = this.pointOf(key);
     return point ? this.surface.camera.toScreen(point) : null;
   }
 
-  /** The line within a few pixels of `screen`, a point in the canvas's
-   *  pixels, if any: a machine's line to its hub or through another
-   *  machine, or a direct link. Rings and knots come first: a point within
-   *  one is not on a line. */
+  /** The machine's twig within a few pixels of `screen`, a point in the
+   *  canvas's pixels, if any. A point within a ring is not on a twig. */
   lineAt(screen: Point): LineSeen | null {
     const { scene, placement } = this;
     if (!scene || !placement) return null;
     const scale = this.surface.camera.view.scale;
     const at = this.surface.camera.toWorld(screen);
-    const near = (point: Point, reach: number) => Math.hypot(at[0] - point[0], at[1] - point[1]) * scale <= reach * scale + 4;
-    for (const point of placement.machines.values()) if (near(point, RING)) return null;
-    for (const point of placement.hubs.values()) if (near(point, KNOT)) return null;
+    for (const point of placement.machines.values()) if (Math.hypot(at[0] - point[0], at[1] - point[1]) * scale <= RING * scale + 4) return null;
     // Within 7 pixels on the screen, however far the drawing is zoomed.
-    let best: { seen: LineSeen; distance: number } | null = null;
-    const consider = (points: Point[], seen: LineSeen) => {
-      const distance = distanceTo(points, at) * scale;
-      if (distance <= 7 && (!best || distance < best.distance)) best = { seen, distance };
-    };
-    for (const node of scene.nodes) {
-      const point = placement.machines.get(node.key);
-      if (!point) continue;
-      for (const route of this.routesOf(node)) {
-        const line = this.lineOf(point, route.to, route.name, route.end);
-        consider(line.points, route.through ? { kind: "through", machine: node.key, through: route.through } : { kind: "hub", machine: node.key, hub: route.hub, ms: node.hubMs });
-      }
+    let best: { branch: Branch; distance: number } | null = null;
+    for (const branch of placement.branches) {
+      if (!branch.machine) continue;
+      const distance = distanceTo(branch.points, at) * scale;
+      if (distance <= 7 && (!best || distance < best.distance)) best = { branch, distance };
     }
-    for (const link of scene.links) {
-      const ends = this.directOf(link);
-      if (ends) consider(ends, { kind: "direct", link });
-    }
-    return (best as { seen: LineSeen } | null)?.seen ?? null;
+    const found = best as { branch: Branch } | null;
+    const node = found ? scene.nodes.find((one) => one.key === found.branch.machine) : undefined;
+    if (!found || !node) return null;
+    const through = node.through ? scene.nodes.find((one) => one.name === node.through) : undefined;
+    return through ? { kind: "through", machine: node.key, through: through.key } : { kind: "hub", machine: node.key, hub: found.branch.hub, ms: node.hubMs };
+  }
+
+  /** How wide a name is on the screen, whether or not it is shown now. */
+  nameWidth(key: string): number {
+    return this.surface.labelSize(key)?.width ?? 0;
   }
 
   /** The screen box of a ring, for keeping names clear of what floats. */
@@ -200,7 +190,7 @@ export class MachineMap {
 
   update(scene: MachineMapScene): void {
     this.scene = scene;
-    this.placement = this.layout.update(scene.hubs, scene.nodes, scene.links);
+    this.placement = this.layout.update(scene.hubs, scene.nodes, scene.links, scene.folded);
     this.compose();
     this.place();
     this.mark();
@@ -210,6 +200,7 @@ export class MachineMap {
     const placement = this.placement;
     if (!placement) return null;
     if (key.startsWith("hub:")) return placement.hubs.get(key.slice(4)) ?? null;
+    if (key.startsWith("group:")) return placement.groups.find((group) => group.key === key)?.point ?? null;
     // A hub's dashed ring waits where its next machine will stand.
     if (key.startsWith("add:")) return this.layout.vacant(key.slice(4));
     return placement.machines.get(key) ?? null;
@@ -230,7 +221,8 @@ export class MachineMap {
     this.options.frame?.(frame);
   }
 
-  /** The hit areas and names: every hub, dashed ring and machine. */
+  /** The hit areas and names: every hub, group, dashed ring and machine;
+   *  a hub's name above it, the others' to their right. */
   private place(): void {
     const { scene, placement } = this;
     if (!scene || !placement) return;
@@ -243,23 +235,33 @@ export class MachineMap {
         point: placement.hubs.get(hub.id)!,
         radius: KNOT + 6,
         label: hub.name,
-        sub: near ? (scene.hubLabels.get(hub.id) ?? "") : "",
+        sub: scene.hubLabels.get(hub.id) ?? "",
+        priority: 3,
+        side: "above",
+      })),
+      ...placement.groups.map((group): CanvasItem => ({
+        key: group.key,
+        kind: "group",
+        point: group.point,
+        radius: GROUP_KNOT + 8,
+        // Open, on one line so it keeps clear of the first machine under
+        // it; folded, its count under its name, narrow beside its
+        // neighbours.
+        label: group.folded ? group.label : `${group.label} · ${words.groupSub(group.count, group.online)}`,
+        sub: group.folded ? words.groupFolded(group.count, group.online) : "",
         priority: 2,
+        side: "right",
       })),
       ...scene.adds.flatMap((hub): CanvasItem[] => {
         const point = this.pointOf(addKey(hub));
-        return point ? [{ key: addKey(hub), kind: "machine", point, radius: RING, label: scene.waiting.has(hub) ? words.waitingJoin : words.addMachine, priority: -1 }] : [];
+        return point ? [{ key: addKey(hub), kind: "machine", point, radius: RING, labelRadius: RING + 6, label: scene.waiting.has(hub) ? words.waitingJoin : words.addMachine, priority: -1, side: "right" }] : [];
       }),
-      ...scene.nodes.map((node): CanvasItem => ({
-        key: node.key,
-        kind: "machine",
-        point: placement.machines.get(node.key)!,
-        radius: RING,
-        labelRadius: near ? RING + 20 : RING + 6,
-        label: node.name,
-        sub: near ? node.sub : "",
-        priority: node.here ? 1 : 0,
-      })),
+      ...scene.nodes.flatMap((node): CanvasItem[] => {
+        const point = placement.machines.get(node.key);
+        if (!point) return [];
+        const through = node.through ? words.via(node.through) : "";
+        return [{ key: node.key, kind: "machine", point, radius: RING, labelRadius: RING + 6, label: node.name, sub: near ? [node.sub, through].filter(Boolean).join(" · ") : through, priority: node.here ? 1 : 0, side: "right" }];
+      }),
     ];
     this.surface.setScene(items, [], placement.bounds);
     const selected = scene.selected && items.some((item) => item.key === scene.selected) ? scene.selected : null;
@@ -272,15 +274,14 @@ export class MachineMap {
     if (!scene || !placement) return;
     const near = this.level >= 1;
     const key = JSON.stringify([
-      this.level >= 1,
+      near,
       scene.hubs,
       scene.adds,
       [...scene.waiting],
-      scene.nodes.map((node) => [node.key, node.hubs, node.online, node.hold, node.reaching, node.here, near ? node.marks : null, node.directAt, node.through]),
-      scene.links.map((link) => [link.a, link.b, link.up, near ? link.why : null]),
+      scene.nodes.map((node) => [node.key, node.online, node.hold, node.reaching, node.here, near ? node.marks : null, node.directAt, node.through]),
       [...scene.opening],
       [...placement.machines],
-      placement.groups.map((group) => [group.key, group.from, group.to, group.radius]),
+      placement.groups.map((group) => [group.key, group.folded, group.point]),
     ]);
     if (key === this.composed) return;
     this.composed = key;
@@ -296,6 +297,16 @@ export class MachineMap {
       return { x: Math.min(...xs) - pad, y: Math.min(...ys) - pad, width: Math.max(...xs) - Math.min(...xs) + pad * 2, height: Math.max(...ys) - Math.min(...ys) + pad * 2 };
     };
 
+    // The tree: ruled lines, square at the corners; a twig to a machine out
+    // of reach, broken.
+    for (const branch of placement.branches) {
+      const [from, to] = [branch.points[0]!, branch.points[branch.points.length - 1]!];
+      if (Math.hypot(to[0] - from[0], to[1] - from[1]) < 1) continue;
+      const random = seeded(`branch:${from.join(",")}:${to.join(",")}`);
+      if (branch.out) for (const d of ticks(branch.points, 6, 4, 1.2, random)) add(d, spanning(branch.points, 3), "dry", graphite, 0.45);
+      else add(ruled(from, to, 1.3, random), spanning(branch.points, 3), "marker", graphite, 0.7);
+    }
+
     for (const hub of scene.hubs) {
       const knot = placement.hubs.get(hub.id)!;
       const random = seeded(`knot:${hub.id}`);
@@ -303,7 +314,15 @@ export class MachineMap {
       if (hub.online) add(blot(knot, 2.4, random), around(knot, 5), "marker", graphite, 0.9);
     }
 
-    // The dashed ring beside a hub, a small cross in it: a machine to add.
+    // A group's knot: open while its machines hang below it, filled when
+    // it is folded and holds them.
+    for (const group of placement.groups) {
+      const random = seeded(`group:${group.key}`);
+      if (group.folded) add(blot(group.point, GROUP_KNOT, random), around(group.point, GROUP_KNOT + 3), "marker", graphite, 0.85);
+      else add(circle(group.point, GROUP_KNOT, 1.4, random), around(group.point, GROUP_KNOT + 3), "marker", graphite, 0.85);
+    }
+
+    // The dashed ring that adds a machine, a small cross in it.
     for (const hub of scene.adds) {
       const at = this.pointOf(addKey(hub));
       if (!at) continue;
@@ -317,47 +336,12 @@ export class MachineMap {
       }
     }
 
-    // Each group of machines round a hub, when there are several: a faint
-    // pencil arc outside their names, its ends turned in toward the hub.
-    for (const group of placement.groups) {
-      const random = seeded(`group:${group.hub}:${group.key}`);
-      const reach = group.radius + GROUP_OUT;
-      const steps = Math.max(8, Math.round(((group.to - group.from) * reach) / 14));
-      const arc: Point[] = [];
-      for (let index = 0; index <= steps; index += 1) {
-        const angle = group.from + ((group.to - group.from) * index) / steps;
-        arc.push([group.centre[0] + Math.cos(angle) * reach, group.centre[1] + Math.sin(angle) * reach]);
-      }
-      const end = (angle: number): Point[] => [
-        [group.centre[0] + Math.cos(angle) * reach, group.centre[1] + Math.sin(angle) * reach],
-        [group.centre[0] + Math.cos(angle) * (reach - 14), group.centre[1] + Math.sin(angle) * (reach - 14)],
-      ];
-      for (const line of [arc, end(group.from), end(group.to)]) add(outline(line, 1.2, random, { pressure: 0.2, taper: 0.08 }), spanning(line, 3), "dry", graphite, 0.45);
-    }
-
-    // A direct link: a straight thin line between the two rings, ruled, so
-    // it is told from the bowed lines to the hub at a glance; one that is
-    // down, faint and broken.
-    for (const link of scene.links) {
-      const ends = this.directOf(link);
-      if (!ends) continue;
-      const random = seeded(`direct:${link.a}|${link.b}`);
-      if (link.up) add(ruled(ends[0], ends[1], 1.1, random), spanning(ends, 3), "marker", graphite, 0.8);
-      else if (near) for (const d of ticks(ends, 5, 7, 1, random)) add(d, spanning(ends, 3), "dry", graphite, 0.35);
-    }
-
     for (const node of scene.nodes) {
-      const point = placement.machines.get(node.key)!;
+      const point = placement.machines.get(node.key);
+      if (!point) continue;
       const [x, y] = point;
       const online = node.online === true;
       const random = seeded(`map:${node.key}`);
-      // A line from the ring to each knot it hangs on, a little bowed, or
-      // to the machine it reaches the hub through.
-      for (const { to, name, end } of this.routesOf(node)) {
-        const line = this.lineOf(point, to, name, end);
-        if (online && node.hold !== "lent") add(outline(line.points, 1.5, random, { pressure: 0.3, taper: 0.06 }), spanning(line.points, 4), "marker", graphite, 0.9);
-        else for (const d of ticks(line.points, online ? 7 : 9, online ? 5 : 4, online ? 1.3 : 1.4, random)) add(d, spanning(line.points, 4), online ? "marker" : "dry", online ? clay : graphite, online ? 1 : 0.5);
-      }
       // The ring: graphite for the account's own and others' machines it
       // works on, clay and broken where an agent alone is lent.
       if (node.hold === "lent") {
@@ -369,35 +353,28 @@ export class MachineMap {
         add(circle(point, RING, 2.2, random), around(point, RING + 4), "dry", graphite, 0.5);
       }
       if (node.here) add(blot(point, 3, random), around(point, 5), "marker", graphite, 0.9);
-      // Others may connect to it directly: a socket on its ring, a short
-      // stub out and a small open circle at its end, a quarter turn from
-      // where its agents sit and clear of its line to the hub; in pencil
-      // while the hub checks it.
+      // Others may connect to it directly: a dashed halo round its ring,
+      // in pencil while the hub checks it.
       const opening = scene.opening.has(node.key);
       if (node.directAt?.length || opening) {
-        const angle = this.outward(node, point) + 1.25;
-        const out = (reach: number): Point => [x + Math.cos(angle) * reach, y + Math.sin(angle) * reach];
-        const stub = [out(RING + 1), out(RING + 7)];
-        const pen = opening ? "dry" : "marker";
-        add(outline(stub, 1.8, random, { pressure: 0.2, taper: 0.1 }), spanning(stub, 3), pen, graphite, opening ? 0.6 : 0.9);
-        add(circle(out(RING + 10.5), 3.4, 1.3, random), around(out(RING + 10.5), 5), pen, graphite, opening ? 0.6 : 0.9);
+        for (const d of ticks(ringPoints(point, RING + 8, 72), 5, 3.4, 1.2, random)) add(d, around(point, RING + 12), opening ? "dry" : "marker", graphite, opening ? 0.5 : 0.75);
       }
       if (!near) continue;
       // Another's machine whose agents may reach the account's: a short
       // clay tick across the top of its ring.
       if (node.reaching) {
         const tick: Point[] = [
-          [x + RING * 0.45, y - RING * 1.08],
-          [x + RING * 0.62, y - RING * 0.86],
-          [x + RING * 1.0, y - RING * 1.3],
+          [x - RING * 0.45, y - RING * 1.08],
+          [x - RING * 0.28, y - RING * 0.86],
+          [x + RING * 0.1, y - RING * 1.3],
         ];
         add(outline(tick, 2.2, random, { pressure: 0.25, taper: 0.2 }), spanning(tick, 4), "marker", clay);
       }
-      // The agents on it, on the side away from its hubs.
-      const outward = this.outward(node, point);
+      // The agents on it, round the upper right of its ring, clear of the
+      // twig on its left and of its name on its right.
       node.marks.forEach((mark, place) => {
-        const at = outward + (place - (node.marks.length - 1) / 2) * 0.4 - 0.9;
-        const spot: Point = [x + Math.cos(at) * (RING + 13), y + Math.sin(at) * (RING + 13)];
+        const at = -1.15 + place * 0.36;
+        const spot: Point = [x + Math.cos(at) * (RING + 15), y + Math.sin(at) * (RING + 15)];
         const own = seeded(`map-agent:${node.key}:${place}`);
         if (mark === "waiting") add(circle(spot, 5, 1.8, own), around(spot, 8), "marker", clay);
         else if (mark === "busy") add(blot(spot, 4.4, own), around(spot, 7), "marker", clay);
@@ -407,79 +384,21 @@ export class MachineMap {
     void this.pens.update(strokes).catch((error: unknown) => console.warn("the machines drawing could not be inked", error));
   }
 
-  /** Where a machine's lines go: to each hub it hangs on, or, while it
-   *  reaches that hub through another machine on the drawing, to that
-   *  machine. */
-  private routesOf(node: MapNode): { to: Point; name: string; end: number; hub: string; through?: string }[] {
-    const placement = this.placement!;
-    const via = node.through ? this.scene?.nodes.find((one) => one.name === node.through) : undefined;
-    return node.hubs.flatMap((id) => {
-      const knot = placement.hubs.get(id);
-      if (!knot) return [];
-      if (via && via.hubs.includes(id)) {
-        const at = placement.machines.get(via.key);
-        if (at) return [{ to: at, name: `${node.key}>${via.key}`, end: RING, hub: id, through: via.key }];
-      }
-      return [{ to: knot, name: `${node.key}>${id}`, end: KNOT, hub: id }];
-    });
-  }
-
-  /** A direct link's two ends, at the edges of the two rings. */
-  private directOf(link: MapLink): [Point, Point] | null {
-    const a = this.placement?.machines.get(link.a);
-    const b = this.placement?.machines.get(link.b);
-    if (!a || !b) return null;
-    const dx = b[0] - a[0];
-    const dy = b[1] - a[1];
-    const length = Math.hypot(dx, dy) || 1;
-    const reach = RING + 4;
-    if (length <= reach * 2) return null;
-    return [
-      [a[0] + (dx / length) * reach, a[1] + (dy / length) * reach],
-      [b[0] - (dx / length) * reach, b[1] - (dy / length) * reach],
-    ];
-  }
-
-  /** A machine's line to a hub or another machine: from the ring's edge to the
-   *  other end's, bowed the same way each time. */
-  private lineOf(point: Point, knot: Point, name: string, end = KNOT): { points: Point[]; from: Point; control: Point; to: Point } {
-    const random = seeded(`line:${name}`);
-    const dx = knot[0] - point[0];
-    const dy = knot[1] - point[1];
-    const length = Math.hypot(dx, dy) || 1;
-    const from: Point = [point[0] + (dx / length) * (RING + 5), point[1] + (dy / length) * (RING + 5)];
-    const to: Point = [knot[0] - (dx / length) * (end + 5), knot[1] - (dy / length) * (end + 5)];
-    const bow = (random() - 0.5) * 0.2 * length;
-    const control: Point = [(from[0] + to[0]) / 2 + (-dy / length) * bow, (from[1] + to[1]) / 2 + (dx / length) * bow];
-    return { points: quadratic(from, control, to), from, control, to };
-  }
-
-  /** The direction away from the hubs a machine hangs on: where its agents
-   *  go. */
-  private outward(node: MapNode, point: Point): number {
-    const knots = node.hubs.map((id) => this.placement?.hubs.get(id)).filter((knot): knot is Point => !!knot);
-    if (!knots.length) return Math.PI / 2;
-    const kx = knots.reduce((sum, knot) => sum + knot[0], 0) / knots.length;
-    const ky = knots.reduce((sum, knot) => sum + knot[1], 0) / knots.length;
-    if (Math.hypot(point[0] - kx, point[1] - ky) < 1) return Math.PI / 2;
-    return Math.atan2(point[1] - ky, point[0] - kx);
-  }
-
-  /** Drawn live over the ink: the clay circle round the one chosen, the
-   *  circles round machines just come, and the strokes moving along the
-   *  line of a machine something works on. */
+  /** Drawn live over the ink: the clay circle round the one chosen and the
+   *  ones framed, the circles round machines just come, and the strokes
+   *  moving along the twig of a machine something works on. */
   private mark(): void {
     const { scene, placement } = this;
     if (!scene || !placement) return;
     const near = this.level >= 1;
-    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.marks.includes("busy"), node.through]), [...placement.machines], placement.groups]);
+    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.marks.includes("busy")]), [...placement.machines], placement.groups.map((group) => group.point)]);
     if (key === this.marked) return;
     this.marked = key;
     const circles: string[] = [];
     const chosen = scene.selected ? this.pointOf(scene.selected) : null;
     if (chosen) {
-      const hub = scene.selected!.startsWith("hub:");
-      circles.push(`<path class="chosen" d="${circle(chosen, hub ? KNOT + 9 : RING + 9, 3.2, seeded(`chosen:${scene.selected}`))}"/>`);
+      const small = scene.selected!.startsWith("hub:") ? KNOT + 9 : scene.selected!.startsWith("group:") ? GROUP_KNOT + 8 : RING + 9;
+      circles.push(`<path class="chosen" d="${circle(chosen, small, 3.2, seeded(`chosen:${scene.selected}`))}"/>`);
     }
     for (const framed of scene.framed) {
       const point = this.pointOf(framed);
@@ -491,26 +410,14 @@ export class MachineMap {
     }
     const flows: string[] = [];
     if (near) {
-      for (const node of scene.nodes) {
-        if (node.online !== true || !node.marks.includes("busy")) continue;
-        const point = placement.machines.get(node.key)!;
-        for (const route of this.routesOf(node)) {
-          const { from, control, to } = this.lineOf(point, route.to, route.name, route.end);
-          flows.push(`<path class="flow" d="M${from[0].toFixed(1)} ${from[1].toFixed(1)}Q${control[0].toFixed(1)} ${control[1].toFixed(1)} ${to[0].toFixed(1)} ${to[1].toFixed(1)}"/>`);
-        }
+      for (const branch of placement.branches) {
+        const node = branch.machine ? scene.nodes.find((one) => one.key === branch.machine) : undefined;
+        if (!node || node.online !== true || !node.marks.includes("busy")) continue;
+        const [from, to] = [branch.points[0]!, branch.points[branch.points.length - 1]!];
+        flows.push(`<path class="flow" d="M${from[0].toFixed(1)} ${from[1].toFixed(1)}L${to[0].toFixed(1)} ${to[1].toFixed(1)}"/>`);
       }
     }
-    const names = placement.groups.map((group) => {
-      const angle = (group.from + group.to) / 2;
-      const reach = group.radius + GROUP_OUT + 26;
-      const x = group.centre[0] + Math.cos(angle) * reach;
-      const y = group.centre[1] + Math.sin(angle) * reach;
-      // Left of the hub the name ends at its place, right of it begins
-      // there; above and below it is centred.
-      const anchor = Math.abs(Math.cos(angle)) < 0.4 ? "middle" : Math.cos(angle) > 0 ? "start" : "end";
-      return `<text class="group-name" x="${x.toFixed(1)}" y="${(y + 6).toFixed(1)}" text-anchor="${anchor}">${escapeText(group.label)}</text>`;
-    });
-    this.marks.innerHTML = `<g class="groups">${names.join("")}</g><g class="clay" filter="url(#pen-marker)">${circles.join("")}</g><g class="flows">${flows.join("")}</g>`;
+    this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)">${circles.join("")}</g><g class="flows">${flows.join("")}</g>`;
   }
 }
 
@@ -538,9 +445,4 @@ function distanceTo(points: Point[], point: Point): number {
     best = Math.min(best, Math.hypot(point[0] - (ax + t * dx), point[1] - (ay + t * dy)));
   }
   return best;
-}
-
-/** Text for SVG, its markup characters written as entities. */
-function escapeText(text: string): string {
-  return text.replace(/[&<>]/g, (character) => (character === "&" ? "&amp;" : character === "<" ? "&lt;" : "&gt;"));
 }

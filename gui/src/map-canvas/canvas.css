@@ -74,6 +74,8 @@
   text-align: center;
 }
 .canvas-name[hidden] { display: none; }
+.canvas-name[data-side="right"] { text-align: left; }
+.canvas-name[data-side="left"] { text-align: right; }
 .canvas-handle { width: 44px; height: 44px; font-size: 32px; cursor: crosshair; }
 .canvas-controls {
   position: absolute;

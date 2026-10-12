@@ -185,14 +185,6 @@
   pointer-events: none;
 }
 
-/* A group's name round a hub, written by hand outside its arc. */
-.map-live .group-name {
-  fill: var(--text-3);
-  font-family: var(--font-reading);
-  font-size: 17px;
-  letter-spacing: 0.04em;
-}
-
 .map-live .clay path {
   fill: var(--pen-clay);
 }
@@ -313,39 +305,7 @@
   color: var(--wrong);
 }
 
-/* Whom a machine is given to, hung at its ring; a cross takes it back. */
-.map-tags {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-}
-
-.map-tag {
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  height: 24px;
-  padding: 0 2px 0 8px;
-  border-radius: var(--radius-full);
-  background: var(--fill);
-  color: var(--text-2);
-  font-size: var(--size-small);
-  white-space: nowrap;
-  pointer-events: auto;
-}
-
-@media (pointer: coarse) {
-  .map-tag .chip-x {
-    min-width: 44px;
-    min-height: 44px;
-  }
-}
-
-/* A taking back, undone for a moment from the corner. */
+/* A change taken back, undone for a moment from the corner. */
 .map-undo {
   position: absolute;
   left: var(--space-3);
@@ -1460,4 +1420,36 @@
   flex: none;
   color: var(--text-3);
   font-size: var(--size-small);
+}
+
+/* A machine's direct links in its details: the ones up, then those down
+   with why, quieter; where others connect to it, under them. */
+.panel-direct {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px var(--space-2);
+  margin: var(--space-3) 0 0;
+  font-size: var(--size-ui);
+}
+
+.panel-direct-list {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.panel-direct .direct-down {
+  color: var(--text-3);
+}
+
+.panel-direct .sep {
+  margin: 0 6px;
+  color: var(--text-3);
+}
+
+.panel-direct-at {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
 }
