@@ -59,6 +59,7 @@ mod binary_reading;
 mod desktop_presence;
 mod line_reading;
 mod local_files;
+mod logins;
 mod names;
 mod pages;
 mod reading;
@@ -908,6 +909,12 @@ pub fn run() {
             hub_moving::arrive_hub,
             accounts::agent_homes,
             accounts::works_on,
+            logins::agent_logins,
+            logins::scan_agents,
+            logins::add_agent_login,
+            logins::preview_agent_change,
+            logins::change_agent_login,
+            logins::read_agent_limits,
             world_now,
             since,
             agents,

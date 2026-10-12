@@ -183,6 +183,79 @@ impl World {
         }
     }
 
+    /// What the nodes of one machine, or of every machine this user may
+    /// look at, keep of their agents' logins; no program is started.
+    pub async fn agent_logins(
+        &self,
+        machine: Option<MachineName>,
+    ) -> Result<fastctx_types::logins::WorldLogins, Error> {
+        match self.ask(Call::AgentLogins { machine }).await? {
+            Reply::AgentLogins(logins) => Ok(logins),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Scans `machine` for its agents, answered once the usual places are
+    /// done; with `stop`, stops the walk of its disks.
+    pub async fn scan_agents(
+        &self,
+        machine: MachineName,
+        stop: bool,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::ScanAgents { machine, stop }).await?)
+    }
+
+    /// Takes up `dir` on `machine` as a candidate login of `agent`.
+    pub async fn add_agent_login(
+        &self,
+        machine: MachineName,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::AddAgentLogin { machine, agent, dir }).await?)
+    }
+
+    /// What putting the World's tools into a login (`into`), or taking them
+    /// out, would change.
+    pub async fn preview_agent_change(
+        &self,
+        machine: MachineName,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        into: bool,
+    ) -> Result<fastctx_types::logins::ChangePreview, Error> {
+        match self.ask(Call::PreviewAgentChange { machine, agent, dir, into }).await? {
+            Reply::AgentChangePreview(preview) => Ok(*preview),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Puts the World's tools into a login, or takes them out, by its
+    /// machine's node.
+    pub async fn change_agent_login(
+        &self,
+        machine: MachineName,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+        into: bool,
+        raise_output_limit: bool,
+    ) -> Result<fastctx_types::logins::LoginChange, Error> {
+        match self.ask(Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit }).await? {
+            Reply::AgentLoginChanged(change) => Ok(*change),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Reads a login's limits afresh on its machine.
+    pub async fn read_agent_limits(
+        &self,
+        machine: MachineName,
+        agent: fastctx_types::AgentName,
+        dir: std::path::PathBuf,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::ReadAgentLimits { machine, agent, dir }).await?)
+    }
+
     /// The user's word on whether Claude Code on `machine`, in its home
     /// `home` or its default one, may run the World's sessions without
     /// approvals. Answers what it now records and whether that changed.
@@ -539,6 +612,13 @@ impl World {
 fn record(reply: Reply) -> Result<TownRecord, Error> {
     match reply {
         Reply::Record { town, record, opened } => Ok(TownRecord { town, record: *record, opened }),
+        other => Err(unexpected(other)),
+    }
+}
+
+fn machine_logins(reply: Reply) -> Result<fastctx_types::logins::MachineLogins, Error> {
+    match reply {
+        Reply::MachineAgentLogins(logins) => Ok(*logins),
         other => Err(unexpected(other)),
     }
 }

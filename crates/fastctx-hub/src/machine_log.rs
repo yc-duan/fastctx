@@ -86,6 +86,7 @@ impl History {
                 accounts.insert(to.clone());
             }
             Action::StopActing { machine }
+            | Action::Plan { machine, .. }
             | Action::Relays { machine, .. }
             | Action::RelayAt { machine, .. }
             | Action::AllowActing { machine, .. } => {
@@ -271,6 +272,9 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
             home: home.clone(),
             lent: *lent,
         },
+        Change::Plan { machine, agent, home, plan } => {
+            Action::Plan { machine: machine.clone(), agent: agent.clone(), home: home.clone(), plan: *plan }
+        }
         Change::StopActing { machine } => Action::StopActing { machine: machine.clone() },
         Change::Relays { machine, relays } => Action::Relays { machine: machine.clone(), relays: relays.clone() },
         Change::RelayAt { machine, addresses } => {

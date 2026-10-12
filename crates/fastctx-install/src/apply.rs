@@ -36,11 +36,16 @@ use crate::{File, Notice, executable, guidance, legacy};
 mod homes;
 mod identity;
 pub mod kernel;
+mod preview;
+mod progress;
 mod recovery;
 mod tools;
 mod withdrawn;
 pub use homes::Host;
 pub use identity::forward_login_identity;
+pub use preview::preview;
+pub use progress::Progress;
+use progress::tell;
 pub use tools::ToolCheck;
 pub use withdrawn::{Integration, integrations, read_withdrawn, remember_withdrawn, restore_withdrawn};
 
@@ -177,7 +182,11 @@ pub fn status(places: &Places) -> Result<Status, Error> {
         },
         claude: standing(
             present.claude,
-            record.claude_md.is_some() || record.settings.is_some() || record.claude_tools.is_some() || plugin,
+            record.claude_md.is_some()
+                || record.settings.is_some()
+                || record.claude_tools.is_some()
+                || record.consent.is_some()
+                || plugin,
         ),
         codex_tools: None,
         claude_tools: None,
@@ -311,6 +320,10 @@ struct Record {
     claude_tools: Option<crate::claude::tools::Receipt>,
     #[serde(default)]
     settings_created: bool,
+    /// The permission for the World's Claude conversations, granted with
+    /// the apply (`claude::consent`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    consent: Option<crate::claude::consent::Receipt>,
     /// Files and directories an apply created, which an unapply may remove
     /// when they are empty or unchanged.
     created: Created,
@@ -338,7 +351,11 @@ impl Record {
     }
 
     fn holds_nothing(&self) -> bool {
-        self.codex.is_none() && self.claude_md.is_none() && self.settings.is_none() && self.claude_tools.is_none()
+        self.codex.is_none()
+            && self.claude_md.is_none()
+            && self.settings.is_none()
+            && self.claude_tools.is_none()
+            && self.consent.is_none()
     }
 }
 
@@ -358,12 +375,24 @@ pub fn place_executable(places: &Places) -> Result<(PathBuf, Report), Error> {
 /// `approval` says whether Codex's shared output limit may be raised when
 /// the user set it lower than the World needs.
 pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report, Error> {
+    apply_reporting(places, hosts, approval, None)
+}
+
+/// `apply`, telling `progress` each step as it goes.
+pub fn apply_reporting(
+    places: &Places,
+    hosts: Hosts,
+    approval: Approval,
+    progress: Option<Progress>,
+) -> Result<Report, Error> {
     if places.root.join("uninstalled.json").try_exists().map_err(io("checking uninstall state"))? {
         return Err(Error::Io("this World was uninstalled; reinstall it before reconnecting hosts".into()));
     }
+    tell(&progress, progress::Step::Program, progress::StepState::Running);
     crate::placement::ensure(&places.root, &places.fastctx)
         .map_err(|error| Error::Io(format!("placing the World program: {error:#}")))?;
-    if let Some(report) = kernel::delegate(places, hosts, approval, true)? {
+    tell(&progress, progress::Step::Program, progress::StepState::Done);
+    if let Some(report) = progress::delegated(&progress, || kernel::delegate(places, hosts, approval, true))? {
         return Ok(report);
     }
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
@@ -444,6 +473,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
             || previous.as_ref().is_some_and(|r| r.settings_created)
             || !initial_settings.exists();
         let mut host = Cli::new(claude, plugin_record, initial_settings.path().to_owned(), settings_created);
+        host.progress = progress.clone();
         let before = plugins::snapshot(&mut host).map_err(Error::Claude)?;
         let planned =
             PluginApply::prepare(&plan, before, previous.as_ref().map(|r| &r.receipt)).map_err(Error::Claude)?;
@@ -478,8 +508,10 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
             )
             .map_err(Error::Claude)?;
             report.notices.extend(tools.notices);
-            change(&mut changes, settings_file, tools.bytes);
-            Ok::<_, Error>((edit, tools.receipt))
+            let (bytes, consent) = crate::claude::consent::grant(tools.bytes.as_deref(), record.consent.as_ref())
+                .map_err(Error::Claude)?;
+            change(&mut changes, settings_file, bytes);
+            Ok::<_, Error>((edit, tools.receipt, consent))
         })();
         let edit = match edit {
             Ok(edit) => edit,
@@ -487,6 +519,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
         };
         record.settings = edit.0.receipt;
         record.claude_tools = Some(edit.1);
+        record.consent = edit.2;
         record.settings_created = settings_created;
         change(&mut changes, claude_md, Some(applied.bytes));
         record.claude_md = Some(applied.receipt);
@@ -498,6 +531,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
     // not to what an unapply takes out.
     let bin = installed.parent().map(Path::to_path_buf);
     changes.push(recovery::stamp(places, &operation)?);
+    tell(&progress, progress::Step::Files { changed: Vec::new() }, progress::StepState::Running);
     let committed = Transaction::new(changes).commit_with_record_durable(places.journal(), record_file, |created| {
         let mut record = record.clone();
         record.created.files.extend(created.files.iter().filter(|file| !same_path(file, &installed)).cloned());
@@ -513,6 +547,7 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
     });
     match committed {
         Ok(receipt) => {
+            tell(&progress, progress::Step::Files { changed: receipt.changed.clone() }, progress::StepState::Done);
             report.changed.extend(receipt.changed);
             report.preserved.extend(receipt.preserved);
             report.leftovers.extend(receipt.cleanup.iter().map(ToString::to_string));
@@ -522,10 +557,10 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
                 host.checkpoint(&added).map_err(Error::Claude)?;
             }
             if hosts.codex {
-                report.tools.push(tools::codex(places));
+                report.tools.push(progress::checked(&progress, || tools::codex(places)));
             }
             if hosts.claude {
-                report.tools.push(tools::claude(places));
+                report.tools.push(progress::checked(&progress, || tools::claude(places)));
             }
             Ok(report)
         }
@@ -544,7 +579,13 @@ pub fn apply(places: &Places, hosts: Hosts, approval: Approval) -> Result<Report
 /// Takes out of `hosts` what an apply put in, leaving what the user changed
 /// since.
 pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
-    if let Some(report) = kernel::delegate(places, hosts, Approval::Require, false)? {
+    unapply_reporting(places, hosts, None)
+}
+
+/// `unapply`, telling `progress` each step as it goes.
+pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progress>) -> Result<Report, Error> {
+    if let Some(report) = progress::delegated(&progress, || kernel::delegate(places, hosts, Approval::Require, false))?
+    {
         return Ok(report);
     }
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
@@ -604,6 +645,7 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
             record.settings_created |= previous.as_ref().is_some_and(|record| record.settings_created);
             let mut host =
                 Cli::new(claude, plugin_record.clone(), initial_settings.path().to_owned(), record.settings_created);
+            host.progress = progress.clone();
             let plan = ClaudePlan::new(&places.world);
             let baseline = plugins::snapshot(&mut host).map_err(Error::Claude)?;
             let baseline = PluginApply::prepare(&plan, baseline, previous.as_ref().map(|record| &record.receipt))
@@ -635,6 +677,14 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
             settings_bytes = edit.bytes;
             record.settings = edit.receipt;
         }
+        if let Some(receipt) = record.consent.take() {
+            let (bytes, kept) =
+                crate::claude::consent::restore(settings_bytes.as_deref(), &receipt).map_err(Error::Claude)?;
+            if kept {
+                report.notices.push(consent_kept(settings_file.path()));
+            }
+            settings_bytes = bytes;
+        }
         if record.settings_created {
             settings_bytes = settings::discard_empty_created(settings_bytes).map_err(Error::Claude)?;
         }
@@ -649,6 +699,7 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
 
     changes.push(recovery::stamp(places, &operation)?);
     let cleanup = records.update(places, hosts, &record)?;
+    tell(&progress, progress::Step::Files { changed: Vec::new() }, progress::StepState::Running);
     let committed = if records.is_empty() {
         if record_file.exists() {
             changes.push(FileChange::delete(record_file));
@@ -662,6 +713,7 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
         )
     };
     let receipt = committed.map_err(|failure| Error::Files(failure.to_string()))?;
+    tell(&progress, progress::Step::Files { changed: receipt.changed.clone() }, progress::StepState::Done);
     report.changed.extend(receipt.changed);
     report.preserved.extend(receipt.preserved);
     report.leftovers.extend(receipt.cleanup.iter().map(ToString::to_string));
@@ -692,6 +744,8 @@ struct Cli {
     /// The commands that changed Claude, as run.
     ran: Vec<String>,
     preserved: Vec<PathBuf>,
+    /// Told each command that changes Claude, as it runs.
+    progress: Option<Progress>,
 }
 
 impl Cli {
@@ -704,6 +758,7 @@ impl Cli {
             operation: None,
             ran: Vec::new(),
             preserved: Vec::new(),
+            progress: None,
         }
     }
 }
@@ -721,19 +776,43 @@ impl PluginHost for Cli {
         } else {
             None
         };
-        let program = std::path::absolute(&self.claude).map_err(|e| e.to_string())?;
-        let cwd = std::path::absolute(self.record.parent().expect("record directory")).map_err(|e| e.to_string())?;
-        let output = crate::claude::process::output(
-            &program,
-            &command.args,
-            &cwd,
-            self.settings_path.parent().expect("settings directory"),
-        )
-        .map_err(|error| format!("running claude {}: {error}", command.args.join(" ")))?;
+        let line = format!("claude {}", command.args.join(" "));
+        let step = progress::Step::Command { command: line.clone() };
+        if mutation {
+            tell(&self.progress, step.clone(), progress::StepState::Running);
+        }
+        let ran = (|| {
+            let program = std::path::absolute(&self.claude).map_err(|e| e.to_string())?;
+            let cwd =
+                std::path::absolute(self.record.parent().expect("record directory")).map_err(|e| e.to_string())?;
+            crate::claude::process::output(
+                &program,
+                &command.args,
+                &cwd,
+                self.settings_path.parent().expect("settings directory"),
+            )
+            .map_err(|error| format!("running claude {}: {error}", command.args.join(" ")))
+        })();
+        let output = match ran {
+            Ok(output) => output,
+            Err(error) => {
+                if mutation {
+                    tell(&self.progress, step, progress::StepState::Failed { reason: error.clone() });
+                }
+                return Err(error);
+            }
+        };
         if let Some(history) = &history {
             history.finish()?;
         }
-        let line = format!("claude {}", command.args.join(" "));
+        if mutation {
+            let state = if output.status.success() {
+                progress::StepState::Done
+            } else {
+                progress::StepState::Failed { reason: format!("{line}: {}", output.status) }
+            };
+            tell(&self.progress, step, state);
+        }
         if !output.status.success() {
             return Err(format!(
                 "{line}: {}\n{}\n{}{}",
@@ -824,6 +903,15 @@ fn bind_legacy(receipt: &mut legacy::Receipt, config: &Snapshot, agents: &Snapsh
     }
     receipt.bind_paths(text(config.path()), text(agents.path()));
     Ok(())
+}
+
+/// The permission's key, changed by the user since the apply granted it,
+/// stays as they left it.
+fn consent_kept(path: &Path) -> Notice {
+    Notice {
+        location: format!("{}: skipDangerousModePermissionPrompt", path.display()),
+        reason: "changed since apply; left untouched".into(),
+    }
 }
 
 fn settings_notice(report: &mut Report, path: &Path, edit: &settings::SettingsEdit) {

@@ -999,10 +999,12 @@
   /* What is known of the one chosen rises from below, over the drawing. */
   .machines-layout > .machine-panel {
     position: fixed;
+    top: auto;
     left: 0;
     right: 0;
     bottom: 0;
     z-index: 15;
+    width: auto;
     max-height: 60dvh;
     padding: var(--space-4) var(--space-4) calc(var(--space-5) + env(safe-area-inset-bottom));
     border-radius: var(--radius-l) var(--radius-l) 0 0;
@@ -1074,7 +1076,8 @@
     border-radius: var(--radius-m);
     color: var(--text-2);
     font-size: var(--size-small);
-    white-space: nowrap;
+    line-height: 1.3;
+    text-align: center;
     background: none;
   }
 
@@ -1328,4 +1331,70 @@
   .map-log.as-sheet {
     animation: none;
   }
+}
+
+/* What a line is, beside the pointer resting on it. */
+.map-tip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  max-width: min(320px, calc(100% - 16px));
+  padding: 4px 10px;
+  border-radius: var(--radius-s);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+/* The addresses a machine may be reached at, chosen as solid pills; the
+   chosen ones washed in clay. */
+.map-card-field {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.map-card-field legend {
+  margin-bottom: var(--space-1);
+  padding: 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.map-card-choice {
+  cursor: pointer;
+}
+
+.map-card-choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.map-card-choice:has(input:checked) {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+}
+
+.map-card-choice:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.map-card-port input {
+  width: 7em;
+}
+
+.map-card-wrong.quiet {
+  color: var(--text-3);
+}
+
+/* One small drawing on its own keeps to the size of two side by side. */
+.map-card-pictures > .map-card-picture:only-child {
+  flex: 0 1 60%;
 }

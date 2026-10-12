@@ -29,6 +29,7 @@ import type { SessionEvent, Watched, SessionChange, Health } from "../src/world/
 import type { WorldWho, NodesReply, TownSummary, JournalSummary } from "../src/world/world";
 import type { WorldSince } from "../src/world/since";
 import type { WorldAgents } from "../src/world/agents";
+import type { ChangePreview, LoginChange, MachineLogins, WorldLogins } from "../src/world/logins";
 import type { Control, Controlled, Offers } from "../src/world/control";
 import type { FileReadPart, FileReadResult } from "../src/world/file-read";
 import type { Attachment } from "../src/world/attachments";
@@ -62,6 +63,19 @@ export const fixture = ${json.trimEnd()} satisfies {
   // telephone go through the shell and the node.
   since: { replies: ({ reply: "since" } & WorldSince)[]; calls: unknown; remote_calls: unknown; remote_replies: unknown };
   agents: { replies: ({ reply: "agents" } & WorldAgents)[]; calls: unknown; remote_calls: unknown; remote_replies: unknown };
+  // The agents' logins as each node keeps them, a change's preview and the
+  // change itself, step by step.
+  logins: {
+    calls: unknown;
+    replies: (
+      | ({ reply: "agent_logins" } & WorldLogins)
+      | ({ reply: "machine_agent_logins" } & MachineLogins)
+      | ({ reply: "agent_change_preview" } & ChangePreview)
+      | ({ reply: "agent_login_changed" } & LoginChange)
+    )[];
+    remote_calls: unknown;
+    remote_replies: unknown;
+  };
   control: { controls: Control[]; controlled: Controlled[]; offers: Offers[] };
   // The page sees how a read ended and what was opened; the stream itself
   // is the shell's.

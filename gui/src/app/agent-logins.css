@@ -1,0 +1,497 @@
+/* The agents page: a tab for each agent, a section per machine, the logins
+   as slips; candidates as quiet rows; the change card over the page. */
+
+.logins-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: 0 var(--gutter) var(--space-3);
+}
+
+.logins-tabs [role="tab"] {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.logins-tabs [role="tab"]:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.logins-tabs [role="tab"].current {
+  color: var(--text-strong);
+  background: var(--fill-strong);
+}
+
+.logins-body {
+  padding: 0 var(--gutter) var(--space-8);
+}
+
+.logins-machine + .logins-machine {
+  margin-top: var(--space-6);
+}
+
+.logins-machine-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+  color: var(--text-3);
+}
+
+.logins-machine-head h2 {
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  font-weight: 400;
+  color: var(--text-strong);
+}
+
+.logins-programs {
+  font-size: var(--size-small);
+  color: var(--text-3);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: default;
+}
+
+.logins-programs.quiet {
+  text-decoration: none;
+}
+
+.logins-away,
+.logins-scanning {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.logins-scanning.wrong {
+  color: var(--wrong);
+}
+
+.logins-rescan {
+  margin-left: auto;
+}
+
+/* Never scanned: the agent's mark and the way to look, in the middle. */
+.logins-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-8) 0;
+  color: var(--text-3);
+}
+
+.logins-slips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A slip: a solid card, one line of who, the bars, the stamp. */
+.logins-slip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.logins-slip.changing {
+  opacity: 0.75;
+}
+
+.logins-slip-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.logins-slip-mark {
+  display: inline-flex;
+  color: var(--text-2);
+}
+
+.logins-slip-who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong);
+}
+
+.logins-more {
+  margin-left: auto;
+}
+
+.tag-token {
+  color: var(--accent);
+}
+
+.tag-warn {
+  color: var(--caution);
+}
+
+.logins-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.logins-bar {
+  display: grid;
+  grid-template-columns: 2.4em minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.logins-bar-track {
+  position: relative;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.logins-bar-track > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--pen-clay);
+}
+
+.logins-bar.high .logins-bar-track > span {
+  background: var(--caution);
+}
+
+.logins-bar.spent .logins-bar-track > span {
+  background: var(--wrong);
+}
+
+/* Never read: an empty dashed bar, the reason a hover away. */
+.logins-bar.unread .logins-bar-track {
+  background: none;
+  border-top: 1px dashed var(--text-3);
+  height: 0;
+  opacity: 0.6;
+}
+
+.logins-credits {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.logins-slip-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* The stamp: a solid wash of clay, slightly turned, as if pressed by hand;
+   no line round it. */
+.logins-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-s);
+  font-size: var(--size-small);
+  color: var(--pen-clay);
+  background: var(--accent-wash);
+  transform: rotate(-2deg);
+}
+
+.logins-stamp.busy {
+  color: var(--text-3);
+  background: var(--fill);
+  transform: none;
+}
+
+.logins-lent {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.tag-removable {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.logins-group {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--size-small);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.logins-candidates {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.logins-candidate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+}
+
+.logins-candidate:hover {
+  background: var(--hairline);
+}
+
+.logins-candidate-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.logins-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+/* 「接入」 stands out on its row: the one thing to do with a candidate. */
+.logins-apply {
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.logins-elsewhere {
+  margin-top: var(--space-3);
+}
+
+.logins-elsewhere > button .glyph {
+  transform: rotate(-90deg);
+  transition: transform var(--fold) var(--fold-easing);
+}
+
+.logins-elsewhere > button[aria-expanded="true"] .glyph {
+  transform: none;
+}
+
+.logins-add {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.logins-add input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  font-family: var(--font-code);
+}
+
+.logins-add-open {
+  margin-top: var(--space-3);
+}
+
+.logins-menu {
+  position: absolute;
+  top: 44px;
+  right: var(--space-3);
+  z-index: 10;
+}
+
+.logins-menu-plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+/* The change card. */
+.agent-change-sheet .sheet-body {
+  width: min(620px, 100vw - 32px);
+  max-height: 86vh;
+  overflow-y: auto;
+}
+
+.agent-change {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.agent-change-drawing {
+  width: 180px;
+  height: auto;
+  margin: 0 auto var(--space-2);
+  color: var(--text-2);
+}
+
+.agent-change-drawing .ach-strike,
+.agent-change-drawing .ach-arrow {
+  fill: none;
+  stroke: var(--pen-clay);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.agent-change-drawing .ach-arrow {
+  stroke: var(--pen-graphite);
+}
+
+.agent-change-drawing .ach-ring {
+  fill: none;
+  stroke: var(--pen-clay);
+  stroke-width: 2;
+}
+
+.agent-change-drawing .ach-run {
+  color: var(--text-strong);
+}
+
+.agent-change-rows {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.agent-change-rows > div {
+  display: grid;
+  grid-template-columns: 4.5em minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.agent-change-rows dt {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.agent-change-rows dd {
+  margin: 0;
+}
+
+.agent-change-lines {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.agent-change-raise {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--size-small);
+}
+
+.agent-change-files,
+.agent-change-items,
+.agent-change-kept {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--size-small);
+}
+
+.agent-change-files > li + li {
+  margin-top: var(--space-2);
+}
+
+.agent-change-file {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.agent-change-file code,
+.agent-change-kept code {
+  overflow-wrap: anywhere;
+  font-family: var(--font-code);
+  color: var(--text-2);
+}
+
+.agent-change-items {
+  padding-left: var(--space-5);
+  color: var(--text-3);
+}
+
+.agent-change-items li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.agent-change-items del {
+  color: var(--wrong);
+}
+
+.agent-change-items ins {
+  text-decoration: none;
+  color: var(--text);
+}
+
+.agent-change-stamp {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  color: var(--pen-clay);
+}
+
+.agent-change-stampmark {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: var(--pen-clay);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.agent-change-kept li {
+  display: flex;
+  gap: var(--space-2);
+  color: var(--text-3);
+}

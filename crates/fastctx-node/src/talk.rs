@@ -551,17 +551,10 @@ pub async fn open_here(
         }
         None => {}
     }
-    // The home it is born in must be one this machine has; the default one
-    // is recorded as none, so that it follows the user's environment.
-    let home = match choices.home {
-        None => None,
-        Some(dir) => {
-            let env = crate::claude::environment()?;
-            let user_home = fastctx_platform::user_home().map_err(|error| Failure::new(error.to_string()))?;
-            let home = crate::homes::find(node, &env, &user_home, agent.as_str(), Some(&dir))?;
-            (home.found != fastctx_types::agents::HomeFound::Default).then_some(home.dir)
-        }
-    };
+    // The login it is born in must be in this machine's agent list, the
+    // default one too (`world-agent-logins.md`); the default one is recorded
+    // as none, so that it follows the user's environment.
+    let home = crate::homes::listed(node, agent.as_str(), choices.home.as_deref())?;
     let opened = Opened { acting, works_on, home, files_on: choices.files_on };
     match agent.as_str() {
         "codex" => {}

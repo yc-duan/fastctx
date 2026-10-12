@@ -90,6 +90,7 @@ fn cut(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Direc
         accounts: all.accounts.iter().filter(|account| named.contains(&account.name)).cloned().collect(),
         shares,
         lends,
+        plans: all.plans.iter().filter(|plan| seen.contains(&plan.machine)).cloned().collect(),
         acting: all
             .acting
             .iter()

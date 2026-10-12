@@ -33,8 +33,11 @@ import { AccountPage } from "./app/account";
 import { AdminPage } from "./app/admin";
 import { LoginPage } from "./app/login";
 import { MachinesPage } from "./app/machines";
-import { AgentsPage } from "./app/agents";
-import { enAgents, zhAgents } from "./app/agents-words";
+import { AgentLoginsPage } from "./app/agent-logins";
+import { enAgentLogins, zhAgentLogins } from "./app/agent-logins-words";
+import { enAgentChange, zhAgentChange } from "./app/agent-change";
+import "./app/agent-logins.css";
+import { specimenChange as specimenLoginChange, specimenLogins, specimenPreview, specimenScan } from "./specimen/logins";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { NetworkPage, enNetwork, zhNetwork } from "./app/network-page";
@@ -133,7 +136,12 @@ import { agentName, titleOf } from "./world/names";
 import { mapOf } from "./app/map-of";
 import { NetworkMap } from "./app/network-map";
 import {
-  applyHosts,
+  addAgentLogin,
+  agentLogins,
+  changeAgentLogin,
+  previewAgentChange,
+  readAgentLimits,
+  scanAgents,
   control,
   offers,
   placeFastctx,
@@ -178,7 +186,6 @@ import {
   createWorld,
   hereAddresses,
   accountChange,
-  agentHomes,
   serverCommand,
   setWorksOn,
   machineLog,
@@ -1309,23 +1316,21 @@ function show(next: Place): void {
       });
       break;
     case "agents":
-      page = new AgentsPage({
+      page = new AgentLoginsPage({
         store,
-        words: english ? enAgents : zhAgents,
+        words: english ? enAgentLogins : zhAgentLogins,
+        changeWords: english ? enAgentChange : zhAgentChange,
         access: english ? enAccess : zhAccess,
-        homeWords: agentHomeWords,
         head,
         machine: next.machine,
         when,
-        agents: () => agentsOn(null),
-        applyHere: (agent, into, home, raise = false) => (live ? applyHosts(agent === "codex", agent === "claude", raise, into, home) : notLive()),
-        consent: {
-          allow: (machine, home) => consent.allow(machine, (english ? enConsent : zhConsent).allow, home),
-          withdraw: (machine, home) => consent.withdraw(machine, home),
-        },
-        homes: (machine, change) => (live ? agentHomes(machine, change) : notLive()),
-        change,
-        talkWith: (key) => beginTalk(null, key),
+        read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine)),
+        scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop)),
+        add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : notLive()),
+        preview: (machine, agent, dir, into) => (live ? previewAgentChange(machine, agent, dir, into) : specimenPreview(machine, agent, dir, into)),
+        change: (machine, agent, dir, into, raise) => (live ? changeAgentLogin(machine, agent, dir, into, raise) : specimenLoginChange(machine, agent, dir, into)),
+        limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),
+        change_: change,
         confirm: accountConfirm,
       });
       break;

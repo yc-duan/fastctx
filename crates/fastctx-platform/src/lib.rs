@@ -11,9 +11,11 @@ pub mod awake;
 #[cfg(any(target_os = "linux", windows))]
 pub mod child;
 pub mod detach;
+pub mod disks;
 pub mod elevation;
 pub mod environment;
 pub mod file_read;
+pub mod file_version;
 pub mod form;
 pub mod home;
 pub mod host_process;

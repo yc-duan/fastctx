@@ -20,6 +20,8 @@ mod control;
 mod file_read;
 #[path = "gui_wire_fixtures/file_search.rs"]
 mod file_search;
+#[path = "gui_wire_fixtures/logins.rs"]
+mod logins;
 #[path = "gui_wire_fixtures/machine_log.rs"]
 mod machine_log;
 #[path = "gui_wire_fixtures/pages.rs"]
@@ -49,6 +51,7 @@ struct Fixtures {
     world: world::Fixtures,
     since: since::Fixtures,
     agents: agents::Fixtures,
+    logins: logins::Fixtures,
     control: control::Fixtures,
     file_read: file_read::Fixtures,
     file_search: file_search::Fixtures,
@@ -69,6 +72,7 @@ fn main() {
         world: world::fixtures(),
         since: since::fixtures(),
         agents: agents::fixtures(),
+        logins: logins::fixtures(),
         control: control::fixtures(),
         file_read: file_read::fixtures(),
         file_search: file_search::fixtures(),
