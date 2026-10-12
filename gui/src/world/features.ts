@@ -14,7 +14,7 @@ export type Feature = "conversations";
 
 export type FeaturesPiece =
   | { kind: "features"; features: Features }
-  | { kind: "ended"; error: string };
+  | { kind: "interrupted"; error: string; since: number };
 
 export function readFeatures(): Promise<Features> {
   return invoke("features_read");

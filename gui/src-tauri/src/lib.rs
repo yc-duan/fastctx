@@ -153,22 +153,18 @@ async fn select_connection(
     Ok(state)
 }
 
-/// Also callable by the native application's network/resume callbacks.
+/// Everything that broke is tried again now: the page calls this when the
+/// window comes to the front or the system says the network is back.
 #[tauri::command]
-fn reconnect(shell: tauri::State<'_, Shell>) -> Result<(), String> {
-    reconnect_world(&shell.world())
+fn reconnect(shell: tauri::State<'_, Shell>) {
+    shell.world().retry_now();
 }
 
 /// Native network and foreground-service callbacks use this after shell
 /// setup. It interrupts an old dial/socket and the retry backoff immediately.
 pub fn reconnect_device(app: &tauri::AppHandle) -> Result<(), String> {
     let shell = app.try_state::<Shell>().ok_or("the World shell has not started yet")?;
-    reconnect_world(&shell.world())
-}
-
-fn reconnect_world(world: &World) -> Result<(), String> {
-    let device = world.device().ok_or("this interface uses a local node, not a device connection")?;
-    device.reconnect();
+    shell.world().retry_now();
     Ok(())
 }
 
@@ -197,9 +193,11 @@ enum Piece {
     Reset {
         history: Vec<SessionEvent>,
     },
-    #[cfg(target_os = "android")]
+    /// The live part broke and is being read again: why, and since when
+    /// (milliseconds since the Unix epoch).
     Interrupted {
         error: Option<String>,
+        since: u64,
     },
     Event {
         event: SessionEvent,
@@ -208,6 +206,18 @@ enum Piece {
     Ended {
         error: Option<String>,
     },
+}
+
+impl Piece {
+    fn interrupted(interruption: &fastctx_client::Interruption) -> Self {
+        Piece::Interrupted { error: Some(interruption.why.clone()), since: epoch_ms(interruption.since) }
+    }
+}
+
+/// A moment as milliseconds since the Unix epoch, as a page's `Date` takes
+/// it.
+pub(crate) fn epoch_ms(at: std::time::SystemTime) -> u64 {
+    at.duration_since(std::time::UNIX_EPOCH).map(|since| since.as_millis() as u64).unwrap_or_default()
 }
 
 #[derive(Serialize)]
@@ -220,6 +230,14 @@ struct Watch {
 struct Spoken {
     to: Address,
     landed: Landed,
+}
+
+/// Why words were not said: `again` when no answer came, so the page says
+/// them again under the same id once it can.
+#[derive(Serialize)]
+pub(crate) struct NotSaid {
+    pub(crate) message: String,
+    pub(crate) again: bool,
 }
 
 fn resident(id: String) -> Result<ResidentId, String> {
@@ -279,14 +297,11 @@ async fn watch(
         let mut conversation = conversation;
         loop {
             let piece = match conversation.update().await {
-                Ok(Some(fastctx_client::Update::Current)) => Piece::Resumed,
-                Ok(Some(fastctx_client::Update::Moment(moment))) => Piece::Event { event: moment.event },
-                Ok(Some(fastctx_client::Update::History(history))) => Piece::Reset { history },
-                Ok(Some(fastctx_client::Update::Extended(history))) => Piece::Extended { history },
-                Ok(None) => {
-                    let _ = pieces.send(Piece::Ended { error: None });
-                    return;
-                }
+                Ok(fastctx_client::Update::Current) => Piece::Resumed,
+                Ok(fastctx_client::Update::Interrupted(interruption)) => Piece::interrupted(&interruption),
+                Ok(fastctx_client::Update::Moment(moment)) => Piece::Event { event: moment.event },
+                Ok(fastctx_client::Update::History(history)) => Piece::Reset { history },
+                Ok(fastctx_client::Update::Extended(history)) => Piece::Extended { history },
                 Err(error) => {
                     let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
                     return;
@@ -318,21 +333,25 @@ async fn talk(
     text: String,
     attachments: Option<Vec<fastctx_types::attachments::Attachment>>,
     files_on: Option<String>,
-) -> Result<Spoken, String> {
+    id: Option<String>,
+) -> Result<Spoken, NotSaid> {
+    let refused = |message: String| NotSaid { message, again: false };
     let files_on = files_on
         .map(|written| written.parse::<fastctx_types::access::Written>().map_err(|error| error.to_string()))
-        .transpose()?;
+        .transpose()
+        .map_err(refused)?;
     let said = shell
         .world()
         .talk_with_attachments(
-            resident(resident_id)?,
-            machine(machine_name)?,
+            resident(resident_id).map_err(refused)?,
+            machine(machine_name).map_err(refused)?,
             text,
             attachments.unwrap_or_default(),
             files_on,
+            id,
         )
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| NotSaid { message: error.to_string(), again: World::unanswered(&error) })?;
     Ok(Spoken { to: said.to, landed: said.landed })
 }
 

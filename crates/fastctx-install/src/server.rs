@@ -40,6 +40,9 @@ pub fn certificate_pin(certificate_der: &[u8]) -> anyhow::Result<String> {
 
 /// Builds one physical shell line: select the host architecture, download and
 /// verify the complete archive, unpack it, then run `fastctx server install`.
+/// A download that breaks goes on from where it stopped, again and again,
+/// waiting twice as long each time up to a minute (`world-network.md`, 断开不是
+/// 结束); a source that cannot resume is read again from the start.
 /// Requires a POSIX shell, uname, mktemp, curl, tar and sha256sum; no Python.
 /// The kernel owns durable installation, enrollment and service registration.
 pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyhow::Result<String> {
@@ -73,7 +76,7 @@ pub fn command(kernel: Kernel<'_>, invitation: &str, source: Source<'_>) -> anyh
         }
     };
     Ok(format!(
-        "(set -e;a=$(uname -m);case $a in x86_64) {};;aarch64) {};;*) echo Unsupported:$a >&2;exit 1;;esac;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;cd \"$d\";curl --proto '=https' -fLo a{pin} {}/fastctx-$a-unknown-linux-gnu.tar.gz;echo \"$h  a\"|sha256sum -c -;tar xzf a;./fastctx server install {})",
+        "(set -e;a=$(uname -m);case $a in x86_64) {};;aarch64) {};;*) echo Unsupported:$a >&2;exit 1;;esac;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;cd \"$d\";w=1;until curl --proto '=https' -fL -C - -o a{pin} {}/fastctx-$a-unknown-linux-gnu.tar.gz;do r=$?;[ $r = 33 ]&&rm -f a;echo \"download stopped (curl $r); again in $w s\" >&2;sleep $w;w=$((w*2));[ $w -gt 60 ]&&w=60;done;echo \"$h  a\"|sha256sum -c -;tar xzf a;./fastctx server install {})",
         architecture(kernel.x86_64_sha256, kernel.version),
         architecture(kernel.aarch64_sha256, kernel.version),
         quote(&directory),

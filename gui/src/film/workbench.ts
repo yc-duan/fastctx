@@ -109,10 +109,13 @@ export function workbench(words: WorkbenchWords, shape: Shape): Built {
 
   // Elsewhere: the call and what came back, as text and nothing else.
   const { dry } = L;
+  // As many characters as the box holds inside its margins: the program's
+  // type is monospaced, each character six tenths of its size wide.
+  const fits = Math.floor((dry.w - 52) / (L.dryType * 0.6));
   reel.group([dry.x + dry.w / 2, dry.y + dry.h / 2], [{ t: 0 }, { t: 2600 }, { t: 3500, x: shape === "wide" ? -40 : 0, sx: 0.95, sy: 0.95, o: 0.4 }, { t: 5600, o: 0.4 }, { t: 6400, o: 0 }], () => {
     reel.wash(dry.x, dry.y, dry.w, dry.h, "raised", 250, 380, 18);
     DRY.slice(0, L.dryLines).forEach((line, index) => {
-      reel.text([dry.x + 26, dry.y + 50 + index * (L.dryType * 1.75)], clip(line, shape === "wide" ? 46 : 52), L.dryType, "graphite", 450 + index * 130, { mono: true });
+      reel.text([dry.x + 26, dry.y + 50 + index * (L.dryType * 1.75)], clip(line, fits), L.dryType, "graphite", 450 + index * 130, { mono: true });
     });
   });
 
@@ -132,7 +135,7 @@ export function workbench(words: WorkbenchWords, shape: Shape): Built {
     // Its steps, a row each.
     const row = (n: number) => w.y + 170 * u + n * 64 * u;
     const type = 26 * u;
-    reel.mark("thinking", [left, row(0) - 24 * u], 30 * u, "clay", 3700);
+    reel.mark("thinking", [left, row(0) - 24 * u], 30 * u, "graphite", 3700);
     reel.text([left + 46 * u, row(0)], words.thought, type, "ink", 3760);
     reel.mark("command", [left, row(1) - 24 * u], 30 * u, "graphite", 4150);
     reel.text([left + 46 * u, row(1)], `${words.ran}  cargo test`, type, "ink", 4210);
@@ -176,7 +179,7 @@ export function workbench(words: WorkbenchWords, shape: Shape): Built {
   reel.group(remoteCentre, away, () => {
     reel.wash(r.x, r.y, r.w, r.h, "raised", 7700, 380, 16);
     reel.wash(r.x - 40, r.y + r.h - 2, r.w + 80, 24, "panel", 7900, 300, 12);
-    reel.mark("claude", [remoteCentre[0] - 42, remoteCentre[1] - 46], 84, "clay", 8150);
+    reel.mark("codex", [remoteCentre[0] - 42, remoteCentre[1] - 46], 84, "graphite", 8150);
     reel.text([remoteCentre[0], r.y + r.h + 72], "laptop", L.label, "graphite", 8300, { anchor: "middle" });
   });
   // The line comes to the right of this computer's screen.
@@ -203,7 +206,7 @@ export function workbench(words: WorkbenchWords, shape: Shape): Built {
   const span = p.w - pad * 2 - 28;
   for (let index = 0; index < 4; index += 1) {
     const y = p.y + 120 + index * (p.h / 9);
-    reel.mark(index === 0 ? "thinking" : index === 3 ? "edit" : "command", [inner, y - 14], 20, index === 0 ? "clay" : "graphite", 12500 + index * 220);
+    reel.mark(index === 0 ? "thinking" : index === 3 ? "edit" : "command", [inner, y - 14], 20, "graphite", 12500 + index * 220);
     reel.scribble([inner + 28, y - 4], span - 40 - ((index * 17) % 30), "graphite", 12560 + index * 220, 260, 2.4);
   }
   // The card it asks with drops in at the top of the phone's screen.

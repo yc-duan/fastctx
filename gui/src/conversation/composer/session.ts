@@ -8,6 +8,7 @@ import type { ComposerJournal } from "./document";
 import { composerJournalStore } from "./journal";
 import type { ComposerJournalStore } from "./journal";
 import { composerWriter } from "./writer";
+import { unanswered } from "../../world/again";
 
 export interface ComposerOperation {
   readonly id: string;
@@ -44,6 +45,9 @@ interface Operation extends ComposerOperation {
   flight?: Promise<ComposerUpdated | ComposerAttachmentAdded>;
   attempt: number;
   reject?: (error: Error) => void;
+  /** It failed for want of an answer, not by the node's refusal: it goes
+   *  again, as it was, once the shared input is back. */
+  broken?: boolean;
 }
 
 interface DocumentEntry {
@@ -78,6 +82,8 @@ export class ComposerSession {
   private readonly listeners = new Set<(state: ComposerSessionState) => void>();
   private opening: Promise<void> | undefined;
   private closing: Promise<void> | undefined;
+  /** What waits for the shared input to be back. */
+  private readonly waiting: { resolve: () => void; reject: (error: Error) => void }[] = [];
 
   private constructor(
     private readonly transport: ComposerTransport,
@@ -196,7 +202,44 @@ export class ComposerSession {
     this.connected = true;
     this.error = null;
     for (const document of this.documents.keys()) document.setConnected(true);
+    // What broke with the connection goes again under its own id, so the
+    // node does it once (`world-network.md`, 断开不是结束); an upload is
+    // offered again by the one who made it.
+    for (const operation of this.operations.values()) {
+      if (operation.status === "failed" && operation.broken && operation.change.do !== "upload") {
+        void this.run(operation).catch(() => {});
+      }
+    }
+    for (const waiting of this.waiting.splice(0)) waiting.resolve();
     this.emit();
+  }
+
+  /** Resolves once the shared input is back; at once while it is. */
+  private untilConnected(): Promise<void> {
+    if (this.connected) return Promise.resolve();
+    this.assertOpen();
+    return new Promise((resolve, reject) => this.waiting.push({ resolve, reject }));
+  }
+
+  /** Runs an operation until the node answers it: one that broke with the
+   *  connection goes again, as it was, once the connection is back. */
+  private async lasting(operation: Operation): Promise<ComposerUpdated | ComposerAttachmentAdded> {
+    for (;;) {
+      try {
+        return await this.run(operation);
+      } catch (error) {
+        if (!operation.broken || this.closed || this.closing) throw error;
+        await this.untilConnected();
+        if (operation.status === "completed") return operation.result!;
+        if (operation.flight) {
+          try {
+            return await operation.flight;
+          } catch {
+            if (!operation.broken) throw operation.error;
+          }
+        }
+      }
+    }
   }
 
   private disconnect(error: Error | null): void {
@@ -208,6 +251,7 @@ export class ComposerSession {
       operation.attempt += 1;
       operation.error = error ?? new Error("the composer connection broke before its operation was acknowledged");
       operation.status = "failed";
+      operation.broken = true;
       operation.reject?.(operation.error);
       delete operation.reject;
       delete operation.flight;
@@ -318,14 +362,28 @@ export class ComposerSession {
   }
 
   /** Captures this epoch before flushing. A concurrent send refuses this call;
-   * it never silently sends the next draft. Textareas remain editable while the node works. */
+   * it never silently sends the next draft. Textareas remain editable while the node works.
+   * Sent while the connection is down, it waits for it and goes then; one that broke on the
+   * way goes again under its own id, so the node sends it once. */
   async send(): Promise<ComposerUpdated> {
-    this.assertConnected();
+    this.assertOpen();
     const epoch = this.draft.view.state.epoch;
     if (this.draft.view.state.composing) throw new Error("finish the input composition before sending");
-    await this.flushMetadata({ kind: "draft" }, epoch);
-    await this.flushDocuments({ kind: "draft" });
-    return this.mutate({ do: "send", epoch });
+    for (;;) {
+      await this.untilConnected();
+      try {
+        await this.flushMetadata({ kind: "draft" }, epoch);
+        await this.flushDocuments({ kind: "draft" });
+        break;
+      } catch (error) {
+        if (this.connected || this.closed || this.closing) throw error;
+      }
+    }
+    const mutation: ComposerMutation = { do: "send", epoch, operation: crypto.randomUUID() };
+    const operation: Operation = { id: mutation.operation, change: { do: "send", epoch }, status: "pending", error: null, result: null, attempt: 0,
+      run: () => this.transport.update(mutation) };
+    this.operations.set(operation.id, operation);
+    return this.lasting(operation) as Promise<ComposerUpdated>;
   }
 
   async deleteQueued(id: string): Promise<ComposerUpdated> {
@@ -428,6 +486,7 @@ export class ComposerSession {
     this.assertConnected();
     operation.status = "pending";
     operation.error = null;
+    operation.broken = false;
     const attempt = ++operation.attempt;
     operation.flight = new Promise((resolve, reject) => {
       operation.reject = reject;
@@ -446,6 +505,7 @@ export class ComposerSession {
         if (operation.attempt !== attempt) return;
         operation.error = errorOf(error);
         operation.status = "failed";
+        operation.broken = unanswered(error) || !this.connected;
         reject(operation.error);
         void this.transport.read().then((updated) => { this.receive(updated.composer); },
           (error: unknown) => { this.error = errorOf(error); this.emit(); });
@@ -499,6 +559,7 @@ export class ComposerSession {
   private async end(): Promise<void> {
     this.generation += 1;
     this.disconnect(null);
+    for (const waiting of this.waiting.splice(0)) waiting.reject(new Error("the composer is closed"));
     try {
       await Promise.all([...this.documents.values()].map((entry) => this.save(entry)));
       for (const entry of this.documents.values()) { entry.unsubscribe(); entry.document.dispose(); }

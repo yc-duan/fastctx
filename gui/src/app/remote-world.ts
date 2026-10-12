@@ -9,10 +9,11 @@
 // one that fails says which and why, and the steps already done are not
 // done again. Nothing typed here is kept.
 
+import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { LoggedIn, NameProblem } from "../world/bridge";
 import type { LoginWords } from "./account-words";
-import { passwordProblem } from "./password";
+import { newPasswordFields, passwordReady, sayPassword } from "./new-password";
 import { plainly } from "./problem";
 import { mark } from "./removal";
 
@@ -126,8 +127,16 @@ export class RemoteWorld {
     body.addEventListener("click", this.clicked);
     body.addEventListener("change", this.changed);
     body.addEventListener("submit", this.submitted);
+    body.addEventListener("input", this.typedIn);
     this.draw();
   }
+
+  /** A new password, or the account it may not hold, is typed: the line
+   *  under the fields follows. */
+  private readonly typedIn = (event: Event): void => {
+    const name = (event.target as HTMLInputElement).name;
+    if (name === "password" || name === "admin") sayPassword(this.body, this.options.words, this.body.querySelector<HTMLInputElement>("[name=admin]")?.value.trim() ?? "");
+  };
 
   /** The enclosing form was submitted: the step this one is on goes on. */
   submit(): void {
@@ -138,6 +147,7 @@ export class RemoteWorld {
     this.body.removeEventListener("click", this.clicked);
     this.body.removeEventListener("change", this.changed);
     this.body.removeEventListener("submit", this.submitted);
+    this.body.removeEventListener("input", this.typedIn);
     const open = this.made ?? this.opened;
     const kept = !!this.options.adding?.then && !this.followed;
     if (open && (!this.joined || kept)) void this.options.seams.close(open.session).catch((error: unknown) => console.warn("the session with the server could not be closed", error));
@@ -150,6 +160,10 @@ export class RemoteWorld {
       this.keep();
       this.typed.by = by;
       this.draw();
+      return;
+    }
+    if (target.closest("[data-remote=choose-key]")) {
+      this.body.querySelector<HTMLInputElement>("[name=keyfile]")?.click();
       return;
     }
     if (target.closest("[data-remote=key-back]")) {
@@ -200,19 +214,21 @@ export class RemoteWorld {
         this.body.innerHTML = `<${form} class="welcome-form remote-form" autocomplete="off">
           ${this.options.adding ? "" : `<h2 class="welcome-form-title">${escape(words.remote)}</h2><p class="welcome-form-what">${escape(words.remoteHub)}</p>`}
           <div class="field-pair remote-address">
-            ${field("host", words.server, 'class="mono" required spellcheck="false" autocapitalize="off" placeholder="203.0.113.20"', this.typed.host)}
+            ${field("host", words.server, 'class="mono" required spellcheck="false" autocapitalize="off"', this.typed.host)}
             ${field("sshPort", words.sshPort, 'class="mono" inputmode="numeric" pattern="[0-9]{1,5}" required', this.typed.sshPort)}
           </div>
           ${field("user", words.sshUser, 'class="mono" required spellcheck="false" autocapitalize="off"', this.typed.user)}
-          <div class="choice-options remote-by" role="radiogroup" aria-label="${escape(words.signInBy)}">
-            <button class="choice${password ? " chosen" : ""}" type="button" role="radio" aria-checked="${password}" data-by="password">${escape(words.password)}</button>
-            <button class="choice${password ? "" : " chosen"}" type="button" role="radio" aria-checked="${!password}" data-by="key">${escape(words.keyFile)}</button>
+          <div class="field remote-by-field"><span class="field-label">${escape(words.signInBy)}</span>
+            <div class="segmented remote-by" role="radiogroup" aria-label="${escape(words.signInBy)}">
+              <button class="segment${password ? " chosen" : ""}" type="button" role="radio" aria-checked="${password}" data-by="password">${escape(words.password)}</button>
+              <button class="segment${password ? "" : " chosen"}" type="button" role="radio" aria-checked="${!password}" data-by="key">${escape(words.keyFile)}</button>
+            </div>
           </div>
           ${
             password
               ? `<label class="field"><span class="field-label">${escape(words.password)}</span><input name="login" type="password" required autocomplete="off" value="${escape(this.secret.login)}"></label>`
-              : `<label class="field remote-key"><span class="field-label">${escape(words.keyFile)}</span><span class="remote-key-pick"><input name="keyfile" type="file"><span class="remote-key-name mono">${escape(this.key?.name ?? "")}</span></span></label>
-                 <label class="field"><span class="field-label">${escape(words.keyPassword)}</span><input name="passphrase" type="password" autocomplete="off" value="${escape(this.secret.passphrase)}"></label>`
+              : `<div class="field remote-key"><span class="field-label">${escape(words.keyFile)}</span><span class="remote-key-pick"><input name="keyfile" type="file" hidden><button class="pick-file" type="button" data-remote="choose-key">${glyph("file", 16)}<span>${escape(words.chooseKey)}</span></button><span class="remote-key-name mono">${escape(this.key?.name ?? "")}</span></span></div>
+                 <label class="field"><span class="field-label">${escape(words.keyPassword)}<span class="field-optional">${escape(words.optional)}</span></span><input name="passphrase" type="password" autocomplete="off" value="${escape(this.secret.passphrase)}"></label>`
           }
           ${foot(words.next)}
         </${form}>`;
@@ -250,16 +266,14 @@ export class RemoteWorld {
             ${field("world", words.worldName, `class="mono" required spellcheck="false" autocapitalize="off" placeholder="home"`, this.typed.world)}
             ${field("admin", words.admin, `class="mono" required spellcheck="false" autocapitalize="off" pattern="${accountRule}" placeholder="me"`, this.typed.admin)}
           </div>
-          <div class="field-pair">
-            <label class="field"><span class="field-label">${escape(words.password)}</span><input name="password" type="password" required autocomplete="new-password" value="${escape(this.secret.password)}"></label>
-            <label class="field"><span class="field-label">${escape(words.passwordAgain)}</span><input name="again" type="password" required autocomplete="new-password" value="${escape(this.secret.again)}"></label>
-          </div>
+          ${newPasswordFields(words, { password: this.secret.password, again: this.secret.again })}
           ${field("hubPort", words.port, 'class="mono" inputmode="numeric" pattern="[0-9]{2,5}" required', this.typed.hubPort)}
           ${this.wantsSudo ? `<label class="field"><span class="field-label">${escape(words.sudoPassword)}</span><input name="sudo" type="password" required autocomplete="off" value="${escape(this.secret.sudo)}"></label>` : ""}
           <ol class="removal-list remote-steps"${this.progress.length ? "" : " hidden"}></ol>
           ${foot(making ? words.creating : words.createGo)}
         </${form}>`;
         this.drawSteps();
+        sayPassword(this.body, words, this.typed.admin.trim());
         if (making) this.body.querySelector<HTMLButtonElement>(".sheet-go")!.disabled = true;
         break;
       }
@@ -346,15 +360,13 @@ export class RemoteWorld {
     }
     if (this.stage !== "world") return;
     if (this.options.adding) return this.add(this.options.adding);
-    const { password, again } = this.secret;
+    const { password } = this.secret;
     const world = this.typed.world.trim();
     const admin = this.typed.admin.trim();
     this.busy = true;
     const named = await seams.nameProblem("hub", world).finally(() => (this.busy = false));
     if (named) return this.note(words.nameSaid(named));
-    const problem = passwordProblem(admin, password);
-    if (problem) return this.note(words.passwordRule[problem]);
-    if (password !== again) return this.note(words.passwordsDiffer);
+    if (!passwordReady(this.body, words, admin)) return;
     const auth = this.auth()!;
     this.busy = true;
     this.stage = "making";

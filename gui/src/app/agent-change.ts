@@ -55,7 +55,7 @@ export const zhAgentChange: AgentChangeWords = {
   applyTitle: (who, machine) => `接入 ${who} · ${machine}`,
   removeTitle: (who, machine) => `移除 ${who} · ${machine}`,
   putIn: "换上",
-  putInWhat: "World 的 run：跑命令、看文件与图片、改文件、去别的机器",
+  putInWhat: "Fastctx 的 run：跑命令、看文件与图片、改文件、去别的机器",
   turnOff: "关掉",
   turnOffWhat: (agent) => (agent === "claude" ? "它自带的 Bash、Grep、Glob（Windows 上连同 PowerShell）" : "它自带的 shell 与看图"),
   leave: "不动",
@@ -69,7 +69,7 @@ export const zhAgentChange: AgentChangeWords = {
         ? "已经开着的 Claude Code 会话马上用不了自带的 Bash，重新打开才有 run"
         : "已经开着的 Codex 会话要重新打开才有 run"
       : "已经开着的会话要重新打开才回到自带的工具",
-  permission: "World 开的 Claude 对话从此不再逐条问你批准命令和改文件；你自己开的会话照旧逐条问",
+  permission: "Fastctx 开的 Claude 对话从此不再逐条问你批准命令和改文件；你自己开的会话照旧逐条问",
   programs: (names) => `用这个登录的程序一起有了 run：${names}`,
   details: "细节",
   hideDetails: "收起细节",
@@ -96,7 +96,7 @@ export const enAgentChange: AgentChangeWords = {
   applyTitle: (who, machine) => `Hook up ${who} · ${machine}`,
   removeTitle: (who, machine) => `Remove ${who} · ${machine}`,
   putIn: "Puts in",
-  putInWhat: "The World's run: commands, files and images, edits, other machines",
+  putInWhat: "Fastctx's run: commands, files and images, edits, other machines",
   turnOff: "Turns off",
   turnOffWhat: (agent) => (agent === "claude" ? "Its own Bash, Grep and Glob (and PowerShell on Windows)" : "Its own shell and image viewer"),
   leave: "Leaves",
@@ -110,7 +110,7 @@ export const enAgentChange: AgentChangeWords = {
         ? "Claude Code sessions already open lose their own Bash at once and get run once reopened"
         : "Codex sessions already open get run once reopened"
       : "Sessions already open get their own tools back once reopened",
-  permission: "Claude conversations the World opens stop asking you to approve each command and edit; sessions you open ask as before",
+  permission: "Claude conversations Fastctx opens stop asking you to approve each command and edit; sessions you open ask as before",
   programs: (names) => `Programs using this login get run too: ${names}`,
   details: "Details",
   hideDetails: "Hide details",

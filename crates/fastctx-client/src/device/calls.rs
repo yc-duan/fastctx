@@ -125,9 +125,9 @@ impl Device {
             Call::ReadAgentLimits { machine, agent, dir } => {
                 (machine, RemoteCall::ReadAgentLimits { agent, dir }, None)
             }
-            Call::Talk { to, machine, text, attachments, files_on } => {
+            Call::Talk { to, machine, text, attachments, files_on, id } => {
                 let machine = self.find(&to, machine).await?;
-                (machine, RemoteCall::Talk { to: to.clone(), text, attachments, files_on }, Some(to))
+                (machine, RemoteCall::Talk { to: to.clone(), text, attachments, files_on, id }, Some(to))
             }
             Call::Open { agent, town, node, text, model, reasoning_effort, attachments, choices } => {
                 let machine =
@@ -212,7 +212,9 @@ impl Device {
         } else {
             session.link.call(&machine, &account, purpose, remote.clone()).await
         }
-        .map_err(failed)?
+        .map_err(|error| {
+            crate::Error::from(crate::CallError::Failed(fastctx_types::ipc::Failure::unanswered(error.to_string())))
+        })?
         .map_err(failed)?;
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {

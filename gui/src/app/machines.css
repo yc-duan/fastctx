@@ -18,6 +18,10 @@
   padding: 0 var(--gutter) var(--gutter);
 }
 
+.machines-layout[hidden] {
+  display: none;
+}
+
 .machines-canvas {
   position: relative;
   flex: 1 1 auto;
@@ -55,8 +59,47 @@
   }
 }
 
-.machines-canvas.alone .machine-map {
-  opacity: 0.5;
+/* In no network: the film of what a network is for, as large as the page
+   allows, a sentence on the hub under it, and the two ways into one, all
+   on one screen. */
+.machines-intro {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-5) var(--space-8);
+}
+
+.machines-intro[hidden] {
+  display: none;
+}
+
+.machines-film {
+  width: min(100%, 1040px, calc((100dvh - 300px) * 16 / 9));
+}
+
+.machines-hub-is {
+  margin: 0;
+  max-width: 34em;
+  text-align: center;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.machines-ways {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.machines-ways a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 /* The drawing: graph paper that moves with it, a fine line every step and
@@ -748,9 +791,6 @@
   padding-left: 0;
 }
 
-.machine-panel .machines-alone {
-  margin: 0 0 var(--space-4);
-}
 
 /* A hub: the account's level there, who administers it, and the ways to
    let a device in or manage its accounts, a slip for each login on it. */
@@ -1330,6 +1370,23 @@
   fill: var(--text-3);
   font-size: 12px;
   font-weight: 400;
+}
+
+/* The arrow before a box's name: down while it is open, right while it is
+   folded to its strip. */
+.map-names .box-arrow {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The whole strip is what folds the box: under the pointer it deepens as
+   one piece, its own shape, never a disc. */
+.machines-canvas .machine-map .canvas-object[data-kind="group"]:hover,
+.machines-canvas .machine-map .canvas-object[data-kind="group"][data-pointed="true"] {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
 }
 
 .map-names .machine-name {

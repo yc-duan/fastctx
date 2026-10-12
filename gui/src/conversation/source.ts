@@ -9,6 +9,7 @@
 // keeping what it drew wherever the keys are the same.
 
 import type { Address, SessionEvent } from "../world/events";
+import { after, whyOf } from "../world/again";
 import { unwatch, watch, type Piece } from "../world/bridge";
 
 export interface ConversationFeed {
@@ -19,8 +20,8 @@ export interface ConversationFeed {
   extended(history: SessionEvent[]): void;
   /** One thing as it happens. */
   happened(event: SessionEvent): void;
-  /** The live part broke and waits to come back (a phone's connection). */
-  interrupted(why: string | null): void;
+  /** The live part broke and is being read again: why, and since when. */
+  interrupted(why: string | null, since: Date): void;
   /** It came back. */
   resumed(): void;
   /** It is over: what is shown stays, no longer live. */
@@ -61,12 +62,17 @@ export const watched: ConversationSource = {
           feed.extended(piece.history);
           return;
         case "interrupted":
-          feed.interrupted(piece.error);
+          feed.interrupted(piece.error, new Date(piece.since));
           return;
         case "ended":
           feed.ended(piece.error);
       }
     };
+    // A watch that could not start is tried again, as `../world/again.ts`
+    // paces it (`world-network.md`, 断开不是结束).
+    let tries = 0;
+    let since: Date | null = null;
+    let waiting: (() => void) | null = null;
     const read = () => {
       const mine = ++reading;
       let ready = false;
@@ -82,23 +88,35 @@ export const watched: ConversationSource = {
             return;
           }
           id = started.id;
+          tries = 0;
+          since = null;
           feed.replaced(started.history);
           for (const piece of early) take(piece);
           ready = true;
         })
         .catch((error: unknown) => {
-          if (mine === reading && !closed) feed.ended(String(error));
+          if (mine !== reading || closed) return;
+          since ??= new Date();
+          feed.interrupted(whyOf(error), since);
+          tries += 1;
+          waiting = after(tries + 1, () => {
+            waiting = null;
+            read();
+          });
         });
     };
     read();
     return {
       again() {
+        waiting?.();
+        waiting = null;
         if (id !== null) void unwatch(id);
         id = null;
         read();
       },
       close() {
         closed = true;
+        waiting?.();
         if (id !== null) void unwatch(id);
         id = null;
       },

@@ -12,7 +12,7 @@ use std::io::{BufRead as _, Write as _};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
-use fastctx_client::{Conversation, Said, World};
+use fastctx_client::{Conversation, Next, Said, World};
 use fastctx_hands::told::turn_end;
 use fastctx_types::residents::Landed;
 use fastctx_types::session::{Happened, Part, SessionChange, SessionEvent, Speaker, StepStatus, ToolStatus, What};
@@ -104,9 +104,9 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
         });
         loop {
             tokio::select! {
-                moment = conversation.next() => match moment? {
-                    Some(moment) => printer.event(&moment.event),
-                    None => return Ok(()),
+                next = conversation.next() => match next? {
+                    Next::Moment(moment) => printer.event(&moment.event),
+                    other => printer.watch(&other),
                 },
                 line = typed.recv() => match line {
                     Some(line) if line.trim().is_empty() => {}
@@ -125,13 +125,17 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
 
 /// Shows what happens until the turn the words went into ends.
 async fn follow(conversation: &mut Conversation, printer: &mut Printer) -> anyhow::Result<()> {
-    while let Some(moment) = conversation.next().await? {
-        printer.event(&moment.event);
-        if moment.answered {
-            return Ok(());
+    loop {
+        match conversation.next().await? {
+            Next::Moment(moment) => {
+                printer.event(&moment.event);
+                if moment.answered {
+                    return Ok(());
+                }
+            }
+            other => printer.watch(&other),
         }
     }
-    Ok(())
 }
 
 /// Where words are that went into no turn yet.
@@ -167,6 +171,8 @@ struct Printer {
     tools: HashSet<(String, String)>,
     /// Whether the cursor is in the middle of a line.
     open_line: bool,
+    /// Why the watch is broken, while it is.
+    broken: Option<String>,
 }
 
 impl Printer {
@@ -287,6 +293,25 @@ impl Printer {
 
     fn note(&mut self, text: &str) {
         self.line(&format!("=== {text} ==="));
+    }
+
+    /// That the watch broke and is being opened again, once for each
+    /// reason; that it is back.
+    fn watch(&mut self, next: &Next) {
+        match next {
+            Next::Interrupted(interruption) => {
+                if self.broken.as_ref() != Some(&interruption.why) {
+                    self.note(&format!("connection lost: {}; reconnecting", interruption.why));
+                    self.broken = Some(interruption.why.clone());
+                }
+            }
+            Next::Resumed => {
+                if self.broken.take().is_some() {
+                    self.note("reconnected");
+                }
+            }
+            Next::Moment(_) => {}
+        }
     }
 
     fn line(&mut self, text: &str) {

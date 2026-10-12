@@ -156,8 +156,12 @@ export interface Words {
   watchEnded(why: string | null): string;
   /** The live stream broke and is waiting to be read again. */
   watchInterrupted(why: string | null): string;
+  /** On hover over that: for how long, and why. */
+  brokenFor(took: string, why: string | null): string;
   /** Words that could not be sent. */
   notSent(why: string): string;
+  /** Words with no answer yet, said again until one comes. */
+  waitingToSend: string;
   /** What the session's host said of its own health, in a plain line; the
    *  host's words go on hover. */
   health: Record<HealthKind, string>;
@@ -301,7 +305,7 @@ export const zh: Words = {
     close: "关闭查找",
   },
   you: (machine) => `你 · ${machine}`,
-  world: "世界",
+  world: "Fastctx",
   aPage: (name) => `页面「${name}」`,
   compacted: "上下文已压缩",
   turn: (how, reason) => {
@@ -379,12 +383,14 @@ export const zh: Words = {
   answerFailed: (label) => `${label} 本轮失败`,
   watchEnded: () => "已停止同步",
   watchInterrupted: () => "连接中断，正在重连…",
+  brokenFor: (took, why) => (why ? `已断开 ${took} · ${why}` : `已断开 ${took}`),
   notSent: () => "发送失败",
+  waitingToSend: "等待发送",
   health: {
     reconnecting: "连接中断，正在重试",
     safety: "OpenAI 正在对这一轮的输出做额外的安全审查",
     rerouted: "OpenAI 把这一轮换到了另一个模型",
-    tools_missing: "世界的工具没有接上",
+    tools_missing: "Fastctx 的工具没有接上",
     tool_server: "有一组工具没能启动",
     warning: "有一条提醒",
     error: "这一轮出错了",
@@ -438,7 +444,7 @@ export const zh: Words = {
   briefHanded: "项目说明",
   deskFree: (who) => `${who} 这一轮结束，屏幕空出来了`,
   deskTaken: (who) => `${who} 正在操作屏幕，结束后会通知`,
-  deskOutside: "屏幕被世界之外的会话占着",
+  deskOutside: "屏幕被 Fastctx 之外的会话占着",
   ended: (how) =>
     endedIn(how, {
       exited: (code) => `退出 ${code}`,
@@ -515,7 +521,7 @@ export const en: Words = {
     close: "Close find",
   },
   you: (machine) => `You · ${machine}`,
-  world: "World",
+  world: "Fastctx",
   aPage: (name) => `the page “${name}”`,
   compacted: "Context compacted",
   turn: (how, reason) => {
@@ -593,12 +599,14 @@ export const en: Words = {
   answerFailed: (label) => `${label}: turn failed`,
   watchEnded: () => "Sync stopped",
   watchInterrupted: () => "Disconnected, reconnecting…",
+  brokenFor: (took, why) => (why ? `Disconnected for ${took} · ${why}` : `Disconnected for ${took}`),
   notSent: () => "Couldn't send",
+  waitingToSend: "Waiting to send",
   health: {
     reconnecting: "Connection lost, retrying",
     safety: "OpenAI is giving this turn's output extra safety review",
     rerouted: "OpenAI moved this turn to another model",
-    tools_missing: "The World's tools are not connected",
+    tools_missing: "Fastctx's tools are not connected",
     tool_server: "A set of tools did not start",
     warning: "A notice",
     error: "This turn hit an error",
@@ -643,7 +651,7 @@ export const en: Words = {
       ? `Sent to ${machine}`
       : how === "uncertain"
         ? "Not sure it arrived"
-        : "Arrives when it next uses a World tool",
+        : "Arrives when it next uses a Fastctx tool",
   jobEnded: (_job, machine) => `Background command on ${machine} ended`,
   movedTo: (town) => `Moved to project ${town}`,
   movedOut: "Removed from project",
@@ -652,7 +660,7 @@ export const en: Words = {
   briefHanded: "Project brief",
   deskFree: (who) => `${who}'s turn ended; the screen is free`,
   deskTaken: (who) => `${who} is using the screen; you'll be told when it's free`,
-  deskOutside: "Computer Use is held by a session outside the World",
+  deskOutside: "Computer Use is held by a session outside Fastctx",
   ended: (how) =>
     endedIn(how, {
       exited: (code) => `exit ${code}`,

@@ -164,8 +164,9 @@ impl World {
         text: String,
         attachments: Vec<Attachment>,
         files_on: Option<fastctx_types::access::Written>,
+        id: Option<String>,
     ) -> Result<Said, Error> {
-        match self.call(Call::Talk { to, machine, text, attachments, files_on }).await?.0 {
+        match self.call(Call::Talk { to, machine, text, attachments, files_on, id }).await?.0 {
             Reply::Spoken { to, landed } => Ok(Said { to, landed }),
             other => Err(Error::Unexpected(format!("{other:?}"))),
         }

@@ -18,10 +18,10 @@ Var FastctxParameters
   ClearErrors
   ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --desktop-install' $0
   ${If} ${Errors}
-    Abort "World notification identity installer could not be started."
+    Abort "Fastctx notification identity installer could not be started."
   ${EndIf}
   ${If} $0 != 0
-    Abort "World notification identity installation failed (exit $0)."
+    Abort "Fastctx notification identity installation failed (exit $0)."
   ${EndIf}
   ; The fastctx carried here put in place, and what a removal that kept the
   ; data took out put back; a computer already in a network gets back the
@@ -51,7 +51,7 @@ Var FastctxParameters
     nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --quit-running'
     Pop $0
     ${If} $0 != 0
-      Abort "World could not be closed (exit $0)."
+      Abort "Fastctx could not be closed (exit $0)."
     ${EndIf}
   ${EndIf}
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
@@ -71,23 +71,23 @@ Var FastctxParameters
       ${If} $0 == 10
         StrCpy $FastctxEverything 0
         ${IfNot} ${Silent}
-          MessageBox MB_OK|MB_ICONINFORMATION "This computer is a world's server, so its data was kept. Removing everything is done inside World, where the world's name is typed to confirm."
+          MessageBox MB_OK|MB_ICONINFORMATION "This computer is a world's server, so its data was kept. Removing everything is done inside Fastctx, where the network's name is typed to confirm."
         ${EndIf}
       ${ElseIf} $0 != 0
-        Abort "World could not finish removing this computer's kernel (exit $0)."
+        Abort "Fastctx could not finish removing this computer's kernel (exit $0)."
       ${EndIf}
     ${ElseIf} $FastctxEverything = 1
       nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --uninstall-finish'
       Pop $0
       ${If} $0 != 0
-        Abort "World's kernel removal has not completed (exit $0)."
+        Abort "Fastctx's kernel removal has not completed (exit $0)."
       ${EndIf}
     ${EndIf}
   ${EndIf}
   nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --desktop-uninstall'
   Pop $0
   ${If} $0 != 0
-    Abort "World notification identity removal failed (exit $0)."
+    Abort "Fastctx notification identity removal failed (exit $0)."
   ${EndIf}
 !macroend
 

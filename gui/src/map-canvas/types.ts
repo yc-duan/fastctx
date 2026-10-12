@@ -17,6 +17,10 @@ export interface CanvasItem {
   priority?: number;
   /** The side its name goes first, when there is room there. */
   side?: "below" | "above" | "right" | "left";
+  /** Pressed over this rectangle instead of the circle round `point`, its
+   *  corners rounded by `corners` (top left, top right, bottom right, bottom
+   *  left), all in the drawing's units. */
+  box?: { x: number; y: number; width: number; height: number; corners?: [number, number, number, number] };
 }
 
 /** A handle starts an intent; the page validates targets and confirms the result. */

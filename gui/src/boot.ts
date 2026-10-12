@@ -40,8 +40,8 @@ function tooOld(): void {
       ? `这台设备的系统浏览器内核（Chromium ${found}）缺少界面要用的绘制能力。`
       : `This device's browser engine (Chromium ${found}) lacks what the interface is drawn with.`
     : zh
-      ? `世界的界面要用 Chromium ${MINIMUM} 或更新的系统浏览器内核来画，这台设备上的是 ${found ? `Chromium ${found}` : "更早的版本"}。`
-      : `The World's interface is drawn by the system's browser engine, which must be Chromium ${MINIMUM} or newer; this device has ${found ? `Chromium ${found}` : "an older one"}.`;
+      ? `Fastctx 的界面要用 Chromium ${MINIMUM} 或更新的系统浏览器内核来画，这台设备上的是 ${found ? `Chromium ${found}` : "更早的版本"}。`
+      : `Fastctx's interface is drawn by the system's browser engine, which must be Chromium ${MINIMUM} or newer; this device has ${found ? `Chromium ${found}` : "an older one"}.`;
   const what = android
     ? zh
       ? "在应用商店里更新「Android System WebView」（有的手机上叫「Chrome」），然后重新打开这个应用。"

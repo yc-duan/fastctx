@@ -498,6 +498,13 @@ async fn follow_there(
         let call = RemoteCall::Follow { origin: origin.clone(), job: job.clone(), out_from, err_from };
         let following = feed(machine, None, followed.clone(), pieces.clone(), None, waiting.clone(), None);
         let result = link.call_with_stream(machine, account, Purpose::Hands, call, following).await;
+        let progressed = {
+            let followed = followed.lock().expect("never poisoned");
+            followed.out != out_from || followed.err != err_from
+        };
+        if progressed {
+            delay.reset();
+        }
         // A control reply can fail after the data stream already offered
         // the end. Only that handover's CLI receipt decides its outcome.
         if followed.lock().expect("never poisoned").ending.is_some() {
@@ -727,27 +734,25 @@ fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::OpenOptions::new().create(true).append(true).open(path)?.write_all(bytes)
 }
 
-/// The waits between attempts to reach a machine again, as the link waits
-/// to reconnect (`world-network.md`): at once, then up to twice as long
-/// each time, at most a minute, each a random part of that.
+/// The waits between attempts to reach a machine again: the one pacing of
+/// everything that reconnects (`world-network.md`, 断开不是结束), at once,
+/// then up to twice as long each time, at most a minute, each a random
+/// part of that.
 #[derive(Default)]
 pub(crate) struct Backoff {
-    ceiling: Option<Duration>,
+    failures: u32,
 }
 
 impl Backoff {
     pub(crate) fn next(&mut self) -> Duration {
-        let ceiling = match self.ceiling {
-            None => {
-                self.ceiling = Some(Duration::from_secs(1));
-                return Duration::ZERO;
-            }
-            Some(ceiling) => ceiling,
-        };
-        self.ceiling = Some((ceiling * 2).min(Duration::from_secs(60)));
-        let mut byte = [0u8; 1];
-        let _ = getrandom::fill(&mut byte);
-        ceiling / 2 + ceiling.mul_f64(f64::from(byte[0]) / 512.0)
+        self.failures = self.failures.saturating_add(1);
+        fastctx_net::dial::backoff(self.failures)
+    }
+
+    /// The machine was reached and the work went on: the next break is
+    /// tried again at once.
+    pub(crate) fn reset(&mut self) {
+        self.failures = 0;
     }
 }
 

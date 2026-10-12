@@ -248,6 +248,9 @@ export class ConversationPage {
     }
     const main = this.element.querySelector<HTMLElement>(".conversation")!;
     this.state = this.element.querySelector<HTMLElement>(".who-state")!;
+    this.state.addEventListener("pointerenter", () => {
+      if (this.interrupted) this.drawState();
+    });
     this.spoken = document.createElement("p");
     this.spoken.className = "spoken";
     this.spoken.setAttribute("role", "status");
@@ -543,9 +546,13 @@ export class ConversationPage {
   private sendShared(session: ComposerSession, text: string): void {
     const { conversation, here } = this.options;
     const draft = this.sharedState?.composer;
-    const queued = conversation.busy() || !!draft?.queue.length || !!draft?.awaiting_turn;
+    // While the shared input is not connected, the words wait here, shown
+    // as waiting to send; the node says once they go whether they queue.
+    const connected = session.state.connected;
+    const queued = connected && (conversation.busy() || !!draft?.queue.length || !!draft?.awaiting_turn);
     const shown = (draft?.draft.attachments ?? []).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
     const key = queued ? null : conversation.sending(text, here || null, shown);
+    if (key && !connected) conversation.sent(key, { state: "waiting", why: session.state.error?.message ?? "" });
     this.update();
     // Words sent here while the last ones are still on their way go once
     // the node has those, as the next draft rather than the one already sent.
@@ -1425,11 +1432,12 @@ export class ConversationPage {
     this.drawState();
   }
 
-  /** The live stream broke and waits to be read again: what is shown
-   *  stays, and the bar says it is waiting. */
-  broken(why: string | null): void {
+  /** The live stream broke and is being read again: what is shown stays,
+   *  and the bar says it is reconnecting; on hover, why and for how long. */
+  broken(why: string | null, since: Date): void {
     this.gone = this.options.words.watchInterrupted(why);
-    this.goneWhy = why ?? "";
+    this.brokenWhy = why;
+    this.brokenSince = since;
     this.interrupted = true;
     this.drawState();
   }
@@ -1440,10 +1448,15 @@ export class ConversationPage {
     this.interrupted = false;
     this.gone = null;
     this.goneWhy = "";
+    this.brokenWhy = null;
+    this.brokenSince = null;
     this.drawState();
   }
 
   private interrupted = false;
+  /** Why the live stream broke, and since when, while it is broken. */
+  private brokenWhy: string | null = null;
+  private brokenSince: Date | null = null;
 
   /** The state last said, and where it is said to a screen reader. */
   private said: string | null = null;
@@ -1498,7 +1511,11 @@ export class ConversationPage {
     this.state.classList.toggle("working", working);
     this.state.classList.toggle("waiting", waiting);
     this.state.classList.toggle("gone", this.gone !== null);
-    if (this.goneWhy) this.state.title = this.goneWhy;
+    // How long it has been broken is as of when the pointer comes to it.
+    const why = this.interrupted && this.brokenSince
+      ? words.brokenFor(words.took(Date.now() - this.brokenSince.getTime()), this.brokenWhy)
+      : this.goneWhy;
+    if (why) this.state.title = why;
     else this.state.removeAttribute("title");
     // How much of the context is used: the host's latest report, from the
     // conversation's events, or from what it offers when it says.

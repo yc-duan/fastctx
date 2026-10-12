@@ -2,9 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::data::Stream;
+use crate::data::{CHUNK, Stream};
 use crate::sign::{Bytes, Signature, Signed};
-use crate::wire::MAX_DATA_MESSAGE;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -20,15 +19,16 @@ enum Incoming {
     Carried(Carried),
 }
 
-/// Sends the existing JSON envelope when it fits; otherwise announces the
-/// signed payload's length and signature, then sends its exact bytes in chunks.
+/// Sends the existing JSON envelope when it fits in one message of a data
+/// connection; otherwise announces the signed payload's length and
+/// signature, then sends its exact bytes in chunks.
 pub async fn send(stream: &mut Stream, signed: &Signed) -> Result<(), String> {
     let empty = Signed { data: Bytes(Vec::new()), sig: signed.sig };
     let overhead = serde_json::to_vec(&empty).expect("signed envelopes serialize").len();
     let length = signed.data.0.len();
     // Bytes are unpadded base64; the empty envelope accounts for all other JSON bytes.
     let encoded = overhead + length / 3 * 4 + if length.is_multiple_of(3) { 0 } else { length % 3 + 1 };
-    if encoded <= MAX_DATA_MESSAGE {
+    if encoded <= CHUNK {
         return stream.say(signed).await;
     }
     stream.say(&Carried { watch_bytes: length as u64, sig: signed.sig }).await?;

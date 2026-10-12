@@ -117,6 +117,9 @@ export class MachineMap {
   private marked = "";
   /** A still drawing's frame, as of its last layout. */
   private framed = "";
+  /** The boxes folded as of the last placing: a fold the person made keeps
+   *  the drawing where it is. */
+  private placedFolds: string | null = null;
 
   constructor(private readonly options: MachineMapOptions) {
     const { words } = options;
@@ -290,7 +293,16 @@ export class MachineMap {
     const { words } = this.options;
     const items: CanvasItem[] = [
       ...scene.hubs.map((hub): CanvasItem => ({ key: `hub:${hub.id}`, kind: "hub", point: placement.hubs.get(hub.id)!, radius: KNOT + 6, label: hub.name, sub: scene.hubLabels.get(hub.id) ?? "" })),
-      ...placement.groups.map((group): CanvasItem => ({ key: group.key, kind: "group", point: group.point, radius: TITLE / 2 + 4, label: group.label, sub: words.groupSub(group.count, group.online) })),
+      // A box is pressed anywhere on its title strip.
+      ...placement.groups.map((group): CanvasItem => ({
+        key: group.key,
+        kind: "group",
+        point: group.point,
+        radius: TITLE / 2 + 4,
+        box: { x: group.box.x, y: group.box.y, width: group.box.width, height: TITLE, corners: group.folded ? [7, 7, 7, 7] : [7, 7, 0, 0] },
+        label: group.label,
+        sub: words.groupSub(group.count, group.online),
+      })),
       ...scene.adds.flatMap((hub): CanvasItem[] => {
         const point = this.pointOf(addKey(hub));
         return point ? [{ key: addKey(hub), kind: "machine", point, radius: RING, label: scene.waiting.has(hub) ? words.waitingJoin : words.addMachine }] : [];
@@ -306,7 +318,11 @@ export class MachineMap {
     // The page's head lies over the top of a phone's drawing: room above.
     const top = { ...placement.bounds, y: placement.bounds.y - 40, height: placement.bounds.height + 40 };
     const fitted = this.narrow && view.width > 0 ? { ...top, height: Math.min(top.height, (top.width * view.height) / view.width) } : placement.bounds;
-    this.surface.setScene(items, [], fitted);
+    // Folding or opening a box moves nothing else on the screen.
+    const folds = [...scene.folded].sort().join("|");
+    const folding = this.placedFolds !== null && folds !== this.placedFolds;
+    this.placedFolds = folds;
+    this.surface.setScene(items, [], fitted, folding);
     const selected = scene.selected && items.some((item) => item.key === scene.selected) ? scene.selected : null;
     if (this.surface.selection !== selected) this.surface.setSelection(selected);
   }
@@ -452,9 +468,18 @@ export class MachineMap {
       text.push(`<text class="hub-name" x="${x}" y="${y - 22}"${said ? ` dy="-1.15em"` : ""} text-anchor="middle">${escapeText(hub.name)}</text>`);
       if (said) text.push(`<text class="hub-sub" x="${x}" y="${y - 22}" text-anchor="middle">${escapeText(said)}</text>`);
     }
+    // A box's strip: an arrow that says it opens or folds (a still picture
+    // only leads to the machines page), then its name and how many.
+    const still = this.options.still ?? false;
     for (const group of placement.groups) {
       const { x, y } = group.box;
-      text.push(`<text class="box-name" x="${x + TRUNK + 14}" y="${y + TITLE / 2 + 5}"><tspan>${escapeText(group.label)}</tspan><tspan class="box-count" dx="10">${escapeText(words.groupSub(group.count, group.online))}</tspan></text>`);
+      const middle = y + TITLE / 2;
+      const arrowAt = x + TRUNK + 20;
+      if (!still) {
+        const d = group.folded ? `M${arrowAt - 2} ${middle - 4}L${arrowAt + 2} ${middle}L${arrowAt - 2} ${middle + 4}` : `M${arrowAt - 4} ${middle - 2}L${arrowAt} ${middle + 2}L${arrowAt + 4} ${middle - 2}`;
+        text.push(`<path class="box-arrow" d="${d}"/>`);
+      }
+      text.push(`<text class="box-name" x="${still ? x + TRUNK + 14 : arrowAt + 12}" y="${middle + 5}"><tspan>${escapeText(group.label)}</tspan><tspan class="box-count" dx="10">${escapeText(words.groupSub(group.count, group.online))}</tspan></text>`);
     }
     const nameAt = (key: string, point: Point, name: string, sub: string, quiet = false) => {
       const x = point[0] + RING + 15;

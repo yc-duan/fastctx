@@ -192,9 +192,9 @@ pub(super) async fn keep(inner: Arc<Inner>, peer: MachineName, at: Vec<SocketAdd
             Ok((conn, socket, frames, address, route)) => {
                 inner.node.log(format!("a direct link with {peer} is up, to {address} {route}"));
                 inner.direct_up(&conn);
-                let reason = serve(inner.clone(), conn.clone(), socket, frames).await;
+                let (reason, moved) = serve(inner.clone(), conn.clone(), socket, frames, Some(&mut network)).await;
                 inner.direct_down(&conn, &reason);
-                if started.elapsed() >= STABLE {
+                if moved || started.elapsed() >= STABLE {
                     failures = 0;
                 }
                 format!("the link went down: {reason}")
@@ -260,7 +260,9 @@ pub(super) async fn taken(inner: Arc<Inner>, name: MachineName, key: PublicKey, 
     let (conn, frames) = PeerConn::new(name.clone(), key, false, Vec::new());
     inner.node.log(format!("a direct link from {name} came in from {from}"));
     inner.direct_up(&conn);
-    let reason = serve(inner.clone(), conn.clone(), socket, frames).await;
+    // The machine that dialled keeps the link and dials again, so a change
+    // in this machine's network does not end it here; its silence does.
+    let (reason, _) = serve(inner.clone(), conn.clone(), socket, frames, None).await;
     inner.direct_down(&conn, &reason);
     inner.node.log(format!("the direct link from {name} ended: {reason}"));
 }
@@ -303,13 +305,15 @@ impl Inner {
 }
 
 /// Everything that passes on a link once both ends proved who they are,
-/// until it ends; returns why it ended.
+/// until it ends; returns why it ended, and whether because this machine's
+/// `network` changed, when the old way may no longer be there.
 async fn serve(
     inner: Arc<Inner>,
     conn: Arc<PeerConn>,
     socket: Socket,
     mut frames: mpsc::UnboundedReceiver<Frame>,
-) -> String {
+    mut network: Option<&mut watch::Receiver<u64>>,
+) -> (String, bool) {
     let (mut sink, mut stream) = socket.split();
     let (writer_done, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
     let (finish, mut finishing) = tokio::sync::oneshot::channel::<String>();
@@ -356,16 +360,25 @@ async fn serve(
     let ended = conn.clone();
     let ended = ended.ended();
     tokio::pin!(ended);
-    let mut last_pong = Instant::now();
+    // Anything the other machine sends shows it is there, a pong or not.
+    let mut heard = Instant::now();
     let mut last_ping = 0;
+    if let Some(network) = network.as_mut() {
+        network.mark_unchanged();
+    }
+    let mut moved = false;
     let reason = loop {
         let next = tokio::select! {
             biased;
-            () = tokio::time::sleep_until(last_pong + SILENCE) => {
-                break format!("it did not answer a heartbeat for {} s", SILENCE.as_secs());
+            () = tokio::time::sleep_until(heard + SILENCE) => {
+                break format!("nothing came from it for {} s", SILENCE.as_secs());
             }
             reason = &mut ended => break reason,
             _ = &mut writer_stopped => break "writing to it failed".to_string(),
+            changed = network_changed(&mut network) => {
+                moved = changed;
+                break "this machine's network changed".to_string();
+            }
             next = stream.next() => next,
         };
         let frame: Frame = match next {
@@ -375,8 +388,12 @@ async fn serve(
                 Ok(frame) => frame,
                 Err(error) => break format!("an unreadable frame from it: {error}"),
             },
-            Some(Ok(_)) => continue,
+            Some(Ok(_)) => {
+                heard = Instant::now();
+                continue;
+            }
         };
+        heard = Instant::now();
         match frame {
             Frame::Ping { n } => {
                 let _ = conn.send(Frame::Pong { n });
@@ -384,7 +401,6 @@ async fn serve(
             Frame::Pong { n } => {
                 if n > last_ping {
                     last_ping = n;
-                    last_pong = Instant::now();
                     if let Some(sent) = pinged.lock().expect("never poisoned").remove(&n) {
                         let ms = u32::try_from(sent.elapsed().as_millis()).unwrap_or(u32::MAX);
                         *conn.ms.lock().expect("never poisoned") = Some(ms);
@@ -413,5 +429,14 @@ async fn serve(
     heartbeat.abort();
     conn.close(reason.clone());
     let _ = finish.send(reason.clone());
-    reason
+    (reason, moved)
+}
+
+/// Whether `network` changed, once it does; never without one, and false
+/// when the node it belongs to is going away.
+async fn network_changed(network: &mut Option<&mut watch::Receiver<u64>>) -> bool {
+    match network {
+        Some(network) => network.changed().await.is_ok(),
+        None => std::future::pending().await,
+    }
 }

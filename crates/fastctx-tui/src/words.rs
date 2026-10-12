@@ -650,7 +650,7 @@ impl Words {
             }
             (Lang::En, true) => {
                 format!(
-                    "{done}; Claude Code sessions already open lose their own shell at once and get the World's tools when opened again"
+                    "{done}; Claude Code sessions already open lose their own shell at once and get Fastctx's tools when opened again"
                 )
             }
         }
@@ -735,7 +735,7 @@ impl Words {
     pub fn link_alone(&self) -> String {
         self.pick(
             "未加入世界 · l 用中枢服务器地址、账号和密码登录",
-            "Not in a World · l to sign in with the hub address, account and password",
+            "Not in a network · l to sign in with the hub address, account and password",
         )
         .to_string()
     }
@@ -1060,6 +1060,13 @@ impl Words {
 
     pub fn watch_ended(&self) -> &'static str {
         self.pick("已停止同步", "sync stopped")
+    }
+
+    pub fn watch_interrupted(&self, lasted: &str, why: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("连接中断，正在重连…（{lasted}：{why}）"),
+            Lang::En => format!("connection lost, reconnecting… ({lasted}: {why})"),
+        }
     }
 
     // Journals.

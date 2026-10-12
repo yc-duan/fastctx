@@ -264,7 +264,7 @@ function specimenRemoving(): Removing {
         : []),
       item("path", "path", "C:/Users/me/.fastctx/bin"),
       item("program", "program", "C:/Users/me/.fastctx/bin/fastctx.exe"),
-      item("app", "app", "C:/Users/me/AppData/Local/World"),
+      item("app", "app", "C:/Users/me/AppData/Local/Fastctx"),
     ],
     keeps: everything ? [] : [item("data", "data", "C:/Users/me/.fastctx/world"), item("hub-data", "hub-data", "C:/Users/me/.fastctx/hub")],
     hub: { name: "lab", dir: "C:/Users/me/.fastctx/hub" },

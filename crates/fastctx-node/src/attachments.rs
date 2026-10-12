@@ -30,10 +30,21 @@ use tokio::io::AsyncReadExt as _;
 
 use crate::Node;
 
-pub fn delivery(from: &MachineName, text: String, attachments: Vec<Attachment>) -> fastctx_types::residents::Delivery {
+/// The user's words typed on `from` as a delivery; named by the device's
+/// own `id` for them when it gave one, so the same words said again under
+/// it are known as the same (`world-network.md`, 改变什么的动作都带编号).
+pub fn delivery(
+    from: &MachineName,
+    text: String,
+    attachments: Vec<Attachment>,
+    id: Option<&str>,
+) -> fastctx_types::residents::Delivery {
     use fastctx_types::residents::{Delivery, Notice};
     use fastctx_types::session::{Speaker, attachments::AttachedMessage};
-    let id = crate::speech::new_id("talk");
+    let id = match id {
+        Some(id) => crate::speech::fixed_id("talk", &[from.as_str(), id]),
+        None => crate::speech::new_id("talk"),
+    };
     let notice = if attachments.is_empty() {
         Notice::Words { from: Speaker::User { machine: from.clone() }, text }
     } else {

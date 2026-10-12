@@ -254,6 +254,10 @@ pub enum RemoteCall {
         /// chose.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         files_on: Option<crate::access::Written>,
+        /// This device's name for these words: said again under it, as
+        /// after an answer that never came, they go in once.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
     },
     /// Keep here a file the user attached to their words for `resident`, of
     /// the calling machine, which works here (`world-gui.md`): its receipt
@@ -349,6 +353,10 @@ pub enum RemoteCall {
         to: String,
         manifest_bytes: u64,
         manifest_sha256: String,
+        /// The source sends a file from a byte the destination names, so a
+        /// copy that broke goes on from where it was.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        resumes: bool,
     },
     /// Send `from`, on this machine, to the calling machine over the call's
     /// data connection: first how long the manifest is, then the manifest,

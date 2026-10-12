@@ -68,6 +68,8 @@ pub struct TalkPage {
 enum Watching {
     Starting,
     Live,
+    /// Broken and being opened again: why, and since when.
+    Interrupted(String, std::time::SystemTime),
     Ended(Option<String>),
 }
 
@@ -185,6 +187,12 @@ impl TalkPage {
                 self.transcript.event(event);
             }
             Data::Unwatched(why) => self.watching = Watching::Ended(why),
+            Data::Interrupted { why, since } => self.watching = Watching::Interrupted(why, since),
+            Data::Current => {
+                if matches!(self.watching, Watching::Interrupted(..)) {
+                    self.watching = Watching::Live;
+                }
+            }
             Data::Returned(Ok(Some(0))) => {}
             Data::Returned(Ok(code)) => self.note = Some(quiet(ctx, ctx.words.attach_exited(code))),
             Data::Returned(Err(why)) => {
@@ -541,6 +549,9 @@ impl TalkPage {
                 Some(why) => wrong(ctx, words.watch_broke(&text::first_line(why))),
                 None => quiet(ctx, words.watch_ended()),
             })
+        } else if let Watching::Interrupted(why, since) = &self.watching {
+            let lasted = since.elapsed().map(|lasted| lasted.as_secs()).unwrap_or_default();
+            Some(wrong(ctx, words.watch_interrupted(&words.duration(lasted), &text::first_line(why))))
         } else if self.note.is_some() {
             self.note.clone()
         } else if self.waiting_for_user {

@@ -70,7 +70,7 @@ impl Connection {
             if let Some(device) = selected.world.device()
                 && device.state().name.is_some()
             {
-                return Err("leave this device's World before switching to a local node".into());
+                return Err("leave this device's network before switching to a local node".into());
             }
             let next = Self::make(&self.directory, mode)?;
             let bytes = serde_json::to_vec(&mode).map_err(|error| error.to_string())?;

@@ -117,7 +117,9 @@ async fn respond(
                         crate::moving::standby::connected(standby, socket, path, binding, hello, peer).await;
                     }
                 },
-                Ok(Err(error)) => host.log().line(format_args!("{peer}: the WebSocket on {path} did not open: {error}")),
+                Ok(Err(error)) => {
+                    host.log().line(format_args!("{peer}: the WebSocket on {path} did not open: {error}"))
+                }
                 Err(_) => host.log().line(format_args!(
                     "{peer}: no hello on {path} within {} s of the connection",
                     wire::SILENCE.as_secs()
@@ -162,18 +164,58 @@ async fn respond(
         Ok(metadata) => metadata.len(),
         Err(_) => return Ok(text(StatusCode::INTERNAL_SERVER_ERROR, "Reading release failed")),
     };
-    let body = if *request.method() == Method::HEAD {
+    // A download that broke asks for the rest (`world-network.md`, 断开不是
+    // 结束): one range from a byte to the end or to a byte. Anything else
+    // asked gets the whole file.
+    let range = request.headers().get(hyper::header::RANGE).and_then(|asked| asked.to_str().ok()).and_then(range_of);
+    let (status, start, end) = match range {
+        Some((start, _)) if start >= length => {
+            return Ok(Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header("Content-Range", format!("bytes */{length}"))
+                .body(full(Bytes::new()))
+                .expect("fixed release response headers"));
+        }
+        Some((start, end)) => (StatusCode::PARTIAL_CONTENT, start, end.map_or(length - 1, |end| end.min(length - 1))),
+        None => (StatusCode::OK, 0, length.saturating_sub(1)),
+    };
+    let sending = if length == 0 { 0 } else { end - start + 1 };
+    let body = if *request.method() == Method::HEAD || sending == 0 {
         full(Bytes::new())
     } else {
-        let stream = ReaderStream::new(tokio::fs::File::from_std(file)).map_ok(Frame::data);
+        use std::io::{Seek as _, SeekFrom};
+        use tokio::io::AsyncReadExt as _;
+        let mut file = file;
+        if file.seek(SeekFrom::Start(start)).is_err() {
+            return Ok(text(StatusCode::INTERNAL_SERVER_ERROR, "Reading release failed"));
+        }
+        let stream = ReaderStream::new(tokio::fs::File::from_std(file).take(sending)).map_ok(Frame::data);
         StreamBody::new(stream).boxed_unsync()
     };
-    Ok(Response::builder()
-        .status(StatusCode::OK)
+    let mut response = Response::builder()
+        .status(status)
         .header("Content-Type", if gzip { "application/gzip" } else { "text/plain; charset=utf-8" })
-        .header("Content-Length", length)
-        .body(body)
-        .expect("fixed release response headers"))
+        .header("Content-Length", sending)
+        .header("Accept-Ranges", "bytes");
+    if status == StatusCode::PARTIAL_CONTENT {
+        response = response.header("Content-Range", format!("bytes {start}-{end}/{length}"));
+    }
+    Ok(response.body(body).expect("fixed release response headers"))
+}
+
+/// The one range `bytes=START-` or `bytes=START-END` asks for; none for any
+/// other form, which is answered with the whole file.
+fn range_of(asked: &str) -> Option<(u64, Option<u64>)> {
+    let (start, end) = asked.strip_prefix("bytes=")?.split_once('-')?;
+    let start = start.trim().parse().ok()?;
+    let end = match end.trim() {
+        "" => None,
+        end => Some(end.parse().ok()?),
+    };
+    if end.is_some_and(|end| end < start) {
+        return None;
+    }
+    Some((start, end))
 }
 
 fn full(bytes: Bytes) -> Body {

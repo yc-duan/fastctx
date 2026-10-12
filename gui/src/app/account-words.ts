@@ -10,6 +10,7 @@ import type { MemberKind } from "../world/accounts";
 import type { PasswordProblem } from "./password";
 import { enProblems, failure, zhProblems, type ProblemWords } from "./problem";
 import type { MachineLogAction } from "../world/machine-log";
+import type { NetworkWords } from "../film/network";
 import { agentName } from "../world/names";
 import { enNameSaid, zhNameSaid, type NameSaid } from "./name-words";
 import type { WhenWords } from "./when";
@@ -33,6 +34,12 @@ export interface LoginWords {
   keyFile: string;
   keyPassword: string;
   keyMissing: string;
+  /** The button that opens the system's file picker for the key. */
+  chooseKey: string;
+  /** After a field's label, for one that may be left empty. */
+  optional: string;
+  /** The bar a new password must clear, said before it is typed. */
+  passwordFloor: string;
   next: string;
   firstTime: string;
   fingerprintWhat: string;
@@ -135,9 +142,12 @@ export const zhLogin: LoginWords = {
   sshPort: "SSH 端口",
   sshUser: "用户名",
   signInBy: "登录方式",
-  keyFile: "钥匙文件",
-  keyPassword: "钥匙的密码",
-  keyMissing: "选一个钥匙文件",
+  keyFile: "私钥文件",
+  keyPassword: "私钥密码",
+  keyMissing: "选一个私钥文件",
+  chooseKey: "选择文件",
+  optional: "（可选）",
+  passwordFloor: "至少 8 位，字母、数字、符号中至少两种",
   next: "下一步",
   firstTime: "第一次连这台服务器",
   fingerprintWhat: "服务器的指纹",
@@ -199,13 +209,13 @@ export const zhLogin: LoginWords = {
   back: "返回",
   already: (logins) => `已登录：${logins}`,
   separator: "、",
-  placeMissing: "World 组件未安装",
+  placeMissing: "Fastctx 组件未安装",
   place: "安装",
   problems: zhProblems,
 };
 
 export const enLogin: LoginWords = {
-  lede: "Your computers, and the Codex and Claude on them, in one World.",
+  lede: "Your computers, and the Codex and Claude on them, together in one network.",
   title: "Log in",
   join: "Join a network",
   joinWhat: "Log in with a hub address and account",
@@ -220,9 +230,12 @@ export const enLogin: LoginWords = {
   sshPort: "SSH port",
   sshUser: "User",
   signInBy: "Sign in with",
-  keyFile: "Key file",
-  keyPassword: "Key password",
-  keyMissing: "Choose a key file",
+  keyFile: "Private key file",
+  keyPassword: "Key passphrase",
+  keyMissing: "Choose a private key file",
+  chooseKey: "Choose a file",
+  optional: " (optional)",
+  passwordFloor: "At least 8 characters, with two of letters, numbers and symbols",
   next: "Next",
   firstTime: "First time on this server",
   fingerprintWhat: "The server's fingerprint",
@@ -238,7 +251,7 @@ export const enLogin: LoginWords = {
   notArch: "This server's architecture isn't supported; only x86_64 and aarch64 are",
   addGo: "Add",
   adding: "Adding…",
-  remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Make the World", login: "Sign this computer in", join: "Add the server", arrive: "Move the hub there" },
+  remoteSteps: { connect: "Connect", check: "Look at the server", upload: "Upload the program", hub: "Set up the network", login: "Sign this computer in", join: "Add the server", arrive: "Move the hub there" },
   another: "Log in to another account",
   hub: "Hub address",
   account: "Account",
@@ -259,8 +272,8 @@ export const enLogin: LoginWords = {
   withPassword: "Use account and password",
   scanFailed: "Couldn't scan",
   alone: "Not now",
-  aloneWhat: "Use this computer on its own and join or create a World any time",
-  worldName: "World name",
+  aloneWhat: "Use this computer on its own and join or create a network any time",
+  worldName: "Network name",
   admin: "Administrator account",
   reach: "Connection addresses",
   reachWhat: "Other computers connect to this one at these addresses",
@@ -283,7 +296,7 @@ export const enLogin: LoginWords = {
   back: "Back",
   already: (logins) => `Logged in: ${logins}`,
   separator: ", ",
-  placeMissing: "World components aren't installed",
+  placeMissing: "Fastctx components aren't installed",
   place: "Install",
   problems: enProblems,
 };
@@ -389,9 +402,11 @@ export interface MachinesWords {
   /** A lent login its machine does not list. */
   borrowedGone: string;
   talk: string;
-  /** On its own, logged in nowhere. */
-  alone: string;
-  logIn: string;
+  /** On its own, in no network: the film of what a network is for, and the
+   *  two ways into one. */
+  film: NetworkWords;
+  newNetwork: string;
+  joinNetwork: string;
   /** The drawing as a canvas: what it is to a screen reader, its corner
    *  controls, the dashed ring that adds a machine and what it says while
    *  one is on its way, and what floats beside one chosen. */
@@ -588,9 +603,16 @@ export const zhMachines: MachinesWords = {
   borrowedSaid: (owner) => `${owner} 借给你；它在你的机器上工作，不接触 ${owner} 的这台电脑`,
   borrowedGone: "该登录已不可用",
   talk: "新对话",
-  alone: "未加入世界",
-  logIn: "加入",
-  map: "世界图：拖动平移，Ctrl 加滚轮缩放，Tab 逐台选中",
+  film: {
+    captions: ["你的智能体在这台电脑上干活", "几台机器连到一台中枢服务器，就成了一个网络", "它在每一台上都能干活：写一句 on gpu，活就在那台跑", "合上电脑，那边照样跑完，结果等它回来", "文件在机器之间直接搬，机器也能共享给别人"],
+    thought: "Thought for 2s",
+    ran: "运行",
+    hub: "中枢服务器",
+    shared: "共享给 bo",
+  },
+  newNetwork: "新建网络",
+  joinNetwork: "加入网络",
+  map: "机器图：按住滚轮拖动，Ctrl 加滚轮缩放，Tab 逐台选中",
   zoomOut: "缩小",
   zoomIn: "放大",
   fit: "看全",
@@ -644,7 +666,7 @@ export const zhMachines: MachinesWords = {
     offline: "离线",
     hosts: "中枢服务器就在这台",
     moving: (to) => `正在搬到 ${to}`,
-    older: "这台的 World 版本太旧",
+    older: "这台的 Fastctx 版本太旧",
     system: "中枢服务器只能装在 Windows 和 Linux 上",
     notOwn: "只有管理员自己的机器能接手",
     other: "不能接手",
@@ -663,7 +685,7 @@ export const zhMachines: MachinesWords = {
   moveMoved: (to) => `已搬到 ${to}`,
   moveInstallHere: "这台电脑要装上中枢服务器，需要管理员确认一次。",
   moveInstall: "装上",
-  moveInstallThere: (machine) => `在 ${machine} 上的 World 里点「装上」，或在它的终端里运行：`,
+  moveInstallThere: (machine) => `在 ${machine} 上的 Fastctx 里点「装上」，或在它的终端里运行：`,
   moveInstallCommand: (os) => (os === "windows" ? "fastctx hub arrive" : "sudo fastctx hub arrive"),
   moveCopy: "复制",
   moveCopied: "已复制",
@@ -802,9 +824,16 @@ export const enMachines: MachinesWords = {
   borrowedSaid: (owner) => `Lent to you by ${owner}; it works on your machines and never touches ${owner}'s computer`,
   borrowedGone: "Login unavailable",
   talk: "New conversation",
-  alone: "Not in a World",
-  logIn: "Join",
-  map: "World map: drag to pan, Ctrl and the wheel to zoom, Tab to each machine",
+  film: {
+    captions: ["Your agent works on this computer", "Machines that reach one hub make a network", "It works on any of them: write on gpu, and the job runs there", "Close the computer: the job runs on, and its result waits", "Files go straight between machines, and a machine can be shared"],
+    thought: "Thought for 2s",
+    ran: "Ran",
+    hub: "Hub",
+    shared: "Shared with bo",
+  },
+  newNetwork: "New network",
+  joinNetwork: "Join a network",
+  map: "Machines: hold the wheel to move, Ctrl and the wheel to zoom, Tab to each machine",
   zoomOut: "Zoom out",
   zoomIn: "Zoom in",
   fit: "Fit",
@@ -858,7 +887,7 @@ export const enMachines: MachinesWords = {
     offline: "Offline",
     hosts: "The hub is on it",
     moving: (to) => `Moving to ${to}`,
-    older: "Its World is too old",
+    older: "Its Fastctx is too old",
     system: "The hub runs on Windows and Linux",
     notOwn: "Only the administrator's own machines can take it",
     other: "Cannot take it",
@@ -877,7 +906,7 @@ export const enMachines: MachinesWords = {
   moveMoved: (to) => `Moved to ${to}`,
   moveInstallHere: "This computer installs the hub, after one administrator confirmation.",
   moveInstall: "Install",
-  moveInstallThere: (machine) => `In World on ${machine}, press Install, or run in its terminal:`,
+  moveInstallThere: (machine) => `In Fastctx on ${machine}, press Install, or run in its terminal:`,
   moveInstallCommand: (os) => (os === "windows" ? "fastctx hub arrive" : "sudo fastctx hub arrive"),
   moveCopy: "Copy",
   moveCopied: "Copied",
@@ -1182,7 +1211,7 @@ export const zhAccount: AccountWords = {
   logoutGo: "退出",
   adminPage: "管理中枢服务器",
   another: "添加账号",
-  none: "未加入世界",
+  none: "未加入网络",
   logIn: "加入",
   working: "处理中…",
   close: "关闭",
@@ -1258,7 +1287,7 @@ export const enAccount: AccountWords = {
   logoutGo: "Sign out",
   adminPage: "Manage hub",
   another: "Add account",
-  none: "Not in a World",
+  none: "Not in a network",
   logIn: "Join",
   working: "Working…",
   close: "Close",

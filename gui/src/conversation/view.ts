@@ -1067,6 +1067,7 @@ export class ConversationView {
       const state = sending ? ` ${sending.state}` : "";
       let note = "";
       if (sending?.state === "failed") note = `<div class="bubble-note wrong" title="${escape(sending.why)}">${escape(words.notSent(sending.why))}</div>`;
+      if (sending?.state === "waiting") note = `<div class="bubble-note" title="${escape(sending.why)}">${escape(words.waitingToSend)}</div>`;
       if (sending?.state === "landed") {
         note = `<div class="bubble-note"${sending.why ? ` title="${escape(sending.why)}"` : ""}>${escape(words.landed(sending.how, sending.machine, sending.why ?? null))}</div>`;
       }

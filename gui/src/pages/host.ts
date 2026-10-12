@@ -136,7 +136,7 @@ function hostContext(context: HostContext): Record<string, unknown> {
     displayMode: "inline",
     availableDisplayModes: ["inline"],
     platform: context.platform,
-    userAgent: "World",
+    userAgent: "Fastctx",
     world: { theme: context.theme },
   };
 }
@@ -209,7 +209,7 @@ export class PageHost {
       case "ui/initialize":
         return {
           protocolVersion: PROTOCOL,
-          hostInfo: { name: "World", version: this.options.version },
+          hostInfo: { name: "Fastctx", version: this.options.version },
           hostCapabilities: { serverTools: {}, logging: {} },
           hostContext: hostContext(this.options.context()),
         };

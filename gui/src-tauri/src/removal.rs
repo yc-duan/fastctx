@@ -21,7 +21,7 @@ struct Completed {
 pub(crate) fn program() -> Result<PathBuf, String> {
     crate::setup::carried()
         .or_else(|| crate::setup::places().ok().map(|places| places.installed()).filter(|path| path.is_file()))
-        .ok_or_else(|| "World has no fastctx executable available to uninstall this computer".into())
+        .ok_or_else(|| "Fastctx has no fastctx executable available to uninstall this computer".into())
 }
 
 fn directories(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
@@ -45,7 +45,7 @@ fn command(app: &AppHandle, action: &str, everything: bool) -> Result<Command, S
     command.args(["uninstall", action, "--json"]);
     let application = std::env::current_exe().map_err(|error| error.to_string())?;
     #[cfg(windows)]
-    command.arg("--application").arg(application.parent().ok_or("World has no install directory")?);
+    command.arg("--application").arg(application.parent().ok_or("Fastctx has no install directory")?);
     #[cfg(not(windows))]
     command.arg("--application").arg(&application);
     command.arg("--graphical");
@@ -203,13 +203,13 @@ pub async fn removal_finish(app: AppHandle, everything: bool) -> Result<(), Stri
 fn finish(_app: &AppHandle, everything: bool) -> Result<(), String> {
     use std::os::windows::process::CommandExt as _;
     let current = std::env::current_exe().map_err(|error| error.to_string())?;
-    let uninstaller = current.parent().ok_or("World has no install directory")?.join("uninstall.exe");
+    let uninstaller = current.parent().ok_or("Fastctx has no install directory")?.join("uninstall.exe");
     if !uninstaller.is_file() {
-        return Err("this World is not installed by an uninstallable package".into());
+        return Err("this Fastctx is not installed by an uninstallable package".into());
     }
     let identity = fastctx_platform::current_identity().map_err(|error| error.to_string())?;
     let quote = |text: &str| format!("'{}'", text.replace('\'', "''"));
-    let path = uninstaller.to_str().ok_or("World's uninstaller path is not Unicode")?;
+    let path = uninstaller.to_str().ok_or("Fastctx's uninstaller path is not Unicode")?;
     // World's WebView2 processes outlive it by a moment and hold the
     // application data a complete removal deletes, so the uninstaller waits
     // for every process World started, found by parent and by having started
@@ -231,14 +231,14 @@ fn finish(_app: &AppHandle, everything: bool) -> Result<(), String> {
     let mut command = Command::new("powershell.exe");
     command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
     command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).creation_flags(0x08000000);
-    command.spawn().map_err(|error| format!("starting World's package uninstaller: {error}"))?;
+    command.spawn().map_err(|error| format!("starting Fastctx's package uninstaller: {error}"))?;
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 fn finish(app: &AppHandle, everything: bool) -> Result<(), String> {
     let current = std::env::current_exe().map_err(|error| error.to_string())?;
-    if current == std::path::Path::new("/usr/bin/World") {
+    if current == std::path::Path::new("/usr/bin/fastctx-app") {
         let state = app.state::<State>();
         let mut completed = state.0.lock().expect("removal state");
         let handoff = completed.handoff.take().ok_or("the Debian package handoff is absent")?;
@@ -248,7 +248,7 @@ fn finish(app: &AppHandle, everything: bool) -> Result<(), String> {
     }
     let image = std::env::var_os("APPIMAGE")
         .map(PathBuf::from)
-        .ok_or("this World is not running from an installed deb or an AppImage")?;
+        .ok_or("this Fastctx is not running from an installed deb or an AppImage")?;
     let identity = fastctx_platform::current_identity().map_err(|error| error.to_string())?;
     let temporary =
         tempfile::Builder::new().prefix("world-appimage-uninstall-").tempdir().map_err(|error| error.to_string())?;

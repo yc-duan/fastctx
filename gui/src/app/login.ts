@@ -12,7 +12,7 @@ import type { KeptNow, LoggedIn, NameProblem, Setup } from "../world/bridge";
 import type { Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { LoginWords } from "./account-words";
-import { passwordProblem, passwordStrength } from "./password";
+import { newPasswordFields, passwordReady, sayPassword } from "./new-password";
 import { plainly } from "./problem";
 import { loginLabel } from "./reach";
 import { RemoteWorld, type RemoteSeams } from "./remote-world";
@@ -196,14 +196,7 @@ export class LoginPage implements Page {
       `<p class="sheet-note" role="alert" hidden></p>
       <footer class="welcome-foot"><span class="login-ways">${ways}</span><button class="sheet-go" type="submit"${title ? ` title="${escape(title)}"` : ""}>${escape(go)}</button></footer>`;
     const way = (to: Step, label: string) => `<button class="text-button login-way" type="button" data-way="${to}">${escape(label)}</button>`;
-    const newPassword = (pair: boolean) => {
-      const fields = `<label class="field"><span class="field-label">${escape(words.password)}</span>
-        <input name="password" type="password" required autocomplete="new-password"></label>
-      <label class="field"><span class="field-label">${escape(words.passwordAgain)}</span>
-        <input name="again" type="password" required autocomplete="new-password"></label>`;
-      return `${pair ? `<div class="field-pair">${fields}</div>` : fields}
-      <p class="password-meter" aria-live="polite"><span class="password-bars"><i></i><i></i><i></i></span><span class="password-said"></span></p>`;
-    };
+    const newPassword = (pair: boolean) => newPasswordFields(words, { pair });
     switch (this.step) {
       case "choose":
         this.body.innerHTML = `
@@ -304,18 +297,10 @@ export class LoginPage implements Page {
     this.drawStrength();
   }
 
-  /** Under a new password: what it still lacks, or how strong it is. */
+  /** Under a new password: the bar before it is typed, then what it
+   *  still lacks, or how strong it is. */
   private drawStrength(): void {
-    const meter = this.body.querySelector<HTMLElement>(".password-meter");
-    if (!meter) return;
-    const { words } = this.options;
-    const account = this.body.querySelector<HTMLInputElement>("[name=account]")?.value.trim() ?? "";
-    const password = this.body.querySelector<HTMLInputElement>("[name=password]")?.value ?? "";
-    const problem = password ? passwordProblem(account, password) : null;
-    const strength = passwordStrength(account, password);
-    meter.dataset.strength = String(strength);
-    meter.classList.toggle("wanting", problem !== null);
-    meter.querySelector(".password-said")!.textContent = problem ? words.passwordRule[problem] : strength ? words.strength[strength - 1]! : "";
+    sayPassword(this.body, this.options.words, this.body.querySelector<HTMLInputElement>("[name=account]")?.value.trim() ?? "");
   }
 
   /** Back to the two ways, for a computer that has none yet. */
@@ -544,24 +529,13 @@ export class LoginPage implements Page {
     };
     if (!(await named("machine", name))) return;
     // A new password must pass before anything is sent.
-    const fresh = (account: string, password: string): boolean => {
-      const problem = passwordProblem(account, password);
-      if (problem) {
-        this.note(words.passwordRule[problem]);
-        return false;
-      }
-      if (password !== field("again")?.value) {
-        this.note(words.passwordsDiffer);
-        return false;
-      }
-      return true;
-    };
+    const fresh = (account: string): boolean => passwordReady(this.body, words, account);
     if (this.step === "create") {
       const create = this.options.create;
       const world = field("world")?.value.trim() ?? "";
       const account = field("account")?.value.trim() ?? "";
       const password = field("password")?.value ?? "";
-      if (!create || !world || !account || !password || !fresh(account, password)) return;
+      if (!create || !world || !account || !password || !fresh(account)) return;
       if (!(await named("hub", world))) return;
       const reach = [...this.chosen, ...this.extraAddresses()].map((address) => `${address}:${this.typed.port.trim()}`);
       if (!reach.length) return this.note(words.noReach);
@@ -576,7 +550,7 @@ export class LoginPage implements Page {
       if (!hub || !account || !password) return;
       if (this.step === "open") {
         const open = this.options.openAccount;
-        if (!open || !fresh(account, password)) return;
+        if (!open || !fresh(account)) return;
         act = () => open(hub, account, password, register, name);
       } else act = () => this.options.login(hub, account, password, register, name);
     }

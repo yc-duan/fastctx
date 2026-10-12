@@ -312,6 +312,10 @@ pub enum Call {
         /// chose; see `agents::Choices::files_on`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         files_on: Option<crate::access::Written>,
+        /// This device's name for these words: said again under it, as
+        /// after an answer that never came, they go in once.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
     },
     /// The user's byte stream, followed by an empty frame, on its own IPC
     /// connection. The final Uploaded reply is sent only after verification.

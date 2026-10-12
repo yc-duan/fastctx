@@ -376,10 +376,10 @@ pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Resu
     }
     if installation.application.is_some() {
         let deb = cfg!(target_os = "linux")
-            && installation.application.as_deref() == Some(std::path::Path::new("/usr/bin/World"));
+            && installation.application.as_deref() == Some(std::path::Path::new("/usr/bin/fastctx-app"));
         add(
             "app",
-            "After the kernel finishes, exit World and run its package uninstaller",
+            "After the kernel finishes, exit Fastctx and run its package uninstaller",
             installation
                 .application_image
                 .as_ref()

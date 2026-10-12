@@ -200,10 +200,13 @@ async fn watch(
     }
     loop {
         let data = match conversation.update().await {
-            Ok(Some(fastctx_client::Update::Current)) => continue,
-            Ok(Some(fastctx_client::Update::Moment(moment))) => Data::Event(moment.event),
-            Ok(Some(fastctx_client::Update::History(history))) => Data::History(history),
-            Ok(Some(fastctx_client::Update::Extended(history))) => {
+            Ok(fastctx_client::Update::Current) => Data::Current,
+            Ok(fastctx_client::Update::Interrupted(interruption)) => {
+                Data::Interrupted { why: interruption.why, since: interruption.since }
+            }
+            Ok(fastctx_client::Update::Moment(moment)) => Data::Event(moment.event),
+            Ok(fastctx_client::Update::History(history)) => Data::History(history),
+            Ok(fastctx_client::Update::Extended(history)) => {
                 for event in history {
                     if sender.send((page, Data::Event(event))).is_err() {
                         return;
@@ -211,7 +214,6 @@ async fn watch(
                 }
                 continue;
             }
-            Ok(None) => Data::Unwatched(None),
             Err(error) => Data::Unwatched(Some(error.to_string())),
         };
         let ended = matches!(data, Data::Unwatched(_));

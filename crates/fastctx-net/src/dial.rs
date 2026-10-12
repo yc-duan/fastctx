@@ -449,11 +449,18 @@ pub fn config(max_message: usize) -> WebSocketConfig {
 }
 
 /// Keepalive lets the operating system notice a peer that vanished
-/// without closing; no delay, since frames are small and each one is
-/// awaited.
+/// without closing, on a connection nothing has been said on for a while;
+/// every long-lived connection also carries its own heartbeat, so this
+/// rarely comes into play. Its interval is set: left out, Windows probes
+/// back to back, and on a path that drops keepalive probes takes a
+/// connection idle for 30 s for dead. No delay, since frames are small and
+/// each one is awaited.
 pub fn configure(tcp: &TcpStream) {
     let socket = socket2::SockRef::from(tcp);
-    let _ = socket.set_tcp_keepalive(&socket2::TcpKeepalive::new().with_time(std::time::Duration::from_secs(30)));
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(std::time::Duration::from_secs(30))
+        .with_interval(std::time::Duration::from_secs(10));
+    let _ = socket.set_tcp_keepalive(&keepalive);
     let _ = socket.set_tcp_nodelay(true);
 }
 

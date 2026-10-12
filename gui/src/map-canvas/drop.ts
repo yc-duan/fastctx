@@ -7,6 +7,16 @@ export function nearestItem(items: readonly CanvasItem[], screen: Point, project
   let nearest: CanvasItem | null = null;
   let distance = Infinity;
   for (const item of items) {
+    // A rectangle is hit anywhere inside it, at least a finger's height
+    // about its middle, as its button is drawn; it stands before any circle.
+    if (item.box) {
+      const [left, top] = project([item.box.x, item.box.y]);
+      const [right, bottom] = project([item.box.x + item.box.width, item.box.y + item.box.height]);
+      const reach = Math.max(22, (bottom - top) / 2);
+      const middle = (top + bottom) / 2;
+      if (screen[0] >= left && screen[0] <= right && Math.abs(screen[1] - middle) <= reach) return item;
+      continue;
+    }
     const p = project(item.point);
     const d = Math.hypot(screen[0] - p[0], screen[1] - p[1]);
     if (d <= Math.max(22, item.radius * scale) && d < distance) { nearest = item; distance = d; }

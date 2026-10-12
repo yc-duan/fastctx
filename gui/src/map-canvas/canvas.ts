@@ -193,7 +193,10 @@ export class MapCanvas {
   }
 
   /** Reconcile by identity; focusing a machine survives a detail redraw. */
-  setScene(items: readonly CanvasItem[], handles: readonly CanvasHandle[], bounds: Bounds): void {
+  /** What the drawing holds. With `keepView`, the drawing stays where it is
+   *  and is no longer fitted to what it holds: a change the person made in
+   *  it, such as folding a part, must not move the rest under the pointer. */
+  setScene(items: readonly CanvasItem[], handles: readonly CanvasHandle[], bounds: Bounds, keepView = false): void {
     if (new Set(items.map(i => i.key)).size !== items.length || new Set(handles.map(h => h.key)).size !== handles.length) throw new Error("Duplicate canvas identity");
     this.items = items;
     this.bounds = bounds;
@@ -245,7 +248,8 @@ export class MapCanvas {
     if (this.selected && !kept.has(this.selected)) this.select(null, [0, 0]);
     if (this.pointed && !kept.has(this.pointed)) this.point(null, [0, 0]);
     // Until the drawing is moved by hand it stays fitted to what it holds.
-    if (this.fitOnResize && this.camera.view.width > 0) this.camera.fit(this.bounds, this.fitPadding());
+    if (keepView) this.fitOnResize = false;
+    else if (this.fitOnResize && this.camera.view.width > 0) this.camera.fit(this.bounds, this.fitPadding());
     if (this.draft) {
       const current = this.handles.get(this.draft.handle.key)?.handle;
       if (!current || current.source !== this.draft.handle.source || current.point.some((n, i) => n !== this.draft!.handle.point[i])) this.cancelDraft("changed");
@@ -292,9 +296,22 @@ export class MapCanvas {
     const obstacles: Bounds[] = [...this.labelObstacles];
     for (const entry of this.buttons.values()) {
       const [x, y] = this.camera.toScreen(entry.item.point);
-      const size = Math.max(44, entry.item.radius * view.scale * 2);
-      entry.button.style.transform = `translate(${x - size / 2}px,${y - size / 2}px)`;
-      entry.button.style.width = entry.button.style.height = `${size}px`;
+      const box = entry.item.box;
+      if (box) {
+        // A rectangle as it is drawn, at least a finger's height.
+        const [left, top] = this.camera.toScreen([box.x, box.y]);
+        const width = box.width * view.scale;
+        const height = Math.max(44, box.height * view.scale);
+        const shift = (height - box.height * view.scale) / 2;
+        entry.button.style.transform = `translate(${left}px,${top - shift}px)`;
+        entry.button.style.width = `${width}px`;
+        entry.button.style.height = `${height}px`;
+        entry.button.style.borderRadius = (box.corners ?? [0, 0, 0, 0]).map((corner) => `${corner * view.scale}px`).join(" ");
+      } else {
+        const size = Math.max(44, entry.item.radius * view.scale * 2);
+        entry.button.style.transform = `translate(${x - size / 2}px,${y - size / 2}px)`;
+        entry.button.style.width = entry.button.style.height = `${size}px`;
+      }
       entry.button.setAttribute("aria-pressed", String(entry.item.key === this.selected));
       entry.button.dataset.valid = String(this.draft?.valid.includes(entry.item.key) ?? false);
       entry.button.dataset.target = String(this.draft?.target === entry.item.key);

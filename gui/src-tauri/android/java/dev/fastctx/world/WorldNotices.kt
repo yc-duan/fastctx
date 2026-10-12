@@ -61,7 +61,7 @@ class WorldNotices(private val context: Context) {
             else -> "Reconnecting to your World"
         }
         return NotificationCompat.Builder(context, CONNECTION).setSmallIcon(R.drawable.world_notification)
-            .setContentTitle("World").setContentText(text).setOngoing(true).setOnlyAlertOnce(true)
+            .setContentTitle("Fastctx").setContentText(text).setOngoing(true).setOnlyAlertOnce(true)
             .setContentIntent(launch(null)).setCategory(NotificationCompat.CATEGORY_SERVICE).build()
     }
 
@@ -115,7 +115,8 @@ class WorldNotices(private val context: Context) {
         val notice = synchronized(this) { saved.getString("notice:$tag", null)?.let(::JSONObject) } ?: return
         val words = notice.getJSONArray("answers").getJSONObject(choice).getString("words")
         val to = notice.getJSONObject("to")
-        val error = WorldRuntime.sayNative(to.getString("resident"), to.getString("machine"), words)
+        // The same button pressed again after a failure that did send is the same words.
+        val error = WorldRuntime.sayNative(to.getString("resident"), to.getString("machine"), words, "notice:$tag:$choice")
         check(error == null) { error!! }
         dismiss(tag)
     }

@@ -30,7 +30,7 @@ let changed = false;
 let composeCount = 0;
 const events: CanvasEvent[] = [];
 const surface = new MapCanvas({
-  label: "World drawing. Drag to pan; control-wheel to zoom. Tab reaches every ring and handle.",
+  label: "Network drawing. Drag to pan; control-wheel to zoom. Tab reaches every ring and handle.",
   controls: { minus: "Zoom out", plus: "Zoom in", fit: "Fit world", scale: "Scale" },
   minScale: 1 / 64, maxScale: 8, levels: [0.55, 1.2],
   validTarget: (handle, item) => {

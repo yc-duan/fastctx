@@ -9,6 +9,12 @@
 //! what changed. Each file is staged beside its target and moved into place
 //! whole once its bytes check out; a file that cannot be copied is named in
 //! the report and the rest go on.
+//!
+//! Over a network a file's bytes are staged where a try that broke can find
+//! them again (`world-network.md`, 断开不是结束): beside the target, under a
+//! name made of the contents promised and the target's name, so the next try
+//! asks only for the bytes after them, and a file whose contents changed
+//! between the tries starts over.
 
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -139,11 +145,21 @@ fn hash(path: &Path) -> io::Result<(u64, String)> {
     Ok((size, format!("{:x}", hasher.finalize())))
 }
 
+/// A file the destination needs: which entry, and from which byte, where
+/// an earlier try brought the ones before it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Wanted {
+    pub index: usize,
+    pub from: u64,
+}
+
 /// The destination of a copy, deciding what it needs and putting it in
 /// place.
 pub struct Receiver {
     destination: PathBuf,
     manifest: Manifest,
+    /// Whether files are staged to go on with after a break.
+    resumes: bool,
     pub files: u64,
     pub bytes: u64,
     pub directories: u64,
@@ -205,6 +221,7 @@ impl Receiver {
         Ok(Self {
             destination,
             manifest,
+            resumes: false,
             files: 0,
             bytes: 0,
             directories: 0,
@@ -219,8 +236,10 @@ impl Receiver {
     }
 
     /// Makes the directories and says which files to send: those not here
-    /// already with the same contents.
-    pub fn wanted(&mut self) -> Vec<usize> {
+    /// already with the same contents. When `resumes`, a file an earlier try
+    /// brought part of is asked for from where that part ends.
+    pub fn wanted(&mut self, resumes: bool) -> Vec<Wanted> {
+        self.resumes = resumes;
         let mut wanted = Vec::new();
         // Two names that differ only in case are one file on Windows.
         let mut names = BTreeSet::new();
@@ -239,8 +258,11 @@ impl Receiver {
                     Err(error) => self.problems.push(format!("{}: {error}", target.display())),
                 },
                 EntryKind::File { size, sha256 } => match hash(&target) {
-                    Ok((existing, digest)) if existing == *size && digest == *sha256 => self.unchanged += 1,
-                    _ => wanted.push(index),
+                    Ok((existing, digest)) if existing == *size && digest == *sha256 => {
+                        self.unchanged += 1;
+                        let _ = std::fs::remove_file(partial(&target, sha256));
+                    }
+                    _ => wanted.push(Wanted { index, from: self.held(&target, *size, sha256) }),
                 },
                 EntryKind::Symlink { .. } => {}
             }
@@ -248,21 +270,65 @@ impl Receiver {
         wanted
     }
 
-    /// The size of the file at `index` and where its bytes go.
-    pub fn arrive(&mut self, index: usize) -> (u64, Arriving) {
+    /// How many bytes of the file for `target` an earlier try left, when
+    /// they can be gone on with; the parts other tries left for other
+    /// contents of it are removed.
+    fn held(&self, target: &Path, size: u64, sha256: &str) -> u64 {
+        let ours = partial(target, sha256);
+        let mine = |name: &str| name.starts_with(".fastctx-part-") && name.ends_with(&suffix(target));
+        if let Some(parent) = target.parent()
+            && let Ok(children) = std::fs::read_dir(parent)
+        {
+            for child in children.filter_map(Result::ok) {
+                if mine(&child.file_name().to_string_lossy()) && child.path() != ours {
+                    let _ = std::fs::remove_file(child.path());
+                }
+            }
+        }
+        match std::fs::metadata(&ours) {
+            Ok(metadata) if self.resumes && metadata.is_file() && metadata.len() <= size => metadata.len(),
+            Ok(_) => {
+                let _ = std::fs::remove_file(&ours);
+                0
+            }
+            Err(_) => 0,
+        }
+    }
+
+    /// How many bytes of the file at `index` are still to come, from
+    /// `from`, and where they go.
+    pub fn arrive(&mut self, index: usize, from: u64) -> (u64, Arriving) {
         let entry = self.manifest.entries[index].clone();
-        let EntryKind::File { size, .. } = entry.kind else { unreachable!("only files are wanted") };
+        let EntryKind::File { size, sha256 } = entry.kind else { unreachable!("only files are wanted") };
         let target = self.target(&entry.path).expect("checked when wanted");
-        let staged = target
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| Staged::create(&target, entry.mode))
-            .map_err(|error| format!("{}: {error}", target.display()));
-        let (staged, failure) = match staged {
+        let mut hasher = Sha256::new();
+        let staged = target.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| {
+            if !self.resumes {
+                return Staged::create(&target, entry.mode);
+            }
+            let at = partial(&target, &sha256);
+            let (staged, held) = Staged::resume(&target, at.clone(), entry.mode)?;
+            if held != from {
+                staged.discard();
+                return Err(io::Error::other("what an earlier try left of it changed meanwhile"));
+            }
+            // The bytes already here count toward the file's hash.
+            let mut kept = File::open(&at)?.take(from);
+            let mut buffer = vec![0u8; 1 << 20];
+            loop {
+                let read = kept.read(&mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..read]);
+            }
+            Ok(staged)
+        });
+        let (staged, failure) = match staged.map_err(|error| format!("{}: {error}", target.display())) {
             Ok(staged) => (Some(staged), None),
             Err(error) => (None, Some(error)),
         };
-        (size, Arriving { staged, hasher: Sha256::new(), failure })
+        (size.saturating_sub(from), Arriving { staged, hasher, failure })
     }
 
     /// Puts an arrived file in place if its bytes are the ones promised.
@@ -271,10 +337,16 @@ impl Receiver {
         let EntryKind::File { size, sha256 } = &entry.kind else { unreachable!("only files are wanted") };
         let target = self.target(&entry.path).expect("checked when wanted");
         if let Some(failure) = arriving.failure {
+            if let Some(staged) = arriving.staged {
+                staged.discard();
+            }
             self.problems.push(failure);
             return;
         }
         if format!("{:x}", arriving.hasher.finalize()) != *sha256 {
+            if let Some(staged) = arriving.staged {
+                staged.discard();
+            }
             self.problems
                 .push(format!("{}: its bytes changed while it was copied, or on the way; not kept", entry.path));
             return;
@@ -327,6 +399,20 @@ impl Receiver {
         }
         Some(target)
     }
+}
+
+/// Where the bytes of `target`'s file with the contents `sha256` are
+/// staged, to be gone on with after a break: beside it, hidden, named by
+/// the contents and by the target's own name.
+fn partial(target: &Path, sha256: &str) -> PathBuf {
+    target.with_file_name(format!(".fastctx-part-{}{}", &sha256[..sha256.len().min(16)], suffix(target)))
+}
+
+/// The end of the names of the parts staged for `target`, whatever their
+/// contents.
+fn suffix(target: &Path) -> String {
+    let name = target.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    format!("-{}", &format!("{:x}", Sha256::digest(name.as_bytes()))[..8])
 }
 
 /// One name of a path, with nothing that leads elsewhere: not empty, not

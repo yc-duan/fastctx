@@ -327,15 +327,17 @@ async fn connected(
         }));
     }
 
-    let mut last_pong = Instant::now();
+    // Anything the hub sends shows it is there, a pong or not: a pong can
+    // wait behind letters and answers the hub queued before it.
+    let mut heard = Instant::now();
     let mut last_ping = 0;
     let ended = loop {
         let next = tokio::select! {
-            // A continuous stream of unrelated frames must not postpone
-            // the heartbeat deadline once it has expired.
+            // Checked first, so that once nothing has come for the whole
+            // silence the connection ends even if something is just arriving.
             biased;
-            _ = tokio::time::sleep_until(last_pong + SILENCE) => {
-                break Ended::Retry(format!("the hub did not answer a heartbeat for {} s", SILENCE.as_secs()));
+            _ = tokio::time::sleep_until(heard + SILENCE) => {
+                break Ended::Retry(format!("nothing came from the hub for {} s", SILENCE.as_secs()));
             },
             _ = &mut writer_stopped => break Ended::Retry("writing to the hub failed".to_string()),
             () = &mut rerouted => break Ended::Reroute("the ways this machine connects to the hub by changed".to_string()),
@@ -355,13 +357,16 @@ async fn connected(
                     break Ended::Retry(format!("an unreadable frame from the hub: {error}"));
                 }
             },
-            Some(Ok(_)) => continue,
+            Some(Ok(_)) => {
+                heard = Instant::now();
+                continue;
+            }
         };
+        heard = Instant::now();
         match frame {
             Down::Pong { n } => {
                 if n > last_ping {
                     last_ping = n;
-                    last_pong = Instant::now();
                     let mut pinged = pinged.lock().expect("never poisoned");
                     if let Some(sent) = pinged.remove(&n) {
                         let ms = u32::try_from(sent.elapsed().as_millis()).unwrap_or(u32::MAX);

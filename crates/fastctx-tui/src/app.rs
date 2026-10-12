@@ -250,8 +250,16 @@ pub enum Data {
     },
     History(Vec<SessionEvent>),
     Event(SessionEvent),
-    /// The watch ended, with why when it broke.
+    /// The watch could not open, with why.
     Unwatched(Option<String>),
+    /// The watch broke, or opening it again failed, and it is being opened
+    /// again: why, and since when.
+    Interrupted {
+        why: String,
+        since: std::time::SystemTime,
+    },
+    /// The watch is current: first, or again after it broke.
+    Current,
     /// What the agent being watched has going on besides its turns.
     Around(Result<Around, String>),
     /// Whether the user's own sessions here have the World's tools.

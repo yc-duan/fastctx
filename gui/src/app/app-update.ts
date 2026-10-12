@@ -129,7 +129,7 @@ export class AppUpdateRow {
         break;
     }
     this.element.hidden = false;
-    this.element.innerHTML = `<dt>${escape(words.app)}</dt><dd><span>${escape(this.version ? `World ${this.version}` : "World")}</span>${act}<p class="settings-said" role="status"${why ? ` title="${escape(why)}"` : ""}>${escape(said)}</p>${
+    this.element.innerHTML = `<dt>${escape(words.app)}</dt><dd><span>${escape(this.version ? `Fastctx ${this.version}` : "Fastctx")}</span>${act}<p class="settings-said" role="status"${why ? ` title="${escape(why)}"` : ""}>${escape(said)}</p>${
       notes ? `<p class="settings-notes">${escape(notes)}</p>` : ""
     }</dd>`;
   }

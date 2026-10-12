@@ -26,32 +26,57 @@ pub(crate) async fn features_set(
 }
 
 /// What a features watch sends: the switches, at first and after each
-/// change, or why the watch ended.
+/// change, or why the watch broke while it is opened again.
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Piece {
     Features { features: Features },
-    Ended { error: String },
+    Interrupted { error: String, since: u64 },
 }
 
 /// Follows the switches until the page closes or `unwatch` is called with
-/// the id this returns.
+/// the id this returns. A watch that broke, as when the node handed the
+/// World on, is opened again as `Again` paces it; the switches as they are
+/// then come first.
 #[fastctx_gui_command::command]
 pub(crate) async fn features_watch(shell: tauri::State<'_, Shell>, pieces: Channel<Piece>) -> Result<u64, String> {
     let page = shell.page.load(Ordering::Relaxed);
-    let mut watch = shell.world().watch_features().await.map_err(|error| error.to_string())?;
+    let world = shell.world();
+    let mut watch = world.watch_features().await.map_err(|error| error.to_string())?;
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
     shell.follow(page, id, async move {
+        let mut again = fastctx_client::Again::default();
         loop {
             match watch.next().await {
                 Ok(features) => {
+                    again.came();
                     if pieces.send(Piece::Features { features }).is_err() {
                         return;
                     }
+                    continue;
                 }
                 Err(error) => {
-                    let _ = pieces.send(Piece::Ended { error: error.to_string() });
-                    return;
+                    let interruption = again.broke(error.to_string());
+                    let since = crate::epoch_ms(interruption.since);
+                    if pieces.send(Piece::Interrupted { error: interruption.why, since }).is_err() {
+                        return;
+                    }
+                }
+            }
+            loop {
+                again.pause(&world, None).await;
+                match world.watch_features().await {
+                    Ok(opened) => {
+                        watch = opened;
+                        break;
+                    }
+                    Err(error) => {
+                        let interruption = again.broke(error.to_string());
+                        let since = crate::epoch_ms(interruption.since);
+                        if pieces.send(Piece::Interrupted { error: interruption.why, since }).is_err() {
+                            return;
+                        }
+                    }
                 }
             }
         }

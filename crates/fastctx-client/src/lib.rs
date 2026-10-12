@@ -13,6 +13,7 @@
 //! application's own directory.
 
 mod address;
+mod again;
 mod artifact_sink;
 pub mod attachments;
 pub mod cache;
@@ -40,7 +41,8 @@ pub mod town;
 pub mod world;
 
 pub use address::hub_addresses;
-pub use conversation::{Conversation, Following, Moment, Update};
+pub use again::{Again, Interruption};
+pub use conversation::{Conversation, Following, Moment, Next, Update};
 pub use file_read::Reading;
 pub use town::TownView;
 pub use world::{Error, Said, TownRecord, World};

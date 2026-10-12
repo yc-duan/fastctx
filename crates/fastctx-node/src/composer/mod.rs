@@ -66,7 +66,11 @@ pub async fn request(
         return here(node, &node.machine(), &resident, request).await;
     }
     let call = RemoteCall::Composer { resident, request };
-    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(failure)? {
+    match node
+        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .await
+        .map_err(|error| Failure::unanswered(error.to_string()))?
+    {
         Ok(RemoteReply::Composer(updated)) => Ok(*updated),
         Ok(_) => Err(failure("the machine answered something other than a composer")),
         Err(error) => Err(error),

@@ -105,7 +105,7 @@ fn acknowledge(state: tauri::State<'_, Presence>, id: u64) -> Result<(), String>
 }
 
 fn hwnd(app: &tauri::AppHandle) -> Result<HWND, String> {
-    let window = app.get_webview_window("main").ok_or("World's main window does not exist")?;
+    let window = app.get_webview_window("main").ok_or("Fastctx's main window does not exist")?;
     window.hwnd().map(|value| HWND(value.0)).map_err(|e| e.to_string())
 }
 
@@ -123,7 +123,7 @@ fn window_presence(app: tauri::AppHandle) -> Result<WindowPresence, String> {
 }
 
 fn reveal(app: &tauri::AppHandle) -> Result<(), String> {
-    let window = app.get_webview_window("main").ok_or("World's main window does not exist")?;
+    let window = app.get_webview_window("main").ok_or("Fastctx's main window does not exist")?;
     // Keep tao's visibility cache in sync. Calling ShowWindow directly would
     // make a formerly hidden window visible while tao still considers it
     // hidden, causing the next window.hide() to do nothing.
@@ -132,7 +132,7 @@ fn reveal(app: &tauri::AppHandle) -> Result<(), String> {
     let hwnd = hwnd(app)?;
     unsafe {
         if !SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() != hwnd {
-            return Err("Windows refused to bring World to the foreground".into());
+            return Err("Windows refused to bring Fastctx to the foreground".into());
         }
     }
     if let Err(error) = app.emit_to("main", "desktop-presence-changed", ()) {
@@ -193,7 +193,7 @@ pub fn enter() -> Result<Option<Instance>, String> {
         // installation goes on; World offers what is missing when it opens.
         [command] if command == "--after-install" => {
             if let Err(error) = crate::setup::after_install() {
-                crate::installer_lines::complain(&format!("preparing this computer for World: {error}"));
+                crate::installer_lines::complain(&format!("preparing this computer for Fastctx: {error}"));
                 std::process::exit(1);
             }
             Ok(None)
@@ -242,12 +242,12 @@ pub fn enter() -> Result<Option<Instance>, String> {
 }
 
 fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "desktop-presence-open", "打开 World", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "desktop-presence-quit", "退出 World", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "desktop-presence-open", "打开 Fastctx", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "desktop-presence-quit", "退出 Fastctx", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
     TrayIconBuilder::with_id("desktop-presence")
-        .icon(app.default_window_icon().expect("bundled World icon").clone())
-        .tooltip("World")
+        .icon(app.default_window_icon().expect("bundled Fastctx icon").clone())
+        .tooltip("Fastctx")
         .menu(&menu)
         .show_menu_on_left_click(false)
         // Tauri menu listeners are global. Register exactly once, here;
@@ -294,7 +294,7 @@ pub fn plugin(instance: Instance) -> TauriPlugin<tauri::Wry> {
         .on_event(move |app, event| match event {
             tauri::RunEvent::Ready => {
                 if let Err(error) = tray(app) {
-                    report(app, format!("creating World's tray: {error}"));
+                    report(app, format!("creating Fastctx's tray: {error}"));
                     app.exit(1);
                     return;
                 }
@@ -308,7 +308,7 @@ pub fn plugin(instance: Instance) -> TauriPlugin<tauri::Wry> {
                         report(&handle, error);
                     }
                     if let Err(error) = instance.serve(handle.clone()).await {
-                        report(&handle, format!("World instance listener stopped: {error}"));
+                        report(&handle, format!("Fastctx instance listener stopped: {error}"));
                         handle.exit(1);
                     }
                 });
@@ -321,17 +321,17 @@ pub fn plugin(instance: Instance) -> TauriPlugin<tauri::Wry> {
                     {
                         use tauri_plugin_window_state::AppHandleExt;
                         if let Err(error) = app.save_window_state(crate::WINDOW_KEPT) {
-                            report(app, format!("keeping World's window place: {error}"));
+                            report(app, format!("keeping Fastctx's window place: {error}"));
                         }
                     }
                     if let Some(window) = app.get_webview_window("main")
                         && let Err(error) = window.hide()
                     {
-                        report(app, format!("hiding World's window: {error}"));
+                        report(app, format!("hiding Fastctx's window: {error}"));
                     }
                 }
                 if let Err(error) = app.emit_to("main", "desktop-presence-changed", ()) {
-                    eprintln!("reporting World's window state: {error}");
+                    eprintln!("reporting Fastctx's window state: {error}");
                 }
             }
             _ => (),

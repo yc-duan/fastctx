@@ -1,9 +1,9 @@
 //! The shell exposes shared input without keeping a draft or releasing a queue itself.
 
 use fastctx_client::{World, composer::Composing};
+use fastctx_net::link::Status;
 use fastctx_types::attachments::Attachment;
 use fastctx_types::composer::{Change, Composer, Mutation, Request, Target, Updated};
-use fastctx_net::link::Status;
 use fastctx_types::{MachineName, ResidentId};
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -20,9 +20,26 @@ pub struct Watching {
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Piece {
-    Snapshot { watch: String, composer: Box<Composer> },
-    Interrupted { error: Option<String> },
-    Ended { error: Option<String> },
+    Snapshot {
+        watch: String,
+        composer: Box<Composer>,
+    },
+    /// The watch broke and is being opened again: why, and since when
+    /// (milliseconds since the Unix epoch).
+    Interrupted {
+        error: Option<String>,
+        since: u64,
+    },
+}
+
+/// A request the page sent that came to nothing: `again` when no answer
+/// came, so it is sent again, as it was, once the shared input is back.
+fn not_done(error: fastctx_client::Error) -> crate::NotSaid {
+    crate::NotSaid { again: World::unanswered(&error), message: error.to_string() }
+}
+
+fn refused(message: String) -> crate::NotSaid {
+    crate::NotSaid { message, again: false }
 }
 
 #[fastctx_gui_command::command]
@@ -30,12 +47,12 @@ pub async fn composer_read(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
-) -> Result<Updated, String> {
+) -> Result<Updated, crate::NotSaid> {
     shell
         .world()
-        .composer(resident(resident_id)?, machine(machine_name)?, Request::Read)
+        .composer(resident(resident_id).map_err(refused)?, machine(machine_name).map_err(refused)?, Request::Read)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(not_done)
 }
 
 #[fastctx_gui_command::command]
@@ -44,12 +61,12 @@ pub async fn composer_update(
     resident_id: String,
     machine_name: Option<String>,
     mutation: Mutation,
-) -> Result<Updated, String> {
+) -> Result<Updated, crate::NotSaid> {
     shell
         .world()
-        .update_composer(resident(resident_id)?, machine(machine_name)?, mutation)
+        .update_composer(resident(resident_id).map_err(refused)?, machine(machine_name).map_err(refused)?, mutation)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(not_done)
 }
 
 #[fastctx_gui_command::command]
@@ -59,7 +76,7 @@ pub async fn composer_send(
     machine_name: Option<String>,
     operation_id: String,
     epoch: u64,
-) -> Result<Updated, String> {
+) -> Result<Updated, crate::NotSaid> {
     composer_update(
         shell,
         resident_id,
@@ -123,6 +140,11 @@ async fn open(
     }
 }
 
+/// Follows the shared input until the page lets go. A watch that broke is
+/// not the end (`world-network.md`, 断开不是结束): the page is told it is
+/// interrupted and why, and it is opened again as `Again` paces it, under a
+/// fresh watch name the next snapshot carries. A hidden Android page lets
+/// its watch go until it is shown again.
 async fn stream(
     world: World,
     resident: ResidentId,
@@ -131,36 +153,25 @@ async fn stream(
     name: String,
     pieces: Channel<Piece>,
 ) {
-    let mut changes = match world.device() {
-        Some(device) => match device.machine_changes(machine.as_ref()) {
-            Ok((_, changes)) => Some(changes),
-            Err(error) => {
-                let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
-                return;
-            }
-        },
-        None => None,
-    };
     #[cfg(target_os = "android")]
     let mut visible = crate::android::visibility();
+    let mut again = fastctx_client::Again::default();
+    again.came();
     let mut composing = Some(initial);
     let mut name = name;
+    // Whether the last try broke, so the next waits; a page shown again
+    // opens at once.
+    let mut broken = false;
     loop {
         #[cfg(target_os = "android")]
         if !*visible.borrow_and_update() {
             composing = None;
         }
         let next = tokio::select! {
-            changed = async { match changes.as_mut() { Some(changes) => changes.changed().await.map_err(|error| error.to_string()), None => std::future::pending().await } } => {
-                if let Err(error) = changed { let _ = pieces.send(Piece::Ended { error: Some(error) }); return; }
-                None
-            },
-            _ = async {
+            _ = shown(
                 #[cfg(target_os = "android")]
-                { visible.changed().await }
-                #[cfg(not(target_os = "android"))]
-                { std::future::pending::<Result<(), tokio::sync::watch::error::RecvError>>().await }
-            } => None,
+                &mut visible,
+            ) => None,
             next = async { match composing.as_mut() { Some(composing) => composing.next().await, None => std::future::pending().await } } => Some(next),
         };
         match next {
@@ -172,46 +183,67 @@ async fn stream(
             }
             Some(ended) => {
                 drop(composing.take());
-                let error = ended.err().map(|error| error.to_string());
-                if changes.is_none() {
-                    let _ = pieces.send(Piece::Ended { error });
+                broken = true;
+                let why = match ended {
+                    Ok(_) => "the shared input's watch ended".to_string(),
+                    Err(error) => error.to_string(),
+                };
+                if pieces.send(interrupted(again.broke(why))).is_err() {
                     return;
                 }
-                if pieces.send(Piece::Interrupted { error }).is_err() {
-                    return;
-                }
+            }
+            None => drop(composing.take()),
+        }
+        loop {
+            #[cfg(target_os = "android")]
+            if !*visible.borrow_and_update() {
+                break;
+            }
+            if broken {
                 tokio::select! {
-                    changed = changes.as_mut().expect("device changes").changed() => if changed.is_err() { return; },
-                    _ = async {
+                    () = again.pause(&world, machine.as_ref()) => {}
+                    _ = shown(
                         #[cfg(target_os = "android")]
-                        { visible.changed().await }
-                        #[cfg(not(target_os = "android"))]
-                        { std::future::pending::<Result<(), tokio::sync::watch::error::RecvError>>().await }
-                    } => {},
+                        &mut visible,
+                    ) => {}
                 }
             }
-            None => {
-                drop(composing.take());
-            }
-        }
-        #[cfg(target_os = "android")]
-        if !*visible.borrow_and_update() {
-            continue;
-        }
-        match open(&world, &resident, &machine).await {
-            Ok((fresh, watch, composer)) => {
-                name = watch;
-                if pieces.send(Piece::Snapshot { watch: name.clone(), composer: Box::new(composer) }).is_err() {
-                    return;
+            match open(&world, &resident, &machine).await {
+                Ok((fresh, watch, composer)) => {
+                    again.came();
+                    broken = false;
+                    name = watch;
+                    if pieces.send(Piece::Snapshot { watch: name.clone(), composer: Box::new(composer) }).is_err() {
+                        return;
+                    }
+                    composing = Some(fresh);
+                    break;
                 }
-                composing = Some(fresh);
-            }
-            Err(error) => {
-                let _ = pieces.send(Piece::Ended { error: Some(error) });
-                return;
+                Err(why) => {
+                    broken = true;
+                    if pieces.send(interrupted(again.broke(why))).is_err() {
+                        return;
+                    }
+                }
             }
         }
     }
+}
+
+fn interrupted(interruption: fastctx_client::Interruption) -> Piece {
+    Piece::Interrupted { error: Some(interruption.why), since: crate::epoch_ms(interruption.since) }
+}
+
+/// A change of whether an Android page is shown; never elsewhere.
+async fn shown(#[cfg(target_os = "android")] visible: &mut tokio::sync::watch::Receiver<bool>) {
+    #[cfg(target_os = "android")]
+    {
+        if visible.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    std::future::pending::<()>().await
 }
 
 /// A completed upload receipt is returned even when the draft changed during transfer.

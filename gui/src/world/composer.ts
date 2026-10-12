@@ -84,7 +84,7 @@ export interface ComposerAttachmentAdded {
 
 export type ComposerPiece =
   | { readonly kind: "snapshot"; readonly watch: string; readonly composer: ComposerSnapshot }
-  | { readonly kind: "interrupted" | "ended"; readonly error: string | null };
+  | { readonly kind: "interrupted"; readonly error: string | null; readonly since: number };
 
 export interface ComposerWatching {
   readonly id: number;

@@ -34,7 +34,7 @@
         <service android:name=".WorldService" android:exported="false" android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Persistent authenticated connection to the owner's self-hosted World, receiving agent conversation requests and completion notifications without a third-party push provider." />
+                android:value="Persistent authenticated connection to the owner's self-hosted Fastctx network, receiving agent conversation requests and completion notifications without a third-party push provider." />
         </service>
         <receiver android:name=".WorldBoot" android:enabled="true" android:exported="false">
             <intent-filter>

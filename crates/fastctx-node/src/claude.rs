@@ -65,6 +65,9 @@ pub struct Claude {
     /// Held to read while the World starts a session and learns its id;
     /// to write, while a mod registration is assigned to a resident.
     pub births: tokio::sync::RwLock<()>,
+    /// The user's words handed to each resident's session as the user's,
+    /// until Claude Code reports keeping them (`said_by_world`).
+    handed: Mutex<HashMap<ResidentId, Vec<String>>>,
 }
 
 struct State {
@@ -102,6 +105,39 @@ impl Claude {
             reading: Default::default(),
             startup_listings: Default::default(),
             changed: Default::default(),
+            handed: Default::default(),
+        })
+    }
+
+    /// The user's words `text` go to `resident`'s session as the user's.
+    fn handing(&self, resident: &ResidentId, text: &str) {
+        self.handed.lock().expect("never poisoned").entry(resident.clone()).or_default().push(text.to_string());
+    }
+
+    /// Whether the user's message `text` Claude Code reports keeping in
+    /// `resident`'s session is words the World handed it as the user's. The
+    /// World shows those as it heard them, so the host's own record of them
+    /// is the same words a second time; each handing answers one report.
+    /// Words still in the inbox count too, as after the node restarted
+    /// between handing them and the report.
+    pub(crate) fn said_by_world(&self, directory: &ConversationDir, resident: &ResidentId, text: &str) -> bool {
+        {
+            let mut handed = self.handed.lock().expect("never poisoned");
+            if let Some(words) = handed.get_mut(resident)
+                && let Some(at) = words.iter().position(|words| words == text)
+            {
+                words.remove(at);
+                if words.is_empty() {
+                    handed.remove(resident);
+                }
+                return true;
+            }
+        }
+        crate::inbox::pending(directory).is_ok_and(|pending| {
+            pending.iter().any(|pending| {
+                matches!(pending.state, PendingState::Handed | PendingState::Waking)
+                    && matches!(words(&pending.delivery.notice), (words, true) if words == text)
+            })
         })
     }
 }
@@ -904,7 +940,7 @@ async fn pair(node: &Arc<Node>, session: &str) {
                         None => newer,
                     }
             }) {
-                if let Err(failure) = into_inbox(node, session, &directory, &pending) {
+                if let Err(failure) = into_inbox(node, &resident, session, &directory, &pending) {
                     node.log.line(format_args!("handing {} to {resident}'s session: {failure}", pending.delivery.id));
                 }
             }
@@ -944,14 +980,17 @@ pub async fn deliver(
     if !about.world_started && !stopped_background {
         // The user's own session: whatever its state, its mod hands this over
         // when the session runs, and when the user opens it again.
-        return Some(into_inbox(node, &session, directory, pending));
+        return Some(into_inbox(node, to, &session, directory, pending));
     }
     Some(match running(node, about.home.as_deref(), &session).await {
-        Ok(true) => into_inbox(node, &session, directory, pending),
+        Ok(true) => into_inbox(node, to, &session, directory, pending),
         // Its supervisor stopped it: the words wake it, as they are, and its
         // next turn takes them.
         Ok(false) => {
             let (text, as_user) = words(&pending.delivery.notice);
+            if as_user {
+                node.claude.handing(to, &text);
+            }
             let claimed: std::io::Result<bool> = (|| {
                 let taking = node.taking.lock().expect("never poisoned");
                 if taking.contains(&(to.clone(), pending.delivery.id.clone())) {
@@ -1022,7 +1061,13 @@ async fn failed_wake(
 
 /// Puts something kept into the mod's inbox; it is kept until the mod says
 /// which turn took it.
-fn into_inbox(node: &Node, session: &str, directory: &ConversationDir, pending: &Pending) -> Result<Landed, Failure> {
+fn into_inbox(
+    node: &Node,
+    resident: &ResidentId,
+    session: &str,
+    directory: &ConversationDir,
+    pending: &Pending,
+) -> Result<Landed, Failure> {
     let taking = node.taking.lock().expect("never poisoned");
     if taking.iter().any(|(_, id)| *id == pending.delivery.id) {
         return Ok(Landed::Waiting {
@@ -1036,6 +1081,9 @@ fn into_inbox(node: &Node, session: &str, directory: &ConversationDir, pending: 
     let session_directory = exchange::sessions(node.world.path()).join(session);
     crate::inbox::target(directory, &pending.delivery.id, session).map_err(|error| Failure::new(error.to_string()))?;
     let (text, as_user) = words(&pending.delivery.notice);
+    if as_user {
+        node.claude.handing(resident, &text);
+    }
     exchange::deliver(&session_directory, pending.delivery.id.as_str(), &text, as_user)
         .and_then(|()| crate::inbox::set_state(directory, &pending.delivery.id, PendingState::Handed))
         .map(|()| Landed::Handed { id: pending.delivery.id.clone() })
@@ -1206,7 +1254,7 @@ pub async fn open_here(
     // reads as the user's: they are. They are kept until its first turn
     // takes them, so whoever follows them knows which turn that is.
     let first = Pending {
-        delivery: crate::attachments::delivery(typed_on, text, attachments),
+        delivery: crate::attachments::delivery(typed_on, text, attachments, None),
         readers: Vec::new(),
         state: PendingState::Waking,
         working: false,
@@ -1215,6 +1263,7 @@ pub async fn open_here(
     crate::inbox::keep(&directory, &first)
         .map_err(|error| Failure::new(format!("keeping the first words: {error}")))?;
     let text = self::words(&first.delivery.notice).0;
+    node.claude.handing(&id, &text);
     let world = node.world.path().to_path_buf();
     // Until the World knows which session this is, a Claude session's MCP
     // connection it cannot place waits, rather than becoming someone new.

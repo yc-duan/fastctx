@@ -74,7 +74,7 @@ pub(crate) fn at_package_uninstall(everything: bool) -> Result<Removed, String> 
         && !complete_removal_begun()?
     {
         say(&format!(
-            "This computer is the server of the world {}. Removing everything here would end that world for every computer in it; that is done only inside World, where the world's name is typed to confirm. The data stays; the rest of World is removed.",
+            "This computer is the server of the world {}. Removing everything here would end that world for every computer in it; that is done only inside Fastctx, where the world's name is typed to confirm. The data stays; the rest of Fastctx is removed.",
             hub.name
         ));
         removed = Removed::KeptForHub;

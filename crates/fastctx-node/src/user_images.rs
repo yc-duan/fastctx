@@ -62,7 +62,8 @@ pub fn claude(node: &Node, resident: &ResidentId, event: &mut SessionEvent) {
 }
 
 pub async fn live(node: &Node, resident: &ResidentId, mut event: SessionEvent) -> std::io::Result<()> {
-    if node.residents.about(resident).is_some_and(|(about, _)| about.host.agent.as_str() == "claude") {
+    let claude_session = node.residents.about(resident).is_some_and(|(about, _)| about.host.agent.as_str() == "claude");
+    if claude_session {
         claude(node, resident, &mut event);
         if let Happened::Heard { message: Some(message), .. } = &event.happened
             && !message.images.is_empty()
@@ -78,6 +79,16 @@ pub async fn live(node: &Node, resident: &ResidentId, mut event: SessionEvent) -
         // later host projection updates it only when it adds native pictures.
         let told = fastctx_hands::told::is_told(text) || fastctx_hosts::codex::sent_by_world(message);
         if (delivery.is_some() || told) && message.images.is_empty() {
+            continue;
+        }
+        // The user's words the World handed in as the user's, which Claude
+        // Code then keeps as the user's: the World's own record of them is
+        // already shown (`claude::history::place` drops them the same way).
+        if claude_session
+            && message.images.is_empty()
+            && attachments::AttachedMessage::read(text).is_none()
+            && node.claude.said_by_world(&node.world.conversation(resident), resident, text)
+        {
             continue;
         }
         node.watchers.publish(resident, &event);

@@ -22,8 +22,9 @@ pub fn copy(from: &Path, to: &str, machine: &MachineName) -> io::Result<CopyRepo
     }
     receiver.problems.extend(walked.problems);
     let mut buffer = vec![0; 1 << 20];
-    for index in receiver.wanted() {
-        let (_, mut arriving) = receiver.arrive(index);
+    for wanted in receiver.wanted(false) {
+        let index = wanted.index;
+        let (_, mut arriving) = receiver.arrive(index, 0);
         let read = (|| {
             let mut file = File::open(&walked.sources[index])?;
             loop {

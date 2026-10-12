@@ -34,11 +34,11 @@ fn start(directory: PathBuf, bridge: Arc<bridge::Bridge>) -> Result<(), String> 
         World::from_device(Device::open_managed(directory.join("device")).map_err(|error| error.to_string())?)
             .keeping(crate::connection::kept(&directory)?)
     };
-    WORLD.set(world.clone()).map_err(|_| "World's Android runtime was already started")?;
+    WORLD.set(world.clone()).map_err(|_| "Fastctx's Android runtime was already started")?;
     tauri::async_runtime::set(runtime.handle().clone());
     runtime.spawn(monitor::run(world.clone(), bridge.clone()));
     runtime.spawn(observer::run(world, directory, bridge));
-    RUNTIME.set(runtime).map_err(|_| "World's Android runtime was already started")?;
+    RUNTIME.set(runtime).map_err(|_| "Fastctx's Android runtime was already started")?;
     Ok(())
 }
 
@@ -47,23 +47,26 @@ pub fn world() -> Result<World, String> {
 }
 
 /// The user's words to a conversation, from a notification's button; the
-/// caller's thread, not the runtime's, waits for how it went.
-fn say(resident: String, machine: String, text: String) -> Result<(), String> {
+/// caller's thread, not the runtime's, waits for how it went. Said again under
+/// the same `id`, they go in once.
+fn say(resident: String, machine: String, text: String, id: String) -> Result<(), String> {
     let world = world()?;
     let runtime = RUNTIME.get().ok_or("Android has not started the device connection")?;
     let resident = resident.parse().map_err(|error| format!("{error}"))?;
     let machine = machine.parse().map_err(|error| format!("{error}"))?;
     runtime
-        .block_on(world.talk_with_attachments(resident, Some(machine), text, vec![], None))
+        .block_on(world.talk_with_attachments(resident, Some(machine), text, vec![], None, Some(id)))
         .map(drop)
         .map_err(|error| error.to_string())
 }
 
 fn reconnect() {
-    if let Some(device) = WORLD.get().and_then(World::device) {
+    if let Some(world) = WORLD.get()
+        && let Some(device) = world.device()
+    {
         readiness::reconnecting(device);
         fastctx_net::android::network_changed();
-        device.reconnect();
+        world.retry_now();
     }
 }
 
@@ -185,7 +188,7 @@ pub fn plugin() -> TauriPlugin<tauri::Wry> {
         .setup(|app, api| {
             let plugin = api.register_android_plugin("dev.fastctx.world", "WorldPlugin")?;
             app.manage(Native(plugin));
-            APP.set(app.clone()).map_err(|_| "World's Android shell was already started")?;
+            APP.set(app.clone()).map_err(|_| "Fastctx's Android shell was already started")?;
             Ok(())
         })
         .on_event(|app, event| match event {

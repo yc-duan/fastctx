@@ -140,7 +140,7 @@ impl Notifications {
                     return Ok(());
                 }
                 let why = match setting {
-                    NotificationSetting::DisabledForApplication => "disabled for World",
+                    NotificationSetting::DisabledForApplication => "disabled for Fastctx",
                     NotificationSetting::DisabledForUser => "disabled for this user",
                     NotificationSetting::DisabledByGroupPolicy => "disabled by group policy",
                     NotificationSetting::DisabledByManifest => "disabled by the application manifest",

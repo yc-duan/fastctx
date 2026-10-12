@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app's name as Android shows it; the generated project's own copy is replaced by this one. -->
+    <string name="app_name">"Fastctx"</string>
+    <string name="main_activity_title">"Fastctx"</string>
+</resources>

@@ -177,7 +177,7 @@ const enWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"
 const enMonths = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 export const enHome: HomeWords = {
-  world: "The World",
+  world: "Home",
   aPage: (name) => `the page “${name}”`,
   dateline: (at) => `${enWeek[at.getDay()]}, ${enMonths[at.getMonth()]} ${at.getDate()}`,
   lastHere: (ago) => `Last visit ${ago}`,

@@ -113,7 +113,8 @@ export class FeaturesPage implements Page {
     const theater = document.createElement("div");
     theater.className = "film-theater";
     const shut = this.options.words.closeFilm;
-    theater.innerHTML = `<div class="film-theater-box"></div><button class="icon-button film-theater-close" type="button" aria-label="${escape(shut)}" title="${escape(shut)}">${glyph("close", 20)}</button>`;
+    // Its close is under the film, away from the window's own buttons.
+    theater.innerHTML = `<div class="film-theater-box"></div><button class="text-button film-theater-close" type="button">${glyph("close", 16)}<span>${escape(shut)}</span></button>`;
     const film = new Film(make, label);
     theater.firstElementChild!.append(film.element);
     const close = () => {

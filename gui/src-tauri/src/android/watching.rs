@@ -67,6 +67,11 @@ async fn opening(
     }
 }
 
+/// A page that cannot be live now, hidden or with its connection down.
+fn paused() -> Piece {
+    Piece::Interrupted { error: None, since: crate::epoch_ms(std::time::SystemTime::now()) }
+}
+
 pub(crate) async fn stream(
     world: World,
     resident: ResidentId,
@@ -76,7 +81,7 @@ pub(crate) async fn stream(
 ) {
     if initial.has_cached_rest() {
         match initial.update().await {
-            Ok(Some(Update::History(history))) => {
+            Ok(Update::History(history)) => {
                 if pieces.send(Piece::Reset { history }).is_err() {
                     return;
                 }
@@ -110,7 +115,7 @@ pub(crate) async fn stream(
             && kept.has_cached_rest()
         {
             match kept.update().await {
-                Ok(Some(Update::History(history))) => {
+                Ok(Update::History(history)) => {
                     if pieces.send(Piece::Reset { history }).is_err() {
                         return;
                     }
@@ -123,7 +128,7 @@ pub(crate) async fn stream(
             }
         }
         if !online || !shown {
-            if conversation.take().is_some() && pieces.send(Piece::Interrupted { error: None }).is_err() {
+            if conversation.take().is_some() && pieces.send(paused()).is_err() {
                 return;
             }
         } else if conversation.is_none() {
@@ -148,7 +153,7 @@ pub(crate) async fn stream(
         tokio::select! {
             changed = connection.changed() => {
                 if changed.is_err() { return; }
-                if conversation.take().is_some() && pieces.send(Piece::Interrupted { error: None }).is_err() { return; }
+                if conversation.take().is_some() && pieces.send(paused()).is_err() { return; }
             }
             changed = visible.changed() => { if changed.is_err() { return; } }
             piece = async {
@@ -158,14 +163,16 @@ pub(crate) async fn stream(
                 }
             } => {
                 match piece {
-                    Ok(Some(Update::Current)) => if pieces.send(Piece::Resumed).is_err() { return; },
-                    Ok(Some(Update::Moment(moment))) => if pieces.send(Piece::Event { event: moment.event }).is_err() { return; },
-                    Ok(Some(Update::History(history))) => if pieces.send(Piece::Reset { history }).is_err() { return; },
-                    Ok(Some(Update::Extended(history))) => if pieces.send(Piece::Extended { history }).is_err() { return; },
-                    ended => {
+                    Ok(Update::Current) => if pieces.send(Piece::Resumed).is_err() { return; },
+                    // It opens itself again, as `fastctx_client::Conversation` paces it.
+                    Ok(Update::Interrupted(interruption)) => if pieces.send(Piece::interrupted(&interruption)).is_err() { return; },
+                    Ok(Update::Moment(moment)) => if pieces.send(Piece::Event { event: moment.event }).is_err() { return; },
+                    Ok(Update::History(history)) => if pieces.send(Piece::Reset { history }).is_err() { return; },
+                    Ok(Update::Extended(history)) => if pieces.send(Piece::Extended { history }).is_err() { return; },
+                    Err(error) => {
                         conversation = None;
-                        let error = ended.err().map(|error| error.to_string());
-                        if pieces.send(Piece::Interrupted { error }).is_err() { return; }
+                        let error = Some(error.to_string());
+                        if pieces.send(Piece::Interrupted { error, since: crate::epoch_ms(std::time::SystemTime::now()) }).is_err() { return; }
                         // A failed live stream waits for an actual connection
                         // or visibility change; it never replays a failed call.
                         if !connection.has_changed().unwrap_or(false) {

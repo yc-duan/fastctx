@@ -1078,10 +1078,67 @@ a.details-job {
   margin-top: var(--space-6);
 }
 
-/* Making a World on a server: the way to sign in to it chosen as chips, its
-   fingerprint read as one solid slip, the steps ticked off in pencil. */
+/* Making a World on a server: the way to sign in to it chosen on one
+   switch, its fingerprint read as one solid slip, the steps ticked off in
+   pencil. */
 .remote-by {
   margin: 0 0 var(--space-1);
+}
+
+/* One of two, as a single switch: a solid track, the side chosen washed in
+   clay, so it reads as either this or that. */
+.segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+}
+
+.segment {
+  min-height: 30px;
+  padding: 4px 16px;
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.segment:hover:not(.chosen) {
+  color: var(--text);
+}
+
+.segment.chosen {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+}
+
+/* A file chosen through the system's picker, by a button of the page's own;
+   the name of the one chosen beside it. */
+.pick-file {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: var(--size-ui);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.pick-file:hover {
+  color: var(--text);
+  background: var(--fill-strong);
+}
+
+/* After a label, for a field that may be left empty. */
+.field-optional {
+  color: var(--text-3);
 }
 
 .remote-key-pick {

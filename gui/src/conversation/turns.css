@@ -34,7 +34,6 @@
 
 .group-time {
   flex: none;
-  font-size: var(--size-small);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }

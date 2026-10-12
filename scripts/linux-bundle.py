@@ -49,14 +49,14 @@ def owners(path):
 
 
 def native_notices(appdir):
-    gui_files = {Path('usr/bin/World'), Path('usr/bin/fastctx'), Path('World.png')}
+    gui_files = {Path('usr/bin/fastctx-app'), Path('usr/bin/fastctx'), Path('Fastctx.png')}
     records, packages = {}, set()
     hooks = []
     for path in sorted(appdir.rglob('*')):
         if not path.is_file() or path.is_symlink():
             continue
         relative = path.relative_to(appdir)
-        if relative in gui_files or relative.parts[:3] == ('usr', 'lib', 'World') or relative.parts[:4] == ('usr', 'share', 'doc', 'world'):
+        if relative in gui_files or relative.parts[:3] == ('usr', 'lib', 'Fastctx') or relative.parts[:4] == ('usr', 'share', 'doc', 'world'):
             continue
         if relative.parts[:3] in (('usr', 'share', 'icons'), ('usr', 'share', 'applications')):
             continue
@@ -170,7 +170,7 @@ def main():
     expected = {name: (ROOT/'gui/src-tauri/licenses'/name).read_bytes() for name in ('LICENSE-APACHE', 'NOTICE', 'THIRD_PARTY_LICENSES.md')}
     expected['THIRD_PARTY_LICENSES.md'] = full_notices
     expected['kernel'] = (args.target_dir/'x86_64-unknown-linux-musl/release/fastctx').read_bytes()
-    expected['gui'] = (appdir/'usr/bin/World').read_bytes()
+    expected['gui'] = (appdir/'usr/bin/fastctx-app').read_bytes()
     verify_payload(appdir, expected)
     with tempfile.TemporaryDirectory(dir=bundle) as temporary:
         work = Path(temporary)
@@ -186,7 +186,7 @@ def main():
             raise ValueError(f'Runtime offset {offset} differs from reviewed runtime size {len(runtime_data)}')
         def packed(relative):
             return subprocess.check_output(['unsquashfs', '-processors', '4', '-cat', '-o', str(offset), str(staged), str(relative)])
-        if packed('AppRun') != launcher.read_bytes() or packed('usr/bin/World') != expected['gui']:
+        if packed('AppRun') != launcher.read_bytes() or packed('usr/bin/fastctx-app') != expected['gui']:
             raise ValueError('The sealed AppImage launcher or graphical program differs')
         kernel_path = one(path for path in appdir.rglob('fastctx') if path.is_file() and not path.is_symlink()).relative_to(appdir)
         if packed(kernel_path) != expected['kernel']:

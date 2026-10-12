@@ -13,6 +13,8 @@
 import { glyph } from "../conversation/glyphs";
 import { layerOpened, type Layer } from "./back";
 import { escape } from "../conversation/prose";
+import { Film } from "../film/film";
+import { network } from "../film/network";
 import type { Point } from "../map-canvas";
 import { blot, circle, outline, ruled, seeded } from "../pen/shapes";
 import type { AccountChange, HubAccounts, Login, MemberSeen } from "../world/accounts";
@@ -156,6 +158,12 @@ export class MachinesPage implements Page {
    *  default. */
   private readonly folds = new Map<string, boolean>();
 
+  /** In no network: the film and the ways into one, instead of the
+   *  drawing. */
+  private readonly intro: HTMLElement;
+  private readonly layout: HTMLElement;
+  private film: Film | null = null;
+
   constructor(private readonly options: MachinesOptions) {
     const { words } = options;
     this.giving = new GiveSheet(options.access);
@@ -172,8 +180,11 @@ export class MachinesPage implements Page {
         `<h1 class="page-title">${escape(words.title)}</h1>`,
         `<button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
+      <div class="machines-intro" hidden><div class="machines-film"></div><p class="machines-hub-is">${escape(words.hubIs)}</p><div class="machines-ways"><a class="sheet-go" href="${link({ kind: "login", way: "new" })}">${escape(words.newNetwork)}</a><a class="text-button quiet-button" href="${link({ kind: "login", way: "join" })}">${escape(words.joinNetwork)}</a></div></div>
       <div class="machines-layout"><div class="machines-canvas"><div class="map-undo" role="status" hidden></div><div class="map-choose" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
+    this.intro = this.element.querySelector<HTMLElement>(".machines-intro")!;
+    this.layout = this.element.querySelector<HTMLElement>(".machines-layout")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
     this.acts = this.element.querySelector<HTMLElement>(".map-acts")!;
     this.menu = this.element.querySelector<HTMLElement>(".map-menu")!;
@@ -273,6 +284,7 @@ export class MachinesPage implements Page {
 
   leave(): void {
     this.stop();
+    this.film?.destroy();
     this.moving.dispose();
     this.resized.disconnect();
     this.log.dispose();
@@ -392,6 +404,22 @@ export class MachinesPage implements Page {
   }
 
   /** The hub or machine chosen on the drawing: its actions float beside it. */
+  /** Shows the film and the ways into a network while this computer is in
+   *  none, the drawing once it is in one. */
+  private alone(alone: boolean): void {
+    this.intro.hidden = !alone;
+    this.layout.hidden = alone;
+    this.element.classList.toggle("alone", alone);
+    if (alone && !this.film) {
+      const film = new Film((shape) => network(this.options.words.film, shape), this.options.words.title);
+      this.film = film;
+      this.intro.querySelector(".machines-film")!.replaceChildren(film.element);
+    } else if (!alone && this.film) {
+      this.film.destroy();
+      this.film = null;
+    }
+  }
+
   /** The groups folded to their knot. Past two dozen machines the drawing
    *  fitted to the page is too small to read them all, so others' groups
    *  start folded and the account's own open; what the user opened or
@@ -611,20 +639,21 @@ export class MachinesPage implements Page {
     if (open && this.panel.hidden) layerOpened(this.detailsLayer);
     this.panel.hidden = !open;
     this.panel.classList.toggle("peek", narrow && !this.grown);
+    // In no network, the page is the film of what a network is for and the
+    // ways into one; the drawing waits until there is one.
     const alone = !loginsOf(world.accounts).length && isComputer(world);
-    this.canvas.classList.toggle("alone", alone);
+    this.alone(alone);
     const acts = narrow && this.selected ? this.sheetActs(this.selected, world) : "";
     const grip = narrow
       ? `<button class="sheet-grip" type="button" data-act="grow" aria-expanded="${this.grown}" aria-label="${escape(this.grown ? words.closeDetails : words.details)}"></button>`
       : "";
     const html = alone
-      ? `<p class="machines-alone">${escape(words.alone)} <a class="text-link" href="${link({ kind: "login" })}">${escape(words.logIn)}</a></p>`
+      ? ""
       : framed.length > 1
         ? this.framedPanel(framed, world)
       : spot && open
         ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "lent" ? this.lentPanel(spot.lent, world, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
         : "";
-    if (alone) this.panel.hidden = false;
     if (html !== this.drawn) {
       this.drawn = html;
       redrawKeepingFocus(this.panel, () => {

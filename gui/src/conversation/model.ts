@@ -21,6 +21,9 @@ export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
 export type SendState =
   | { state: "going" }
+  /** No answer came yet; they are said again, under the same id, until one
+   *  does: why the last try got none. */
+  | { state: "waiting"; why: string }
   /** In the World, not yet in a turn: `how` is the way they landed
    *  (`waiting`, `sent`, `uncertain`), as the node said. */
   | { state: "landed"; how: string; machine: MachineName; why?: string | null }
@@ -152,6 +155,9 @@ export class Conversation {
   attachmentName(path: string): string | null {
     return this.attachments.get(path.replaceAll("\\", "/")) ?? null;
   }
+  /** Whether its thinking's words are kept: Codex's are not, whatever it
+   *  hands over (`world-gui.md`, 对话); its thinking is a line without them. */
+  thoughtWords = true;
   /** The host replaced or removed turns: what is shown must be read again. */
   stale = false;
   /** Moves with every change to what is shown; an entry's stamp is the
@@ -381,6 +387,7 @@ export class Conversation {
         this.underWay(event.turn, at);
         const shown = this.find(event.turn, event.item);
         if (shown?.kind === "prose" && event.part === "text") {
+          if (shown.prose === "thinking" && !this.thoughtWords) return;
           shown.text += event.text;
           shown.version += 1;
           this.touch(shown);
@@ -594,7 +601,7 @@ export class Conversation {
           item: id,
           turn,
           prose: native.kind,
-          text: native.text,
+          text: native.kind === "thinking" && !this.thoughtWords ? "" : native.text,
           writing: !finished,
           version: 0,
           ...(native.kind === "thinking" ? { began: startedAt, ...(native.duration_ms !== undefined ? { took: native.duration_ms } : {}) } : {}),

@@ -85,6 +85,7 @@ pub fn fixtures() -> Fixtures {
                 text: text.clone(),
                 attachments: attachments.clone(),
                 files_on: Some("laptop".parse().unwrap()),
+                id: Some("words-1".into()),
             },
             Call::Open {
                 agent: "codex".parse().unwrap(),
@@ -147,6 +148,7 @@ pub fn fixtures() -> Fixtures {
                 text: text.clone(),
                 attachments: attachments.clone(),
                 files_on: None,
+                id: Some("words-1".into()),
             },
             RemoteCall::Open {
                 agent: "codex".parse().unwrap(),

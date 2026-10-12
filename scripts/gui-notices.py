@@ -59,7 +59,7 @@ def main():
     (output/'THIRD_PARTY_LICENSES.md').write_text(share_html_notices(text), encoding='utf-8', newline='\n')
     if 'linux' in target:
         (output/'copyright').write_text(
-            'World '+json.loads((gui/'package.json').read_text())['version']+'\n\n'
+            'Fastctx '+json.loads((gui/'package.json').read_text())['version']+'\n\n'
             +(ROOT/'NOTICE').read_text(encoding='utf-8')+'\n'
             +(ROOT/'LICENSE-APACHE').read_text(encoding='utf-8')+'\n'
             +share_html_notices(text), encoding='utf-8', newline='\n')

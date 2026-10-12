@@ -53,7 +53,7 @@ export interface DataWords {
 
 export const zhData: DataWords = {
   title: "本机数据",
-  total: (size) => `World 在这台电脑上占 ${size}`,
+  total: (size) => `Fastctx 在这台电脑上占 ${size}`,
   kinds: { conversations: "对话", command_output: "命令输出", cache: "缓存", program: "程序", other: "其他" },
   conversations: "对话",
   groups: { listed: "在列", removed: "已移除", elsewhere: "别处的" },
@@ -96,7 +96,7 @@ export const zhData: DataWords = {
 
 export const enData: DataWords = {
   title: "Data on this computer",
-  total: (size) => `World uses ${size} on this computer`,
+  total: (size) => `Fastctx uses ${size} on this computer`,
   kinds: { conversations: "Conversations", command_output: "Command output", cache: "Cache", program: "Program", other: "Other" },
   conversations: "Conversations",
   groups: { listed: "Listed", removed: "Removed", elsewhere: "From elsewhere" },

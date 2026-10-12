@@ -45,6 +45,7 @@ import { FeaturesPage } from "./app/features";
 import { NetworkPage, enNetwork, zhNetwork } from "./app/network-page";
 import { deviceFeatures } from "./app/device-features";
 import { readFeatures, setFeature, watchFeatures } from "./world/features";
+import { untilAnswered, whyOf } from "./world/again";
 import { enFeatures, zhFeatures } from "./app/features-words";
 import { accountOf, enHomes, homeChoice, homeLabel, homesOf, installed, loggedOut, zhHomes } from "./app/agent-homes";
 import { Tokens } from "./app/tokens";
@@ -190,6 +191,7 @@ import {
   stop,
   stopJob,
   talk,
+  retryNow,
   type WorldNow,
   login,
   loginToken,
@@ -838,6 +840,7 @@ function specimenTalk(address: Address): KeepablePage {
     ? streamSpecimen(params)
     : (specimens[name === "codex-a51c" ? "asking" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
+  conversation.thoughtWords = sample.agent !== "codex";
   const seed = seeds.get(talkKey(address));
   seeds.delete(talkKey(address));
   if (seed) conversation.sending(seed.text, sample.here, seed.attached);
@@ -1018,6 +1021,8 @@ function liveTalk(address: Address): KeepablePage {
   const someone: Someone = listed ?? { agent: address.resident, machine: address.machine, model: null, project: null };
   const here = world?.here ?? null;
   const conversation = new Conversation();
+  // The agent by its name, or, not yet listed, its resident's id.
+  conversation.thoughtWords = !/^codex/i.test(someone.agent);
   // A conversation just begun here opens with its first words on their way.
   const seed = seeds.get(talkKey(address));
   seeds.delete(talkKey(address));
@@ -1123,7 +1128,13 @@ function liveTalk(address: Address): KeepablePage {
         attached.shown.map(({ name, size, image, preview }) => ({ name, size, image, preview })),
       );
       page.update();
-      return talk(address, text, attached.refs as Attachment[], attached.filesOn ?? null)
+      // Words with no answer are said again under the same id until one
+      // comes: they go in once (`world-network.md`, 断开不是结束).
+      const id = crypto.randomUUID();
+      return untilAnswered(() => talk(address, text, attached.refs as Attachment[], attached.filesOn ?? null, id), (why) => {
+        conversation.sent(key, { state: "waiting", why });
+        page.update();
+      })
         .then(({ to, landed }) => {
           // Words in a turn take their place when the session hears them;
           // words in no turn yet say where they are.
@@ -1137,7 +1148,7 @@ function liveTalk(address: Address): KeepablePage {
           return landed.kind === "uncertain" || (landed.kind === "waiting" && !landed.answered) ? ("unseen" as const) : ("turn" as const);
         })
         .catch((error: unknown) => {
-          conversation.sent(key, { state: "failed", why: String(error) });
+          conversation.sent(key, { state: "failed", why: whyOf(error) });
           page.update();
           return "failed" as const;
         });
@@ -1177,7 +1188,7 @@ function liveTalk(address: Address): KeepablePage {
       if (conversation.stale) reading.again();
       page.update();
     },
-    interrupted: (why) => page.broken(why),
+    interrupted: (why, since) => page.broken(why, since),
     resumed: () => page.resumed(),
     ended: (why) => {
       page.lost(why);
@@ -1749,6 +1760,14 @@ effect(() => {
   if (!talking && place.kind === "home") show({ kind: "agents", machine: null });
 });
 
+// Everything that broke is tried again at once when the window comes to the
+// front or the network is back (`world-network.md`, 断开不是结束).
+if (live) {
+  const now = () => void retryNow().catch((error: unknown) => console.error("trying again now", error));
+  addEventListener("focus", now);
+  addEventListener("online", now);
+}
+
 // The workbench as this device keeps it: a computer's node, shared with its TUI.
 if (live) {
   deviceFeatures.attach({
@@ -1804,7 +1823,12 @@ startPresence({
   words: presenceWords,
   someone: (r) => shellWords.someone(agentName(r.about.host.agent), r.about.machine),
   stop: (address) => stop(address),
-  say: (address, text) => talk(address, text),
+  // An answer from a notification goes in once, however long the way is
+  // closed (`world-network.md`, 断开不是结束).
+  say: (address, text) => {
+    const id = crypto.randomUUID();
+    return untilAnswered(() => talk(address, text, [], null, id), () => {});
+  },
 });
 
 /** A picture's bytes, as a blob the viewer shows. */

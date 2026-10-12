@@ -12,4 +12,4 @@ for hook in "$APPDIR"/apprun-hooks/*.sh; do
     . "$hook"
 done
 cd "$APPDIR/usr"
-exec "$APPDIR/usr/bin/World" "$@"
+exec "$APPDIR/usr/bin/fastctx-app" "$@"

@@ -248,7 +248,7 @@ impl Stored {
             ));
         }
         let draft = entry.document.view();
-        let delivery = crate::attachments::delivery(&entry.from, draft.text, draft.attachments);
+        let delivery = crate::attachments::delivery(&entry.from, draft.text, draft.attachments, None);
         let flight = Flight { entry: id.clone(), delivery, automatic, idle_only, files_on: draft.files_on };
         self.sending = Some(flight.clone());
         if automatic {

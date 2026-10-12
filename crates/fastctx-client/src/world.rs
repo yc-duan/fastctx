@@ -57,6 +57,9 @@ pub struct World {
     /// What this device keeps of the conversations it views, when it keeps
     /// them (`crate::cache`).
     cache: Option<std::sync::Arc<crate::cache::Cache>>,
+    /// Told when a stream that broke should be opened again now
+    /// (`crate::again`).
+    pub(crate) retry: std::sync::Arc<tokio::sync::Notify>,
 }
 
 /// What became of words said to a resident.
@@ -85,6 +88,7 @@ impl World {
             searches: Default::default(),
             line_sources: Default::default(),
             cache: None,
+            retry: Default::default(),
         }
     }
 
@@ -99,6 +103,7 @@ impl World {
             searches: Default::default(),
             line_sources: Default::default(),
             cache: None,
+            retry: Default::default(),
         }
     }
 
@@ -116,6 +121,28 @@ impl World {
 
     pub fn device(&self) -> Option<&std::sync::Arc<crate::device::Device>> {
         self.device.as_ref()
+    }
+
+    /// Whether no answer came to what was asked, so asking again as it was
+    /// asked, under the same id, is how it goes on (`world-network.md`,
+    /// 断开不是结束): the node or the machine that was to do it was not
+    /// reached, or its answer was lost.
+    pub fn unanswered(error: &Error) -> bool {
+        match error {
+            Error::Connect(_) | Error::Call(CallError::Broken(_)) => true,
+            Error::Call(CallError::Failed(failure)) => failure.is_unanswered(),
+            _ => false,
+        }
+    }
+
+    /// Everything that broke is tried again now, not after its wait: this
+    /// device's network changed, it woke, or an interface came to the
+    /// front. A device dials its hubs again too.
+    pub fn retry_now(&self) {
+        if let Some(device) = &self.device {
+            device.reconnect();
+        }
+        self.retry.notify_waiters();
     }
 
     /// The same World, whose node, when none runs, is started from
@@ -370,7 +397,7 @@ impl World {
 
     /// The user's words to a resident on any machine.
     pub async fn talk(&self, to: ResidentId, machine: Option<MachineName>, text: String) -> Result<Said, Error> {
-        match self.ask(Call::Talk { to, machine, text, attachments: Vec::new(), files_on: None }).await? {
+        match self.ask(Call::Talk { to, machine, text, attachments: Vec::new(), files_on: None, id: None }).await? {
             Reply::Spoken { to, landed } => Ok(Said { to, landed }),
             other => Err(unexpected(other)),
         }

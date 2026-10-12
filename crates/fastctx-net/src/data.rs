@@ -6,9 +6,11 @@
 //! messages, such as which of the offered files the sink wants. A transfer
 //! ends when the right its call was made under is taken back: the hub cuts
 //! the pair it relays, and over a direct link the machine answering the
-//! call cuts its own end.
+//! call cuts its own end. Both ends keep the connection alive and take it
+//! for gone when the other falls silent (`line`).
 
-use futures_util::{SinkExt as _, StreamExt as _};
+mod line;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::watch;
@@ -19,10 +21,17 @@ use crate::ids::{CertPin, HubId};
 use crate::sign::{Digest, Domain, SecretKey, sha256};
 use crate::wire::{self, Carried, Down, End, Intent, Up};
 
+use line::{Line, Received as Message};
+
 /// What the sink says when it has every byte and they check out. The
 /// source waits for it before closing, since a close passes the hub as a
 /// close of both directions.
 const DONE: &str = "\"done\"";
+
+/// The most bytes one message carries. The other end counts only whole
+/// messages as hearing from this one, so each must arrive well within
+/// `SILENCE` even on a slow link: 64 KiB in 30 s is about 2 KiB/s.
+pub const CHUNK: usize = 64 * 1024;
 
 /// Where a data connection goes.
 pub enum Endpoint {
@@ -36,7 +45,7 @@ pub enum Endpoint {
 
 /// One end of a paired data connection.
 pub struct Stream {
-    socket: HubSocket,
+    line: Line,
     /// Bytes received and not yet taken.
     pending: Vec<u8>,
     /// Says why, when this machine cut the call the transfer goes with.
@@ -44,6 +53,10 @@ pub struct Stream {
 }
 
 impl Stream {
+    fn over(socket: HubSocket, cut: Option<watch::Receiver<Option<String>>>) -> Self {
+        Self { line: Line::new(socket, cut.clone()), pending: Vec::new(), cut }
+    }
+
     /// Opens this machine's end of the transfer `stream` and waits for the
     /// other end. The hub ends the wait if the other end's machine leaves;
     /// over a direct link, the link's end does.
@@ -52,7 +65,7 @@ impl Stream {
             Endpoint::Hub { upstreams, hub, cert } => (upstreams, hub, *cert),
             Endpoint::Peer(way) => {
                 let socket = way.open(stream, end).await?;
-                return Ok(Self { socket, pending: Vec::new(), cut: way.cut() });
+                return Ok(Self::over(socket, way.cut()));
             }
         };
         let limit = wire::MAX_DATA_MESSAGE + wire::MAX_CONTROL_FRAME;
@@ -77,7 +90,7 @@ impl Stream {
         };
         dial::send(&mut socket, &hello).await?;
         match dial::recv(&mut socket).await? {
-            Some(Down::Paired) => Ok(Self { socket, pending: Vec::new(), cut: None }),
+            Some(Down::Paired) => Ok(Self::over(socket, None)),
             Some(Down::Refused { reason }) => Err(reason.to_string()),
             Some(_) => Err("the hub answered something other than a pairing".to_string()),
             None => Err("the hub closed the connection".to_string()),
@@ -91,7 +104,7 @@ impl Stream {
 
     /// Sends bytes.
     pub async fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
-        for chunk in bytes.chunks(wire::MAX_DATA_MESSAGE) {
+        for chunk in bytes.chunks(CHUNK) {
             self.put(WsMessage::Binary(chunk.to_vec().into())).await?;
         }
         Ok(())
@@ -151,7 +164,7 @@ impl Stream {
         if let Some(why) = self.was_cut() {
             return Err(why);
         }
-        self.socket.send(message).await.map_err(|error| format!("sending: {}", dial::describe(&error)))
+        self.line.send(message).await
     }
 
     /// What the other end says next.
@@ -178,7 +191,18 @@ impl Stream {
     /// has nothing to send; anything the other end says meanwhile is
     /// dropped. Dropping the wait halfway loses nothing else.
     pub async fn closed(&mut self) {
-        while let Ok(Some(_)) = self.next().await {}
+        self.ended().await;
+    }
+
+    /// As `closed`, saying why it broke; none when the other end closed it.
+    pub async fn ended(&mut self) -> Option<String> {
+        loop {
+            match self.next().await {
+                Ok(Some(_)) => {}
+                Ok(None) => return None,
+                Err(why) => return Some(why),
+            }
+        }
     }
 
     /// As the source: waits for the sink's word that it has everything, and
@@ -186,7 +210,7 @@ impl Stream {
     pub async fn finish(mut self) -> Result<(), String> {
         match self.next().await? {
             Some(Message::Word(text)) if text == DONE => {
-                let _ = self.socket.close(None).await;
+                self.line.close().await;
                 Ok(())
             }
             Some(Message::Word(text)) => Err(format!("the other end did not take it: {text}")),
@@ -198,35 +222,13 @@ impl Stream {
     /// As the sink: says everything arrived, and closes.
     pub async fn done(mut self) -> Result<(), String> {
         self.put(WsMessage::Text(DONE.into())).await.map_err(|error| format!("sending the receipt: {error}"))?;
-        let _ = self.socket.close(None).await;
+        self.line.close().await;
         Ok(())
     }
 
     async fn next(&mut self) -> Result<Option<Message>, String> {
-        loop {
-            let next = match &mut self.cut {
-                Some(cut) => tokio::select! {
-                    next = self.socket.next() => next,
-                    cut = cut.wait_for(Option::is_some) => {
-                        return Err(cut.map(|why| why.clone().unwrap_or_default()).unwrap_or_else(|_| "the call was cut".to_string()));
-                    }
-                },
-                None => self.socket.next().await,
-            };
-            match next {
-                None | Some(Ok(WsMessage::Close(_))) => return Ok(None),
-                Some(Ok(WsMessage::Binary(bytes))) => return Ok(Some(Message::Bytes(bytes.to_vec()))),
-                Some(Ok(WsMessage::Text(text))) => return Ok(Some(Message::Word(text.to_string()))),
-                Some(Ok(WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Frame(_))) => {}
-                Some(Err(error)) => return Err(format!("receiving: {}", dial::describe(&error))),
-            }
-        }
+        self.line.next().await
     }
-}
-
-enum Message {
-    Bytes(Vec<u8>),
-    Word(String),
 }
 
 /// Sends `bytes` as the source of the transfer `stream`.

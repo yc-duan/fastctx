@@ -48,6 +48,7 @@ pub async fn talk(
     text: String,
     attachments: Vec<Attachment>,
     files_on: Option<Written>,
+    id: Option<String>,
 ) -> Result<(Address, Landed), Failure> {
     let here = node.machine();
     let machine = match machine {
@@ -55,14 +56,14 @@ pub async fn talk(
         None => locate(node, &to).await?,
     };
     if machine == here {
-        let landed = talk_here(node, &here, &to, text, attachments, files_on.as_ref()).await?;
+        let landed = talk_here(node, &here, &to, text, attachments, files_on.as_ref(), id.as_deref()).await?;
         return Ok((Address { machine: here, resident: to }, landed));
     }
-    let call = RemoteCall::Talk { to: to.clone(), text, attachments, files_on };
+    let call = RemoteCall::Talk { to: to.clone(), text, attachments, files_on, id };
     match node
         .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
         .await
-        .map_err(|failure| Failure::new(failure.to_string()))?
+        .map_err(|failure| Failure::unanswered(failure.to_string()))?
     {
         Ok(RemoteReply::Said { landed }) => Ok((Address { machine, resident: to }, landed)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than a talk"))),
@@ -80,10 +81,11 @@ pub async fn talk_here(
     text: String,
     attachments: Vec<Attachment>,
     files_on: Option<&Written>,
+    id: Option<&str>,
 ) -> Result<Landed, Failure> {
     crate::attachments::resolve(node, to, &attachments).await?;
     let attachments = crate::attachments::place(node, to, attachments, files_on).await?;
-    let delivery = crate::attachments::delivery(typed_on, text, attachments);
+    let delivery = crate::attachments::delivery(typed_on, text, attachments, id);
     speech::tell_here(node, to, delivery, Owed::Nobody).await
 }
 
@@ -162,18 +164,27 @@ pub async fn watch(
             })
         }
     };
+    let what = match &composer {
+        Some(_) => format!("the watch of {resident}'s shared input on {machine}"),
+        None => format!("the watch of {resident} on {machine}"),
+    };
     let call = RemoteCall::Watch { resident, watch, composer, held };
     let node = node.clone();
     tokio::spawn(async move {
+        let started = std::time::Instant::now();
         let result = tokio::select! {
             result = node.call_with_stream(&Acting::Here, &written, Purpose::Agents, call, feed) => result,
             () = sender.closed() => return,
         };
         let ended = match result {
-            Ok(Ok(_)) => return,
+            Ok(Ok(_)) => {
+                node.log.line(format_args!("{what} ended after {}: {machine} ended it", lasted(started)));
+                return;
+            }
             Ok(Err(failure)) => failure.message,
             Err(failure) => failure.to_string(),
         };
+        node.log.line(format_args!("{what} ended after {}: {ended}", lasted(started)));
         let _ = sender.send(Err(ended));
     });
     Ok(receiver)
@@ -489,20 +500,38 @@ async fn unseal(links: &[Arc<Link>], from: &MachineName, signed: &fastctx_net::s
 /// Hands a watch of a resident of this machine to whoever asked through
 /// `link`, over `stream`, until they close it; each piece is signed here,
 /// packed for a viewer that holds the history.
+#[allow(clippy::too_many_arguments)]
 pub async fn serve_watch(
     node: &Arc<Node>,
     link: &Arc<Link>,
+    from: &MachineName,
     resident: ResidentId,
     watch: u64,
     composer: Option<String>,
     held: Option<Held>,
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
+    let what = match &composer {
+        Some(_) => format!("{from}'s watch of {resident}'s shared input"),
+        None => format!("{from}'s watch of {resident}"),
+    };
+    let started = std::time::Instant::now();
+    let ended = |why: &str| -> Result<RemoteReply, Failure> {
+        node.log.line(format_args!("{what} ended after {}: {why}", lasted(started)));
+        Ok(RemoteReply::Watched)
+    };
     let packed = held.is_some();
     let (_lease, opened) = tokio::select! {
-        result = opening(node, &resident, composer, held.as_ref()) => result?,
-        () = stream.closed() => return Ok(RemoteReply::Watched),
+        result = opening(node, &resident, composer, held.as_ref()) => match result {
+            Ok(opened) => opened,
+            Err(failure) => {
+                node.log.line(format_args!("{what} could not open: {}", failure.message));
+                return Err(failure);
+            }
+        },
+        why = stream.ended() => return ended(&format!("it left before it opened ({})", why.as_deref().unwrap_or("closed"))),
     };
+    node.log.line(format_args!("{what} opened"));
     let Opening { pieces, mut events, slim } = opened;
     let mut n = 0;
     let mut next: std::collections::VecDeque<Watched> = pieces.into();
@@ -524,18 +553,28 @@ pub async fn serve_watch(
             } else {
                 fastctx_net::watch_stream::send(&mut stream, &link.sign(Domain::Event, &piece)).await
             };
-            if sent.is_err() {
-                return Ok(RemoteReply::Watched);
+            if let Err(why) = sent {
+                return ended(&format!("sending: {why}"));
             }
             n += 1;
         }
         tokio::select! {
             event = events.recv() => match event {
                 Some(event) => next.extend(live(event, slim.as_ref()).map(|event| Watched::Live { event })),
-                None => return Ok(RemoteReply::Watched),
+                None => return ended("this machine stopped telling its events"),
             },
-            () = stream.closed() => return Ok(RemoteReply::Watched),
+            why = stream.ended() => return ended(why.as_deref().unwrap_or("it closed the watch")),
         }
+    }
+}
+
+/// How long something lasted, as a log line says it.
+pub(crate) fn lasted(since: std::time::Instant) -> String {
+    let seconds = since.elapsed().as_secs();
+    match seconds {
+        0..60 => format!("{seconds} s"),
+        60..3600 => format!("{}m{:02}s", seconds / 60, seconds % 60),
+        _ => format!("{}h{:02}m", seconds / 3600, seconds % 3600 / 60),
     }
 }
 
@@ -655,15 +694,9 @@ pub async fn open_here(
     // What it is told of its machines and folders goes into the instructions
     // its thread starts with.
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
-    let (spec, heard) = crate::colleagues::thread_spec(
-        node,
-        &id,
-        &origin,
-        town.as_ref(),
-        &opened.acting,
-        opened.home.as_deref(),
-    )
-    .await?;
+    let (spec, heard) =
+        crate::colleagues::thread_spec(node, &id, &origin, town.as_ref(), &opened.acting, opened.home.as_deref())
+            .await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
     let (thread, model) = node.codex.home(opened.home.as_deref())?.start_thread(spec).await.map_err(Failure::new)?;
@@ -704,7 +737,7 @@ pub async fn open_here(
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
     node.residents.set_heard(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
-    let landed = talk_here(node, typed_on, &id, text, attachments, opened.files_on.as_ref()).await?;
+    let landed = talk_here(node, typed_on, &id, text, attachments, opened.files_on.as_ref(), None).await?;
     Ok((id, landed))
 }
 

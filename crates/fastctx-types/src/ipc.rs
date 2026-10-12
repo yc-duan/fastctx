@@ -132,6 +132,11 @@ pub enum FailureCode {
     OutputNotRetained,
     /// The holding machine observed that the requested source does not exist.
     SourceMissing,
+    /// No answer came from the machine that was to do it: it was not
+    /// reached, or its answer was lost on the way. It may have been done;
+    /// asked again under the same id, it is done once
+    /// (`world-network.md`, 断开不是结束).
+    Unanswered,
 }
 
 impl Failure {
@@ -158,5 +163,13 @@ impl Failure {
     pub fn source_missing(message: impl Into<String>) -> Self {
         Self { message: message.into(), not_run: false, code: Some(FailureCode::SourceMissing) }
     }
-}
 
+    pub fn unanswered(message: impl Into<String>) -> Self {
+        Self { message: message.into(), not_run: false, code: Some(FailureCode::Unanswered) }
+    }
+
+    /// Whether no answer came: worth asking again, as it was asked.
+    pub fn is_unanswered(&self) -> bool {
+        self.code == Some(FailureCode::Unanswered)
+    }
+}

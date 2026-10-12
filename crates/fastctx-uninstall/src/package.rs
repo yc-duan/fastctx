@@ -24,7 +24,7 @@ fn record(installation: &Installation) -> PathBuf {
 /// Called by the same privileged command that installs the graphical service.
 pub fn remember(installation: Installation) -> anyhow::Result<()> {
     anyhow::ensure!(unsafe { libc::geteuid() } == 0, "recording a Debian installation requires root");
-    if installation.application.as_deref() != Some(Path::new("/usr/bin/World")) {
+    if installation.application.as_deref() != Some(Path::new("/usr/bin/fastctx-app")) {
         return Ok(());
     }
     installation.validate()?;

@@ -72,6 +72,12 @@
   color: var(--del-fg);
 }
 
+/* The interface's marks are lines in the pen's colour; only what a mark
+   fills itself (a dot, the thinking stars) is filled. */
+.fl-mark {
+  fill: none;
+}
+
 /* Type: the interface's, and a program's own for what it printed. */
 .fl-type {
   font-family: var(--font-reading);

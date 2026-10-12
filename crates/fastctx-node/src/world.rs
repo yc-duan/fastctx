@@ -581,15 +581,15 @@ impl fastctx_net::link::Node for Handler {
                         crate::colleagues::ask_here(&node, asker, acting, town, label, prompt, started).await?;
                     Ok(RemoteReply::Asked { colleague })
                 }
-                RemoteCall::Talk { to, text, attachments, files_on } => {
-                    crate::talk::talk_here(&node, &from, &to, text, attachments, files_on.as_ref())
+                RemoteCall::Talk { to, text, attachments, files_on, id } => {
+                    crate::talk::talk_here(&node, &from, &to, text, attachments, files_on.as_ref(), id.as_deref())
                         .await
                         .map(|landed| RemoteReply::Said { landed })
                 }
                 RemoteCall::Watch { resident, watch, composer, held } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
-                    crate::talk::serve_watch(&node, &link, resident, watch, composer, held, stream).await
+                    crate::talk::serve_watch(&node, &link, &from, resident, watch, composer, held, stream).await
                 }
                 RemoteCall::Agents => crate::agents::here(&node)
                     .await
@@ -655,17 +655,7 @@ impl fastctx_net::link::Node for Handler {
                     let stream = stream.ok_or_else(|| Failure::new("logical rows require a data connection"))?;
                     crate::lines::reading::remote(&node, &link, from, request, true, read, stream).await
                 }
-                RemoteCall::Open {
-                    agent,
-                    town,
-                    text,
-                    model,
-                    reasoning_effort,
-                    attachments,
-                    focus,
-                    home,
-                    files_on,
-                } => {
+                RemoteCall::Open { agent, town, text, model, reasoning_effort, attachments, focus, home, files_on } => {
                     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
                     let choices = fastctx_types::agents::Choices { account: None, focus, home, files_on };
                     let (resident, landed) =
@@ -728,10 +718,10 @@ impl fastctx_net::link::Node for Handler {
                         .ok_or_else(|| Failure::new("a copy comes with a data connection, and this one had none"))?;
                     crate::copy::give(&node, &path, stream).await.map(RemoteReply::Copied)
                 }
-                RemoteCall::CopyReceive { to, manifest_bytes, manifest_sha256 } => {
+                RemoteCall::CopyReceive { to, manifest_bytes, manifest_sha256, resumes } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a copy comes with a data connection, and this one had none"))?;
-                    crate::copy::receive(&node, to, manifest_bytes, manifest_sha256, stream)
+                    crate::copy::receive(&node, to, manifest_bytes, manifest_sha256, resumes, stream)
                         .await
                         .map(RemoteReply::Copied)
                 }
@@ -833,8 +823,18 @@ impl fastctx_net::link::Node for Handler {
                 }
                 crate::own_collab::carry(&node, &hub).await;
             }
-            if let Err(error) = crate::ledger::sync(&node, &hub, town).await {
-                node.log.line(format_args!("taking the projects' ledgers: {error}"));
+            // What could not be taken is taken again until it is, paced as
+            // everything that reconnects (`world-network.md`, 断开不是结束).
+            let mut delay = crate::on::Backoff::default();
+            loop {
+                match crate::ledger::sync(&node, &hub, town.clone()).await {
+                    Ok(()) => return,
+                    Err(error) => node.log.line(format_args!("taking the projects' ledgers: {error}; trying again")),
+                }
+                if node.link_of(&hub).is_none() {
+                    return;
+                }
+                tokio::time::sleep(delay.next()).await;
             }
         });
     }

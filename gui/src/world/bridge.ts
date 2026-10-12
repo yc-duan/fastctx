@@ -52,12 +52,12 @@ export type Piece =
   | { kind: "extended"; history: SessionEvent[] }
   | { kind: "event"; event: SessionEvent }
   | { kind: "ended"; error: string | null }
-  /** On a phone: the stream was read again from the start after the
-   *  connection came back; it replaces everything shown. */
+  /** The stream was read again: everything known, in place of what is
+   *  shown. */
   | { kind: "reset"; history: SessionEvent[] }
-  /** On a phone: the stream broke, and waits for the connection or for the
-   *  app to come to the front. */
-  | { kind: "interrupted"; error: string | null };
+  /** The stream broke and is being read again: why, and since when
+   *  (milliseconds since the epoch). */
+  | { kind: "interrupted"; error: string | null; since: number };
 
 export type Landed =
   | { kind: "uncertain"; why: string }
@@ -121,8 +121,23 @@ export function keptForget(address: Address): Promise<void> {
 /** The user's words to a resident, with the files uploaded for them;
  *  those other than images go to `filesOn` when the user chose a machine
  *  (an agent lent to them works on none of its own). */
-export function talk(who: Address, text: string, attachments: Attachment[] = [], filesOn: string | null = null): Promise<{ to: Address; landed: Landed }> {
-  return invoke("talk", { residentId: who.resident, machineName: who.machine, text, attachments, filesOn });
+/** Why words were not said: `again` when no answer came, so saying them
+ *  again under the same id is how they go on. */
+export interface NotSaid {
+  message: string;
+  again: boolean;
+}
+
+/** The user's words to a conversation. Said again under the same `id`, as
+ *  after an answer that never came, they go in once. */
+export function talk(who: Address, text: string, attachments: Attachment[] = [], filesOn: string | null = null, id: string | null = null): Promise<{ to: Address; landed: Landed }> {
+  return invoke("talk", { residentId: who.resident, machineName: who.machine, text, attachments, filesOn, id });
+}
+
+/** Everything that broke is tried again now: the window came to the front,
+ *  or the system says the network is back. */
+export function retryNow(): Promise<void> {
+  return invoke("reconnect");
 }
 
 /** Carries a file on this computer to a machine, for an agent there or

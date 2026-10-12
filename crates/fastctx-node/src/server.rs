@@ -784,9 +784,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let machine = machine.map(|name| crate::reach::Written { name, hub });
             crate::stop::stop(node, &acting, by, job, machine).await
         }
-        Call::Talk { to, machine, text, attachments, files_on } => {
+        Call::Talk { to, machine, text, attachments, files_on, id } => {
             users_voice(node, peer)?;
-            crate::talk::talk(node, to, machine, text, attachments, files_on)
+            crate::talk::talk(node, to, machine, text, attachments, files_on, id)
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed })
         }

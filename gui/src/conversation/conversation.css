@@ -3,7 +3,11 @@
    in a rail of glyphs until the reader opens it. */
 
 .transcript {
-  --row-line: 30px;
+  /* What the agent did, in quiet lines: each one a 32px line, its glyph
+     16px in a rail as wide, the words 10px on, at the size of the words
+     around them. */
+  --row-line: 32px;
+  --rail-glyph: 16px;
   max-width: calc(var(--column) + 2 * var(--gutter));
   margin: 0 auto;
   padding: var(--space-6) var(--gutter) var(--space-12);
@@ -307,14 +311,14 @@
   align-items: center;
   gap: var(--space-1);
   max-width: 100%;
-  min-height: 28px;
+  min-height: var(--row-line);
   font-size: var(--size-ui);
   color: var(--text-2);
   border-radius: var(--radius-s);
   transition: color var(--hover) ease;
 }
 
-.group-head:hover {
+.group-head:not(:disabled):hover {
   color: var(--text);
 }
 
@@ -335,7 +339,7 @@
   transform: rotate(0deg);
 }
 
-.group-head:hover .glyph {
+.group-head:not(:disabled):hover > .glyph {
   color: var(--text-2);
 }
 
@@ -393,8 +397,9 @@
 }
 
 /* A row: a glyph in the rail, then what it did and on what, its figures
-   beside it, then anything it links to; quiet, one size. Rails are joined
-   by a thin line that breaks a little before each glyph.
+   beside it, then anything it links to; quiet, one size, in the reading
+   face: monospace only in what a row opens. A line down the rail joins
+   one glyph to the next, breaking a little before each.
 
    A stretch's rows share the rail's and the verbs' columns: each row and
    its line are subgrids of the stretch, so the verbs' column is as wide as
@@ -446,9 +451,9 @@
   position: absolute;
   left: calc(var(--rail-glyph) / 2 - 0.5px);
   width: 1px;
-  top: calc(var(--row-line) / 2 + var(--rail-glyph) / 2 + 3px);
-  bottom: calc(-1 * (var(--row-line) / 2 - var(--rail-glyph) / 2 - 3px));
-  background: var(--hairline);
+  top: calc(var(--row-line) / 2 + var(--rail-glyph) / 2 + 2px);
+  bottom: calc(-1 * (var(--row-line) / 2 - var(--rail-glyph) / 2 - 2px));
+  background: var(--rail-line);
 }
 
 .row > .rail {
@@ -459,6 +464,24 @@
   display: grid;
   place-items: center;
   color: var(--text-3);
+}
+
+/* Under a finger the rail is a little larger, as every glyph is there. */
+@media (hover: none) and (pointer: coarse) {
+  .transcript {
+    --rail-glyph: 18px;
+    --row-line: 36px;
+  }
+}
+
+/* A row's glyphs, and the heading's, are as large as the rail, whatever
+   size each was drawn at. */
+.row > .rail > .glyph,
+.group-mark > .glyph,
+.group-head > .glyph,
+.row-chevron > .glyph {
+  width: var(--rail-glyph);
+  height: var(--rail-glyph);
 }
 
 .row-line {
@@ -581,7 +604,8 @@
 }
 
 /* Thinking reads as one phrase, "Thought for 4s", not as a verb in the
-   stretch's column: its section's title after it, the tokens at the end. */
+   stretch's column: its section's title after it, the tokens at the end.
+   Like every row, it answers the pointer only where it opens. */
 .row-thinking > .row-line {
   display: flex;
   align-items: center;
@@ -603,8 +627,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Thinking's spark: before a stretch that is only thinking, and in the rail
-   of a thinking row; it twinkles while the model thinks. */
+/* Thinking's two stars: before a stretch that is only thinking, and in the
+   rail of a thinking row; one colour, still, thinking or done. */
 .group-mark {
   display: none;
   flex: none;
@@ -619,38 +643,10 @@
   transform: none;
 }
 
-.group-head.thought.going .group-mark .glyph,
-.row-thinking.row-running > .rail .glyph {
-  color: var(--pen-clay);
-  animation: twinkle 1.6s ease-in-out infinite;
-}
-
-@keyframes twinkle {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1) rotate(0deg);
-  }
-  50% {
-    opacity: 0.45;
-    transform: scale(0.82) rotate(12deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .group-head.thought.going .group-mark .glyph,
-  .row-thinking.row-running > .rail .glyph {
-    animation: none;
-  }
-}
-
-/* A heading with nothing beneath to open: thinking whose words were kept. */
+/* A heading with nothing beneath to open: thinking without words. It does
+   not answer the pointer. */
 .group-head.bare {
   cursor: default;
-}
-
-.group-head.bare:hover {
-  color: var(--text-2);
 }
 
 .group-head.bare > .glyph {

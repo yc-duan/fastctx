@@ -127,6 +127,8 @@
   --hairline: rgba(245, 242, 232, 0.1);
   --divider: rgba(245, 242, 232, 0.06);
   --rule: rgba(245, 242, 232, 0.16);
+  /* The line that joins an activity's glyphs down the rail. */
+  --rail-line: rgba(245, 242, 232, 0.28);
   /* Solid boxes: a quiet fill, a stronger one under the pointer, and the
      well a field is typed into. */
   --fill: rgba(245, 242, 232, 0.06);
@@ -191,6 +193,7 @@
   --hairline: rgba(255, 255, 255, 0.1);
   --divider: rgba(255, 255, 255, 0.08);
   --rule: rgba(255, 255, 255, 0.16);
+  --rail-line: rgba(255, 255, 255, 0.26);
   --fill: rgba(255, 255, 255, 0.065);
   --fill-strong: rgba(255, 255, 255, 0.11);
   --field: rgba(0, 0, 0, 0.35);
@@ -246,6 +249,7 @@
   --hairline: rgba(60, 55, 40, 0.1);
   --divider: rgba(60, 55, 40, 0.06);
   --rule: rgba(60, 55, 40, 0.16);
+  --rail-line: rgba(60, 55, 40, 0.3);
   --fill: rgba(60, 55, 40, 0.055);
   --fill-strong: rgba(60, 55, 40, 0.095);
   --field: rgba(60, 55, 40, 0.06);

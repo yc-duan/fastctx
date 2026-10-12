@@ -9,7 +9,7 @@
 // lines and does not break them: the line down from the bus runs on through
 // the title strip as the trunk of the first column, the other columns branch
 // from it under the strip, and a short twig reaches each machine. A box folds to its title
-// strip alone. The account's own end with the dashed ring that adds a
+// strip alone, as wide as it is open, so folding moves nothing but what lies below it. The account's own end with the dashed ring that adds a
 // machine, so one that comes stands where it waited. On a narrow screen, a
 // phone's, the boxes stand one under another instead, each its machines in
 // one column, joined from the left by a spine down from the hub, so the
@@ -39,8 +39,6 @@ const COLUMN = 230;
 const NAME = 150;
 /** At most this many machines stand in one column before the next. */
 export const ROWS = 10;
-/** A folded box: its title strip, this wide. */
-const FOLDED = 200;
 /** On a narrow screen: how far right of the spine the boxes stand. */
 const SIDE = 34;
 /** Room between boxes, and between the trees of two hubs. */
@@ -184,7 +182,7 @@ export class MapLayout {
         const perColumn = narrow ? Math.max(1, cells) : rows;
         const columns = Math.max(1, Math.ceil(cells / perColumn));
         const tall = Math.min(cells, perColumn);
-        const width = fold ? FOLDED : TRUNK + TWIG + PAD + (columns - 1) * COLUMN + RING * 2 + NAME;
+        const width = TRUNK + TWIG + PAD + (columns - 1) * COLUMN + RING * 2 + NAME;
         const height = fold ? TITLE : TITLE + PAD * 2 + (tall - 1) * ROW + RING * 2;
         return { kind, key, members, fold, width, height, perColumn };
       });

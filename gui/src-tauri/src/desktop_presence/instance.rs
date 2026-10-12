@@ -62,7 +62,7 @@ pub fn enter(launch: Launch) -> Result<Option<Instance>, String> {
             forward(&name, &launch)?;
             Ok(None)
         }
-        Err(error) => Err(format!("binding the World instance endpoint: {error}")),
+        Err(error) => Err(format!("binding the Fastctx instance endpoint: {error}")),
     }
 }
 
@@ -80,7 +80,7 @@ pub fn quit_running() -> Result<(), String> {
             Err(error) if error.raw_os_error() == Some(231) => {
                 unsafe { WaitNamedPipeW(&HSTRING::from(name.as_str()), u32::MAX).ok() }.map_err(|e| e.to_string())?;
             }
-            Err(error) => return Err(format!("contacting the running World: {error}")),
+            Err(error) => return Err(format!("contacting the running Fastctx: {error}")),
         }
     };
     let mut pid = 0;
@@ -90,7 +90,7 @@ pub fn quit_running() -> Result<(), String> {
     waited.extend(started_by(&world)?);
     let mut request = serde_json::to_vec(&Launch::Quit).map_err(|e| e.to_string())?;
     request.push(b'\n');
-    pipe.write_all(&request).map_err(|e| format!("asking World to exit: {e}"))?;
+    pipe.write_all(&request).map_err(|e| format!("asking Fastctx to exit: {e}"))?;
     // World may be gone before its acknowledgement is written; its exit is
     // what is waited for.
     let _ = BufReader::new(pipe).read_line(&mut String::new());
@@ -144,7 +144,7 @@ fn forward(name: &str, launch: &Launch) -> Result<(), String> {
                 // Wait for actual endpoint availability, not a guessed startup delay.
                 unsafe { WaitNamedPipeW(&HSTRING::from(name), u32::MAX).ok() }.map_err(|e| e.to_string())?;
             }
-            Err(error) => return Err(format!("contacting the running World: {error}")),
+            Err(error) => return Err(format!("contacting the running Fastctx: {error}")),
         }
     };
     let foreground_permission = unsafe {
@@ -161,7 +161,7 @@ fn forward(name: &str, launch: &Launch) -> Result<(), String> {
     let mut response = String::new();
     BufReader::new(pipe).read_line(&mut response).map_err(|e| e.to_string())?;
     serde_json::from_str::<Result<(), String>>(&response)
-        .map_err(|e| format!("World did not acknowledge the launch: {e}"))?
+        .map_err(|e| format!("Fastctx did not acknowledge the launch: {e}"))?
         .map_err(|error| match foreground_permission {
             Ok(()) => error,
             Err(permission) => format!("{error}; transferring foreground permission: {permission}"),
@@ -184,7 +184,7 @@ impl Instance {
                 let mut line = String::new();
                 let result = async {
                     stream.read_line(&mut line).await.map_err(|e| e.to_string())?;
-                    let launch = serde_json::from_str(&line).map_err(|e| format!("invalid World launch: {e}"))?;
+                    let launch = serde_json::from_str(&line).map_err(|e| format!("invalid Fastctx launch: {e}"))?;
                     super::launch(&app, launch).await
                 }
                 .await;
@@ -194,7 +194,7 @@ impl Instance {
                 let mut reply = serde_json::to_vec(&result).expect("serializing launch result");
                 reply.push(b'\n');
                 if let Err(error) = stream.get_mut().write_all(&reply).await {
-                    super::report(&app, format!("acknowledging World launch: {error}"));
+                    super::report(&app, format!("acknowledging Fastctx launch: {error}"));
                     return;
                 }
                 // Tokio's flush does not drain a Windows pipe. Keep the server
@@ -206,8 +206,8 @@ impl Instance {
                 .await;
                 match drained {
                     Ok(Ok(())) => (),
-                    Ok(Err(error)) => super::report(&app, format!("draining World launch acknowledgement: {error}")),
-                    Err(error) => super::report(&app, format!("joining World launch acknowledgement: {error}")),
+                    Ok(Err(error)) => super::report(&app, format!("draining Fastctx launch acknowledgement: {error}")),
+                    Err(error) => super::report(&app, format!("joining Fastctx launch acknowledgement: {error}")),
                 }
             });
         }

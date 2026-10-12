@@ -75,9 +75,24 @@ impl Staged {
         self.inner.write_all(bytes)
     }
 
+    /// Goes on staging `target` in `partial`, a file beside it that an
+    /// earlier try left: what it holds stays and what is written is added
+    /// after it, or it is made when there is none. Dropped uncommitted, it
+    /// is kept for the next try (`world-network.md`, 断开不是结束); returns
+    /// how many bytes it held already.
+    pub fn resume(target: &Path, partial: PathBuf, mode: Option<u32>) -> io::Result<(Self, u64)> {
+        let (inner, held) = imp::Staged::resume(target, partial, mode)?;
+        Ok((Self { inner }, held))
+    }
+
     /// Flushes the contents to disk and moves them over the target.
     pub fn commit(self) -> io::Result<()> {
         self.inner.commit()
+    }
+
+    /// Removes what was staged, kept for another try or not.
+    pub fn discard(self) {
+        self.inner.discard();
     }
 }
 
@@ -181,6 +196,8 @@ mod imp {
         file: Option<File>,
         temporary: std::path::PathBuf,
         target: std::path::PathBuf,
+        /// Kept when dropped uncommitted, for another try.
+        kept: bool,
     }
 
     impl Staged {
@@ -191,7 +208,22 @@ mod imp {
                 // the source's own.
                 file.set_permissions(fs::Permissions::from_mode(mode & 0o7777))?;
             }
-            Ok(Self { file: Some(file), temporary, target: target.to_path_buf() })
+            Ok(Self { file: Some(file), temporary, target: target.to_path_buf(), kept: false })
+        }
+
+        pub fn resume(target: &Path, partial: std::path::PathBuf, mode: Option<u32>) -> io::Result<(Self, u64)> {
+            let file = OpenOptions::new().append(true).create(true).mode(mode.unwrap_or(0o666)).open(&partial)?;
+            if let Some(mode) = mode {
+                file.set_permissions(fs::Permissions::from_mode(mode & 0o7777))?;
+            }
+            let held = file.metadata()?.len();
+            Ok((Self { file: Some(file), temporary: partial, target: target.to_path_buf(), kept: true }, held))
+        }
+
+        pub fn discard(mut self) {
+            if self.file.take().is_some() {
+                let _ = fs::remove_file(&self.temporary);
+            }
         }
 
         pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
@@ -209,7 +241,7 @@ mod imp {
 
     impl Drop for Staged {
         fn drop(&mut self) {
-            if self.file.is_some() {
+            if self.file.is_some() && !self.kept {
                 let _ = fs::remove_file(&self.temporary);
             }
         }
@@ -235,9 +267,9 @@ mod imp {
 
     use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_NEW, CreateFileW, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_DISPOSITION_INFO, FILE_RENAME_INFO,
+        CREATE_NEW, CreateFileW, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_DISPOSITION_INFO, FILE_END, FILE_RENAME_INFO,
         FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfo, FileRenameInfoEx, FlushFileBuffers,
-        SetFileInformationByHandle, WriteFile,
+        OPEN_ALWAYS, SetFileInformationByHandle, SetFilePointerEx, WriteFile,
     };
 
     use super::{Permissions, temporary_beside};
@@ -277,12 +309,31 @@ mod imp {
     pub struct Staged {
         handle: Option<Handle>,
         target: std::path::PathBuf,
+        /// Kept when dropped uncommitted, for another try.
+        kept: bool,
     }
 
     impl Staged {
         pub fn create(target: &Path, temporary: std::path::PathBuf, _mode: Option<u32>) -> io::Result<Self> {
             let target = std::path::absolute(target)?;
-            Ok(Self { handle: Some(Handle(create_temporary(&temporary)?)), target })
+            Ok(Self { handle: Some(Handle(create_temporary(&temporary)?)), target, kept: false })
+        }
+
+        pub fn resume(target: &Path, partial: std::path::PathBuf, _mode: Option<u32>) -> io::Result<(Self, u64)> {
+            let target = std::path::absolute(target)?;
+            let handle = Handle(open_partial(&partial)?);
+            let mut end = 0i64;
+            // SAFETY: a valid handle; the new position is written to `end`.
+            if unsafe { SetFilePointerEx(handle.0, 0, &mut end, FILE_END) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok((Self { handle: Some(handle), target, kept: true }, end as u64))
+        }
+
+        pub fn discard(mut self) {
+            if let Some(handle) = self.handle.take() {
+                delete_on_close(handle.0);
+            }
         }
 
         pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
@@ -303,7 +354,9 @@ mod imp {
 
     impl Drop for Staged {
         fn drop(&mut self) {
-            if let Some(handle) = &self.handle {
+            if let Some(handle) = &self.handle
+                && !self.kept
+            {
                 delete_on_close(handle.0);
             }
         }
@@ -337,6 +390,28 @@ mod imp {
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 ptr::null(),
                 CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL,
+                ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(handle)
+    }
+
+    /// Opens what an earlier try staged at `path`, or makes it, to write on
+    /// at its end; with DELETE access, as `create_temporary`'s.
+    fn open_partial(path: &Path) -> io::Result<HANDLE> {
+        let name = wide(path.as_os_str());
+        // SAFETY: a NUL-terminated path and no security attributes.
+        let handle = unsafe {
+            CreateFileW(
+                name.as_ptr(),
+                GENERIC_WRITE | DELETE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                ptr::null(),
+                OPEN_ALWAYS,
                 FILE_ATTRIBUTE_NORMAL,
                 ptr::null_mut(),
             )
