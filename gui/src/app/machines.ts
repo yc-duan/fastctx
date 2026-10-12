@@ -13,7 +13,8 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Bounds, Point } from "../map-canvas";
-import type { AccountChange, HubAccounts, Login } from "../world/accounts";
+import { blot, circle, outline, ruled, seeded } from "../pen/shapes";
+import type { AccountChange, HubAccounts, Login, MemberSeen } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { LinkState } from "../world/world";
@@ -23,7 +24,7 @@ import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
-import { MachineMap } from "./machine-map";
+import { MachineMap, type LineSeen } from "./machine-map";
 import { RING } from "./map-layout";
 import { mapOf } from "./map-of";
 import { link, talkLink } from "./places";
@@ -85,6 +86,10 @@ const UNDO_MS = 6_000;
  *  the circle and a moment to see it. */
 const ARRIVED_MS = 6_000;
 
+/** The port offered first for direct connections: the one after the hub's
+ *  own, 7443. */
+const DIRECT_PORT = 7444;
+
 export class MachinesPage implements Page {
   readonly element: HTMLElement;
   readonly title: string;
@@ -132,6 +137,10 @@ export class MachinesPage implements Page {
    *  way in was given. */
   private readonly waiting = new Map<string, Set<string>>();
   private readonly fresh = new Set<string>();
+  /** Machines direct connections were just allowed to, while the hub
+   *  checks it reaches them. */
+  private readonly opening = new Set<string>();
+  private readonly tip: HTMLElement;
 
   constructor(private readonly options: MachinesOptions) {
     const { words } = options;
@@ -147,7 +156,7 @@ export class MachinesPage implements Page {
         `<h1 class="page-title">${escape(words.title)}</h1>`,
         `<button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
-      <div class="machines-layout"><div class="machines-canvas"><div class="map-tags"></div><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
+      <div class="machines-layout"><div class="machines-canvas"><div class="map-tags"></div><div class="map-undo" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form><div class="map-tip" role="tooltip" hidden></div></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
     this.acts = this.element.querySelector<HTMLElement>(".map-acts")!;
@@ -155,6 +164,7 @@ export class MachinesPage implements Page {
     this.tags = this.element.querySelector<HTMLElement>(".map-tags")!;
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
+    this.tip = this.element.querySelector<HTMLElement>(".map-tip")!;
     this.map = new MachineMap({
       words,
       storageKey: "machines-map",
@@ -162,9 +172,6 @@ export class MachinesPage implements Page {
         if (event.kind === "select") this.choose(event.key);
         else if (event.kind === "context") this.openMenu(event.key, event.at, event.input !== "mouse" || matchMedia("(max-width: 760px)").matches);
       },
-      // How a machine reaches its hub is the program's to choose; nothing
-      // on the drawing changes it.
-      validRoute: () => false,
       frame: (frame) => {
         this.scale = frame.view.scale;
         this.level = frame.view.level;
@@ -179,6 +186,9 @@ export class MachinesPage implements Page {
     this.canvas.prepend(this.map.element);
     this.log = new MachineLog(words, options.log, () => loginsOf(options.store.world.peek()?.accounts), (at) => options.when(at, options.store.clock.peek()));
     this.canvas.append(this.log.button, this.log.panel);
+    // A pointer resting on a line is told which way it is and how fast.
+    this.map.element.addEventListener("pointermove", (event) => this.tell(event));
+    this.map.element.addEventListener("pointerleave", () => this.untell());
     // A ring pressed twice opens what is known of it.
     this.map.element.addEventListener("dblclick", (event) => {
       const key = (event.target as HTMLElement).closest<HTMLElement>("[data-item]")?.dataset.item;
@@ -492,7 +502,7 @@ export class MachinesPage implements Page {
    *  another an agent is lent on. A machine come to a hub one was on its
    *  way to is circled as it arrives. */
   private drawMap(world: WorldNow): void {
-    const { hubs, nodes, hubLabels } = mapOf(world, this.options.words);
+    const { hubs, nodes, hubLabels, links } = mapOf(world, this.options.words);
     for (const [hub, before] of this.waiting) {
       const arrived = nodes.filter((node) => node.hubs.includes(hub) && !before.has(node.key));
       if (!arrived.length) continue;
@@ -514,9 +524,8 @@ export class MachinesPage implements Page {
       waiting: new Set(this.waiting.keys()),
       selected: this.selected,
       fresh: this.fresh,
-      route: null,
-      pending: new Map(),
-      ways: [],
+      links,
+      opening: this.opening,
     });
   }
 
@@ -537,10 +546,17 @@ export class MachinesPage implements Page {
     }
     if (spot.kind === "lent") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
     const owners = this.ownersOf(spot.machine, world);
+    // Direct connections are the network's administrator's to allow: to a
+    // computer, while it is online to be checked, and no longer at any time.
+    const admin = this.adminOf(spot.machine, world);
+    const member = admin ? this.memberOf(spot.machine, admin, world) : undefined;
+    const direct: Act[] =
+      member?.kind !== "computer" ? [] : member.direct?.length ? [{ act: "direct", label: words.stopDirect, icon: "link" }] : member.reach ? [{ act: "direct", label: words.allowDirect, icon: "link" }] : [];
     return [
       { act: "talk", label: words.talk, icon: "plus" },
       { act: "agents", label: words.hosts, icon: "agents" },
       ...(owners.length ? [{ act: "share", label: words.share, icon: "colleague" as const }] : []),
+      ...direct,
       details,
       ...(owners.length && !spot.machine.here ? [{ act: "remove", label: words.remove, icon: "close" as const, danger: true }] : []),
     ];
@@ -606,6 +622,182 @@ export class MachinesPage implements Page {
       case "remove":
         if (login) this.remove(login, machine.name);
         return;
+      case "direct": {
+        const admin = this.adminOf(machine, world);
+        const member = admin ? this.memberOf(machine, admin, world) : undefined;
+        if (!admin || !member) return;
+        if (member.direct?.length) this.stopDirect(admin, machine, key, member.direct);
+        else this.allowDirect(admin, machine, key, member);
+        return;
+      }
+    }
+  }
+
+  /** The login of the network's administrator among this device's, on a
+   *  hub `machine` is on. */
+  private adminOf(machine: Machine, world: WorldNow): Login | undefined {
+    return loginsOf(world.accounts).find((login) => machine.on.some((on) => on.hub === login.hub) && isSuper(world, login));
+  }
+
+  /** What `login`'s hub says of `machine`. */
+  private memberOf(machine: Machine, login: Login, world: WorldNow): MemberSeen | undefined {
+    return world.accounts.hubs.find((hub) => hub.hub === login.hub)?.members.find((member) => member.name === machine.name);
+  }
+
+  /** The card that lets other machines connect to one directly: a small
+   *  drawing of their lines meeting it, its addresses to choose from (its
+   *  network cards' and where the server sees it, never an example), and
+   *  the port. The server then tries it from outside; until it has, the
+   *  socket on its ring is pencil, and what kept the server out is said in
+   *  the card. */
+  private allowDirect(login: Login, machine: Machine, key: string, member: MemberSeen): void {
+    const { words } = this.options;
+    const seen = member.reach?.seen ? [hostOf(member.reach.seen)] : [];
+    const cards = (member.reach?.interfaces ?? []).map(hostOf).filter((host) => !seen.includes(host));
+    const choice = (host: string, note: string, checked: boolean) =>
+      `<label class="choice map-card-choice"><input type="checkbox" name="host" value="${escape(host)}"${checked ? " checked" : ""}><span class="mono">${escape(host)}</span><span class="choice-note">${escape(note)}</span></label>`;
+    const at = this.map.screenOf(key) ?? [0, 0];
+    this.openCard(
+      key,
+      at,
+      `<p class="map-card-title">${escape(words.directTitle(machine.written))}</p>
+       <div class="map-card-pictures">${directPicture(true)}</div>
+       <fieldset class="map-card-field"><legend>${escape(words.directAddresses)}</legend><div class="choice-options">${[
+         ...seen.map((host) => choice(host, words.directSeen, true)),
+         ...cards.map((host) => choice(host, words.directCard, !seen.length)),
+       ].join("")}</div></fieldset>
+       <label class="field map-card-port"><span class="field-label">${escape(words.directPort)}</span><input class="mono" name="port" inputmode="numeric" value="${DIRECT_PORT}" autocomplete="off" spellcheck="false" required></label>
+       <p class="map-card-wrong" role="alert" hidden></p>
+       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.directWhat)}</p></details>
+       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.directGo)}</button></footer>`,
+      async () => {
+        const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong")!;
+        const hosts = [...this.card.querySelectorAll<HTMLInputElement>("input[name=host]:checked")].map((input) => input.value);
+        const port = Number(this.card.querySelector<HTMLInputElement>("input[name=port]")!.value.trim());
+        const refuse = (said: string) => {
+          wrong.textContent = said;
+          wrong.hidden = false;
+          return new Error("kept open");
+        };
+        if (!hosts.length) throw refuse(words.directPickOne);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw refuse(words.directPortWrong);
+        wrong.textContent = words.directChecking;
+        wrong.hidden = false;
+        wrong.classList.add("quiet");
+        this.opening.add(key);
+        this.redraw();
+        try {
+          await this.options.change(login, { change: "direct", machine: machine.name, at: hosts.map((host) => (host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`)) });
+        } catch (error) {
+          wrong.classList.remove("quiet");
+          throw refuse(error instanceof Error ? error.message : String(error));
+        } finally {
+          this.opening.delete(key);
+          this.redraw();
+        }
+      },
+    );
+  }
+
+  /** Takes direct connections to a machine away at once, after a small
+   *  card of before and after; for a moment they can be given back. */
+  private stopDirect(login: Login, machine: Machine, key: string, before: string[]): void {
+    const { words } = this.options;
+    const at = this.map.screenOf(key) ?? [0, 0];
+    this.openCard(
+      key,
+      at,
+      `<p class="map-card-title">${escape(words.stopDirectTitle(machine.written))}</p>
+       <div class="map-card-pictures">${directPicture(true)}<span aria-hidden="true">→</span>${directPicture(false)}</div>
+       <p class="map-card-said">${escape(words.stopDirectSaid)}</p>
+       <p class="map-card-wrong" role="alert" hidden></p>
+       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.confirm)}</button></footer>`,
+      async () => {
+        await this.options.change(login, { change: "direct", machine: machine.name, at: [] });
+        this.offerUndo(words.directStopped(machine.written), () => this.options.change(login, { change: "direct", machine: machine.name, at: before }));
+      },
+    );
+  }
+
+  /** A card beside a ring, or rising from below on a narrow page; `go`
+   *  runs when it is confirmed, and an error it throws stays in the card. */
+  private openCard(key: string, at: Point, html: string, go: () => Promise<void>): void {
+    this.closeMenu();
+    this.cardFor = key;
+    this.float();
+    this.card.innerHTML = html;
+    const sheet = this.narrow();
+    this.card.classList.toggle("as-sheet", sheet);
+    this.card.hidden = false;
+    if (!sheet) {
+      // Beside the ring, on its right unless what is open on the right, the
+      // panel or the canvas's edge, leaves no room there.
+      const canvas = this.canvas.getBoundingClientRect();
+      const right = this.panel.hidden ? canvas.width : Math.min(canvas.width, this.panel.getBoundingClientRect().left - canvas.left);
+      const width = this.card.offsetWidth;
+      const x = at[0] + 16 + width + 8 <= right ? at[0] + 16 : at[0] - 16 - width;
+      const y = Math.min(this.canvas.clientHeight - this.card.offsetHeight - 8, at[1] - 24);
+      this.card.style.transform = `translate(${Math.max(8, Math.min(x, right - width - 8))}px, ${Math.max(8, y)}px)`;
+    } else this.card.style.transform = "";
+    this.card.onsubmit = (event) => {
+      event.preventDefault();
+      const button = this.card.querySelector<HTMLButtonElement>(".map-card-go");
+      if (button) button.disabled = true;
+      go().then(
+        () => {
+          this.closeCard();
+          void this.options.store.refresh().then(() => this.redraw());
+        },
+        (error: unknown) => {
+          if (button) button.disabled = false;
+          if (error instanceof Error && error.message === "kept open") return;
+          const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong");
+          const said = error instanceof Error ? error.message : String(error);
+          if (wrong) {
+            wrong.textContent = said;
+            wrong.hidden = false;
+          } else {
+            this.note = { machine: key.replace(/^m:/, ""), text: this.options.access.failed(said) };
+            this.redraw();
+          }
+        },
+      );
+    };
+    this.card.focus({ preventScroll: true });
+  }
+
+  /** Says which line the pointer rests on, beside it. */
+  private tell(event: PointerEvent): void {
+    if (event.pointerType === "touch" || event.buttons) return this.untell();
+    const box = this.map.element.getBoundingClientRect();
+    const at: Point = [event.clientX - box.left, event.clientY - box.top];
+    const seen = (event.target as HTMLElement).closest("[data-item]") ? null : this.map.lineAt(at);
+    const said = seen ? this.lineSaid(seen) : "";
+    if (!said) return this.untell();
+    this.tip.textContent = said;
+    this.tip.hidden = false;
+    const x = Math.min(this.canvas.clientWidth - this.tip.offsetWidth - 8, at[0] + 14);
+    const y = Math.max(8, at[1] - this.tip.offsetHeight - 10);
+    this.tip.style.transform = `translate(${Math.max(8, x).toFixed(0)}px, ${y.toFixed(0)}px)`;
+  }
+
+  private untell(): void {
+    if (!this.tip.hidden) this.tip.hidden = true;
+  }
+
+  private lineSaid(seen: LineSeen): string {
+    const { words } = this.options;
+    const world = this.options.store.world.peek();
+    if (!world) return "";
+    const { nodes } = mapOf(world, words);
+    const name = (key: string) => nodes.find((node) => node.key === key)?.name ?? key.replace(/^m:/, "");
+    switch (seen.kind) {
+      case "hub":
+        return words.lineHub(name(seen.machine), seen.ms);
+      case "through":
+        return words.lineThrough(name(seen.machine), name(seen.through));
+      case "direct":
+        return seen.link.up ? words.lineDirect(name(seen.link.a), name(seen.link.b), seen.link.ms) : words.lineDown(name(seen.link.a), name(seen.link.b), seen.link.why);
     }
   }
 
@@ -762,23 +954,18 @@ export class MachinesPage implements Page {
     // not touch: 38 degrees apart, with 6 pixels between.
     const step = (38 * Math.PI) / 180;
     const reach = Math.max(Math.max(RING * this.scale, 14) + size / 2 + 12, (size + 6) / (2 * Math.sin(step / 2)));
-    // Away from the handle on its line, where it has one; else down the
-    // right of the ring, or the left where the right has no room.
-    const handle = this.map.handleOf(key);
+    // Down the right of the ring, or the left where the right has no room.
     const left = at[0] + reach + size > width;
-    const centre = handle ? Math.atan2(at[1] - handle[1], at[0] - handle[0]) : left ? Math.PI : 0;
+    const centre = left ? Math.PI : 0;
     const boxes = [...this.acts.children].map((button, index, all) => {
       const degrees = -((all.length - 1) * 38) / 2 + index * 38;
-      const angle = centre + (((left && !handle) || (handle && Math.cos(centre) < 0) ? -degrees : degrees) * Math.PI) / 180;
+      const angle = centre + ((left ? -degrees : degrees) * Math.PI) / 180;
       const x = Math.min(width - size - 4, Math.max(4, at[0] + Math.cos(angle) * reach - size / 2));
       const y = Math.min(height - size - 4, Math.max(4, at[1] + Math.sin(angle) * reach - size / 2));
       (button as HTMLElement).style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
       return { x, y, width: size, height: size };
     });
-    // The blot of the handle on its line stays clear of the names too;
-    // its wider reach for a finger may lie under one.
-    const pulled = handle ? [{ x: handle[0] - 9, y: handle[1] - 9, width: 18, height: 18 }] : [];
-    this.map.reserve([...boxes, ...hung, ...pulled]);
+    this.map.reserve([...boxes, ...hung]);
   }
 
   /** The menu of a spot, or of the drawing itself, where the right button
@@ -866,7 +1053,7 @@ export class MachinesPage implements Page {
       reaching ? this.tag(words.reaching, "tag-reach", words.reachingWhat) : "",
     ];
     const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
-    const route = machine.here ? "" : machine.online === true ? (machine.through ? words.via(machine.through) : words.direct) : "";
+    const route = !machine.here && machine.online === true && machine.through ? words.via(machine.through) : "";
     const factLine = facts
       ? [osName(facts.os), facts.arch, `fastctx ${facts.version}`, route].filter(Boolean).map(escape).join(`<span class="sep">·</span>`)
       : "Err" in machine.facts && machine.facts.Err && machine.online !== false
@@ -1020,3 +1207,35 @@ export function linkSaid(link: LinkState, words: MachinesWords): string {
   }
 }
 
+/** An address as the hub or a network card gives it, without a port. */
+function hostOf(address: string): string {
+  const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(address);
+  if (bracketed) return bracketed[1]!;
+  return /^[^:]+:\d+$/.test(address) ? address.slice(0, address.lastIndexOf(":")) : address;
+}
+
+/** A machine others connect to directly, drawn small for a card: its ring
+ *  in the middle with its line to the hub's knot above, and two machines
+ *  beside it with theirs; with direct connections, straight clay lines from
+ *  the two to it. */
+function directPicture(direct: boolean): string {
+  const random = seeded(`direct-picture:${direct}`);
+  const knot: [number, number] = [66, 7];
+  const middle: [number, number] = [66, 30];
+  const sides: [number, number][] = [
+    [18, 26],
+    [114, 26],
+  ];
+  const rings = [circle(middle, 8, 1.5, random), ...sides.map((side) => circle(side, 6, 1.3, random))];
+  const bowed = (from: [number, number], reach: number) => {
+    const dx = knot[0] - from[0];
+    const dy = knot[1] - from[1];
+    const length = Math.hypot(dx, dy);
+    const start: [number, number] = [from[0] + (dx / length) * (reach + 2), from[1] + (dy / length) * (reach + 2)];
+    const end: [number, number] = [knot[0] - (dx / length) * 5, knot[1] - (dy / length) * 5];
+    return outline([start, [(start[0] + end[0]) / 2 + 2, (start[1] + end[1]) / 2 - 2], end], 1.1, random, { pressure: 0.3, taper: 0.1 });
+  };
+  const lines = [bowed(middle, 8), ...sides.map((side) => bowed(side, 6))];
+  const straight = direct ? sides.map((side) => ruled([side[0] + (side[0] < 66 ? 8 : -8), side[1] + 1], [middle[0] + (side[0] < 66 ? -10 : 10), middle[1]], 1.1, random)) : [];
+  return `<svg class="map-card-picture" viewBox="0 0 132 40" aria-hidden="true"><g class="ink graphite" filter="url(#pen-marker)"><path d="${circle(knot, 3.5, 1.2, random)}"/><path d="${blot(knot, 1.5, random)}"/>${[...rings, ...lines].map((d) => `<path d="${d}"/>`).join("")}</g><g class="ink clay" filter="url(#pen-marker)">${straight.map((d) => `<path d="${d}"/>`).join("")}</g></svg>`;
+}

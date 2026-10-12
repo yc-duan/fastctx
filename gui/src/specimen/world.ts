@@ -4,7 +4,7 @@
 // interface grouped by account.
 
 import type { Address } from "../world/events";
-import type { AccountChange, HubAccounts } from "../world/accounts";
+import type { AccountChange, HubAccounts, MemberSeen, Paths, Reach } from "../world/accounts";
 import type { About, Action, HubNodes, MachineFacts, Node, ProjectRecord, ResidentNow } from "../world/world";
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
@@ -105,8 +105,23 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       ],
     },
   ];
-  const member = (name: string, kind: "computer" | "phone", logins: string[], home: string | null, added: string, online: boolean, key: string, direct: string[] = []) => ({
+  // How the lines go: desktop and server take direct connections; laptop
+  // and lab hold links with server, laptop one with desktop on the same
+  // network, and lab's with desktop is refused by desktop's firewall.
+  const paths: Record<string, Paths> = {
+    desktop: { hub_ms: 41 },
+    laptop: { hub_ms: 46, links: [{ peer: "server", up: true, ms: 9, since: at("02:05:00") }, { peer: "desktop", up: true, ms: 2, since: at("02:05:00") }] },
+    lab: { hub_ms: 12, links: [{ peer: "server", up: true, ms: 4, since: at("00:31:00") }, { peer: "desktop", up: false, since: at("00:31:00"), why: "desktop 的防火墙没放行 7444" }] },
+    server: { hub_ms: 3 },
+  };
+  const reach: Record<string, Reach> = {
+    lab: { seen: "198.51.100.7:52114", interfaces: ["10.0.0.5", "192.168.1.30"] },
+    laptop: { seen: "203.0.113.77:61002", interfaces: ["192.168.1.41"] },
+  };
+  const member = (name: string, kind: "computer" | "phone", logins: string[], home: string | null, added: string, online: boolean, key: string, direct: string[] = []): MemberSeen => ({
     name, kind, logins, home, direct, added: at(added), online, since: at(added), through: null, key,
+    ...(paths[name] ? { paths: paths[name] } : {}),
+    ...(reach[name] ? { reach: reach[name] } : {}),
   });
   const accounts: HubAccounts[] = [
     {

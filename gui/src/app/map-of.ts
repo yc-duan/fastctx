@@ -3,16 +3,21 @@
 // another an agent is lent on, with what the drawing marks on it. The front
 // page and the machines page draw the same thing; a machine is keyed
 // `m:<name>`, a machine an agent is lent on `lent:<name>`, a hub `hub:<id>`.
+// Between two machines, the direct link each holds with the other, as the
+// two say.
 
-import { loginsOf } from "../world/accounts";
+import { loginsOf, type LinkSeen } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
-import type { MapHub, MapNode } from "./network-map";
+import type { MapHub, MapLink, MapNode } from "./network-map";
 import { osName } from "../world/names";
 import { borrowedOf, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
 import { residentsOf } from "./store";
 
 export interface MapWords {
   ownedBy(account: string): string;
+  /** On a machine others may connect to directly, for a pointer resting on
+   *  its ring. */
+  takesDirect: string;
   lentShort(owner: string): string;
   borrowedSaid(owner: string): string;
   reachingWhat: string;
@@ -26,6 +31,7 @@ export interface MapNow {
   nodes: MapNode[];
   /** What stands under each hub's name. */
   hubLabels: Map<string, string>;
+  links: MapLink[];
 }
 
 export function mapOf(world: WorldNow, words: MapWords): MapNow {
@@ -44,6 +50,8 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
     const owner = mine ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null);
     const reaching = !mine && logins.some((login) => machineActsFor(world, machine.name, login));
     const member = world.accounts.hubs.flatMap((hub) => hub.members).find((one) => one.name === machine.name && one.kind === "computer");
+    const direct = member?.direct ?? [];
+    const hubLink = machine.here ? world.accounts.hubs.map((hub) => hub.link).find((link) => link.kind === "online") : undefined;
     nodes.push({
       key: `m:${machine.written}`,
       name: machine.written,
@@ -54,9 +62,10 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       hold: mine ? "mine" : "others",
       reaching,
       marks: marks(machine.name),
-      title: [machine.written, owner ? words.ownedBy(owner) : "", reaching ? words.reachingWhat : ""].filter(Boolean).join(" · "),
-      directAt: member?.direct ?? [],
+      title: [machine.written, owner ? words.ownedBy(owner) : "", reaching ? words.reachingWhat : "", direct.length ? words.takesDirect : ""].filter(Boolean).join(" · "),
+      directAt: direct,
       through: machine.through ?? null,
+      hubMs: (hubLink?.kind === "online" ? hubLink.ms : member?.paths?.hub_ms) ?? undefined,
     });
   }
   const lent = new Set<string>();
@@ -76,5 +85,36 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       title: words.borrowedSaid(one.owner ?? ""),
     });
   }
-  return { hubs, nodes, hubLabels };
+  return { hubs, nodes, hubLabels, links: linksOf(world, nodes) };
+}
+
+/** The direct links between machines on the drawing, each pair once: up
+ *  when either end holds it up, with the faster round trip of the two
+ *  ends; down with why, when neither does and one tried. */
+function linksOf(world: WorldNow, nodes: MapNode[]): MapLink[] {
+  const keys = new Map<string, string>();
+  for (const machine of machinesOf(world)) keys.set(machine.name, `m:${machine.written}`);
+  const pairs = new Map<string, MapLink>();
+  const note = (from: string, seen: LinkSeen) => {
+    const a = keys.get(from);
+    const b = keys.get(seen.peer);
+    if (!a || !b || a === b || !nodes.some((node) => node.key === a) || !nodes.some((node) => node.key === b)) return;
+    const [first, second] = a < b ? [a, b] : [b, a];
+    const key = `${first}|${second}`;
+    const known = pairs.get(key);
+    if (!known) {
+      pairs.set(key, { a: first, b: second, up: seen.up, ms: seen.up ? seen.ms : undefined, why: seen.up ? undefined : seen.why });
+      return;
+    }
+    if (seen.up) {
+      known.up = true;
+      known.why = undefined;
+      if (seen.ms !== undefined && (known.ms === undefined || seen.ms < known.ms)) known.ms = seen.ms;
+    } else if (!known.up && !known.why) known.why = seen.why;
+  };
+  for (const hub of world.accounts.hubs) {
+    for (const member of hub.members) for (const seen of member.paths?.links ?? []) note(member.name, seen);
+    for (const seen of hub.links ?? []) note(world.nodes.machine, seen);
+  }
+  return [...pairs.values()];
 }
