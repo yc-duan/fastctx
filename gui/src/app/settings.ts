@@ -5,6 +5,7 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
+import { chooseMotion, chosenMotion, motions, type Motion } from "../motion";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
 import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
 import { Sheet } from "./confirm";
@@ -143,6 +144,9 @@ export class SettingsPage implements Page {
         case "size":
           chooseSize(value || null);
           break;
+        case "motion":
+          chooseMotion(value as Motion);
+          break;
         case "language":
           options.chooseLanguage(value as "zh" | "en");
           return;
@@ -233,6 +237,7 @@ export class SettingsPage implements Page {
     this.element.querySelector(".look")!.innerHTML = [
       row("theme", words.theme, [["", words.system], ...themes.map((theme): [string, string] => [theme, words.themes[theme]])], chosenTheme() ?? ""),
       row("size", words.textSize, [["", words.sizeDefault], ...textSizes.map((size): [string, string] => [size, words.sizes[size]!])], chosenSize() ?? ""),
+      row("motion", words.motion, motions.map((motion): [string, string] => [motion, words.motions[motion]]), chosenMotion()),
       row("language", words.language, [["zh", "中文"], ["en", "English"]], language),
       // Only where the shell can call the user from outside the window.
       desktopAvailable() || this.options.phone

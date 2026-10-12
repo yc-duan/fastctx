@@ -13,6 +13,7 @@
 // are up is said in its details. What floats beside a ring chosen is the
 // page's.
 
+import { reducedMotion } from "../motion";
 import { MapCanvas, PenLayer, type Bounds, type CanvasEvent, type CanvasFrame, type CanvasItem, type PenStroke, type Point } from "../map-canvas";
 import { blot, circle, outline, ruled, seeded, ticks } from "../pen/shapes";
 import type { MachinesWords } from "./account-words";
@@ -189,10 +190,10 @@ export class MachineMap {
   }
 
   /** Moves the drawing by `dx`, `dy` screen pixels, smoothly unless the
-   *  system asks for less motion. */
+   *  interface moves less (`motion.ts`). */
   glide(dx: number, dy: number): void {
     if (Math.hypot(dx, dy) < 1) return;
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (reducedMotion()) {
       this.surface.pan(dx, dy);
       return;
     }

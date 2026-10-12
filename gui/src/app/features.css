@@ -514,11 +514,9 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .effort-name,
-  .feature-save-bar {
-    transition: none;
-  }
+:root[data-reduced] .effort-name,
+:root[data-reduced] .feature-save-bar {
+  transition: none;
 }
 
 /* Off, a feature's page is its story and its switch, held in the middle of

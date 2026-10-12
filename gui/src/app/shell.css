@@ -618,11 +618,9 @@ body {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mark.mark-busy,
-  .mark.mark-ask {
-    animation: none;
-  }
+:root[data-reduced] .mark.mark-busy,
+:root[data-reduced] .mark.mark-ask {
+  animation: none;
 }
 
 /* The window's caption buttons on Windows, where the shell draws no
@@ -716,11 +714,9 @@ html.framed .page-head {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .touch-hint,
-  .pointer-hint {
-    animation: none;
-  }
+:root[data-reduced] .touch-hint,
+:root[data-reduced] .pointer-hint {
+  animation: none;
 }
 
 /* Every conversation: the sidebar's lines, wider, with a search above. */
@@ -930,11 +926,9 @@ html.framed .page-head {
   background: var(--hairline);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .network-pop,
-  .network-pop.popover-leaving {
-    animation: none;
-  }
+:root[data-reduced] .network-pop,
+:root[data-reduced] .network-pop.popover-leaving {
+  animation: none;
 }
 
 /* A network's own page: what a server is, drawn; then the facts. */

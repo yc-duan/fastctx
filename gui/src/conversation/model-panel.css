@@ -201,10 +201,8 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .model-panel {
-    animation: none;
-  }
+:root[data-reduced] .model-panel {
+  animation: none;
 }
 
 /* What the conversation started that still runs: a mark with how many in
@@ -398,11 +396,9 @@ button.job-what:hover .job-command {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .composer-jobs .glyph,
-  .jobs-pop {
-    animation: none;
-  }
+:root[data-reduced] .composer-jobs .glyph,
+:root[data-reduced] .jobs-pop {
+  animation: none;
 }
 
 .job-row .pulse {

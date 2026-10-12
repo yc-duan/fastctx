@@ -1,3 +1,5 @@
+import { onMotion, reducedMotion } from "../motion";
+
 /** Owns the conversation's scroll anchoring during an explicit user action.
  * Content must be one normal-flow child of the scroller. Reserve space allows
  * the clicked pixel to remain fixed even at either end of a short conversation. */
@@ -70,13 +72,13 @@ export interface FoldMotion { cancelled: boolean; reduced: boolean; }
  * the transition. A reversal begins at the currently painted height. */
 export class AnchoredHeight {
   private active: { animation: Animation; finish: (cancelled: boolean) => void; retarget: (height: number) => void } | null = null;
-  private reduced = matchMedia("(prefers-reduced-motion: reduce)");
+  private readonly unfollow: () => void;
 
   constructor(readonly box: HTMLElement, private layout: AnchorLayout, private frame?: (frame: FoldFrame) => void) {
-    this.reduced.addEventListener("change", this.motionChanged);
+    this.unfollow = onMotion(this.motionChanged);
   }
 
-  private motionChanged = (): void => { if (this.reduced.matches) this.active?.finish(false); };
+  private motionChanged = (): void => { if (reducedMotion()) this.active?.finish(false); };
 
   /** A source or viewport changed while opening. Keep the original completion
    * promise and anchor, and continue from the painted height to the new target. */
@@ -97,7 +99,7 @@ export class AnchoredHeight {
     const style = getComputedStyle(this.box);
     const token = style.getPropertyValue("--fold").trim();
     const duration = parseFloat(token) * (token.endsWith("ms") ? 1 : 1000);
-    const reduced = this.reduced.matches;
+    const reduced = reducedMotion();
     if (!Number.isFinite(duration)) throw new Error("--fold must be a CSS time");
     if (reduced || duration === 0 || height === from) {
       this.box.style.height = `${height}px`;
@@ -122,7 +124,7 @@ export class AnchoredHeight {
         this.frame?.({ time: performance.now(), height: final, anchorError: held.correct() });
         held.release();
         this.active = null;
-        resolve({ cancelled, reduced: reduced || this.reduced.matches });
+        resolve({ cancelled, reduced: reduced || reducedMotion() });
       };
       const retarget = (target: number): void => {
         if (Math.round(target) === height) return;
@@ -147,6 +149,6 @@ export class AnchoredHeight {
 
   destroy(): void {
     this.active?.finish(true);
-    this.reduced.removeEventListener("change", this.motionChanged);
+    this.unfollow();
   }
 }

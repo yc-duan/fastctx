@@ -257,8 +257,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .focus-pop {
-    animation: none;
-  }
+:root[data-reduced] .focus-pop {
+  animation: none;
 }

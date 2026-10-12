@@ -32,6 +32,14 @@
           var size = localStorage.getItem("bodySize");
           if (["14", "15", "16", "17"].indexOf(size) >= 0) document.documentElement.style.setProperty("--body-size", size + "px");
         } catch (e) {}
+        // So is whether the interface moves less: as the system asks, unless
+        // the user chose always or never (`motion.ts`).
+        var motion = null;
+        try {
+          motion = localStorage.getItem("motion");
+        } catch (e) {}
+        var reduced = motion === "off" || (motion !== "always" && matchMedia("(prefers-reduced-motion: reduce)").matches);
+        if (reduced) document.documentElement.setAttribute("data-reduced", "");
       })();
     </script>
   </head>

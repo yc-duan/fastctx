@@ -361,17 +361,15 @@
   color: var(--text-strong);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .welcome-way,
-  .welcome-way:hover {
-    transform: none;
-  }
+:root[data-reduced] .welcome-way,
+:root[data-reduced] .welcome-way:hover {
+  transform: none;
+}
 
-  .welcome-way-mark path,
-  .welcome-way-mark circle {
-    animation: none;
-    stroke-dashoffset: 0;
-  }
+:root[data-reduced] .welcome-way-mark path,
+:root[data-reduced] .welcome-way-mark circle {
+  animation: none;
+  stroke-dashoffset: 0;
 }
 
 /* The agents on a machine, as its own programs say: one line each, its

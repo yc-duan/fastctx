@@ -1,6 +1,7 @@
 import { CanvasCamera, type CameraOptions } from "./camera";
 import { DropTargets, nearestItem, type ValidTarget } from "./drop";
 import { placeLabels } from "./labels";
+import { onMotion, reducedMotion } from "../motion";
 import type { Bounds, CanvasEvent, CanvasFrame, CanvasHandle, CanvasItem, Draft, Point } from "./types";
 import "./canvas.css";
 
@@ -43,7 +44,6 @@ export class MapCanvas {
   private readonly control = document.createElement("div");
   private readonly scaleText = document.createElement("output");
   private readonly marquee = document.createElement("div");
-  private readonly media = matchMedia("(prefers-reduced-motion: reduce)");
   private readonly resize: ResizeObserver;
   private readonly buttons = new Map<string, ButtonLabel>();
   private readonly handles = new Map<string, { handle: CanvasHandle; button: HTMLButtonElement }>();
@@ -69,7 +69,7 @@ export class MapCanvas {
   constructor(private readonly options: CanvasOptions) {
     this.camera = new CanvasCamera(options);
     this.targets = new DropTargets(options.validTarget);
-    this.frameState = { view: this.camera.view, moving: false, reducedMotion: this.media.matches, hiddenLabels: [] };
+    this.frameState = { view: this.camera.view, moving: false, reducedMotion: reducedMotion(), hiddenLabels: [] };
     this.element.className = options.still ? "map-canvas map-still" : "map-canvas";
     this.element.tabIndex = options.still ? -1 : 0;
     this.element.setAttribute("role", "group");
@@ -145,7 +145,8 @@ export class MapCanvas {
       if (!this.element.contains(e.relatedTarget as Node | null)) { this.focused = null; if (this.draft?.keyboard) this.cancelDraft("interrupted"); this.schedule(); }
     }, { signal });
     window.addEventListener("blur", () => { this.clearPointers(); this.cancelDraft("interrupted"); }, { signal });
-    this.media.addEventListener("change", () => this.schedule(), { signal });
+    const unfollow = onMotion(() => this.schedule());
+    signal.addEventListener("abort", unfollow);
     document.fonts.addEventListener("loadingdone", () => { this.measure(); this.schedule(); }, { signal });
     this.resize = new ResizeObserver(() => {
       this.rect = this.element.getBoundingClientRect();
@@ -339,8 +340,8 @@ export class MapCanvas {
     this.scaleText.textContent = `${Math.round(view.scale * 100)}%`;
     this.element.dataset.moving = String(moving);
     this.element.dataset.panning = String([...this.pointers.values()].some((pointer) => pointer.middle || (!pointer.frame && pointer.moved)));
-    this.element.dataset.reducedMotion = String(this.media.matches);
-    this.frameState = { view, moving, reducedMotion: this.media.matches, hiddenLabels };
+    this.element.dataset.reducedMotion = String(reducedMotion());
+    this.frameState = { view, moving, reducedMotion: reducedMotion(), hiddenLabels };
     this.options.frame?.(this.frameState);
     if (changed) this.schedule();
   }

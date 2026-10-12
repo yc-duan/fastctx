@@ -513,11 +513,9 @@
   color: var(--text-3);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .turn-acts,
-  .notice-open > .glyph:last-child {
-    transition: none;
-  }
+:root[data-reduced] .turn-acts,
+:root[data-reduced] .notice-open > .glyph:last-child {
+  transition: none;
 }
 
 /* A block with nothing in it (a turn that ended as it should) takes no
@@ -632,12 +630,10 @@
   animation: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .turn-status-step {
-    background: none;
-    color: var(--text-2);
-    animation: none;
-  }
+:root[data-reduced] .turn-status-step {
+  background: none;
+  color: var(--text-2);
+  animation: none;
 }
 
 /* A conversation that could not begin: said under its first words, in the
@@ -747,8 +743,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .group-title.fresh {
-    animation: none;
-  }
+:root[data-reduced] .group-title.fresh {
+  animation: none;
 }

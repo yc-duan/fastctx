@@ -313,6 +313,10 @@ export interface SettingsWords {
   language: string;
   textSize: string;
   sizeDefault: string;
+  /** How much the interface moves: as the system asks, always, or not at
+   *  all (`motion.ts`). */
+  motion: string;
+  motions: Record<"system" | "always" | "off", string>;
   sizes: Record<string, string>;
   device: string;
   machine: string;
@@ -412,6 +416,8 @@ export const zhSettings: SettingsWords = {
   language: "语言",
   textSize: "字号",
   sizeDefault: "默认",
+  motion: "动效",
+  motions: { system: "跟随系统", always: "总是播放", off: "关闭" },
   sizes: { "14": "小", "15": "标准", "16": "大", "17": "特大" },
   device: "本机",
   machine: "机器名",
@@ -528,6 +534,8 @@ export const enSettings: SettingsWords = {
   themes: { "warm-black": "Warm black", "ink-black": "Ink black", "warm-white": "Warm white" },
   language: "Language",
   textSize: "Text size",
+  motion: "Motion",
+  motions: { system: "System", always: "Always", off: "Off" },
   sizeDefault: "Default",
   sizes: { "14": "Small", "15": "Standard", "16": "Large", "17": "Extra large" },
   device: "This device",

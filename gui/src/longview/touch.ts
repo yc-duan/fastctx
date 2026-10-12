@@ -1,3 +1,4 @@
+import { reducedMotion } from "../motion";
 import type { LineViewport } from "./viewport";
 
 /** Chromium latches a touch gesture to its initial scrolling element. Route
@@ -5,7 +6,6 @@ import type { LineViewport } from "./viewport";
  * either edge. Horizontal panning and pinch zoom remain browser gestures. */
 export function chainTouch(viewport: LineViewport): () => void {
   const element = viewport.element;
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   let pointer: number | null = null;
   let x = 0;
   let y = 0;
@@ -35,7 +35,7 @@ export function chainTouch(viewport: LineViewport): () => void {
   const up = (event: PointerEvent): void => {
     if (pointer !== event.pointerId) return;
     pointer = null;
-    if (!vertical || reduced.matches || event.type === "pointercancel") return;
+    if (!vertical || reducedMotion() || event.type === "pointercancel") return;
     const token = getComputedStyle(element).getPropertyValue("--fold").trim();
     const duration = parseFloat(token) * (token.endsWith("ms") ? 1 : 1000);
     const distance = velocity * duration / 3;

@@ -5,8 +5,7 @@
 // the shade behind it is "outside".
 
 import { layerOpened, type Layer } from "../app/back";
-
-const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+import { reducedMotion } from "../motion";
 
 export class Popover {
   private leaving = false;
@@ -53,7 +52,7 @@ export class Popover {
   hide(): void {
     if (this.panel.hidden || this.leaving) return;
     this.button.setAttribute("aria-expanded", "false");
-    if (reducedMotion.matches) {
+    if (reducedMotion()) {
       this.panel.hidden = true;
       this.closed();
       return;

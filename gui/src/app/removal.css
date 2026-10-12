@@ -265,13 +265,11 @@
   color: var(--wrong);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .removal-plan,
-  .removal-button.armed,
-  .removal-list li[data-result] .removal-mark path {
-    animation: none;
-    stroke-dashoffset: 0;
-  }
+:root[data-reduced] .removal-plan,
+:root[data-reduced] .removal-button.armed,
+:root[data-reduced] .removal-list li[data-result] .removal-mark path {
+  animation: none;
+  stroke-dashoffset: 0;
 }
 
 /* The uninstall dialog: wide enough for its two slips side by side, and

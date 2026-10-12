@@ -712,18 +712,18 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .group-head.going .group-title {
-    animation: none;
-    background: none;
-    color: var(--text);
-  }
-  .pulse {
-    animation: none;
-  }
-  .row.entering {
-    animation: none;
-  }
+:root[data-reduced] .group-head.going .group-title {
+  animation: none;
+  background: none;
+  color: var(--text);
+}
+
+:root[data-reduced] .pulse {
+  animation: none;
+}
+
+:root[data-reduced] .row.entering {
+  animation: none;
 }
 
 /* Surfaces: solid, borderless; a surface inside another takes the other
@@ -1027,10 +1027,8 @@
   animation: pulse 1.6s ease-in-out infinite;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .prose.writing > :last-child::after {
-    animation: none;
-  }
+:root[data-reduced] .prose.writing > :last-child::after {
+  animation: none;
 }
 
 /* What it waits on the user for: set off from the column by a stroke of
@@ -1391,11 +1389,9 @@
   color: var(--text-3);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .ask-mark,
-  .ask-waiting::before {
-    animation: none;
-  }
+:root[data-reduced] .ask-mark,
+:root[data-reduced] .ask-waiting::before {
+  animation: none;
 }
 
 /* Copying a message as it was written: a quiet mark beside it, shown when
@@ -1790,10 +1786,8 @@ a.bubble-file:hover {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .picture-viewer {
-    animation: none;
-  }
+:root[data-reduced] .picture-viewer {
+  animation: none;
 }
 
 /* Starting again from the user's words, forking from a turn: quiet
@@ -1943,8 +1937,6 @@ a.bubble-file:hover {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .file-menu.as-sheet {
-    animation: none;
-  }
+:root[data-reduced] .file-menu.as-sheet {
+  animation: none;
 }

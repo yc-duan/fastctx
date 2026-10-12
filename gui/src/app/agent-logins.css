@@ -465,14 +465,12 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .logins-candidate.fresh,
-  .logins-found-row.fresh,
-  .logins-folder.fresh,
-  .logins-slip.fresh {
-    animation: none;
-    background-color: var(--accent-wash);
-  }
+:root[data-reduced] .logins-candidate.fresh,
+:root[data-reduced] .logins-found-row.fresh,
+:root[data-reduced] .logins-folder.fresh,
+:root[data-reduced] .logins-slip.fresh {
+  animation: none;
+  background-color: var(--accent-wash);
 }
 
 @media (max-width: 760px) {

@@ -278,15 +278,14 @@
   --shadow-pop: 0 12px 36px rgba(60, 55, 40, 0.16), 0 2px 8px rgba(60, 55, 40, 0.1);
 }
 
-/* A system that asks for less motion gets none that is not information. */
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --hover: 0ms;
-    --fold: 0ms;
-    --enter: 0ms;
-    --line-in: 0ms;
-    --send: 0ms;
-  }
+/* Less motion, where the system asks for it or the user chose so
+   (`motion.ts`): none that is not information. */
+:root[data-reduced] {
+  --hover: 0ms;
+  --fold: 0ms;
+  --enter: 0ms;
+  --line-in: 0ms;
+  --send: 0ms;
 }
 
 /* Every glyph at its nominal size times the scale, in whole pixels; where

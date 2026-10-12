@@ -53,10 +53,8 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .machines-layout > .machine-panel {
-    animation: none;
-  }
+:root[data-reduced] .machines-layout > .machine-panel {
+  animation: none;
 }
 
 /* In no network: the film of what a network is for, as large as the page
@@ -947,18 +945,16 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .map-live .flow,
-  .map-live .chosen,
-  .map-live .arrived,
-  .map-live .asked,
-  .map-act,
-  .map-menu.as-sheet,
-  .map-card,
-  .map-card.as-sheet,
-  .machines-layout > .machine-panel {
-    animation: none;
-  }
+:root[data-reduced] .map-live .flow,
+:root[data-reduced] .map-live .chosen,
+:root[data-reduced] .map-live .arrived,
+:root[data-reduced] .map-live .asked,
+:root[data-reduced] .map-act,
+:root[data-reduced] .map-menu.as-sheet,
+:root[data-reduced] .map-card,
+:root[data-reduced] .map-card.as-sheet,
+:root[data-reduced] .machines-layout > .machine-panel {
+  animation: none;
 }
 
 /* The ways a chosen machine tries in turn, when the one it is on fails: a
@@ -1163,10 +1159,8 @@
   margin-top: var(--space-2);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .map-log.as-sheet {
-    animation: none;
-  }
+:root[data-reduced] .map-log.as-sheet {
+  animation: none;
 }
 
 /* The addresses a machine may be reached at, chosen as solid pills; the

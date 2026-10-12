@@ -572,14 +572,12 @@
   color: var(--text-3);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .board.arriving .people > li,
-  .board.arriving .chronicle > li,
-  .board.arriving .section-title,
-  .ask,
-  .dateline-day {
-    animation: none;
-  }
+:root[data-reduced] .board.arriving .people > li,
+:root[data-reduced] .board.arriving .chronicle > li,
+:root[data-reduced] .board.arriving .section-title,
+:root[data-reduced] .ask,
+:root[data-reduced] .dateline-day {
+  animation: none;
 }
 
 /* Under the chronicle: the machines whose part could not be asked, so an

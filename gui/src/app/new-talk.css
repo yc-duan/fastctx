@@ -292,11 +292,9 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .new-talk-mark svg :is(path, rect, circle),
-  .talk-pop {
-    animation: none;
-  }
+:root[data-reduced] .new-talk-mark svg :is(path, rect, circle),
+:root[data-reduced] .talk-pop {
+  animation: none;
 }
 
 /* The sidebar's way here, while it is the page shown. */
