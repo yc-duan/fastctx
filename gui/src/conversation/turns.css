@@ -676,9 +676,16 @@
   will-change: transform;
 }
 
-/* The input stays quiet while the words it sent are on their way. */
-.composer textarea.hushed::placeholder {
+/* The input stays quiet while the words it sent are on their way: its
+   placeholder, and words a shared input still holds until the node has
+   them. */
+.composer textarea.hushed::placeholder,
+.composer textarea.words-going {
   color: transparent;
+}
+
+.composer textarea.words-going {
+  caret-color: var(--text);
 }
 
 /* The conversation's region keeps room for its scroll bar from the start,
