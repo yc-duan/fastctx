@@ -260,11 +260,15 @@ export class MachineMap {
       return { x: Math.min(...xs) - pad, y: Math.min(...ys) - pad, width: Math.max(...xs) - Math.min(...xs) + pad * 2, height: Math.max(...ys) - Math.min(...ys) + pad * 2 };
     };
 
-    // The hub's lines down to the boxes: ruled, square at the corners.
+    // The lines: the hub's down to the boxes, each column's trunk and its
+    // twigs, ruled and square at the corners; a twig to a machine out of
+    // reach, broken.
     for (const branch of placement.branches) {
       const [from, to] = [branch.points[0]!, branch.points[branch.points.length - 1]!];
       if (Math.hypot(to[0] - from[0], to[1] - from[1]) < 1) continue;
-      add(ruled(from, to, 1.2, seeded(`branch:${from.join(",")}:${to.join(",")}`)), spanning(branch.points, 3), "marker", graphite, 0.6);
+      const random = seeded(`branch:${from.join(",")}:${to.join(",")}`);
+      if (branch.out) for (const d of ticks(branch.points, 5, 3.5, 1.1, random)) add(d, spanning(branch.points, 3), "dry", graphite, 0.45);
+      else add(ruled(from, to, 1.2, random), spanning(branch.points, 3), "marker", graphite, 0.6);
     }
 
     for (const hub of scene.hubs) {
@@ -383,11 +387,13 @@ export class MachineMap {
   }
 
   /** Drawn live over the ink: the clay circle round the one chosen and the
-   *  ones framed, and the circles round machines just come. */
+   *  ones framed, the circles round machines just come, and strokes moving
+   *  along the twig of a machine something works on. */
   private mark(): void {
     const { scene, placement } = this;
     if (!scene || !placement) return;
-    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], [...placement.machines]]);
+    const near = this.level >= 1;
+    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.marks.includes("busy")]), [...placement.machines]]);
     if (key === this.marked) return;
     this.marked = key;
     const circles: string[] = [];
@@ -401,7 +407,16 @@ export class MachineMap {
       const point = this.pointOf(fresh);
       if (point && fresh !== scene.selected) circles.push(`<path class="arrived" d="${circle(point, RING + 8, 3, seeded(`arrived:${fresh}`))}"/>`);
     }
-    this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)">${circles.join("")}</g>`;
+    const flows: string[] = [];
+    if (near) {
+      for (const branch of placement.branches) {
+        const node = branch.machine ? scene.nodes.find((one) => one.key === branch.machine) : undefined;
+        if (!node || node.online !== true || !node.marks.includes("busy")) continue;
+        const [from, to] = [branch.points[0]!, branch.points[branch.points.length - 1]!];
+        flows.push(`<path class="flow" d="M${from[0].toFixed(1)} ${from[1].toFixed(1)}L${to[0].toFixed(1)} ${to[1].toFixed(1)}"/>`);
+      }
+    }
+    this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)">${circles.join("")}</g><g class="flows">${flows.join("")}</g>`;
   }
 }
 

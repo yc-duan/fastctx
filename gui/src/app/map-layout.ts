@@ -5,7 +5,8 @@
 // account's own first, then each other account's shared with it, then those
 // an agent is lent on from another. A box has a title strip with the
 // group's name, and its machines stand in a grid inside, one to a row and a
-// new column every ten, their names to the right. A box folds to its title
+// new column every ten, their names to the right, each joined by a short twig
+// to a trunk down the left of its column. A box folds to its title
 // strip alone. The account's own end with the dashed ring that adds a
 // machine, so one that comes stands where it waited. Positions are computed,
 // never moved by hand; the order within a group is remembered on this
@@ -22,9 +23,12 @@ export const TITLE = 34;
 /** From the hub down to the bus, and from the bus down to the boxes. */
 const BUS_DROP = 70;
 const BOX_DROP = 44;
-/** Inside a box: the margin round its grid, the rows, the columns, and the
- *  room a name takes to the right of its ring. */
+/** Inside a box: the margin round its grid, the trunk down a column and
+ *  the twig from it to a ring, the rows, the columns, and the room a name
+ *  takes to the right of its ring. */
 const PAD = 20;
+const TRUNK = 16;
+const TWIG = 22;
 const ROW = 74;
 const COLUMN = 230;
 const NAME = 150;
@@ -52,10 +56,15 @@ export interface GroupNode {
   point: Point;
 }
 
-/** A line of the tree, square at its corners. */
+/** A line of the tree, square at its corners: the hub's down to the
+ *  boxes, a column's trunk, and the twig to each machine, broken where the
+ *  machine is out of reach. */
 export interface Branch {
   points: Point[];
   hub: string;
+  /** The machine a twig reaches. */
+  machine?: string | undefined;
+  out?: boolean;
 }
 
 export interface Placement {
@@ -150,7 +159,7 @@ export class MapLayout {
         const cells = members.length + (kind === "mine" ? 1 : 0);
         const columns = Math.max(1, Math.ceil(cells / ROWS));
         const rows = Math.min(cells, ROWS);
-        const width = fold ? FOLDED : PAD * 2 + (columns - 1) * COLUMN + RING * 2 + NAME;
+        const width = fold ? FOLDED : TRUNK + TWIG + PAD + (columns - 1) * COLUMN + RING * 2 + NAME;
         const height = fold ? TITLE : TITLE + PAD * 2 + (rows - 1) * ROW + RING * 2;
         return { kind, key, members, fold, width, height };
       });
@@ -170,10 +179,18 @@ export class MapLayout {
         branches.push({ points: [[drop, busY], [drop, top]], hub: id });
         if (!block.fold) {
           const slots: (MapNode | null)[] = [...block.members, ...(block.kind === "mine" ? [null] : [])];
+          const columns = Math.ceil(slots.length / ROWS);
+          for (let column = 0; column < columns; column += 1) {
+            const trunk = x + TRUNK + column * COLUMN;
+            const last = Math.min(ROWS, slots.length - column * ROWS) - 1;
+            branches.push({ points: [[trunk, top + TITLE], [trunk, top + TITLE + PAD + RING + last * ROW]], hub: id });
+          }
           slots.forEach((slot, index) => {
             const column = Math.floor(index / ROWS);
             const row = index % ROWS;
-            const at: Point = [x + PAD + RING + column * COLUMN, top + TITLE + PAD + RING + row * ROW];
+            const trunk = x + TRUNK + column * COLUMN;
+            const at: Point = [trunk + TWIG + RING, top + TITLE + PAD + RING + row * ROW];
+            branches.push({ points: [[trunk, at[1]], [trunk + TWIG - 3, at[1]]], hub: id, machine: slot?.key, out: !!slot && slot.online !== true });
             if (slot) machines.set(slot.key, at);
             else this.vacancies.set(id, at);
           });
