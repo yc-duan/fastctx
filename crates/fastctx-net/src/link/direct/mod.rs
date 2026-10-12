@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
+use fastctx_types::access::Purpose;
 use fastctx_types::accounts::LinkSeen;
 use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;
@@ -307,7 +308,10 @@ impl Inner {
         .map_err(|error| format!("changing the firewall: {error}"))?
     }
 
-    /// The machines this one keeps a link with.
+    /// The machines this one keeps a link with: those that take direct
+    /// connections and that one of the two may say something to, for some
+    /// account (`world-network.md`, 直连). A right taken back lets the link
+    /// go with the view that says so.
     fn wanted_links(&self, view: &View) -> BTreeMap<MachineName, Vec<SocketAddr>> {
         if !self.membership.kind.is_computer() {
             return BTreeMap::new();
@@ -316,6 +320,7 @@ impl Inner {
         let i_listen = view.me().is_some_and(|me| !me.direct.is_empty());
         view.machines()
             .filter(|member| member.name != *me && !member.direct.is_empty())
+            .filter(|member| may_talk(view, me, &member.name))
             // Two machines that both take direct connections link once: the
             // one whose name sorts first dials.
             .filter(|member| !i_listen || me.as_str() < member.name.as_str())
@@ -439,4 +444,16 @@ impl Drop for Demand {
             inner.follow_keepers(&inner.view());
         }
     }
+}
+
+/// Whether `a` and `b` may say anything to each other, either way, for any
+/// account in `view`.
+fn may_talk(view: &View, a: &MachineName, b: &MachineName) -> bool {
+    let directory = &view.directory;
+    directory.accounts.iter().any(|account| {
+        [Purpose::Hands, Purpose::Agents, Purpose::Look, Purpose::Words].into_iter().any(|purpose| {
+            directory.admits(a, &account.name, b, purpose).is_ok()
+                || directory.admits(b, &account.name, a, purpose).is_ok()
+        })
+    })
 }
