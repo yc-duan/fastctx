@@ -66,6 +66,10 @@ export function groupOf(kind: string): RemovalGroup {
     case "data":
     case "legacy":
     case "user-files":
+    case "unrecognized":
+    case "unremoved":
+    case "removal-records":
+    case "settings-copies":
       return "data";
     case "logout":
       return "hubs";
@@ -112,6 +116,10 @@ export const zhRemoval: RemovalWords = {
     runtime: "运行中的进程",
     "other-program": "其他 fastctx",
     "user-files": "文件的原始版本",
+    unrecognized: "不是 World 的文件",
+    unremoved: "没删掉的文件",
+    "removal-records": "卸载自己的记录",
+    "settings-copies": "宿主设置的副本",
     "claude-permission": "Claude 自动运行授权",
     "account-right": "「作为批处理作业登录」权限",
     linger: "systemd linger",
@@ -121,6 +129,9 @@ export const zhRemoval: RemovalWords = {
     legacy: "按你的选择保留",
     "other-program": "不归 World 管理，保持不变",
     "user-files": "保留你文件的原始版本，避免丢失之后的写入",
+    unrecognized: "不是 World 写的，原样留着",
+    "removal-records": "World 退出后随安装包删除",
+    "settings-copies": "没能删掉，里面可能有登录令牌，请手动删除",
     "claude-permission": "这是你给的授权，原值未记录，保持不变",
     "account-right": "安装前的状态未记录，保持不变",
     linger: "安装前的状态未记录，保持不变",
@@ -187,6 +198,10 @@ export const enRemoval: RemovalWords = {
     runtime: "Running processes",
     "other-program": "Other fastctx",
     "user-files": "Original file versions",
+    unrecognized: "Files that aren't World's",
+    unremoved: "Files not removed",
+    "removal-records": "The removal's own records",
+    "settings-copies": "Copies of host settings",
     "claude-permission": "Claude unattended permission",
     "account-right": "“Log on as a batch job” right",
     linger: "systemd linger",
@@ -196,6 +211,9 @@ export const enRemoval: RemovalWords = {
     legacy: "Kept as you chose",
     "other-program": "Not managed by World, so it stays",
     "user-files": "Kept so later writes to your files aren't lost",
+    unrecognized: "Not written by World, so it stays",
+    "removal-records": "Removed with the package once World exits",
+    "settings-copies": "Couldn't be removed and may hold a login token; delete it by hand",
     "claude-permission": "Your own permission; its earlier value wasn't recorded, so it stays",
     "account-right": "Its state before installation wasn't recorded, so it stays",
     linger: "Its state before installation wasn't recorded, so it stays",

@@ -18,7 +18,7 @@ struct Completed {
     handoff: Option<tempfile::TempDir>,
 }
 
-fn program() -> Result<PathBuf, String> {
+pub(crate) fn program() -> Result<PathBuf, String> {
     crate::setup::carried()
         .or_else(|| crate::setup::places().ok().map(|places| places.installed()).filter(|path| path.is_file()))
         .ok_or_else(|| "World has no fastctx executable available to uninstall this computer".into())
@@ -106,16 +106,24 @@ pub async fn removal_run(
         .filter(|step| step.kind != "logout")
         .map(|step| step.id.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    let handoff =
-        tempfile::Builder::new().prefix("world-removal-handoff-").tempdir().map_err(|error| error.to_string())?;
-    fastctx_platform::ensure_private_dir(handoff.path()).map_err(|error| error.to_string())?;
-    command.arg("--application-control").arg(handoff.path().join("finish"));
+    // Only the deb's removal on Linux is handed a control file. Elsewhere
+    // nothing reads it, and its directory would outlive World, which exits
+    // without dropping its state.
+    let handoff = if cfg!(target_os = "linux") {
+        let handoff =
+            tempfile::Builder::new().prefix("world-removal-handoff-").tempdir().map_err(|error| error.to_string())?;
+        fastctx_platform::ensure_private_dir(handoff.path()).map_err(|error| error.to_string())?;
+        command.arg("--application-control").arg(handoff.path().join("finish"));
+        Some(handoff)
+    } else {
+        None
+    };
     command.arg("--application-process").arg(
         serde_json::to_string(&fastctx_platform::current_identity().map_err(|error| error.to_string())?)
             .map_err(|error| error.to_string())?,
     );
     let state = app.state::<State>();
-    *state.0.lock().expect("removal state") = Completed { ready: false, handoff: Some(handoff) };
+    *state.0.lock().expect("removal state") = Completed { ready: false, handoff };
     let result_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         use std::io::{BufRead as _, Read as _};
@@ -202,12 +210,23 @@ fn finish(_app: &AppHandle, everything: bool) -> Result<(), String> {
     let identity = fastctx_platform::current_identity().map_err(|error| error.to_string())?;
     let quote = |text: &str| format!("'{}'", text.replace('\'', "''"));
     let path = uninstaller.to_str().ok_or("World's uninstaller path is not Unicode")?;
+    // World's WebView2 processes outlive it by a moment and hold the
+    // application data a complete removal deletes, so the uninstaller waits
+    // for every process World started, found by parent and by having started
+    // after World, as well as for World itself; this waiting PowerShell is
+    // one of World's children too, and is not waited for.
     let script = format!(
-        "$ErrorActionPreference='Stop'; $p=Get-Process -Id {} -ErrorAction SilentlyContinue; if ($null -ne $p -and $p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -eq {}) {{ $p.WaitForExit() }}; & {} /S /FASTCTXKERNELDONE {}",
-        identity.pid,
-        quote(&identity.token),
-        quote(path),
-        if everything { "/FASTCTXEVERYTHING" } else { "" }
+        "$ErrorActionPreference='Stop'; $born=[DateTime]::FromFileTimeUtc([long]{token}); \
+         $all=@(Get-CimInstance Win32_Process); $tree=@({pid}); \
+         for ($i=0; $i -lt $tree.Count; $i++) {{ $tree += @($all | Where-Object {{ $_.ParentProcessId -eq $tree[$i] -and $_.ProcessId -ne $PID -and $_.CreationDate.ToUniversalTime() -ge $born }} | ForEach-Object {{ [int]$_.ProcessId }}) }}; \
+         $p=Get-Process -Id {pid} -ErrorAction SilentlyContinue; \
+         if ($null -ne $p -and $p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -eq {token}) {{ $p.WaitForExit() }}; \
+         @($tree | Select-Object -Skip 1 | ForEach-Object {{ Get-Process -Id $_ -ErrorAction SilentlyContinue }} | Where-Object {{ $_.StartTime.ToUniversalTime() -ge $born }}) | ForEach-Object {{ $_.WaitForExit() }}; \
+         & {path} /S /FASTCTXKERNELDONE {everything}",
+        pid = identity.pid,
+        token = quote(&identity.token),
+        path = quote(path),
+        everything = if everything { "/FASTCTXEVERYTHING" } else { "" }
     );
     let mut command = Command::new("powershell.exe");
     command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
@@ -262,42 +281,4 @@ fn finish(app: &AppHandle, everything: bool) -> Result<(), String> {
 #[cfg(not(any(windows, target_os = "linux")))]
 fn finish(_app: &AppHandle, _everything: bool) -> Result<(), String> {
     Err("package uninstall is supported on Windows and Linux".into())
-}
-
-#[cfg(windows)]
-pub(crate) fn at_package_uninstall() -> Result<(), String> {
-    let mut command = Command::new(program()?);
-    command.args(["uninstall", "run", "--json"]).stdin(Stdio::null());
-    #[cfg(windows)]
-    {
-        let home = fastctx_platform::user_home().map_err(|error| error.to_string())?;
-        for path in fastctx_install::uninstall::application_directories(&home).map_err(|error| error.to_string())? {
-            command.arg("--application-dir").arg(path);
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        command.creation_flags(0x08000000);
-    }
-    let output = command.output().map_err(|error| error.to_string())?;
-    print!("{}", String::from_utf8_lossy(&output.stdout));
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-pub(crate) fn finish_checkpoint() -> Result<(), String> {
-    use std::os::windows::process::CommandExt as _;
-    let output = Command::new(program()?)
-        .args(["uninstall", "application-finish"])
-        .creation_flags(0x08000000)
-        .output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-    }
-    Ok(())
 }

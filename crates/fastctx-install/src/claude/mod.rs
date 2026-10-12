@@ -18,7 +18,7 @@
 //! registration cleanup removes only this product's declarations in that case.
 
 pub mod consent;
-pub(crate) mod history;
+pub mod history;
 mod jsonc;
 mod limit;
 pub mod plugins;

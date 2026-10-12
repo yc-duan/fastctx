@@ -33,21 +33,25 @@ import { glyph } from "./glyphs";
 import { effortLabel } from "./effort-slider";
 import { isThinking, runsOf, type Activity, type Block, type Conversation, type Entry, type SendState, type ShownAttachment } from "./model";
 import { escape, plain, render } from "./prose";
-import { counts, numbered, parse } from "./diff";
+import { numbered, parse } from "./diff";
 import { DiffLines, RemoteDiff, diffPaint, memoryDiff } from "./diff-lines";
-import { headline, groupHeading, onlyWrites, tenseOf, writeHeadline } from "./tool";
+import { headline, onlyWrites, tenseOf, writeHeadline } from "./tool";
 import { drawDiagrams } from "./diagrams";
 import { readTold, worldSaid, type WorldSaid } from "./told";
 import { detailOf } from "../app/problem";
 import { AnchorLayout, AnchoredHeight } from "../longview";
 import { FEW, LongText, type LongLines, type LongTextWords, type OtherSource } from "./long-text";
-import { Said, WholeOutput, outputPaint, shownOutput, type OpenedLines } from "./run-output";
+import { Said, WholeOutput, outputPaint, type OpenedLines } from "./run-output";
 import { replyOf } from "./async-ask";
 import { chosenIn, drawQuestions, type QuestionWords } from "./question-card";
 import { StreamedProse } from "./stream-prose";
 import { TurnLine, time, type LineSays } from "./turn-line";
 import { fly, type Departure } from "./flight";
 import { Lazy, estimate } from "./lazy";
+import { FindContent, displayedDiff, toolText } from "./find-content";
+import { clockSays, sections, stretchSays, thoughtOnly, thoughtText, thoughtTook } from "./stretch-says";
+import { displayedText, htmlText as displayedTextHtml, type TextMatch } from "./find-text";
+import type { FindChanges, FindMatch } from "./find-index";
 
 export interface Context {
   words: Words;
@@ -95,6 +99,7 @@ interface Row {
   key: string;
   signature: string;
   html(): string;
+  text(): string;
 }
 
 /** A write's row is keyed by its run's row and the write. */
@@ -131,6 +136,8 @@ interface Slot {
   stretch?: Stretch;
   /** Its height when it was let go, kept while it is not drawn. */
   height: number | null;
+  findSignature?: string;
+  findRevision?: number;
 }
 
 /** Blocks drawn only near the reader; the others cost too little to wait. */
@@ -146,6 +153,7 @@ export class ConversationView {
   /** What else a row holds open on another machine (lines being read),
    *  let go with it. */
   private closers = new Map<string, (() => void)[]>();
+  private filling = new Map<string, Promise<void>>();
   private motions = new WeakMap<HTMLElement, AnchoredHeight>();
   /** Rows already on the page once; only rows new to a live conversation
    *  make an entrance. */
@@ -157,8 +165,11 @@ export class ConversationView {
   private skipped = new Set<string>();
   /** Words already sent up from the input, by key. */
   private flown = new Set<string>();
-  /** Every block is drawn, as finding in the conversation needs. */
-  private whole = false;
+  private findPending = new Set<string>();
+  private findRemoved = new Set<string>();
+  private findOrder: string[] = [];
+  private findWrites = new Map<string, { signature: string; lines: readonly string[] }>();
+  private readonly findContent: FindContent;
   private readonly layout: AnchorLayout;
   private readonly lazy: Lazy;
   private readonly line: TurnLine;
@@ -172,6 +183,26 @@ export class ConversationView {
     private readonly context: Context,
   ) {
     root.classList.add("transcript");
+    this.findContent = new FindContent({
+      words: context.words,
+      attachment: (path) => conversation.attachmentName(path),
+      entry: (entry) => {
+        const slot = this.slots.get(entry.key);
+        if (slot?.signature !== null && slot?.element.isConnected) {
+          const root = entry.kind === "heard" && this.noticeOf(entry) ? slot.element.querySelector<HTMLElement>(".notice-line") : slot.prose?.element;
+          return displayedText(root ?? slot.element).text;
+        }
+        if (entry.kind === "prose") {
+          const text = this.findContent.prose(entry.text, entry.writing);
+          return entry.prose === "plan" ? `${context.words.plan}\n${text}` : text;
+        }
+        return displayedTextHtml(this.entry(entry));
+      },
+      rows: (run) => this.rowsOf(run),
+      tokens: (run) => conversation.thinkingTokens(run),
+      notice: (entry) => !!this.noticeOf(entry),
+      write: (key, signal) => this.findWrite(key, signal),
+    });
     this.layout = new AnchorLayout(context.scroller, root);
     this.line = new TurnLine(context.words);
     this.lazy = new Lazy(context.scroller, {
@@ -220,6 +251,7 @@ export class ConversationView {
     // words of a conversation just begun) rose where they were sent.
     if (!this.live) for (const block of blocks) if (block.kind === "heard" && block.sending) this.flown.add(block.key);
     const present = new Set<string>();
+    this.findOrder = blocks.map((block) => block.key);
     const drawn: HTMLElement[] = [];
     let previous: HTMLElement | null = null;
     // The line stands before the first words waiting below it, else last.
@@ -229,6 +261,11 @@ export class ConversationView {
       let slot = this.slots.get(block.key);
       if (!slot) slot = this.slot(block, read);
       slot.block = block;
+      const signature = this.findSignature(block);
+      if (slot.findSignature !== signature) {
+        slot.findSignature = signature;
+        this.findPending.add(block.key);
+      }
       // The turn's line between blocks is passed over: it is placed after.
       let want: Element | null = previous ? previous.nextElementSibling : this.root.firstElementChild;
       if (want === this.line.element) want = want.nextElementSibling;
@@ -249,6 +286,8 @@ export class ConversationView {
       this.lazy.unwatch(slot.element);
       slot.element.remove();
       this.slots.delete(key);
+      this.findPending.delete(key);
+      this.findRemoved.add(key);
     }
     // Words rising this frame land before the line beneath them is drawn.
     const flying = this.flights(blocks);
@@ -261,22 +300,134 @@ export class ConversationView {
       this.fillFromEnd(blocks);
     }
     this.tick();
-    for (const element of drawn) void drawDiagrams(element);
+    for (const element of drawn) void drawDiagrams(element).then(() => {
+      const slot = this.byElement.get(element);
+      if (slot && element.querySelector(".diagram.drawn")) {
+        slot.findRevision = (slot.findRevision ?? 0) + 1;
+        this.findPending.add(slot.key);
+      }
+    });
   }
 
-  /** Draws every block, for finding words anywhere in the conversation;
-   *  none is let go while `whole`. */
-  wholly(whole: boolean): void {
-    this.whole = whole;
-    if (whole) {
-      for (const slot of this.slots.values()) if (slot.signature === null) this.draw(slot);
-      return;
+  /** Changed display text, independently of which blocks are drawn. */
+  findChanges(): FindChanges {
+    const changed: FindChanges["changed"] = [];
+    for (const key of this.findPending) {
+      const slot = this.slots.get(key);
+      if (!slot) continue;
+      const parts = this.findContent.parts(slot.block);
+      const signature = `${slot.findSignature ?? ""}|${slot.findRevision ?? 0}`;
+      changed.push({ key, parts: slot.block.kind === "activity-group" ? parts : (function* () {
+        for (const part of parts) yield { ...part, stamp: `${signature}|${part.stamp}` };
+      })() });
     }
-    // Watched afresh, each says again where it is: those far away go.
-    for (const slot of this.slots.values()) {
-      if (!LAZY.has(slot.block.kind)) continue;
-      this.lazy.unwatch(slot.element);
-      this.lazy.watch(slot.element);
+    const removed = [...this.findRemoved];
+    this.findPending.clear();
+    this.findRemoved.clear();
+    return { order: this.findOrder, changed, removed };
+  }
+
+  /** Draws and opens just the selected match's ancestry. Existing folds
+   * and unrelated line viewports keep their disclosure and scroll state. */
+  async revealFind(match: FindMatch): Promise<void> {
+    const target = match.document.target;
+    const slot = this.slots.get(target.block);
+    if (!slot) return;
+    if (slot.signature === null) this.draw(slot);
+    const stretch = slot.stretch;
+    if (target.row && stretch && slot.block.kind === "activity-group" && !this.openStretches.has(slot.key)) {
+      this.openStretches.add(slot.key);
+      stretch.head.setAttribute("aria-expanded", "true");
+      this.seenOpen = false;
+      this.rows(stretch, slot.block);
+      this.seenOpen = true;
+      this.motions.get(stretch.box)?.destroy();
+      this.motions.delete(stretch.box);
+      stretch.box.inert = false;
+      stretch.box.style.height = "";
+      slot.signature = this.signature(slot.block);
+    }
+    const row = target.row === slot.key ? slot.element : target.row ? stretch?.drawn.get(target.row)?.element : undefined;
+    if (row && (target.long !== undefined || target.selector !== undefined) && !this.openRows.has(target.row!)) {
+      const button = row.querySelector<HTMLElement>("[data-open]");
+      const box = row.querySelector<HTMLElement>(".fold-box");
+      if (button && box) {
+        this.openRows.add(target.row!);
+        button.setAttribute("aria-expanded", "true");
+        this.fill(target.row!, row);
+        this.motions.get(box)?.destroy();
+        this.motions.delete(box);
+        box.inert = false;
+        box.style.height = "";
+      }
+    }
+    if (target.row) await this.filling.get(target.row);
+    if (target.long !== undefined) {
+      const long = this.longs.get(target.row ?? slot.key)?.[target.long];
+      const line = match.document.text.slice(0, match.start).split("\n").length - 1;
+      if (long) await long.reveal(line);
+    }
+    for (let node = this.findRange(match)?.startContainer.parentElement; node && node !== slot.element; node = node.parentElement) {
+      if (node instanceof HTMLDetailsElement) node.open = true;
+    }
+  }
+
+  findRange(match: FindMatch): Range | null {
+    const target = match.document.target;
+    const slot = this.slots.get(target.block);
+    if (!slot || slot.signature === null) return null;
+    const row = target.row === slot.key ? slot.element : target.row ? slot.stretch?.drawn.get(target.row)?.element : slot.element;
+    if (!row) return null;
+    let element: HTMLElement | null = target.selector ? row.querySelector(target.selector) : row;
+    let offsets: TextMatch = match;
+    if (target.long !== undefined) {
+      const long = this.longs.get(target.row ?? slot.key)?.[target.long];
+      if (!long) {
+        const note = row.querySelector<HTMLElement>(".io-note");
+        return note ? displayedText(note).range(match) : null;
+      }
+      element = long.element;
+      const before = match.document.text.slice(0, match.start);
+      const line = before.split("\n").length - 1;
+      const lines = element.querySelectorAll<HTMLElement>(".lv-line");
+      if (lines.length) {
+        element = element.querySelector<HTMLElement>(`[data-line="${line}"]`) ?? (lines[line]?.dataset.line === undefined ? lines[line]! : null);
+        const start = match.start - before.lastIndexOf("\n") - 1;
+        offsets = { start, end: start + match.end - match.start };
+      }
+    }
+    return element ? displayedText(element).range(offsets) : null;
+  }
+
+  private async findWrite(key: string, signal: AbortSignal): Promise<string> {
+    const split = key.indexOf(WRITE);
+    const entry = this.conversation.get(key.slice(0, split));
+    const write = entry?.kind === "tool" ? entry.tool.run?.writes.find((one) => one.id === key.slice(split + 1)) : undefined;
+    if (!write?.diff || !this.context.lines) return "";
+    let raw: OpenedLines | null = null;
+    try {
+      raw = await this.context.lines(write.diff.machine, write.diff.path, { kind: "file", encoding: "utf-8" });
+      const source = await RemoteDiff.open(raw, signal);
+      const shown: string[] = [];
+      const kept: string[] = [];
+      // Use the same request size as RemoteDiff.find, rather than asking
+      // the remote machine to materialize the entire change at once.
+      for (let start = 0; start < source.extent.length; start += 2048) {
+        const lines = await source.read(start, Math.min(2048, source.extent.length - start), signal);
+        lines.forEach((line) => {
+          kept.push(line);
+          shown.push(displayedDiff(line, true, this.context.words.unchangedLines));
+        });
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        signal.throwIfAborted();
+      }
+      this.findWrites.set(key, { signature: JSON.stringify(write), lines: kept });
+      return shown.join("\n");
+    } catch (error) {
+      if (signal.aborted) throw signal.reason;
+      return gone(error) ? this.context.words.output.diffGone : this.context.words.output.readFailed;
+    } finally {
+      if (raw) await raw.close().catch((error: unknown) => console.warn("a change's lines could not be let go", error));
     }
   }
 
@@ -305,6 +456,7 @@ export class ConversationView {
   destroy(): void {
     for (const slot of this.slots.values()) this.forget(slot);
     this.slots.clear();
+    this.findWrites.clear();
     this.lazy.close();
     this.line.remove();
     clearTimeout(this.ticking);
@@ -325,7 +477,7 @@ export class ConversationView {
     const slot: Slot = { key: block.key, element, block, signature: null, height: null };
     this.slots.set(block.key, slot);
     this.byElement.set(element, slot);
-    if ((this.live && !read) || !LAZY.has(block.kind) || this.whole) this.draw(slot);
+    if ((this.live && !read) || !LAZY.has(block.kind)) this.draw(slot);
     else this.wait(slot);
     if (LAZY.has(block.kind)) this.lazy.watch(element);
     return slot;
@@ -389,8 +541,8 @@ export class ConversationView {
   private release(slot: Slot, height: number): void {
     // A page out of view keeps what it drew, to be shown again as it was.
     if (!this.root.isConnected) return;
-    if (slot.signature === null || this.whole || !LAZY.has(slot.block.kind)) return;
-    if (this.openStretches.has(slot.key) || slot.element.querySelector('[aria-expanded="true"]')) return;
+    if (slot.signature === null || !LAZY.has(slot.block.kind)) return;
+    if (this.openStretches.has(slot.key) || slot.element.querySelector("[aria-expanded=\"true\"]")) return;
     if (slot.element.contains(document.activeElement)) return;
     const selection = getSelection();
     if (selection && selection.rangeCount && !selection.isCollapsed && selection.getRangeAt(0).intersectsNode(slot.element)) return;
@@ -430,6 +582,19 @@ export class ConversationView {
         return `${block.stamp}|${this.editing.has(block.key) ? "e" : ""}${this.skipped.has(block.key) ? "s" : ""}`;
       case "uncertain":
         return `${block.stamp}|${this.conversation.hasTurns() ? "t" : ""}`;
+      default:
+        return String(block.stamp);
+    }
+  }
+
+  private findSignature(block: Block): string {
+    switch (block.kind) {
+      case "activity-group":
+        return `${block.stamp}|${block.members.length}${block.agents ? `|${this.conversation.agentStamp}` : ""}`;
+      case "question":
+        return `${block.stamp}|${this.editing.has(block.key)}|${this.skipped.has(block.key)}`;
+      case "uncertain":
+        return `${block.stamp}|${this.conversation.hasTurns()}`;
       default:
         return String(block.stamp);
     }
@@ -592,8 +757,8 @@ export class ConversationView {
       `data-turn-act="regenerate" data-turn="${escape(entry.turn)}"`,
       "regenerate",
       words.regenerate,
-      ' data-needs="rewind"',
-    )}${icon(`data-turn-act="fork" data-turn="${escape(entry.turn)}"`, "fork", words.fork, ' data-needs="fork"')}${
+      " data-needs=\"rewind\"",
+    )}${icon(`data-turn-act="fork" data-turn="${escape(entry.turn)}"`, "fork", words.fork, " data-needs=\"fork\"")}${
       info.length
         ? `<span class="turn-icon turn-info" tabindex="0" aria-label="${escape(info.map(([label, value]) => `${label} ${value}`).join("; "))}">${glyph("info", 16)}<span class="turn-info-card" role="tooltip">${info
             .map(([label, value]) => `<span class="turn-info-label">${escape(label)}</span><span>${escape(value)}</span>`)
@@ -852,7 +1017,7 @@ export class ConversationView {
     const line = `<span class="notice-mark${ok ? "" : " wrong"}">${mark}</span><span class="notice-said">${escape(said)}</span>`;
     if (!more) return `<div class="notice-line${ok ? "" : " failed"}">${line}</div>`;
     const open = this.openRows.has(entry.key);
-    return `<div class="notice-line${ok ? "" : " failed"}"><button class="notice-open" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}">${line}${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>`;
+    return `<div class="notice-line${ok ? "" : " failed"}"><button class="notice-open" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}">${line}${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>`;
   }
 
   /** What a notice holds, opened: a job's last lines and where its output
@@ -1010,59 +1175,12 @@ export class ConversationView {
    *  The words change in place; the line keeps its height. */
   private heading(stretch: Stretch, group: Activity): void {
     const { words } = this.context;
-    const tools = group.members.filter((member): member is ToolEntry => member.kind === "tool");
-    const thinking = group.members.filter(isThinking);
-    const steps = runsOf(group.members).length;
-    const writing = thinking.find((member) => member.writing);
-    const runningTool = tools.find((tool) => tool.ended === null);
-    const running = !!runningTool || !!writing;
-    const only = thoughtOnly(group);
-    // Thinking without words has nothing to open.
-    const bare = only && !thinking.some((member) => member.text.trim());
+    const said = stretchSays(group, words, (path) => this.conversation.attachmentName(path), (run) => this.conversation.thinkingTokens(run));
+    const { title, added, removed, steps, running, only, bare, began } = said;
+    const stats = added || removed ? `<span class="add">+${added}</span><span class="del">−${removed}</span>` : "";
     stretch.head.classList.toggle("bare", bare);
     stretch.head.classList.toggle("thought", only);
     stretch.head.disabled = bare;
-    let title: string;
-    let stats = "";
-    let figures = "";
-    if (runningTool) {
-      const line = headline(runningTool.tool, null, words, (path) => this.conversation.attachmentName(path));
-      title = [line.action, line.object].filter(Boolean).join(" ");
-    } else if (writing) {
-      const last = sections(writing.text).at(-1);
-      title = last ? words.thinkingAbout(last) : words.thinking;
-    } else if (only) {
-      const took = thoughtTook(thinking);
-      title = took === null ? words.thought : words.thoughtFor(took);
-      const tokens = this.conversation.thinkingTokens(thinking);
-      if (tokens !== null) figures = words.thinkingTokens(tokens);
-    } else {
-      title = groupHeading(tools, thinking.length, words);
-      let added = 0;
-      let removed = 0;
-      for (const tool of tools) {
-        for (const write of tool.tool.run?.writes ?? []) {
-          added += write.added ?? 0;
-          removed += write.removed ?? 0;
-        }
-        if (tool.tool.does.as !== "edit") continue;
-        for (const change of tool.tool.does.changes) {
-          const counted = counts(change.diff);
-          added += counted.added;
-          removed += counted.removed;
-        }
-      }
-      stats = added || removed ? `<span class="add">+${added}</span><span class="del">−${removed}</span>` : "";
-    }
-    // Its clock runs from when its first step began, thinking included.
-    let began: number | null = null;
-    let last: number | null = null;
-    for (const member of group.members) {
-      const start = member.kind === "tool" ? member.began : isThinking(member) ? (member.began ?? null) : null;
-      if (start !== null && (began === null || start < began)) began = start;
-    }
-    for (const tool of tools) if (tool.ended && (last === null || tool.ended.at > last)) last = tool.ended.at;
-    const ended = !running && tools.length && tools.every((tool) => tool.ended) ? last : null;
     const titleElement = stretch.head.querySelector<HTMLElement>(".group-title")!;
     if (titleElement.textContent !== title) {
       // The step in hand changes in place: the new words fade in, the line
@@ -1085,8 +1203,7 @@ export class ConversationView {
     } else {
       delete time.dataset.since;
       this.clocks.delete(time);
-      const said = only ? figures : [running || steps < 2 ? "" : words.steps(steps), began !== null && ended !== null ? words.took(ended - began) : ""].filter(Boolean).join(" · ");
-      if (time.textContent !== said) time.textContent = said;
+      if (time.textContent !== said.time) time.textContent = said.time;
     }
   }
 
@@ -1099,9 +1216,12 @@ export class ConversationView {
         this.clocks.delete(clock);
         continue;
       }
-      const steps = Number(clock.dataset.steps);
-      const said = [steps < 2 ? "" : words.steps(steps), words.took(Date.now() - Number(clock.dataset.since))].filter(Boolean).join(" · ");
-      if (clock.textContent !== said) clock.textContent = said;
+      const said = clockSays(Number(clock.dataset.steps), Number(clock.dataset.since), words);
+      if (clock.textContent !== said) {
+        clock.textContent = said;
+        const block = clock.closest<HTMLElement>(".block");
+        if (block?.dataset.key) this.findPending.add(block.dataset.key);
+      }
     }
     clearTimeout(this.ticking);
     if (this.clocks.size) this.ticking = window.setTimeout(() => this.tick(), 1000);
@@ -1114,16 +1234,24 @@ export class ConversationView {
     const member = run[0]!;
     if (isThinking(member)) {
       const thoughts = run as ProseEntry[];
-      return [{ key: member.key, signature: this.runSignature(thoughts), html: () => this.thinkingRow(thoughts, this.entering(member.key)) }];
+      return [{ key: member.key, signature: this.runSignature(thoughts), html: () => this.thinkingRow(thoughts, this.entering(member.key)), text: () => this.thinkingRowText(thoughts) }];
     }
-    const own: Row = { key: member.key, signature: this.memberSignature(member), html: () => this.member(member) };
+    const own: Row = { key: member.key, signature: this.memberSignature(member), html: () => this.member(member), text: () => this.findRowText(member) };
     const writes = member.kind === "tool" ? (member.tool.run?.writes ?? []) : [];
     if (!writes.length || member.kind !== "tool") return [own];
     return [
       ...(onlyWrites(member.tool) ? [] : [own]),
       ...writes.map((write) => {
         const key = `${member.key}${WRITE}${write.id}`;
-        return { key, signature: `${key}${write.added}${write.removed}${write.diff ? "d" : ""}`, html: () => this.writeRow(key, write) };
+        return {
+          key, signature: JSON.stringify(write),
+          html: () => this.writeRow(key, write),
+          text: () => {
+            const line = writeHeadline(write, this.context.words);
+            const stats = line.added !== null && line.removed !== null ? `+${line.added} −${line.removed}` : "";
+            return [line.action, line.object, stats, write.machine !== this.context.residentMachine ? this.context.words.on(write.machine) : ""].filter(Boolean).join(" ");
+          },
+        };
       }),
     ];
   }
@@ -1138,12 +1266,37 @@ export class ConversationView {
    *  would be. */
   private thoughtWords(run: ProseEntry[]): Row {
     const key = `${run[0]!.key}~words`;
-    return { key, signature: this.runSignature(run), html: () => `<div class="thinking-text prose" data-row="${escape(key)}">${render(thoughtText(run))}</div>` };
+    return { key, signature: this.runSignature(run), html: () => `<div class="thinking-text prose" data-row="${escape(key)}">${render(thoughtText(run))}</div>`, text: () => "" };
   }
 
   private memberSignature(entry: Entry): string {
     if (entry.kind === "tool" && this.conversation.agentOf(entry)) return `${entry.stamp}a${this.conversation.agentStamp}`;
     return String(entry.stamp);
+  }
+
+  /** A run of thinking's line as its row shows it. */
+  private thinkingRowText(run: readonly ProseEntry[]): string {
+    const { words } = this.context;
+    const writing = run.some((entry) => entry.writing);
+    const took = writing ? null : thoughtTook(run);
+    const titles = sections(thoughtText(run));
+    const title = writing ? titles.at(-1) : titles[0];
+    const tokens = writing ? null : this.conversation.thinkingTokens(run);
+    return [writing ? words.thinking : took === null ? words.thought : words.thoughtFor(took), title ?? "", tokens === null ? "" : words.thinkingTokens(tokens)].filter(Boolean).join(" ");
+  }
+
+  private findRowText(entry: Entry): string {
+    const { words } = this.context;
+    if (entry.kind === "activity") return entry.text;
+    if (entry.kind !== "tool") return "";
+    const line = headline(entry.tool, entry.ended, words, (path) => this.conversation.attachmentName(path), true);
+    const tense = tenseOf(entry.ended);
+    const stats = line.added !== null && line.removed !== null ? `+${line.added} −${line.removed}` : "";
+    const where = entry.tool.machine && entry.tool.machine !== this.context.residentMachine ? words.on(entry.tool.machine) : "";
+    const agent = this.conversation.agentOf(entry);
+    const colleague = entry.tool.does.as === "colleague" && entry.tool.does.to && this.context.link ? words.openColleague : "";
+    const text = [line.action, line.object, stats, displayedTextHtml(this.outcome(entry, tense)), where].filter(Boolean).join(" ");
+    return `${text}${colleague ? `\n${colleague}` : ""}${agent ? `\n${words.subagent(agent.kind, agent.steps, tense === "running" ? agent.doing : null)}` : ""}`;
   }
 
   /** A file a run wrote: made, changed or removed, its lines added and
@@ -1161,7 +1314,7 @@ export class ConversationView {
         : "";
     const elsewhere = write.machine !== this.context.residentMachine ? `<span class="row-machine">${escape(words.on(write.machine))}</span>` : "";
     const chevron = expandable ? `<span class="row-chevron">${glyph("chevron", 16)}</span>` : "";
-    const fold = expandable ? `<div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>` : "";
+    const fold = expandable ? `<div class="fold-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>` : "";
     // A change that could not be read line by line says why on hover.
     const why = write.unavailable ? ` title="${escape(write.unavailable)}"` : "";
     return `<div class="row row-tool row-done${enter}" data-row="${escape(key)}"><span class="rail">${glyph(line.glyph)}</span><button class="row-line" type="button" ${expandable ? `data-open="${escape(key)}"` : "disabled"} aria-expanded="${open}"${why}><span class="row-action">${escape(line.action)}</span><span class="row-rest"><span class="row-object" title="${escape(write.path)}">${escape(line.object ?? "")}</span><span class="row-meta">${stats}${elsewhere}${chevron}</span></span></button>${fold}</div>`;
@@ -1204,7 +1357,7 @@ export class ConversationView {
       ? `<span class="row-object"${line.title ? ` title="${escape(line.title)}"` : ""}>${escape(line.object)}</span>`
       : "";
     const chevron = expandable ? `<span class="row-chevron">${glyph("chevron", 16)}</span>` : "";
-    const fold = expandable ? `<div class="fold-box"${open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div>` : "";
+    const fold = expandable ? `<div class="fold-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>` : "";
     // A colleague it asked lives on in the World: its own conversation is a
     // step away.
     const colleague =
@@ -1311,6 +1464,13 @@ export class ConversationView {
   /** What a write changed, read from the machine that keeps it: a few rows
    *  are read whole and shown outright, more are read a screen at a time. */
   private fillWrite(key: string, write: WriteFact, into: HTMLElement): void {
+    const cached = this.findWrites.get(key);
+    if (cached?.signature === JSON.stringify(write)) {
+      const long = this.diffText(cached.lines, write.path, true);
+      this.longs.set(key, [long]);
+      into.append(long.element);
+      return;
+    }
     const diff = write.diff;
     const lines = this.context.lines;
     if (!diff || !lines) return;
@@ -1332,7 +1492,7 @@ export class ConversationView {
         close();
       },
     ]);
-    void (async () => {
+    const pending = (async () => {
       try {
         held.raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });
         if (request.signal.aborted) return close();
@@ -1356,6 +1516,10 @@ export class ConversationView {
         note.title = detailOf(error);
       }
     })();
+    this.filling.set(key, pending);
+    void pending.finally(() => {
+      if (this.filling.get(key) === pending) this.filling.delete(key);
+    });
   }
 
   /** Fills what opens under a row or a notice: a change as a diff, a
@@ -1408,16 +1572,8 @@ export class ConversationView {
     }
     // A World run says what the model got as facts: its own output, apart
     // from what its writes printed of themselves, which their rows show.
-    const run = tool.does.as === "command" && tool.status !== "running" ? tool.run : undefined;
-    const shown = run ? shownOutput(run.spans, run.writes, words.output) : null;
-    const output = run ? "" : textOf(tool.output);
+    const { run, shown, output, given, ending: endText } = toolText(tool, words);
     const images = imagesOf(tool.output);
-    const given =
-      tool.does.as === "command"
-        ? tool.does.command
-        : tool.input !== null && tool.input !== undefined && JSON.stringify(tool.input) !== "{}"
-          ? JSON.stringify(tool.input, null, 2)
-          : "";
     const surface = document.createElement("div");
     surface.className = "surface io";
     const longs: LongText[] = [];
@@ -1465,12 +1621,7 @@ export class ConversationView {
       printed = { lines: shown.lines, ...(plain ? {} : { paint: outputPaint(shown) }), name: words.output.modelCopy, others };
     }
     // How a command ended, under what it wrote.
-    const ending =
-      tool.does.as === "command" && tool.does.job
-        ? `<p class="io-end">${escape(words.wentOnAs(tool.does.job))}</p>`
-        : tool.does.as === "command" && tool.does.exit !== null
-          ? `<p class="io-end${tool.does.exit === 0 ? "" : " nonzero"}">${escape(words.exited(tool.does.exit))}</p>`
-          : "";
+    const ending = endText ? `<p class="io-end${tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0 ? " nonzero" : ""}">${escape(endText)}</p>` : "";
     if (given) part("IN", given);
     if (printed || images || ending) part("OUT", printed, images + ending);
     content.append(surface);
@@ -1480,6 +1631,7 @@ export class ConversationView {
 
   /** Lets go of what a row held open. */
   private letGo(key: string): void {
+    this.filling.delete(key);
     for (const long of this.longs.get(key) ?? []) long.destroy();
     this.longs.delete(key);
     for (const close of this.closers.get(key) ?? []) close();
@@ -1632,13 +1784,6 @@ function gone(error: unknown): boolean {
   return code === "source_missing" || code === "original_gone" || code === "output_not_retained";
 }
 
-function textOf(output: Content[]): string {
-  return output
-    .filter((content): content is Extract<Content, { type: "text" }> => content.type === "text")
-    .map((content) => content.text)
-    .join("\n");
-}
-
 function imagesOf(output: Content[]): string {
   return output
     .map((content) => {
@@ -1701,35 +1846,4 @@ function modelName(id: string): string {
   if (!claude) return id;
   const [, family, major, minor] = claude;
   return `${family![0]!.toUpperCase()}${family!.slice(1)} ${major}${minor ? `.${minor}` : ""}`;
-}
-
-/** Whether a stretch is nothing but thinking: one run of it, said by its
- *  heading alone. */
-function thoughtOnly(group: Activity): boolean {
-  return group.members.every(isThinking);
-}
-
-/** The words of a run of thinking, its parts' one after another. */
-function thoughtText(run: readonly ProseEntry[]): string {
-  return run
-    .map((entry) => entry.text.trim())
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-/** How long a run of thinking took: its parts' together, where the host
- *  said for every one. */
-function thoughtTook(run: readonly ProseEntry[]): number | null {
-  let took = 0;
-  for (const entry of run) {
-    if (entry.took === undefined) return null;
-    took += entry.took;
-  }
-  return took;
-}
-
-/** The titles a summary of thinking puts its sections under, in bold on a
- *  line of their own. */
-function sections(text: string): string[] {
-  return [...text.matchAll(/^\*\*(.+?)\*\*\s*$/gm)].map((match) => match[1]!);
 }
