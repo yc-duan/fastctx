@@ -1,10 +1,13 @@
-//! Title changes include idle renames, so observation follows the host file.
+//! Following a session's own file as Claude Code writes it: its title,
+//! idle renames included, and the rows that end its blocks of thinking
+//! (`thoughts`).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fastctx_hosts::claude::{exchange, titles::Titles};
+use fastctx_hosts::claude::tail::{Found, Tail};
+use fastctx_hosts::claude::{exchange, thoughts::Thought, titles::Titles};
 use fastctx_types::ResidentId;
 use fastctx_types::session::{Happened, SessionEvent};
 use jiff::Timestamp;
@@ -37,21 +40,56 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
     let resident = resident.clone();
     tokio::spawn(async move {
         let _watcher = watcher;
+        let mut tail = Tail::default();
         let mut titles = Titles::default();
+        // What the file held when it was first read, or when it was read
+        // again after a rewrite, came before: only later rows are new.
+        let mut followed = false;
         loop {
             let Some(node) = node.upgrade() else { return };
-            match titles.observe(&path) {
-                Ok(Some(title))
-                    if node.residents.now(&resident).is_some_and(|now| now.title.as_ref() != Some(&title)) =>
-                {
-                    let event = SessionEvent { at: Timestamp::now(), happened: Happened::Titled { title } };
-                    if let Err(error) = crate::turns::apply(&node, &resident, event).await {
-                        node.log.line(format_args!("observing Claude's title: {error}"));
+            let mut restarted = false;
+            let mut thoughts = Vec::new();
+            let read = tail.read(&path, |found| {
+                match found {
+                    Found::Restarted => {
+                        titles = Titles::default();
+                        restarted = true;
+                    }
+                    Found::Row(row) => {
+                        titles.row(row)?;
+                        thoughts.extend(Thought::read(row));
                     }
                 }
-                Ok(_) => {}
+                Ok(())
+            });
+            if restarted {
+                node.claude.thoughts.restarted(&path);
+            }
+            let new = followed && !restarted;
+            for thought in thoughts {
+                if let Some(ready) = node.claude.thoughts.read(&path, thought, new)
+                    && let Err(error) = super::thoughts::show(&node, ready).await
+                {
+                    node.log.line(format_args!("showing Claude's thinking as recorded: {error}"));
+                }
+            }
+            match read {
+                Ok(()) => {
+                    followed = true;
+                    match titles.title() {
+                        Some(title)
+                            if node.residents.now(&resident).is_some_and(|now| now.title.as_ref() != Some(&title)) =>
+                        {
+                            let event = SessionEvent { at: Timestamp::now(), happened: Happened::Titled { title } };
+                            if let Err(error) = crate::turns::apply(&node, &resident, event).await {
+                                node.log.line(format_args!("observing Claude's title: {error}"));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => node.log.line(format_args!("reading Claude's title in {}: {error}", path.display())),
+                Err(error) => node.log.line(format_args!("following Claude's record in {}: {error}", path.display())),
             }
             drop(node);
             if changes.recv().await.is_none() {

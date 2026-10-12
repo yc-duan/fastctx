@@ -201,6 +201,14 @@ pub enum Reported {
     Stored {
         uuid: String,
     },
+    /// The stored record `uuid` ended the live thinking item `item` of
+    /// `turn`; how long it took and what its request cost are on that record
+    /// once the file has it (`crate::claude::thoughts`).
+    Thought {
+        uuid: String,
+        turn: String,
+        item: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -216,6 +224,13 @@ enum ModEvent {
     /// Claude Code kept the main conversation's record `uuid`.
     Stored {
         uuid: String,
+    },
+    /// The main conversation's record `uuid` ended the live thinking item
+    /// `item` of `turn`.
+    Thought {
+        uuid: String,
+        turn: String,
+        item: String,
     },
     Session {
         at: Option<Timestamp>,
@@ -456,6 +471,7 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             .collect(),
         ModEvent::Batch { events } => events.into_iter().flat_map(|event| translate(event, recorded_at)).collect(),
         ModEvent::Stored { uuid } => vec![Reported::Stored { uuid }],
+        ModEvent::Thought { uuid, turn, item } => vec![Reported::Thought { uuid, turn, item }],
         ModEvent::Session { at, happened: observed } => vec![happened(at, observed)],
         ModEvent::ToolStored {
             at,
