@@ -1,5 +1,6 @@
 //! Graphics protocols retain payload ranges and decode into bounded spools.
 use super::terminal::{Image, Lines};
+use crate::image::Header;
 use crate::spool::{Bytes, Spool};
 use base64::engine::general_purpose::STANDARD;
 use base64::{DecodeError, Engine as _};
@@ -100,10 +101,13 @@ fn image<R: Read>(lines: &mut Lines<R>, encoded: Bytes, reason: &str) -> io::Res
         Ok(bytes) => bytes,
         Err(error) => return lines.unreadable(format!("{reason}: {error}")),
     };
-    if let Some((mime, width, height)) = sniff(&bytes)? {
-        lines.image(Image { mime, width, height, bytes })
-    } else {
-        lines.unreadable(format!("an image of {} bytes in a format other than PNG, JPEG, GIF or WebP", bytes.len()))
+    match crate::image::header(bytes.reader())? {
+        Some(Header::Shown { mime, width, height }) => lines.image(Image { mime, width, height, bytes }),
+        Some(Header::Unreadable { format, reason }) => lines
+            .unreadable(format!("an image of {} bytes whose {format} header cannot be read: {reason}", bytes.len())),
+        Some(Header::Other(_)) | None => {
+            lines.unreadable(format!("an image of {} bytes in a format other than PNG, JPEG, GIF or WebP", bytes.len()))
+        }
     }
 }
 
@@ -148,38 +152,5 @@ fn decode(bytes: &Bytes) -> io::Result<Result<Bytes, DecodeError>> {
             DecodeError::InvalidLength(length) => DecodeError::InvalidLength(prefix + length),
             DecodeError::InvalidPadding => DecodeError::InvalidPadding,
         })),
-    }
-}
-fn sniff(bytes: &Bytes) -> io::Result<Option<(&'static str, u32, u32)>> {
-    let prefix = bytes.slice(0..bytes.len().min(512)).to_vec()?;
-    if !prefix.starts_with(b"\xff\xd8") {
-        return Ok(crate::image::sniff(&prefix));
-    }
-    let mut at = 2;
-    loop {
-        if at + 4 > bytes.len() {
-            return Ok(None);
-        }
-        let header = bytes.slice(at..(at + 9).min(bytes.len())).to_vec()?;
-        if header[0] == 0xff && header[1] == 0xff {
-            at += 1;
-            continue;
-        }
-        if header[0] != 0xff {
-            return Ok(None);
-        }
-        let marker = header[1];
-        let length = usize::from(u16::from_be_bytes([header[2], header[3]]));
-        if (0xc0..=0xcf).contains(&marker) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
-            if header.len() < 9 {
-                return Ok(None);
-            }
-            return Ok(Some((
-                "image/jpeg",
-                u32::from(u16::from_be_bytes([header[7], header[8]])),
-                u32::from(u16::from_be_bytes([header[5], header[6]])),
-            )));
-        }
-        at += 2 + length;
     }
 }
