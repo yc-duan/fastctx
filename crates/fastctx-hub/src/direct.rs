@@ -211,6 +211,8 @@ fn explain(machine: &MachineName, address: SocketAddr, unreached: &Unreached, fi
         Unreached::Refused(_) => format!(
             "the hub could not reach {machine} at {address}: {unreached}; nothing listens there for {machine}: the address may lead to another computer, such as a router that does not forward port {port}, or a firewall on the way rejects it"
         ),
-        Unreached::Other(_) => format!("the hub did not reach {machine} at {address}: {unreached}"),
+        Unreached::Other(_) => format!(
+            "the hub did not reach {machine} at {address}: {unreached}; the address may lead to another computer or program, such as a router forwarding port {port} elsewhere, or a proxy where the hub runs answers for every address"
+        ),
     }
 }
