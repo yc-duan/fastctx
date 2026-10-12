@@ -1,7 +1,9 @@
 // What the agents page says (`world-gui.md`, 账号、机器、共享与借出): short
-// labels on the slips, the change card's lines, and what stays a hover away.
+// labels on the slips, the folders searched for logins, the change card's
+// lines, and what stays a hover away.
 
 import type { Installed } from "../world/logins";
+import type { FolderWalkWords } from "./folder-walk";
 
 export interface AgentLoginsWords {
   title: string;
@@ -18,10 +20,6 @@ export interface AgentLoginsWords {
   scanThere: string;
   rescan: string;
   scanning: string;
-  /** The walk of every disk, its progress, and stopping it. */
-  walking(directories: number): string;
-  stopWalk: string;
-  walkStopped: string;
   scanFailed: string;
   /** The programs found, at the head of the agent's column. */
   programs(n: number): string;
@@ -34,11 +32,24 @@ export interface AgentLoginsWords {
   /** The groups of logins. */
   listed: string;
   candidates: string;
-  elsewhere(n: number): string;
   noneFound: string;
-  addDir: string;
-  addDirPlaceholder: string;
-  add: string;
+  /** The folders searched for logins: the group, choosing one, a search
+   *  under way and how it ended, and what stays a hover away. */
+  folders: string;
+  addFolder: string;
+  searching(directories: number): string;
+  stop: string;
+  stopped: string;
+  searchFailed: string;
+  noneBelow: string;
+  notSearched: string;
+  searched(directories: number, unreadable: number, when: string): string;
+  forget: string;
+  moreFound(n: number): string;
+  /** Choosing a folder on another machine, walked by its node. */
+  chooseOn(machine: string): string;
+  close: string;
+  walk: FolderWalkWords;
   /** A slip. */
   defaultLogin: string;
   token: string;
@@ -100,9 +111,6 @@ export const zhAgentLogins: AgentLoginsWords = {
   scanThere: "扫描这台机器",
   rescan: "重新扫描",
   scanning: "正在找",
-  walking: (directories) => `正在走一遍整台电脑的盘 · 已看 ${directories.toLocaleString("zh-CN")} 个目录`,
-  stopWalk: "停止",
-  walkStopped: "整盘的查找已停止",
   scanFailed: "扫描没有完成",
   programs: (n) => `${n} 个程序`,
   noProgram: "没有找到它的程序",
@@ -112,11 +120,22 @@ export const zhAgentLogins: AgentLoginsWords = {
   onPath: "终端里敲命令用的是它",
   listed: "已接入",
   candidates: "找到的登录",
-  elsewhere: (n) => `别处还找到 ${n} 处`,
   noneFound: "没有找到登录",
-  addDir: "添加目录",
-  addDirPlaceholder: "登录目录的路径",
-  add: "添加",
+  folders: "文件夹",
+  addFolder: "添加文件夹…",
+  searching: (directories) => `已看 ${directories.toLocaleString("zh-CN")} 个文件夹`,
+  stop: "停止",
+  stopped: "已停止",
+  searchFailed: "没找完",
+  noneBelow: "没找到",
+  notSearched: "还没找过",
+  searched: (directories, unreadable, when) =>
+    [`看了 ${directories.toLocaleString("zh-CN")} 个文件夹`, unreadable ? `${unreadable.toLocaleString("zh-CN")} 个打不开` : "", when].filter(Boolean).join(" · "),
+  forget: "不再找这个文件夹",
+  moreFound: (n) => `还有 ${n} 处`,
+  chooseOn: (machine) => `在 ${machine} 上选择文件夹`,
+  close: "关闭",
+  walk: { up: "上一级", reading: "读取中…", noFolders: "没有子文件夹", path: "路径", choose: "选这个文件夹", back: "返回" },
   defaultLogin: "默认",
   token: "长期令牌",
   tokenSaid: "用 setup-token 得到的长期令牌登录：认不出账号与套餐",
@@ -170,9 +189,6 @@ export const enAgentLogins: AgentLoginsWords = {
   scanThere: "Scan this machine",
   rescan: "Scan again",
   scanning: "Looking",
-  walking: (directories) => `Walking every disk · ${directories.toLocaleString("en")} directories seen`,
-  stopWalk: "Stop",
-  walkStopped: "The disk walk was stopped",
   scanFailed: "The scan did not finish",
   programs: (n) => (n === 1 ? "1 program" : `${n} programs`),
   noProgram: "None of its programs found",
@@ -182,11 +198,22 @@ export const enAgentLogins: AgentLoginsWords = {
   onPath: "What the command runs in a terminal",
   listed: "Hooked up",
   candidates: "Logins found",
-  elsewhere: (n) => (n === 1 ? "1 more place found elsewhere" : `${n} more places found elsewhere`),
   noneFound: "No logins found",
-  addDir: "Add a directory",
-  addDirPlaceholder: "Path of the login directory",
-  add: "Add",
+  folders: "Folders",
+  addFolder: "Add a folder…",
+  searching: (directories) => `${directories.toLocaleString("en")} folders seen`,
+  stop: "Stop",
+  stopped: "Stopped",
+  searchFailed: "Not finished",
+  noneBelow: "None found",
+  notSearched: "Not searched yet",
+  searched: (directories, unreadable, when) =>
+    [`${directories.toLocaleString("en")} folders seen`, unreadable ? `${unreadable.toLocaleString("en")} unreadable` : "", when].filter(Boolean).join(" · "),
+  forget: "Stop searching this folder",
+  moreFound: (n) => `${n} more`,
+  chooseOn: (machine) => `Choose a folder on ${machine}`,
+  close: "Close",
+  walk: { up: "Up", reading: "Reading…", noFolders: "No folders here", path: "Path", choose: "Choose this folder", back: "Back" },
   defaultLogin: "Default",
   token: "Token",
   tokenSaid: "Logged in with a long-lived setup-token: no account or plan to show",

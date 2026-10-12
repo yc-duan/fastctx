@@ -1,88 +1,58 @@
 //! A scan of this machine for its agents, only when the user asks
-//! (`world-agent-logins.md`, 世界怎样找到它们): first the usual places, the
+//! (`world-agent-logins.md`, 世界怎样找到它们): the usual places, the
 //! agents' programs where their installers put them and each login there
-//! asked who it is, which is answered at once; then a walk of every local
-//! fixed disk by names alone, on threads at the lowest priority, one for
-//! each disk, which the user can stop at any time. What the walk finds only
-//! looks like a login: no one is asked who is logged in there until the
-//! user takes one up.
+//! asked who it is, which takes seconds; then every folder the user chose
+//! is searched again in the background (`folders`). With `stop`, those
+//! searches stop.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use fastctx_hosts::inventory::{self, traces, walk};
+use fastctx_hosts::inventory::{self, traces};
 use fastctx_types::agents::Fact;
 use fastctx_types::ipc::Failure;
-use fastctx_types::logins::{DiskProgress, DiskWalk, Found, LooksLike, MachineLogins, Scan, Stage};
+use fastctx_types::logins::{Found, MachineLogins, Scan, Stage};
 use jiff::Timestamp;
 
 use super::kept::{self, KeptLimits, KeptLogin};
 use super::{AGENTS, Context, identify};
 use crate::Node;
 
-/// A scan under way.
-pub(crate) struct Running {
-    started_at: Timestamp,
-    stop: AtomicBool,
-    /// Each disk's walk, once it began.
-    disks: Mutex<Vec<(PathBuf, Arc<walk::Counters>)>>,
-}
-
-impl Running {
-    /// Writes how far the walk has got into the kept record of the scan.
-    pub(super) fn progress(&self, scan: &mut Scan) {
-        if scan.started_at != self.started_at {
-            return;
-        }
-        if let Some(walk) = &mut scan.disks {
-            walk.disks = self
-                .disks
-                .lock()
-                .expect("never poisoned")
-                .iter()
-                .map(|(root, counters)| DiskProgress {
-                    root: root.clone(),
-                    directories: counters.directories.load(Ordering::Relaxed),
-                    unreadable: counters.unreadable.load(Ordering::Relaxed),
-                    done: counters.done.load(Ordering::Acquire),
-                })
-                .collect();
-        }
-    }
-}
-
 /// Scans this machine, answering once the usual places are done while the
-/// walk of every disk goes on; with `stop`, stops that walk. Asked while
-/// one runs, it answers how that one is going.
-pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, Failure> {
-    let running = node.logins.scan.lock().expect("never poisoned").clone();
-    if stop || running.is_some() {
-        if stop && let Some(running) = &running {
-            running.stop.store(true, Ordering::Relaxed);
-        }
+/// chosen folders are searched; with `stop`, stops those searches. Asked
+/// while a scan runs, it answers how that one is going. With `limits`,
+/// each Codex login is asked its usage limits too. The scan goes on to its
+/// end even when whoever asked for it is gone.
+pub(crate) async fn scan(node: &Arc<Node>, stop: bool, limits: bool) -> Result<MachineLogins, Failure> {
+    if stop {
+        super::folders::stop_all(node);
         return super::here(node).await;
     }
+    if node.logins.scanning.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        return super::here(node).await;
+    }
+    let scanning = node.clone();
+    let scanned = tokio::spawn(async move {
+        let node = scanning;
+        let scanned = scan_once(&node, limits).await;
+        node.logins.scanning.store(false, Ordering::Release);
+        scanned
+    })
+    .await
+    .map_err(|error| Failure::new(format!("scanning: {error}")));
+    scanned??;
+    super::here(node).await
+}
+
+/// The usual places, then the chosen folders' searches; the record says how
+/// the scan ended before the scan is no longer running, so no reader sees
+/// it running in the record and nowhere else.
+async fn scan_once(node: &Arc<Node>, limits: bool) -> Result<(), Failure> {
     let started_at = Timestamp::now();
-    let running = Arc::new(Running { started_at, stop: AtomicBool::new(false), disks: Mutex::new(Vec::new()) });
-    let began = {
-        let mut slot = node.logins.scan.lock().expect("never poisoned");
-        let free = slot.is_none();
-        if free {
-            *slot = Some(running.clone());
-        }
-        free
-    };
-    if !began {
-        return super::here(node).await;
-    }
-    let usual = usual(node, &running).await;
-    if let Err(failure) = &usual {
-        // The record says how it ended before the scan is no longer running,
-        // so no reader sees it running in the record and nowhere else.
+    if let Err(failure) = usual(node, started_at, limits).await {
         let failed = Stage::Failed { at: Timestamp::now(), reason: failure.message.clone() };
-        let kept = blocking(node, move |node| {
+        blocking(node, move |node| {
             kept::change(node, |kept| {
                 if let Some(scan) = &mut kept.scan
                     && scan.started_at == started_at
@@ -92,34 +62,10 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
             })
             .map_err(|error| Failure::new(format!("keeping the scan: {error}")))
         })
-        .await;
-        node.logins.scan.lock().expect("never poisoned").take();
-        kept?;
-        return Err(failure.clone());
+        .await?;
+        return Err(failure);
     }
-    let walking = node.clone();
-    tokio::spawn(async move {
-        let node = walking.clone();
-        let outcome = tokio::task::spawn_blocking(move || disks(&walking, &running)).await;
-        let problem = match outcome {
-            Ok(Ok(())) => None,
-            Ok(Err(failure)) => Some(failure.message),
-            Err(error) => Some(error.to_string()),
-        };
-        if let Some(problem) = problem {
-            node.log.line(format_args!("walking the disks for agents' logins: {problem}"));
-            let kept = kept::change(&node, |kept| {
-                if let Some(walk) = kept.scan.as_mut().and_then(|scan| scan.disks.as_mut()) {
-                    walk.stage = Stage::Failed { at: Timestamp::now(), reason: problem.clone() };
-                }
-            });
-            if let Err(error) = kept {
-                node.log.line(format_args!("keeping the scan: {error}"));
-            }
-        }
-        node.logins.scan.lock().expect("never poisoned").take();
-    });
-    super::here(node).await
+    super::folders::search_all(node)
 }
 
 async fn blocking<T: Send + 'static>(
@@ -131,41 +77,37 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// The usual places: each agent's default login, the directories directly
-/// in the user's home named and kept like the agent's, those the user
-/// added and those the World's tools are in, each asked who it is; and the
+/// in the user's home named and kept like the agent's, those the user took
+/// up and those the World's tools are in, each asked who it is; and the
 /// agents' programs.
-async fn usual(node: &Arc<Node>, running: &Running) -> Result<(), Failure> {
-    let started_at = running.started_at;
-    let (context, kept, programs, candidates) = blocking(node, move |node| {
+async fn usual(node: &Arc<Node>, started_at: Timestamp, limits: bool) -> Result<(), Failure> {
+    let (context, programs, candidates) = blocking(node, move |node| {
         let context = Context::of(node)?;
         kept::change(node, |kept| {
-            kept.scan = Some(Scan { started_at, usual: Stage::Running, disks: None, unreadable: Vec::new() });
+            kept.scan = Some(Scan { started_at, usual: Stage::Running, unreadable: Vec::new() });
         })
         .map_err(|error| Failure::new(format!("keeping the scan: {error}")))?;
         let kept = kept::read(node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
-        let programs = inventory::find(&inventory::Where {
+        let mut programs = inventory::find(&inventory::Where {
             user_home: &context.user_home,
             env: &context.env,
             codex_home: &context.codex_default,
             claude_home: &context.claude_default,
         });
-        let mut unreadable = programs.unreadable.clone();
         let mut candidates = Vec::new();
         for agent in AGENTS {
             let mut dirs = super::dirs(node, &context, &kept, agent)?;
             // A scan finds afresh what is in the usual places: what it found
             // before and is gone is not carried on.
             dirs.retain(|(dir, found)| *found != Found::Home || dir.is_dir());
-            for dir in in_home(&context.user_home, agent, &mut unreadable) {
+            for dir in in_home(&context.user_home, agent, &mut programs.unreadable) {
                 if !dirs.iter().any(|(known, _)| crate::homes::same_dir(known, &dir)) {
                     dirs.push((dir, Found::Home));
                 }
             }
             candidates.push((agent, dirs));
         }
-        let mut programs = programs;
-        programs.unreadable = unreadable;
-        Ok((context, kept, programs, candidates))
+        Ok((context, programs, candidates))
     })
     .await?;
     // Each login is asked at once: a slow one does not hold the others.
@@ -177,7 +119,7 @@ async fn usual(node: &Arc<Node>, running: &Running) -> Result<(), Failure> {
             let default = crate::homes::same_dir(&dir, context.default_of(agent));
             asking.push(tokio::spawn(async move {
                 let asked = if agent == "codex" {
-                    identify::codex(&node, &dir).await
+                    identify::codex(&node, &dir, limits).await
                 } else {
                     let path = dir.clone();
                     match tokio::task::spawn_blocking(move || identify::claude(&path, default, &claude_programs)).await
@@ -195,7 +137,6 @@ async fn usual(node: &Arc<Node>, running: &Running) -> Result<(), Failure> {
     for asking in asking {
         answers.push(asking.await.map_err(|error| Failure::new(format!("asking a login: {error}")))?);
     }
-    drop(kept);
     blocking(node, move |node| {
         kept::change(node, |kept| {
             kept.codex.programs = programs.codex;
@@ -222,7 +163,6 @@ async fn usual(node: &Arc<Node>, running: &Running) -> Result<(), Failure> {
             {
                 scan.usual = Stage::Done { at: Timestamp::now() };
                 scan.unreadable = programs.unreadable;
-                scan.disks = Some(DiskWalk { stage: Stage::Running, disks: Vec::new() });
             }
         })
         .map_err(|error| Failure::new(format!("keeping the scan: {error}")))
@@ -278,114 +218,4 @@ fn in_home(home: &Path, agent: &str, unreadable: &mut Vec<String>) -> Vec<PathBu
     }
     found.sort();
     found
-}
-
-/// The walk of every local fixed disk, a thread each, lowered to the
-/// background; its findings kept once every disk is done or the user
-/// stopped it.
-fn disks(node: &Arc<Node>, running: &Arc<Running>) -> Result<(), Failure> {
-    let roots = fastctx_platform::disks::fixed_disks()
-        .map_err(|error| Failure::new(format!("listing the local fixed disks: {error}")))?;
-    let context = Context::of(node)?;
-    let kept = kept::read(node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
-    // The World's own directory, and the logins known already, are not
-    // walked into.
-    let mut skip: HashSet<String> = HashSet::from([walk::key(&node.root)]);
-    // Nor is any place a filesystem is mounted again: each disk is walked
-    // from its own root, once.
-    let mounted = fastctx_platform::disks::mount_points()
-        .map_err(|error| Failure::new(format!("listing where filesystems are mounted: {error}")))?;
-    for point in mounted.iter().filter(|point| !roots.contains(point)) {
-        skip.insert(walk::key(point));
-    }
-    for agent in AGENTS {
-        for (dir, _) in super::dirs(node, &context, &kept, agent)? {
-            skip.insert(walk::key(&dir));
-        }
-    }
-    let skip = Arc::new(skip);
-    let found: Arc<Mutex<Vec<walk::Found>>> = Arc::default();
-    let problems: Arc<Mutex<Vec<String>>> = Arc::default();
-    let mut threads = Vec::new();
-    for root in roots {
-        let counters = Arc::new(walk::Counters::default());
-        running.disks.lock().expect("never poisoned").push((root.clone(), counters.clone()));
-        let (running, skip, found, told, walked) =
-            (running.clone(), skip.clone(), found.clone(), problems.clone(), root.clone());
-        let thread = std::thread::Builder::new().name("agents' logins walk".into()).spawn(move || {
-            let (root, problems) = (walked, told);
-            if let Err(error) = fastctx_platform::disks::lower_this_thread() {
-                problems.lock().expect("never poisoned").push(format!(
-                    "{}: not walked, as its walk could not be put in the background: {error}",
-                    root.display()
-                ));
-                counters.done.store(true, Ordering::Release);
-                return;
-            }
-            walk::walk(&root, &skip, &running.stop, &counters, &mut |one| {
-                found.lock().expect("never poisoned").push(one);
-            });
-        });
-        match thread {
-            Ok(thread) => threads.push(thread),
-            Err(error) => {
-                problems.lock().expect("never poisoned").push(format!("{}: not walked: {error}", root.display()))
-            }
-        }
-    }
-    for thread in threads {
-        if thread.join().is_err() {
-            problems.lock().expect("never poisoned").push("a disk's walk panicked".into());
-        }
-    }
-    let stopped = running.stop.load(Ordering::Relaxed);
-    let found = std::mem::take(&mut *found.lock().expect("never poisoned"));
-    let problems = std::mem::take(&mut *problems.lock().expect("never poisoned"));
-    let progress: Vec<DiskProgress> = running
-        .disks
-        .lock()
-        .expect("never poisoned")
-        .iter()
-        .map(|(root, counters)| DiskProgress {
-            root: root.clone(),
-            directories: counters.directories.load(Ordering::Relaxed),
-            unreadable: counters.unreadable.load(Ordering::Relaxed),
-            done: counters.done.load(Ordering::Acquire),
-        })
-        .collect();
-    let started_at = running.started_at;
-    kept::change(node, |kept| {
-        for agent in AGENTS {
-            let mut elsewhere: Vec<LooksLike> = Vec::new();
-            let mut seen: HashSet<String> = HashSet::new();
-            for one in found.iter().filter(|one| one.agent == agent) {
-                if seen.insert(walk::key(&one.dir)) {
-                    elsewhere.push(LooksLike { dir: one.dir.clone(), traces: one.traces.clone() });
-                }
-            }
-            // A walk the user stopped did not reach everywhere: what an
-            // earlier walk found there, and is still a directory, is still
-            // the best word on it.
-            if stopped {
-                for earlier in &kept.of(agent).elsewhere {
-                    if earlier.dir.is_dir() && seen.insert(walk::key(&earlier.dir)) {
-                        elsewhere.push(earlier.clone());
-                    }
-                }
-            }
-            elsewhere.sort_by(|a, b| a.dir.cmp(&b.dir));
-            kept.of_mut(agent).elsewhere = elsewhere;
-        }
-        if let Some(scan) = &mut kept.scan
-            && scan.started_at == started_at
-        {
-            let at = Timestamp::now();
-            scan.disks = Some(DiskWalk {
-                stage: if stopped { Stage::Stopped { at } } else { Stage::Done { at } },
-                disks: progress,
-            });
-            scan.unreadable.extend(problems);
-        }
-    })
-    .map_err(|error| Failure::new(format!("keeping the scan: {error}")))
 }

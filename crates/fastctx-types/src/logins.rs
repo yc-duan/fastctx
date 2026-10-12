@@ -1,7 +1,8 @@
 //! What each machine's node keeps of its agents' logins
 //! (`world-agent-logins.md`): what the last scan found there, which logins
-//! the World lists and uses, which are only candidates, and how far a scan
-//! or a change has got. Every page reads this record; reading it starts no
+//! the World lists and uses, which are only candidates, the folders the user
+//! chose and what their searches found, and how far a scan, a search or a
+//! change has got. Every page reads this record; reading it starts no
 //! process. A scan happens only when the user asks for one.
 //!
 //! A login is a directory: Codex's `CODEX_HOME`, Claude Code's
@@ -41,6 +42,10 @@ pub struct MachineLogins {
     pub scan: Option<Scan>,
     pub codex: AgentLogins,
     pub claude: AgentLogins,
+    /// The folders the user chose on this machine for logins kept below
+    /// them, each searched by the names in it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<Folder>,
 }
 
 impl MachineLogins {
@@ -72,8 +77,9 @@ pub struct AgentLogins {
     /// The other logins a scan found in the usual places, or the user
     /// added: each can be put into the list.
     pub candidates: Vec<Login>,
-    /// Directories the walk of every disk found that look like logins of
-    /// this agent; no one has asked who is logged in there.
+    /// Always empty: what a folder's search finds is in its machine's
+    /// `folders`. Interfaces from before folders read this.
+    #[serde(default)]
     pub elsewhere: Vec<LooksLike>,
 }
 
@@ -127,9 +133,9 @@ pub enum Found {
     /// A directory directly in the user's home, named and kept like the
     /// agent's.
     Home,
-    /// One the user wrote in.
+    /// One the user chose.
     Added,
-    /// One the walk of every disk found, which the user then took up.
+    /// One a folder's search found, which the user then took up.
     Elsewhere,
 }
 
@@ -237,22 +243,70 @@ pub struct LooksLike {
     pub traces: Vec<String>,
 }
 
-/// A scan of a machine for its agents: first the usual places, then, at
-/// the lowest priority, a walk of every local fixed disk by names alone.
+/// A scan of a machine for its agents: the usual places, each login there
+/// asked who it is; the folders the user chose are searched again with it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Scan {
     pub started_at: Timestamp,
     /// The agents' default logins, the first level of the user's home and
-    /// the directories the user added, each asked who is logged in there;
+    /// the directories the user chose, each asked who is logged in there;
     /// and the agents' programs in the places they are installed.
     pub usual: Stage,
-    /// The walk of every disk; none once the usual places were not done.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disks: Option<DiskWalk>,
     /// Places the scan could not look into, and why: what is there was not
     /// found, which is not to say nothing is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unreadable: Vec<String>,
+}
+
+/// A folder the user chose, for the logins kept below it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Folder {
+    pub dir: PathBuf,
+    /// Its search, running or the last one; none before the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<FolderSearch>,
+}
+
+/// What the user does with a folder of a machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "change")]
+pub enum FolderChange {
+    /// Chooses it for logins: a folder that is a login is taken up as a
+    /// candidate, asked who is logged in there and, with `limits`, its
+    /// usage limits, which only a device with the workbench on asks for;
+    /// any other is kept among the folders searched, and searched now.
+    Choose {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        limits: bool,
+    },
+    /// Stops its search; what it found so far stays.
+    Stop,
+    /// No longer searches it: its search stops, and what it found goes.
+    Forget,
+}
+
+/// A search of everything below a folder, by the names in it, at the
+/// lowest priority; the user can stop it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FolderSearch {
+    pub stage: Stage,
+    /// Directories listed so far.
+    pub directories: u64,
+    /// Directories that could not be listed, such as another user's.
+    pub unreadable: u64,
+    /// What looks like a login below the folder, that the World does not
+    /// know yet; no one has asked who is logged in there.
+    pub found: Vec<FoundIn>,
+}
+
+/// A directory below a folder that looks like a login of `agent`, and the
+/// names in it that make it look so.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FoundIn {
+    pub agent: AgentName,
+    /// Relative to the folder.
+    pub path: PathBuf,
+    pub traces: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -270,23 +324,6 @@ pub enum Stage {
         at: Timestamp,
         reason: String,
     },
-}
-
-/// How far the walk of every disk has got.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DiskWalk {
-    pub stage: Stage,
-    pub disks: Vec<DiskProgress>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DiskProgress {
-    pub root: PathBuf,
-    /// Directories listed so far.
-    pub directories: u64,
-    /// Directories that could not be listed, such as another user's.
-    pub unreadable: u64,
-    pub done: bool,
 }
 
 /// Putting the World's tools into a login, or taking them out, as the node

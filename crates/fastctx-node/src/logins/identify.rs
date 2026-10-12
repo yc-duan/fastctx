@@ -25,11 +25,13 @@ pub(super) struct Asked {
     pub limits: Option<(Timestamp, serde_json::Value)>,
 }
 
-/// Asks the Codex login in `dir`; `default` is the node's default home.
-pub(super) async fn codex(node: &Arc<Node>, dir: &Path) -> Asked {
+/// Asks the Codex login in `dir` who is logged in, and with `limits` its
+/// usage limits: those belong to the workbench, and a device without it
+/// does not read them (`world-agent-logins.md`, 额度).
+pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
     let at = Timestamp::now();
     if let Some(host) = node.codex.existing(dir)
-        && let Some(said) = host.ask_running().await
+        && let Some(said) = host.ask_running(limits).await
     {
         // The running app-server's program is the host's launch.
         let launcher = host.launch().ok().flatten().map(|launch| Launcher {
@@ -63,7 +65,15 @@ pub(super) async fn codex(node: &Arc<Node>, dir: &Path) -> Asked {
         version: None,
         desktop_app: launch.source == ProgramSource::DesktopApp,
     };
-    match fastctx_hosts::codex::identify::ask_once(&launch, dir, &cwd, node.codex.environment(), node.codex.log()).await
+    match fastctx_hosts::codex::identify::ask_once(
+        &launch,
+        dir,
+        &cwd,
+        node.codex.environment(),
+        node.codex.log(),
+        limits,
+    )
+    .await
     {
         Ok(said) => asked_codex(at, said, Some(launcher)),
         Err(error) => Asked {

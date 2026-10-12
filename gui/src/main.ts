@@ -39,7 +39,7 @@ import { AgentLoginsPage } from "./app/agent-logins";
 import { enAgentLogins, zhAgentLogins } from "./app/agent-logins-words";
 import { enAgentChange, zhAgentChange } from "./app/agent-change";
 import "./app/agent-logins.css";
-import { specimenChange as specimenLoginChange, specimenLogins, specimenPreview, specimenScan } from "./specimen/logins";
+import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenTakeUp } from "./specimen/logins";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { NetworkPage, enNetwork, zhNetwork } from "./app/network-page";
@@ -53,6 +53,7 @@ import { NewTalk } from "./app/new-talk";
 import { enModelPanel, zhModelPanel } from "./conversation/model-panel";
 import "./app/new-talk.css";
 import "./app/focus-panel.css";
+import "./app/folder-walk.css";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
@@ -148,8 +149,10 @@ import { foldedOf, MachineMap, MAP_ORDER, type MachineMapScene } from "./app/mac
 import { mapOf } from "./app/map-of";
 import {
   addAgentLogin,
+  agentFolder,
   agentLogins,
   changeAgentLogin,
+  pickFolder,
   previewAgentChange,
   readAgentLimits,
   scanAgents,
@@ -1514,9 +1517,15 @@ function show(next: Place): void {
         head,
         machine: next.machine,
         when,
+        workbench: deviceFeatures.conversations,
         read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)),
-        scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen.now)),
-        add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : notLive()),
+        scan: (machine, stop, limits) => (live ? scanAgents(machine, stop, limits) : specimenScan(machine, stop, specimen.now)),
+        add: (machine, agent, dir, limits) => (live ? addAgentLogin(machine, agent, dir, limits) : specimenTakeUp(machine, agent, dir, specimen.now)),
+        folder: (machine, dir, change) => (live ? agentFolder(machine, dir, change) : specimenFolder(machine, dir, change, specimen.now)),
+        // A phone holds no folder of the World's; a plain browser walks the
+        // specimen's folders.
+        pick: live && onComputer() ? pickFolder : null,
+        folders: (machine, path) => (live ? foldersOf(machine, path) : specimenFolders(machine, path)),
         preview: (machine, agent, dir, into) => (live ? previewAgentChange(machine, agent, dir, into) : specimenPreview(machine, agent, dir, into)),
         change: (machine, agent, dir, into, raise) => (live ? changeAgentLogin(machine, agent, dir, into, raise) : specimenLoginChange(machine, agent, dir, into)),
         limits: (machine, agent, dir) => (live ? readAgentLimits(machine, agent, dir) : notLive()),

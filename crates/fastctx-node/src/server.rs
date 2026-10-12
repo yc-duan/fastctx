@@ -825,15 +825,21 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::logins::query(node, &acting, machine).await.map(Reply::AgentLogins)
         }
-        Call::ScanAgents { machine, stop } => {
+        Call::ScanAgents { machine, stop, limits } => {
             users_voice(node, peer)?;
-            crate::logins::remote::scan(node, machine, stop)
+            crate::logins::remote::scan(node, machine, stop, limits)
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }
-        Call::AddAgentLogin { machine, agent, dir } => {
+        Call::AddAgentLogin { machine, agent, dir, limits } => {
             users_voice(node, peer)?;
-            crate::logins::remote::add(node, machine, agent, dir)
+            crate::logins::remote::add(node, machine, agent, dir, limits)
+                .await
+                .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
+        }
+        Call::AgentFolder { machine, dir, change } => {
+            users_voice(node, peer)?;
+            crate::logins::remote::folder(node, machine, dir, change)
                 .await
                 .map(|logins| Reply::MachineAgentLogins(Box::new(logins)))
         }

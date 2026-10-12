@@ -262,20 +262,33 @@ pub enum Call {
         machine: Option<MachineName>,
     },
     /// Scans `machine`, one of the user's own, for its agents: answered
-    /// once the usual places are done, while the walk of every disk goes
-    /// on; or, with `stop`, stops that walk.
+    /// once the usual places are done, while the folders the user chose are
+    /// searched again; or, with `stop`, stops those searches. With `limits`,
+    /// each Codex login is asked its usage limits too: the asking device's
+    /// workbench is on (`world-agent-logins.md`, 额度).
     ScanAgents {
         machine: MachineName,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         stop: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        limits: bool,
     },
     /// Takes up a directory on `machine` as a candidate login of `agent`,
-    /// asking the agent who is logged in there: one the user wrote, or one
-    /// the walk of every disk found.
+    /// asking the agent who is logged in there, and with `limits` its usage
+    /// limits: one a folder's search found.
     AddAgentLogin {
         machine: MachineName,
         agent: AgentName,
         dir: std::path::PathBuf,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        limits: bool,
+    },
+    /// A folder on `machine` the user chooses for logins, whose search
+    /// stops, or which is no longer searched (`logins::FolderChange`).
+    AgentFolder {
+        machine: MachineName,
+        dir: std::path::PathBuf,
+        change: crate::logins::FolderChange,
     },
     /// What putting the World's tools into a login on `machine` (`into`),
     /// or taking them out, would change, with nothing written.

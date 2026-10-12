@@ -10,7 +10,7 @@ use std::sync::Arc;
 use fastctx_net::link::CallFailure;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
-use fastctx_types::logins::{ChangePreview, LoginChange, MachineLogins, MachineLoginsHeard, WorldLogins};
+use fastctx_types::logins::{ChangePreview, FolderChange, LoginChange, MachineLogins, MachineLoginsHeard, WorldLogins};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::{AgentName, MachineName};
 
@@ -72,6 +72,7 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
     }
     let here = view.me.clone();
     logins.scan = None;
+    logins.folders.clear();
     for agent in super::AGENTS {
         let side = logins.of_mut(agent).expect("an agent that keeps logins");
         side.programs.clear();
@@ -127,11 +128,16 @@ fn other(machine: &MachineName) -> Failure {
     Failure::new(format!("{machine} answered something other than its agents' logins; the World there may be older"))
 }
 
-pub(crate) async fn scan(node: &Arc<Node>, machine: MachineName, stop: bool) -> Result<MachineLogins, Failure> {
+pub(crate) async fn scan(
+    node: &Arc<Node>,
+    machine: MachineName,
+    stop: bool,
+    limits: bool,
+) -> Result<MachineLogins, Failure> {
     if machine == node.machine() {
-        return super::scan::scan(node, stop).await;
+        return super::scan::scan(node, stop, limits).await;
     }
-    match ask(node, &machine, Purpose::Hands, RemoteCall::ScanAgents { stop }).await? {
+    match ask(node, &machine, Purpose::Hands, RemoteCall::ScanAgents { stop, limits }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
         _ => Err(other(&machine)),
     }
@@ -142,11 +148,27 @@ pub(crate) async fn add(
     machine: MachineName,
     agent: AgentName,
     dir: PathBuf,
+    limits: bool,
 ) -> Result<MachineLogins, Failure> {
     if machine == node.machine() {
-        return super::take_up(node, agent, dir).await;
+        return super::take_up(node, agent, dir, limits).await;
     }
-    match ask(node, &machine, Purpose::Hands, RemoteCall::AddAgentLogin { agent, dir }).await? {
+    match ask(node, &machine, Purpose::Hands, RemoteCall::AddAgentLogin { agent, dir, limits }).await? {
+        RemoteReply::AgentLogins(logins) => Ok(*logins),
+        _ => Err(other(&machine)),
+    }
+}
+
+pub(crate) async fn folder(
+    node: &Arc<Node>,
+    machine: MachineName,
+    dir: PathBuf,
+    change: FolderChange,
+) -> Result<MachineLogins, Failure> {
+    if machine == node.machine() {
+        return super::folders::change(node, dir, change).await;
+    }
+    match ask(node, &machine, Purpose::Hands, RemoteCall::AgentFolder { dir, change }).await? {
         RemoteReply::AgentLogins(logins) => Ok(*logins),
         _ => Err(other(&machine)),
     }
@@ -213,8 +235,9 @@ pub(crate) async fn answer(
     let logins = |logins: MachineLogins| RemoteReply::AgentLogins(Box::new(seen(view, asker, logins)));
     match call {
         RemoteCall::AgentLogins => super::here(node).await.map(logins),
-        RemoteCall::ScanAgents { stop } => super::scan::scan(node, stop).await.map(logins),
-        RemoteCall::AddAgentLogin { agent, dir } => super::take_up(node, agent, dir).await.map(logins),
+        RemoteCall::ScanAgents { stop, limits } => super::scan::scan(node, stop, limits).await.map(logins),
+        RemoteCall::AddAgentLogin { agent, dir, limits } => super::take_up(node, agent, dir, limits).await.map(logins),
+        RemoteCall::AgentFolder { dir, change } => super::folders::change(node, dir, change).await.map(logins),
         RemoteCall::PreviewAgentChange { agent, dir, into } => super::change::preview(node, agent, dir, into)
             .await
             .map(|preview| RemoteReply::AgentChangePreview(Box::new(preview))),

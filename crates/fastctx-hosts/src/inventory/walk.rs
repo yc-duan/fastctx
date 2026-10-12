@@ -1,11 +1,11 @@
-//! A walk of one whole disk by the names of its directories' entries,
-//! looking for directories that look like the agents' logins.
+//! A walk of everything below a folder by the names of its directories'
+//! entries, looking for directories that look like the agents' logins.
 //!
 //! Only names and entry types are read, as listing a directory gives them;
 //! no file is opened. Links of every kind are not followed: Windows
 //! junctions, symbolic links and the reparse points of cloud folders, whose
 //! listing may fetch from the network, and on Linux symbolic links and the
-//! mounts of other filesystems, each walked from its own root or not at all.
+//! mounts of other filesystems, each walked only when chosen itself.
 //! A directory that looks like a login is walked into like any other: a
 //! stray file in a folder (`auth.json` on a desktop) must not hide what is
 //! below it. The walk keeps only the directories still to visit, so its
@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::traces::{self, AGENTS, Entry};
 
-/// How far one disk's walk has got, shared with whoever watches it.
+/// How far a walk has got, shared with whoever watches it.
 #[derive(Debug, Default)]
 pub struct Counters {
     pub directories: AtomicU64,

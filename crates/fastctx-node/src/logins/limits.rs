@@ -86,7 +86,7 @@ pub(crate) async fn read(node: &Arc<Node>, agent: &AgentName, dir: &Path) -> Res
             "Claude Code reads its limits only in a session at work; they are shown as its sessions last read them",
         ));
     }
-    let asked = super::identify::codex(node, dir).await;
+    let asked = super::identify::codex(node, dir, true).await;
     let Some((at, answer)) = asked.limits else {
         return Err(Failure::new(match asked.identified.who {
             Fact::Known { value } if !value.logged_in => format!("no one is logged in to {}", dir.display()),

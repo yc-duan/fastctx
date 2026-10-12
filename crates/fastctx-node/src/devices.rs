@@ -76,6 +76,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::AgentLogins
             | RemoteCall::ScanAgents { .. }
             | RemoteCall::AddAgentLogin { .. }
+            | RemoteCall::AgentFolder { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::ReadAgentLimits { .. }

@@ -61,6 +61,7 @@ mod attachment_files;
 mod binary_reading;
 #[cfg(windows)]
 mod desktop_presence;
+mod folder_picker;
 #[cfg(windows)]
 mod installer_lines;
 mod line_reading;
@@ -737,6 +738,16 @@ async fn save_as(
     save_as::save(app, window, path, suggested_name).await
 }
 
+/// The system's own folder picker on this computer; none when the user
+/// cancelled it.
+#[fastctx_gui_command::command]
+async fn pick_folder(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<Option<std::path::PathBuf>, String> {
+    folder_picker::pick(app, window).await
+}
+
 #[fastctx_gui_command::command]
 async fn reveal(app: tauri::AppHandle, path: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt as _;
@@ -1002,6 +1013,7 @@ pub fn run() {
             logins::agent_logins,
             logins::scan_agents,
             logins::add_agent_login,
+            logins::agent_folder,
             logins::preview_agent_change,
             logins::change_agent_login,
             logins::read_agent_limits,
@@ -1057,6 +1069,7 @@ pub fn run() {
             line_reading::cancel_line_request,
             open_local,
             save_as,
+            pick_folder,
             reveal,
             read_binary,
             control,

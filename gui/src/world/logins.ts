@@ -1,8 +1,8 @@
 // What each machine's node keeps of its agents' logins: the JSON form of
 // `fastctx_types::logins` (`world-agent-logins.md`). Reading it starts no
-// process; a scan, a change or a fresh read of limits happens only when
-// asked. A login is a directory; the World lists exactly the logins its
-// tools are put into.
+// process; a scan, a folder's search, a change or a fresh read of limits
+// happens only when asked. A login is a directory; the World lists exactly
+// the logins its tools are put into.
 
 import type { AgentLimits, AgentModel, Fact, Integration } from "./agents";
 import type { AgentName, MachineName, Timestamp } from "./wire";
@@ -25,6 +25,8 @@ export interface MachineLogins {
   scan?: Scan;
   codex: AgentLogins;
   claude: AgentLogins;
+  /** The folders the user chose there for logins kept below them. */
+  folders?: Folder[];
 }
 
 /** One agent on a machine: its programs, and its logins in three groups. */
@@ -35,8 +37,8 @@ export interface AgentLogins {
   listed: Login[];
   /** The others the usual places or the user gave; each can be put in. */
   candidates: Login[];
-  /** What the walk of every disk found that looks like a login; no one
-   *  has asked who is logged in there. */
+  /** Always empty: what a folder's search found is in the machine's
+   *  `folders`. Kept for interfaces from before folders. */
   elsewhere: LooksLike[];
 }
 
@@ -141,29 +143,46 @@ export interface Scan {
   started_at: Timestamp;
   /** The usual places, each login there asked who it is, and the programs. */
   usual: Stage;
-  /** The walk of every local fixed disk, at the lowest priority. */
-  disks?: DiskWalk;
   /** Places that could not be looked into, and why. */
   unreadable?: string[];
 }
+
+/** A folder the user chose, for the logins kept below it. */
+export interface Folder {
+  dir: string;
+  /** Its search, running or the last one; absent before the first. */
+  search?: FolderSearch;
+}
+
+/** A search of everything below a folder, by the names in it. */
+export interface FolderSearch {
+  stage: Stage;
+  /** Directories listed so far. */
+  directories: number;
+  /** Directories that could not be listed. */
+  unreadable: number;
+  /** What looks like a login below it that the World does not know yet;
+   *  no one has asked who is logged in there. */
+  found: FoundIn[];
+}
+
+export interface FoundIn {
+  agent: AgentName;
+  /** Relative to the folder. */
+  path: string;
+  /** The names in it that make it look like a login. */
+  traces: string[];
+}
+
+/** What the user does with a folder: choose it (a folder that is a login
+ *  becomes a candidate), stop its search, or no longer search it. */
+export type FolderChange = { change: "choose"; limits?: boolean } | { change: "stop" } | { change: "forget" };
 
 export type Stage =
   | { state: "running" }
   | { state: "done"; at: Timestamp }
   | { state: "stopped"; at: Timestamp }
   | { state: "failed"; at: Timestamp; reason: string };
-
-export interface DiskWalk {
-  stage: Stage;
-  disks: DiskProgress[];
-}
-
-export interface DiskProgress {
-  root: string;
-  directories: number;
-  unreadable: number;
-  done: boolean;
-}
 
 /** Putting the World's tools into a login (`into`), or taking them out. */
 export interface LoginChange {

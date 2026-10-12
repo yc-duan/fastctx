@@ -6,7 +6,7 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { HomeChange, WorldAgents } from "./agents";
-import type { ChangePreview, LoginChange, MachineLogins, WorldLogins } from "./logins";
+import type { ChangePreview, FolderChange, LoginChange, MachineLogins, WorldLogins } from "./logins";
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
@@ -270,14 +270,28 @@ export function agentLogins(machine: MachineName | null): Promise<WorldLogins> {
 }
 
 /** Scans a machine for its agents, answered once the usual places are
- *  done while the walk of its disks goes on; with `stop`, stops the walk. */
-export function scanAgents(machine: MachineName, stop = false): Promise<MachineLogins> {
-  return invoke("scan_agents", { machineName: machine, stop });
+ *  done while its chosen folders are searched again; with `stop`, stops
+ *  those searches. With `limits`, Codex's logins are asked their limits
+ *  too: this device's workbench is on. */
+export function scanAgents(machine: MachineName, stop: boolean, limits: boolean): Promise<MachineLogins> {
+  return invoke("scan_agents", { machineName: machine, stop, limits });
 }
 
-/** Takes up a directory on a machine as a candidate login of `agent`. */
-export function addAgentLogin(machine: MachineName, agent: string, dir: string): Promise<MachineLogins> {
-  return invoke("add_agent_login", { machineName: machine, agentName: agent, dir });
+/** Takes up a directory on a machine as a candidate login of `agent`,
+ *  asking who is logged in there, and with `limits` its limits. */
+export function addAgentLogin(machine: MachineName, agent: string, dir: string, limits: boolean): Promise<MachineLogins> {
+  return invoke("add_agent_login", { machineName: machine, agentName: agent, dir, limits });
+}
+
+/** Chooses a folder on a machine for logins, stops its search, or no
+ *  longer searches it. */
+export function agentFolder(machine: MachineName, dir: string, change: FolderChange): Promise<MachineLogins> {
+  return invoke("agent_folder", { machineName: machine, dir, change });
+}
+
+/** The system's own folder picker on this computer; null when cancelled. */
+export function pickFolder(): Promise<string | null> {
+  return invoke("pick_folder");
 }
 
 /** What putting the World's tools into a login (`into`), or taking them

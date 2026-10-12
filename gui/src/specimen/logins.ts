@@ -1,10 +1,13 @@
 // What a plain browser shows on the agents page: this desktop with two
-// Codex logins listed and a third found by the walk, Claude Code listed with
-// a long-lived token and a candidate under the home, and the laptop, which
-// was never scanned. A scan runs for a few seconds and finds what it found.
+// Codex logins listed, Claude Code listed with a long-lived token and a
+// candidate under the home, two folders chosen for logins, one of them
+// searched with what it found; the laptop, never scanned; the studio,
+// offline. A scan runs for a few seconds and searches the folders again; a
+// folder chosen is searched for a few seconds, or, named like a login,
+// becomes a candidate; what a search found is taken up as a candidate.
 // Times are told from `at`, the specimen's own morning.
 
-import type { ChangePreview, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
+import type { ChangePreview, Folder, FolderChange, FoundIn, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
 
 let base = Date.now();
 const ago = (minutes: number) => new Date(base - minutes * 60_000).toISOString();
@@ -21,12 +24,70 @@ const limits = (five: number, week: number) => ({
   },
 });
 
-function desktop(scanning: boolean): MachineLogins {
+const HOMES = "C:\\Users\\me\\CodexHomes";
+
+/** What the desktop's folders hold, found as a search reaches them. */
+const below: Record<string, FoundIn[]> = {
+  [HOMES]: [
+    { agent: "codex", path: "team", traces: ["auth.json", "config.toml", "sessions"] },
+    { agent: "codex", path: "trial", traces: ["auth.json", "history.jsonl"] },
+    { agent: "codex", path: "2024\\old-plus", traces: ["config.toml", "sessions", "state_5.sqlite"] },
+    { agent: "claude", path: "claude-review", traces: [".credentials.json", "projects"] },
+  ],
+  "D:\\": [{ agent: "codex", path: "backup\\.codex-old", traces: ["auth.json", "config.toml"] }],
+};
+
+/** A folder chosen, with when its search began and, once it ended, how. */
+interface Chosen {
+  dir: string;
+  began: number;
+  ended: { at: number; stopped: boolean } | null;
+}
+
+/** How long a search takes here, and how many folders it sees a second. */
+const SEARCH_MS = 5200;
+const PER_SECOND = 9_400;
+
+let chosen: Chosen[] = [
+  { dir: HOMES, began: Date.now() - 50 * 60_000, ended: { at: Date.now() - 50 * 60_000 + SEARCH_MS, stopped: false } },
+  { dir: "D:\\", began: Date.now() - 49 * 60_000, ended: { at: Date.now() - 48 * 60_000, stopped: true } },
+];
+/** Candidates taken up from what a search found. */
+let takenUp: { agent: "codex" | "claude"; dir: string }[] = [];
+let scanUntil = 0;
+/** When the laptop was scanned, finding nothing; never, at first. */
+let laptopScanned: number | null = null;
+
+function search(one: Chosen, now: number): Folder {
+  const running = !one.ended && now - one.began < SEARCH_MS;
+  if (!running && !one.ended) one.ended = { at: one.began + SEARCH_MS, stopped: false };
+  const until = one.ended ? one.ended.at : now;
+  const elapsed = Math.max(0, until - one.began);
+  const share = Math.min(1, elapsed / SEARCH_MS);
+  const all = below[one.dir] ?? [];
+  const found = all.slice(0, Math.floor(all.length * share + 0.001)).filter((it) => !takenUp.some((taken) => taken.dir === `${one.dir.replace(/\\$/, "")}\\${it.path}`));
+  const at = new Date(until).toISOString();
+  return {
+    dir: one.dir,
+    search: {
+      stage: running ? { state: "running" } : one.ended?.stopped ? { state: "stopped", at } : { state: "done", at },
+      directories: Math.round((elapsed / 1000) * PER_SECOND),
+      unreadable: one.dir === "D:\\" ? 3 : 0,
+      found,
+    },
+  };
+}
+
+function candidate(agent: "codex" | "claude", dir: string): Login {
+  const name = dir.split("\\").pop() ?? dir;
+  return { dir, default: false, found: "elsewhere", identity: { at: ago(0), who: { kind: "known", value: { logged_in: true, method: agent === "codex" ? "chatgpt" : "claude.ai", email: `${name}@example.com`, plan: "plus" } } }, limits: limits(60, 140), programs: [0], integration: "out" };
+}
+
+function desktop(now: number): MachineLogins {
+  const scanning = now < scanUntil - 4000;
   return {
     machine: "desktop",
-    scan: scanning
-      ? { started_at: ago(0), usual: { state: "done", at: ago(0) }, disks: { stage: { state: "running" }, disks: [{ root: "C:\\", directories: 184_220, unreadable: 0, done: false }, { root: "E:\\", directories: 61_034, unreadable: 0, done: true }] } }
-      : { started_at: ago(52), usual: { state: "done", at: ago(52) }, disks: { stage: { state: "done", at: ago(49) }, disks: [{ root: "C:\\", directories: 545_716, unreadable: 0, done: true }, { root: "E:\\", directories: 195_244, unreadable: 0, done: true }] } },
+    scan: scanning ? { started_at: ago(0), usual: { state: "running" } } : { started_at: ago(52), usual: { state: "done", at: ago(52) } },
     codex: {
       programs: [
         { path: "C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd", how: "npm", version: "0.160.0", on_path: true },
@@ -36,8 +97,8 @@ function desktop(scanning: boolean): MachineLogins {
         { dir: "C:\\Users\\me\\.codex", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "me@example.com", plan: "pro" } } }, limits: limits(412, 233), programs: [0, 1], integration: "in" },
         { dir: "C:\\Users\\me\\.codex-work", default: false, found: "home", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "chatgpt", email: "work@example.com", plan: "plus" } } }, limits: limits(880, 610), programs: [0], integration: "in" },
       ],
-      candidates: [],
-      elsewhere: [{ dir: "D:\\backup\\.codex-old", traces: ["auth.json", "config.toml"] }],
+      candidates: takenUp.filter((one) => one.agent === "codex").map((one) => candidate("codex", one.dir)),
+      elsewhere: [],
     },
     claude: {
       programs: [{ path: "C:\\Users\\me\\.local\\bin\\claude.exe", how: "official", version: "2.1.296", on_path: true }],
@@ -46,32 +107,77 @@ function desktop(scanning: boolean): MachineLogins {
       ],
       candidates: [
         { dir: "C:\\Users\\me\\.claude-max", default: false, found: "home", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "claude.ai", email: "me@example.com", plan: "max" } } }, limits: limits(120, 300), programs: [0], integration: "out" },
+        ...takenUp.filter((one) => one.agent === "claude").map((one) => candidate("claude", one.dir)),
       ],
       elsewhere: [],
     },
+    folders: chosen.map((one) => search(one, now)),
   };
 }
 
-let scanUntil = 0;
-
 export function specimenLogins(machine: string | null, at: Date): Promise<WorldLogins> {
   base = at.getTime();
-  const scanning = Date.now() < scanUntil;
   const all: WorldLogins = {
     machine: "desktop",
     machines: [
-      { kind: "answered", logins: desktop(scanning) },
-      { kind: "answered", logins: { machine: "laptop", codex: { programs: [], listed: [], candidates: [], elsewhere: [] }, claude: { programs: [], listed: [], candidates: [], elsewhere: [] } } },
+      { kind: "answered", logins: desktop(Date.now()) },
+      { kind: "answered", logins: laptop() },
       { kind: "offline", machine: "studio", since: ago(12 * 60) },
     ],
   };
   return Promise.resolve(machine ? { ...all, machines: all.machines.filter((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === machine) } : all);
 }
 
+function laptop(): MachineLogins {
+  const empty = { programs: [], listed: [], candidates: [], elsewhere: [] };
+  const scan = laptopScanned === null ? undefined : Date.now() - laptopScanned < 1400 ? { started_at: ago(0), usual: { state: "running" as const } } : { started_at: ago(0), usual: { state: "done" as const, at: ago(0) } };
+  return { machine: "laptop", ...(scan ? { scan } : {}), codex: empty, claude: empty };
+}
+
 export function specimenScan(machine: string, stop: boolean, at: Date): Promise<MachineLogins> {
   base = at.getTime();
-  scanUntil = stop ? 0 : Date.now() + 6000;
-  return Promise.resolve(desktop(!stop && machine === "desktop"));
+  const now = Date.now();
+  if (machine === "laptop") {
+    laptopScanned = now;
+    return Promise.resolve(laptop());
+  }
+  if (stop) {
+    for (const one of chosen) if (!one.ended) one.ended = { at: now, stopped: true };
+  } else {
+    scanUntil = now + 5200;
+    chosen = chosen.map((one) => ({ dir: one.dir, began: now + 1200, ended: null }));
+  }
+  return Promise.resolve(desktop(now));
+}
+
+/** A folder chosen, stopped or forgotten on the desktop. */
+export function specimenFolder(machine: string, dir: string, change: FolderChange, at: Date): Promise<MachineLogins> {
+  void machine;
+  base = at.getTime();
+  const now = Date.now();
+  if (change.change === "choose") {
+    const name = dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+    const agent = name.startsWith(".claude") ? "claude" : name.startsWith(".codex") ? "codex" : null;
+    if (agent) {
+      if (!takenUp.some((one) => one.dir === dir)) takenUp.push({ agent, dir });
+    } else {
+      chosen = [...chosen.filter((one) => one.dir !== dir), { dir, began: now, ended: null }];
+      below[dir] ??= [{ agent: "codex", path: "profiles\\lab", traces: ["auth.json", "sessions"] }];
+    }
+  } else if (change.change === "stop") {
+    for (const one of chosen) if (one.dir === dir && !one.ended) one.ended = { at: now, stopped: true };
+  } else {
+    chosen = chosen.filter((one) => one.dir !== dir);
+  }
+  return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 240));
+}
+
+/** What a folder's search found, taken up as a candidate. */
+export function specimenTakeUp(machine: string, agent: "codex" | "claude", dir: string, at: Date): Promise<MachineLogins> {
+  void machine;
+  base = at.getTime();
+  if (!takenUp.some((one) => one.dir === dir)) takenUp.push({ agent, dir });
+  return new Promise((resolve) => setTimeout(() => resolve(desktop(Date.now())), 900));
 }
 
 export function specimenPreview(machine: string, agent: "codex" | "claude", dir: string, into: boolean): Promise<ChangePreview> {

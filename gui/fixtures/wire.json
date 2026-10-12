@@ -13800,13 +13800,39 @@
       },
       {
         "call": "scan_agents",
-        "machine": "desktop"
+        "machine": "desktop",
+        "limits": true
       },
       {
         "call": "add_agent_login",
         "machine": "desktop",
         "agent": "codex",
         "dir": "D:/backup/.codex"
+      },
+      {
+        "call": "agent_folder",
+        "machine": "desktop",
+        "dir": "C:/Users/me/CodexHomes",
+        "change": {
+          "change": "choose",
+          "limits": true
+        }
+      },
+      {
+        "call": "agent_folder",
+        "machine": "desktop",
+        "dir": "D:/",
+        "change": {
+          "change": "stop"
+        }
+      },
+      {
+        "call": "agent_folder",
+        "machine": "desktop",
+        "dir": "E:/old",
+        "change": {
+          "change": "forget"
+        }
       },
       {
         "call": "preview_agent_change",
@@ -13844,19 +13870,6 @@
                 "usual": {
                   "state": "done",
                   "at": "2026-10-11T12:00:00Z"
-                },
-                "disks": {
-                  "stage": {
-                    "state": "running"
-                  },
-                  "disks": [
-                    {
-                      "root": "C:/",
-                      "directories": 12345,
-                      "unreadable": 2,
-                      "done": false
-                    }
-                  ]
                 },
                 "unreadable": [
                   "C:/Program Files/WindowsApps: access denied"
@@ -14018,15 +14031,7 @@
                     }
                   }
                 ],
-                "elsewhere": [
-                  {
-                    "dir": "D:/backup/.codex",
-                    "traces": [
-                      "auth.json",
-                      "sessions"
-                    ]
-                  }
-                ]
+                "elsewhere": []
               },
               "claude": {
                 "programs": [
@@ -14085,7 +14090,64 @@
                   }
                 ],
                 "elsewhere": []
-              }
+              },
+              "folders": [
+                {
+                  "dir": "C:/Users/me/CodexHomes",
+                  "search": {
+                    "stage": {
+                      "state": "done",
+                      "at": "2026-10-11T12:00:00Z"
+                    },
+                    "directories": 1204,
+                    "unreadable": 0,
+                    "found": [
+                      {
+                        "agent": "codex",
+                        "path": "work",
+                        "traces": [
+                          "auth.json",
+                          "sessions"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "dir": "D:/",
+                  "search": {
+                    "stage": {
+                      "state": "running"
+                    },
+                    "directories": 12345,
+                    "unreadable": 2,
+                    "found": []
+                  }
+                },
+                {
+                  "dir": "E:/old",
+                  "search": {
+                    "stage": {
+                      "state": "stopped",
+                      "at": "2026-10-11T12:00:00Z"
+                    },
+                    "directories": 80,
+                    "unreadable": 0,
+                    "found": [
+                      {
+                        "agent": "claude",
+                        "path": "profiles/.claude-team",
+                        "traces": [
+                          ".credentials.json"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "dir": "F:/never"
+                }
+              ]
             }
           },
           {
@@ -14134,19 +14196,6 @@
           "usual": {
             "state": "done",
             "at": "2026-10-11T12:00:00Z"
-          },
-          "disks": {
-            "stage": {
-              "state": "running"
-            },
-            "disks": [
-              {
-                "root": "C:/",
-                "directories": 12345,
-                "unreadable": 2,
-                "done": false
-              }
-            ]
           },
           "unreadable": [
             "C:/Program Files/WindowsApps: access denied"
@@ -14308,15 +14357,7 @@
               }
             }
           ],
-          "elsewhere": [
-            {
-              "dir": "D:/backup/.codex",
-              "traces": [
-                "auth.json",
-                "sessions"
-              ]
-            }
-          ]
+          "elsewhere": []
         },
         "claude": {
           "programs": [
@@ -14375,7 +14416,64 @@
             }
           ],
           "elsewhere": []
-        }
+        },
+        "folders": [
+          {
+            "dir": "C:/Users/me/CodexHomes",
+            "search": {
+              "stage": {
+                "state": "done",
+                "at": "2026-10-11T12:00:00Z"
+              },
+              "directories": 1204,
+              "unreadable": 0,
+              "found": [
+                {
+                  "agent": "codex",
+                  "path": "work",
+                  "traces": [
+                    "auth.json",
+                    "sessions"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "dir": "D:/",
+            "search": {
+              "stage": {
+                "state": "running"
+              },
+              "directories": 12345,
+              "unreadable": 2,
+              "found": []
+            }
+          },
+          {
+            "dir": "E:/old",
+            "search": {
+              "stage": {
+                "state": "stopped",
+                "at": "2026-10-11T12:00:00Z"
+              },
+              "directories": 80,
+              "unreadable": 0,
+              "found": [
+                {
+                  "agent": "claude",
+                  "path": "profiles/.claude-team",
+                  "traces": [
+                    ".credentials.json"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "dir": "F:/never"
+          }
+        ]
       },
       {
         "reply": "agent_change_preview",
@@ -14475,7 +14573,15 @@
       {
         "call": "add_agent_login",
         "agent": "claude",
-        "dir": "/home/me/.claude-work"
+        "dir": "/home/me/.claude-work",
+        "limits": true
+      },
+      {
+        "call": "agent_folder",
+        "dir": "/home/me/agents",
+        "change": {
+          "change": "choose"
+        }
       },
       {
         "call": "preview_agent_change",
@@ -14504,19 +14610,6 @@
           "usual": {
             "state": "done",
             "at": "2026-10-11T12:00:00Z"
-          },
-          "disks": {
-            "stage": {
-              "state": "running"
-            },
-            "disks": [
-              {
-                "root": "C:/",
-                "directories": 12345,
-                "unreadable": 2,
-                "done": false
-              }
-            ]
           },
           "unreadable": [
             "C:/Program Files/WindowsApps: access denied"
@@ -14678,15 +14771,7 @@
               }
             }
           ],
-          "elsewhere": [
-            {
-              "dir": "D:/backup/.codex",
-              "traces": [
-                "auth.json",
-                "sessions"
-              ]
-            }
-          ]
+          "elsewhere": []
         },
         "claude": {
           "programs": [
@@ -14745,7 +14830,64 @@
             }
           ],
           "elsewhere": []
-        }
+        },
+        "folders": [
+          {
+            "dir": "C:/Users/me/CodexHomes",
+            "search": {
+              "stage": {
+                "state": "done",
+                "at": "2026-10-11T12:00:00Z"
+              },
+              "directories": 1204,
+              "unreadable": 0,
+              "found": [
+                {
+                  "agent": "codex",
+                  "path": "work",
+                  "traces": [
+                    "auth.json",
+                    "sessions"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "dir": "D:/",
+            "search": {
+              "stage": {
+                "state": "running"
+              },
+              "directories": 12345,
+              "unreadable": 2,
+              "found": []
+            }
+          },
+          {
+            "dir": "E:/old",
+            "search": {
+              "stage": {
+                "state": "stopped",
+                "at": "2026-10-11T12:00:00Z"
+              },
+              "directories": 80,
+              "unreadable": 0,
+              "found": [
+                {
+                  "agent": "claude",
+                  "path": "profiles/.claude-team",
+                  "traces": [
+                    ".credentials.json"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "dir": "F:/never"
+          }
+        ]
       },
       {
         "reply": "agent_change_preview",

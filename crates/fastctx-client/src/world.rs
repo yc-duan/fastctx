@@ -272,13 +272,16 @@ impl World {
     }
 
     /// Scans `machine` for its agents, answered once the usual places are
-    /// done; with `stop`, stops the walk of its disks.
+    /// done while its chosen folders are searched again; with `stop`, stops
+    /// those searches. With `limits`, Codex's logins are asked their usage
+    /// limits too, which only a device with the workbench on asks for.
     pub async fn scan_agents(
         &self,
         machine: MachineName,
         stop: bool,
+        limits: bool,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
-        machine_logins(self.ask(Call::ScanAgents { machine, stop }).await?)
+        machine_logins(self.ask(Call::ScanAgents { machine, stop, limits }).await?)
     }
 
     /// Takes up `dir` on `machine` as a candidate login of `agent`.
@@ -287,8 +290,20 @@ impl World {
         machine: MachineName,
         agent: fastctx_types::AgentName,
         dir: std::path::PathBuf,
+        limits: bool,
     ) -> Result<fastctx_types::logins::MachineLogins, Error> {
-        machine_logins(self.ask(Call::AddAgentLogin { machine, agent, dir }).await?)
+        machine_logins(self.ask(Call::AddAgentLogin { machine, agent, dir, limits }).await?)
+    }
+
+    /// Chooses the folder `dir` on `machine` for logins, stops its search,
+    /// or no longer searches it.
+    pub async fn agent_folder(
+        &self,
+        machine: MachineName,
+        dir: std::path::PathBuf,
+        change: fastctx_types::logins::FolderChange,
+    ) -> Result<fastctx_types::logins::MachineLogins, Error> {
+        machine_logins(self.ask(Call::AgentFolder { machine, dir, change }).await?)
     }
 
     /// What putting the World's tools into a login (`into`), or taking them

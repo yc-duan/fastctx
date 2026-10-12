@@ -2,15 +2,17 @@
 // Codex and Claude Code each in their own tab. Opening the page starts no
 // program: it reads what each machine's node recorded of its agents, and
 // a machine never scanned shows only the agent's mark and 「扫描这台电脑」.
-// A scan finds candidates; hooking one up is a real change, made on a card
-// of its own (`./agent-change`), and only then does the login join the
-// list the World uses. A listed login is a slip: one line of who, a small
-// tag for its plan (and for Claude's long-lived token), a bar for each
-// usage window, the stamp, and a 「⋯」 with removing, lending, reading the
-// limits again and its directory. Every machine of the network the user
-// may look at comes under the same tab, each in its own section; the
-// user's own other machines are scanned and hooked up from here too, by
-// their own nodes.
+// A scan finds candidates in the usual places; the folders the user chose
+// are searched below them (`./agent-folders`), and what a search finds is
+// asked who it is only when taken up. Hooking a candidate up is a real
+// change, made on a card of its own (`./agent-change`), and only then does
+// the login join the list the World uses. A listed login is a slip: one
+// line of who, a small tag for its plan (and for Claude's long-lived
+// token), with the workbench on a bar for each usage window, the stamp,
+// and a 「⋯」 with removing, lending, reading the limits again and its
+// directory. Every machine of the network the user may look at comes under
+// the same tab, each in its own section; the user's own other machines are
+// scanned and hooked up from here too, by their own nodes.
 
 import { glyph } from "../conversation/glyphs";
 import { Popover } from "../conversation/popover";
@@ -19,17 +21,20 @@ import type { AccountChange, HubAccounts, Login as AccountLogin, PlanLabel } fro
 import { loginsOf } from "../world/accounts";
 import type { AgentLimits, Fact, LimitWindow } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
-import type { AgentLogins, ChangePreview, FoundProgram, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
+import type { Folders } from "../world/focus";
+import type { AgentLogins, ChangePreview, FolderChange, FoundProgram, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
 import type { AccessWords } from "./account-words";
 import { AgentChangeSheet, type AgentChangeTarget, type AgentChangeWords } from "./agent-change";
+import { foldersSection, foundOf, freshness, searching } from "./agent-folders";
 import type { AgentLoginsWords } from "./agent-logins-words";
 import type { Confirm } from "./confirm";
+import { FolderSheet } from "./folder-sheet";
 import { redrawKeepingFocus } from "./focus";
 import { LendSheet, type Loan } from "./lend-sheet";
 import { detailOf } from "./problem";
 import { machinesOf, owns, ownerOf } from "./reach";
 import type { Page } from "./shell";
-import { effect } from "./signals";
+import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
 
 type Agent = "codex" | "claude";
@@ -43,9 +48,18 @@ export interface AgentLoginsOptions {
   /** The machine to show first, when one was named. */
   machine: string | null;
   when(at: Date, now: Date): string;
+  /** Whether this device's workbench is on: the limits belong to it, and
+   *  without it they are neither read nor shown. */
+  workbench: Signal<boolean>;
   read(machine: string | null): Promise<WorldLogins>;
-  scan(machine: string, stop: boolean): Promise<MachineLogins>;
-  add(machine: string, agent: Agent, dir: string): Promise<MachineLogins>;
+  scan(machine: string, stop: boolean, limits: boolean): Promise<MachineLogins>;
+  add(machine: string, agent: Agent, dir: string, limits: boolean): Promise<MachineLogins>;
+  folder(machine: string, dir: string, change: FolderChange): Promise<MachineLogins>;
+  /** This computer's own folder picker, where it has one. */
+  pick: (() => Promise<string | null>) | null;
+  /** A machine's folders, walked by its node, where its picker is out of
+   *  reach. */
+  folders(machine: string, path: string | null): Promise<Folders>;
   preview(machine: string, agent: Agent, dir: string, into: boolean): Promise<ChangePreview>;
   change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean): Promise<LoginChange>;
   limits(machine: string, agent: Agent, dir: string): Promise<MachineLogins>;
@@ -66,10 +80,12 @@ interface Shown {
 }
 
 const TAB = "agents.tab";
-/** While a scan or a change runs, its record is read again this often:
- *  reading is a file the node keeps, and the walk reports progress about
- *  once a second. */
+/** While a scan, a search or a change runs, its record is read again this
+ *  often: reading is a file the node keeps, and a search's count moves on
+ *  as it goes. */
 const FOLLOW_MS = 1200;
+/** How long a row just added shows as new. */
+const FRESH_MS = 2400;
 
 export class AgentLoginsPage implements Page {
   readonly element: HTMLElement;
@@ -78,15 +94,22 @@ export class AgentLoginsPage implements Page {
   private readonly stop: () => void;
   private readonly sheet: AgentChangeSheet;
   private readonly lending: LendSheet;
+  private readonly choosing: FolderSheet;
   private agent: Agent = keptTab();
   private record: WorldLogins | null = null;
   private problem: string | null = null;
   private reading = false;
   private following = 0;
-  /** What the last thing done on a machine or slip left to say. */
+  /** What the last thing done on a machine, slip or folder left to say. */
   private notes = new Map<string, { text: string; detail: string }>();
-  private adding: string | null = null;
-  private openElsewhere = new Set<string>();
+  /** Machines a folder is being chosen on. */
+  private picking = new Set<string>();
+  /** Folders whose whole list of what they found is open. */
+  private openFolders = new Set<string>();
+  /** What a search found that is being taken up, by its full path. */
+  private taking = new Set<string>();
+  /** Rows just added, shown as new for a moment, each with when. */
+  private fresh = new Map<string, number>();
   private menu: { element: HTMLElement; popover: Popover } | null = null;
   private drawn = "";
 
@@ -122,20 +145,12 @@ export class AgentLoginsPage implements Page {
       keepTab(tab);
       this.draw();
     });
+    this.choosing = new FolderSheet(options.words);
     this.body.addEventListener("click", (event) => void this.click(event));
-    this.body.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void this.addDir(event.target as HTMLFormElement);
-    });
-    this.body.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && (event.target as HTMLElement).closest(".logins-add")) {
-        this.adding = null;
-        this.draw();
-      }
-    });
     this.stop = effect(() => {
       options.store.world.get();
       options.store.clock.get();
+      options.workbench.get();
       this.draw();
     });
     void this.read();
@@ -167,8 +182,7 @@ export class AgentLoginsPage implements Page {
   private running(): boolean {
     return (this.record?.machines ?? []).some((machine) => {
       if (machine.kind !== "answered") return false;
-      const scan = machine.logins.scan;
-      const scanning = scan?.usual.state === "running" || scan?.disks?.stage.state === "running";
+      const scanning = machine.logins.scan?.usual.state === "running" || searching(machine.logins.folders ?? []);
       const changing = (["codex", "claude"] as const).some((agent) => [...machine.logins[agent].listed, ...machine.logins[agent].candidates].some((login) => login.change && !login.change.end));
       return scanning || changing;
     });
@@ -244,43 +258,44 @@ export class AgentLoginsPage implements Page {
         </div></section>`;
     }
     const scanning = scan.usual.state === "running";
-    const walking = scan.disks?.stage.state === "running";
-    const seen = (scan.disks?.disks ?? []).reduce((sum, disk) => sum + disk.directories, 0);
     const status = scanning
       ? `<span class="logins-scanning"><span class="pulse" aria-hidden="true"></span>${escape(words.scanning)}</span>`
-      : walking
-        ? `<span class="logins-scanning"><span class="pulse" aria-hidden="true"></span>${escape(words.walking(seen))}<button class="text-button quiet-button" type="button" data-act="stop-walk" data-machine="${escape(machine.name)}">${escape(words.stopWalk)}</button></span>`
-        : scan.usual.state === "failed"
-          ? `<span class="logins-scanning wrong" title="${escape(scan.usual.reason)}">${escape(words.scanFailed)}</span>`
-          : "";
-    const rescan = mine && !scanning && !walking ? `<button class="text-button quiet-button logins-rescan" type="button" data-act="scan" data-machine="${escape(machine.name)}">${glyph("scan", 14)}<span>${escape(words.rescan)}</span></button>` : "";
+      : scan.usual.state === "failed"
+        ? `<span class="logins-scanning wrong" title="${escape(scan.usual.reason)}">${escape(words.scanFailed)}</span>`
+        : "";
+    const rescan = mine && !scanning ? `<button class="text-button quiet-button logins-rescan" type="button" data-act="scan" data-machine="${escape(machine.name)}">${glyph("scan", 14)}<span>${escape(words.rescan)}</span></button>` : "";
     const programs = this.programs(agent);
     const listed = agent.listed.map((login) => this.slip(machine, login, agent, world, now)).join("");
     const candidates = agent.candidates
       .map((login) => {
         const who = login.identity?.who.kind === "known" ? (login.identity.who.value.email ?? null) : null;
         const changing = login.change && !login.change.end;
-        return `<li class="logins-candidate">${glyph(this.agent, 16)}<span class="logins-candidate-name" title="${escape(login.dir)}">${escape(who ?? dirName(login.dir))}</span>${login.default ? `<span class="tag">${escape(words.defaultLogin)}</span>` : ""}${who ? `<code class="logins-dir">${escape(dirName(login.dir))}</code>` : ""}
+        const fresh = freshness(this.fresh, `d:${machine.name}:${login.dir}`);
+        return `<li class="logins-candidate${fresh}>${glyph(this.agent, 16)}<span class="logins-candidate-name" title="${escape(login.dir)}">${escape(who ?? dirName(login.dir))}</span>${login.default ? `<span class="tag">${escape(words.defaultLogin)}</span>` : ""}${who ? `<code class="logins-dir">${escape(dirName(login.dir))}</code>` : ""}
           ${mine ? `<button class="text-button logins-apply" type="button" data-act="apply" data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}"${changing ? " disabled" : ""}>${escape(changing ? words.applying : words.apply)}</button>` : ""}</li>`;
       })
       .join("");
-    const elsewhereOpen = this.openElsewhere.has(machine.name);
-    const elsewhere = agent.elsewhere.length
-      ? `<div class="logins-elsewhere"><button class="text-button quiet-button" type="button" data-act="elsewhere" data-machine="${escape(machine.name)}" aria-expanded="${elsewhereOpen}">${glyph("chevron", 14)}<span>${escape(words.elsewhere(agent.elsewhere.length))}</span></button>
-        ${elsewhereOpen ? `<ul class="logins-candidates">${agent.elsewhere.map((one) => `<li class="logins-candidate"><code class="logins-dir" title="${escape(one.traces.join(", "))}">${escape(one.dir)}</code>${mine ? `<button class="text-button logins-apply" type="button" data-act="apply" data-machine="${escape(machine.name)}" data-dir="${escape(one.dir)}">${escape(words.apply)}</button>` : ""}</li>`).join("")}</ul>` : ""}</div>`
-      : "";
-    const adding = this.adding === machine.name;
-    const add = mine
-      ? adding
-        ? `<form class="logins-add"><input type="text" name="dir" placeholder="${escape(words.addDirPlaceholder)}" spellcheck="false" autocomplete="off" data-machine="${escape(machine.name)}"><button class="text-button" type="submit">${escape(words.add)}</button></form>`
-        : `<button class="text-button quiet-button logins-add-open" type="button" data-act="add" data-machine="${escape(machine.name)}">${glyph("plus", 14)}<span>${escape(words.addDir)}</span></button>`
-      : "";
-    const empty = !agent.listed.length && !agent.candidates.length && !agent.elsewhere.length && !scanning ? `<p class="feature-quiet">${escape(words.noneFound)}</p>` : "";
+    const folders = record.folders ?? [];
+    const searched = foldersSection({
+      machine: machine.name,
+      agent: this.agent,
+      mine,
+      folders,
+      words,
+      now,
+      when: this.options.when,
+      open: this.openFolders,
+      taking: this.taking,
+      fresh: this.fresh,
+      notes: this.notes,
+      choosing: this.picking.has(machine.name),
+    });
+    const empty = !agent.listed.length && !agent.candidates.length && !foundOf(folders, this.agent) && !scanning ? `<p class="feature-quiet">${escape(words.noneFound)}</p>` : "";
     return `<section class="logins-machine">${head}${programs}${status}${rescan}</header>
       ${note ? `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` : ""}
       ${listed ? `<ul class="logins-slips" aria-label="${escape(words.listed)}">${listed}</ul>` : ""}
       ${candidates ? `<h3 class="logins-group">${escape(words.candidates)}</h3><ul class="logins-candidates">${candidates}</ul>` : ""}
-      ${elsewhere}${empty}${add}
+      ${empty}${searched}
     </section>`;
   }
 
@@ -307,7 +322,8 @@ export class AgentLoginsPage implements Page {
       .join("\n");
     const key = `s:${machine.name}:${login.dir}`;
     const note = this.notes.get(key);
-    return `<li class="logins-slip${changing ? " changing" : ""}">
+    const fresh = freshness(this.fresh, `d:${machine.name}:${login.dir}`);
+    return `<li class="logins-slip${changing ? " changing" : ""}${fresh}>
       <div class="logins-slip-head">
         <span class="logins-slip-mark" title="${escape(versions)}">${glyph(this.agent, 18)}</span>
         <span class="logins-slip-who" title="${escape(login.dir)}">${escape(who)}</span>
@@ -316,7 +332,7 @@ export class AgentLoginsPage implements Page {
         ${identity && !identity.logged_in ? `<span class="tag tag-warn">${escape(words.loggedOut)}</span>` : ""}
         <button class="icon-button logins-more" type="button" data-act="menu" data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 16)}</button>
       </div>
-      ${this.bars(login.limits, now)}
+      ${this.options.workbench.peek() ? this.bars(login.limits, now) : ""}
       <div class="logins-slip-foot">
         <span class="logins-stamp${changing ? " busy" : ""}">${changing ? escape(login.change!.into ? words.applying : words.removing) : `${glyph("check", 14)}${escape(words.applied)}`}</span>
         ${lent.length ? `<span class="logins-lent">${escape(words.lentTo)}${lent.map((loan) => this.loanTag(machine.name, login.dir, loan, now)).join("")}</span>` : ""}
@@ -447,27 +463,31 @@ export class AgentLoginsPage implements Page {
     if (!button || button.disabled) return;
     const machine = button.dataset.machine ?? "";
     const dir = button.dataset.dir ?? "";
+    const limits = this.options.workbench.peek();
     switch (button.dataset.act) {
       case "scan":
-        await this.quietly(button, `m:${machine}`, () => this.options.scan(machine, false));
-        return;
-      case "stop-walk":
-        await this.quietly(button, `m:${machine}`, () => this.options.scan(machine, true));
+        await this.quietly(button, `m:${machine}`, () => this.options.scan(machine, false, limits));
         return;
       case "apply": {
         const target = this.target(machine, dir, true) ?? { agent: this.agent, machine, dir, who: dirName(dir), programs: [], here: this.shown(this.options.store.world.peek()).find((one) => one.name === machine)?.here ?? false, into: true };
         this.sheet.open(target);
         return;
       }
-      case "elsewhere":
-        if (this.openElsewhere.has(machine)) this.openElsewhere.delete(machine);
-        else this.openElsewhere.add(machine);
+      case "add-folder":
+        this.chooseFolder(machine);
+        return;
+      case "stop-search":
+        await this.quietly(button, `f:${machine}:${dir}`, () => this.options.folder(machine, dir, { change: "stop" }));
+        return;
+      case "forget":
+        await this.quietly(button, `f:${machine}:${dir}`, () => this.options.folder(machine, dir, { change: "forget" }));
+        return;
+      case "more":
+        this.openFolders.add(`${machine}:${dir}`);
         this.draw();
         return;
-      case "add":
-        this.adding = machine;
-        this.draw();
-        this.body.querySelector<HTMLInputElement>(".logins-add input")?.focus();
+      case "take":
+        await this.takeUp(machine, dir, button.dataset.folder ?? "");
         return;
       case "menu":
         this.openMenu(button, machine, dir);
@@ -506,7 +526,7 @@ export class AgentLoginsPage implements Page {
     element.innerHTML = [
       mine ? `<button class="map-menu-item danger" type="button" role="menuitem" data-menu="remove">${glyph("archive", 16)}<span>${escape(words.remove)}</span></button>` : "",
       found.machine.owner ? `<button class="map-menu-item" type="button" role="menuitem" data-menu="lend">${glyph("person", 16)}<span>${escape(words.lend)}</span></button>` : "",
-      `<button class="map-menu-item" type="button" role="menuitem" data-menu="limits">${glyph("reread", 16)}<span>${escape(words.rereadLimits)}</span></button>`,
+      this.options.workbench.peek() ? `<button class="map-menu-item" type="button" role="menuitem" data-menu="limits">${glyph("reread", 16)}<span>${escape(words.rereadLimits)}</span></button>` : "",
       `<button class="map-menu-item" type="button" role="menuitem" data-menu="copy" title="${escape(login.dir)}">${glyph("folder", 16)}<span>${escape(words.copyDir)}</span></button>`,
       identity?.method === "oauth_token" && admin
         ? `<div class="logins-menu-plan"><span>${escape(words.plan)}</span>${plans.map((plan) => `<button class="choice" type="button" data-menu="plan" data-plan="${plan ?? ""}">${escape(plan ? planName(plan) : words.planNone)}</button>`).join("")}</div>`
@@ -562,13 +582,106 @@ export class AgentLoginsPage implements Page {
     }
   }
 
-  private async addDir(form: HTMLFormElement): Promise<void> {
-    const input = form.querySelector<HTMLInputElement>("input[name=dir]");
-    const dir = input?.value.trim();
-    const machine = input?.dataset.machine;
-    if (!dir || !machine) return;
-    this.adding = null;
-    await this.quietly(null, `m:${machine}`, () => this.options.add(machine, this.agent, dir));
+  /** 「添加文件夹…」: this computer's own folder picker where it has one,
+   *  the machine's folders walked by its node anywhere else. */
+  private chooseFolder(machine: string): void {
+    const here = this.shown(this.options.store.world.peek()).find((one) => one.name === machine)?.here ?? false;
+    const walk = () => this.choosing.open(machine, (path) => this.options.folders(machine, path), (dir) => void this.choose(machine, dir));
+    const pick = this.options.pick;
+    if (!here || !pick) {
+      walk();
+      return;
+    }
+    this.picking.add(machine);
+    this.draw();
+    pick().then(
+      (dir) => {
+        this.picking.delete(machine);
+        if (dir) void this.choose(machine, dir);
+        else this.draw();
+      },
+      // A computer whose picker cannot open walks its folders as any
+      // other machine does.
+      () => {
+        this.picking.delete(machine);
+        this.draw();
+        walk();
+      },
+    );
+  }
+
+  /** Chooses `dir` on `machine` for logins, then shows what it became: a
+   *  login of an agent, its row marked new, under that agent's tab; or a
+   *  folder being searched. */
+  private async choose(machine: string, dir: string): Promise<void> {
+    const before = this.answered(machine);
+    this.picking.add(machine);
+    this.notes.delete(`m:${machine}`);
+    this.draw();
+    try {
+      const after = await this.options.folder(machine, dir, { change: "choose", limits: this.options.workbench.peek() });
+      const marked = this.became(before, after, dir);
+      if (marked.agent && marked.agent !== this.agent) {
+        this.agent = marked.agent;
+        keepTab(marked.agent);
+      }
+      this.mark(marked.keys);
+    } catch (error) {
+      this.notes.set(`m:${machine}`, { text: this.options.words.failed, detail: detailOf(error) });
+    } finally {
+      this.picking.delete(machine);
+    }
+    await this.read();
+  }
+
+  /** What choosing `dir` made of it on a machine: the logins that are new,
+   *  or the one it already was, with their agent; else the folder. */
+  private became(before: MachineLogins | null, after: MachineLogins, dir: string): { agent: Agent | null; keys: string[] } {
+    const machine = after.machine;
+    for (const agent of [this.agent, this.agent === "codex" ? "claude" : "codex"] as const) {
+      const logins = [...after[agent].listed, ...after[agent].candidates];
+      const known = before ? [...before[agent].listed, ...before[agent].candidates] : null;
+      const fresh = logins.filter((login) => sameDir(login.dir, dir) || (known !== null && !known.some((one) => sameDir(one.dir, login.dir))));
+      if (fresh.length) return { agent, keys: fresh.map((login) => `d:${machine}:${login.dir}`) };
+    }
+    const folder = (after.folders ?? []).find((one) => sameDir(one.dir, dir));
+    return { agent: null, keys: folder ? [`f:${machine}:${folder.dir}`] : [] };
+  }
+
+  /** Takes up what a folder's search found, asking who is logged in
+   *  there; the change card for it opens once it is known. */
+  private async takeUp(machine: string, dir: string, folder: string): Promise<void> {
+    const agent = this.agent;
+    this.taking.add(dir);
+    this.notes.delete(`f:${machine}:${folder}`);
+    this.draw();
+    try {
+      await this.options.add(machine, agent, dir, this.options.workbench.peek());
+      await this.read();
+      const target = this.agent === agent ? this.target(machine, dir, true) : null;
+      if (target) this.sheet.open(target);
+    } catch (error) {
+      this.notes.set(`f:${machine}:${folder}`, { text: this.options.words.failed, detail: detailOf(error) });
+    } finally {
+      this.taking.delete(dir);
+    }
+    this.draw();
+  }
+
+  /** Marks rows as new for a moment. */
+  private mark(keys: string[]): void {
+    const at = Date.now();
+    for (const key of keys) this.fresh.set(key, at);
+    window.setTimeout(() => {
+      for (const key of keys) if (this.fresh.get(key) === at) this.fresh.delete(key);
+      this.draw();
+    }, FRESH_MS);
+  }
+
+  /** The record of `machine` as last read, when it answered. */
+  private answered(machine: string): MachineLogins | null {
+    const heard = this.record?.machines.find((one) => one.kind === "answered" && one.logins.machine === machine);
+    return heard?.kind === "answered" ? heard.logins : null;
   }
 
   /** Does `act`, says on the machine or slip what went wrong if it did,
@@ -605,6 +718,17 @@ function keepTab(tab: Agent): void {
 
 function dirName(dir: string): string {
   return dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? dir;
+}
+
+/** Whether two paths a machine wrote name the same directory: a Windows
+ *  path without regard to case, slash or the verbatim prefix. */
+function sameDir(a: string, b: string): boolean {
+  const plain = (path: string) => {
+    const bare = path.replace(/^\\\\\?\\/, "");
+    const trimmed = bare.replace(/[\\/]+$/, "") || bare;
+    return /^[A-Za-z]:|\\/.test(bare) ? trimmed.replace(/\//g, "\\").toLowerCase() : trimmed;
+  };
+  return plain(a) === plain(b);
 }
 
 function planName(plan: string): string {

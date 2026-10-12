@@ -1,8 +1,9 @@
 //! What the node keeps on disk of its agents' logins: the last scan's
 //! findings in `<world>/agent-scan.json`, each login's limits as last read
-//! with them, and the directories the user added in `<world>/agent-homes.json`
-//! (`world-agent-logins.md`). Nothing in either is a credential: who is
-//! logged in, as the agents said it, and paths.
+//! with them, and each chosen folder's last search; and what the user chose
+//! in `<world>/agent-homes.json`, the logins taken up and the folders
+//! searched (`world-agent-logins.md`). Nothing in either is a credential:
+//! who is logged in, as the agents said it, and paths.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -11,7 +12,7 @@ use std::path::{Path, PathBuf};
 use fastctx_platform::{Permissions, publish};
 use fastctx_types::AgentName;
 use fastctx_types::agents::AgentModel;
-use fastctx_types::logins::{Found, FoundProgram, Identified, Launcher, LooksLike, Scan};
+use fastctx_types::logins::{FolderSearch, Found, FoundProgram, Identified, Launcher, Scan};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +30,15 @@ pub(super) struct Kept {
     pub codex: KeptAgent,
     #[serde(default)]
     pub claude: KeptAgent,
+    /// Each chosen folder's search, running or the last one.
+    #[serde(default)]
+    pub folders: Vec<KeptSearch>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct KeptSearch {
+    pub dir: PathBuf,
+    pub search: FolderSearch,
 }
 
 impl Kept {
@@ -48,8 +58,6 @@ pub(super) struct KeptAgent {
     /// Each login asked who it is, by the last scan or when taken up.
     #[serde(default)]
     pub logins: Vec<KeptLogin>,
-    #[serde(default)]
-    pub elsewhere: Vec<LooksLike>,
     /// Codex's limits as last read or pushed, for each login.
     #[serde(default)]
     pub limits: Vec<KeptLimits>,
@@ -112,12 +120,15 @@ pub(super) fn change<T>(node: &Node, edit: impl FnOnce(&mut Kept) -> T) -> io::R
     Ok(result)
 }
 
-/// The directories the user added, from `agent-homes.json`; what an older
-/// World recorded there as hidden is no longer heeded.
+/// What the user chose, from `agent-homes.json`: the directories taken up
+/// as logins, and the folders searched for logins. What an older World
+/// recorded there as hidden is no longer heeded.
 #[derive(Default, Serialize, Deserialize)]
-struct Added {
+pub(super) struct Added {
     #[serde(default)]
-    added: Vec<AddedHome>,
+    pub added: Vec<AddedHome>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<PathBuf>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -130,24 +141,49 @@ fn added_path(node: &Node) -> PathBuf {
     node.world.path().join("agent-homes.json")
 }
 
-pub(super) fn added(node: &Node) -> io::Result<Vec<AddedHome>> {
+pub(super) fn chosen(node: &Node) -> io::Result<Added> {
     match std::fs::read(added_path(node)) {
         Ok(bytes) => serde_json::from_slice::<Added>(&bytes)
-            .map(|added| added.added)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("agent-homes.json: {error}"))),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Added::default()),
         Err(error) => Err(error),
     }
 }
 
-/// Adds `dir` to the directories the user added for `agent`, once.
-pub(super) fn add(node: &Node, agent: &AgentName, dir: &Path) -> io::Result<()> {
+/// Changes what the user chose, under the node's lock for its records.
+fn choose(node: &Node, edit: impl FnOnce(&mut Added)) -> io::Result<()> {
     let _keeping = node.logins.keeping.lock().expect("never poisoned");
-    let mut added = added(node)?;
-    if !added.iter().any(|known| known.agent == *agent && crate::homes::same_dir(&known.dir, dir)) {
-        added.push(AddedHome { agent: agent.clone(), dir: dir.to_path_buf() });
-    }
-    let mut bytes = serde_json::to_vec_pretty(&Added { added }).map_err(io::Error::other)?;
+    let mut added = chosen(node)?;
+    edit(&mut added);
+    let mut bytes = serde_json::to_vec_pretty(&added).map_err(io::Error::other)?;
     bytes.push(b'\n');
     publish(&added_path(node), &bytes, Permissions::Private)
+}
+
+/// Adds `dir` to the directories the user took up for `agent`, once.
+pub(super) fn add(node: &Node, agent: &AgentName, dir: &Path) -> io::Result<()> {
+    choose(node, |added| {
+        if !added.added.iter().any(|known| known.agent == *agent && crate::homes::same_dir(&known.dir, dir)) {
+            added.added.push(AddedHome { agent: agent.clone(), dir: dir.to_path_buf() });
+        }
+    })
+}
+
+/// The folders the user chose, searched for logins.
+pub(super) fn folders(node: &Node) -> io::Result<Vec<PathBuf>> {
+    chosen(node).map(|added| added.folders)
+}
+
+/// Adds `dir` to the folders searched for logins, once.
+pub(super) fn add_folder(node: &Node, dir: &Path) -> io::Result<()> {
+    choose(node, |added| {
+        if !added.folders.iter().any(|known| crate::homes::same_dir(known, dir)) {
+            added.folders.push(dir.to_path_buf());
+        }
+    })
+}
+
+/// No longer searches `dir` for logins.
+pub(super) fn remove_folder(node: &Node, dir: &Path) -> io::Result<()> {
+    choose(node, |added| added.folders.retain(|known| !crate::homes::same_dir(known, dir)))
 }

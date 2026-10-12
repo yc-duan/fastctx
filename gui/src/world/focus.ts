@@ -53,5 +53,6 @@ export function sameFocus(a: Focus, b: Focus): boolean {
 export function folderName(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, "");
   const name = trimmed.slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\")) + 1);
-  return name || path;
+  // A drive's root, `D:\`, is named by its whole path.
+  return name && !/^[A-Za-z]:$/.test(name) ? name : path;
 }

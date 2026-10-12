@@ -610,6 +610,7 @@ impl fastctx_net::link::Node for Handler {
                 call @ (RemoteCall::AgentLogins
                 | RemoteCall::ScanAgents { .. }
                 | RemoteCall::AddAgentLogin { .. }
+                | RemoteCall::AgentFolder { .. }
                 | RemoteCall::PreviewAgentChange { .. }
                 | RemoteCall::ChangeAgentLogin { .. }
                 | RemoteCall::ReadAgentLimits { .. }) => {

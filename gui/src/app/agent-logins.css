@@ -274,6 +274,13 @@
   color: var(--text-3);
 }
 
+/* Rows read across in one look: on a wide screen they stop at a width
+   where a name and its 「接入」 stay together. */
+.logins-candidates,
+.logins-folders {
+  max-width: 760px;
+}
+
 .logins-candidates {
   margin: 0;
   padding: 0;
@@ -319,37 +326,196 @@
   font-weight: 600;
 }
 
-.logins-elsewhere {
-  margin-top: var(--space-3);
-}
-
-.logins-elsewhere > button .glyph {
-  transform: rotate(-90deg);
-  transition: transform var(--fold) var(--fold-easing);
-}
-
-.logins-elsewhere > button[aria-expanded="true"] .glyph {
-  transform: none;
-}
-
-.logins-add {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-
-.logins-add input {
-  flex: 1;
-  min-width: 0;
-  min-height: 36px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-s);
-  background: var(--fill);
-  font-family: var(--font-code);
-}
-
+/* 「添加文件夹…」, and the folders searched for logins: a row each, the
+   folder's name and where it is, how its search goes at the end of the row;
+   what it found below it a quiet row each, set in under the name. */
 .logins-add-open {
   margin-top: var(--space-3);
+}
+
+.logins-folder-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.logins-folder-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 0 0 var(--space-2);
+  color: var(--text-2);
+}
+
+.logins-folder-mark {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+}
+
+.logins-folder-what {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+  cursor: default;
+}
+
+.logins-folder-name {
+  flex: 0 1 auto;
+  min-width: 2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.logins-folder-where {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.logins-folder-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.logins-folder-state.wrong {
+  color: var(--wrong);
+}
+
+.logins-folder-forget {
+  flex: none;
+  color: var(--text-3);
+}
+
+.logins-found {
+  margin: 0 0 var(--space-1);
+  padding: 0 0 0 calc(16px + var(--space-2));
+  list-style: none;
+}
+
+.logins-found-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+}
+
+.logins-found-row > .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.logins-found-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+  color: var(--text);
+  cursor: default;
+}
+
+.logins-found-more {
+  margin: 2px 0 0 var(--space-1);
+}
+
+.logins-apply .pulse {
+  margin-right: 6px;
+}
+
+/* A row just added, or what a folder chosen turned out to be: a wash of
+   the accent that fades to the row's own ground. */
+.logins-candidate.fresh,
+.logins-found-row.fresh,
+.logins-folder.fresh,
+.logins-slip.fresh {
+  animation: logins-fresh 2400ms ease-out both;
+}
+
+.logins-folder {
+  border-radius: var(--radius-m);
+}
+
+@keyframes logins-fresh {
+  from {
+    background-color: var(--accent-wash);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logins-candidate.fresh,
+  .logins-found-row.fresh,
+  .logins-folder.fresh,
+  .logins-slip.fresh {
+    animation: none;
+    background-color: var(--accent-wash);
+  }
+}
+
+@media (max-width: 760px) {
+  .logins-folder-head,
+  .logins-found-row {
+    min-height: 44px;
+  }
+
+  .logins-folder-where {
+    display: none;
+  }
+}
+
+/* Choosing a folder on another machine: the sheet keeps its size as the
+   walk goes, and only the folders scroll. */
+.folder-sheet .sheet-body {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100vw - 32px);
+  height: min(620px, 84vh);
+  overflow: hidden;
+}
+
+.folder-sheet .folder-walk {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.folder-sheet .folder-walk-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 760px) {
+  .folder-sheet .sheet-body {
+    width: 100%;
+    height: min(80dvh, 640px);
+  }
 }
 
 .logins-menu {

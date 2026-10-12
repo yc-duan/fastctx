@@ -24,17 +24,17 @@ pub struct Said {
     pub version: Option<String>,
     pub who: Fact<Identity>,
     /// The answer of `account/rateLimits/read`, and when it came; none
-    /// when no one is logged in.
+    /// when no one is logged in, or the limits were not asked for.
     pub limits: Option<Result<(Timestamp, Value), String>>,
     pub models: Fact<Vec<AgentModel>>,
 }
 
 impl CodexHost {
-    /// Asks this host's app-server when it is running now; `None` when it is
-    /// not, and then nothing is started.
-    pub async fn ask_running(self: &Arc<Self>) -> Option<Said> {
+    /// Asks this host's app-server when it is running now, its usage limits
+    /// too with `limits`; `None` when it is not, and then nothing is started.
+    pub async fn ask_running(self: &Arc<Self>, limits: bool) -> Option<Said> {
         let server = self.lock().server.as_ref().map(|(server, _)| server.clone())?;
-        let said = ask(&server, None).await;
+        let said = ask(&server, None, limits).await;
         if let Some(Ok((at, answer))) = &said.limits {
             self.limits_heard(*at, super::account::LimitsHow::Read(answer.clone()));
         }
@@ -48,13 +48,15 @@ impl CodexHost {
     }
 }
 
-/// Starts `launch` for the Codex home `home`, asks it, and stops it.
+/// Starts `launch` for the Codex home `home`, asks it, its usage limits
+/// too with `limits`, and stops it.
 pub async fn ask_once(
     launch: &Launch,
     home: &Path,
     cwd: &Path,
     env: &[(OsString, OsString)],
     log: Log,
+    limits: bool,
 ) -> Result<Said, String> {
     let mut env = env.to_vec();
     env.retain(|(name, _)| !name.eq_ignore_ascii_case("CODEX_HOME"));
@@ -100,7 +102,7 @@ pub async fn ask_once(
                 .and_then(|agent| agent.split_whitespace().next())
                 .and_then(|first| first.split_once('/'))
                 .map(|(_, version)| version.to_string());
-            Ok(ask(&server, version).await)
+            Ok(ask(&server, version, limits).await)
         }
         Err(error) => Err(format!("starting the Codex app-server {}: {error}", launch.binary.display())),
     };
@@ -110,10 +112,10 @@ pub async fn ask_once(
     said
 }
 
-async fn ask(server: &AppServer, version: Option<String>) -> Said {
+async fn ask(server: &AppServer, version: Option<String>, limits: bool) -> Said {
     let who = super::account::identity(server).await;
     let limits = match &who {
-        Fact::Known { value } if value.logged_in => {
+        Fact::Known { value } if value.logged_in && limits => {
             let at = Timestamp::now();
             Some(server.request("account/rateLimits/read", json!({})).await.map(|answer| (at, answer)))
         }

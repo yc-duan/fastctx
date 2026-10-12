@@ -1,8 +1,8 @@
 // Pointing a conversation at machines and folders (`world-gui.md`, 新对话
 // and 对话): the machines its account may use, each chosen as a whole or
 // with folders on it, a folder chosen by walking the machine's own folders
-// a level at a time, or by typing its path. What is chosen is said to the
-// agent as where its work is; it limits nothing.
+// (`folder-walk.ts`). What is chosen is said to the agent as where its work
+// is; it limits nothing.
 //
 // The same panel serves a conversation about to begin, above its input,
 // and one under way, from the strip at the top of its page.
@@ -10,6 +10,7 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { folderName, type Focus, type Folders } from "../world/focus";
+import { FolderWalk } from "./folder-walk";
 import type { FocusWords } from "./words";
 
 /** A machine the conversation's account may use. */
@@ -32,21 +33,11 @@ export interface FocusPanelOptions {
   done?: () => void;
 }
 
-/** Walking one machine's folders. */
-interface Walk {
-  place: FocusPlace;
-  path: string | null;
-  listing: Folders | null;
-  error: string | null;
-  /** The latest ask; an answer to an earlier one is dropped. */
-  asked: number;
-}
-
 export class FocusPanel {
   readonly element: HTMLElement;
   private focus: Focus;
-  private walk: Walk | null = null;
-  private asks = 0;
+  /** Walking one machine's folders, in the panel's place. */
+  private walk: FolderWalk | null = null;
 
   constructor(
     private readonly options: FocusPanelOptions,
@@ -56,16 +47,6 @@ export class FocusPanel {
     this.element = document.createElement("div");
     this.element.className = "focus-panel";
     this.element.addEventListener("click", (event) => this.click(event));
-    // The panel may stand inside the input's own form, so a typed path goes
-    // on Enter here and never submits anything.
-    this.element.addEventListener("keydown", (event) => {
-      const input = (event.target as HTMLElement).closest<HTMLInputElement>(".focus-path");
-      if (!input || event.key !== "Enter" || event.isComposing) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const typed = input.value.trim();
-      if (this.walk && typed) this.go(typed);
-    });
     this.draw();
   }
 
@@ -118,33 +99,7 @@ export class FocusPanel {
       }
       case "browse": {
         const place = this.placesShown().find((one) => one.written === machine);
-        if (!place) return;
-        this.walk = { place, path: null, listing: null, error: null, asked: 0 };
-        this.go(null);
-        break;
-      }
-      case "into":
-        this.go(target.dataset.path ?? null);
-        break;
-      case "up":
-        this.go(this.walk?.listing?.parent ?? null);
-        break;
-      case "back":
-        this.walk = null;
-        this.draw();
-        break;
-      case "pick": {
-        const walk = this.walk;
-        const path = walk?.listing?.path;
-        if (!walk || !path) return;
-        let chosen = this.focus.machines.find((one) => one.machine === walk.place.written);
-        if (!chosen) {
-          chosen = { machine: walk.place.written, folders: [] };
-          this.focus.machines.push(chosen);
-        }
-        if (!chosen.folders.includes(path)) chosen.folders.push(path);
-        this.walk = null;
-        this.change();
+        if (place) this.browse(place);
         break;
       }
       case "done":
@@ -153,30 +108,31 @@ export class FocusPanel {
     }
   }
 
-  /** Asks the machine for the folders in `path`, or its places to start. */
-  private go(path: string | null): void {
-    const walk = this.walk;
-    if (!walk) return;
-    const asked = ++this.asks;
-    walk.asked = asked;
-    walk.path = path;
-    walk.error = null;
-    walk.listing = null;
+  /** Walks `place`'s folders in the panel's place, until one is chosen or
+   *  the walk goes back. */
+  private browse(place: FocusPlace): void {
+    const walk = new FolderWalk({
+      words: this.options.words,
+      machine: place.written,
+      folders: (path) => this.options.folders(place.name, path),
+      chosen: (path) => {
+        let chosen = this.focus.machines.find((one) => one.machine === place.written);
+        if (!chosen) {
+          chosen = { machine: place.written, folders: [] };
+          this.focus.machines.push(chosen);
+        }
+        if (!chosen.folders.includes(path)) chosen.folders.push(path);
+        this.walk = null;
+        this.change();
+      },
+      back: () => {
+        this.walk = null;
+        this.draw();
+      },
+    });
+    this.walk = walk;
     this.draw();
-    this.options
-      .folders(walk.place.name, path)
-      .then((listing) => {
-        if (this.walk !== walk || walk.asked !== asked) return;
-        walk.listing = listing;
-        walk.path = listing.path;
-      })
-      .catch((error: unknown) => {
-        if (this.walk !== walk || walk.asked !== asked) return;
-        walk.error = error instanceof Error ? error.message : String(error);
-      })
-      .finally(() => {
-        if (this.walk === walk && walk.asked === asked) this.draw();
-      });
+    walk.go(null);
   }
 
   /** The machines it may use, and any chosen before that it no longer may. */
@@ -189,10 +145,11 @@ export class FocusPanel {
   }
 
   private draw(): void {
-    const html = this.walk ? this.walking(this.walk) : this.machines();
-    this.element.classList.toggle("walking", !!this.walk);
-    this.element.innerHTML = html;
-    if (this.walk) this.element.querySelector<HTMLElement>(".focus-list")?.scrollTo({ top: 0 });
+    if (this.walk) {
+      this.element.replaceChildren(this.walk.element);
+      return;
+    }
+    this.element.innerHTML = this.machines();
   }
 
   private machines(): string {
@@ -216,25 +173,6 @@ export class FocusPanel {
     const body = rows || `<span class="choice-none quiet">${escape(words.noMachine)}</span>`;
     const done = this.options.done ? `<div class="focus-foot"><button type="button" class="sheet-go focus-done" data-act="done">${escape(words.done)}</button></div>` : "";
     return `<h3 class="picker-title">${escape(words.title)}</h3><div class="focus-machines">${body}</div>${done}`;
-  }
-
-  private walking(walk: Walk): string {
-    const { words } = this.options;
-    const listing = walk.listing;
-    let rows = "";
-    if (walk.path !== null) rows += `<button type="button" class="pop-row focus-up" data-act="up">${glyph("back", 14)}<span class="pop-label">${escape(words.up)}</span></button>`;
-    if (walk.error) rows += `<span class="choice-none">${escape(walk.error)}</span>`;
-    else if (!listing) rows += `<span class="choice-none quiet">${escape(words.reading)}</span>`;
-    else if (!listing.folders.length) rows += `<span class="choice-none quiet">${escape(words.noFolders)}</span>`;
-    else
-      rows += listing.folders
-        .map(
-          (folder) =>
-            `<button type="button" class="pop-row${folder.hidden ? " quiet" : ""}" data-act="into" data-path="${escape(folder.path)}">${glyph("folder", 16)}<span class="pop-label">${escape(folder.name)}</span></button>`,
-        )
-        .join("");
-    const where = listing?.path ?? walk.path ?? "";
-    return `<div class="focus-walk-head"><button type="button" class="icon-button" data-act="back" aria-label="${escape(words.back)}" title="${escape(words.back)}">${glyph("back", 18)}</button><span class="focus-name">${escape(walk.place.written)}</span></div><div class="focus-go"><input class="focus-path" type="text" value="${escape(where)}" placeholder="${escape(words.path)}" aria-label="${escape(words.path)}" spellcheck="false" autocomplete="off" autocapitalize="off" enterkeyhint="go"></div><div class="pop-list focus-list">${rows}</div><div class="focus-foot"><button type="button" class="sheet-go focus-done" data-act="pick"${listing?.path ? "" : " disabled"}>${escape(words.choose)}</button></div>`;
   }
 }
 

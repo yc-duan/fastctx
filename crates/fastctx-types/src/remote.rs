@@ -190,17 +190,27 @@ pub enum RemoteCall {
     },
     /// What that machine's node keeps of its agents' logins.
     AgentLogins,
-    /// Scan that machine for its agents, or stop the walk of its disks; only
-    /// for the machine's owner.
+    /// Scan that machine for its agents, or stop the searches of its
+    /// chosen folders; only for the machine's owner.
     ScanAgents {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         stop: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        limits: bool,
     },
     /// Take up a directory there as a candidate login; only for the
     /// machine's owner.
     AddAgentLogin {
         agent: AgentName,
         dir: std::path::PathBuf,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        limits: bool,
+    },
+    /// Choose a folder there for logins, stop its search, or no longer
+    /// search it; only for the machine's owner.
+    AgentFolder {
+        dir: std::path::PathBuf,
+        change: crate::logins::FolderChange,
     },
     /// What a change of a login there would do; only for the machine's
     /// owner.
@@ -416,6 +426,7 @@ impl RemoteCall {
             | RemoteCall::Homes { .. }
             | RemoteCall::ScanAgents { .. }
             | RemoteCall::AddAgentLogin { .. }
+            | RemoteCall::AgentFolder { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. } => Purpose::Hands,
             RemoteCall::Composer { .. }

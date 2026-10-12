@@ -1,6 +1,6 @@
-//! The computer's local fixed disks, and walking them without getting in
-//! anyone's way: where a walk of every disk starts, and the thread it runs
-//! on asking for no more of the processor and the disks than is left over.
+//! The computer's local fixed disks and where its filesystems are mounted,
+//! and a thread that walks a folder without getting in anyone's way, asking
+//! for no more of the processor and the disks than is left over.
 
 use std::io;
 use std::path::PathBuf;
@@ -14,11 +14,11 @@ pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
     imp::fixed_disks()
 }
 
-/// Every place a filesystem is mounted, which a walk from a disk's root
-/// does not enter: on Linux the same filesystem can be mounted again inside
-/// itself (a bind mount), and walking it there would walk it twice. On
-/// Windows none: a folder a volume is mounted on is a reparse point, which
-/// a walk never enters anyway.
+/// Every place a filesystem is mounted, which a walk of a folder does not
+/// enter: on Linux the same filesystem can be mounted again inside itself
+/// (a bind mount), and walking it there would walk it twice. On Windows
+/// none: a folder a volume is mounted on is a reparse point, which a walk
+/// never enters anyway.
 pub fn mount_points() -> io::Result<Vec<PathBuf>> {
     imp::mount_points()
 }

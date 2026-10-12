@@ -129,10 +129,6 @@ pub fn fixtures() -> Fixtures {
         scan: Some(Scan {
             started_at: at,
             usual: Stage::Done { at },
-            disks: Some(DiskWalk {
-                stage: Stage::Running,
-                disks: vec![DiskProgress { root: "C:/".into(), directories: 12345, unreadable: 2, done: false }],
-            }),
             unreadable: vec!["C:/Program Files/WindowsApps: access denied".into()],
         }),
         codex: AgentLogins {
@@ -159,10 +155,7 @@ pub fn fixtures() -> Fixtures {
             ],
             listed: vec![listed],
             candidates: vec![never],
-            elsewhere: vec![LooksLike {
-                dir: "D:/backup/.codex".into(),
-                traces: vec!["auth.json".into(), "sessions".into()],
-            }],
+            elsewhere: vec![],
         },
         claude: AgentLogins {
             programs: vec![FoundProgram {
@@ -181,17 +174,50 @@ pub fn fixtures() -> Fixtures {
             candidates: vec![candidate],
             elsewhere: vec![],
         },
+        folders: vec![
+            Folder {
+                dir: "C:/Users/me/CodexHomes".into(),
+                search: Some(FolderSearch {
+                    stage: Stage::Done { at },
+                    directories: 1204,
+                    unreadable: 0,
+                    found: vec![FoundIn {
+                        agent: codex.clone(),
+                        path: "work".into(),
+                        traces: vec!["auth.json".into(), "sessions".into()],
+                    }],
+                }),
+            },
+            Folder {
+                dir: "D:/".into(),
+                search: Some(FolderSearch { stage: Stage::Running, directories: 12345, unreadable: 2, found: vec![] }),
+            },
+            Folder {
+                dir: "E:/old".into(),
+                search: Some(FolderSearch {
+                    stage: Stage::Stopped { at },
+                    directories: 80,
+                    unreadable: 0,
+                    found: vec![FoundIn {
+                        agent: claude.clone(),
+                        path: "profiles/.claude-team".into(),
+                        traces: vec![".credentials.json".into()],
+                    }],
+                }),
+            },
+            Folder { dir: "F:/never".into(), search: None },
+        ],
     };
     let empty = MachineLogins {
         machine: "laptop".parse().unwrap(),
         scan: Some(Scan {
             started_at: at,
             usual: Stage::Failed { at, reason: "the node stopped during it".into() },
-            disks: None,
             unreadable: vec![],
         }),
         codex: AgentLogins::default(),
         claude: AgentLogins::default(),
+        folders: vec![],
     };
     let preview = ChangePreview {
         agent: claude.clone(),
@@ -266,8 +292,20 @@ pub fn fixtures() -> Fixtures {
     Fixtures {
         calls: vec![
             Call::AgentLogins { machine: None },
-            Call::ScanAgents { machine: machine.clone(), stop: false },
-            Call::AddAgentLogin { machine: machine.clone(), agent: codex.clone(), dir: "D:/backup/.codex".into() },
+            Call::ScanAgents { machine: machine.clone(), stop: false, limits: true },
+            Call::AddAgentLogin {
+                machine: machine.clone(),
+                agent: codex.clone(),
+                dir: "D:/backup/.codex".into(),
+                limits: false,
+            },
+            Call::AgentFolder {
+                machine: machine.clone(),
+                dir: "C:/Users/me/CodexHomes".into(),
+                change: FolderChange::Choose { limits: true },
+            },
+            Call::AgentFolder { machine: machine.clone(), dir: "D:/".into(), change: FolderChange::Stop },
+            Call::AgentFolder { machine: machine.clone(), dir: "E:/old".into(), change: FolderChange::Forget },
             Call::PreviewAgentChange {
                 machine: machine.clone(),
                 agent: claude.clone(),
@@ -303,8 +341,9 @@ pub fn fixtures() -> Fixtures {
         ],
         remote_calls: vec![
             RemoteCall::AgentLogins,
-            RemoteCall::ScanAgents { stop: true },
-            RemoteCall::AddAgentLogin { agent: claude.clone(), dir: "/home/me/.claude-work".into() },
+            RemoteCall::ScanAgents { stop: true, limits: false },
+            RemoteCall::AddAgentLogin { agent: claude.clone(), dir: "/home/me/.claude-work".into(), limits: true },
+            RemoteCall::AgentFolder { dir: "/home/me/agents".into(), change: FolderChange::Choose { limits: false } },
             RemoteCall::PreviewAgentChange { agent: claude.clone(), dir: "/home/me/.claude-work".into(), into: false },
             RemoteCall::ChangeAgentLogin {
                 agent: claude,

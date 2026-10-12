@@ -1,7 +1,7 @@
 /* The machines and folders a conversation is pointed at
    (`focus-panel.ts`): a list of machines, each chosen as a whole block, the
    folders chosen on it as small solid chips under it; walking a machine's
-   folders takes the panel's place until one is chosen. */
+   folders (`folder-walk.css`) takes the panel's place until one is chosen. */
 
 .focus-machines {
   display: flex;
@@ -131,57 +131,6 @@
   margin-top: var(--space-3);
 }
 
-/* Walking a machine's folders. */
-.focus-walk-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  margin: calc(-1 * var(--space-1)) 0 var(--space-2) calc(-1 * var(--space-2));
-  font-size: var(--size-ui);
-  color: var(--text-strong);
-}
-
-.focus-go {
-  margin-bottom: var(--space-2);
-}
-
-.focus-go input {
-  display: block;
-  width: 100%;
-  min-width: 0;
-  margin: 0;
-  padding: 7px var(--space-3);
-  border: 0;
-  border-radius: var(--radius-m);
-  outline: 0;
-  background: var(--field);
-  color: var(--text);
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-small);
-  line-height: var(--leading-ui);
-}
-
-.focus-go input::placeholder {
-  color: var(--text-3);
-}
-
-.focus-list .pop-row > .glyph {
-  color: var(--text-3);
-}
-
-.focus-list .pop-row.quiet {
-  color: var(--text-3);
-}
-
-.focus-list .choice-none {
-  padding: var(--space-2);
-}
-
-.focus-list .choice-none.quiet {
-  color: var(--text-3);
-}
-
 /* The machines and folders the new conversation is pointed at, among the
    labels over its input. */
 .talk-pop[data-pop="focus"] {
@@ -283,8 +232,7 @@
     animation-name: sheet-rise;
   }
 
-  .focus-toggle,
-  .focus-list .pop-row {
+  .focus-toggle {
     min-height: 44px;
   }
 

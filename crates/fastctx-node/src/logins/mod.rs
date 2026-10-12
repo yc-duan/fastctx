@@ -1,24 +1,29 @@
 //! This machine's agents' logins, as its node keeps them
 //! (`world-agent-logins.md`): which the World lists and uses, which are
-//! candidates, what a scan found and how far it has got, the limits last
-//! read, and the changes of the list under way. Reading the record starts
-//! no process; a scan, a change or a fresh read of limits happens only when
-//! the user asks for it, here or from another of their devices.
+//! candidates, what a scan found, the folders the user chose and what their
+//! searches found, the limits last read, and the changes of the list under
+//! way. Reading the record starts no process; a scan, a search, a change or
+//! a fresh read of limits happens only when the user asks for it, here or
+//! from another of their devices.
 //!
 //! The list is exactly the logins the World's tools are put into: the apply
 //! record (`applied.json`) says which, so the list and what the user's own
 //! sessions get can never disagree.
 
 pub(crate) mod change;
+pub(crate) mod folders;
 pub(crate) mod identify;
 pub(crate) mod kept;
 pub(crate) mod limits;
 pub(crate) mod remote;
 pub(crate) mod scan;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use fastctx_hosts::inventory::walk;
 use fastctx_install::apply::{self, Host, Standing};
 use fastctx_types::agents::{AgentHome, AgentLimits, Fact, HomeFound, Integration};
 use fastctx_types::ipc::Failure;
@@ -30,10 +35,12 @@ use crate::Node;
 /// The node's state of its logins beyond what is kept on disk.
 #[derive(Default)]
 pub(crate) struct Logins {
-    /// Writing the kept record, one at a time.
+    /// Writing the kept records, one at a time.
     keeping: Mutex<()>,
-    /// The scan under way, if one is.
-    scan: Mutex<Option<Arc<scan::Running>>>,
+    /// Whether a scan of the usual places is under way.
+    scanning: AtomicBool,
+    /// The searches of the chosen folders under way.
+    searches: folders::Searches,
     /// The change running in each login, or the last one since the node
     /// started: its agent, directory and steps.
     changes: Mutex<Vec<(AgentName, PathBuf, LoginChange)>>,
@@ -93,7 +100,7 @@ pub(crate) async fn here(node: &Arc<Node>) -> Result<MachineLogins, Failure> {
 
 /// Each login of `agent` the World knows here, with how it knows of it:
 /// the default one, those the last scan found or the user took up, those
-/// the user added, and those the World's tools are put into.
+/// the user took up since, and those the World's tools are put into.
 fn dirs(node: &Node, context: &Context, kept: &kept::Kept, agent: &str) -> Result<Vec<(PathBuf, Found)>, Failure> {
     let mut dirs: Vec<(PathBuf, Found)> = vec![(context.default_of(agent).to_path_buf(), Found::Default)];
     let mut add = |dir: PathBuf, found: Found| {
@@ -104,10 +111,10 @@ fn dirs(node: &Node, context: &Context, kept: &kept::Kept, agent: &str) -> Resul
     for login in &kept.of(agent).logins {
         add(login.dir.clone(), login.found);
     }
-    let added = kept::added(node).map_err(|error| Failure::new(format!("reading the added logins: {error}")))?;
-    for one in added.into_iter().filter(|one| one.agent.as_str() == agent) {
-        let elsewhere = found_elsewhere(kept, agent, &one.dir);
-        add(one.dir, if elsewhere { Found::Elsewhere } else { Found::Added });
+    let chosen = kept::chosen(node).map_err(|error| Failure::new(format!("reading the chosen logins: {error}")))?;
+    for one in chosen.added.into_iter().filter(|one| one.agent.as_str() == agent) {
+        let found = if in_folder(&chosen.folders, &one.dir) { Found::Elsewhere } else { Found::Added };
+        add(one.dir, found);
     }
     let integrations = apply::integrations(&context.places)
         .map_err(|error| Failure::new(format!("reading the apply record: {error}")))?;
@@ -118,18 +125,12 @@ fn dirs(node: &Node, context: &Context, kept: &kept::Kept, agent: &str) -> Resul
     Ok(dirs)
 }
 
-/// A path as the walk of the disks writes it. What the walk found is
-/// matched by its text alone: a directory taken up from it is named as the
-/// walk named it, and the walk does not follow links, so no path it wrote
-/// needs resolving.
-fn walk_key(path: &Path) -> String {
-    fastctx_hosts::inventory::walk::key(path)
-}
-
-/// Whether the walk of the disks found `dir` as `agent`'s.
-fn found_elsewhere(kept: &kept::Kept, agent: &str, dir: &Path) -> bool {
-    let wanted = walk_key(dir);
-    kept.of(agent).elsewhere.iter().any(|found| walk_key(&found.dir) == wanted)
+/// Whether `dir` lies below one of the chosen `folders`: a login taken up
+/// from what a folder's search found. Paths are matched by their text, as
+/// the search wrote them: it follows no link, so none needs resolving.
+fn in_folder(folders: &[PathBuf], dir: &Path) -> bool {
+    let dir = walk::key(dir);
+    folders.iter().any(|folder| folders::below(&dir, &walk::key(folder)))
 }
 
 /// Whether the World's tools are in the login `dir` of `host`.
@@ -145,32 +146,27 @@ fn standing(context: &Context, host: Host, dir: &Path) -> Result<Integration, St
 fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
     let context = Context::of(node)?;
     let kept = kept::read(node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
-    let running = node.logins.scan.lock().expect("never poisoned").clone();
     let mut scan = kept.scan.clone();
-    match (&running, &mut scan) {
-        (Some(running), Some(scan)) => running.progress(scan),
-        // A scan the record says runs, with none running here, was cut
-        // short when the node stopped.
-        (None, Some(scan)) => {
-            let at = jiff::Timestamp::now();
-            let cut = |stage: &mut Stage| {
-                if *stage == Stage::Running {
-                    *stage = Stage::Failed { at, reason: "the node stopped during it".into() };
-                }
-            };
-            cut(&mut scan.usual);
-            if let Some(disks) = &mut scan.disks {
-                cut(&mut disks.stage);
-            }
-        }
-        _ => {}
+    // A scan the record says runs, with none running here, was cut short
+    // when the node stopped.
+    if let Some(scan) = &mut scan
+        && scan.usual == Stage::Running
+        && !node.logins.scanning.load(Ordering::Acquire)
+    {
+        scan.usual = Stage::Failed { at: jiff::Timestamp::now(), reason: "the node stopped during it".into() };
     }
     let claude_limits = fastctx_hosts::claude::exchange::limits(node.world.path());
     let claude_models = fastctx_hosts::claude::exchange::models(node.world.path())
         .map_err(|error| Failure::new(format!("reading Claude's model rows: {error}")))?;
     let changes = node.logins.changes.lock().expect("never poisoned").clone();
-    let mut logins =
-        MachineLogins { machine: node.machine(), scan, codex: AgentLogins::default(), claude: AgentLogins::default() };
+    let mut logins = MachineLogins {
+        machine: node.machine(),
+        scan,
+        codex: AgentLogins::default(),
+        claude: AgentLogins::default(),
+        folders: Vec::new(),
+    };
+    let mut known = HashSet::new();
     for agent in AGENTS {
         let dirs = dirs(node, &context, &kept, agent)?;
         let side = logins.of_mut(agent).expect("an agent that keeps logins");
@@ -231,10 +227,10 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 side.candidates.push(login);
             }
         }
-        let known: std::collections::HashSet<String> = dirs.iter().map(|(dir, _)| walk_key(dir)).collect();
-        side.elsewhere =
-            kept.of(agent).elsewhere.iter().filter(|found| !known.contains(&walk_key(&found.dir))).cloned().collect();
+        known.extend(dirs.iter().map(|(dir, _)| walk::key(dir)));
     }
+    let chosen = kept::folders(node).map_err(|error| Failure::new(format!("reading the chosen folders: {error}")))?;
+    logins.folders = folders::shown(node, &kept, &chosen, &known);
     Ok(logins)
 }
 
@@ -308,30 +304,37 @@ pub(crate) async fn query(
     remote::query(node, acting, machine).await
 }
 
-/// Takes up `dir` as a candidate login of `agent`: one the user wrote, or
-/// one the walk of every disk found. The agent is asked who is logged in
-/// there, and the directory is kept among those the user added.
-pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) -> Result<MachineLogins, Failure> {
+/// Takes up `dir` as a candidate login of `agent`: a folder the user chose
+/// that is a login, or one a folder's search found. The agent is asked who
+/// is logged in there, and with `limits` its usage limits; the directory is
+/// kept among those the user took up.
+pub(crate) async fn take_up(
+    node: &Arc<Node>,
+    agent: AgentName,
+    dir: PathBuf,
+    limits: bool,
+) -> Result<MachineLogins, Failure> {
     host(agent.as_str())?;
     if !dir.is_absolute() {
         return Err(Failure::not_run(format!("{} is not an absolute path", dir.display())));
     }
-    if !dir.is_dir() {
-        return Err(Failure::not_run(format!("{} is not a directory on {}", dir.display(), node.machine())));
-    }
     let (found, default, programs) = {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
         tokio::task::spawn_blocking(move || {
+            if !dir.is_dir() {
+                return Err(Failure::not_run(format!("{} is not a directory on {}", dir.display(), node.machine())));
+            }
             let context = Context::of(&node)?;
             let kept =
                 kept::read(&node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
-            let elsewhere = found_elsewhere(&kept, agent.as_str(), &dir);
+            let chosen =
+                kept::folders(&node).map_err(|error| Failure::new(format!("reading the chosen folders: {error}")))?;
             kept::add(&node, &agent, &dir)
                 .map_err(|error| Failure::new(format!("keeping the added login: {error}")))?;
             let default = crate::homes::same_dir(&dir, context.default_of(agent.as_str()));
             let found = if default {
                 Found::Default
-            } else if elsewhere {
+            } else if in_folder(&chosen, &dir) {
                 Found::Elsewhere
             } else {
                 Found::Added
@@ -342,7 +345,7 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
         .map_err(|error| Failure::new(error.to_string()))??
     };
     let asked = if agent.as_str() == "codex" {
-        identify::codex(node, &dir).await
+        identify::codex(node, &dir, limits).await
     } else {
         let path = dir.clone();
         tokio::task::spawn_blocking(move || identify::claude(&path, default, &programs))
