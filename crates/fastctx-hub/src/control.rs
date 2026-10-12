@@ -78,6 +78,11 @@ pub(crate) async fn session(
         refuse(&mut socket, reason).await;
         return;
     }
+    // A hub that began handing over after this session was let in, but
+    // before it was registered, did not end it.
+    if hub.moving.frozen() {
+        let _ = out.send(Out::End(Refusal::ShuttingDown));
+    }
     crate::moving::follow::came(&hub, &name, dialed);
     match &through {
         Some(relay) => hub.log.line(format_args!("{name} connected from {peer} through the relay {relay}")),
