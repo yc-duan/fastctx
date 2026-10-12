@@ -259,7 +259,7 @@ export class Sidebar {
     const account = loginsOf(world?.accounts).length
       ? `<a class="place account-place${place.kind === "account" || place.kind === "admin" ? " current" : ""}" href="${link({ kind: "account" })}">${glyph("person", 18)}<span class="place-name">${escape(words.account)}</span>${arrivals ? `<span class="count waiting"><span class="spoken">${escape(words.arrivals(arrivals))}</span>${arrivals}</span>` : ""}</a>`
       : "";
-    const html = `${account}<a class="place settings${place.kind === "settings" ? " current" : ""}" href="${link({ kind: "settings" })}">${glyph("settings", 18)}<span class="place-name">${escape(words.settings)}</span></a>`;
+    const html = `${account}<a class="place settings${place.kind === "settings" || place.kind === "data" ? " current" : ""}" href="${link({ kind: "settings" })}">${glyph("settings", 18)}<span class="place-name">${escape(words.settings)}</span></a>`;
     if (html !== this.foot.innerHTML) this.foot.innerHTML = html;
   }
 
