@@ -38,6 +38,7 @@ import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
 import { NetworkPage, enNetwork, zhNetwork } from "./app/network-page";
 import { deviceFeatures } from "./app/device-features";
+import { readFeatures, setFeature, watchFeatures } from "./world/features";
 import { enFeatures, zhFeatures } from "./app/features-words";
 import { accountOf, enHomes, homeChoice, homeLabel, homesOf, installed, loggedOut, zhHomes } from "./app/agent-homes";
 import { Tokens } from "./app/tokens";
@@ -1588,6 +1589,18 @@ effect(() => {
   const talking = deviceFeatures.conversations.get();
   if (!talking && place.kind === "home") show({ kind: "agents", machine: null });
 });
+
+// 「对话」 as this device keeps it: a computer's node, shared with its TUI.
+if (live) {
+  deviceFeatures.attach({
+    read: async () => (await readFeatures()).conversations,
+    write: async (on) => void (await setFeature("conversations", on)),
+    follow: (heard) =>
+      void watchFeatures((piece) => {
+        if (piece.kind === "features") heard(piece.features.conversations);
+      }).catch((error: unknown) => console.error("following this device's features", error)),
+  });
+}
 
 installPens();
 installHints();

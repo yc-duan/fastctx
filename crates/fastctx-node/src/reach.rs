@@ -40,14 +40,16 @@ impl Node {
         let links = self.links();
         if links.is_empty() {
             return Err(Failure::not_run(format!(
-                "{} is logged in to no hub, so it reaches no other machine",
+                "{} is in no network, so it reaches no other machine",
                 self.machine()
             )));
         }
         if let Some(hub) = &machine.hub {
-            return links.into_iter().find(|link| link.membership().hub_name == *hub).map(|link| vec![link]).ok_or_else(
-                || Failure::not_run(format!("{} is not logged in to a hub named {hub}", self.machine())),
-            );
+            return links
+                .into_iter()
+                .find(|link| link.membership().hub_name == *hub)
+                .map(|link| vec![link])
+                .ok_or_else(|| Failure::not_run(format!("{} is not logged in to a hub named {hub}", self.machine())));
         }
         let holding: Vec<(Arc<Link>, fastctx_net::sign::PublicKey)> = links
             .iter()
@@ -57,11 +59,9 @@ impl Node {
             // Not in any view yet: the only hub, if there is one, may know
             // it, and its answer says so if not.
             None if links.len() == 1 => Ok(links),
-            None => Err(Failure::not_run(format!(
-                "no hub {} is on has a machine named {}",
-                self.machine(),
-                machine.name
-            ))),
+            None => {
+                Err(Failure::not_run(format!("no hub {} is on has a machine named {}", self.machine(), machine.name)))
+            }
             Some((_, key)) if holding.iter().all(|(_, other)| other == key) => {
                 Ok(holding.into_iter().map(|(link, _)| link).collect())
             }
@@ -110,17 +110,23 @@ impl Node {
     /// Whether `acting` works for `account` of `hub`.
     pub(crate) fn serves(&self, acting: &Acting, hub: &HubId, account: &AccountName) -> bool {
         match acting {
-            Acting::Here => self
-                .link_of(hub)
-                .is_some_and(|link| link.view().me().is_some_and(|me| me.logins.contains(account))),
-            Acting::Accounts { accounts } => accounts.contains(&HubAccount { hub: hub.clone(), account: account.clone() }),
+            Acting::Here => {
+                self.link_of(hub).is_some_and(|link| link.view().me().is_some_and(|me| me.logins.contains(account)))
+            }
+            Acting::Accounts { accounts } => {
+                accounts.contains(&HubAccount { hub: hub.clone(), account: account.clone() })
+            }
         }
     }
 
     /// `town` as a call to a machine of `link`'s hub carries it: a project
     /// is of one hub (`world-network.md`), so what goes to a machine of
     /// another hub is kept outside any project there.
-    pub(crate) fn town_across(&self, link: &Link, town: Option<&fastctx_types::TownName>) -> Option<fastctx_types::TownName> {
+    pub(crate) fn town_across(
+        &self,
+        link: &Link,
+        town: Option<&fastctx_types::TownName>,
+    ) -> Option<fastctx_types::TownName> {
         let town = town?;
         crate::ledger::names::place(&self.world, town)
             .ok()
@@ -194,7 +200,12 @@ impl Node {
 
     /// The link and the account to say something for `purpose` to `to`
     /// that is not answered: the first `speakers` gives.
-    pub(crate) fn speaking(&self, acting: &Acting, to: &Written, purpose: Purpose) -> Result<(Arc<Link>, AccountName), CallFailure> {
+    pub(crate) fn speaking(
+        &self,
+        acting: &Acting,
+        to: &Written,
+        purpose: Purpose,
+    ) -> Result<(Arc<Link>, AccountName), CallFailure> {
         Ok(self.speakers(acting, to, purpose)?.into_iter().next().expect("speakers names one at least"))
     }
 
@@ -202,8 +213,14 @@ impl Node {
     /// something for `purpose` to it for, at least one. News goes for the
     /// accounts it is about without a look at this machine's view, which
     /// need not show the resident's machine; the hub checks it.
-    pub(crate) fn speakers(&self, acting: &Acting, to: &Written, purpose: Purpose) -> Result<Vec<(Arc<Link>, AccountName)>, CallFailure> {
-        let unreachable = |failure: Failure| CallFailure::Unreachable { name: to.name.clone(), reason: failure.message };
+    pub(crate) fn speakers(
+        &self,
+        acting: &Acting,
+        to: &Written,
+        purpose: Purpose,
+    ) -> Result<Vec<(Arc<Link>, AccountName)>, CallFailure> {
+        let unreachable =
+            |failure: Failure| CallFailure::Unreachable { name: to.name.clone(), reason: failure.message };
         let links = self.locate(to).map_err(unreachable)?;
         let here = self.machine();
         let mut speakers = Vec::new();

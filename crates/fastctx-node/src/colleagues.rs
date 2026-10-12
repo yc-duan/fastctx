@@ -443,7 +443,10 @@ fn words(
     // Where it lives and where its shell is, when they differ (`world-run.md`,
     // 这里), or that it has none where it lives (`world-network.md`,
     // 共享机器与借出智能体).
-    let on = "`on MACHINE` in the script runs a part of it on another machine";
+    // Many users have this one computer only: other machines are spoken of
+    // as `run`'s description lists them, never assumed.
+    let on =
+        "when `run`'s description lists other machines, `on MACHINE` in the script runs a part of it on one of them";
     let (who, runs, elsewhere) = match (works_on, lent) {
         (Some(works_on), _) => (
             format!("an agent session on {machine}, one of the user's machines connected by fastctx"),
@@ -457,11 +460,9 @@ fn words(
             "Each script is a single `on MACHINE`, which runs it there".to_string(),
             format!("\n\n{}", fastctx_hands::lent::opening(machines)),
         ),
-        (None, None) => (
-            format!("an agent session on {machine}, one of the user's machines connected by fastctx"),
-            format!("It runs bash on this machine, and {on}"),
-            String::new(),
-        ),
+        (None, None) => {
+            (format!("an agent session on {machine}"), format!("It runs bash on this machine; {on}"), String::new())
+        }
     };
     format!(
         "You are {id}, {who}.{elsewhere}{place}\n\n{working}\n\nWork through the `run` tool; it is your only shell, editor and image viewer. {runs}; `fastctx view` shows files, images and documents, and `edit` and `write` change files. Its description says how. Paths are absolute, each the path on its own machine, written like C:/Users/me on Windows. A script still running when its call stops waiting (15 seconds by default) goes on by itself in the background; when it ends you are told automatically, with its exit status and last lines, while you work or after you end your turn."

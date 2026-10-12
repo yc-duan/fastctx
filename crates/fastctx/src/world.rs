@@ -594,7 +594,7 @@ fn render_nodes(reply: &NodesReply, now: Timestamp) -> String {
         text.push_str(&format!("{}  this computer  {}\n", reply.machine, facts_line(facts)));
     }
     if reply.hubs.is_empty() {
-        text.push_str("logged in to no hub: `fastctx login HUB ACCOUNT` logs in\n");
+        text.push_str("in no network: this computer is the only machine\n");
     }
     for hub in &reply.hubs {
         text.push_str(&hub_nodes(hub, now));
