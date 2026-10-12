@@ -23,6 +23,7 @@ mod control;
 mod data;
 mod direct;
 mod ledger;
+mod lends;
 mod log;
 mod login;
 mod machine_log;
@@ -170,6 +171,8 @@ pub(crate) struct Hub {
     next: AtomicU64,
     log: log::Log,
     machine_log_changed: tokio::sync::Notify,
+    /// Told when the directory changes, so the loans' deadlines are read again.
+    lends_changed: tokio::sync::Notify,
 }
 
 /// A member's open control connection.
@@ -277,6 +280,7 @@ impl Hub {
     /// look again, and what lost the standing it was allowed under ends.
     fn changed(&self) {
         self.machine_log_changed.notify_one();
+        self.lends_changed.notify_one();
         let outs: Vec<mpsc::UnboundedSender<Out>> =
             self.sessions().values().map(|session| session.out.clone()).collect();
         for out in outs {
@@ -325,6 +329,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
         next: AtomicU64::new(0),
         log,
         machine_log_changed: tokio::sync::Notify::new(),
+        lends_changed: tokio::sync::Notify::new(),
     });
     loop {
         tokio::select! {
@@ -341,6 +346,7 @@ pub async fn serve(dir: &Path) -> anyhow::Result<()> {
             },
             () = shutdown_signal() => break,
             expired = machine_log::expire(&hub) => expired?,
+            ended = lends::expire(&hub) => ended?,
         }
     }
     hub.log.line(format_args!("shutting down"));

@@ -572,7 +572,7 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
         event(600, Happened::TurnEnded { turn: "t-0".into(), end: TurnEnd { facts: None, error: None, how: TurnHow::Completed, reason: None, duration_ms: Some(300_000), last_message: None } }),
         event(240, Happened::TurnStarted { turn: turn.clone() }),
         event(240, Happened::Heard { message: None, delivery: None, turn: Some(turn.clone()), from: Some(Speaker::User { machine: machine("desktop") }), text: "先别动采样周期，积分项用 Q8.24 试试看，跑一下 step 那组测试。".into(), notice: None }),
-        event(238, Happened::Finished { turn: turn.clone(), item: item("r1", What::Thinking { text: "**Checking where the clamp sits**\n\nThe accumulator is clamped after it is summed, so an overflow would be cut back only after it happened.".into() }) }),
+        event(238, Happened::Finished { turn: turn.clone(), item: item("r1", What::Thinking { text: "**Checking where the clamp sits**\n\nThe accumulator is clamped after it is summed, so an overflow would be cut back only after it happened.".into(), duration_ms: Some(6_400) }) }),
         event(236, Happened::Steps { turn: turn.clone(), steps: steps(1), note: None }),
     ];
     events.extend(used(
@@ -638,7 +638,10 @@ fn conversation(now: Timestamp) -> Vec<SessionEvent> {
     ));
     events.push(event(
         8,
-        Happened::Began { turn: turn.clone(), item: item("r2", What::Thinking { text: String::new() }) },
+        Happened::Began {
+            turn: turn.clone(),
+            item: item("r2", What::Thinking { text: String::new(), duration_ms: None }),
+        },
     ));
     events.push(event(
         6,

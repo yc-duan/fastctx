@@ -25,7 +25,7 @@ import { AgentChangeSheet, type AgentChangeTarget, type AgentChangeWords } from 
 import type { AgentLoginsWords } from "./agent-logins-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
-import { GiveSheet } from "./machine-sheets";
+import { LendSheet, type Loan } from "./lend-sheet";
 import { detailOf } from "./problem";
 import { machinesOf, owns, ownerOf } from "./reach";
 import type { Page } from "./shell";
@@ -77,7 +77,7 @@ export class AgentLoginsPage implements Page {
   private readonly body: HTMLElement;
   private readonly stop: () => void;
   private readonly sheet: AgentChangeSheet;
-  private readonly giving: GiveSheet;
+  private readonly lending: LendSheet;
   private agent: Agent = keptTab();
   private record: WorldLogins | null = null;
   private problem: string | null = null;
@@ -102,7 +102,7 @@ export class AgentLoginsPage implements Page {
       </div>
       <div class="logins-body scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".logins-body")!;
-    this.giving = new GiveSheet(options.access);
+    this.lending = new LendSheet(options.access);
     this.sheet = new AgentChangeSheet(options.changeWords, {
       preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into),
       change: (target, raise) => options.change(target.machine, target.agent, target.dir, target.into, raise),
@@ -319,14 +319,16 @@ export class AgentLoginsPage implements Page {
       ${this.bars(login.limits, now)}
       <div class="logins-slip-foot">
         <span class="logins-stamp${changing ? " busy" : ""}">${changing ? escape(login.change!.into ? words.applying : words.removing) : `${glyph("check", 14)}${escape(words.applied)}`}</span>
-        ${lent.length ? `<span class="logins-lent">${escape(words.lentTo)}${lent.map((account) => `<button class="tag tag-removable" type="button" data-act="unlend" data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}" data-to="${escape(account)}" title="${escape(words.takeBack(account))}">${escape(account)}${glyph("cross", 12)}</button>`).join("")}</span>` : ""}
+        ${lent.length ? `<span class="logins-lent">${escape(words.lentTo)}${lent.map((loan) => this.loanTag(machine.name, login.dir, loan, now)).join("")}</span>` : ""}
       </div>
       ${note ? `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` : ""}
     </li>`;
   }
 
-  /** A bar for each usage window: only bars on the slip, the numbers a
-   *  hover away; a window never read is a dashed empty bar. */
+  /** A row for each usage window: its name, a short bar, how much of it is
+   *  used and how long until it starts again, in columns shared by the
+   *  rows; the rest a hover away. A window never read is a dashed empty
+   *  bar. */
   private bars(limits: Fact<AgentLimits>, now: Date): string {
     const { words, when } = this.options;
     if (limits.kind !== "known") {
@@ -337,7 +339,8 @@ export class AgentLoginsPage implements Page {
     const credits = value.credits;
     const read = words.observed(when(new Date(value.observed_at), now));
     const rows = value.windows.map((window) => {
-      const percent = `${(window.used_tenths / 10).toFixed(window.used_tenths % 10 ? 1 : 0)}%`;
+      // A whole number, rounded: hosts often give no more.
+      const percent = `${Math.round(window.used_tenths / 10)}%`;
       const said = [
         words.used(percent),
         window.resets_at ? words.resets(new Date(window.resets_at), now) : "",
@@ -349,7 +352,9 @@ export class AgentLoginsPage implements Page {
       const width = Math.min(100, window.used_tenths / 10).toFixed(1);
       const spent = window.used_tenths >= 1000;
       const onCredits = spent && !!credits;
-      return `<span class="logins-bar${levelOf(window)}" title="${escape(said)}"><span class="logins-bar-name">${escape(words.window(window.name, window.minutes ?? null))}</span><span class="logins-bar-track"><span style="width:${width}%"></span></span>${onCredits ? `<span class="logins-credits" title="${escape(words.creditsMark)}">¢</span>` : ""}</span>`;
+      const left = window.resets_at ? words.resetsIn(new Date(window.resets_at), now) : "";
+      const used = `${escape(percent)}${onCredits ? `<span class="logins-credits" title="${escape(words.creditsMark)}">¢</span>` : ""}`;
+      return `<span class="logins-bar${levelOf(window)}" title="${escape(said)}"><span class="logins-bar-name">${escape(words.window(window.name, window.minutes ?? null))}</span><span class="logins-bar-track"><span style="width:${width}%"></span></span><span class="logins-bar-used">${used}</span><span class="logins-bar-reset">${left ? `${glyph("history", 12)}${escape(left)}` : ""}</span></span>`;
     });
     return `<div class="logins-bars">${rows.join("")}</div>`;
   }
@@ -368,12 +373,44 @@ export class AgentLoginsPage implements Page {
     return null;
   }
 
-  private lentTo(machine: Shown, login: Login, world: WorldNow | null): string[] {
+  private lentTo(machine: Shown, login: Login, world: WorldNow | null): Loan[] {
     if (!machine.owner) return [];
     const home = login.default ? null : login.dir;
     return (this.hubOf(machine.owner, world)?.lends ?? [])
       .filter((lend) => lend.machine === machine.name && lend.agent === this.agent && (lend.home ?? null) === home)
-      .map((lend) => lend.account);
+      .map((lend) => ({ to: lend.account, until: lend.until ?? null }));
+  }
+
+  /** One loan on a slip: whom to, and the day it ends when it does;
+   *  pressed, its deadline opens to be changed; its cross takes it back. */
+  private loanTag(machine: string, dir: string, loan: Loan, now: Date): string {
+    const { words, access } = this.options;
+    const at = `data-machine="${escape(machine)}" data-dir="${escape(dir)}" data-to="${escape(loan.to)}"`;
+    const until = loan.until ? new Date(loan.until) : null;
+    const said = until ? access.moment.until(until, now) : access.when.none;
+    return `<span class="tag lend-tag"><button class="lend-tag-open" type="button" data-act="lend-edit" ${at} title="${escape(`${access.changeUntil} · ${said}`)}">${escape(loan.to)}${until ? `<span class="lend-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}</button><button class="lend-tag-x" type="button" data-act="unlend" ${at} aria-label="${escape(words.takeBack(loan.to))}" title="${escape(words.takeBack(loan.to))}">${glyph("cross", 12)}</button></span>`;
+  }
+
+  /** The lend sheet for one login, with `editing`'s deadline open. */
+  private openLend(machineName: string, dir: string, editing: string | null): void {
+    const { options } = this;
+    const found = this.find(machineName, dir);
+    const owner = found?.machine.owner;
+    if (!found?.login || !owner) return;
+    const home = found.login.default ? undefined : dir;
+    const label = this.target(machineName, dir, true)?.who ?? dirName(dir);
+    this.lending.open(
+      options.access.lendTitle(label, machineName),
+      this.lentTo(found.machine, found.login, options.store.world.peek()),
+      async (to, until, lent) => {
+        const ends = lent && until ? { until: until.toISOString() } : {};
+        await options.change_(owner, { change: "lend", machine: machineName, to, agent: this.agent, ...(home ? { home } : {}), lent, ...ends });
+        await options.store.refresh();
+        const again = this.find(machineName, dir);
+        return again?.login ? this.lentTo(again.machine, again.login, options.store.world.peek()) : [];
+      },
+      editing,
+    );
   }
 
   private find(machineName: string, dir: string): { machine: Shown; login: Login | null; agent: AgentLogins } | null {
@@ -428,6 +465,9 @@ export class AgentLoginsPage implements Page {
         return;
       case "menu":
         this.openMenu(button, machine, dir);
+        return;
+      case "lend-edit":
+        this.openLend(machine, dir, button.dataset.to ?? null);
         return;
       case "unlend": {
         const found = this.find(machine, dir);
@@ -489,23 +529,9 @@ export class AgentLoginsPage implements Page {
         if (target) this.sheet.open(target);
         return;
       }
-      case "lend": {
-        const owner = found.machine.owner;
-        if (!owner) return;
-        const home = found.login.default ? undefined : dir;
-        const label = this.target(machineName, dir, true)?.who ?? dirName(dir);
-        this.giving.open(
-          { title: `${options.words.lend.replace("…", "")} ${label} · ${machineName}`, what: options.access.lendWhat, sees: options.access.lendSees, given: options.access.lentTo, go: options.access.lendGo },
-          this.lentTo(found.machine, found.login, options.store.world.peek()),
-          async (to, lent) => {
-            await options.change_(owner, { change: "lend", machine: machineName, to, agent: this.agent, ...(home ? { home } : {}), lent });
-            await options.store.refresh();
-            const again = this.find(machineName, dir);
-            return again?.login ? this.lentTo(again.machine, again.login, options.store.world.peek()) : [];
-          },
-        );
+      case "lend":
+        this.openLend(machineName, dir, null);
         return;
-      }
       case "limits":
         await this.quietly(null, key, () => options.limits(machineName, this.agent, dir));
         return;

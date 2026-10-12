@@ -12,6 +12,8 @@ import { enProblems, failure, zhProblems, type ProblemWords } from "./problem";
 import type { MachineLogAction } from "../world/machine-log";
 import { agentName } from "../world/names";
 import { enNameSaid, zhNameSaid, type NameSaid } from "./name-words";
+import type { WhenWords } from "./when";
+import { enMoment, enWhen, zhMoment, zhWhen, type MomentWords } from "./when-words";
 
 export interface LoginWords {
   lede: string;
@@ -514,7 +516,10 @@ export const zhMachines: MachinesWords = {
       case "share":
         return a.shared ? `把 ${a.machine} 共享给 ${a.to}` : `收回 ${a.machine} 对 ${a.to} 的共享`;
       case "lend":
-        return a.lent ? `把 ${a.machine} 上的 ${agentName(a.agent)} 借给 ${a.to}` : `收回借给 ${a.to} 的 ${agentName(a.agent)}`;
+        if (!a.lent) return `收回借给 ${a.to} 的 ${agentName(a.agent)}`;
+        return `把 ${a.machine} 上的 ${agentName(a.agent)} 借给 ${a.to}${a.until ? `，到 ${zhMoment.stamp(new Date(a.until))}` : ""}`;
+      case "lend_ended":
+        return `借给 ${a.to} 的 ${agentName(a.agent)} 到期收回`;
       case "plan":
         return a.plan ? `把 ${a.machine} 上 ${agentName(a.agent)} 的套餐标为 ${a.plan}` : `去掉 ${a.machine} 上 ${agentName(a.agent)} 的套餐标记`;
       case "stop_acting":
@@ -649,7 +654,10 @@ export const enMachines: MachinesWords = {
       case "share":
         return a.shared ? `Shared ${a.machine} with ${a.to}` : `Stopped sharing ${a.machine} with ${a.to}`;
       case "lend":
-        return a.lent ? `Lent ${agentName(a.agent)} on ${a.machine} to ${a.to}` : `Took back ${agentName(a.agent)} from ${a.to}`;
+        if (!a.lent) return `Took back ${agentName(a.agent)} from ${a.to}`;
+        return `Lent ${agentName(a.agent)} on ${a.machine} to ${a.to}${a.until ? ` until ${enMoment.stamp(new Date(a.until))}` : ""}`;
+      case "lend_ended":
+        return `${agentName(a.agent)} lent to ${a.to} came back at its end`;
       case "plan":
         return a.plan ? `Marked ${agentName(a.agent)} on ${a.machine} as ${a.plan}` : `Cleared the plan of ${agentName(a.agent)} on ${a.machine}`;
       case "stop_acting":
@@ -691,6 +699,15 @@ export interface AccessWords {
   lendSees: string;
   lentTo: string;
   lendGo: string;
+  /** The lend sheet's own: whom to lend to, until when, and changing it. */
+  lendWho: string;
+  lendUntil: string;
+  changeUntil: string;
+  untilPassed: string;
+  save: string;
+  cancel: string;
+  when: WhenWords;
+  moment: MomentWords;
   nobodyYet: string;
   to: string;
   toHint: string;
@@ -716,6 +733,14 @@ export const zhAccess: AccessWords = {
   lendSees: "会使用这个登录的订阅额度，运行过程在你的机器上可见、可停止。",
   lentTo: "已借给",
   lendGo: "借出",
+  lendWho: "借给",
+  lendUntil: "截止",
+  changeUntil: "改截止时间",
+  untilPassed: "这个截止时间已经过了",
+  save: "保存",
+  cancel: "取消",
+  when: zhWhen,
+  moment: zhMoment,
   nobodyYet: "暂无",
   to: "账号",
   toHint: "对方的账号名",
@@ -741,6 +766,14 @@ export const enAccess: AccessWords = {
   lendSees: "It uses this login's subscription. You can see and stop it on your machine.",
   lentTo: "Lent to",
   lendGo: "Lend",
+  lendWho: "Lend to",
+  lendUntil: "Ends",
+  changeUntil: "Change when it ends",
+  untilPassed: "That time has already passed",
+  save: "Save",
+  cancel: "Cancel",
+  when: enWhen,
+  moment: enMoment,
   nobodyYet: "None yet",
   to: "Account",
   toHint: "Their account name",

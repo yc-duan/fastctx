@@ -12,6 +12,7 @@ mod apply;
 mod ask;
 mod attach;
 mod copy;
+mod first_program;
 mod host_change;
 mod journal;
 mod keep;
@@ -25,6 +26,8 @@ mod renew;
 mod secret;
 mod server_install;
 mod service;
+#[cfg(windows)]
+mod service_local_network;
 mod stop;
 mod talk;
 mod uninstall;
@@ -111,6 +114,9 @@ enum Command {
     Renew(renew::RenewalArgs),
     /// Install, uninstall or inspect a node/hub service on this machine.
     Service(service::ServiceArgs),
+    #[cfg(windows)]
+    #[command(hide = true)]
+    ServiceLocalNetwork(service_local_network::LocalNetworkArgs),
     /// Preview or execute removal of the World installed on this computer.
     #[command(subcommand)]
     Uninstall(uninstall::Uninstall),
@@ -319,7 +325,11 @@ fn main() -> ExitCode {
             | Command::Uninstall(_)
     );
     #[cfg(windows)]
-    let routes_world = routes_world && !matches!(&command, Command::ServiceHost { .. } | Command::ServiceCheck { .. });
+    let routes_world = routes_world
+        && !matches!(
+            &command,
+            Command::ServiceHost { .. } | Command::ServiceCheck { .. } | Command::ServiceLocalNetwork(_)
+        );
     if matches!(command, Command::Uninstall(_)) {
         let routed =
             fastctx_platform::fastctx_root().map_err(anyhow::Error::from).and_then(|root| program::removal(&root));
@@ -369,6 +379,8 @@ fn main() -> ExitCode {
         }
         Command::Renew(args) => renew::run(args),
         Command::Service(args) => service::run(args),
+        #[cfg(windows)]
+        Command::ServiceLocalNetwork(args) => service_local_network::run(args),
         Command::Uninstall(command) => uninstall::run(command),
         Command::Server(command) => server_install::run(command),
         #[cfg(windows)]
@@ -561,9 +573,7 @@ fn world_entry(root: &std::path::Path, node: bool) -> anyhow::Result<Entry> {
     let source = std::env::current_exe()?;
     let installed = fastctx_install::executable::installed_path(root);
     let source_is_installed = installed.is_file() && stable_name(&source, &installed)?;
-    if !installed.is_file() || fastctx_install::program::inspect(&installed)?.protocol == 0 {
-        fastctx_install::placement::ensure(root, &source)?;
-    }
+    first_program::ensure(root, &source)?;
     let gate = if node {
         fastctx_install::placement::node_activation(root)?
     } else {

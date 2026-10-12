@@ -42,6 +42,15 @@ pub enum Action {
         agent: AgentName,
         home: Option<PathBuf>,
         lent: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<Timestamp>,
+    },
+    /// A loan reached its deadline and the hub took it back.
+    LendEnded {
+        machine: MachineName,
+        to: AccountName,
+        agent: AgentName,
+        home: Option<PathBuf>,
     },
     Plan {
         machine: MachineName,

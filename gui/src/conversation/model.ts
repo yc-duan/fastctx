@@ -73,6 +73,13 @@ export type Entry = { stamp: number } & (
       writing: boolean;
       /** Bumped whenever the text changes, so a view redraws only what did. */
       version: number;
+      /** Thinking: when it began, as far as is known. */
+      began?: number;
+      /** Thinking: how long it took, where the host said. */
+      took?: number;
+      /** Thinking: the model response it was part of, whose thinking
+       *  tokens `Conversation.thinkingTokens` knows where they were told. */
+      response?: string;
     }
   | { kind: "tool"; key: string; item: string; turn: string; tool: Tool; began: number; ended: { at: number; use: Use } | null }
   | { kind: "steps"; key: string; turn: string; steps: Step[]; note: string | null }
@@ -121,7 +128,6 @@ interface Derived {
   latest: string | null;
   moving: boolean;
   waiting: boolean;
-  doing: Entry | null;
   /** Whether anything of the agent's own has been shown: a turn's work or
    *  words, its end, a request. */
   heardFrom: boolean;
@@ -241,6 +247,9 @@ export class Conversation {
     this.stale = false;
     this.running.clear();
     this.began.clear();
+    this.thoughtTokens.clear();
+    this.codexTotal = 0;
+    this.codexResponses = 0;
     this.serial = 0;
     this.clock += 1;
     this.extend(events);
@@ -475,8 +484,13 @@ export class Conversation {
           this.answeredBy = change.usage.model;
           return;
         }
-        if (change.kind === "message_usage" && change.model) {
-          this.answeredBy = change.model;
+        if (change.kind === "message_usage") {
+          if (change.model) this.answeredBy = change.model;
+          this.claudeThought(event.turn, change.items, change.response, change.usage);
+          return;
+        }
+        if (change.kind === "usage") {
+          this.codexThought(event.turn, change.usage);
           return;
         }
         if (change.kind === "agents") {
@@ -583,6 +597,7 @@ export class Conversation {
           text: native.text,
           writing: !finished,
           version: 0,
+          ...(native.kind === "thinking" ? { began: startedAt, ...(native.duration_ms !== undefined ? { took: native.duration_ms } : {}) } : {}),
         };
         break;
       case "agent_activity":
@@ -634,6 +649,8 @@ export class Conversation {
       if (shown.text !== fresh.text) shown.version += 1;
       shown.text = fresh.text;
       shown.writing = fresh.writing;
+      if (fresh.took !== undefined) shown.took = fresh.took;
+      if (shown.began === undefined && fresh.began !== undefined) shown.began = fresh.began;
       this.touch(shown);
       return;
     }
@@ -645,6 +662,59 @@ export class Conversation {
       return;
     }
     this.replace(shown, { ...fresh, key: shown.key } as Entry);
+  }
+
+  /** Thinking tokens by model response, as the hosts told them. */
+  private thoughtTokens = new Map<string, number>();
+  /** The last running total Codex told, so a total told again names no
+   *  new response. */
+  private codexTotal = 0;
+  private codexResponses = 0;
+
+  /** Claude Code's usage of one stored row: the response it was part of,
+   *  the row's blocks, and what the response cost, its thinking counted
+   *  apart (`output_tokens_details.thinking_tokens`). */
+  private claudeThought(turn: string | null, items: readonly string[], response: string | null, usage: JsonValue): void {
+    const tokens = property(property(usage, "output_tokens_details") ?? null, "thinking_tokens");
+    if (!turn || !response || typeof tokens !== "number") return;
+    this.thoughtTokens.set(response, tokens);
+    for (const id of items) {
+      const entry = this.find(turn, id);
+      if (entry?.kind !== "prose" || entry.prose !== "thinking" || entry.response === response) continue;
+      entry.response = response;
+      this.touch(entry);
+    }
+  }
+
+  /** Codex's usage after a model response: `last` is that response's own.
+   *  The thinking it counts is the turn's thinking finished since the last
+   *  response. A total no larger than the last is one told again, as on
+   *  joining a thread, and names no response. */
+  private codexThought(turn: string | null, usage: JsonValue): void {
+    const total = property(property(usage, "total") ?? null, "totalTokens");
+    const tokens = property(property(usage, "last") ?? null, "reasoningOutputTokens");
+    if (!turn || typeof total !== "number" || typeof tokens !== "number" || total <= this.codexTotal) return;
+    this.codexTotal = total;
+    const response = `codex:${++this.codexResponses}`;
+    this.thoughtTokens.set(response, tokens);
+    for (const entry of this.byTurn.get(turn) ?? []) {
+      if (entry.kind !== "prose" || entry.prose !== "thinking" || entry.writing || entry.response) continue;
+      entry.response = response;
+      this.touch(entry);
+    }
+  }
+
+  /** The thinking tokens of a run of thinking: each response it was part
+   *  of counted once; null unless every part's response told them. */
+  thinkingTokens(run: readonly Entry[]): number | null {
+    const responses = new Set<string>();
+    for (const entry of run) {
+      if (entry.kind !== "prose" || !entry.response || !this.thoughtTokens.has(entry.response)) return null;
+      responses.add(entry.response);
+    }
+    let sum = 0;
+    for (const response of responses) sum += this.thoughtTokens.get(response)!;
+    return sum;
   }
 
   /** Puts `fresh` where `shown` stood. */
@@ -818,12 +888,6 @@ export class Conversation {
     return times.length ? Math.min(...times) : null;
   }
 
-  /** What the turn under way is doing now, for the line under it: the last
-   *  thing still happening. */
-  doing(): Entry | null {
-    return this.derived().doing;
-  }
-
   /** Whether the agent has shown anything of its own yet: before then, a
    *  conversation whose user has spoken is still starting. */
   spoke(): boolean {
@@ -851,23 +915,16 @@ export class Conversation {
     let latest: string | null = null;
     let moving = false;
     let waiting = false;
-    let doing: Entry | null = null;
     let heardFrom = false;
     for (const entry of this.entries) {
       switch (entry.kind) {
         case "prose":
           if (entry.prose === "message") lastMessage.set(entry.turn, entry.key);
-          if (entry.writing) {
-            moving = true;
-            doing = entry;
-          }
+          if (entry.writing) moving = true;
           heardFrom = true;
           break;
         case "tool":
-          if (entry.ended === null) {
-            moving = true;
-            doing = entry;
-          }
+          if (entry.ended === null) moving = true;
           heardFrom = true;
           break;
         case "heard":
@@ -897,7 +954,7 @@ export class Conversation {
           break;
       }
     }
-    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, doing, heardFrom };
+    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom };
     return this.derivedCache;
   }
 
@@ -905,9 +962,9 @@ export class Conversation {
    *  it said, folded into activity stretches. Thinking belongs to the
    *  stretch it sits in; words in between are prose and divide stretches.
    *  A stretch keeps its key while it lasts, whatever comes and goes in it;
-   *  it is laid out only while something in it can be seen, so its heading
-   *  never comes and goes with a placeholder. A message not yet begun, and
-   *  thinking not yet given, are nothing to show. Words sent into a turn
+   *  thinking shows the moment it begins, whether or not its words are
+   *  given, so a stretch and its heading are there from its first member.
+   *  A message not yet begun is nothing to show. Words sent into a turn
    *  under way and not yet taken in come last, in the order sent: they
    *  stand below the turn's line and divide nothing. */
   blocks(): Block[] {
@@ -947,10 +1004,9 @@ export class Conversation {
         blocks.push(entry);
       }
     }
-    const shown = blocks.filter((block) => block.kind !== "activity-group" || block.members.some(visible) || withheld(block));
-    shown.push(...below);
-    this.blocksCache = { clock: this.clock, blocks: shown };
-    return shown;
+    blocks.push(...below);
+    this.blocksCache = { clock: this.clock, blocks };
+    return blocks;
   }
 }
 
@@ -1018,16 +1074,22 @@ function replyOf(text: string): { reply?: { item: string; answers: string[] } } 
   return reply ? { reply: { item: reply.item, answers: reply.answers.map((one) => one.answer) } } : {};
 }
 
-/** Whether a member of a stretch has anything to show: thinking only with
- *  words; empty thinking takes no row of its own (walkthrough item 33). */
-export function visible(entry: Entry): boolean {
-  return entry.kind !== "prose" || entry.prose !== "thinking" || !!entry.text.trim();
+/** Whether an entry is the agent's thinking. */
+export function isThinking(entry: Entry): entry is Extract<Entry, { kind: "prose" }> {
+  return entry.kind === "prose" && entry.prose === "thinking";
 }
 
-/** A stretch that was only thinking the host kept to itself: once that
- *  thinking is over, its heading says so, with nothing to open beneath. */
-export function withheld(group: Activity): boolean {
-  return !group.members.some(visible) && group.members.some((member) => member.kind === "prose" && !member.writing);
+/** A stretch's members as they are shown: thinking with nothing between is
+ *  one run of thinking, as Claude's response that thinks in two blocks, one
+ *  without words and one with, is thought once. */
+export function runsOf(members: readonly Entry[]): Entry[][] {
+  const runs: Entry[][] = [];
+  for (const member of members) {
+    const last = runs[runs.length - 1];
+    if (last && isThinking(member) && isThinking(last[0]!)) last.push(member);
+    else runs.push([member]);
+  }
+  return runs;
 }
 
 /** The questions of an agent's message asked without waiting, where it is

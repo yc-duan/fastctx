@@ -72,7 +72,9 @@ class Script {
       this.events.push({ at: this.at(1), event: "grew", turn, item: item.id, part: "text", text });
       return;
     }
-    this.events.push({ at: this.at(1), event: "finished", turn, item });
+    // Thinking says how long it took, as the hosts now tell it.
+    const took = kind === "thinking" ? { duration_ms: 1200 + ((this.serial * 2711) % 9000) } : {};
+    this.events.push({ at: this.at(1), event: "finished", turn, item: { ...item, ...took } as Item });
   }
 
   /** Returns the item's id, which facts told while it runs name. */

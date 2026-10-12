@@ -126,12 +126,15 @@ fn apply(
             }
             Ok(Told::Done)
         }
-        Change::Lend { machine, to, agent, home, lent } => {
+        Change::Lend { machine, to, agent, home, lent, until } => {
             let directory = &mut store.book.directory;
             let owner = own_machine(directory, account, super_, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
-            let lend = Lend { machine, account: to, agent, home };
-            directory.lends.retain(|existing| *existing != lend);
+            if lent && until.is_some_and(|until| until <= Timestamp::now()) {
+                return Err("the loan's deadline has already passed".to_string());
+            }
+            let lend = Lend { machine, account: to, agent, home, until: until.filter(|_| lent) };
+            directory.lends.retain(|existing| !existing.same(&lend));
             if lent {
                 directory.lends.push(lend);
             }

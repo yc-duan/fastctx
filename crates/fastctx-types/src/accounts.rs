@@ -114,7 +114,8 @@ pub enum AccountChange {
     },
     /// Lends one login of an agent on `machine`, one of the account's own,
     /// to `to`; or no longer. `home` is the login's directory as `machine`
-    /// writes it, none for that agent's default login there.
+    /// writes it, none for that agent's default login there. `until` is
+    /// when the loan ends by itself; lending again sets it anew.
     Lend {
         machine: MachineName,
         to: AccountName,
@@ -122,6 +123,8 @@ pub enum AccountChange {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         home: Option<PathBuf>,
         lent: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<Timestamp>,
     },
     /// The plan shown for one login of an agent on `machine`, set by the
     /// hub's super administrator on a login that names none (a Claude Code
@@ -302,6 +305,8 @@ pub struct LendSeen {
     /// The login's directory as that machine writes it; none for the
     /// agent's default login there.
     pub home: Option<PathBuf>,
+    /// When the loan ends by itself; none while the owner keeps it lent.
+    pub until: Option<Timestamp>,
 }
 
 /// A plan a login names none of, as the hub's super administrator set it

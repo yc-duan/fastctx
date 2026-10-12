@@ -392,6 +392,7 @@ pub enum Change {
     },
     /// Lends `agent`'s login `home` on `machine`, one of the account's own,
     /// to `to`, or no longer; none is that agent's default login there.
+    /// Lent again, the loan takes the deadline given now, or none.
     Lend {
         machine: MachineName,
         to: AccountName,
@@ -399,6 +400,8 @@ pub enum Change {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         home: Option<std::path::PathBuf>,
         lent: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<Timestamp>,
     },
     /// The super administrator sets the plan shown for `agent`'s login
     /// `home` on `machine`, or takes it away.

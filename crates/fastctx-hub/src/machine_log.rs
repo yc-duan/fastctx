@@ -80,7 +80,9 @@ impl History {
         let mut accounts: BTreeSet<AccountName> = actor.account.iter().cloned().collect();
         let mut names: BTreeSet<MachineName> = BTreeSet::new();
         match &action {
-            Action::Share { machine, to, .. } | Action::Lend { machine, to, .. } => {
+            Action::Share { machine, to, .. }
+            | Action::Lend { machine, to, .. }
+            | Action::LendEnded { machine, to, .. } => {
                 names.insert(machine.clone());
                 accounts.insert(to.clone());
             }
@@ -265,12 +267,13 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
         Change::Share { machine, to, shared } => {
             Action::Share { machine: machine.clone(), to: to.clone(), shared: *shared }
         }
-        Change::Lend { machine, to, agent, home, lent } => Action::Lend {
+        Change::Lend { machine, to, agent, home, lent, until } => Action::Lend {
             machine: machine.clone(),
             to: to.clone(),
             agent: agent.clone(),
             home: home.clone(),
             lent: *lent,
+            until: until.filter(|_| *lent),
         },
         Change::Plan { machine, agent, home, plan } => {
             Action::Plan { machine: machine.clone(), agent: agent.clone(), home: home.clone(), plan: *plan }

@@ -19,6 +19,8 @@ import "./app/shell.css";
 import "./app/sheet.css";
 import "./app/pages.css";
 import "./app/accounts.css";
+import "./app/when.css";
+import "./app/lend.css";
 import "./app/machines.css";
 import "./app/agents.css";
 import "./app/features.css";
@@ -770,7 +772,7 @@ function home(): Page {
 
 function specimenTalk(address: Address): KeepablePage {
   const name = address.resident;
-  const sample: Specimen & { later?: SessionEvent[]; rate?: number } = name.startsWith("stream")
+  const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
     ? streamSpecimen(params)
     : (specimens[name === "codex-a51c" ? "asking" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
@@ -899,12 +901,16 @@ function specimenTalk(address: Address): KeepablePage {
     page.update();
     // What a made-to-measure specimen does next, each event its own task at
     // its rate, as a shell's channel hands them over.
-    if (sample.later?.length) playLater(sample.later, sample.rate ?? 0, (event) => {
+    const take = (event: SessionEvent) => {
       if (left) return false;
       conversation.event(event);
       page.update();
       return true;
-    });
+    };
+    if (sample.later?.length) {
+      if (sample.timed) playTimed(sample.later, take);
+      else playLater(sample.later, sample.rate ?? 0, take);
+    }
   }
   return {
     element: page.element,
@@ -1268,7 +1274,7 @@ function when(at: Date, now: Date): string {
 }
 
 function show(next: Place): void {
-  // The front page belongs to 「对话」: without it, the interface opens on
+  // The front page belongs to the workbench: without it, the interface opens on
   // the agents (`world-gui.md`, 界面的结构).
   if (next.kind === "home" && !deviceFeatures.conversations.peek()) next = { kind: "agents", machine: null };
   place = next;
@@ -1324,8 +1330,8 @@ function show(next: Place): void {
         head,
         machine: next.machine,
         when,
-        read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine)),
-        scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop)),
+        read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)),
+        scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen.now)),
         add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : notLive()),
         preview: (machine, agent, dir, into) => (live ? previewAgentChange(machine, agent, dir, into) : specimenPreview(machine, agent, dir, into)),
         change: (machine, agent, dir, into, raise) => (live ? changeAgentLogin(machine, agent, dir, into, raise) : specimenLoginChange(machine, agent, dir, into)),
@@ -1641,13 +1647,13 @@ if (live) {
       .catch(() => {});
   });
 }
-// The front page comes and goes with 「对话」: the place shown follows.
+// The front page comes and goes with the workbench: the place shown follows.
 effect(() => {
   const talking = deviceFeatures.conversations.get();
   if (!talking && place.kind === "home") show({ kind: "agents", machine: null });
 });
 
-// 「对话」 as this device keeps it: a computer's node, shared with its TUI.
+// The workbench as this device keeps it: a computer's node, shared with its TUI.
 if (live) {
   deviceFeatures.attach({
     read: async () => (await readFeatures()).conversations,

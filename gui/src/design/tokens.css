@@ -76,13 +76,8 @@
   --fold: 220ms;
   --fold-easing: cubic-bezier(0.2, 0, 0, 1);
   --enter: 220ms;
-  /* A turn's line comes as if drawn: the rule pulled across the column
-     (--draw), the drop of ink and the words written in after it (--write,
-     beginning --write-after into the rule). It goes at once. */
-  --draw: 820ms;
-  --draw-easing: cubic-bezier(0.33, 0.05, 0.2, 1);
-  --write: 560ms;
-  --write-after: 120ms;
+  /* A turn's line comes in softly, and goes at once. */
+  --line-in: 240ms;
   /* Words sent rise from the input into their place: up along
      --send-easing, across along the slower --send-drift, so they travel on
      a curve. */
@@ -150,6 +145,10 @@
      darken it, as ink does. */
   --pen-graphite: #9a978d;
   --pen-clay: #d97757;
+  /* The turn's line: the pencil trace the pen writes over, and the light
+     that passes over its word; each must show on this paper. */
+  --pen-trace: rgba(154, 151, 141, 0.38);
+  --glint: var(--pen-clay);
   --pen-sky: #7fa8cf;
   --pen-sage: #9cb07e;
   --pen-rose: #d08da4;
@@ -204,6 +203,8 @@
   --scrollbar: #2c2c2d;
   --pen-graphite: #8f9092;
   --pen-clay: #c2c4c7;
+  --pen-trace: rgba(143, 144, 146, 0.42);
+  --glint: var(--text-strong);
   --pen-sky: #8fa9c4;
   --pen-sage: #9fae8f;
   --pen-rose: #c49aa9;
@@ -257,6 +258,8 @@
   --scrollbar: #c6c4bd;
   --pen-graphite: #87867f;
   --pen-clay: #c96442;
+  --pen-trace: rgba(135, 134, 127, 0.55);
+  --glint: var(--pen-clay);
   --pen-sky: #6a9bcc;
   --pen-sage: #788c5d;
   --pen-rose: #c46686;
@@ -272,9 +275,7 @@
     --hover: 0ms;
     --fold: 0ms;
     --enter: 0ms;
-    --draw: 0ms;
-    --write: 0ms;
-    --write-after: 0ms;
+    --line-in: 0ms;
     --send: 0ms;
   }
 }

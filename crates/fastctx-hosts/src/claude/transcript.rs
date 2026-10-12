@@ -474,6 +474,17 @@ pub fn read_with_cuts(path: &Path, cuts: &[HistoryCut]) -> io::Result<Transcript
                 match message.get("content") {
                     Some(Value::String(_)) if prompt => {}
                     Some(Value::Array(blocks)) => {
+                        // How long the model thought, as Claude Code measured
+                        // it: one figure for the row, so only a row with one
+                        // block of thinking can give it to that block.
+                        let thinking = |block: &Value| {
+                            matches!(block.get("type").and_then(Value::as_str), Some("thinking" | "redacted_thinking"))
+                        };
+                        let thought = row
+                            .value
+                            .get("thinkingDurationMs")
+                            .and_then(Value::as_u64)
+                            .filter(|_| blocks.iter().filter(|block| thinking(block)).count() == 1);
                         for (block_index, block) in blocks.iter().enumerate() {
                             let kind = block.get("type").and_then(Value::as_str);
                             let what = match (row.kind(), kind) {
@@ -484,10 +495,10 @@ pub fn read_with_cuts(path: &Path, cuts: &[HistoryCut]) -> io::Result<Transcript
                                 (Some("assistant"), Some("thinking")) => block
                                     .get("thinking")
                                     .and_then(Value::as_str)
-                                    .map(|text| What::Thinking { text: text.to_string() }),
+                                    .map(|text| What::Thinking { text: text.to_string(), duration_ms: thought }),
                                 (Some("assistant"), Some("redacted_thinking")) => {
                                     if block.get("data").is_some_and(Value::is_string) {
-                                        Some(What::Thinking { text: String::new() })
+                                        Some(What::Thinking { text: String::new(), duration_ms: thought })
                                     } else {
                                         transcript.problem(row, "redacted thinking block has no string data");
                                         None

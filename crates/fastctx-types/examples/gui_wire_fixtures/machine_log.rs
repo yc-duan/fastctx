@@ -16,7 +16,17 @@ pub fn fixtures() -> Vec<Page> {
             agent: "codex".parse().unwrap(),
             home: Some("/home/me/agent".into()),
             lent: false,
+            until: None,
         },
+        Action::Lend {
+            machine: machine(),
+            to: to(),
+            agent: "claude".parse().unwrap(),
+            home: None,
+            lent: true,
+            until: Some(at),
+        },
+        Action::LendEnded { machine: machine(), to: to(), agent: "claude".parse().unwrap(), home: None },
         Action::Plan { machine: machine(), agent: "claude".parse().unwrap(), home: None, plan: Some(PlanLabel::Free) },
         Action::StopActing { machine: machine() },
         Action::Relays {

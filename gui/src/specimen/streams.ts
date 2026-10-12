@@ -14,6 +14,8 @@ export interface Stream extends Specimen {
   later: SessionEvent[];
   /** Events played a second. */
   rate: number;
+  /** Played at the times the events carry, instead of at `rate`. */
+  timed?: boolean;
 }
 
 const user: Speaker = { kind: "user", machine: "desktop" };
@@ -156,6 +158,7 @@ export function streamSpecimen(params: URLSearchParams): Stream {
     });
   }
   const later: SessionEvent[] = [];
+  if (start === "think") return thinking();
   if (start === "open") {
     // Begun from the new conversation's page: the first words came with
     // it; the agent takes them in, thinks, and answers.
@@ -276,4 +279,69 @@ export function playTimed(events: SessionEvent[], take: (event: SessionEvent) =>
     if (take(event)) next();
   };
   next();
+}
+
+/** `?s=stream&start=think`: Claude's way of thinking, its words kept to
+ *  itself. Done before: a turn that thought between its commands, and one
+ *  that only thought and answered. Then, played at a model's pace, a turn
+ *  that thinks a while before anything, runs a command, thinks again, then
+ *  thinks aloud and answers. */
+function thinking(): Stream {
+  let clock = new Clock(Date.now() - 600_000);
+  const events: SessionEvent[] = [];
+  let serial = 0;
+  const id = () => `item-${++serial}`;
+  // Thinking as Claude Code tells it: begun, its words where given, its
+  // length once over, and the response's thinking tokens as the row is
+  // kept.
+  const think = (into: SessionEvent[], turn: string, ms: number, said = "", tokens: number | null = null) => {
+    const item = id();
+    const began = clock.next(300);
+    into.push({ at: began, event: "began", turn, item: { id: item, started_at: began, kind: "thinking", text: "" } as Item });
+    if (said) {
+      const parts = pieces(said);
+      for (const piece of parts) into.push({ at: clock.next(Math.round(ms / parts.length)), event: "grew", turn, item, part: "text", text: piece });
+    } else clock.next(ms);
+    into.push({ at: clock.next(0), event: "finished", turn, item: { id: item, kind: "thinking", text: said, duration_ms: ms } as Item });
+    if (tokens !== null) {
+      into.push({
+        at: clock.next(0),
+        event: "changed",
+        turn,
+        change: { kind: "message_usage", items: [item], response: `msg_${item}`, model: "claude-opus-5-5", api_error: false, usage: { output_tokens: tokens + 120, output_tokens_details: { thinking_tokens: tokens } } },
+      });
+    }
+  };
+  const say = (into: SessionEvent[], turn: string, said: string) => {
+    const item = id();
+    into.push({ at: clock.next(200), event: "began", turn, item: { id: item, kind: "message", text: "" } as Item });
+    for (const piece of pieces(said)) into.push({ at: clock.next(20), event: "grew", turn, item, part: "text", text: piece });
+    into.push({ at: clock.next(50), event: "finished", turn, item: { id: item, kind: "message", text: said } as Item });
+  };
+  events.push({ at: clock.next(0), event: "heard", delivery: null, turn: "t1", from: user, text: "看一下 ctrl 的测试为什么挂。" });
+  events.push({ at: clock.next(300), event: "turn_started", turn: "t1" });
+  think(events, "t1", 4200, "", 312);
+  events.push(...tool(clock, "t1", id(), 0));
+  think(events, "t1", 2600, "**Reading the integrator**\n\nThe integral is summed in Q16 before the gain; small errors round away.", 1_840);
+  events.push(...tool(clock, "t1", id(), 1));
+  say(events, "t1", "挂在 step_response：积分项在 Q16 里累加，舍入让它停在 0.9612。");
+  events.push({ at: clock.next(100), event: "turn_ended", turn: "t1", end: { how: "completed", reason: null, duration_ms: 12_000, last_message: null } });
+  events.push({ at: clock.next(4000), event: "heard", delivery: null, turn: "t2", from: user, text: "要改吗？" });
+  events.push({ at: clock.next(300), event: "turn_started", turn: "t2" });
+  think(events, "t2", 1800, "", 96);
+  say(events, "t2", "要改：在 Q32 里累加，乘上 $K_i$ 之后再收窄。");
+  events.push({ at: clock.next(100), event: "turn_ended", turn: "t2", end: { how: "completed", reason: null, duration_ms: 3000, last_message: null } });
+
+  const later: SessionEvent[] = [];
+  clock = new Clock(Date.now() + 1200);
+  later.push({ at: clock.next(0), event: "heard", delivery: null, turn: "t3", from: user, text: "那就改掉，改完在 lab 上把整套测试跑一遍。" });
+  later.push({ at: clock.next(300), event: "turn_started", turn: "t3" });
+  think(later, "t3", 4500);
+  later.push(...tool(clock, "t3", id(), 3));
+  think(later, "t3", 3500);
+  later.push(...tool(clock, "t3", id(), 2));
+  think(later, "t3", 2500, "**看测试结果**\n\n42 个全过，step_response 停在 0.9999；可以收尾了。");
+  say(later, "t3", "改好了：积分在 Q32 里累加，lab 上 42 个测试全过，step_response 停在 0.9999。");
+  later.push({ at: clock.next(100), event: "turn_ended", turn: "t3", end: { how: "completed", reason: null, duration_ms: 20_000, last_message: null } });
+  return { title: "ctrl 的测试", agent: "claude", resident: "stream-1", machine: "laptop", model: "claude-opus-5-5", town: "mark50", here: "desktop", events, later, rate: 0, timed: true };
 }

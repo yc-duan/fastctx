@@ -392,12 +392,12 @@ impl Words {
         self.pick("新建项目", "new project")
     }
 
-    /// The key that turns conversations off, when they are `on`, or on.
+    /// The key that turns the workbench off, when it is `on`, or on.
     pub fn key_conversations(&self, on: bool) -> &'static str {
         if on {
-            self.pick("关闭对话", "turn conversations off")
+            self.pick("关闭工作台", "turn the workbench off")
         } else {
-            self.pick("开启对话", "turn conversations on")
+            self.pick("开启工作台", "turn the workbench on")
         }
     }
 
@@ -922,12 +922,28 @@ impl Words {
         }
     }
 
+    /// Thinking under way, as both hosts say it, in every language.
     pub fn thinking(&self) -> &'static str {
-        self.pick("思考", "Thinking")
+        "Thinking…"
     }
 
-    pub fn thinking_withheld(&self) -> &'static str {
-        self.pick("思考内容未公开", "thinking not shared")
+    /// Thinking that is over, its length not told.
+    pub fn thought(&self) -> &'static str {
+        "Thought"
+    }
+
+    /// Thinking that is over: `Thought for 4s`, `Thought for 1m 4s`; never
+    /// under a second.
+    pub fn thought_for(&self, ms: u64) -> String {
+        let seconds = ms.div_ceil(1000).max(1);
+        let span = match seconds {
+            0..60 => format!("{seconds}s"),
+            60..3600 if seconds.is_multiple_of(60) => format!("{}m", seconds / 60),
+            60..3600 => format!("{}m {}s", seconds / 60, seconds % 60),
+            _ if (seconds / 60).is_multiple_of(60) => format!("{}h", seconds / 3600),
+            _ => format!("{}h {}m", seconds / 3600, seconds / 60 % 60),
+        };
+        format!("Thought for {span}")
     }
 
     pub fn plan(&self) -> &'static str {

@@ -1,0 +1,111 @@
+/* A film set in the page (`film.ts`): a sunken stage, the words said under
+   it. Its pens and washes are the theme's own, so each theme draws it in
+   its colours. */
+.film {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.film-stage {
+  width: 100%;
+  border-radius: var(--radius-l);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.film-stage svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The words said as it goes: one line at a time, room for two so the page
+   does not move when a longer one comes. */
+.film-caption {
+  min-height: calc(2 * 1.6em);
+  max-width: 40em;
+  font-family: var(--font-reading);
+  font-size: var(--body-size);
+  line-height: 1.6;
+  text-align: center;
+  color: var(--text-2);
+}
+
+.film-caption.fresh {
+  animation: film-say 480ms ease-out both;
+}
+
+@keyframes film-say {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* Pens. */
+.fl-ink {
+  fill: var(--text-2);
+  color: var(--text-2);
+}
+
+.fl-graphite {
+  fill: var(--pen-graphite);
+  color: var(--pen-graphite);
+}
+
+.fl-clay {
+  fill: var(--pen-clay);
+  color: var(--pen-clay);
+}
+
+.fl-add {
+  fill: var(--add-fg);
+  color: var(--add-fg);
+}
+
+.fl-del {
+  fill: var(--del-fg);
+  color: var(--del-fg);
+}
+
+/* Type: the interface's, and a program's own for what it printed. */
+.fl-type {
+  font-family: var(--font-reading);
+}
+
+.fl-mono {
+  font-family: var(--font-code);
+}
+
+/* Washes: the interface's own surfaces. */
+.fw-page {
+  fill: var(--bg);
+}
+
+.fw-panel {
+  fill: var(--fill);
+}
+
+.fw-raised {
+  fill: var(--fill-strong);
+}
+
+.fw-bubble {
+  fill: var(--bubble);
+}
+
+.fw-clay {
+  fill: var(--accent-wash);
+}
+
+.fw-add {
+  fill: var(--add-line);
+}
+
+.fw-del {
+  fill: var(--del-line);
+}

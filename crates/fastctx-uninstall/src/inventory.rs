@@ -39,9 +39,22 @@ pub enum Action {
     Package,
 }
 
-pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<Request> {
+pub fn preview(mut installation: Installation, everything: bool) -> anyhow::Result<Request> {
     installation.validate()?;
-    if let Some(mut request) = crate::read::<Request>(&installation.marker())? {
+    // Of the application's possible data directories, only those that are
+    // there are planned for or named among what stays.
+    let mut present = Vec::new();
+    for directory in std::mem::take(&mut installation.application_dirs) {
+        if directory.try_exists()? {
+            present.push(directory);
+        }
+    }
+    installation.application_dirs = present;
+    if let Some(mut request) = crate::read::<Request>(&installation.marker())?
+        // A removal that keeps the data, finished or cut short, gives way to
+        // a complete one, planned afresh from what is on this computer now.
+        && (request.plan.everything || !everything)
+    {
         anyhow::ensure!(
             request.plan.everything == everything,
             "an interrupted uninstall has a different mode; finish that mode first"
@@ -421,13 +434,6 @@ pub fn preview(installation: Installation, everything: bool) -> anyhow::Result<R
             "user-files",
             "User file versions retained by host publication transactions",
             &location.display().to_string(),
-        ));
-    }
-    if root.join("claude-command-history").try_exists()? {
-        plan.keeps.push(keep(
-            "user-files",
-            "Original user settings versions retained around public Claude commands",
-            &root.join("claude-command-history").display().to_string(),
         ));
     }
     let programs = other_programs(&places, installation.application.as_deref())?;

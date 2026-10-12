@@ -6,8 +6,10 @@ use fastctx_types::accounts::{
     AccountChange, AccountSeen, ActingSeen, HubAccounts, LendSeen, MemberSeen, PlanSeen, ProjectSeen, ShareSeen,
 };
 use fastctx_types::world::LinkState;
+use jiff::Timestamp;
 
 use super::{Link, Status};
+use crate::directory::Lend;
 use crate::wire::{Change, Told};
 
 impl Link {
@@ -36,7 +38,12 @@ impl Link {
         };
         let wire = match change {
             AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
-            AccountChange::Lend { machine, to, agent, home, lent } => Change::Lend { machine, to, agent, home, lent },
+            AccountChange::Lend { machine, to, agent, home, lent, until } => {
+                return self
+                    .lend(account, Lend { machine, account: to, agent, home, until }, lent)
+                    .await
+                    .map(|()| None);
+            }
             AccountChange::Plan { machine, agent, home, plan } => Change::Plan { machine, agent, home, plan },
             AccountChange::StopActing { machine } => Change::StopActing { machine },
             // An older hub would not read the change, and would end the
@@ -73,6 +80,38 @@ impl Link {
         match self.manage(account, wire).await? {
             Told::Token { text } => Ok(Some(text)),
             _ => Ok(None),
+        }
+    }
+
+    /// Lends `lend`'s login as `account`, or takes it back. A hub from
+    /// before loans had deadlines drops the deadline it does not know and
+    /// lends without one; a loan meant to end must not outlive it, so it is
+    /// taken back at once and the owner told why.
+    async fn lend(&self, account: &AccountName, lend: Lend, lent: bool) -> Result<(), String> {
+        let change = |lent: bool, until: Option<Timestamp>| Change::Lend {
+            machine: lend.machine.clone(),
+            to: lend.account.clone(),
+            agent: lend.agent.clone(),
+            home: lend.home.clone(),
+            lent,
+            until,
+        };
+        self.manage(account, change(lent, lend.until)).await?;
+        if !lent || lend.until.is_none() {
+            return Ok(());
+        }
+        let hub = self.hub_name();
+        // The view read again after the change: the loan with its deadline,
+        // the loan without one (a hub that does not know deadlines), or not
+        // what was just asked (the view could not be read again).
+        let why = match self.view().lends.iter().find(|found| found.same(&lend)).map(|found| found.until) {
+            Some(kept) if kept == lend.until => return Ok(()),
+            Some(None) => format!("the hub {hub} keeps no deadline on a loan; upgrade it to lend until a set time"),
+            _ => format!("the hub {hub} could not be asked whether it kept the deadline; lend again"),
+        };
+        match self.manage(account, change(false, None)).await {
+            Ok(_) => Err(format!("{why}. The login was taken back")),
+            Err(error) => Err(format!("{why}. Taking the login back failed too: {error}; take it back by hand")),
         }
     }
 
@@ -141,6 +180,7 @@ impl Link {
                     account: lend.account.clone(),
                     agent: lend.agent.clone(),
                     home: lend.home.clone(),
+                    until: lend.until,
                 })
                 .collect(),
             plans: view

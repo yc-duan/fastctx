@@ -1,49 +1,101 @@
-//! Keep the public settings images around CLI mutations as well as around our
-//! own file transaction. No private Claude registry or login state is read.
+//! Earlier versions kept a copy of a Claude Code login's `settings.json`
+//! before and after every `claude plugin` command they ran, in
+//! `claude-command-history`, and never removed them. Those settings can carry
+//! the login's long-lived token, and fastctx keeps no credential: the image
+//! before a command now lives only in memory for the length of the change
+//! (`world-run.md`, apply). What an earlier version left is removed wherever
+//! an apply, an unapply, the node's start or an uninstall finds it.
 
-use crate::transaction::Snapshot;
+use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-pub(crate) struct History {
-    directory: PathBuf,
-    pub before: Snapshot,
+const DIRECTORY: &str = "claude-command-history";
+
+/// The files an earlier version wrote into each `command-<hex>` directory.
+const FILES: [&str; 5] = ["command.json", "before.json", "before-metadata.json", "after.json", "after-metadata.json"];
+
+/// Removes the settings copies under `root`. Returns, for each thing that
+/// could not go, where it is and why; an entry fastctx did not write is
+/// named and left.
+pub fn retire(root: &Path) -> Vec<String> {
+    let history = root.join(DIRECTORY);
+    let mut left = Vec::new();
+    match fs::symlink_metadata(&history) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return left,
+        Err(error) => return vec![format!("{}: {error}", history.display())],
+        Ok(metadata) if crate::disk::is_link(&metadata) || !metadata.is_dir() => {
+            return vec![format!("{}: not a directory fastctx made; left", history.display())];
+        }
+        Ok(_) => {}
+    }
+    let entries = match fs::read_dir(&history) {
+        Ok(entries) => entries,
+        Err(error) => return vec![format!("{}: {error}", history.display())],
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                left.push(format!("{}: {error}", history.display()));
+                continue;
+            }
+        };
+        let path = entry.path();
+        let name = entry.file_name();
+        let command = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("command-"))
+            .is_some_and(|suffix| suffix.len() == 32 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        let directory =
+            fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_dir() && !crate::disk::is_link(&metadata));
+        if !command || !directory {
+            left.push(format!("{}: not written by fastctx; left", path.display()));
+            continue;
+        }
+        retire_command(&path, &mut left);
+    }
+    if left.is_empty()
+        && let Err(error) = fs::remove_dir(&history)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        left.push(format!("{}: {error}", history.display()));
+    }
+    left
 }
 
-impl History {
-    pub fn begin(root: &Path, settings: &Path, command: &[String]) -> Result<Self, String> {
-        let before = Snapshot::read(settings).map_err(|error| error.to_string())?;
-        let parent = root.join("claude-command-history");
-        crate::disk::ensure_private_dir(&parent).map_err(|error| error.to_string())?;
-        let directory = crate::disk::unique_path(&parent, "command-").map_err(|error| error.to_string())?;
-        crate::disk::ensure_private_dir(&directory).map_err(|error| error.to_string())?;
-        save(&directory, "before", &before).map_err(|error| error.to_string())?;
-        let metadata = serde_json::to_vec_pretty(&serde_json::json!({ "settings": before.path(), "command": command }))
-            .map_err(|error| error.to_string())?;
-        crate::disk::publish_private(&directory.join("command.json"), &metadata).map_err(|error| error.to_string())?;
-        Ok(Self { directory, before })
+fn retire_command(directory: &Path, left: &mut Vec<String>) {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            left.push(format!("{}: {error}", directory.display()));
+            return;
+        }
+    };
+    let mut kept = false;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                left.push(format!("{}: {error}", directory.display()));
+                kept = true;
+                continue;
+            }
+        };
+        let path = entry.path();
+        let ours = entry.file_name().to_str().is_some_and(|name| FILES.contains(&name))
+            && fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_file());
+        if !ours {
+            left.push(format!("{}: not written by fastctx; left", path.display()));
+            kept = true;
+            continue;
+        }
+        if let Err(error) = fs::remove_file(&path) {
+            left.push(format!("{}: {error}", path.display()));
+            kept = true;
+        }
     }
-
-    pub fn finish(&self) -> Result<Snapshot, String> {
-        let after = Snapshot::read(self.before.path()).map_err(|error| error.to_string())?;
-        save(&self.directory, "after", &after).map_err(|error| error.to_string())?;
-        Ok(after)
+    if !kept && let Err(error) = fs::remove_dir(directory) {
+        left.push(format!("{}: {error}", directory.display()));
     }
-
-    pub fn manifest(&self) -> PathBuf {
-        self.directory.join("command.json")
-    }
-}
-
-fn save(directory: &Path, name: &str, snapshot: &Snapshot) -> io::Result<()> {
-    if let Some(bytes) = snapshot.bytes() {
-        crate::disk::publish_private(&directory.join(format!("{name}.json")), bytes)?;
-    }
-    let metadata = snapshot.state.as_ref().map(|state| {
-        serde_json::json!({
-            "identity": state.identity, "modified": state.modified, "attributes": state.attributes,
-        })
-    });
-    let bytes = serde_json::to_vec_pretty(&metadata)?;
-    crate::disk::publish_private(&directory.join(format!("{name}-metadata.json")), &bytes)
 }
