@@ -109,10 +109,10 @@
   background: var(--fill-strong);
 }
 
-.data-tab.current {
+.data-tab.current,
+.data-tab.current:hover {
   color: var(--text-strong);
-  background: var(--fill-strong);
-  box-shadow: inset 0 -2px 0 var(--pen-clay);
+  background: var(--accent-wash);
 }
 
 .data-tab .count {
