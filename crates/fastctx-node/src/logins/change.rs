@@ -142,11 +142,11 @@ fn set(node: &Node, agent: &AgentName, dir: &Path, edit: impl FnOnce(&mut LoginC
 
 /// A step told: the same step told again while running replaces its state.
 fn told(steps: &mut Vec<ChangeStep>, step: ChangeStep) {
-    if let Some(last) = steps.iter_mut().rev().find(|known| same_step(&known.step, &step.step)) {
-        if last.state == StepState::Running {
-            *last = step;
-            return;
-        }
+    if let Some(last) = steps.iter_mut().rev().find(|known| same_step(&known.step, &step.step))
+        && last.state == StepState::Running
+    {
+        *last = step;
+        return;
     }
     steps.push(step);
 }

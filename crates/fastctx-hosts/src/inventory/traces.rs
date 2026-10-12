@@ -21,7 +21,7 @@ fn has(entries: &[Entry], name: &str, directory: bool) -> bool {
     entries.iter().any(|(entry, is_dir)| *is_dir == directory && entry == name)
 }
 
-fn names<'a>(entries: &'a [Entry], wanted: &[(&str, bool)]) -> Vec<String> {
+fn names(entries: &[Entry], wanted: &[(&str, bool)]) -> Vec<String> {
     wanted
         .iter()
         .filter(|(name, directory)| has(entries, name, *directory))
@@ -92,7 +92,8 @@ pub fn elsewhere(agent: &str, entries: &[Entry]) -> Option<Vec<String>> {
             );
             let login = has(entries, ".credentials.json", false);
             let settings = has(entries, ".claude.json", false) || has(entries, "settings.json", false);
-            if !login && !(settings && has(entries, "projects", true) && !used.is_empty()) {
+            let kept = settings && has(entries, "projects", true) && !used.is_empty();
+            if !(login || kept) {
                 return None;
             }
             let mut traces = names(

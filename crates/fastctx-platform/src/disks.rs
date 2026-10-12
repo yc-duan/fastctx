@@ -91,7 +91,7 @@ mod imp {
 
     pub fn lower_this_thread() -> io::Result<()> {
         // SAFETY: the pseudo handle of the calling thread.
-        if unsafe { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN as i32) } == 0 {
+        if unsafe { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN) } == 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(())
