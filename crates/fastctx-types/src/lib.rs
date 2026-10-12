@@ -25,6 +25,7 @@ pub mod ipc;
 pub mod kernel;
 pub mod layout;
 pub mod lines;
+pub mod logins;
 pub mod machine_log;
 pub mod management;
 pub mod names;

@@ -11,4 +11,5 @@ pub mod claude;
 pub mod codex;
 pub mod image_digest;
 pub mod image_record;
+pub mod inventory;
 pub mod world_tools;

@@ -20,7 +20,7 @@ import { loginsOf } from "../world/accounts";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
 import { readCollab, sameAgentLogin, writeCollab, type AgentLogin, type Collab, type CollabView } from "../world/collab";
 import { agentName, titleOf } from "../world/names";
-import { accountOf, homeChoice, homeLabel, homesOf, usableHome, type HomeWords } from "./agent-homes";
+import { accountOf, homeChoice, homeLabel, homesOf, listed, usableHome, type HomeWords } from "./agent-homes";
 import type { FeaturesWords } from "./features-words";
 import { link, type Feature } from "./places";
 import { detailOf } from "./problem";
@@ -178,7 +178,7 @@ export class FeaturesPage implements Page {
       for (const machine of answer.machines) {
         if (machine.kind !== "answered") continue;
         for (const agent of ["claude", "codex"] as const) {
-          for (const home of homesOf(machine.reply.agents, agent).filter(usableHome)) {
+          for (const home of homesOf(machine.reply.agents, agent).filter((home) => usableHome(home) && listed(home))) {
             known.push({
               login: { machine: machine.reply.machine, agent, home: homeChoice(home) },
               label: this.loginLabel(agent, machine.reply.machine, home),

@@ -133,7 +133,9 @@ import { agentName, titleOf } from "./world/names";
 import { mapOf } from "./app/map-of";
 import { NetworkMap } from "./app/network-map";
 import {
-  applyHosts,
+  agentLogins,
+  changeAgentLogin,
+  scanAgents,
   control,
   offers,
   placeFastctx,
@@ -1318,7 +1320,15 @@ function show(next: Place): void {
         machine: next.machine,
         when,
         agents: () => agentsOn(null),
-        applyHere: (agent, into, home, raise = false) => (live ? applyHosts(agent === "codex", agent === "claude", raise, into, home) : notLive()),
+        changeLogin: (machine, agent, dir, into, raise = false) => (live ? changeAgentLogin(machine, agent, dir, into, raise) : notLive()),
+        logins: (machine) =>
+          live
+            ? agentLogins(machine).then((world) => {
+                const one = world.machines.find((heard) => heard.kind === "answered" && heard.logins.machine === machine);
+                return one?.kind === "answered" ? one.logins : null;
+              })
+            : Promise.resolve(null),
+        scan: (machine, stop) => (live ? scanAgents(machine, stop) : notLive()),
         consent: {
           allow: (machine, home) => consent.allow(machine, (english ? enConsent : zhConsent).allow, home),
           withdraw: (machine, home) => consent.withdraw(machine, home),

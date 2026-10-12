@@ -1,5 +1,5 @@
 // The hub's machine-layer history (`fastctx_types::machine_log`).
-import type { AccountName, MemberKind, Relay } from "./accounts";
+import type { AccountName, MemberKind, PlanLabel, Relay } from "./accounts";
 import type { MachineName, Timestamp } from "./wire";
 
 export interface MachineLogActor {
@@ -13,6 +13,7 @@ export type MachineLogAction =
   | { change: "collab"; version: number }
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
   | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home: string | null; lent: boolean }
+  | { change: "plan"; machine: MachineName; agent: string; home: string | null; plan: PlanLabel | null }
   | { change: "stop_acting"; machine: MachineName }
   | { change: "relays"; machine: MachineName; relays: Relay[] }
   | { change: "relay_at"; machine: MachineName; addresses: string[] }

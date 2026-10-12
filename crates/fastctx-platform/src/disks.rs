@@ -1,0 +1,252 @@
+//! The computer's local fixed disks, and walking them without getting in
+//! anyone's way: where a walk of every disk starts, and the thread it runs
+//! on asking for no more of the processor and the disks than is left over.
+
+use std::io;
+use std::path::PathBuf;
+
+/// The root of each local fixed disk, each volume once. On Windows, every
+/// drive letter of a fixed volume; a letter that merely aliases a folder
+/// (`subst`) is no volume of its own and is left out. On Linux, one mount
+/// of each filesystem kept on a disk, the one showing the whole of it at
+/// the shortest path; pseudo, memory and network filesystems are not disks.
+pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
+    imp::fixed_disks()
+}
+
+/// Every place a filesystem is mounted, which a walk from a disk's root
+/// does not enter: on Linux the same filesystem can be mounted again inside
+/// itself (a bind mount), and walking it there would walk it twice. On
+/// Windows none: a folder a volume is mounted on is a reparse point, which
+/// a walk never enters anyway.
+pub fn mount_points() -> io::Result<Vec<PathBuf>> {
+    imp::mount_points()
+}
+
+/// Puts the calling thread in the background: the lowest processor
+/// priority, and on Windows the background mode that also lowers its disk
+/// and memory priority; on Linux the idle disk class. It lasts until the
+/// thread ends, so a thread made for one walk is the one to call it on.
+pub fn lower_this_thread() -> io::Result<()> {
+    imp::lower_this_thread()
+}
+
+#[cfg(windows)]
+mod imp {
+    use std::collections::BTreeSet;
+    use std::ffi::OsString;
+    use std::io;
+    use std::os::windows::ffi::OsStringExt as _;
+    use std::path::PathBuf;
+
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeNameForVolumeMountPointW,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN};
+
+    /// `DRIVE_FIXED` of `GetDriveTypeW`.
+    const DRIVE_FIXED: u32 = 3;
+
+    pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
+        // SAFETY: a size query with no buffer.
+        let length = unsafe { GetLogicalDriveStringsW(0, std::ptr::null_mut()) };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut buffer = vec![0u16; length as usize];
+        // SAFETY: the buffer holds `length` units, as the system asked.
+        let written = unsafe { GetLogicalDriveStringsW(length, buffer.as_mut_ptr()) };
+        if written == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut volumes = BTreeSet::new();
+        let mut disks = Vec::new();
+        for root in buffer[..written as usize].split(|unit| *unit == 0).filter(|root| !root.is_empty()) {
+            let mut wide: Vec<u16> = root.to_vec();
+            wide.push(0);
+            // SAFETY: a NUL-terminated root such as `C:\`.
+            if unsafe { GetDriveTypeW(wide.as_ptr()) } != DRIVE_FIXED {
+                continue;
+            }
+            // A volume GUID path is 49 units with its NUL.
+            let mut volume = [0u16; 64];
+            // SAFETY: the root is NUL-terminated and the buffer's length is
+            // given. A `subst` letter is no mount point and fails here.
+            if unsafe { GetVolumeNameForVolumeMountPointW(wide.as_ptr(), volume.as_mut_ptr(), volume.len() as u32) }
+                == 0
+            {
+                continue;
+            }
+            let end = volume.iter().position(|unit| *unit == 0).unwrap_or(volume.len());
+            if volumes.insert(volume[..end].to_vec()) {
+                disks.push(PathBuf::from(OsString::from_wide(root)));
+            }
+        }
+        Ok(disks)
+    }
+
+    pub fn mount_points() -> io::Result<Vec<PathBuf>> {
+        Ok(Vec::new())
+    }
+
+    pub fn lower_this_thread() -> io::Result<()> {
+        // SAFETY: the pseudo handle of the calling thread.
+        if unsafe { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod imp {
+    use std::collections::BTreeMap;
+    use std::io;
+    use std::path::PathBuf;
+
+    /// Filesystems kept on a disk; every other type is a pseudo, memory,
+    /// image or network filesystem.
+    const DISK_FILESYSTEMS: &[&str] = &[
+        "ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "jfs", "reiserfs", "bcachefs", "vfat", "exfat", "ntfs",
+        "ntfs3", "fuseblk", "hfsplus", "apfs",
+    ];
+
+    /// One line of `/proc/self/mountinfo`.
+    struct Mount {
+        /// The filesystem's device, `major:minor`.
+        device: String,
+        /// Which of the filesystem's directories shows at the mount point;
+        /// `/` for the whole of it.
+        root: String,
+        point: PathBuf,
+        kind: String,
+    }
+
+    /// The mounts this process sees, as `proc(5)` lays out `mountinfo`: the
+    /// mount's id, its parent's, the device, the root, the mount point and
+    /// its options, optional fields up to a lone `-`, then the type.
+    fn mounts() -> io::Result<Vec<Mount>> {
+        let text = std::fs::read_to_string("/proc/self/mountinfo")?;
+        let mut mounts = Vec::new();
+        for line in text.lines() {
+            let fields: Vec<&str> = line.split(' ').collect();
+            let separator = fields.iter().position(|field| *field == "-");
+            let (Some(separator), Some(device), Some(root), Some(point)) =
+                (separator, fields.get(2), fields.get(3), fields.get(4))
+            else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("a mountinfo line not understood: {line}"),
+                ));
+            };
+            let Some(kind) = fields.get(separator + 1) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("a mountinfo line not understood: {line}"),
+                ));
+            };
+            mounts.push(Mount {
+                device: (*device).to_string(),
+                root: unescape(root),
+                point: PathBuf::from(unescape(point)),
+                kind: (*kind).to_string(),
+            });
+        }
+        Ok(mounts)
+    }
+
+    pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
+        let mut by_device: BTreeMap<String, Vec<Mount>> = BTreeMap::new();
+        for mount in mounts()? {
+            if DISK_FILESYSTEMS.contains(&mount.kind.as_str()) {
+                by_device.entry(mount.device.clone()).or_default().push(mount);
+            }
+        }
+        // Of each filesystem, the mounts that together show all of it that
+        // is mounted anywhere, each part once: the widest parts first, at
+        // their shortest paths, and no part inside one already taken.
+        let mut disks = Vec::new();
+        for mut mounts in by_device.into_values() {
+            mounts.sort_by_key(|mount| (std::path::Path::new(&mount.root).components().count(), mount.point.clone()));
+            let mut taken: Vec<PathBuf> = Vec::new();
+            for mount in mounts {
+                let root = PathBuf::from(&mount.root);
+                if !taken.iter().any(|part| root.starts_with(part)) {
+                    taken.push(root);
+                    disks.push(mount.point);
+                }
+            }
+        }
+        disks.sort();
+        Ok(disks)
+    }
+
+    pub fn mount_points() -> io::Result<Vec<PathBuf>> {
+        Ok(mounts()?.into_iter().map(|mount| mount.point).collect())
+    }
+
+    /// `/proc/self/mountinfo` writes a space, tab, newline and backslash in a
+    /// path as three octal digits after a backslash.
+    fn unescape(field: &str) -> String {
+        let bytes = field.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut at = 0;
+        while at < bytes.len() {
+            if bytes[at] == b'\\'
+                && at + 3 < bytes.len()
+                && bytes[at + 1..at + 4].iter().all(|digit| (b'0'..=b'7').contains(digit))
+            {
+                out.push((bytes[at + 1] - b'0') * 64 + (bytes[at + 2] - b'0') * 8 + (bytes[at + 3] - b'0'));
+                at += 4;
+            } else {
+                out.push(bytes[at]);
+                at += 1;
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    pub fn lower_this_thread() -> io::Result<()> {
+        // Linux keeps a niceness and a disk priority for each thread.
+        // SAFETY: gettid has no arguments and cannot fail.
+        let thread = unsafe { libc::syscall(libc::SYS_gettid) } as libc::id_t;
+        // SAFETY: setpriority of one thread, by its id.
+        if unsafe { libc::setpriority(libc::PRIO_PROCESS, thread, 19) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        /// `IOPRIO_WHO_PROCESS` and the idle class, shifted into place as
+        /// `linux/ioprio.h` defines them.
+        const WHO_PROCESS: libc::c_long = 1;
+        const IDLE: libc::c_long = 3 << 13;
+        // SAFETY: ioprio_set of one thread, by its id.
+        if unsafe { libc::syscall(libc::SYS_ioprio_set, WHO_PROCESS, thread as libc::c_long, IDLE) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
+/// Elsewhere neither the disks nor a thread's own background priority are
+/// known to the World yet: a walk there fails, saying so, rather than walk
+/// at the priority of the whole node.
+#[cfg(not(any(windows, target_os = "linux")))]
+mod imp {
+    use std::io;
+    use std::path::PathBuf;
+
+    fn unsupported() -> io::Error {
+        io::Error::new(io::ErrorKind::Unsupported, "not on this operating system")
+    }
+
+    pub fn fixed_disks() -> io::Result<Vec<PathBuf>> {
+        Err(unsupported())
+    }
+
+    pub fn mount_points() -> io::Result<Vec<PathBuf>> {
+        Err(unsupported())
+    }
+
+    pub fn lower_this_thread() -> io::Result<()> {
+        Err(unsupported())
+    }
+}

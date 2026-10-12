@@ -54,8 +54,14 @@ export interface AgentsWords {
   lentTo: string;
   takeBack(to: string): string;
   lendTitle(label: string, machine: string): string;
-  hide: string;
-  hideSaid: string;
+  /** Scanning a machine for its agents, and the walk of its disks. */
+  scan: string;
+  scanAgain: string;
+  walking(directories: number): string;
+  stopWalk: string;
+  /** What the walk found that looks like a login, and taking one up. */
+  elsewhere(count: number): string;
+  takeUp(agent: string): string;
   addHome: string;
   addHomeWhere(agent: "codex" | "claude"): string;
   addHomeGo: string;
@@ -106,8 +112,12 @@ export const zhAgents: AgentsWords = {
   lentTo: "借给",
   takeBack: (to) => `收回 ${to}`,
   lendTitle: (label, machine) => `借出 ${label} · ${machine}`,
-  hide: "不再列出",
-  hideSaid: "不再列出和使用这个登录；重新添加它的目录即可恢复",
+  scan: "扫描这台电脑",
+  scanAgain: "重新扫描",
+  walking: (directories) => `已走过 ${directories.toLocaleString("zh")} 个目录`,
+  stopWalk: "停止",
+  elsewhere: (count) => `别处还找到 ${count} 个`,
+  takeUp: (agent) => `作为 ${agent} 候选`,
   addHome: "添加登录",
   addHomeWhere: (agent) => (agent === "codex" ? "CODEX_HOME 目录" : "CLAUDE_CONFIG_DIR 目录"),
   addHomeGo: "添加",
@@ -158,8 +168,12 @@ export const enAgents: AgentsWords = {
   lentTo: "Lent to",
   takeBack: (to) => `Take back from ${to}`,
   lendTitle: (label, machine) => `Lend ${label} · ${machine}`,
-  hide: "Stop listing",
-  hideSaid: "Stop listing and using this login; add its directory again to bring it back",
+  scan: "Scan this computer",
+  scanAgain: "Scan again",
+  walking: (directories) => `${directories.toLocaleString("en")} folders looked through`,
+  stopWalk: "Stop",
+  elsewhere: (count) => `Also found elsewhere: ${count}`,
+  takeUp: (agent) => `Add as ${agent} candidate`,
   addHome: "Add login",
   addHomeWhere: (agent) => (agent === "codex" ? "CODEX_HOME directory" : "CLAUDE_CONFIG_DIR directory"),
   addHomeGo: "Add",

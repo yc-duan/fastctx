@@ -78,6 +78,16 @@ pub enum AccountChange {
         home: Option<PathBuf>,
         lent: bool,
     },
+    /// The plan shown for one login of an agent on `machine`, set by the
+    /// hub's super administrator on a login that names none (a Claude Code
+    /// long-lived token); none takes it away. Shown, never acted on.
+    Plan {
+        machine: MachineName,
+        agent: AgentName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<PathBuf>,
+        plan: Option<PlanLabel>,
+    },
     /// `machine`, another's, no longer acts for the account.
     StopActing {
         machine: MachineName,
@@ -169,6 +179,10 @@ pub struct HubAccounts {
     pub members: Vec<MemberSeen>,
     pub shares: Vec<ShareSeen>,
     pub lends: Vec<LendSeen>,
+    /// The plans the hub's super administrator set on logins that name
+    /// none.
+    #[serde(default)]
+    pub plans: Vec<PlanSeen>,
     /// Machines of others that act for an account, because it used an
     /// agent there (`world-network.md`, 别人机器上的智能体什么时候能访问你的机器).
     pub acting: Vec<ActingSeen>,
@@ -235,6 +249,28 @@ pub struct LendSeen {
     /// The login's directory as that machine writes it; none for the
     /// agent's default login there.
     pub home: Option<PathBuf>,
+}
+
+/// A plan a login names none of, as the hub's super administrator set it
+/// by hand (`world-agent-logins.md`): Claude Code's long-lived tokens say no
+/// plan. It is only shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanLabel {
+    Max,
+    Pro,
+    Free,
+}
+
+/// The plan set on one login of an agent on a machine.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanSeen {
+    pub machine: MachineName,
+    pub agent: AgentName,
+    /// The login's directory as that machine writes it; none for the
+    /// agent's default login there.
+    pub home: Option<PathBuf>,
+    pub plan: PlanLabel,
 }
 
 /// A machine of another that acts for an account, since it first used an

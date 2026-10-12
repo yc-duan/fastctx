@@ -49,7 +49,9 @@ impl CodexHost {
                     _ => {
                         let start = Instant::now();
                         let limits = super::account::limits(&server).await;
-                        facts.timings.push(ProbeTime { step: "account/rateLimits/read".into(), elapsed_ms: elapsed(start) });
+                        facts
+                            .timings
+                            .push(ProbeTime { step: "account/rateLimits/read".into(), elapsed_ms: elapsed(start) });
                         limits
                     }
                 };
@@ -131,7 +133,7 @@ struct Effort {
     description: String,
 }
 
-async fn models(server: &AppServer) -> Result<Vec<AgentModel>, String> {
+pub(super) async fn models(server: &AppServer) -> Result<Vec<AgentModel>, String> {
     let mut models = Vec::new();
     let mut cursor = None::<String>;
     loop {

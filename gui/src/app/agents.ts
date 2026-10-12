@@ -13,6 +13,7 @@ import { escape } from "../conversation/prose";
 import type { AccountChange, HubAccounts, Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { AgentFacts, HomeChange, WorldAgents } from "../world/agents";
+import type { LoginChange, MachineLogins } from "../world/logins";
 import type { WorldNow } from "../world/bridge";
 import type { AccessWords } from "./account-words";
 import { accountOf, dirName, homeChoice, homeLabel, homesOf, installed, isDefault, limitsHtml, loggedOut, usableHome, versionOf, type HomeWords } from "./agent-homes";
@@ -37,11 +38,16 @@ export interface AgentsOptions {
   /** The machine to show alone, when one was named. */
   machine: string | null;
   when(at: Date, now: Date): string;
-  /** What every online machine's programs say of its agents. */
+  /** What every online machine's node keeps of its agents. */
   agents(): Promise<WorldAgents>;
-  /** Puts the World's tools into one login of an agent on this computer, or
-   *  takes them out; what it left as the user had it, said. */
-  applyHere(agent: "codex" | "claude", into: boolean, home: string | null, raise?: boolean): Promise<string[]>;
+  /** What one machine's node keeps of its agents' logins: its scan and
+   *  what the walk of its disks found. */
+  logins?: ((machine: string) => Promise<MachineLogins | null>) | undefined;
+  /** Scans one of the user's machines, or stops the walk of its disks. */
+  scan?: ((machine: string, stop: boolean) => Promise<MachineLogins>) | undefined;
+  /** Puts the World's tools into one login of an agent on a machine of the
+   *  user's own, or takes them out, by that machine's node. */
+  changeLogin(machine: string, agent: "codex" | "claude", dir: string, into: boolean, raise?: boolean): Promise<LoginChange>;
   /** Asks the user, and gives or withdraws Claude's consent to work
    *  without asking in one of its homes on a machine; true once done. */
   consent?: { allow(machine: string, home: ConsentHome): Promise<boolean>; withdraw(machine: string, home: ConsentHome): Promise<boolean> } | undefined;
@@ -86,6 +92,11 @@ export class AgentsPage implements Page {
   private notes = new Map<string, { text: string; detail: string; caution: boolean; raise?: boolean }>();
   private adding: { machine: string; agent: string; dir: string } | null = null;
   private readonly giving: GiveSheet;
+  /** What each machine's node keeps of its logins: its scan, and what the
+   *  walk of its disks found. */
+  private records = new Map<string, MachineLogins>();
+  private following = false;
+  private left = false;
 
   constructor(private readonly options: AgentsOptions) {
     const { words } = options;
@@ -111,9 +122,11 @@ export class AgentsPage implements Page {
       }
     });
     this.stop = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
+    void this.readRecords();
   }
 
   leave(): void {
+    this.left = true;
     this.stop();
   }
 
@@ -130,10 +143,16 @@ export class AgentsPage implements Page {
         this.options.talkWith(button.dataset.key ?? "");
         return;
       case "apply":
-        this.apply(button, key, machine, agent, button.dataset.into === "1", home);
+        this.apply(button, key, machine, agent, button.dataset.into === "1", button.dataset.dir ?? "");
         return;
       case "raise":
-        this.apply(button, key, machine, agent, true, home, true);
+        this.apply(button, key, machine, agent, true, button.dataset.dir ?? "", true);
+        return;
+      case "scan":
+        void this.scan(machine, button.dataset.stop === "1");
+        return;
+      case "take-up":
+        void this.takeUp(button, machine, agent, button.dataset.dir ?? "");
         return;
       case "consent":
         void this.consent(machine, button.dataset.allow === "1", { dir: home, label: button.dataset.label || null });
@@ -148,9 +167,6 @@ export class AgentsPage implements Page {
         if (lender) void this.act(button, key, lender, { change: "lend", machine, to: button.dataset.to ?? "", agent, ...(home ? { home } : {}), lent: false });
         return;
       }
-      case "hide":
-        void this.hideHome(button, key, machine, agent, button.dataset.dir ?? "");
-        return;
       case "add-home":
         this.adding = { machine, agent, dir: "" };
         this.redraw();
@@ -231,16 +247,21 @@ export class AgentsPage implements Page {
    *  its account of the files it wrote never reaches the page. Codex's
    *  output limit is raised only when the user asks, here as with
    *  `--raise-output-limit` (`world-run.md`). */
-  private apply(button: HTMLButtonElement, key: string, machine: string, agent: "codex" | "claude", into: boolean, home: string | null, raise = false): void {
+  private apply(button: HTMLButtonElement, key: string, machine: string, agent: "codex" | "claude", into: boolean, dir: string, raise = false): void {
     const { words } = this.options;
     const run = async () => {
-      const kept = await this.options.applyHere(agent, into, home, raise);
-      this.notes.set(key, kept.length ? { text: words.kept, detail: kept.join("\n"), caution: false } : { text: "", detail: "", caution: false });
+      const change = await this.options.changeLogin(machine, agent, dir, into, raise);
+      const end = change.end;
+      if (end?.end === "failed") {
+        this.notes.set(key, { text: (into ? words.applyFailed : words.takeOutFailed)(end.reason), detail: end.reason, caution: true, raise: !!end.output_limit });
+        return;
+      }
+      const kept = (end?.end === "done" ? end.kept : undefined) ?? [];
+      this.notes.set(key, kept.length ? { text: words.kept, detail: kept.map((one) => `${one.location}: ${one.reason}`).join("\n"), caution: false } : { text: "", detail: "", caution: false });
     };
     const failed = (error: unknown) => {
       const detail = detailOf(error);
-      const limit = into && agent === "codex" && detail.includes("--raise-output-limit");
-      this.notes.set(key, { text: (into ? words.applyFailed : words.takeOutFailed)(detail), detail, caution: true, raise: limit });
+      this.notes.set(key, { text: (into ? words.applyFailed : words.takeOutFailed)(detail), detail, caution: true });
     };
     const done = () => this.again(machine);
     if (agent === "claude" && into) {
@@ -278,16 +299,65 @@ export class AgentsPage implements Page {
     this.again(adding.machine);
   }
 
-  private async hideHome(button: HTMLButtonElement, key: string, machine: string, agent: string, dir: string): Promise<void> {
+  /** Takes up a directory the walk of the disks found as a candidate. */
+  private async takeUp(button: HTMLButtonElement, machine: string, agent: string, dir: string): Promise<void> {
     const homes = this.options.homes;
     if (!homes || !dir) return;
     button.disabled = true;
+    const key = `add:${machine}:${agent}`;
     try {
-      await homes(machine, { change: "hide", agent, dir });
+      await homes(machine, { change: "add", agent, dir });
+      this.notes.delete(key);
     } catch (error) {
       this.notes.set(key, { text: this.options.words.changeFailed(detailOf(error)), detail: detailOf(error), caution: true });
     }
     this.again(machine);
+  }
+
+  /** Scans a machine, or stops the walk of its disks; while a walk goes on
+   *  its progress is read again each second the page is open. */
+  private async scan(machine: string, stop: boolean): Promise<void> {
+    const scan = this.options.scan;
+    if (!scan) return;
+    try {
+      this.records.set(machine, await scan(machine, stop));
+    } catch (error) {
+      this.notes.set(`scan:${machine}`, { text: this.options.words.changeFailed(detailOf(error)), detail: detailOf(error), caution: true });
+    }
+    this.again(machine);
+    this.follow();
+  }
+
+  /** Reads the records of the machines whose disks are being walked, until
+   *  none is or the page is left. */
+  private follow(): void {
+    if (this.following || this.left) return;
+    const walking = [...this.records.values()].filter((record) => record.scan?.disks?.stage.state === "running").map((record) => record.machine);
+    if (!walking.length || !this.options.logins) return;
+    this.following = true;
+    window.setTimeout(async () => {
+      for (const machine of walking) {
+        const record = await this.options.logins!(machine).catch(() => null);
+        if (record) this.records.set(machine, record);
+      }
+      this.following = false;
+      if (this.left) return;
+      const done = walking.filter((machine) => this.records.get(machine)?.scan?.disks?.stage.state !== "running");
+      for (const machine of done) this.again(machine);
+      this.redraw();
+      this.follow();
+    }, 1000);
+  }
+
+  private async readRecords(): Promise<void> {
+    const logins = this.options.logins;
+    if (!logins) return;
+    for (const machine of machinesOf(this.options.store.world.peek()).filter((m) => m.here || m.online)) {
+      const record = await logins(machine.name).catch(() => null);
+      if (record) this.records.set(machine.name, record);
+    }
+    this.redraw();
+    this.follow();
   }
 
   private redraw(): void {
@@ -379,16 +449,41 @@ export class AgentsPage implements Page {
       cards = `<ul class="agent-cards">${agents.map((agent) => this.cards(m, agent as "codex" | "claude", asked.facts, now)).join("")}</ul>`;
     }
     const tag = m.tag ? `<span class="tag ${m.tag.kind}"${m.tag.said ? ` title="${escape(m.tag.said)}"` : ""}>${escape(m.tag.text)}</span>` : "";
+    const record = this.records.get(m.name);
+    const walk = record?.scan?.disks;
+    const walking = walk?.stage.state === "running";
+    const scanned = record?.scan ? (walk?.disks ?? []).reduce((sum, disk) => sum + disk.directories, 0) : null;
+    const scanNote = this.notes.get(`scan:${m.name}`);
+    const scanControl =
+      m.changeable && m.online && this.options.scan
+        ? `<span class="agents-scan">${walking && scanned !== null ? `<span class="agents-quiet">${escape(words.walking(scanned))}</span>` : ""}<button class="text-button quiet-button" type="button" data-act="scan" data-stop="${walking ? "1" : "0"}">${escape(walking ? words.stopWalk : record?.scan ? words.scanAgain : words.scan)}</button>${scanNote ? `<span class="caution" title="${escape(scanNote.detail)}">${escape(scanNote.text)}</span>` : ""}</span>`
+        : "";
     return `<section class="agents-machine${m.online ? "" : " offline"}">
       <header class="agents-machine-head">
         <span class="agents-machine-form" aria-hidden="true">${glyph(m.form, 18)}</span>
         <h2 class="agents-machine-name">${escape(m.written)}</h2>
         ${tag}
         <span class="agents-machine-state"><span class="dot" aria-hidden="true"></span>${escape(m.online ? words.online : words.offline)}</span>
+        ${scanControl}
         <a class="icon-button agents-machine-map" href="${link({ kind: "machine", name: m.written })}" title="${escape(words.onMap(m.written))}" aria-label="${escape(words.onMap(m.written))}">${glyph("machine", 16)}</a>
       </header>
       ${cards}
+      ${this.elsewhere(m, record)}
     </section>`;
+  }
+
+  /** What the walk of a machine's disks found that looks like a login, a
+   *  row each, each to be taken up as a candidate. */
+  private elsewhere(m: Shown, record: MachineLogins | undefined): string {
+    if (!record || !m.changeable) return "";
+    const { words } = this.options;
+    const rows = (["codex", "claude"] as const).flatMap((agent) =>
+      record[agent].elsewhere.map(
+        (one) =>
+          `<li class="agents-elsewhere-one"><code title="${escape(one.traces.join(", "))}">${escape(one.dir)}</code><button class="text-button quiet-button" type="button" data-act="take-up" data-agent="${agent}" data-dir="${escape(one.dir)}">${escape(words.takeUp(agent === "codex" ? "Codex" : "Claude Code"))}</button></li>`,
+      ),
+    );
+    return rows.length ? `<details class="agents-elsewhere" data-machine="${escape(m.name)}"><summary>${escape(words.elsewhere(rows.length))}</summary><ul>${rows.join("")}</ul></details>` : "";
   }
 
   /** The cards of one agent on a machine: one per login, or one saying it
@@ -442,9 +537,9 @@ export class AgentsPage implements Page {
     // The World's tools in the sessions the user opens on this computer.
     const integration = facts.integration.kind === "known" ? facts.integration.value : null;
     const tools =
-      m.here && integration && integration !== "absent"
+      m.changeable && integration && integration !== "absent"
         ? `${integration === "in" ? `<span class="tag tag-own" title="${escape(words.toolsInSaid(agent))}">${escape(words.toolsIn)}</span>` : integration === "old" ? `<span class="tag caution">${escape(words.toolsOld)}</span>` : ""}
-           <button class="text-button quiet-button" type="button" data-act="apply" data-agent="${agent}" data-home="${escape(choice)}" data-into="${integration === "in" ? "0" : "1"}">${escape(integration === "in" ? words.takeOut : integration === "old" ? words.renew : words.putIn)}</button>`
+           <button class="text-button quiet-button" type="button" data-act="apply" data-agent="${agent}" data-dir="${escape(dir ?? "")}" data-into="${integration === "in" ? "0" : "1"}">${escape(integration === "in" ? words.takeOut : integration === "old" ? words.renew : words.putIn)}</button>`
         : "";
     // Claude works for the World only once the user let it skip approvals
     // in that login.
@@ -475,16 +570,12 @@ export class AgentsPage implements Page {
               `<button class="icon-button" type="button" data-act="lend" data-agent="${agent}" data-home="${escape(choice)}" data-label="${escape(label)}" data-lender="${escape(lender.account)}" data-lender-hub="${escape(lender.hub)}" title="${escape(words.lend)}" aria-label="${escape(words.lend)}">${glyph("colleague", 16)}</button>`,
           )
           .join("");
-    const hide =
-      m.changeable && !isDefault(facts) && dir
-        ? `<button class="icon-button" type="button" data-act="hide" data-agent="${agent}" data-dir="${escape(dir)}" title="${escape(words.hideSaid)}" aria-label="${escape(words.hide)}">${glyph("archive", 16)}</button>`
-        : "";
     const talkButton = talk
       ? `<button class="text-button agent-card-talk" type="button" data-act="talk" data-key="${escape(talk)}">${glyph("plus", 14)}<span>${escape(words.newTalk)}</span></button>`
       : "";
     const note = this.notes.get(key);
     const raise = note?.raise
-      ? `<button class="text-button quiet-button" type="button" data-act="raise" data-agent="${agent}" data-home="${escape(choice)}" title="${escape(words.raiseSaid)}">${escape(words.raise)}</button>`
+      ? `<button class="text-button quiet-button" type="button" data-act="raise" data-agent="${agent}" data-dir="${escape(dir ?? "")}" title="${escape(words.raiseSaid)}">${escape(words.raise)}</button>`
       : "";
     const said = note?.text ? `<p class="agent-card-note${note.caution ? " caution" : ""}"><span title="${escape(note.detail)}">${escape(note.text)}</span>${raise}</p>` : "";
     const limits = limitsHtml(facts.limits, homeWords, now, this.options.when, { notRead: agent === "claude" && !out && facts.login.kind === "known" });
@@ -495,7 +586,7 @@ export class AgentsPage implements Page {
       ${tools || consent ? `<div class="agent-card-line agent-card-uses">${tools}${consent}</div>` : ""}
       ${lending}
       ${said}
-      ${talkButton || lendButtons || hide ? `<div class="agent-card-acts">${talkButton}<span class="agent-card-more">${lendButtons}${hide}</span></div>` : ""}
+      ${talkButton || lendButtons ? `<div class="agent-card-acts">${talkButton}<span class="agent-card-more">${lendButtons}</span></div>` : ""}
     </li>`;
   }
 }
