@@ -8,6 +8,10 @@ ShowUninstDetails show
 ; box, or /FASTCTXEVERYTHING on the command line of a silent removal.
 Var FastctxEverything
 
+; The uninstaller's own command line. The template's running-app check below
+; uses $R0 and the like for itself, so it is kept in a variable of its own.
+Var FastctxParameters
+
 ; The identity is installed even when the optional shortcut task is off:
 ; unpackaged Windows notifications require this Start menu shortcut.
 !macro NSIS_HOOK_POSTINSTALL
@@ -32,9 +36,9 @@ Var FastctxEverything
   ; did not write, so the template's own deletion of those folders stays off.
   StrCpy $FastctxEverything $DeleteAppDataCheckboxState
   StrCpy $DeleteAppDataCheckboxState 0
-  ${GetParameters} $R0
+  ${GetParameters} $FastctxParameters
   ClearErrors
-  ${GetOptions} $R0 "/FASTCTXEVERYTHING" $R1
+  ${GetOptions} $FastctxParameters "/FASTCTXEVERYTHING" $R1
   ${IfNot} ${Errors}
     StrCpy $FastctxEverything 1
   ${EndIf}
@@ -55,7 +59,7 @@ Var FastctxEverything
   ; and hands only the package here.
   ${If} $UpdateMode != 1
     ClearErrors
-    ${GetOptions} $R0 "/FASTCTXKERNELDONE" $R1
+    ${GetOptions} $FastctxParameters "/FASTCTXKERNELDONE" $R1
     ${If} ${Errors}
       ${If} $FastctxEverything = 1
         nsExec::ExecToLog '"$INSTDIR\${MAINBINARYNAME}.exe" --uninstall-world --everything'

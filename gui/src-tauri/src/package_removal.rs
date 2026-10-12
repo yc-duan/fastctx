@@ -46,6 +46,22 @@ fn plan(everything: bool) -> Result<Plan, String> {
     serde_json::from_slice(&output.stdout).map_err(|error| format!("reading the uninstall plan: {error}"))
 }
 
+/// Whether a complete removal begun in World, where the world's name was
+/// typed, was cut short: the uninstaller finishes it rather than keep the
+/// data.
+fn complete_removal_begun() -> Result<bool, String> {
+    let marker = fastctx_install::uninstall::Installation::here().map_err(|error| error.to_string())?.marker();
+    match std::fs::read(&marker) {
+        Ok(bytes) => {
+            let request: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|error| format!("reading {}: {error}", marker.display()))?;
+            Ok(request["plan"]["everything"] == serde_json::Value::Bool(true))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("reading {}: {error}", marker.display())),
+    }
+}
+
 /// Runs the kernel removal and writes its progress to standard output.
 /// Fails when a step on this computer did not finish; a server that could
 /// not be told this computer left is said among what is left, as in the
@@ -53,7 +69,10 @@ fn plan(everything: bool) -> Result<Plan, String> {
 pub(crate) fn at_package_uninstall(everything: bool) -> Result<Removed, String> {
     let mut removed = Removed::AsAsked;
     let mut plan = plan(everything)?;
-    if everything && let Some(hub) = &plan.hub {
+    if everything
+        && let Some(hub) = &plan.hub
+        && !complete_removal_begun()?
+    {
         say(&format!(
             "This computer is the server of the world {}. Removing everything here would end that world for every computer in it; that is done only inside World, where the world's name is typed to confirm. The data stays; the rest of World is removed.",
             hub.name
