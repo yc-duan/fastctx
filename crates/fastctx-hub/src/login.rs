@@ -324,21 +324,26 @@ pub(crate) fn taken_by(asked: &MachineName, taken: &MachineName) -> String {
     }
 }
 
+/// What a device of a release from before names of any language is told
+/// when the hub has such a name.
+pub(crate) const OLDER_RELEASE: &str = "this hub has names beyond lowercase English letters, digits and hyphens, which this release of fastctx cannot read; update fastctx";
+
+/// Whether the hub or one of its members has a name that a release from
+/// before names of any language cannot read.
+pub(crate) fn beyond_older_releases(store: &Store) -> bool {
+    !store.hub.name.is_ascii_word() || store.book.directory.members.iter().any(|member| !member.name.is_ascii_word())
+}
+
 /// Names of any language reach every member in what the hub sends it, and a
 /// release from before them cannot read such a name: it would lose its hub
 /// over it. So a device of such a release comes in only while every name on
 /// the hub is one it reads, and a name it cannot read comes in only while
 /// every other member's last session said it reads them.
 fn readable(store: &Store, joining: &Joining) -> Result<(), String> {
-    let directory = &store.book.directory;
-    if !joining.any_names
-        && (!store.hub.name.is_ascii_word() || directory.members.iter().any(|member| !member.name.is_ascii_word()))
-    {
-        return Err(
-            "this hub has names beyond lowercase English letters, digits and hyphens, which this release of fastctx cannot read; update fastctx and log in again"
-                .to_string(),
-        );
+    if !joining.any_names && beyond_older_releases(store) {
+        return Err(format!("{OLDER_RELEASE} and log in again"));
     }
+    let directory = &store.book.directory;
     let name = directory.by_key(&joining.key).map_or(&joining.name, |member| &member.name);
     match unread(store, name, Some(&joining.key)) {
         Some(reason) => Err(reason),
