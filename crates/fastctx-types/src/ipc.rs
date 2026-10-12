@@ -21,7 +21,7 @@ use crate::{Address, JobId, MachineName};
 /// (`fastctx-node`'s `renewal_legacy`); other mismatched clients are refused
 /// before any call executes. `scripts/check-ipc-contract.py` decodes today's
 /// replies with the readers of the protocols released so far.
-pub const PROTOCOL: u32 = 12;
+pub const PROTOCOL: u32 = 13;
 
 /// The first frame on every connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
