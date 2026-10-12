@@ -69,8 +69,9 @@ pub struct Fields {
     /// What it is for, in a sentence or two.
     #[arg(long)]
     what: Option<String>,
-    /// The machines the project spans, separated by commas; a new project
-    /// spans this machine when not given.
+    /// The machines the project spans, separated by commas. Opening a
+    /// project without it, the project spans this machine; editing without
+    /// it, the machines stay as they are.
     #[arg(long, value_delimiter = ',')]
     machines: Option<Vec<String>>,
     /// One line of the address book: what is there, the machine, and the

@@ -243,6 +243,8 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
                 .map_err(|error| Failure::new(format!("logged in, but recording the membership failed: {error}")))?;
             start(node, membership).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
             crate::ledger::joined(node, &hub);
+            let (carrying, at) = (node.clone(), hub.clone());
+            tokio::spawn(async move { crate::own_collab::carry(&carrying, &at).await });
         }
     }
     node.log.line(format_args!("logged in to {account} on {hub_name} as {name}"));
@@ -300,8 +302,16 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
         answer.map_err(Failure::new)?;
     }
     let hub = link.membership().id.clone();
+    // Leaving its last network, the computer keeps the model collaboration
+    // that named it as its own (`own_collab`).
+    if node.links().iter().all(|other| other.membership().id == hub) {
+        crate::own_collab::take_back(node, link);
+    }
     link.stop();
     node.links.write().expect("never poisoned").remove(&hub);
+    // The machines each session may use, and who may ask for colleagues,
+    // are in its tools.
+    node.tools_changed(None);
     crate::relaying::follow(node, &hub);
     let net = net_dir(&node.world, &hub);
     let aside = node.world.path().join(format!("net-left-{}-{}", hub, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
@@ -783,6 +793,7 @@ impl fastctx_net::link::Node for Handler {
                 for problem in crate::ledger::carry(&node, &hub).await {
                     node.log.line(format_args!("carrying a project into the hub: {problem}"));
                 }
+                crate::own_collab::carry(&node, &hub).await;
             }
             if let Err(error) = crate::ledger::sync(&node, &hub, town).await {
                 node.log.line(format_args!("taking the projects' ledgers: {error}"));

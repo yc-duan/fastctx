@@ -2,10 +2,12 @@
 // this device is in the World. Choices take effect at once and are kept on
 // this device; the language takes effect as the interface starts again.
 
+import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "./focus";
 import { chooseSize, chooseTheme, chosenSize, chosenTheme, textSizes, themes, type Theme } from "../theme";
 import type { KeptNow, Legacy, Setup, WorldNow } from "../world/bridge";
+import { Sheet } from "./confirm";
 import { RenewalRow, type Renewing } from "./renewal";
 import { AppUpdateRow, type Updating } from "./app-update";
 import { PhoneRow, type PhoneSeam } from "./phone";
@@ -81,11 +83,11 @@ export class SettingsPage implements Page {
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
       <div class="settings scroller">
         <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
-        <section class="home-section"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-service" hidden></dl><dl class="facts settings-renewal" hidden></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-phone" hidden></dl><div class="look settings-retention" hidden></div></section>
+        <section class="home-section settings-device"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-renewal" hidden></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data">${escape(words.dataOpen)}${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl></section>
         <section class="home-section settings-keys"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
-        ${options.computer ? `<section class="home-section"><h2 class="section-title">${escape(options.removalWords.title)}</h2><div class="removal"></div></section>` : ""}
+        ${options.computer ? `<section class="home-section"><h2 class="section-title">${escape(options.removalWords.title)}</h2><button class="text-button danger-text settings-uninstall" type="button" data-uninstall>${glyph("logout", 16)}<span>${escape(options.removalWords.open)}</span></button></section>` : ""}
       </div>`;
     this.device = this.element.querySelector<HTMLElement>(".device")!;
     this.service = this.element.querySelector<HTMLElement>(".settings-service")!;
@@ -102,9 +104,22 @@ export class SettingsPage implements Page {
         (version) => options.appUpdate?.(version),
       );
     }
-    this.askRetention();
     if (options.phone) new PhoneRow(this.element.querySelector<HTMLElement>(".settings-phone")!, words, options.phone);
-    if (options.computer) new RemovalSection(this.element.querySelector<HTMLElement>(".removal")!, options.removalWords, options.computer.removing);
+    const computer = options.computer;
+    if (computer) {
+      // Uninstalling is a dialog of its own: the two ways, what each takes
+      // and leaves, and its steps ticked off, over the settings.
+      let sheet: Sheet | null = null;
+      this.element.querySelector("[data-uninstall]")!.addEventListener("click", () => {
+        if (!sheet) {
+          const opened = new Sheet("removal-sheet");
+          opened.body.innerHTML = `${opened.head(options.removalWords.title, options.removalWords.cancel)}<div class="removal"></div>`;
+          new RemovalSection(opened.body.querySelector<HTMLElement>(".removal")!, options.removalWords, computer.removing, (on) => (opened.busy = on));
+          sheet = opened;
+        }
+        sheet.show();
+      });
+    }
     this.service.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-service]");
       if (button && !button.disabled) this.keep();
@@ -127,9 +142,6 @@ export class SettingsPage implements Page {
           chooseNotifying(value === "on");
           options.notifyChanged?.(value === "on");
           break;
-        case "retention":
-          this.keepFor(Number(value));
-          return;
       }
       redrawKeepingFocus(this.element, () => this.drawLook());
     });
@@ -140,51 +152,6 @@ export class SettingsPage implements Page {
     this.stop();
     this.renewal?.leave();
     this.appUpdate?.leave();
-  }
-
-  private retained: number | null = null;
-  private retentionSaid = "";
-
-  private askRetention(): void {
-    const retention = this.options.computer?.retention;
-    if (!retention) return;
-    retention.read().then(
-      (days) => {
-        this.retained = days;
-        this.drawRetention();
-      },
-      (error: unknown) => console.warn("the retention settings could not be read", error),
-    );
-  }
-
-  /** The days to choose from: a day, a few, a week, two, a month, and
-   *  whatever was set otherwise. */
-  private drawRetention(): void {
-    const { words } = this.options;
-    const place = this.element.querySelector<HTMLElement>(".settings-retention")!;
-    if (this.retained === null) return;
-    const days = [...new Set([1, 3, 7, 14, 30, this.retained])].sort((a, b) => a - b);
-    place.hidden = false;
-    place.innerHTML = `<div class="choice-row" role="radiogroup" aria-label="${escape(words.retention)}"><span class="choice-label">${escape(words.retention)}</span><div class="choice-options">${days
-      .map(
-        (n) =>
-          `<button type="button" class="choice${n === this.retained ? " chosen" : ""}" role="radio" aria-checked="${n === this.retained}" data-choice="retention" data-value="${n}">${escape(words.days(n))}</button>`,
-      )
-      .join("")}</div></div>${this.retentionSaid ? `<p class="settings-said">${escape(this.retentionSaid)}</p>` : ""}`;
-  }
-
-  private keepFor(days: number): void {
-    const retention = this.options.computer?.retention;
-    if (!retention || days === this.retained) return;
-    const before = this.retained;
-    this.retained = days;
-    this.retentionSaid = "";
-    redrawKeepingFocus(this.element, () => this.drawRetention());
-    retention.write(days).catch((error: unknown) => {
-      this.retained = before;
-      this.retentionSaid = String(error);
-      this.drawRetention();
-    });
   }
 
   private askService(): void {
@@ -284,10 +251,10 @@ export class SettingsPage implements Page {
       const why = link.kind === "connecting" ? (link.last_error ?? "") : link.kind === "stopped" ? link.reason : "";
       return [words.hub(hub.name), [linked, words.as(hub.logins.join(", "))].filter(Boolean).join(" · "), why];
     });
+    // The version is said once, by the local service's own row below.
     const facts: [string, string, string?][] = [
       [words.machine, world.here],
       ...(hubs.length ? hubs : [[words.link, words.alone] as [string, string]]),
-      [words.version, world.nodes.facts?.version ?? ""],
     ];
     this.device.innerHTML = facts
       .filter(([, value]) => value)

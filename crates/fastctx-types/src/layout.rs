@@ -68,6 +68,18 @@ impl WorldDir {
         self.root.join("net")
     }
 
+    /// Which optional parts of the interface this device shows
+    /// (`crate::features`).
+    pub fn features(&self) -> PathBuf {
+        self.root.join("features.json")
+    }
+
+    /// This computer's own model collaboration, which applies while it is
+    /// in no network (`world-colleagues.md`, 同事从哪里来、能去哪里).
+    pub fn own_collab(&self) -> PathBuf {
+        self.root.join("collab.json")
+    }
+
     /// Every directory that holds residents' directories: `outside` and
     /// each town's.
     pub fn resident_parents(&self) -> std::io::Result<Vec<PathBuf>> {

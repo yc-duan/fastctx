@@ -4,8 +4,8 @@
 import type { Address } from "../world/events";
 
 /** The features a World can turn on (`world-gui.md`, 功能). */
-export type Feature = "collaboration" | "memory";
-const features: Feature[] = ["collaboration", "memory"];
+export type Feature = "conversations" | "collaboration" | "memory";
+const features: Feature[] = ["conversations", "collaboration", "memory"];
 
 export type Place =
   | { kind: "home" }
@@ -27,8 +27,12 @@ export type Place =
    *  has no room for among them. */
   | { kind: "talks"; town: string | null }
   | { kind: "settings" }
-  /** Logging in, the first time or to one more account. */
-  | { kind: "login" }
+  /** Into a network: joining one, or making a new one; with neither, the
+   *  page asks which. */
+  | { kind: "login"; way?: "join" | "new" }
+  /** A network this device is in: its server, this device's place in it,
+   *  and leaving it. */
+  | { kind: "network"; hub: string }
   /** The accounts this computer or device is logged in to. */
   | { kind: "account" }
   /** An administrator's page of a hub's accounts. */
@@ -67,7 +71,9 @@ export function link(place: Place): string {
     case "settings":
       return "#/settings";
     case "login":
-      return "#/login";
+      return place.way ? `#/login/${place.way}` : "#/login";
+    case "network":
+      return `#/network/${part(place.hub)}`;
     case "account":
       return "#/account";
     case "admin":
@@ -120,7 +126,10 @@ export function placeOf(hash: string): Place {
     // An address from before accounts, kept so old links still open.
     case "welcome":
     case "login":
-      return { kind: "login" };
+      return parts[1] === "join" || parts[1] === "new" ? { kind: "login", way: parts[1] } : { kind: "login" };
+    case "network":
+      if (parts[1]) return { kind: "network", hub: parts[1] };
+      break;
     case "account":
       return { kind: "account" };
     case "admin":

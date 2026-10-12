@@ -60,6 +60,11 @@
   --radius-l: 16px;
   --radius-full: 999px;
 
+  /* Glyphs are drawn at their nominal size times this, rounded to whole
+     pixels: a size up from the nominal everywhere, more under a finger
+     (below). */
+  --icon-scale: 1.2;
+
   /* The activity rail: a 20px column of glyphs, then 10px. */
   --rail-glyph: 20px;
   --rail-gap: 10px;
@@ -71,6 +76,19 @@
   --fold: 220ms;
   --fold-easing: cubic-bezier(0.2, 0, 0, 1);
   --enter: 220ms;
+  /* A turn's line comes as if drawn: the rule pulled across the column
+     (--draw), the drop of ink and the words written in after it (--write,
+     beginning --write-after into the rule). It goes at once. */
+  --draw: 820ms;
+  --draw-easing: cubic-bezier(0.33, 0.05, 0.2, 1);
+  --write: 560ms;
+  --write-after: 120ms;
+  /* Words sent rise from the input into their place: up along
+     --send-easing, across along the slower --send-drift, so they travel on
+     a curve. */
+  --send: 560ms;
+  --send-easing: cubic-bezier(0.3, 0.2, 0.15, 1);
+  --send-drift: cubic-bezier(0.55, 0, 0.3, 1);
 }
 
 /* On a phone the body is a size larger: the same words are read at arm's
@@ -260,5 +278,24 @@
     --hover: 0ms;
     --fold: 0ms;
     --enter: 0ms;
+    --draw: 0ms;
+    --write: 0ms;
+    --write-after: 0ms;
+    --send: 0ms;
+  }
+}
+
+/* Every glyph at its nominal size times the scale, in whole pixels; where
+   rounding is not understood, the glyph keeps its nominal size. */
+.glyph {
+  width: round(nearest, calc(var(--glyph, 20) * var(--icon-scale) * 1px), 1px);
+  height: round(nearest, calc(var(--glyph, 20) * var(--icon-scale) * 1px), 1px);
+}
+
+/* Under a finger the glyphs are larger again: read at arm's length, pressed
+   with a thumb. */
+@media (hover: none) and (pointer: coarse) {
+  :root {
+    --icon-scale: 1.4;
   }
 }

@@ -32,6 +32,9 @@ import { AttachTray, type AttachSource, type AttachWords } from "../conversation
 import { glyph } from "../conversation/glyphs";
 import { ModelPanel, type ModelPanelWords } from "../conversation/model-panel";
 import { escape } from "../conversation/prose";
+import { Starting, type Seed } from "../conversation/starting";
+import { departureOf } from "../conversation/flight";
+import type { Words } from "../words";
 import type { HubAccount, Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
@@ -94,7 +97,12 @@ export interface NewTalkOptions {
    *  with null every machine reached. */
   agents(machine: string | null): Promise<WorldAgents>;
   begin(begun: Begun): Promise<Address>;
-  opened(address: Address): void;
+  /** The conversation began: its page opens, with the first words as they
+   *  were shown here. */
+  opened(address: Address, seed: Seed | null): void;
+  /** The conversation's own words, and this device's name, for showing it
+   *  begin (`conversation/starting.ts`). */
+  starting?: { words: Words; here(): string };
   /** Asks the user to let Claude work without asking in one of its logins
    *  on a machine, where it has not yet; true once Claude Code there
    *  records it. */
@@ -220,6 +228,8 @@ export class NewTalk {
   private marked = "";
   /** Where the words being written are kept between visits. */
   private readonly kept: string;
+  /** The conversation being begun, shown in place of the stage. */
+  private readonly starting: Starting | null = null;
 
   constructor(private readonly options: NewTalkOptions) {
     const { words } = options;
@@ -246,6 +256,10 @@ export class NewTalk {
           </div>
         </form>
       </footer>`;
+    if (options.starting) {
+      this.starting = new Starting(options.starting.words, options.starting.here, () => departureOf(this.input));
+      this.element.querySelector(".new-talk-stage")!.after(this.starting.element);
+    }
     this.form = this.element.querySelector("form")!;
     this.input = this.element.querySelector("textarea")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
@@ -328,10 +342,19 @@ export class NewTalk {
   /** The page is left: it stops listening for files dropped on the window;
    *  what was written and attached stays for when it is shown again. */
   leave(): void {
+    // A conversation begun from here opened on its own page; the next is
+    // begun on an empty stage.
+    if (!this.busy) this.unstage();
     this.stopDrops?.();
     this.stopDrops = null;
     this.choose(null);
     this.models.hide();
+  }
+
+  /** The stage as it is before anything is begun. */
+  private unstage(): void {
+    this.starting?.clear();
+    this.element.classList.remove("begun");
   }
 
   private fit(): void {
@@ -959,16 +982,27 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
     if (this.model) remember(`model:${option.agent}`, this.model);
     if (this.effort) remember(`effort:${option.agent}`, this.effort);
     const { words } = this.options;
+    // The words go into the conversation at once; what happens on the way
+    // stays out of sight unless it fails.
+    if (this.starting) {
+      this.starting.begin({
+        text,
+        attached: (this.tray?.held ?? []).map(({ name, size, image, preview }) => ({ name, size, image, preview })),
+      });
+      this.element.classList.add("begun");
+      this.input.value = "";
+      this.fit();
+    }
     try {
       if (this.tray?.count) {
-        this.note.textContent = words.sendingFiles;
+        if (!this.starting) this.note.textContent = words.sendingFiles;
         try {
           await this.tray.sendAll();
         } catch (error) {
           throw new NotSent(String(error));
         }
       }
-      this.note.textContent = words.starting;
+      if (!this.starting) this.note.textContent = words.starting;
       const address = await this.options.begin({
         agent: option.agent,
         machine: option.machine,
@@ -991,13 +1025,23 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
       this.town = this.options.town;
       this.busy = false;
       this.note.textContent = "";
-      this.options.opened(address);
+      this.options.opened(address, this.starting?.seed() ?? null);
     } catch (error) {
       this.busy = false;
       const why = error instanceof Error ? error.message : String(error);
-      this.note.textContent = error instanceof NotSent ? words.filesNotSent : words.notOpened(why);
-      this.note.title = error instanceof NotSent ? "" : why;
-      this.note.classList.add("refused");
+      if (this.starting) {
+        // Said under the words that went; the words come back to the input
+        // to be sent again.
+        this.starting.failed(error instanceof NotSent ? `${words.filesNotSent} · ${why}` : why);
+        if (!this.input.value) {
+          this.input.value = text;
+          this.fit();
+        }
+      } else {
+        this.note.textContent = error instanceof NotSent ? words.filesNotSent : words.notOpened(why);
+        this.note.title = error instanceof NotSent ? "" : why;
+        this.note.classList.add("refused");
+      }
     } finally {
       this.drawStart();
     }

@@ -1,9 +1,13 @@
 //! What a session the user opens is told about its working environment, in
-//! its host's guidance file (`world-run.md`, 模型怎样知道): the user's
-//! machines, that `run` is its shell on all of them and its way to look at
-//! and change files on this machine too, since the host's own shell and image
-//! viewer are off; and the one rule a session needs before it touches
-//! anything, that it enters a project only when the user says.
+//! its host's guidance file (`world-run.md`, 模型怎样知道): that `run` is its
+//! shell and its way to look at and change files on this machine, since the
+//! host's own shell and image viewer are off; that other machines, when
+//! `run`'s description lists any, are reached with `on`; and the one rule a
+//! session needs before it touches anything, that it enters a project only
+//! when the user says. It is written once, when fastctx is applied, and many
+//! users have only this one computer, so it never says the user has several
+//! machines: what is true at the moment of a call is in `run`'s description,
+//! written when the session lists its tools.
 //!
 //! A host may list a server's tools by name only until they are used, so
 //! these words alone must lead a model to the tools and give the commands it
@@ -35,18 +39,16 @@ pub fn guidance(codex: bool) -> String {
     let exec = if codex { CODEX_EXEC } else { "" };
     format!(
         "\
-## Your machines and tools
+## Your shell and tools
 
-The user has several machines, connected by fastctx: this one, and others that `fastctx nodes` lists. You work on all of them through the `run` tool.
-
-`run` is your shell: bash with the GNU tools and `rg` on every machine, Windows included. Do all shell work with it, and all work on files, on this machine too:
+You work through fastctx's `run` tool. `run` is your shell: bash with the GNU tools and `rg`, Windows included. Do all shell work with it, and all work on files, on this machine too:
 - `fastctx view PATH...` shows files: text with line numbers (`--lines 120-180` for part of one); an image as the image itself, for you to see; a PDF as its text by page (`--pages 3-5`, and `--image` to see the pages); Word, PowerPoint and Excel as their content. Without a range, a large file comes back as its beginning, its end and an outline; with a range, that range in full. When you are unsure what a file holds, look at it without a range first.
 - `edit PATH` and `write PATH` change a file and keep its encoding and line endings.
 - `rg` searches.
 
 `run`'s description shows each of these in full.
 
-`run` starts on this machine. To work on another one, write `on MACHINE` before a command, or give it a script:
+`run` starts on the machine the first line of its description names, usually this one. When its description also lists other machines of the user's, reach them by writing `on MACHINE` before a command, or by giving it a script:
 
 ```bash
 on server tail -n 50 /var/log/app.log
@@ -55,7 +57,7 @@ cd C:/work/app && cargo test
 EOF
 ```
 
-When the user speaks of one of the machines, work on it this way.
+When the user speaks of one of those machines, work on it this way.
 
 Inside a script, these commands are ordinary programs: give them several files, pipe into and out of them, loop over machines, as with any command. Calls to `run` share nothing: make several at once, or call `run` from your scripts and subagents, as with any tool.
 

@@ -1,4 +1,5 @@
-//! Model collaboration belongs to an account, not to a project or session.
+//! Model collaboration belongs to an account, not to a project or session;
+//! a computer in no network keeps its own (`world-colleagues.md`).
 
 use std::path::PathBuf;
 
@@ -86,7 +87,10 @@ pub struct Offered {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Offer {
     pub name: String,
-    pub account: String,
+    /// The account it works for; none for a callee of a computer in no
+    /// network, which works for that computer's user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
     pub use_when: String,
     pub lives_on: Option<String>,
 }

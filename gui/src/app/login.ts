@@ -30,6 +30,9 @@ export interface HereAddress {
 export interface LoginOptions {
   store: Store;
   words: LoginWords;
+  /** Asked for from the sidebar's networks: joining one, or making a new
+   *  one (here or on a server); with neither, every way is offered. */
+  way?: "join" | "new";
   head(title: string, actions?: string): string;
   /** This interface runs on a phone: it logs in as a device, and nothing
    *  is set up on it. */
@@ -94,7 +97,7 @@ export class LoginPage implements Page {
   constructor(private readonly options: LoginOptions) {
     const { words } = options;
     this.title = words.title;
-    this.step = options.device ? (options.scan ? "scan" : "password") : this.loggedIn() ? "password" : "choose";
+    this.step = options.device ? (options.scan ? "scan" : "password") : options.way === "join" ? "password" : options.way === "new" || !this.loggedIn() ? "choose" : "password";
     this.element = document.createElement("div");
     this.element.className = "welcome-page login-page";
     this.element.innerHTML = `
@@ -205,7 +208,7 @@ export class LoginPage implements Page {
       case "choose":
         this.body.innerHTML = `
           <div class="welcome-ways">
-            <button class="welcome-way" type="button" data-way="password">${joinMark()}<span class="welcome-way-title">${escape(words.join)}</span><span class="welcome-way-what">${escape(words.joinWhat)}</span></button>
+            ${this.options.way === "new" ? "" : `<button class="welcome-way" type="button" data-way="password">${joinMark()}<span class="welcome-way-title">${escape(words.join)}</span><span class="welcome-way-what">${escape(words.joinWhat)}</span></button>`}
             ${
               this.options.create
                 ? `<button class="welcome-way" type="button" data-way="create">${createMark()}<span class="welcome-way-title">${escape(words.create)}</span><span class="welcome-way-what">${escape(words.createWhat)}</span></button>`
@@ -216,8 +219,7 @@ export class LoginPage implements Page {
                 ? `<button class="welcome-way" type="button" data-way="remote">${remoteMark()}<span class="welcome-way-title">${escape(words.remote)}</span><span class="welcome-way-what">${escape(words.remoteWhat)}</span></button>`
                 : ""
             }
-          </div>
-          ${this.aloneWay()}`;
+          </div>`;
         break;
       case "password":
       case "open": {
@@ -324,13 +326,6 @@ export class LoginPage implements Page {
     return `<button class="text-button login-way" type="button" data-way="choose">${escape(this.options.words.back)}</button>`;
   }
 
-  /** The way past logging in, for a computer on its own the first time. */
-  private aloneWay(): string {
-    const { words } = this.options;
-    if (this.options.device || this.loggedIn()) return "";
-    return `<p class="login-alone"><button class="text-button alone" type="button" title="${escape(words.aloneWhat)}">${escape(words.alone)}</button></p>`;
-  }
-
   /** This computer's addresses as pills to choose: the physical ones with
    *  a way out chosen to start with. */
   private async drawAddresses(): Promise<void> {
@@ -410,14 +405,16 @@ export class LoginPage implements Page {
           : "",
     ].join("");
     const who = [done.account, this.options.device ? "" : done.name].filter(Boolean).join(" · ");
+    // A picture, not a place to work: the drawing is shown, never pointed
+    // at or pressed (`world-gui.md`, 登录或新建成功之后).
     this.body.innerHTML = `
       <div class="welcome-done">
-        <div class="welcome-drawing"></div>
+        <div class="welcome-drawing" inert aria-hidden="true"></div>
         <h2 class="welcome-done-title">${escape(this.created ? words.created(done.hub) : words.joined(done.hub))}</h2>
-        <p class="welcome-done-who mono">${escape(who)}</p>
+        <p class="welcome-done-who">${escape(who)}</p>
         ${slips ? `<div class="welcome-slips">${slips}</div>` : ""}
         <p class="sheet-note" role="alert" hidden></p>
-        <footer class="welcome-foot"><span class="login-ways">${this.created && this.options.invite ? `<button class="text-button invite-next" type="button">${escape(words.addDevice)}</button>` : ""}</span><button class="sheet-go enter" type="button">${escape(words.enter)}</button></footer>
+        <div class="welcome-done-acts"><button class="sheet-go enter" type="button">${escape(words.enter)}</button>${this.created && this.options.invite ? `<button class="text-button invite-next" type="button">${escape(words.addDevice)}</button>` : ""}</div>
       </div>`;
     const drawing = this.options.drawing;
     if (drawing) {
@@ -472,7 +469,7 @@ export class LoginPage implements Page {
       else this.chosen.add(address);
       return this.drawAddresses();
     }
-    if (target.closest(".alone") || target.closest(".enter")) return this.options.enter();
+    if (target.closest(".enter")) return this.options.enter();
     if (target.closest(".invite-next") && this.done && this.options.invite) {
       const login = loginsOf(this.options.store.world.peek()?.accounts).find((one) => one.hubName === this.done!.hub && one.account === this.done!.account);
       if (login) this.options.invite(login);

@@ -133,7 +133,9 @@ fn write_alone(
     if let Some(machines) = &machines
         && let Some(stranger) = machines.iter().find(|machine| *machine != here)
     {
-        return Err(format!("there is no machine named {stranger}; this machine, {here}, is logged in to no hub"));
+        return Err(format!(
+            "there is no machine named {stranger}; this computer, {here}, is in no network, so a project spans only it"
+        ));
     }
     let known: Vec<&str> =
         entries.iter().flat_map(|(_, entry, _)| entry.files.iter().map(|file| file.path.as_str())).collect();
@@ -221,7 +223,13 @@ pub(crate) fn local_name(node: &Node, link: &Link, id: &TownId) -> Result<TownNa
 }
 
 /// Takes `town`'s entries through `latest`.
-pub(crate) async fn take(node: &Arc<Node>, link: &Arc<Link>, name: &TownName, town: &TownId, latest: u64) -> Result<(), String> {
+pub(crate) async fn take(
+    node: &Arc<Node>,
+    link: &Arc<Link>,
+    name: &TownName,
+    town: &TownId,
+    latest: u64,
+) -> Result<(), String> {
     let directory = node.world.town(name);
     let mut refused = refused(&directory).map_err(|error| format!("reading {name}'s ledger: {error}"))?;
     let mut after = cursor(&directory, &refused).map_err(|error| format!("reading {name}'s ledger: {error}"))?;
@@ -349,7 +357,9 @@ async fn carry_town(
     {
         return Err(format!("{town} was not carried: {error}"));
     }
-    let latest = |catalog: Vec<(TownId, u64)>| catalog.into_iter().find(|(town, _)| town == id).map(|(_, latest)| latest).unwrap_or(0);
+    let latest = |catalog: Vec<(TownId, u64)>| {
+        catalog.into_iter().find(|(town, _)| town == id).map(|(_, latest)| latest).unwrap_or(0)
+    };
     // A carry cut short, or another computer's, wrote some of them already.
     let mut written = latest(link.ledger_catalog().await?);
     for (index, (_, entry, _)) in entries.iter().enumerate() {
@@ -371,7 +381,8 @@ async fn carry_town(
             };
             files.push(File { path: file.path.clone(), bytes });
         }
-        let mut carried = link.entry(id, entry.machines.as_ref().map(|machines| machines.iter().map(renamed).collect()), files);
+        let mut carried =
+            link.entry(id, entry.machines.as_ref().map(|machines| machines.iter().map(renamed).collect()), files);
         carried.at = entry.at;
         if let Err(error) = link.ledger_write(id, link.sign_entry(&carried)).await {
             written = latest(link.ledger_catalog().await?);

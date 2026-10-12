@@ -1,4 +1,5 @@
-//! The union of the collaboration configured by the accounts a session serves.
+//! The union of the collaboration configured by the accounts a session
+//! serves; on a computer in no network, its own (`crate::own_collab`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,9 +16,17 @@ use crate::Node;
 
 pub(crate) struct Candidate {
     pub shown: String,
-    pub link: Arc<Link>,
-    pub account: AccountName,
+    pub whose: Whose,
     pub started: Started,
+}
+
+/// Whose settings offer a callee.
+pub(crate) enum Whose {
+    /// An account the session serves, at the hub of `link`.
+    Account { link: Arc<Link>, account: AccountName },
+    /// This computer's own, while it is in no network: the colleague works
+    /// for this computer's user, as a session the user opened here does.
+    Computer,
 }
 
 pub(crate) struct Choices {
@@ -42,7 +51,7 @@ fn home_default(node: &Node, agent: &AgentName) -> Result<PathBuf, Failure> {
     Ok(crate::homes::claude_default(&env, &home))
 }
 
-fn matches_home(
+pub(crate) fn matches_home(
     node: &Node,
     agent: &AgentName,
     configured: Option<&Path>,
@@ -72,6 +81,9 @@ pub(crate) fn choices(
     let Some(login) = login else { return Ok(None) };
     if about.as_ref().is_some_and(|about| about.host.agent != login.agent) {
         return Err(Failure::not_run("the calling login does not match this session's agent"));
+    }
+    if !node.connected_anywhere() {
+        return own(node, login);
     }
     let acting = resident.and_then(|id| crate::here::placed(node, id)).map(|(acting, _)| acting).unwrap_or_default();
     let mut applies = Vec::new();
@@ -141,14 +153,13 @@ pub(crate) fn choices(
             let hands = view.rights(&item.account, &callee.login.machine).hands;
             callees.push(Offer {
                 name: shown.clone(),
-                account: item.label.clone(),
+                account: Some(item.label.clone()),
                 use_when: callee.use_when.clone(),
                 lives_on: hands.then(|| node.written(&item.link, &callee.login.machine).to_string()),
             });
             candidates.push(Candidate {
                 shown,
-                link: item.link.clone(),
-                account: item.account.clone(),
+                whose: Whose::Account { link: item.link.clone(), account: item.account.clone() },
                 started: Started { callee: callee.clone(), rules: item.collab.rules.clone() },
             });
         }
@@ -158,6 +169,44 @@ pub(crate) fn choices(
         .map(|item| HubAccount { hub: item.link.membership().id.clone(), account: item.account.clone() })
         .collect();
     Ok(Some(Choices { offered: Offered { callees, prompt }, candidates, acting: Acting::Accounts { accounts } }))
+}
+
+/// What this computer's own settings offer `login`, while it is in no
+/// network: its callers and callees are its own logins, whatever this
+/// computer was called when they were written.
+fn own(node: &Node, login: &Caller) -> Result<Option<Choices>, Failure> {
+    let collab = crate::own_collab::read(&node.world)?;
+    if !collab.on {
+        return Ok(None);
+    }
+    let mut calling = false;
+    for caller in &collab.callers {
+        calling |= caller.agent == login.agent
+            && matches_home(node, &login.agent, caller.home.as_deref(), login.home.as_deref())?;
+    }
+    if !calling {
+        return Ok(None);
+    }
+    let here = node.machine();
+    let prompt = collab.prompt.clone().unwrap_or_else(|| DEFAULT_PROMPT.to_string());
+    let mut callees = Vec::new();
+    let mut candidates = Vec::new();
+    for callee in &collab.callees {
+        let mut callee = callee.clone();
+        callee.login.machine = here.clone();
+        callees.push(Offer {
+            name: callee.name.clone(),
+            account: None,
+            use_when: callee.use_when.clone(),
+            lives_on: Some(here.to_string()),
+        });
+        candidates.push(Candidate {
+            shown: callee.name.clone(),
+            whose: Whose::Computer,
+            started: Started { callee, rules: collab.rules.clone() },
+        });
+    }
+    Ok(Some(Choices { offered: Offered { callees, prompt }, candidates, acting: Acting::Here }))
 }
 
 pub(crate) fn require(node: &Arc<Node>, resident: &ResidentId, login: Option<&Caller>) -> Result<Choices, Failure> {

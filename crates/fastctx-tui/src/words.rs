@@ -392,6 +392,15 @@ impl Words {
         self.pick("新建项目", "new project")
     }
 
+    /// The key that turns conversations off, when they are `on`, or on.
+    pub fn key_conversations(&self, on: bool) -> &'static str {
+        if on {
+            self.pick("关闭对话", "turn conversations off")
+        } else {
+            self.pick("开启对话", "turn conversations on")
+        }
+    }
+
     pub fn key_machines(&self) -> &'static str {
         self.pick("机器", "machines")
     }

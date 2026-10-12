@@ -85,6 +85,12 @@ export interface Words {
   sending: string;
   context(percent: number): string;
   working: string;
+  /** The turn's line while a conversation's first words are on their way
+   *  and nothing has come back yet. */
+  starting: string;
+  /** Under the first words, when the conversation could not begin; the
+   *  reason follows as it was given. */
+  startFailed: string;
   /** The turn's line while the agent writes its answer. */
   answering: string;
   idle: string;
@@ -312,6 +318,8 @@ export const zh: Words = {
   sending: "发送中",
   context: (percent) => `上下文 ${percent}%`,
   working: "工作中",
+  starting: "启动中",
+  startFailed: "启动失败",
   answering: "书写回答",
   idle: "空闲",
   removed: "已移除",
@@ -522,6 +530,8 @@ export const en: Words = {
   sending: "Sending",
   context: (percent) => `Context ${percent}%`,
   working: "Working",
+  starting: "Starting",
+  startFailed: "Couldn't start",
   answering: "Writing",
   idle: "Idle",
   removed: "Removed",
