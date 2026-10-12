@@ -1522,3 +1522,19 @@
   font-size: var(--size-small);
   color: var(--text-2);
 }
+
+/* In a network, the film of what one is for, again: the last word of the
+   line of hints under the drawing, as quiet as they are. */
+.canvas-hints .machines-film-again {
+  min-height: 0;
+  height: 18px;
+  margin-left: var(--space-2);
+  padding: 0 4px;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.canvas-hints .machines-film-again:hover {
+  color: var(--text);
+}

@@ -31,6 +31,8 @@ export interface MachineMapOptions {
    *  columns as tall as fill the frame best, its names kept readable however
    *  small it is drawn. */
   still?: boolean;
+  /** What follows the hints under the drawing. */
+  afterHints?: HTMLElement;
 }
 
 export interface MachineMapScene {
@@ -128,7 +130,7 @@ export class MachineMap {
     this.surface = new MapCanvas({
       label: words.map,
       controls: { minus: words.zoomOut, plus: words.zoomIn, fit: words.fit, scale: words.scale },
-      hints: options.still ? undefined : { zoom: words.hintZoom, pan: words.hintPan },
+      hints: options.still ? undefined : { zoom: words.hintZoom, pan: words.hintPan, ...(options.afterHints ? { after: options.afterHints } : {}) },
       still: options.still ?? false,
       minScale: 1 / 16,
       maxScale: 4,

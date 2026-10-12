@@ -418,6 +418,10 @@ export interface MachinesWords {
   /** On its own, in no network: the film of what a network is for, and the
    *  two ways into one. */
   film: NetworkWords;
+  /** In a network: the film again, over the drawing, and closing it. */
+  filmAgain: string;
+  filmAgainWhat: string;
+  filmClose: string;
   newNetwork: string;
   joinNetwork: string;
   /** The drawing as a canvas: what it is to a screen reader, its corner
@@ -623,6 +627,9 @@ export const zhMachines: MachinesWords = {
     hub: "中枢服务器",
     shared: "共享给 bo",
   },
+  filmAgain: "再看一遍",
+  filmAgainWhat: "网络能做什么",
+  filmClose: "关闭",
   newNetwork: "新建网络",
   joinNetwork: "加入网络",
   map: "机器图：按住滚轮拖动，Ctrl 加滚轮缩放，Tab 逐台选中",
@@ -844,6 +851,9 @@ export const enMachines: MachinesWords = {
     hub: "Hub",
     shared: "Shared with bo",
   },
+  filmAgain: "Watch again",
+  filmAgainWhat: "What a network does",
+  filmClose: "Close",
   newNetwork: "New network",
   joinNetwork: "Join a network",
   map: "Machines: hold the wheel to move, Ctrl and the wheel to zoom, Tab to each machine",

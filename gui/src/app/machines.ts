@@ -15,6 +15,7 @@ import { layerOpened, type Layer } from "./back";
 import { escape } from "../conversation/prose";
 import { Film } from "../film/film";
 import { network } from "../film/network";
+import { watchFilm } from "../film/theater";
 import type { Point } from "../map-canvas";
 import { blot, circle, outline, ruled, seeded } from "../pen/shapes";
 import type { AccountChange, HubAccounts, Login, MemberSeen } from "../world/accounts";
@@ -191,7 +192,18 @@ export class MachinesPage implements Page {
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
     this.chooseBar = this.element.querySelector<HTMLElement>(".map-choose")!;
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
+    // The film of what a network is for, over the drawing, once in one:
+    // the last word of the line of hints under it.
+    const again = document.createElement("button");
+    again.type = "button";
+    again.className = "text-button quiet-button machines-film-again";
+    again.title = words.filmAgainWhat;
+    again.innerHTML = `${glyph("regenerate", 14)}<span>${escape(words.filmAgain)}</span>`;
+    again.addEventListener("click", () => {
+      watchFilm((shape) => network(words.film, shape), words.filmAgainWhat, words.filmClose);
+    });
     this.map = new MachineMap({
+      afterHints: again,
       words,
       storageKey: MAP_ORDER,
       event: (event) => {

@@ -10,7 +10,9 @@ export interface CanvasOptions extends CameraOptions {
   controls: { minus: string; plus: string; fit: string; scale: string };
   /** The hint under the drawing for a mouse: how to zoom and how to move
    *  it. */
-  hints?: { zoom: string; pan: string } | undefined;
+  /** The hints under the drawing, and what follows them on that line, such
+   *  as a way to what the drawing is for. */
+  hints?: { zoom: string; pan: string; after?: HTMLElement } | undefined;
   /** A live predicate: final release always checks it again. */
   validTarget: ValidTarget;
   event(event: CanvasEvent): void;
@@ -107,8 +109,8 @@ export class MapCanvas {
     if (options.hints && !options.still) {
       const hints = document.createElement("div");
       hints.className = "canvas-hints";
-      hints.setAttribute("aria-hidden", "true");
-      hints.innerHTML = `<span class="canvas-hint"><kbd>Ctrl</kbd><span class="canvas-plus">+</span>${MOUSE}<span>${escapeHtml(options.hints.zoom)}</span></span><span class="canvas-hint">${MOUSE}<span>${escapeHtml(options.hints.pan)}</span></span>`;
+      hints.innerHTML = `<span class="canvas-hint" aria-hidden="true"><kbd>Ctrl</kbd><span class="canvas-plus">+</span>${MOUSE}<span>${escapeHtml(options.hints.zoom)}</span></span><span class="canvas-hint" aria-hidden="true">${MOUSE}<span>${escapeHtml(options.hints.pan)}</span></span>`;
+      if (options.hints.after) hints.append(options.hints.after);
       this.element.append(hints);
     }
     const signal = this.abort.signal;

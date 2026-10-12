@@ -48,8 +48,9 @@
 .canvas-plus { opacity: 0.7; }
 .canvas-mouse { width: 11px; height: 16px; flex: none; }
 .canvas-mouse-wheel { fill: var(--pen-clay, currentColor); }
+.canvas-hints > :not(.canvas-hint) { pointer-events: auto; }
 @media not ((hover: hover) and (pointer: fine)) {
-  .canvas-hints { display: none; }
+  .canvas-hint { display: none; }
 }
 .canvas-ink { position: absolute; transform-origin: 0 0; pointer-events: none; }
 .canvas-overlay, .canvas-hits, .canvas-names { position: absolute; inset: 0; pointer-events: none; }

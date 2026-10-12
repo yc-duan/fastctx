@@ -38,6 +38,7 @@ import { deviceFeatures } from "./device-features";
 import { collaboration } from "../film/collaboration";
 import { Film } from "../film/film";
 import type { Built, Shape } from "../film/reel";
+import { watchFilm } from "../film/theater";
 import { workbench } from "../film/workbench";
 
 export interface FeaturesOptions {
@@ -120,29 +121,11 @@ export class FeaturesPage implements Page {
    *  or Escape is pressed. */
   private watch(make: (shape: Shape) => Built, label: string): void {
     this.unwatch?.();
-    const theater = document.createElement("div");
-    theater.className = "film-theater";
-    const shut = this.options.words.closeFilm;
-    // Its close is under the film, away from the window's own buttons.
-    theater.innerHTML = `<div class="film-theater-box"></div><button class="text-button film-theater-close" type="button">${glyph("close", 16)}<span>${escape(shut)}</span></button>`;
-    const film = new Film(make, label);
-    theater.firstElementChild!.append(film.element);
-    const close = () => {
-      film.destroy();
-      theater.remove();
-      document.removeEventListener("keydown", key);
+    const close = watchFilm(make, label, this.options.words.closeFilm);
+    this.unwatch = () => {
+      close();
       this.unwatch = null;
     };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    theater.addEventListener("click", (event) => {
-      const target = event.target as HTMLElement;
-      if (!target.closest(".film-stage") || target.closest(".film-theater-close")) close();
-    });
-    document.addEventListener("keydown", key);
-    document.body.append(theater);
-    this.unwatch = close;
   }
 
   /** The page that says a feature was turned on, the same for every one,
