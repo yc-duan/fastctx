@@ -300,7 +300,7 @@ pub fn fixtures() -> Fixtures {
     }
     let mut items = vec![
         item("message", What::Message { text: "hello".into() }),
-        item("thinking", What::Thinking { text: "thinking".into() }),
+        item("thinking", What::Thinking { text: "thinking".into(), duration_ms: Some(4_200) }),
         item("plan", What::Plan { text: "plan".into() }),
         item("compaction", What::Compaction),
         item(

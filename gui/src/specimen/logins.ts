@@ -2,11 +2,13 @@
 // Codex logins listed and a third found by the walk, Claude Code listed with
 // a long-lived token and a candidate under the home, and the laptop, which
 // was never scanned. A scan runs for a few seconds and finds what it found.
+// Times are told from `at`, the specimen's own morning.
 
 import type { ChangePreview, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
 
-const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
-const later = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+let base = Date.now();
+const ago = (minutes: number) => new Date(base - minutes * 60_000).toISOString();
+const later = (minutes: number) => new Date(base + minutes * 60_000).toISOString();
 
 const limits = (five: number, week: number) => ({
   kind: "known" as const,
@@ -52,7 +54,8 @@ function desktop(scanning: boolean): MachineLogins {
 
 let scanUntil = 0;
 
-export function specimenLogins(machine: string | null): Promise<WorldLogins> {
+export function specimenLogins(machine: string | null, at: Date): Promise<WorldLogins> {
+  base = at.getTime();
   const scanning = Date.now() < scanUntil;
   const all: WorldLogins = {
     machine: "desktop",
@@ -65,7 +68,8 @@ export function specimenLogins(machine: string | null): Promise<WorldLogins> {
   return Promise.resolve(machine ? { ...all, machines: all.machines.filter((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === machine) } : all);
 }
 
-export function specimenScan(machine: string, stop: boolean): Promise<MachineLogins> {
+export function specimenScan(machine: string, stop: boolean, at: Date): Promise<MachineLogins> {
+  base = at.getTime();
   scanUntil = stop ? 0 : Date.now() + 6000;
   return Promise.resolve(desktop(!stop && machine === "desktop"));
 }

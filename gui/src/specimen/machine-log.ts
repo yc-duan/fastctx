@@ -4,6 +4,8 @@
 import type { MachineLogPage, MachineLogRecord } from "../world/machine-log";
 
 const records: MachineLogRecord[] = [
+  { id: 11, at: "2026-10-04T06:30:00Z", actor: { account: null, authenticated: true, member: null, peer: null }, action: { change: "lend_ended", machine: "laptop", to: "bo", agent: "claude", home: null }, outcome: { kind: "done" } },
+  { id: 10, at: "2026-10-04T06:02:00Z", actor: { account: "me", authenticated: true, member: "desktop", peer: null }, action: { change: "lend", machine: "laptop", to: "bo", agent: "claude", home: null, lent: true, until: "2026-10-04T06:30:00Z" }, outcome: { kind: "done" } },
   { id: 9, at: "2026-10-04T05:58:00Z", actor: { account: "me", authenticated: true, member: "desktop", peer: null }, action: { change: "relays", machine: "server", relays: [{ label: "lab", addresses: ["203.0.113.20:7444"] }] }, outcome: { kind: "done" } },
   { id: 8, at: "2026-10-04T05:57:00Z", actor: { account: "me", authenticated: true, member: "desktop", peer: null }, action: { change: "relay_at", machine: "lab", addresses: ["203.0.113.20:7444"] }, outcome: { kind: "done" } },
   { id: 7, at: "2026-10-04T05:41:00Z", actor: { account: "me", authenticated: true, member: "pixel", peer: null }, action: { change: "lend", machine: "laptop", to: "ada", agent: "codex", home: null, lent: true }, outcome: { kind: "done" } },

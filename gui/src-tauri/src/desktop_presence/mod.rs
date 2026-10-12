@@ -182,12 +182,12 @@ pub fn enter() -> Result<Option<Instance>, String> {
             result?;
             Ok(None)
         }
-        // The installer's last step: this computer kept in the World from
-        // boot. What came of it is said and the installation goes on either
-        // way; the settings offer what is missing.
+        // Restore installation state; boot services belong to computers
+        // already enrolled in a network.
         [command] if command == "--keep-connected" => {
             match crate::setup::keep_at_install() {
-                Ok(kept) => println!("{kept}"),
+                Ok(Some(kept)) => println!("{kept}"),
+                Ok(None) => {}
                 Err(error) => eprintln!("keeping this computer in the World: {error}"),
             }
             Ok(None)

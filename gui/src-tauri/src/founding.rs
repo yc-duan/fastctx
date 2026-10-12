@@ -73,6 +73,10 @@ pub(crate) async fn create_world(
     };
     let places = crate::setup::places()?;
     let kept = tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(windows)]
+        let (kept, node_kept) =
+            fastctx_install::service::keep_local_network(&places, &dir).map_err(|error| error.to_string())?;
+        #[cfg(not(windows))]
         let kept = fastctx_install::service::keep_hub(&places, &dir).map_err(|error| error.to_string())?;
         #[cfg(target_os = "linux")]
         let kept = if matches!(kept, fastctx_install::service::Kept::Command(_)) {
@@ -80,12 +84,21 @@ pub(crate) async fn create_world(
         } else {
             kept
         };
-        Ok::<_, String>(kept)
+        #[cfg(windows)]
+        {
+            Ok::<_, String>((kept, node_kept))
+        }
+        #[cfg(not(windows))]
+        {
+            Ok::<_, String>(kept)
+        }
     })
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
     use fastctx_install::service::Kept;
+    #[cfg(windows)]
+    let (kept, node_kept) = kept;
     match kept {
         Kept::Installed | Kept::Already => {}
         Kept::Declined => {
@@ -102,6 +115,12 @@ pub(crate) async fn create_world(
         .login(addresses, admin, password, register, crate::machine(machine)?)
         .await
         .map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    {
+        let kept = crate::setup::finish_keep(&shell.world(), node_kept).await?;
+        Ok(crate::accounts::logged_in_kept(joined, kept))
+    }
+    #[cfg(not(windows))]
     crate::accounts::logged_in(&shell, joined).await
 }
 

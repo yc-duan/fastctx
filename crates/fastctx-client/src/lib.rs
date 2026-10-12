@@ -127,8 +127,9 @@ impl Client {
     }
 
     /// Connects to the node, first starting it if it is not running. The
-    /// node uses the user's environment. Windows may retain it inside a
-    /// host's job; `node_lifetime` reports the connected node's containment.
+    /// node uses the user's environment. On Windows, a caller in a job uses
+    /// the user's desktop shell as the parent when one exists; without a
+    /// shell, `node_lifetime` reports any retained job containment.
     /// A node a system service keeps is started by nobody else: a second
     /// one would hold the World while the service's waits for it.
     pub async fn connect_or_start(world: &WorldDir, peer: Peer) -> Result<Self, ConnectError> {
@@ -460,12 +461,14 @@ fn start_node(
     environment.retain(|(name, _)| !name.eq_ignore_ascii_case("FASTCTX_NODE_STARTER"));
     environment
         .push(("FASTCTX_NODE_STARTER".into(), serde_json::to_string(&starter).map_err(std::io::Error::other)?.into()));
-    fastctx_platform::spawn_detached(
-        &executable,
-        &[std::ffi::OsStr::new("node"), std::ffi::OsStr::new("--dir"), root.as_os_str()],
-        &home,
-        &environment,
-    )
+    let args = [std::ffi::OsStr::new("node"), std::ffi::OsStr::new("--dir"), root.as_os_str()];
+    #[cfg(windows)]
+    if fastctx_platform::in_job()?
+        && let Some(started) = fastctx_platform::shell_process::spawn(&executable, &args, &home, &environment)?
+    {
+        return Ok(started);
+    }
+    fastctx_platform::spawn_detached(&executable, &args, &home, &environment)
 }
 
 fn to_json(value: &impl serde::Serialize) -> Vec<u8> {

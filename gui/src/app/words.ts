@@ -9,6 +9,7 @@ import type { PresenceWords } from "./presence";
 import type { ReaderWords } from "./reader";
 import { sizeOf, type AttachWords } from "../conversation/attach";
 import { enProblems, failure, zhProblems } from "./problem";
+import { enMoment, zhMoment } from "./when-words";
 
 export interface ShellWords {
   app: string;
@@ -94,6 +95,8 @@ export interface NewTalkWords {
   lentWorks(owner: string): string;
   /** An agent lent to the account, by whom. */
   lentBy(owner: string): string;
+  /** When a borrowed login goes back to its owner. */
+  lentUntil(at: Date, now: Date): string;
   /** A lent agent was given files other than images, and no machine of
    *  the user's can take them. */
   noFilePlace: string;
@@ -144,6 +147,7 @@ export const zhNewTalk: NewTalkWords = {
   livesHere: "所在机器",
   lentWorks: (owner) => `来自 ${owner}，在你的机器上工作，不接触 ${owner} 的电脑`,
   lentBy: (owner) => `来自 ${owner}`,
+  lentUntil: (at, now) => `到 ${zhMoment.short(at, now)}`,
   noFilePlace: "没有能放文件的机器",
   project: "项目",
   outsideProject: "不在项目里",
@@ -184,6 +188,7 @@ export const enNewTalk: NewTalkWords = {
   livesHere: "where it lives",
   lentWorks: (owner) => `From ${owner}; works on your machines, never on ${owner}'s computer`,
   lentBy: (owner) => `from ${owner}`,
+  lentUntil: (at, now) => `until ${enMoment.short(at, now)}`,
   noFilePlace: "No machine can take the files",
   project: "Project",
   outsideProject: "No project",

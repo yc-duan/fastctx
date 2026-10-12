@@ -1031,6 +1031,7 @@ impl CodexHost {
                 let key = (turn.clone(), item.id.clone());
                 if completed {
                     item.started_at = entry.item_starts.remove(&key);
+                    item.thought_until(at);
                 } else {
                     item.started_at = Some(at);
                     entry.item_starts.insert(key, at);

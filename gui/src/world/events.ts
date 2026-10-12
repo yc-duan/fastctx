@@ -69,7 +69,7 @@ export interface Tool {
 
 export type What =
   | { kind: "message"; text: string }
-  | { kind: "thinking"; text: string }
+  | { kind: "thinking"; text: string; duration_ms?: number }
   | { kind: "plan"; text: string }
   | ({ kind: "tool" } & Tool)
   | { kind: "compaction" }

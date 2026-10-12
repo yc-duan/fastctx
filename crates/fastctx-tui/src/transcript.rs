@@ -50,6 +50,8 @@ enum Item {
         text: String,
         writing: bool,
         laid: Laid,
+        /// Thinking: how long it took, where the host said.
+        took: Option<u64>,
     },
     Tool {
         item: String,
@@ -252,6 +254,7 @@ impl Transcript {
                     text: more,
                     writing: true,
                     laid: Laid::default(),
+                    took: None,
                 }),
                 (None, Part::Output) => {}
             },
@@ -307,18 +310,19 @@ impl Transcript {
         let started_at = native.started_at.unwrap_or(at);
         let id = native.id;
         let what = native.what;
-        let prose = |kind, text: String| Item::Prose {
+        let prose = |kind, text: String, took: Option<u64>| Item::Prose {
             item: id.clone(),
             turn: turn.clone(),
             kind,
             text,
             writing: !finished,
             laid: Laid::default(),
+            took,
         };
         let fresh = match what {
-            What::Message { text } => prose(Prose::Message, text),
-            What::Thinking { text } => prose(Prose::Thinking, text),
-            What::Plan { text } => prose(Prose::Plan, text),
+            What::Message { text } => prose(Prose::Message, text, None),
+            What::Thinking { text, duration_ms } => prose(Prose::Thinking, text, duration_ms),
+            What::Plan { text } => prose(Prose::Plan, text, None),
             What::AgentActivity { path, activity, .. } => {
                 Item::Activity { item: id.clone(), turn: turn.clone(), text: format!("{path}: {activity}") }
             }
@@ -377,9 +381,13 @@ impl Transcript {
                     // A message still being written keeps what it has
                     // until its whole text comes.
                     (Item::Prose { writing: true, .. }, _) if !finished && empty_now => {}
-                    (Item::Prose { text, writing, laid, .. }, Item::Prose { text: whole, writing: still, .. }) => {
+                    (
+                        Item::Prose { text, writing, laid, took, .. },
+                        Item::Prose { text: whole, writing: still, took: given, .. },
+                    ) => {
                         *text = whole;
                         *writing = still;
+                        *took = given.or(*took);
                         laid.changed();
                     }
                     (shown @ Item::Tool { .. }, Item::Tool { item, turn, tool, ended, .. }) => {
@@ -483,9 +491,9 @@ impl Transcript {
                         out.extend(sent(ctx, &sending.state, width));
                     }
                 }
-                Item::Prose { kind: Prose::Thinking, text, writing, laid, .. } => {
+                Item::Prose { kind: Prose::Thinking, text, writing, laid, took, .. } => {
                     blank(&mut out);
-                    out.extend(thinking(ctx, text, *writing, laid, width));
+                    out.extend(thinking(ctx, text, *writing, *took, laid, width));
                 }
                 Item::Prose { kind, text, writing, laid, .. } => {
                     blank(&mut out);
@@ -587,19 +595,22 @@ fn cursor(ctx: &Ctx, lines: &mut Vec<Line<'static>>, width: usize) {
     }
 }
 
-/// What the agent shows of its thinking: whole and faint while it thinks;
-/// once it has, its first line after `思考`, as the official apps fold it.
-fn thinking(ctx: &Ctx, text: &str, writing: bool, laid: &Laid, width: usize) -> Vec<Line<'static>> {
+/// What the agent shows of its thinking: `Thinking…`, whole and faint while
+/// it thinks; once it has, `Thought for 4s` where the host said how long
+/// (`Thought` where not), and its first line, as the official apps fold it. Thinking whose words
+/// the host kept (Claude's mostly are) is the line alone.
+fn thinking(ctx: &Ctx, text: &str, writing: bool, took: Option<u64>, laid: &Laid, width: usize) -> Vec<Line<'static>> {
     let look = &ctx.look;
-    let label = Span::styled(format!("{}  ", ctx.words.thinking()), look.text(Role::Faint));
-    // A host may keep its thinking's words to itself (Claude's are not
-    // given): it is shown to have happened, and to have no words here.
+    let said = match took {
+        _ if writing => ctx.words.thinking().to_string(),
+        Some(ms) => ctx.words.thought_for(ms),
+        None => ctx.words.thought().to_string(),
+    };
+    let label = Span::styled(format!("{said}  "), look.text(Role::Faint));
     if text.trim().is_empty() {
         let mut lines = vec![Line::from(label)];
         if writing {
             cursor(ctx, &mut lines, width);
-        } else {
-            lines[0].spans.push(Span::styled(ctx.words.thinking_withheld().to_string(), look.text(Role::Faint)));
         }
         return lines.iter().map(|line| paint::fit_line(line, width)).collect();
     }

@@ -79,7 +79,12 @@ fn captured_live_items_match_completed_history() {
             .into_iter()
             .filter_map(|event| {
                 if let Happened::Finished { turn, mut item } = event.happened {
+                    // Timing is when the events arrived live, and what
+                    // stamps the history keeps; the items are what match.
                     item.started_at = None;
+                    if let What::Thinking { duration_ms, .. } = &mut item.what {
+                        *duration_ms = None;
+                    }
                     Some((turn, item))
                 } else {
                     None
@@ -168,12 +173,15 @@ fn presentation_fields_and_hidden_items_follow_the_frozen_contract() {
     for raw in [
         json!({"type":"imageGeneration","id":"g","status":"failed","result":"","failure":null}),
         json!({"type":"fileChange","id":"p","status":"completed","changes":[]}),
-        json!({"type":"reasoning","id":"r","summary":[],"content":["private"]}),
     ] {
         let hidden = item(raw.clone(), true);
         assert!(matches!(hidden.what, What::Hidden { .. }));
         assert_eq!(hidden.detail, Some(raw));
     }
+    // Reasoning without a summary is thinking all the same, its private
+    // content never shown.
+    let thought = item(json!({"type":"reasoning","id":"r","summary":[],"content":["private"]}), true);
+    assert_eq!(thought.what, What::Thinking { text: String::new(), duration_ms: None });
     let limit = item(
         json!({"type":"imageGeneration","id":"g","status":"failed","result":"","failure":{"type":"usageLimitExceeded","limitId":"image_gen","resetsAt":null}}),
         true,
@@ -216,7 +224,7 @@ fn indexed_summaries_patch_replacement_and_thread_state() {
         events.push(event);
     }
     assert_eq!(events.len(), 7);
-    assert!(events.iter().any(|e| matches!(&e.happened,Happened::Updated{item,..} if item.what == What::Thinking{text:"A first\n\nB second".into()})));
+    assert!(events.iter().any(|e| matches!(&e.happened,Happened::Updated{item,..} if item.what == What::Thinking{text:"A first\n\nB second".into(),duration_ms:None})));
     assert!(events.iter().any(|e| matches!(&e.happened,Happened::Updated{item,..} if matches!(&item.what,What::Tool(tool) if matches!(&tool.does,Does::Edit{changes} if changes[0].how == fastctx_types::session::ChangeHow::Moved{to:"new".into()})))));
     assert!(events.iter().any(|e| matches!(&e.happened,Happened::Changed{change:SessionChange::Safety{buffering},..} if buffering["showBufferingUi"] == false)));
     assert!(events.iter().any(|e| matches!(&e.happened,Happened::Titled{title} if title == "exact")));

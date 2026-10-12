@@ -137,7 +137,7 @@ mod imp {
 }
 
 #[cfg(windows)]
-mod imp {
+pub(crate) mod imp {
     use std::ffi::{OsStr, OsString};
     use std::io;
     use std::mem::{size_of, zeroed};
@@ -215,7 +215,7 @@ mod imp {
     }
 
     // A failed observation after creation must never retry process creation.
-    fn observe(info: PROCESS_INFORMATION) -> io::Result<DetachedProcess> {
+    pub(crate) fn observe(info: PROCESS_INFORMATION) -> io::Result<DetachedProcess> {
         // The handle keeps the creation time readable even if the process
         // has already exited.
         let identity = crate::identity::of_handle(info.hProcess, info.dwProcessId);

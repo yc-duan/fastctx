@@ -89,10 +89,32 @@ pub struct LendArgs {
     /// Take the login back.
     #[arg(long)]
     off: bool,
+    /// When the loan ends by itself: a date and time on this computer's
+    /// clock, such as "2026-10-20 18:00", or a full timestamp. Lending
+    /// again without it keeps the login lent until taken back.
+    #[arg(long, conflicts_with = "off", value_parser = deadline)]
+    until: Option<Timestamp>,
     #[arg(long = "as")]
     owner: Option<AccountName>,
     #[arg(long)]
     hub: Option<HubName>,
+}
+
+/// A deadline as typed: a timestamp, or a date and time on this
+/// computer's clock.
+fn deadline(text: &str) -> Result<Timestamp, String> {
+    if let Ok(at) = text.parse::<Timestamp>() {
+        return Ok(at);
+    }
+    let civil = text
+        .parse::<jiff::civil::DateTime>()
+        .map_err(|_| format!("{text:?} is not a date and time such as \"2026-10-20 18:00\""))?;
+    civil.to_zoned(jiff::tz::TimeZone::system()).map(|zoned| zoned.timestamp()).map_err(|error| error.to_string())
+}
+
+/// `at` on this computer's clock.
+fn local(at: Timestamp) -> String {
+    at.to_zoned(jiff::tz::TimeZone::system()).strftime("%Y-%m-%d %H:%M %Z").to_string()
 }
 
 #[derive(Args)]
@@ -291,13 +313,15 @@ pub fn lend(args: LendArgs) -> anyhow::Result<()> {
         agent: args.agent.clone(),
         home: args.home,
         lent: !args.off,
+        until: args.until,
     };
     self::change(args.hub, owner, change)?;
     if args.off {
         println!("the {} login {login} on {} is no longer lent to {}", args.agent, args.machine, args.to);
     } else {
+        let until = args.until.map(|until| format!(" until {}", local(until))).unwrap_or_default();
         println!(
-            "the {} login {login} on {} is lent to {}: the account and its plan go with it, not the machine, and you see all it does there",
+            "the {} login {login} on {} is lent to {}{until}: the account and its plan go with it, not the machine, and you see all it does there",
             args.agent, args.machine, args.to
         );
     }
@@ -710,7 +734,11 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
         for lend in &hub.lends {
             let login =
                 lend.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
-            text.push_str(&format!("lent the {} login {login} on {} to {}\n", lend.agent, lend.machine, lend.account));
+            let until = lend.until.map(|until| format!(" until {}", local(until))).unwrap_or_default();
+            text.push_str(&format!(
+                "lent the {} login {login} on {} to {}{until}\n",
+                lend.agent, lend.machine, lend.account
+            ));
         }
         for acting in &hub.acting {
             text.push_str(&format!(
