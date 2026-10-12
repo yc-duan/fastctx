@@ -89,6 +89,11 @@
   --send: 560ms;
   --send-easing: cubic-bezier(0.3, 0.2, 0.15, 1);
   --send-drift: cubic-bezier(0.55, 0, 0.3, 1);
+
+  /* Android supplies the bars' heights before the page paints; browsers
+     use their own safe areas. Content at an edge keeps clear by these. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* On a phone the body is a size larger: the same words are read at arm's

@@ -1,7 +1,7 @@
 // Legal material follows the packages actually read by the frontend build,
 // including the separately bundled page runtime and Vite's injected helpers.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const gui = fileURLToPath(new URL("..", import.meta.url));
@@ -11,6 +11,16 @@ const overrides = {
   "@tauri-apps/plugin-updater@2.13.1": ["tauri-plugin-updater-2.13.1-MIT.txt"],
   "qrcode-generator@2.0.4": ["qrcode-generator-2.0.4-MIT.txt"],
 };
+
+// A worktree may borrow another checkout's packages through a link, and
+// Vite names their files by the real path: a package's place in the lock is
+// read against the real `node_modules`.
+const modules = realpathSync(join(gui, "node_modules"));
+function locationOf(directory) {
+  const inside = relative(modules, directory);
+  const location = inside.startsWith("..") || isAbsolute(inside) ? relative(gui, directory) : join("node_modules", inside);
+  return location.replaceAll("\\", "/");
+}
 
 function packageDirectory(input) {
   const name = input.replace(/^\0/, "").replaceAll("\\", "/").split("?")[0];
@@ -41,7 +51,7 @@ export function frontendLicenses() {
       for (const directory of [...paths].sort()) {
         const metadata = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
         const key = `${metadata.name}@${metadata.version}`;
-        const location = relative(gui, directory).replaceAll("\\", "/");
+        const location = locationOf(directory);
         if (lock.packages[location]?.version !== metadata.version) throw new Error(`Unpinned license input: ${location}`);
         if (seen.has(key)) continue;
         seen.add(key);

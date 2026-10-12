@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The three themes' page background (gui/src/design/tokens.css), and the one a start
+     paints before it knows the user's choice: the system's light or dark. -->
+<resources>
+    <color name="world_warm_black">#FF1F1F1E</color>
+    <color name="world_ink_black">#FF0A0B0B</color>
+    <color name="world_warm_white">#FFF8F8F6</color>
+    <color name="world_background">@color/world_warm_white</color>
+</resources>

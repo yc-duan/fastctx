@@ -29,6 +29,7 @@
 // there, and the agent starts in that place with all of them.
 
 import { AttachTray, type AttachSource, type AttachWords } from "../conversation/attach";
+import { layerOpened } from "./back";
 import { glyph } from "../conversation/glyphs";
 import { ModelPanel, type ModelPanelWords } from "../conversation/model-panel";
 import { escape } from "../conversation/prose";
@@ -707,8 +708,11 @@ export class NewTalk {
 
   /** Opens one label's choices, or with null closes what is open. */
   private choose(pop: Pop | null): void {
+    if (pop) {
+      this.models.hide();
+      layerOpened({ isOpen: () => this.opened === pop && this.element.isConnected, close: () => this.choose(null) });
+    }
     this.opened = pop;
-    if (pop) this.models.hide();
     this.draw();
   }
 

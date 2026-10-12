@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Before Android 12, the system cannot keep a chosen splash theme. Wait for
+         World's own window instead of previewing the system theme's colour. -->
+    <bool name="world_disable_preview">true</bool>
+</resources>

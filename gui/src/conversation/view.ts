@@ -21,6 +21,7 @@
 // quiet line on the left; what was done to a turn (copy, ask again, fork)
 // appears only once the turn is over.
 
+import { layerOpened } from "../app/back";
 import type { Content, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
 import { STOPPED_BY_USER } from "../world/events";
 import type { Attachment } from "../world/attachments";
@@ -730,6 +731,7 @@ export class ConversationView {
     if (card) sheet.insertAdjacentHTML("beforeend", `<div class="act-sheet-info turn-info-rows">${card.innerHTML}</div>`);
     scrim.addEventListener("click", close);
     document.body.append(scrim, sheet);
+    layerOpened({ isOpen: () => sheet.isConnected, close });
   }
 
   /** The user chose in a card: an option is marked, an answer is sent. */

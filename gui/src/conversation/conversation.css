@@ -1380,7 +1380,7 @@
 
 .find-bar {
   position: absolute;
-  top: calc(52px + env(safe-area-inset-top));
+  top: calc(52px + var(--safe-top));
   right: var(--space-4);
   z-index: 3;
   display: flex;
@@ -1592,6 +1592,9 @@ a.bubble-file:hover {
   z-index: 60;
   display: grid;
   grid-template-rows: auto 1fr;
+  /* One column the window's width: a long name in the bar must not widen
+     it, or the picture and the bar's buttons go off a phone's screen. */
+  grid-template-columns: minmax(0, 1fr);
   background: color-mix(in srgb, var(--bg) 18%, #0d0d0c);
   color: #ece8e0;
   animation: viewer-in 0.18s ease both;
@@ -1629,12 +1632,13 @@ a.bubble-file:hover {
   align-items: center;
   gap: var(--space-3);
   min-height: 52px;
-  padding: calc(var(--space-2) + env(safe-area-inset-top)) var(--space-3) var(--space-2) var(--space-4);
+  padding: calc(var(--space-2) + var(--safe-top)) var(--space-3) var(--space-2) var(--space-4);
   background: linear-gradient(rgba(13, 13, 12, 0.72), rgba(13, 13, 12, 0));
   pointer-events: none;
 }
 
 .pv-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1854,7 +1858,7 @@ a.bubble-file:hover {
   top: auto;
   right: 0;
   bottom: 0;
-  padding: var(--space-3) var(--space-3) calc(var(--space-4) + env(safe-area-inset-bottom));
+  padding: var(--space-3) var(--space-3) calc(var(--space-4) + var(--safe-bottom));
   border-radius: var(--radius-l) var(--radius-l) 0 0;
   animation: file-menu-rise 0.22s cubic-bezier(0.33, 1, 0.68, 1) both;
 }

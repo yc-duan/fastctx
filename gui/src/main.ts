@@ -186,6 +186,7 @@ import { updating } from "./world/updater";
 import { desktopAvailable } from "./world/desktop";
 import { notifying, startPresence } from "./app/presence";
 import { installAccess } from "./app/access";
+import { installBack } from "./app/back";
 import { installFrame } from "./app/frame";
 import { nameCodeCopy } from "./conversation/prose";
 
@@ -323,7 +324,7 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   opened(address, seed) {
     // The first words open with the conversation, as they were shown.
     seeds.set(talkKey(address), seed);
-    location.hash = talkLink(address);
+    location.replace(talkLink(address));
   },
   starting: { words, here: () => store.world.peek()?.here ?? "" },
   allowClaude: (machine, go, home) => consent.allow(machine, go, home),
@@ -661,7 +662,7 @@ function liveManage(address: Address): Manage {
     remove: () => act({ do: "remove" }),
     towns: townsOn,
     removed: () => {
-      location.hash = link({ kind: "home" });
+      location.replace(link({ kind: "home" }));
     },
   };
 }
@@ -678,7 +679,7 @@ function specimenManage(): Manage {
     remove: refuse,
     towns: townsOn,
     removed: () => {
-      location.hash = link({ kind: "home" });
+      location.replace(link({ kind: "home" }));
     },
   };
 }
@@ -1381,7 +1382,7 @@ function show(next: Place): void {
         },
         enter() {
           welcomed.now();
-          location.hash = asDevice && !deviceFeatures.conversations.peek() ? link({ kind: "feature", feature: "conversations" }) : link({ kind: "home" });
+          location.replace(asDevice && !deviceFeatures.conversations.peek() ? link({ kind: "feature", feature: "conversations" }) : link({ kind: "home" }));
         },
       });
       break;
@@ -1626,7 +1627,7 @@ if (live) {
     decided = true;
     void setupState()
       .then((setup) => {
-        if (!setup.installed && (place.kind === "home" || place.kind === "agents")) location.hash = link({ kind: "login" });
+        if (!setup.installed && (place.kind === "home" || place.kind === "agents")) location.replace(link({ kind: "login" }));
       })
       .catch(() => {});
   });
@@ -1653,6 +1654,7 @@ installPens();
 installHints();
 installRules();
 installAccess();
+installBack();
 // A specimen shows the window's frame when asked, to be looked at.
 installFrame(shellWords.frame, !live && params.has("frame"));
 nameCodeCopy(words.copyCode);
@@ -1666,7 +1668,7 @@ show(specimenPlace() ?? placeOf(location.hash));
 if (live) {
   void connectionState().then((state) => {
     asDevice = state.mode === "device";
-    if (asDevice && !state.device?.hubs.length && place.kind === "home") location.hash = link({ kind: "login" });
+    if (asDevice && !state.device?.hubs.length && (place.kind === "home" || place.kind === "agents")) location.replace(link({ kind: "login" }));
     else if (place.kind === "login") show(place);
   });
 }

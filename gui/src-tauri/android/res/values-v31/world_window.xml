@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The platform splash keeps World's chosen theme from Android 12 onward. -->
+    <bool name="world_disable_preview">false</bool>
+</resources>
