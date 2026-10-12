@@ -68,6 +68,71 @@ export interface ShellWords {
   frame: { minimize: string; maximize: string; restore: string; close: string };
 }
 
+/** The machines and folders a conversation is pointed at
+ *  (`focus-panel.ts`). */
+export interface FocusWords {
+  title: string;
+  /** The chip, when none is chosen. */
+  none: string;
+  here: string;
+  offline: string;
+  addFolder: string;
+  remove: string;
+  up: string;
+  reading: string;
+  noFolders: string;
+  noMachine: string;
+  /** Where a folder's path can be typed. */
+  path: string;
+  choose: string;
+  back: string;
+  done: string;
+  /** How many more are chosen than the chip names. */
+  more(count: number): string;
+  saving: string;
+  failed(why: string): string;
+}
+
+export const zhFocus: FocusWords = {
+  title: "机器与文件夹",
+  none: "机器与文件夹",
+  here: "本机",
+  offline: "离线",
+  addFolder: "文件夹",
+  remove: "移除",
+  up: "上一级",
+  reading: "读取中…",
+  noFolders: "没有子文件夹",
+  noMachine: "没有可用的机器",
+  path: "路径",
+  choose: "选这个文件夹",
+  back: "返回",
+  done: "完成",
+  more: (count) => `+${count}`,
+  saving: "保存中…",
+  failed: (why) => `没改成：${why}`,
+};
+
+export const enFocus: FocusWords = {
+  title: "Machines and folders",
+  none: "Machines and folders",
+  here: "this computer",
+  offline: "offline",
+  addFolder: "Folder",
+  remove: "Remove",
+  up: "Up",
+  reading: "Reading…",
+  noFolders: "No folders here",
+  noMachine: "No machine available",
+  path: "Path",
+  choose: "Choose this folder",
+  back: "Back",
+  done: "Done",
+  more: (count) => `+${count}`,
+  saving: "Saving…",
+  failed: (why) => `Not changed: ${why}`,
+};
+
 export interface NewTalkWords {
   english: boolean;
   title: string;
@@ -87,11 +152,7 @@ export interface NewTalkWords {
   onCredits: string;
   /** Which account it works for. */
   account: string;
-  worksOn: string;
-  /** Beside the machine an agent lives on, among those it may work on. */
-  livesHere: string;
-  /** Why a lent agent is asked no machine to work on: the hover of its
-   *  lent mark. */
+  /** What a lent agent works on: the hover of its lent mark. */
   lentWorks(owner: string): string;
   /** An agent lent to the account, by whom. */
   lentBy(owner: string): string;
@@ -143,8 +204,6 @@ export const zhNewTalk: NewTalkWords = {
   lentGone: "该登录已不可用",
   onCredits: "使用 credits",
   account: "账号",
-  worksOn: "工作机器",
-  livesHere: "所在机器",
   lentWorks: (owner) => `来自 ${owner}，在你的机器上工作，不接触 ${owner} 的电脑`,
   lentBy: (owner) => `来自 ${owner}`,
   lentUntil: (at, now) => `到 ${zhMoment.short(at, now)}`,
@@ -184,8 +243,6 @@ export const enNewTalk: NewTalkWords = {
   lentGone: "Login unavailable",
   onCredits: "on credits",
   account: "Account",
-  worksOn: "Works on",
-  livesHere: "where it lives",
   lentWorks: (owner) => `From ${owner}; works on your machines, never on ${owner}'s computer`,
   lentBy: (owner) => `from ${owner}`,
   lentUntil: (at, now) => `until ${enMoment.short(at, now)}`,
@@ -622,18 +679,8 @@ export interface DetailsWords {
   trouble: string;
   task: string;
   colleagues: string;
-  worksOn: string;
-  /** Where its commands start: the machine it lives on, or another. */
-  worksOnLives: string;
-  worksOnThere(machine: string): string;
-  changeWorksOn: string;
-  /** The choice of the machine it lives on. */
-  livesHere(machine: string): string;
-  worksOnSet(machine: string, lives: boolean): string;
-  /** An agent lent to the user: who lent it, and that it works on no
-   *  machine by default. */
+  /** An agent lent to the user: who lent it. */
   lentBy: string;
-  worksLent: string;
   actingFor: string;
   separator: string;
   /** Which login of its agent it uses, where not the default one. */
@@ -696,14 +743,7 @@ export const zhDetails: DetailsWords = {
   trouble: "异常",
   task: "任务",
   colleagues: "调用的模型",
-  worksOn: "工作机器",
-  worksOnLives: "所在机器",
   lentBy: "来自",
-  worksLent: "每条命令指定",
-  worksOnThere: (machine) => machine,
-  changeWorksOn: "更改",
-  livesHere: (machine) => `所在机器（${machine}）`,
-  worksOnSet: (machine) => `下一条命令起在 ${machine} 上运行`,
   actingFor: "所属账号",
   separator: "、",
   login: "登录",
@@ -762,14 +802,7 @@ export const enDetails: DetailsWords = {
   trouble: "Issues",
   task: "Task",
   colleagues: "Models it called",
-  worksOn: "Works on",
-  worksOnLives: "its own machine",
   lentBy: "From",
-  worksLent: "chosen per command",
-  worksOnThere: (machine) => machine,
-  changeWorksOn: "Change",
-  livesHere: (machine) => `its own machine (${machine})`,
-  worksOnSet: (machine) => `Runs on ${machine} from the next command`,
   actingFor: "Account",
   separator: ", ",
   login: "Login",

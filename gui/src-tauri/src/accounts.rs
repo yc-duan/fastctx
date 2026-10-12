@@ -168,25 +168,6 @@ pub(crate) async fn server_command(
         .map_err(|error| error.to_string())
 }
 
-/// Sets where a conversation works: a machine as written, or the one it
-/// lives on.
-#[fastctx_gui_command::command]
-pub(crate) async fn works_on(
-    shell: tauri::State<'_, Shell>,
-    resident_id: String,
-    machine_name: Option<String>,
-    works_on: Option<String>,
-) -> Result<(), String> {
-    let works_on = works_on
-        .map(|text| text.parse::<fastctx_types::access::Written>().map_err(|error| error.to_string()))
-        .transpose()?;
-    shell
-        .world()
-        .works_on(crate::resident(resident_id)?, crate::machine(machine_name)?, works_on)
-        .await
-        .map_err(|error| error.to_string())
-}
-
 /// Adds an agent's home on a machine, or hides one or shows it again.
 #[fastctx_gui_command::command]
 pub(crate) async fn agent_homes(

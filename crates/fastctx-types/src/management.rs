@@ -16,6 +16,11 @@ pub enum Management {
     Move {
         town: Option<TownName>,
     },
+    /// The machines and folders the user points it to, replacing those
+    /// before (`world-gui.md`, 对话).
+    Focus {
+        focus: crate::focus::Focus,
+    },
 }
 
 /// Each completed stage remains reported if a later stage fails. A host

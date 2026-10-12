@@ -92,7 +92,7 @@ export class FindContent {
           yield part("path", stamp, { row: block.key, selector: ".notice-path" }, () => `${notice.machine} · ${notice.output}`);
         } else if (notice.kind === "answer" && notice.end.last_message) {
           yield part("answer", stamp, { row: block.key, selector: ".notice-answer" }, () => htmlText(render(notice.end.last_message!)));
-        } else if (notice.kind === "world" && notice.fact.fact === "moved") {
+        } else if (notice.kind === "world" && (notice.fact.fact === "moved" || notice.fact.fact === "focus")) {
           yield part("brief", stamp, { row: block.key, selector: ".told-plain" }, () => htmlText(plain(block.text)));
         }
       }

@@ -45,7 +45,6 @@ pub async fn adopt(node: &Arc<Node>) {
             &about.origin,
             resident.town.as_ref(),
             &about.acting,
-            about.works_on.as_ref(),
             about.home.as_deref(),
         )
         .await
@@ -510,7 +509,6 @@ pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
         &about.origin,
         town.as_ref(),
         &about.acting,
-        about.works_on.as_ref(),
         about.home.as_deref(),
     )
     .await

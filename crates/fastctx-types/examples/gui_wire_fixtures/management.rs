@@ -20,6 +20,15 @@ pub fn fixtures() -> Fixtures {
         Management::Wake,
         Management::Move { town: Some("project-0".parse().unwrap()) },
         Management::Move { town: None },
+        Management::Focus { focus: Default::default() },
+        Management::Focus {
+            focus: fastctx_types::focus::Focus {
+                machines: vec![fastctx_types::focus::FocusedMachine {
+                    machine: "laptop.home".parse().unwrap(),
+                    folders: vec!["C:/work/中文 项目".into()],
+                }],
+            },
+        },
     ];
     let calls = actions
         .iter()

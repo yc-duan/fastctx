@@ -16,9 +16,6 @@ pub struct Machines {
     pub here: Option<String>,
     /// The other machines it may work on.
     pub others: Vec<String>,
-    /// The machine its own program runs on, when that is not `here` and it
-    /// may work there too.
-    pub program: Option<String>,
     pub collab: Option<fastctx_types::collab::Offered>,
 }
 
@@ -86,16 +83,9 @@ fn opening(machines: Option<&Machines>) -> String {
     if machines.others.is_empty() {
         return format!("This tool is your shell on {here}, this machine.");
     }
-    let this = if machines.program.is_none() { ", this machine" } else { "" };
     let example = &machines.others[0];
-    let program = match &machines.program {
-        Some(program) => format!(
-            " This program itself runs on {program}: the working directory, platform and paths your host reports are {program}'s, not {here}'s."
-        ),
-        None => String::new(),
-    };
     format!(
-        "Your shell is on {here}{this}. You have access to these other machines: {}. To run anything on them, write `on MACHINE` before it, as in `on {example} cargo test`; a command without `on` runs on {here}.{program} {SHELL}",
+        "Your shell is on {here}, this machine. You have access to these other machines: {}. To run anything on them, write `on MACHINE` before it, as in `on {example} cargo test`; a command without `on` runs on {here}. {SHELL}",
         machines.others.join(", ")
     )
 }

@@ -61,10 +61,9 @@ pub struct About {
     /// Whom it works for.
     #[serde(default)]
     pub acting: crate::access::Acting,
-    /// The machine its scripts start on, its 这里 (`world-run.md`), when
-    /// that is not the machine it lives on.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub works_on: Option<crate::access::Written>,
+    /// The machines and folders the user points it to.
+    #[serde(default, skip_serializing_if = "crate::focus::Focus::is_empty")]
+    pub focus: crate::focus::Focus,
     /// The agent's home it was born in, its account on this machine
     /// (`agents::AgentHome`), when not the default one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -162,6 +161,8 @@ pub enum WorldFact {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<crate::TownName>,
     },
+    /// The user changed the machines and folders it is pointed to.
+    Focus { focus: crate::focus::Focus },
 }
 
 /// Who stops a job when the user does, from an interface: the job's end is

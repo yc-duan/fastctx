@@ -85,7 +85,7 @@ pub(crate) fn choices(
     if !node.connected_anywhere() {
         return own(node, login);
     }
-    let acting = resident.and_then(|id| crate::here::placed(node, id)).map(|(acting, _)| acting).unwrap_or_default();
+    let acting = resident.and_then(|id| crate::here::acting(node, id)).unwrap_or_default();
     let mut applies = Vec::new();
     for link in node.links() {
         let view = link.view();

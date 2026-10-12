@@ -182,12 +182,11 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         login: Option<crate::collab::Caller>,
     },
-    /// The user sets where a resident on any machine works: another
-    /// machine, or the one it lives on with `None` (`world-run.md`, 这里).
-    WorksOn {
-        resident: ResidentId,
+    /// The folders in a folder of a machine, for the user to choose one;
+    /// with no `path`, the places a choice starts from.
+    Folders {
         machine: Option<MachineName>,
-        works_on: Option<crate::access::Written>,
+        path: Option<String>,
     },
     /// On a session's own connection: a `ToolsChanged` frame each time the
     /// tools `resident`, the session's resident when it is known, is
@@ -538,6 +537,7 @@ pub enum Reply {
         result: crate::pages::PageResult,
     },
     FilesFound(crate::file_search::FileSearchReply),
+    Folders(crate::focus::Folders),
     /// What Claude Code on `machine` now records; `changed` is false when it
     /// already said so.
     ClaudeConsent {
@@ -662,15 +662,11 @@ pub enum Reply {
     Nodes(NodesReply),
     Machines {
         /// Where the session's shell starts, as written: the machine it
-        /// works on. None for an agent another account lent: it may not
+        /// lives on. None for an agent another account lent: it may not
         /// work where it runs, and each of its commands names its machine.
         here: Option<String>,
         /// The other machines it may work on.
         others: Vec<String>,
-        /// The machine its own program runs on, when that is not `here` and
-        /// it may work there too; one it may not work on is not named.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        program: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         collab: Option<crate::collab::Offered>,
     },

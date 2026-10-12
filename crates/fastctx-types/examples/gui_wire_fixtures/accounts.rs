@@ -215,7 +215,15 @@ pub fn fixtures() -> Fixtures {
             Choices::default(),
             Choices {
                 account: Some(HubAccount { hub: "w-0123456789abcdef".parse().unwrap(), account: account() }),
-                works_on: Some("lab.home".parse::<Written>().unwrap()),
+                focus: fastctx_types::focus::Focus {
+                    machines: vec![
+                        fastctx_types::focus::FocusedMachine {
+                            machine: "lab.home".parse().unwrap(),
+                            folders: vec!["C:/work/中文 项目".into(), "D:/data".into()],
+                        },
+                        fastctx_types::focus::FocusedMachine { machine: "laptop".parse().unwrap(), folders: vec![] },
+                    ],
+                },
                 home: Some("C:/Users/ada/.claude-work".into()),
                 files_on: None,
             },

@@ -4,6 +4,7 @@
 
 import type { Attachment, AttachmentSource } from "./attachments";
 import type { PageSource } from "./pages";
+import type { Focus } from "./focus";
 import type { RunFacts } from "./run-facts";
 import type { EndedHow, ExitStatus } from "./since";
 import type { Address, JsonValue, MachineName, NoticeId, Timestamp } from "./wire";
@@ -233,7 +234,8 @@ export type WorldFact =
   | { fact: "desk_taken"; by: Address }
   | { fact: "desk_outside" }
   | { fact: "desk_free"; by: Address }
-  | { fact: "moved"; to?: string };
+  | { fact: "moved"; to?: string }
+  | { fact: "focus"; focus: Focus };
 
 /** Who the World records as having stopped a job the user stopped. */
 export const STOPPED_BY_USER = "the user";

@@ -594,14 +594,17 @@ impl World {
         done(self.ask(Call::Homes { machine, change }).await?)
     }
 
-    /// Sets where `resident` works: `works_on`, or the machine it lives on.
-    pub async fn works_on(
+    /// The folders in a folder of `machine`, or this computer; with no
+    /// `path`, the places a choice of one starts from.
+    pub async fn folders(
         &self,
-        resident: ResidentId,
         machine: Option<MachineName>,
-        works_on: Option<fastctx_types::access::Written>,
-    ) -> Result<(), Error> {
-        done(self.ask(Call::WorksOn { resident, machine, works_on }).await?)
+        path: Option<String>,
+    ) -> Result<fastctx_types::focus::Folders, Error> {
+        match self.ask(Call::Folders { machine, path }).await? {
+            Reply::Folders(folders) => Ok(folders),
+            other => Err(unexpected(other)),
+        }
     }
 
     /// Every hub this computer is on, with what it sees of each.

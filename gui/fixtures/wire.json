@@ -1821,7 +1821,21 @@
           "hub": "w-0123456789abcdef",
           "account": "ada"
         },
-        "works_on": "lab.home",
+        "focus": {
+          "machines": [
+            {
+              "machine": "lab.home",
+              "folders": [
+                "C:/work/中文 项目",
+                "D:/data"
+              ]
+            },
+            {
+              "machine": "laptop",
+              "folders": []
+            }
+          ]
+        },
         "home": "C:/Users/ada/.claude-work"
       },
       {
@@ -2681,6 +2695,23 @@
           "hook_fragments": [],
           "presentation": null,
           "detail": null
+        },
+        "notice": {
+          "kind": "world",
+          "fact": {
+            "fact": "focus",
+            "focus": {
+              "machines": [
+                {
+                  "machine": "laptop",
+                  "folders": [
+                    "C:/work/app"
+                  ]
+                }
+              ]
+            }
+          },
+          "text": "The user changed the machines and folders of this conversation."
         }
       },
       {
@@ -7072,7 +7103,16 @@
                         }
                       ]
                     },
-                    "works_on": "laptop.home",
+                    "focus": {
+                      "machines": [
+                        {
+                          "machine": "laptop.home",
+                          "folders": [
+                            "/home/ada/app"
+                          ]
+                        }
+                      ]
+                    },
                     "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
@@ -8514,7 +8554,16 @@
                         }
                       ]
                     },
-                    "works_on": "laptop.home",
+                    "focus": {
+                      "machines": [
+                        {
+                          "machine": "laptop.home",
+                          "folders": [
+                            "/home/ada/app"
+                          ]
+                        }
+                      ]
+                    },
                     "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
@@ -8955,7 +9004,16 @@
                         }
                       ]
                     },
-                    "works_on": "laptop.home",
+                    "focus": {
+                      "machines": [
+                        {
+                          "machine": "laptop.home",
+                          "folders": [
+                            "/home/ada/app"
+                          ]
+                        }
+                      ]
+                    },
                     "home": "C:/Users/ada/.codex-work"
                   },
                   "town": "project-0",
@@ -12895,7 +12953,21 @@
           "hub": "w-0123456789abcdef",
           "account": "ada"
         },
-        "works_on": "laptop",
+        "focus": {
+          "machines": [
+            {
+              "machine": "lab.home",
+              "folders": [
+                "C:/work/中文 项目",
+                "D:/data"
+              ]
+            },
+            {
+              "machine": "laptop",
+              "folders": []
+            }
+          ]
+        },
         "home": "C:/Users/ada/.codex-work"
       },
       {
@@ -13332,6 +13404,21 @@
         "text": "First words",
         "model": "opus",
         "reasoning_effort": "high",
+        "focus": {
+          "machines": [
+            {
+              "machine": "lab.home",
+              "folders": [
+                "C:/work/中文 项目",
+                "D:/data"
+              ]
+            },
+            {
+              "machine": "laptop",
+              "folders": []
+            }
+          ]
+        },
         "home": "/home/ada/.claude-work",
         "files_on": "laptop"
       },
@@ -15673,6 +15760,116 @@
       }
     ]
   },
+  "focus": {
+    "calls": [
+      {
+        "call": "folders",
+        "machine": null,
+        "path": null
+      },
+      {
+        "call": "folders",
+        "machine": "desktop",
+        "path": "C:/work"
+      }
+    ],
+    "replies": [
+      {
+        "reply": "folders",
+        "machine": "desktop",
+        "path": null,
+        "parent": null,
+        "home": "C:/Users/ada",
+        "folders": [
+          {
+            "name": "C:/Users/ada",
+            "path": "C:/Users/ada"
+          },
+          {
+            "name": "D:/",
+            "path": "D:/"
+          }
+        ]
+      },
+      {
+        "reply": "folders",
+        "machine": "desktop",
+        "path": "C:/work",
+        "parent": "C:/",
+        "home": "C:/Users/ada",
+        "folders": [
+          {
+            "name": ".cache",
+            "path": "C:/work/.cache",
+            "hidden": true
+          },
+          {
+            "name": "中文 项目",
+            "path": "C:/work/中文 项目"
+          }
+        ]
+      }
+    ],
+    "remote_calls": [
+      {
+        "call": "folders",
+        "path": "/home/ada"
+      },
+      {
+        "call": "outline",
+        "folders": [
+          "/home/ada/app"
+        ],
+        "within_ms": 4000
+      }
+    ],
+    "remote_results": [
+      {
+        "Ok": {
+          "reply": "folders",
+          "machine": "desktop",
+          "path": "C:/work",
+          "parent": "C:/",
+          "home": "C:/Users/ada",
+          "folders": [
+            {
+              "name": ".cache",
+              "path": "C:/work/.cache",
+              "hidden": true
+            },
+            {
+              "name": "中文 项目",
+              "path": "C:/work/中文 项目"
+            }
+          ]
+        }
+      },
+      {
+        "Ok": {
+          "reply": "outlined",
+          "outlines": [
+            {
+              "path": "/home/ada/app",
+              "outline": {
+                "Ok": "/home/ada/app\n  folders: src (3)"
+              }
+            },
+            {
+              "path": "/srv/data",
+              "outline": {
+                "Err": "permission denied"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "Err": {
+          "message": "/srv/data: permission denied"
+        }
+      }
+    ]
+  },
   "attachments": {
     "calls": [
       {
@@ -16480,6 +16677,35 @@
           "do": "move",
           "town": null
         }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "machine": "desktop",
+        "action": {
+          "do": "focus",
+          "focus": {
+            "machines": []
+          }
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "machine": "desktop",
+        "action": {
+          "do": "focus",
+          "focus": {
+            "machines": [
+              {
+                "machine": "laptop.home",
+                "folders": [
+                  "C:/work/中文 项目"
+                ]
+              }
+            ]
+          }
+        }
       }
     ],
     "remote_calls": [
@@ -16518,6 +16744,33 @@
         "action": {
           "do": "move",
           "town": null
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "action": {
+          "do": "focus",
+          "focus": {
+            "machines": []
+          }
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "action": {
+          "do": "focus",
+          "focus": {
+            "machines": [
+              {
+                "machine": "laptop.home",
+                "folders": [
+                  "C:/work/中文 项目"
+                ]
+              }
+            ]
+          }
         }
       }
     ],

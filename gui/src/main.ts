@@ -51,6 +51,7 @@ import { Tokens } from "./app/tokens";
 import { NewTalk } from "./app/new-talk";
 import { enModelPanel, zhModelPanel } from "./conversation/model-panel";
 import "./app/new-talk.css";
+import "./app/focus-panel.css";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
@@ -68,6 +69,7 @@ import {
   enConsent,
   enPresence,
   enDetails,
+  enFocus,
   enNewTalk,
   enPalette,
   enProjectForm,
@@ -77,6 +79,7 @@ import {
   zhConsent,
   zhPresence,
   zhDetails,
+  zhFocus,
   zhNewTalk,
   zhPalette,
   zhProjectForm,
@@ -86,7 +89,9 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, zhAccount, zhAdmin, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
-import { borrowedBy, borrowedOf, fileHome, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { borrowedBy, borrowedOf, fileHome, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
+import type { FocusPlace } from "./app/focus-panel";
+import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
 import { Details, type Manage } from "./conversation/details";
 import { ComposerSession } from "./conversation/composer";
 import { attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
@@ -135,7 +140,7 @@ import { enPages, zhPages } from "./pages/words";
 import { act as pageAct, consent as pageConsent, pageHistory, readPage, restore as restorePage, withdraw as withdrawPage } from "./world/pages";
 import { specimenPageTools, specimenPageWorld } from "./specimen/pages";
 import type { Address, SessionEvent } from "./world/events";
-import { ownerResident, type ResidentDetail } from "./world/world";
+import { ownerResident, type ResidentDetail, type ResidentNow } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { foldedOf, MachineMap, MAP_ORDER, type MachineMapScene } from "./app/machine-map";
 import { mapOf } from "./app/map-of";
@@ -194,7 +199,6 @@ import {
   hereAddresses,
   accountChange,
   serverCommand,
-  setWorksOn,
   machineLog,
 } from "./world/bridge";
 import { en, zh } from "./words";
@@ -323,14 +327,16 @@ const makeNewTalk = (town: string | null) => new NewTalk({
   town,
   head: (title) => head(title),
   words: english ? enNewTalk : zhNewTalk,
+  focusWords,
   homeWords: agentHomeWords,
   modelWords: english ? enModelPanel : zhModelPanel,
   agents: (machine) => agentsOn(machine),
-  async begin({ agent, machine, town, text, model, effort, attachments, account, worksOn, home, filesOn }) {
+  folders: (machine, path) => (live ? foldersOf(machine, path) : specimenFolders(machine, path)),
+  async begin({ agent, machine, town, text, model, effort, attachments, account, focus, home, filesOn }) {
     if (!live) return specimenBegin(params.get("start"));
     const { to } = await openAgent(agent, machine, town, text, model, effort, attachments, {
       ...(account ? { account } : {}),
-      ...(worksOn ? { works_on: worksOn } : {}),
+      ...(focus.machines.length ? { focus } : {}),
       ...(home ? { home } : {}),
       ...(filesOn ? { files_on: filesOn } : {}),
     });
@@ -547,6 +553,7 @@ async function withFirstLines(happenings: Happening[]): Promise<Happening[]> {
 }
 
 const detailsWords = english ? enDetails : zhDetails;
+const focusWords = english ? enFocus : zhFocus;
 const composerWords = english ? enComposer : zhComposer;
 
 /** Files dropped onto the window from the system, by path, as the shell
@@ -611,10 +618,6 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
       markdown,
       manage: live ? liveManage(address) : specimenManage(),
       logins: loginsOn,
-      worksOn: {
-        places: () => worksPlacesFor(address),
-        set: (worksOn) => (live ? setWorksOn(address, worksOn) : Promise.reject(new Error(specimenSaid))),
-      },
       lentBy: (r) => {
         const lent = borrowedBy(store.world.peek(), r);
         return lent ? (lent.owner ?? lent.machine) : null;
@@ -654,11 +657,48 @@ function livesFor(address: Address): { lives: Machine | null; login: Login | nul
   return { lives, login };
 }
 
-/** Where the agent at `address` may work: machines an account it works for
- *  may work on. */
-function worksPlacesFor(address: Address): string[] {
+/** The machines the conversation at `address` may be pointed at: where it
+ *  lives and those an account it works for may work on; for an agent lent
+ *  to the user, the account's own. */
+function focusPlacesFor(address: Address): FocusPlace[] {
+  const world = store.world.peek();
+  const known = residentAt(world, address);
+  const lent = known ? borrowedBy(world, known) : null;
   const found = livesFor(address);
-  return found.lives ? workPlaces(store.world.peek(), found.lives, found.login).map((machine) => machine.written) : [];
+  const machines = lent ? filePlaces(world, lent.login) : found.lives ? workPlaces(world, found.lives, found.login) : [];
+  return machines.map((machine) => ({ written: machine.written, name: machine.name, here: machine.here, online: machine.here ? true : machine.online }));
+}
+
+/** The machines and folders a conversation is pointed at, where the user
+ *  may point it: one they opened from here and that is still here. */
+function focusOf(known: ResidentNow | null): Focus | null {
+  if (!known || known.about.origin.kind !== "user" || !known.about.world_started) return null;
+  return known.about.focus ?? noFocus();
+}
+
+/** Points the conversation at `address` at machines and folders; what was
+ *  not done of it is said in the user's words. */
+async function pointAt(address: Address, focus: Focus): Promise<string[]> {
+  const managed = await manageResident(address, { do: "focus", focus });
+  void store.refresh();
+  return managed.steps
+    .filter((step): step is typeof step & { outcome: "pending" | "unsupported" | "failed" } => step.outcome !== "done")
+    .map((step) => detailsWords.unfinished(step.stage, step.outcome, step.detail));
+}
+
+/** A specimen's folders: a few made up, the same on every machine. */
+function specimenFolders(machine: string, path: string | null): Promise<Folders> {
+  const home = "C:/Users/ada";
+  const inside: Record<string, string[]> = {
+    "": [home, "D:/"],
+    [home]: [".cache", "code", "Documents", "Downloads"],
+    [`${home}/code`]: ["fastctx", "notes", "playground"],
+    "D:/": ["data", "models"],
+  };
+  const names = inside[path ?? ""] ?? [];
+  const folders = names.map((name) => (path === null ? { name, path: name } : { name, path: `${path.replace(/\/$/, "")}/${name}`, hidden: name.startsWith(".") }));
+  const parent = path === null || path === "D:/" ? null : path.slice(0, path.lastIndexOf("/")) || null;
+  return new Promise((resolve) => setTimeout(() => resolve({ machine, path, parent, home, folders }), 280));
 }
 
 /** The projects an agent on `machine` can be in: those spanning it. */
@@ -825,10 +865,19 @@ function specimenTalk(address: Address): KeepablePage {
       machine: sample.machine,
       model: sample.model,
       project: sample.town,
+      // A specimen with none listed is pointed at its own machine.
+      focus: focusOf(known ?? null) ?? { machines: [{ machine: sample.machine, folders: [] }] },
     },
     head,
     link: talkLink,
     conversation,
+    focus: {
+      words: focusWords,
+      places: () =>
+        machinesOf(specimen.world).map((machine) => ({ written: machine.written, name: machine.name, here: machine.here, online: machine.here ? true : machine.online })),
+      folders: specimenFolders,
+      set: () => new Promise((resolve) => setTimeout(() => resolve([]), 600)),
+    },
     opening: { open: notLive, reveal: notLive },
     pictures: {
       thumbnail: async (_machine, path, max) => specimenPicture(path, max),
@@ -956,8 +1005,8 @@ function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address)
   return {
     agent: agentName(known.about.host.agent),
     machine: address.machine,
-    worksOn: known.about.works_on && known.about.works_on !== address.machine ? known.about.works_on : null,
     lentBy: lent ? (lent.owner ?? lent.machine) : null,
+    focus: known.removed ? null : focusOf(known),
     model: known.about.model ?? null,
     project: known.town ? (world?.towns.find((t) => t.town === known.town)?.record.name ?? known.town) : null,
   };
@@ -994,6 +1043,12 @@ function liveTalk(address: Address): KeepablePage {
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
     composer: () => ComposerSession.open(address),
+    focus: {
+      words: focusWords,
+      places: () => focusPlacesFor(address),
+      folders: (machine, path) => foldersOf(machine, path),
+      set: (focus) => pointAt(address, focus),
+    },
     // A file elsewhere is brought to this device first; one here opens
     // where it is.
     opening: {
@@ -1150,7 +1205,7 @@ function liveTalk(address: Address): KeepablePage {
         const who = someoneOf(now, address);
         if (!known || !who || left) return;
         page.presence(known.removed ? "removed" : null);
-        if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model && who.worksOn === shown.worksOn) return;
+        if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model && JSON.stringify(who.focus) === JSON.stringify(shown.focus)) return;
         shown = who;
         page.identify(who);
       });

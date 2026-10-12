@@ -538,9 +538,21 @@ impl ConversationDir {
         self.books().join("seen")
     }
 
-    /// Jobs its runs left running on the machine it works on.
+    /// Jobs its runs handed to other machines left running there.
     pub fn elsewhere(&self) -> PathBuf {
         self.books().join("elsewhere")
+    }
+
+    /// What the model is told of the machines and folders the user points
+    /// the conversation to, as of the last time they were set.
+    pub fn focus(&self) -> PathBuf {
+        self.books().join("focus.md")
+    }
+
+    /// The machines and folders a Codex thread's instructions were written
+    /// with, and what those instructions say of them (`focus::Opening`).
+    pub fn focus_opening(&self) -> PathBuf {
+        self.books().join("focus-opening.json")
     }
 
     /// The model and reasoning the user chose when the session was opened.

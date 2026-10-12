@@ -12,6 +12,7 @@ import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
 import type { Attachment, UploadTarget } from "./attachments";
 import type { ConnectionState } from "./device";
+import type { Focus } from "./focus";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
 import type { AccountChange, AccountsReply, HubAccount } from "./accounts";
@@ -151,8 +152,8 @@ export async function uploadBytes(machine: MachineName, target: UploadTarget, fi
 export interface Choices {
   /** The account it works for, where more than one may open it there. */
   account?: HubAccount;
-  /** The machine it works on, as written, when not the one it lives on. */
-  works_on?: string;
+  /** The machines and folders the user points it at. */
+  focus?: Focus;
   /** Where its colleagues live; without it, it asks for none. */
   colleagues?: string;
   /** The agent's home, as the machine it lives on writes it, when not the
@@ -393,12 +394,6 @@ export function accountChange(hub: string | null, account: string, change: Accou
  *  machine of `account`. */
 export function serverCommand(hub: string | null, account: string, name: string | null, hours: number): Promise<string> {
   return invoke("server_command", { hubName: hub, accountName: account, name, hours });
-}
-
-/** Sets where a conversation works: a machine as written, or with null
- *  the one it lives on. */
-export function setWorksOn(who: Address, worksOn: string | null): Promise<void> {
-  return invoke("works_on", { residentId: who.resident, machineName: who.machine, worksOn });
 }
 
 /** Turns asking for colleagues on for a conversation, with the machine

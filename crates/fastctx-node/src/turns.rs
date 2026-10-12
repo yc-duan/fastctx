@@ -80,6 +80,15 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
             if let Some(asked) = crate::asked::of_item(item, event.at) {
                 crate::asked::ask(node, id, asked)?;
             }
+            // A Codex thread keeps its first instructions through compacting
+            // its conversation; a change they no longer say is told again.
+            if matches!(item.what, fastctx_types::session::What::Compaction)
+                && about.host.agent.as_str() == "codex"
+                && about.world_started
+            {
+                let (node, id, compaction) = (node.clone(), id.clone(), item.id.clone());
+                tokio::spawn(async move { crate::focus::compacted(&node, &id, &compaction).await });
+            }
         }
         Happened::TurnEnded { .. } => crate::asked::settle(node, id, |asked| asked.waits)?,
         _ => {}

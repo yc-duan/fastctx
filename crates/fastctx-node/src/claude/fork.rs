@@ -67,7 +67,6 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         town.as_ref(),
         &Origin::User,
         &source.acting,
-        source.works_on.as_ref(),
     )
     .await?;
     let directory = node.world.conversation(&id);
@@ -84,7 +83,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         world_started: true,
         model: model.clone(),
         acting: source.acting,
-        works_on: source.works_on,
+        focus: source.focus,
         home: source.home,
         callee: None,
     };

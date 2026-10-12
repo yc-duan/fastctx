@@ -26,7 +26,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use fastctx_types::access::Written;
+use fastctx_types::focus::Focus;
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::{About, Activity, Hints, Host, Now, Origin, Places, Trouble, Whereabouts};
@@ -394,7 +394,7 @@ impl Residents {
             world_started: false,
             model: None,
             acting: Default::default(),
-            works_on: None,
+            focus: Default::default(),
             home: None,
             callee: None,
         };
@@ -516,21 +516,21 @@ impl Residents {
         Ok(())
     }
 
-    /// Where the resident `id` works from now on: `works_on`, or the
-    /// machine it lives on.
-    pub fn set_works_on(&self, world: &WorldDir, id: &ResidentId, works_on: Option<Written>) -> io::Result<()> {
+    /// The machines and folders the user points the resident `id` to from
+    /// now on; whether they changed.
+    pub fn set_focus(&self, world: &WorldDir, id: &ResidentId, focus: Focus) -> io::Result<bool> {
         let mut state = self.lock();
         let Some(live) = state.live.get_mut(id) else {
-            return Ok(());
+            return Ok(false);
         };
-        if live.removed.is_some() || live.about.works_on == works_on {
-            return Ok(());
+        if live.removed.is_some() || live.about.focus == focus {
+            return Ok(false);
         }
         let mut about = live.about.clone();
-        about.works_on = works_on;
+        about.focus = focus;
         records::write_about(&world.conversation(id), &about)?;
         live.about = about;
-        Ok(())
+        Ok(true)
     }
 
     /// A new id for a resident of `agent`, unused on this machine.

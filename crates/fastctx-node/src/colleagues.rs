@@ -197,8 +197,8 @@ pub async fn ask_here(
         },
     )?;
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
-    let _birth = crate::here::born(node, &id, acting.clone(), None);
-    let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, None, home.as_deref()).await?;
+    let _birth = crate::here::born(node, &id, acting.clone());
+    let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, home.as_deref()).await?;
     // Until it is claimed below, reports of threads nobody claims are kept.
     let _starting = crate::codex::starting(node);
     let (thread, model) = node.codex.home(home.as_deref())?.start_thread(spec).await.map_err(|error| {
@@ -215,7 +215,7 @@ pub async fn ask_here(
         world_started: true,
         model,
         acting,
-        works_on: None,
+        focus: Default::default(),
         home,
         callee: Some(started.callee.name.clone()),
     };
@@ -308,7 +308,6 @@ pub async fn thread_spec(
     origin: &Origin,
     town: Option<&TownName>,
     acting: &Acting,
-    works_on: Option<&Written>,
     home: Option<&std::path::Path>,
 ) -> Result<(ThreadSpec, Heard), Failure> {
     let here = node.machine();
@@ -332,15 +331,19 @@ pub async fn thread_spec(
     };
     let mut config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
     let started = crate::collab::started(node, id)?;
-    if started.as_ref().is_some_and(|started| !started.callee.screen)
-        || works_on.filter(|works_on| !node.is_here(works_on)).is_none() && node.works_here(acting).is_err()
-    {
+    if started.as_ref().is_some_and(|started| !started.callee.screen) || node.works_here(acting).is_err() {
         let config_home = home.unwrap_or_else(|| node.codex.default().config_home());
         let (servers, plugins) = codex::desktop_hands(config_home).map_err(Failure::new)?;
         codex::lend(&mut config, &servers, &plugins);
     }
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
-    let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, works_on).await?;
+    let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting).await?;
+    // The machines and folders the user pointed it at, in the words its
+    // thread started with, each time it is resumed (`crate::focus`).
+    if let Some(opening) = crate::focus::opening(&node.world.conversation(id))?.filter(|opening| !opening.note.is_empty()) {
+        developer_instructions.push_str("\n\n");
+        developer_instructions.push_str(&opening.note);
+    }
     if let Some(started) = started.filter(|started| !started.rules.is_empty()) {
         developer_instructions.push_str("\n\n");
         developer_instructions.push_str(&started.rules);
@@ -392,14 +395,12 @@ pub(crate) async fn instructions(
     town: Option<&TownName>,
     origin: &Origin,
     acting: &Acting,
-    works_on: Option<&Written>,
 ) -> Result<(String, Heard), Failure> {
     let heard = heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
-    let works_on = works_on.filter(|works_on| !node.is_here(works_on));
     // An agent lent to another account is given the machines it may work
     // on, and never the name of the one it runs on (`world-run.md`, 这里).
-    let lent = (works_on.is_none() && node.works_here(acting).is_err()).then(|| crate::world::machines(node, acting).1);
-    let words = words(id, &node.machine(), works_on, lent.as_deref(), town, origin);
+    let lent = node.works_here(acting).is_err().then(|| crate::world::machines(node, acting).1);
+    let words = words(id, &node.machine(), lent.as_deref(), town, origin);
     let text = match town {
         Some(town) => format!("{words}\n\n{}", crate::town::map::brief(node, town).await?),
         None => words,
@@ -413,7 +414,6 @@ pub(crate) async fn instructions(
 fn words(
     id: &ResidentId,
     machine: &MachineName,
-    works_on: Option<&Written>,
     lent: Option<&[String]>,
     town: Option<&TownName>,
     origin: &Origin,
@@ -432,27 +432,19 @@ fn words(
         ),
         Origin::User => "The user started this session from fastctx and talks to you here.".to_string(),
     };
-    // Where it lives and where its shell is, when they differ (`world-run.md`,
-    // 这里), or that it has none where it lives (`world-network.md`,
-    // 共享机器与借出智能体).
+    // That it has no shell where it lives, for an agent another account
+    // lent (`world-network.md`, 共享机器与借出智能体).
     // Many users have this one computer only: other machines are spoken of
     // as `run`'s description lists them, never assumed.
     let on =
         "when `run`'s description lists other machines, `on MACHINE` in the script runs a part of it on one of them";
-    let (who, runs, elsewhere) = match (works_on, lent) {
-        (Some(works_on), _) => (
-            format!("an agent session on {machine}, one of the user's machines connected by fastctx"),
-            format!("It runs bash on {works_on}, where you work, and {on}"),
-            format!(
-                " You work on {works_on}: your shell and the files you work on are there. Your own program runs on {machine}, so its built-in tools act on {machine}, and the working directory and platform your host reports are {machine}'s, not {works_on}'s."
-            ),
-        ),
-        (None, Some(machines)) => (
+    let (who, runs, elsewhere) = match lent {
+        Some(machines) => (
             "an agent session working on the user's machines, which fastctx connects".to_string(),
             "Each script is a single `on MACHINE`, which runs it there".to_string(),
             format!("\n\n{}", fastctx_hands::lent::opening(machines)),
         ),
-        (None, None) => {
+        None => {
             (format!("an agent session on {machine}"), format!("It runs bash on this machine; {on}"), String::new())
         }
     };

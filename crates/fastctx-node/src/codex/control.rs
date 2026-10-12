@@ -188,7 +188,6 @@ async fn fork(
         &Origin::User,
         town.as_ref(),
         &source.acting,
-        source.works_on.as_ref(),
         source.home.as_deref(),
     )
     .await?;
@@ -206,7 +205,7 @@ async fn fork(
         world_started: true,
         model,
         acting: source.acting,
-        works_on: source.works_on,
+        focus: source.focus,
         home: source.home,
         callee: None,
     };

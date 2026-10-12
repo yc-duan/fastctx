@@ -256,7 +256,6 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                     &about.origin,
                     town.as_ref(),
                     &about.acting,
-                    about.works_on.as_ref(),
                     about.home.as_deref(),
                 )
                 .await
@@ -292,6 +291,31 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                     result.notification = Some(landed);
                 }
                 Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
+            }
+        }
+        Management::Focus { focus } => {
+            crate::focus::pointable(&about)?;
+            let changed = match node.residents.set_focus(&node.world, id, focus.clone()) {
+                Ok(changed) => changed,
+                Err(error) => {
+                    step(&mut result, "records", Outcome::Failed, format!("Saving its machines and folders failed: {error}"));
+                    return Ok(result);
+                }
+            };
+            step(
+                &mut result,
+                "records",
+                Outcome::Done,
+                if changed { "Machines and folders changed." } else { "These are already its machines and folders." }.into(),
+            );
+            if changed {
+                match crate::focus::changed(node, id, &about, &focus).await {
+                    Ok(delivery) => match speech::tell_here_locked(node, id, delivery, speech::Owed::Nobody).await {
+                        Ok(landed) => result.notification = Some(landed),
+                        Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
+                    },
+                    Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
+                }
             }
         }
     }

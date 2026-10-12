@@ -155,7 +155,7 @@ pub fn fixtures() -> Fixtures {
                 model: None,
                 reasoning_effort: None,
                 attachments,
-                works_on: None,
+                focus: Default::default(),
                 home: None,
                 files_on: None,
             },

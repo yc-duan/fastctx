@@ -98,6 +98,10 @@ impl Device {
                     machine.ok_or_else(|| failed("choose a machine for file search; a device has no local files"))?;
                 (machine, RemoteCall::FindFiles { request }, None)
             }
+            Call::Folders { machine, path } => {
+                let machine = machine.ok_or_else(|| failed("choose a machine for its folders; a device has none"))?;
+                (machine, RemoteCall::Folders { path }, None)
+            }
             Call::Thumbnail { machine, request } => {
                 let machine = machine.ok_or_else(|| failed("choose the machine holding the image"))?;
                 (machine, RemoteCall::Thumbnail { request }, None)
@@ -136,15 +140,11 @@ impl Device {
                     model,
                     reasoning_effort,
                     attachments,
-                    works_on: choices.works_on,
+                    focus: choices.focus,
                     home: choices.home,
                     files_on: choices.files_on,
                 };
                 (machine, open, None)
-            }
-            Call::WorksOn { resident, machine, works_on } => {
-                let machine = self.find(&resident, machine).await?;
-                (machine, RemoteCall::WorksOn { resident: resident.clone(), works_on }, Some(resident))
             }
             Call::Stop { resident, machine } => {
                 let machine = self.find(&resident, machine).await?;
@@ -218,6 +218,7 @@ impl Device {
         let reply = match (remote, answer) {
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
+            (RemoteCall::Folders { .. }, RemoteReply::Folders(folders)) => Reply::Folders(folders),
             (RemoteCall::Thumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::AttachmentThumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::Lines { .. }, RemoteReply::Lines(reply)) => Reply::Lines(reply),
@@ -256,7 +257,6 @@ impl Device {
             (RemoteCall::ItemDetail { .. }, RemoteReply::ItemDetail { detail }) => {
                 Reply::ItemDetail { resident: address.expect("item detail resident"), detail }
             }
-            (RemoteCall::WorksOn { .. }, RemoteReply::Set) => Reply::Done,
             _ => {
                 return Err(failed(format!(
                     "{machine} answered something other than the requested conversation operation"

@@ -1,0 +1,316 @@
+/* The machines and folders a conversation is pointed at
+   (`focus-panel.ts`): a list of machines, each chosen as a whole block, the
+   folders chosen on it as small solid chips under it; walking a machine's
+   folders takes the panel's place until one is chosen. */
+
+.focus-machines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 calc(-1 * var(--space-2));
+}
+
+.focus-machine {
+  border-radius: var(--radius-m);
+}
+
+.focus-machine.chosen {
+  background: var(--accent-wash);
+}
+
+.focus-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-m);
+  text-align: left;
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.focus-toggle:hover {
+  background: var(--hairline);
+}
+
+.focus-machine.chosen .focus-toggle {
+  color: var(--text-strong);
+}
+
+.focus-machine.chosen .focus-toggle:hover {
+  background: transparent;
+}
+
+.focus-toggle > .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.focus-toggle > .glyph:last-child {
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.focus-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-folders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) + 16px + var(--space-2));
+}
+
+.focus-folder,
+.focus-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 28px;
+  border-radius: var(--radius-full);
+  font-size: var(--size-small);
+}
+
+.focus-folder {
+  padding: 0 2px 0 10px;
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.focus-folder > .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.focus-folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  color: var(--text-3);
+}
+
+.focus-remove:hover {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.focus-add {
+  padding: 0 10px 0 8px;
+  background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
+  color: var(--text-2);
+}
+
+.focus-add:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-elevated);
+}
+
+.focus-add:disabled {
+  color: var(--text-3);
+}
+
+.focus-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}
+
+/* Walking a machine's folders. */
+.focus-walk-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: calc(-1 * var(--space-1)) 0 var(--space-2) calc(-1 * var(--space-2));
+  font-size: var(--size-ui);
+  color: var(--text-strong);
+}
+
+.focus-go {
+  margin-bottom: var(--space-2);
+}
+
+.focus-go input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 7px var(--space-3);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+}
+
+.focus-go input::placeholder {
+  color: var(--text-3);
+}
+
+.focus-list .pop-row > .glyph {
+  color: var(--text-3);
+}
+
+.focus-list .pop-row.quiet {
+  color: var(--text-3);
+}
+
+.focus-list .choice-none {
+  padding: var(--space-2);
+}
+
+.focus-list .choice-none.quiet {
+  color: var(--text-3);
+}
+
+/* The machines and folders the new conversation is pointed at, among the
+   labels over its input. */
+.talk-pop[data-pop="focus"] {
+  right: auto;
+  width: min(440px, calc(100% - var(--space-6)));
+}
+
+.focus-more {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--hairline);
+  color: var(--text-2);
+  font-size: var(--size-small);
+}
+
+/* A conversation's strip under its head: what it is pointed at, opening the
+   same panel beneath it. */
+.focus-strip {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--gutter) var(--space-1);
+}
+
+.focus-strip[hidden] {
+  display: none;
+}
+
+.focus-chip {
+  min-width: 0;
+  margin-left: calc(-1 * var(--space-2));
+}
+
+.focus-chip.quiet .talk-chip-name {
+  color: var(--text-3);
+}
+
+.focus-chip:disabled {
+  opacity: 0.6;
+}
+
+.focus-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.focus-state.refused {
+  color: var(--wrong);
+}
+
+.focus-pop {
+  position: absolute;
+  top: 100%;
+  left: var(--gutter);
+  width: min(440px, calc(100% - 2 * var(--gutter)));
+  max-height: min(64dvh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  animation: panel-rise var(--fold) var(--fold-easing) both;
+}
+
+/* Inside a raised panel the chips are a step darker than it. */
+:is(.talk-pop, .focus-pop) .focus-folder {
+  background: var(--fill);
+}
+
+:is(.talk-pop, .focus-pop) .focus-add {
+  background: color-mix(in srgb, var(--fill) 55%, transparent);
+}
+
+:is(.talk-pop, .focus-pop) .focus-add:hover:not(:disabled) {
+  background: var(--fill);
+}
+
+@media (max-width: 760px) {
+  .talk-pop[data-pop="focus"],
+  .focus-pop {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 0;
+    width: auto;
+    max-height: 80dvh;
+    padding: var(--space-4) var(--space-5) calc(var(--space-5) + var(--safe-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+    animation-name: sheet-rise;
+  }
+
+  .focus-toggle,
+  .focus-list .pop-row {
+    min-height: 44px;
+  }
+
+  .focus-folder,
+  .focus-add {
+    min-height: 34px;
+  }
+
+  .focus-remove {
+    width: 30px;
+    height: 30px;
+  }
+
+  /* As every sheet on a phone: a shade over the rest. */
+  .focus-strip:has(.focus-pop:not([hidden]))::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background: rgba(0, 0, 0, 0.36);
+    animation: sheet-scrim var(--fold) ease both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-pop {
+    animation: none;
+  }
+}

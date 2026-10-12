@@ -20,6 +20,8 @@ mod control;
 mod file_read;
 #[path = "gui_wire_fixtures/file_search.rs"]
 mod file_search;
+#[path = "gui_wire_fixtures/focus.rs"]
+mod focus;
 #[path = "gui_wire_fixtures/logins.rs"]
 mod logins;
 #[path = "gui_wire_fixtures/machine_log.rs"]
@@ -55,6 +57,7 @@ struct Fixtures {
     control: control::Fixtures,
     file_read: file_read::Fixtures,
     file_search: file_search::Fixtures,
+    focus: focus::Fixtures,
     attachments: attachments::Fixtures,
     composer: composer::Fixtures,
     claude: claude::Fixtures,
@@ -76,6 +79,7 @@ fn main() {
         control: control::fixtures(),
         file_read: file_read::fixtures(),
         file_search: file_search::fixtures(),
+        focus: focus::fixtures(),
         attachments: attachments::fixtures(),
         composer: composer::fixtures(),
         claude: claude::fixtures(),

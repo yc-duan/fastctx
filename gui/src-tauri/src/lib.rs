@@ -511,8 +511,20 @@ async fn find_files(
     shell.world().find_files(machine(machine_name)?, request).await.map_err(|error| error.to_string())
 }
 
+/// The folders in a folder of `machine_name` (this node when absent), for
+/// pointing a conversation at some; with no `path`, where a choice starts.
+#[fastctx_gui_command::command]
+async fn folders(
+    shell: tauri::State<'_, Shell>,
+    machine_name: Option<String>,
+    path: Option<String>,
+) -> Result<fastctx_types::focus::Folders, String> {
+    shell.world().folders(machine(machine_name)?, path).await.map_err(|error| error.to_string())
+}
+
 /// Removes a resident from the World, lets it sleep, wakes it or moves it
-/// to another project, as the user; each stage is answered as it went.
+/// to another project, or points it at machines and folders, as the user;
+/// each stage is answered as it went.
 #[fastctx_gui_command::command]
 async fn manage(
     shell: tauri::State<'_, Shell>,
@@ -945,7 +957,6 @@ pub fn run() {
             #[cfg(desktop)]
             hub_moving::arrive_hub,
             accounts::agent_homes,
-            accounts::works_on,
             logins::agent_logins,
             logins::scan_agents,
             logins::add_agent_login,
@@ -982,6 +993,7 @@ pub fn run() {
             manage,
             claude_consent,
             find_files,
+            folders,
             pages::page_read,
             pages::page_history,
             pages::page_consent,

@@ -243,12 +243,24 @@ pub fn fixtures() -> Fixtures {
             from: Some(from),
             text: "hello 世界".into(),
             message,
-            notice: (i == 2).then(|| {
-                Box::new(fastctx_types::residents::Notice::World {
+            notice: match i {
+                2 => Some(Box::new(fastctx_types::residents::Notice::World {
                     fact: fastctx_types::residents::WorldFact::Moved { to: Some("mark50".parse().unwrap()) },
                     text: "=== the user moved you to the project mark50 ===".into(),
-                })
-            }),
+                })),
+                1 => Some(Box::new(fastctx_types::residents::Notice::World {
+                    fact: fastctx_types::residents::WorldFact::Focus {
+                        focus: fastctx_types::focus::Focus {
+                            machines: vec![fastctx_types::focus::FocusedMachine {
+                                machine: "laptop".parse().unwrap(),
+                                folders: vec!["C:/work/app".into()],
+                            }],
+                        },
+                    },
+                    text: "The user changed the machines and folders of this conversation.".into(),
+                })),
+                _ => None,
+            },
         }));
     }
     for (id, host_image, name, media_type, content) in [

@@ -5,6 +5,7 @@
 import type { AccountName, Acting, HubId, HubName, Rights } from "./accounts";
 import type { Speaker, TurnEnd } from "./events";
 import type { PageSource, PageSummary } from "./pages";
+import type { Focus } from "./focus";
 import type { Address, AgentName, EntryId, JobId, JournalName, MachineName, ResidentId, Result, Timestamp, TownName } from "./wire";
 
 export interface Host {
@@ -26,9 +27,8 @@ export interface About {
   model: string | null;
   /** Whom it works for: this computer's logins, or these accounts. */
   acting: Acting;
-  /** The machine its scripts start on, as written, when not the one it
-   *  lives on. */
-  works_on?: string;
+  /** The machines and folders the user points it at. */
+  focus?: Focus;
   /** The agent's home it works in, as its machine writes it, when not the
    *  default one there: which of that machine's logins it uses. */
   home?: string;

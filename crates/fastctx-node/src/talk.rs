@@ -332,7 +332,8 @@ pub(crate) async fn history_here(node: &Arc<Node>, resident: &ResidentId) -> Res
 /// that the World does not (`crate::turns::recorded`). Where both tell a
 /// turn's start or end, the World's account stands: it knows why a turn was
 /// cut short. Words the World sent are told by its own record, which knows
-/// who said them; the host's copy of them carries the World's head note.
+/// who said them; the host's copy of them carries the World's head note or,
+/// in Codex, the id the World gave the message.
 fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>, agent: &str) -> Vec<SessionEvent> {
     use fastctx_types::session::Happened;
     let Some(hosted) = hosted else {
@@ -354,10 +355,13 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>, agent
                 true
             }
             // Other words the World told are its own record's, except, for
-            // Codex, in a turn the World has no record of sending into.
-            Happened::Heard { turn, text, .. } => {
-                !(fastctx_hands::told::is_told(text)
-                    && (agent != "codex" || turn.as_deref().is_some_and(|turn| sent_turns.contains(turn))))
+            // Codex, in a turn the World has no record of sending into. The
+            // World's head note tells them, and in Codex, where the user's
+            // words go in as typed, the id the World gave the message.
+            Happened::Heard { turn, text, message, .. } => {
+                let told = fastctx_hands::told::is_told(text)
+                    || agent == "codex" && message.as_deref().is_some_and(fastctx_hosts::codex::sent_by_world);
+                !(told && (agent != "codex" || turn.as_deref().is_some_and(|turn| sent_turns.contains(turn))))
             }
             _ => true,
         })
@@ -596,7 +600,7 @@ pub async fn open(
                 model: options.model,
                 reasoning_effort: options.reasoning_effort,
                 attachments,
-                works_on: choices.works_on,
+                focus: choices.focus,
                 home: choices.home,
                 files_on: choices.files_on,
             };
@@ -625,27 +629,11 @@ pub async fn open_here(
     attachments: Vec<Attachment>,
     choices: Choices,
 ) -> Result<(ResidentId, Landed), Failure> {
-    let works_on = choices.works_on.filter(|works_on| !node.is_here(works_on));
-    // An agent lent to another account works on its machines, each command
-    // naming one, and on no machine by default (`world-run.md`, 这里).
-    let lent = node.works_here(&acting).is_err();
-    match &works_on {
-        Some(works_on) if lent => {
-            return Err(Failure::not_run(format!(
-                "this agent is lent to the account it works for, so each of its commands names its machine; it works on no machine by default, {works_on} included"
-            )));
-        }
-        Some(works_on) => {
-            node.speaking(&acting, works_on, Purpose::Hands)
-                .map_err(|failure| Failure::not_run(format!("it cannot work on {works_on}: {failure}")))?;
-        }
-        None => {}
-    }
     // The login it is born in must be in this machine's agent list, the
     // default one too (`world-agent-logins.md`); the default one is recorded
     // as none, so that it follows the user's environment.
     let home = crate::homes::listed(node, agent.as_str(), choices.home.as_deref())?;
-    let opened = Opened { acting, works_on, home, files_on: choices.files_on };
+    let opened = Opened { acting, focus: choices.focus, home, files_on: choices.files_on };
     match agent.as_str() {
         "codex" => {}
         "claude" => return crate::claude::open_here(node, typed_on, opened, town, text, options, attachments).await,
@@ -659,16 +647,18 @@ pub async fn open_here(
         crate::town::project::spans_here(node, town).await?;
     }
     let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
-    let _birth = crate::here::born(node, &id, opened.acting.clone(), opened.works_on.clone());
+    let _birth = crate::here::born(node, &id, opened.acting.clone());
     let origin = Origin::User;
     crate::session_options::keep(node, &id, &options)?;
+    // What it is told of its machines and folders goes into the instructions
+    // its thread starts with.
+    crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
     let (spec, heard) = crate::colleagues::thread_spec(
         node,
         &id,
         &origin,
         town.as_ref(),
         &opened.acting,
-        opened.works_on.as_ref(),
         opened.home.as_deref(),
     )
     .await?;
@@ -686,7 +676,7 @@ pub async fn open_here(
         world_started: true,
         model,
         acting: opened.acting,
-        works_on: opened.works_on,
+        focus: opened.focus,
         home: opened.home,
         callee: None,
     };
@@ -773,7 +763,8 @@ async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<MachineName, Failur
 /// What the user chose for a session opened here, as this machine keeps it.
 pub struct Opened {
     pub acting: Acting,
-    pub works_on: Option<Written>,
+    /// The machines and folders the user points it to.
+    pub focus: fastctx_types::focus::Focus,
     /// The agent's home here it is born in, when not the default one.
     pub home: Option<std::path::PathBuf>,
     /// Where the files attached to its first words go, other than images,

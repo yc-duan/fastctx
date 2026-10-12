@@ -608,6 +608,13 @@ impl fastctx_net::link::Node for Handler {
                 | RemoteCall::ReadAgentLimits { .. }) => {
                     crate::logins::remote::answer(&node, &link.view(), &asker, call).await
                 }
+                RemoteCall::Folders { path } => {
+                    crate::focus::folders_here(node.machine(), path).await.map(RemoteReply::Folders)
+                }
+                RemoteCall::Outline { folders, within_ms } => {
+                    let within = std::time::Duration::from_millis(within_ms);
+                    Ok(RemoteReply::Outlined { outlines: crate::focus::outline_here(folders, within).await })
+                }
                 RemoteCall::FindFiles { request } => {
                     if let fastctx_types::file_search::FileSearchRequest::Open { scope } = request {
                         let stream =
@@ -655,19 +662,16 @@ impl fastctx_net::link::Node for Handler {
                     model,
                     reasoning_effort,
                     attachments,
-                    works_on,
+                    focus,
                     home,
                     files_on,
                 } => {
                     let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
-                    let choices = fastctx_types::agents::Choices { account: None, works_on, home, files_on };
+                    let choices = fastctx_types::agents::Choices { account: None, focus, home, files_on };
                     let (resident, landed) =
                         crate::talk::open_here(&node, &from, acting, agent, town, text, options, attachments, choices)
                             .await?;
                     Ok(RemoteReply::Opened { resident, landed })
-                }
-                RemoteCall::WorksOn { resident, works_on } => {
-                    crate::here::set(&node, &resident, works_on).await.map(|()| RemoteReply::Set)
                 }
                 RemoteCall::Stop { resident } => {
                     crate::talk::stop_here(&node, &resident).await.map(|stopped| RemoteReply::Stopped { stopped })

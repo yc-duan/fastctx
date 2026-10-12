@@ -148,7 +148,15 @@ pub fn fixtures() -> Fixtures {
                         hub: "w-0123456789abcdef".parse().unwrap(),
                         account: "ada".parse().unwrap(),
                     }),
-                    works_on: Some("laptop".parse().unwrap()),
+                    focus: fastctx_types::focus::Focus {
+                    machines: vec![
+                        fastctx_types::focus::FocusedMachine {
+                            machine: "lab.home".parse().unwrap(),
+                            folders: vec!["C:/work/中文 项目".into(), "D:/data".into()],
+                        },
+                        fastctx_types::focus::FocusedMachine { machine: "laptop".parse().unwrap(), folders: vec![] },
+                    ],
+                },
                     home: Some("C:/Users/ada/.codex-work".into()),
                     files_on: None,
                 },
@@ -200,7 +208,15 @@ pub fn fixtures() -> Fixtures {
                 model: Some("opus".into()),
                 reasoning_effort: Some("high".into()),
                 attachments: Vec::new(),
-                works_on: None,
+                focus: fastctx_types::focus::Focus {
+                    machines: vec![
+                        fastctx_types::focus::FocusedMachine {
+                            machine: "lab.home".parse().unwrap(),
+                            folders: vec!["C:/work/中文 项目".into(), "D:/data".into()],
+                        },
+                        fastctx_types::focus::FocusedMachine { machine: "laptop".parse().unwrap(), folders: vec![] },
+                    ],
+                },
                 home: Some("/home/ada/.claude-work".into()),
                 files_on: Some("laptop".parse().unwrap()),
             },

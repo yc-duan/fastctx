@@ -3,7 +3,9 @@
 // the user is about to send, always at the foot.
 
 import { layerOpened } from "../app/back";
-import type { ComposerWords } from "../app/words";
+import { FocusPanel, focusSummary, type FocusPlace } from "../app/focus-panel";
+import type { ComposerWords, FocusWords } from "../app/words";
+import { sameFocus, type Focus, type Folders } from "../world/focus";
 import type { Words } from "../words";
 import type { Control, Controlled, Offers } from "../world/control";
 import type { Attachment } from "../world/attachments";
@@ -38,12 +40,12 @@ export interface Someone {
   agent: string;
   /** The machine it lives on. */
   machine: string;
-  /** The machine its commands start on, as written, when not the one it
-   *  lives on (`world-run.md`, 这里). */
-  worksOn?: string | null;
   /** Who lent it, for an agent another account lent the user: it works on
    *  no machine by default, each command naming one. */
   lentBy?: string | null;
+  /** The machines and folders it is pointed at; null for a conversation
+   *  the user cannot point, one they did not open from here. */
+  focus?: Focus | null;
   model: string | null;
   /** The project it is in, by the name the user gave it. */
   project: string | null;
@@ -73,6 +75,14 @@ export interface PageOptions {
   /** The conversation's pictures, from the machines holding them. */
   pictures?: PictureSeams;
   conversation: Conversation;
+  /** Pointing it at machines and folders, from the strip at the top. */
+  focus?: {
+    words: FocusWords;
+    places(): FocusPlace[];
+    folders(machine: string, path: string | null): Promise<Folders>;
+    /** Resolves with what was not done of it, in the user's words. */
+    set(focus: Focus): Promise<string[]>;
+  };
   /** What the World knows of the agent, shown in a card opened from the
    *  head, and how to ask for it. */
   details?: {
@@ -212,6 +222,10 @@ export class ConversationPage {
       },
     );
     this.scroller.before(this.finder.element);
+    if (options.focus) {
+      this.focusStrip(options.focus);
+      this.drawFocus();
+    }
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
     document.addEventListener("keydown", this.findKey);
     this.name = this.element.querySelector<HTMLElement>(".who-name")!;
@@ -1279,17 +1293,126 @@ export class ConversationPage {
     gone.hidden = !removed;
     gone.textContent = removed ? this.options.words.removedNote : "";
     this.drawState();
+    this.drawFocus();
   }
 
   /** Who it is, as the World lists it: a conversation opened before then,
    *  as one just started, goes by its agent's id until this; its project
    *  and model follow it when they change. */
   identify(who: Someone): void {
+    // A change being kept stands until the World lists it.
+    if (this.focusSaving) who = { ...who, focus: this.options.someone.focus ?? null };
     Object.assign(this.options.someone, who);
     const said = this.options.words.sendPlaceholder(who.agent);
     this.input.placeholder = said;
     this.input.setAttribute("aria-label", said);
     this.drawState();
+    this.drawFocus();
+  }
+
+  private focusPanel: FocusPanel | null = null;
+  /** What the panel holds while it is open. */
+  private focusDraft: Focus | null = null;
+  private focusSaving = false;
+
+  /** The strip under the head: the machines and folders it is pointed at,
+   *  which open the panel to change them; a change is kept, and told to
+   *  the agent, as the panel closes. */
+  private focusStrip(focus: NonNullable<PageOptions["focus"]>): void {
+    const strip = document.createElement("div");
+    strip.className = "focus-strip";
+    strip.hidden = true;
+    strip.innerHTML = `<button type="button" class="talk-chip focus-chip" aria-haspopup="dialog" aria-expanded="false"></button><span class="focus-state" aria-live="polite"></span><div class="focus-pop" role="dialog" hidden></div>`;
+    this.element.querySelector(".page-head")?.after(strip);
+    const chip = strip.querySelector<HTMLButtonElement>(".focus-chip")!;
+    const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
+    chip.addEventListener("click", () => (pop.hidden ? this.openFocus(focus) : this.closeFocus(focus)));
+    document.addEventListener("pointerdown", (event) => {
+      if (pop.hidden || !this.element.isConnected) return;
+      const target = event.target as HTMLElement;
+      if (!pop.contains(target) && !chip.contains(target)) this.closeFocus(focus);
+    });
+    strip.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || pop.hidden) return;
+      event.stopPropagation();
+      this.closeFocus(focus);
+      chip.focus({ preventScroll: true });
+    });
+  }
+
+  private openFocus(focus: NonNullable<PageOptions["focus"]>): void {
+    const current = this.options.someone.focus;
+    if (!current || this.focusSaving) return;
+    const strip = this.element.querySelector<HTMLElement>(".focus-strip")!;
+    const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
+    this.focusDraft = structuredClone(current);
+    this.focusPanel ??= new FocusPanel(
+      {
+        words: focus.words,
+        places: focus.places,
+        folders: focus.folders,
+        changed: (next) => {
+          this.focusDraft = next;
+        },
+        done: () => this.closeFocus(focus),
+      },
+      current,
+    );
+    this.focusPanel.set(current);
+    pop.replaceChildren(this.focusPanel.element);
+    pop.hidden = false;
+    strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "true");
+    layerOpened({ isOpen: () => !pop.hidden && this.element.isConnected, close: () => this.closeFocus(focus) });
+  }
+
+  private closeFocus(focus: NonNullable<PageOptions["focus"]>): void {
+    const strip = this.element.querySelector<HTMLElement>(".focus-strip")!;
+    const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
+    if (pop.hidden) return;
+    pop.hidden = true;
+    strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "false");
+    const before = this.options.someone.focus;
+    const next = this.focusDraft;
+    this.focusDraft = null;
+    if (!before || !next || sameFocus(before, next)) return;
+    const state = strip.querySelector<HTMLElement>(".focus-state")!;
+    this.focusSaving = true;
+    this.options.someone.focus = next;
+    this.drawFocus();
+    state.textContent = focus.words.saving;
+    state.classList.remove("refused");
+    focus
+      .set(next)
+      .then((unfinished) => {
+        state.textContent = unfinished.join(" · ");
+      })
+      .catch((error: unknown) => {
+        this.options.someone.focus = before;
+        state.textContent = focus.words.failed(error instanceof Error ? error.message : String(error));
+        state.classList.add("refused");
+      })
+      .finally(() => {
+        this.focusSaving = false;
+        this.drawFocus();
+      });
+  }
+
+  /** The strip as the conversation stands: shown where the user may point
+   *  it, and while it is not removed. */
+  private drawFocus(): void {
+    const words = this.options.focus?.words;
+    const strip = this.element.querySelector<HTMLElement>(".focus-strip");
+    if (!words || !strip) return;
+    const focus = this.options.someone.focus;
+    strip.hidden = !focus || this.away === "removed";
+    if (!focus) return;
+    const chip = strip.querySelector<HTMLButtonElement>(".focus-chip")!;
+    const summary = focusSummary(focus, words);
+    const html = `${glyph("machine", 16)}${summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`}${glyph("chevron", 12)}`;
+    if (chip.innerHTML !== html) chip.innerHTML = html;
+    chip.classList.toggle("quiet", !summary);
+    chip.title = summary ? `${words.title} · ${summary.said}` : words.title;
+    chip.disabled = this.focusSaving;
   }
 
   /** The watch on the session is over: what is shown stays, and the bar
@@ -1360,11 +1483,11 @@ export class ConversationPage {
     // its words as they stream would be too many to hear.
     if (this.said !== null && this.said !== now) this.spoken.textContent = `${someone.agent} · ${now}`;
     this.said = now;
-    // Under the title, where it lives and, when elsewhere, where it works.
+    // Under the title, where it lives, and who lent it.
     const facts = [
       now,
       title ? `${someone.agent} · ${someone.machine}` : null,
-      someone.lentBy ? words.lentBy(someone.lentBy) : someone.worksOn ? words.worksOn(someone.worksOn) : null,
+      someone.lentBy ? words.lentBy(someone.lentBy) : null,
       someone.project,
       this.options.conversation.answeredBy ?? someone.model,
     ].filter(Boolean) as string[];

@@ -76,7 +76,8 @@ pub async fn live(node: &Node, resident: &ResidentId, mut event: SessionEvent) -
         let Happened::Heard { text, message: Some(message), delivery, .. } = &event.happened else { continue };
         // The durable delivery already supplied the kept attachments. A
         // later host projection updates it only when it adds native pictures.
-        if (delivery.is_some() || fastctx_hands::told::is_told(text)) && message.images.is_empty() {
+        let told = fastctx_hands::told::is_told(text) || fastctx_hosts::codex::sent_by_world(message);
+        if (delivery.is_some() || told) && message.images.is_empty() {
             continue;
         }
         node.watchers.publish(resident, &event);

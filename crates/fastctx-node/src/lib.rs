@@ -36,6 +36,7 @@ mod features;
 mod file_read;
 mod file_search;
 mod firewall;
+mod focus;
 mod gather;
 pub mod handoff;
 mod held_history;

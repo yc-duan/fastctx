@@ -94,7 +94,16 @@ fn residents() -> Vec<ResidentNow> {
                 } else {
                     fastctx_types::access::Acting::one("w-0123456789abcdef".parse().unwrap(), "ada".parse().unwrap())
                 },
-                works_on: (i == 1).then(|| "laptop.home".parse().unwrap()),
+                focus: if i == 1 {
+                    fastctx_types::focus::Focus {
+                        machines: vec![fastctx_types::focus::FocusedMachine {
+                            machine: "laptop.home".parse().unwrap(),
+                            folders: vec!["/home/ada/app".into()],
+                        }],
+                    }
+                } else {
+                    Default::default()
+                },
                 home: (i == 1).then(|| "C:/Users/ada/.codex-work".into()),
                 callee: None,
             },

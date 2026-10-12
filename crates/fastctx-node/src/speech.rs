@@ -327,6 +327,23 @@ async fn submit_thread(
     if single {
         batch.retain(|kept| kept.delivery.id == pending.delivery.id);
     }
+    // The user's words go in as typed and first: the World's telling after
+    // them begins with a head note, so none of it reads as theirs, while
+    // their words after it would read as its end. Other words they typed go
+    // in the next message.
+    let first = if typed(&pending.delivery.notice) {
+        Some(pending.delivery.id.clone())
+    } else {
+        batch.iter().find(|kept| typed(&kept.delivery.notice)).map(|kept| kept.delivery.id.clone())
+    };
+    let (mut taken, left): (Vec<Pending>, Vec<Pending>) = batch
+        .into_iter()
+        .partition(|kept| !typed(&kept.delivery.notice) || Some(&kept.delivery.id) == first.as_ref());
+    if let Some(at) = taken.iter().position(|kept| Some(&kept.delivery.id) == first.as_ref()) {
+        let words = taken.remove(at);
+        taken.insert(0, words);
+    }
+    let mut batch = taken;
     for kept in &mut batch {
         if kept.working {
             kept.readers = node.residents.working_for(id);
@@ -335,37 +352,40 @@ async fn submit_thread(
     }
     let mut handover =
         crate::delivery::begin(directory, batch.clone()).map_err(|error| Failure::new(error.to_string()))?;
-    let input = match batch.as_slice() {
+    let client = Some(format!("{}{}", fastctx_hosts::codex::WORLD_CLIENT, handover.id));
+    let (input, client) = match batch.as_slice() {
         // A fact of its own work reads best as the output of the tool that
         // started it.
-        [only] if matches!(only.delivery.notice, Notice::JobEnded { .. }) => {
-            Input::ToolOutput { name: "run".to_string(), namespace: None, output: told::told(&only.delivery.notice) }
-        }
-        batch if batch.iter().any(|kept| matches!(kept.delivery.notice, Notice::Attached { .. })) => Input::Messages(
-            batch
-                .iter()
-                .map(|kept| {
-                    let images = match &kept.delivery.notice {
-                        Notice::Attached { message, .. } => message
-                            .attachments
-                            .iter()
-                            .filter(|attachment| attachment.is_image())
-                            .map(|attachment| attachment.path.clone())
-                            .collect(),
-                        _ => Vec::new(),
-                    };
-                    fastctx_hosts::codex::InputMessage { text: told::told(&kept.delivery.notice), images }
-                })
-                .collect(),
+        [only] if matches!(only.delivery.notice, Notice::JobEnded { .. }) => (
+            Input::ToolOutput { name: "run".to_string(), namespace: None, output: told::told(&only.delivery.notice) },
+            None,
         ),
-        batch => {
-            Input::Text(batch.iter().map(|kept| told::told(&kept.delivery.notice)).collect::<Vec<_>>().join("\n\n"))
-        }
+        batch if batch.iter().any(|kept| matches!(kept.delivery.notice, Notice::Attached { .. })) => (
+            Input::Messages(
+                batch
+                    .iter()
+                    .map(|kept| {
+                        let images = match &kept.delivery.notice {
+                            Notice::Attached { message, .. } => message
+                                .attachments
+                                .iter()
+                                .filter(|attachment| attachment.is_image())
+                                .map(|attachment| attachment.path.clone())
+                                .collect(),
+                            _ => Vec::new(),
+                        };
+                        fastctx_hosts::codex::InputMessage { text: told::told(&kept.delivery.notice), images }
+                    })
+                    .collect(),
+            ),
+            client,
+        ),
+        batch => (Input::Text(batch.iter().map(|kept| said(&kept.delivery.notice)).collect::<Vec<_>>().join("\n\n")), client),
     };
     for kept in &batch {
         set_state(directory, &kept.delivery.id, PendingState::Sending).await?;
     }
-    let sent = match codex.send(thread, input).await {
+    let sent = match codex.send(thread, input, client).await {
         Ok(sent) => sent,
         Err(SendError::NotSent(why)) => {
             crate::delivery::refused(directory, &mut handover).map_err(|error| Failure::new(error.to_string()))?;
@@ -403,7 +423,35 @@ async fn submit_thread(
         crate::turns::health(node, id, Some(sent.turn.clone()), health)
             .map_err(|error| Failure::new(error.to_string()))?;
     }
+    // What waited and could not go in with these goes in next, as they would
+    // have, rather than waiting for something else to wake it.
+    if let Some(next) = left.into_iter().next() {
+        hand_over_later(node.clone(), id.clone(), about, directory.clone(), next);
+    }
     Ok(Some(if sent.joined { Landed::JoinedTurn { turn: sent.turn } } else { Landed::NewTurn { turn: sent.turn } }))
+}
+
+/// Hands `pending` over in a task of its own.
+fn hand_over_later(node: Arc<Node>, id: ResidentId, about: About, directory: ConversationDir, pending: Pending) {
+    tokio::spawn(async move {
+        if let Err(failure) = hand_over(&node, &id, &about, &directory, pending).await {
+            node.log.line(format_args!("words for {id} wait: {}", failure.message));
+        }
+    });
+}
+
+/// A notice as it goes into a thread: the user's words as they typed them,
+/// everything else as the World tells it.
+fn said(notice: &Notice) -> String {
+    match notice {
+        Notice::Words { from: Speaker::User { .. }, text } => text.clone(),
+        notice => told::told(notice),
+    }
+}
+
+/// Whether a notice is the user's words, which go in as typed.
+fn typed(notice: &Notice) -> bool {
+    matches!(notice, Notice::Words { from: Speaker::User { .. }, .. })
 }
 
 /// Commits the consuming turn for the entire batch before changing either

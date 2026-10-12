@@ -30,7 +30,7 @@ function resident(
   town: string | null,
   model: string,
   born: string,
-  state: Partial<ResidentNow> & { origin?: About["origin"]; worksOn?: string },
+  state: Partial<ResidentNow> & { origin?: About["origin"]; focus?: About["focus"] },
 ): ResidentNow {
   return {
     about: {
@@ -43,7 +43,7 @@ function resident(
       world_started: true,
       model,
       acting: machine === "desktop" ? { kind: "here" } : { kind: "accounts", accounts: [{ hub: HOME, account: "me" }] },
-      ...(state.worksOn ? { works_on: state.worksOn } : {}),
+      ...(state.focus ? { focus: state.focus } : {}),
     },
     town,
     here: state.here ?? true,
@@ -246,7 +246,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
               last_action: action("13:33:40", "laptop", "run", "cargo test -p ctrl overflow_repro", "exit 101"),
             }),
             resident("codex-7f3a", "laptop", codex(), "ingest", "gpt-6.1-sol", "08:40:00", {
-              worksOn: "lab",
+              focus: { machines: [{ machine: "lab", folders: ["/srv/ingest", "/srv/ingest/fixtures"] }, { machine: "laptop", folders: [] }] },
               now: { owed: {}, answering: [], activity: "idle", since: at("09:31:00"), turn: null, trouble: null, desk: false, waiting_for_user: false, title: null },
               last_action: action("09:30:50", "laptop", "run", "cd /srv/ingest && cargo test 2>&1 | tail -3", "exit 0"),
             }),

@@ -265,7 +265,7 @@ impl CodexHost {
             _ => return Err(format!("more than one enabled skill is named {name}")),
         };
         let text = format!("${name} {args}").trim_end().to_string();
-        self.send(thread, Input::Skill { name: name.into(), path: string(skill, "path")?, text })
+        self.send(thread, Input::Skill { name: name.into(), path: string(skill, "path")?, text }, None)
             .await
             .map_err(|error| error.to_string())
     }

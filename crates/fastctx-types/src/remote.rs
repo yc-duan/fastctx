@@ -166,6 +166,16 @@ pub enum RemoteCall {
     FindFiles {
         request: crate::file_search::FileSearchRequest,
     },
+    /// The folders in a folder there, for the user to choose one.
+    Folders {
+        path: Option<String>,
+    },
+    /// What each of these folders there holds, one level deep, read within
+    /// `within_ms`, for a conversation pointed at them.
+    Outline {
+        folders: Vec<String>,
+        within_ms: u64,
+    },
     /// The user's word on Claude Code's bypass-permissions consent there.
     ClaudeConsent {
         accept: bool,
@@ -226,12 +236,6 @@ pub enum RemoteCall {
         prompt: String,
         started: crate::collab::Started,
     },
-    /// The user sets where a resident there works: another machine, or
-    /// the one it lives on.
-    WorksOn {
-        resident: ResidentId,
-        works_on: Option<crate::access::Written>,
-    },
     /// Whether a resident with this id lives there.
     Find {
         resident: ResidentId,
@@ -291,8 +295,8 @@ pub enum RemoteCall {
         reasoning_effort: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<crate::attachments::Attachment>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        works_on: Option<crate::access::Written>,
+        #[serde(default, skip_serializing_if = "crate::focus::Focus::is_empty")]
+        focus: crate::focus::Focus,
         /// The agent's home there it uses, when not the default one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         home: Option<std::path::PathBuf>,
@@ -380,6 +384,8 @@ impl RemoteCall {
             | RemoteCall::StopOn { .. }
             | RemoteCall::StopJob { .. }
             | RemoteCall::FindFiles { .. }
+            | RemoteCall::Folders { .. }
+            | RemoteCall::Outline { .. }
             | RemoteCall::ReadFile { .. }
             | RemoteCall::Thumbnail { .. }
             | RemoteCall::Lines { .. }
@@ -405,7 +411,6 @@ impl RemoteCall {
             | RemoteCall::Talk { .. }
             | RemoteCall::Watch { .. }
             | RemoteCall::Open { .. }
-            | RemoteCall::WorksOn { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Manage { .. }
             | RemoteCall::Control { .. }
@@ -435,6 +440,10 @@ pub enum RemoteReply {
         result: crate::pages::PageResult,
     },
     FilesFound(crate::file_search::FileSearchReply),
+    Folders(crate::focus::Folders),
+    Outlined {
+        outlines: Vec<crate::focus::Outlined>,
+    },
     Thumbnail(crate::thumbnail::Thumbnail),
     Lines(crate::lines::Reply),
     ClaudeConsent {

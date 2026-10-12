@@ -46,7 +46,6 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::Manage { resident: who, .. }
         | RemoteCall::Offers { resident: who }
         | RemoteCall::ItemDetail { resident: who, .. }
-        | RemoteCall::WorksOn { resident: who, .. }
         | RemoteCall::Upload {
             target:
                 fastctx_types::attachments::UploadTarget::Resident { resident: who }
@@ -153,14 +152,6 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         && let Some((about, _)) = node.residents.about(resident)
     {
         login(&about.host.agent, about.home.as_deref())?;
-        // An agent lent to another account works on its machines, each of
-        // its commands naming one; it has no machine to work on by default.
-        if let RemoteCall::WorksOn { works_on: Some(_), .. } = call {
-            return Err(refuse(format!(
-                "{resident} is an agent lent to the account {}, which names the machine of each command; it works on no machine by default",
-                caller.account
-            )));
-        }
     }
     Ok(Asker { machine: caller.machine.clone(), hub, account: caller.account.clone(), hands })
 }

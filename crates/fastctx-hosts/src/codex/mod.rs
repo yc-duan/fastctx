@@ -169,6 +169,16 @@ pub struct InputMessage {
     pub images: Vec<String>,
 }
 
+/// How every client id the World gives its messages begins. The user's
+/// words go in as typed, so this is how the World tells its own messages
+/// from words typed into Codex itself.
+pub const WORLD_CLIENT: &str = "fastctx:";
+
+/// Whether a message in a thread is one the World sent.
+pub fn sent_by_world(message: &fastctx_types::session::UserMessage) -> bool {
+    message.client_id.as_deref().is_some_and(|id| id.starts_with(WORLD_CLIENT))
+}
+
 /// Where words went: a turn that started with them, or the running turn,
 /// which they join at its next tool boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -493,15 +503,16 @@ impl CodexHost {
     /// Sends words to a thread: they start a turn when it is idle and join
     /// the running turn when it is busy, which the answer tells by the turn
     /// it names. A thread not loaded is resumed first; call
-    /// [`Self::prepare`] before to have its tools there.
-    pub async fn send(self: &Arc<Self>, thread: &str, input: Input) -> Result<Sent, SendError> {
+    /// [`Self::prepare`] before to have its tools there. `client` names the
+    /// message Codex makes of them, in its live items and its history alike.
+    pub async fn send(self: &Arc<Self>, thread: &str, input: Input, client: Option<String>) -> Result<Sent, SendError> {
         let (host, thread) = (self.clone(), thread.to_string());
-        tokio::spawn(async move { host.send_inner(&thread, input).await })
+        tokio::spawn(async move { host.send_inner(&thread, input, client).await })
             .await
             .map_err(|error| SendError::Unknown(format!("the turn submission task stopped: {error}")))?
     }
 
-    async fn send_inner(self: &Arc<Self>, thread: &str, input: Input) -> Result<Sent, SendError> {
+    async fn send_inner(self: &Arc<Self>, thread: &str, input: Input, client: Option<String>) -> Result<Sent, SendError> {
         let server = self.server().await.map_err(SendError::NotSent)?;
         self.ensure_loaded(&server, thread).await.map_err(SendError::NotSent)?;
         let mut params = json!({
@@ -511,12 +522,14 @@ impl CodexHost {
             // our last turn. Restore the World's empty default for this turn.
             "environments": [],
         });
+        if let Some(client) = client {
+            params["clientUserMessageId"] = json!(client);
+        }
         match input {
             Input::Text(text) => {
                 // An answer to a question the model asked without waiting
                 // (`request_user_input_async`) goes in as the user's words in
-                // the envelope Codex's own clients write, marked as such; the
-                // World's head note naming the speaker comes before it.
+                // the envelope Codex's own clients write, marked as such.
                 if text.lines().any(|line| line == ASYNC_REPLY_TAG) {
                     params["turnTrigger"] = json!("send_user_message_async_question");
                 }

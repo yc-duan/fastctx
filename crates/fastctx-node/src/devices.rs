@@ -36,11 +36,14 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
         RemoteCall::Talk { .. }
             | RemoteCall::Composer { .. }
             | RemoteCall::Open { .. }
-            | RemoteCall::WorksOn { .. }
             | RemoteCall::Stop { .. }
             | RemoteCall::Control { .. }
             | RemoteCall::Manage {
-                action: Management::Remove | Management::Sleep | Management::Wake | Management::Move { .. },
+                action: Management::Remove
+                    | Management::Sleep
+                    | Management::Wake
+                    | Management::Move { .. }
+                    | Management::Focus { .. },
                 ..
             }
             | RemoteCall::Offers { .. }
@@ -61,6 +64,9 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             // machine that has them limits the search to the conversation's
             // places, and reads no contents.
             | RemoteCall::FindFiles { .. }
+            // The names of the user's folders, for pointing a conversation
+            // at some: names only, never contents.
+            | RemoteCall::Folders { .. }
             // The user's consent to Claude Code's bypass-permissions mode,
             // which only the user gives, on the machine it is about.
             | RemoteCall::ClaudeConsent { .. }

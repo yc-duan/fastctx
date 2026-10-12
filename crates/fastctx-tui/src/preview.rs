@@ -75,7 +75,7 @@ fn resident(
             world_started: true,
             model: Some(model.to_string()),
             acting: Default::default(),
-            works_on: None,
+            focus: Default::default(),
             home: None,
             callee: None,
         },

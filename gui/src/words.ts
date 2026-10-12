@@ -105,9 +105,6 @@ export interface Words {
   removedNote: string;
   waitingForYou: string;
   on(machine: string): string;
-  /** Under a conversation's title: the machine its commands start on,
-   *  where it is not the one it lives on. */
-  worksOn(machine: string): string;
   /** Under the title of a conversation with an agent lent to the user. */
   lentBy(owner: string): string;
   /** Between the names in a short list. */
@@ -196,6 +193,9 @@ export interface Words {
   /** The user moved it to another project through the World. */
   movedTo(town: string): string;
   movedOut: string;
+  /** The machines and folders a conversation is pointed at, changed. */
+  focusChanged(items: string): string;
+  focusCleared: string;
   /** The project's brief it was handed with the move, folded. */
   briefHanded: string;
   deskFree(who: string): string;
@@ -333,7 +333,6 @@ export const zh: Words = {
   removedNote: "已移除，对话仅供查看",
   waitingForYou: "等待回复",
   on: (machine) => machine,
-  worksOn: (machine) => `工作于 ${machine}`,
   lentBy: (owner) => `来自 ${owner}`,
   listSeparator: "、",
   moreLines: (n) => `+ ${n.toLocaleString("zh-CN")} 行`,
@@ -434,6 +433,8 @@ export const zh: Words = {
   jobEnded: (_job, machine) => `后台命令在 ${machine} 上结束`,
   movedTo: (town) => `已移到项目 ${town}`,
   movedOut: "已移出项目",
+  focusChanged: (items) => `机器与文件夹：${items}`,
+  focusCleared: "已清空机器与文件夹",
   briefHanded: "项目说明",
   deskFree: (who) => `${who} 这一轮结束，屏幕空出来了`,
   deskTaken: (who) => `${who} 正在操作屏幕，结束后会通知`,
@@ -546,7 +547,6 @@ export const en: Words = {
   removedNote: "Removed; the conversation is read-only",
   waitingForYou: "Waiting for your reply",
   on: (machine) => machine,
-  worksOn: (machine) => `works on ${machine}`,
   lentBy: (owner) => `from ${owner}`,
   listSeparator: ", ",
   moreLines: (n) => `+ ${n.toLocaleString("en")} more line${n === 1 ? "" : "s"}`,
@@ -647,6 +647,8 @@ export const en: Words = {
   jobEnded: (_job, machine) => `Background command on ${machine} ended`,
   movedTo: (town) => `Moved to project ${town}`,
   movedOut: "Removed from project",
+  focusChanged: (items) => `Machines and folders: ${items}`,
+  focusCleared: "Machines and folders cleared",
   briefHanded: "Project brief",
   deskFree: (who) => `${who}'s turn ended; the screen is free`,
   deskTaken: (who) => `${who} is using the screen; you'll be told when it's free`,

@@ -5,22 +5,23 @@
 //
 // Its input stands where a conversation's does, the same box, so the
 // conversation it begins grows above the words without the page moving.
-// Above them, three small labels say what the words go to, and each opens
-// what it can be: which agent, as one of its logins, chosen among those the
-// user holds, grouped as they hold them (on their own machines, on machines
-// of others they may work on, lent to them by another account), each with
-// who is logged in and how much of its usage is spent, as its machine
-// says; the machine it works on, the one it lives on unless another is
-// chosen (`world-run.md`, 这里); and the project. The model and how hard it
-// thinks are the conversation's own chip and panel. Above the input, the
+// Above them, small labels say what the words go to, and each opens what it
+// can be: which agent, as one of its logins, chosen among those the user
+// holds, grouped as they hold them (on their own machines, on machines of
+// others they may work on, lent to them by another account), each with who
+// is logged in and how much of its usage is spent, as its machine says; the
+// project; and the machines and folders the conversation is about, among
+// those its account may use, told to the agent as where its work is and
+// never a limit (`focus-panel.ts`). In a project those start as its
+// machines and the places its record lists on them. The model and how hard
+// it thinks are the conversation's own chip and panel. Above the input, the
 // chosen agent's mark and the place's name; nothing more.
 //
-// An agent lent to the user works on no machine of its own choosing: each
-// of its commands names one of the user's machines, so it is asked no
-// machine to work on, and the files attached for it, other than images, go
-// to a machine of the user's without asking (`fileHome`). Which agents may
-// call which models is the model collaboration feature's, never a
-// conversation's.
+// An agent lent to the user runs on a machine it may not touch: each of its
+// commands names one of the user's machines, and the files attached for
+// it, other than images, go to a machine of the user's without asking
+// (`fileHome`). Which agents may call which models is the model
+// collaboration feature's, never a conversation's.
 //
 // Every machine is asked what agents it has each time the page is shown.
 // Files wait in the input while the agent and project are still being
@@ -32,6 +33,8 @@ import { AttachTray, type AttachSource, type AttachWords } from "../conversation
 import { layerOpened } from "./back";
 import { glyph } from "../conversation/glyphs";
 import { ModelPanel, type ModelPanelWords } from "../conversation/model-panel";
+import { FocusPanel, focusSummary, type FocusPlace } from "./focus-panel";
+import { noFocus, type Focus, type Folders } from "../world/focus";
 import { escape } from "../conversation/prose";
 import { Starting, type Seed } from "../conversation/starting";
 import { departureOf } from "../conversation/flight";
@@ -48,6 +51,7 @@ import type { ConsentHome } from "./claude-consent";
 import {
   borrowedOf,
   fileHome,
+  filePlaces,
   groupsOf,
   loginKey,
   loginLabel,
@@ -61,7 +65,7 @@ import {
   type Machine,
 } from "./reach";
 import type { Store } from "./store";
-import type { NewTalkWords } from "./words";
+import type { FocusWords, NewTalkWords } from "./words";
 
 export interface Begun {
   agent: string;
@@ -76,8 +80,8 @@ export interface Begun {
   /** The account it works for, where the user chose among several or the
    *  agent is lent to one. */
   account: HubAccount | null;
-  /** The machine it works on, as written, when not the one it lives on. */
-  worksOn: string | null;
+  /** The machines and folders it is pointed at. */
+  focus: Focus;
   /** The agent's login on the machine it lives on, as its home's
    *  directory; null for the default one. */
   home: string | null;
@@ -88,6 +92,7 @@ export interface Begun {
 export interface NewTalkOptions {
   store: Store;
   words: NewTalkWords;
+  focusWords: FocusWords;
   homeWords: HomeWords;
   modelWords: ModelPanelWords;
   /** The head every page has. */
@@ -97,6 +102,8 @@ export interface NewTalkOptions {
   /** What the machines' own programs say of the agents on them: one, or
    *  with null every machine reached. */
   agents(machine: string | null): Promise<WorldAgents>;
+  /** The folders in a folder of a machine, for pointing it at some. */
+  folders(machine: string, path: string | null): Promise<Folders>;
   begin(begun: Begun): Promise<Address>;
   /** The conversation began: its page opens, with the first words as they
    *  were shown here. */
@@ -158,7 +165,7 @@ interface Line {
 }
 
 /** What a label above the input opens. */
-type Pop = "agent" | "town";
+type Pop = "agent" | "town" | "focus";
 
 const agentsKnown = ["codex", "claude"];
 const programName = (agent: string) => (agent === "codex" ? "Codex" : agent === "claude" ? "Claude" : agent);
@@ -210,8 +217,13 @@ export class NewTalk {
   private effort: string | null = null;
   /** The account chosen, as `hub/account`. */
   private account: string | null = remembered("account");
-  /** Where it works, as written; null for the machine it lives on. */
-  private worksOn: string | null = null;
+  /** The machines and folders it is pointed at. */
+  private focus: Focus = noFocus();
+  /** The project the machines and folders were last set from; changed by
+   *  the user since, they are theirs. */
+  private focusFrom: { town: string | null } | null = null;
+  private focusTouched = false;
+  private readonly focusPanel: FocusPanel;
   /** Where the files of a lent agent go, as written. */
   private filesOn: string | null = null;
   private asked = new Map<string, Asked>();
@@ -277,6 +289,19 @@ export class NewTalk {
       tier: async () => {},
     });
     this.element.querySelector(".composer-menus")!.append(this.models.element);
+    this.focusPanel = new FocusPanel(
+      {
+        words: options.focusWords,
+        places: () => this.focusPlaces(),
+        folders: options.folders,
+        changed: (focus) => {
+          this.focus = focus;
+          this.focusTouched = true;
+          this.draw();
+        },
+      },
+      this.focus,
+    );
     this.input.value = remembered(this.kept) ?? "";
     this.element.addEventListener("click", (event) => this.click(event));
     // A choice open over the input goes away with a press anywhere else,
@@ -698,7 +723,7 @@ export class NewTalk {
 
   /** A few answers as pills, as the logins above them are: the chosen one
    *  washed in clay. */
-  private pills(kind: "works" | "account", label: string, choices: Choice[], chosen: string): string {
+  private pills(kind: "account", label: string, choices: Choice[], chosen: string): string {
     return `<div class="choice-options" role="radiogroup" aria-label="${escape(label)}">${choices
       .map((choice) => {
         const on = choice.value === chosen;
@@ -709,6 +734,8 @@ export class NewTalk {
 
   /** Opens one label's choices, or with null closes what is open. */
   private choose(pop: Pop | null): void {
+    // The machines and folders open at their list, wherever they were left.
+    if (this.opened === "focus" && pop !== "focus") this.focusPanel.reset();
     if (pop) {
       this.models.hide();
       layerOpened({ isOpen: () => this.opened === pop && this.element.isConnected, close: () => this.choose(null) });
@@ -729,20 +756,17 @@ export class NewTalk {
     switch (target.dataset.choice) {
       case "pick":
         this.pick = value;
-        this.worksOn = null;
         this.model = null;
         this.effort = null;
         this.opened = null;
         break;
       case "account":
         this.account = value;
-        this.worksOn = null;
-        break;
-      case "works":
-        this.worksOn = value || null;
         break;
       case "town":
         this.town = value || null;
+        // Another project: its machines and places, whatever was chosen.
+        this.focusTouched = false;
         this.opened = null;
         break;
     }
@@ -770,7 +794,6 @@ export class NewTalk {
     }
     const option = this.chosenOption(lines);
     const line = lines.find((one) => option && one.options.includes(option)) ?? null;
-    const lives = this.lives(world, option);
     const logins = this.openers(world, option);
     const login = logins.chosen;
     // The projects of the account it works for that span where it lives.
@@ -784,17 +807,10 @@ export class NewTalk {
     // A project the agent cannot work in is kept while the machines are
     // still answering, and given up once they have.
     if (this.town && !towns.some((choice) => choice.value === this.town) && !this.askingAll && option) this.town = null;
-    const places: Choice[] = lives
-      ? workPlaces(world, lives, login).map((machine) => ({
-          value: machine.written === lives.written ? "" : machine.written,
-          label: machine.written,
-          note: machine.written === lives.written ? words.livesHere : machine.online === false ? words.offline : undefined,
-        }))
-      : [];
-    if (this.worksOn && !places.some((choice) => choice.value === this.worksOn)) this.worksOn = null;
+    this.settleFocus(world);
     this.drawStage(option, world);
     this.drawContext(option, line, towns, world);
-    this.drawPop(lines, logins, places, towns);
+    this.drawPop(lines, logins, towns);
     this.drawModel();
     // What was sent went for another machine, agent or project: it is sent
     // again, to the one chosen now, when the conversation begins.
@@ -826,10 +842,10 @@ export class NewTalk {
   }
 
   /** The labels over the input: the agent, as its program and the machine
-   *  it lives on, and the machine it works on where that is another; the
-   *  project. Each opens its choices. */
+   *  it lives on; the project; the machines and folders it is pointed at.
+   *  Each opens its choices. */
   private drawContext(option: Option | null, line: Line | null, towns: Choice[], world: WorldNow | null): void {
-    const { words } = this.options;
+    const { words, focusWords } = this.options;
     const label = (pop: Pop, mark: Parameters<typeof glyph>[0], body: string, title: string, extra = "") =>
       `<button type="button" class="talk-chip${extra}" data-pop="${pop}" aria-haspopup="dialog" aria-expanded="${this.opened === pop}" title="${escape(title)}">${glyph(mark, 16)}${body}${glyph("chevron", 12)}</button>`;
     const chips: string[] = [];
@@ -838,13 +854,12 @@ export class NewTalk {
       const asking = !this.factsOf(option) && this.askingAll;
       const lent = option.lent;
       const sub = lent ? [words.lentBy(lent.owner ?? ""), lent.until ? words.lentUntil(new Date(lent.until), new Date()) : ""].filter(Boolean).join(" · ") : option.written;
-      const works = !option.lent && this.worksOn ? this.worksOn : null;
-      const said = [programName(option.agent), sub, who, works ? `${words.worksOn} ${works}` : ""].filter(Boolean).join(" · ");
+      const said = [programName(option.agent), sub, who].filter(Boolean).join(" · ");
       chips.push(
         label(
           "agent",
           markOf(option.agent),
-          `<span class="talk-chip-name">${escape(programName(option.agent))}</span><span class="talk-chip-sub">${escape(sub)}</span>${who ? `<span class="talk-chip-sub who">${escape(who)}</span>` : ""}${works ? `<span class="talk-chip-works">${glyph("terminal", 14)}${escape(works)}</span>` : ""}${asking ? `<span class="talk-chip-sub">${escape(words.asking)}</span>` : ""}`,
+          `<span class="talk-chip-name">${escape(programName(option.agent))}</span><span class="talk-chip-sub">${escape(sub)}</span>${who ? `<span class="talk-chip-sub who">${escape(who)}</span>` : ""}${asking ? `<span class="talk-chip-sub">${escape(words.asking)}</span>` : ""}`,
           option.lent ? `${said}
 ${words.lentWorks(option.lent.owner ?? "")}` : said,
           option.lent ? " lent" : "",
@@ -857,15 +872,32 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
       const name = this.town ? (world?.towns.find((one) => one.town === this.town)?.record.name ?? this.town) : words.outsideProject;
       chips.push(label("town", "folder", `<span class="talk-chip-name">${escape(name)}</span>`, `${words.project} · ${name}`, this.town ? "" : " quiet"));
     }
+    if (option) {
+      const summary = focusSummary(this.focus, focusWords);
+      chips.push(
+        summary
+          ? label("focus", "machine", summary.html, `${focusWords.title} · ${summary.said}`)
+          : label("focus", "machine", `<span class="talk-chip-name">${escape(focusWords.none)}</span>`, focusWords.title, " quiet"),
+      );
+    }
     const html = chips.join("");
     if (this.context.innerHTML !== html) this.context.innerHTML = html;
   }
 
   /** The choices of the label open, risen over the input; on a phone, a
    *  sheet from the bottom. */
-  private drawPop(lines: Line[], logins: { all: Login[]; chosen: Login | null }, places: Choice[], towns: Choice[]): void {
+  private drawPop(lines: Line[], logins: { all: Login[]; chosen: Login | null }, towns: Choice[]): void {
     const { words } = this.options;
     const pop = this.pop;
+    pop.hidden = !this.opened;
+    pop.dataset.pop = this.opened ?? "";
+    // The machines and folders draw themselves, and keep where the user
+    // has walked to while the rest of the page is drawn again.
+    if (this.opened === "focus") {
+      if (pop.firstElementChild !== this.focusPanel.element || pop.childElementCount !== 1) pop.replaceChildren(this.focusPanel.element);
+      this.focusPanel.refresh();
+      return;
+    }
     let html = "";
     if (this.opened === "agent") {
       const account =
@@ -877,18 +909,56 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
               logins.chosen ? `${logins.chosen.hub}/${logins.chosen.account}` : "",
             )}</div>`
           : "";
-      const works = places.length > 1 ? `<div class="pop-section"><h3 class="picker-title">${escape(words.worksOn)}</h3>${this.pills("works", words.worksOn, places, this.worksOn ?? "")}</div>` : "";
-      html = `${this.picker(lines)}${works}${account}`;
+      html = `${this.picker(lines)}${account}`;
     } else if (this.opened === "town") {
       html = `<h3 class="picker-title">${escape(words.project)}</h3>${this.list("town", words.project, towns, this.town ?? "")}`;
     }
-    pop.hidden = !this.opened;
-    pop.dataset.pop = this.opened ?? "";
     if (pop.innerHTML !== html) {
       const scroll = pop.scrollTop;
       pop.innerHTML = html;
       pop.scrollTop = scroll;
     }
+  }
+
+  /** The machines its account may use: where it lives and those the
+   *  account may work on; for a lent agent, the account's own. */
+  private focusPlaces(): FocusPlace[] {
+    const world = this.options.store.world.peek();
+    const option = this.chosenOption();
+    const login = this.loginFor(world, option);
+    const lives = this.lives(world, option);
+    const machines = option?.lent ? (login ? filePlaces(world, login) : []) : lives ? workPlaces(world, lives, login) : [];
+    return machines.map((machine) => ({ written: machine.written, name: machine.name, here: machine.here, online: machine.here ? true : machine.online }));
+  }
+
+  /** The machines and folders, kept to those its account may use; in a
+   *  project, until the user changes them, its machines and the places
+   *  its record lists on them. */
+  private settleFocus(world: WorldNow | null): void {
+    const places = this.focusPlaces();
+    if (!places.length) return;
+    let focus = this.focus;
+    if (!this.focusTouched && this.focusFrom?.town !== this.town) {
+      focus = this.projectFocus(world, places);
+      this.focusFrom = { town: this.town };
+    } else {
+      focus = { machines: focus.machines.filter((one) => places.some((place) => place.written === one.machine)) };
+    }
+    if (JSON.stringify(focus) === JSON.stringify(this.focus)) return;
+    this.focus = focus;
+    if (this.opened !== "focus") this.focusPanel.set(focus);
+  }
+
+  private projectFocus(world: WorldNow | null, places: FocusPlace[]): Focus {
+    const record = this.town ? world?.towns.find((one) => one.town === this.town)?.record : null;
+    if (!record) return noFocus();
+    return {
+      machines: record.machines.flatMap((name) => {
+        const place = places.find((one) => one.name === name);
+        const folders = [...new Set(record.places.filter((listed) => listed.machine === name).map((listed) => listed.path))];
+        return place ? [{ machine: place.written, folders }] : [];
+      }),
+    };
   }
 
   /** The model and effort, as the conversation's own chip and panel show
@@ -1018,7 +1088,7 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
         effort: this.effort,
         attachments: (this.tray?.arrived ?? []) as Attachment[],
         account: login ? { hub: login.hub, account: login.account } : null,
-        worksOn: option.lent ? null : this.worksOn,
+        focus: this.focus,
         home: option.home,
         filesOn: option.lent && (this.tray?.files ?? 0) > 0 ? this.filesOn : null,
       });
@@ -1029,6 +1099,10 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
       this.tray?.take();
       this.draft = null;
       this.town = this.options.town;
+      this.focusTouched = false;
+      this.focusFrom = null;
+      this.focus = noFocus();
+      this.focusPanel.set(this.focus);
       this.busy = false;
       this.note.textContent = "";
       this.options.opened(address, this.starting?.seed() ?? null);

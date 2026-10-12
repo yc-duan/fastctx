@@ -1,5 +1,5 @@
 // What the World knows of the agent in a conversation, opened from the
-// conversation's head: who it is and where it lives and works, which login
+// conversation's head: who it is and where it lives, which login
 // of its agent it uses there, whom it works for, how it came, what it is
 // doing, the models it called, what it started that still runs, its latest
 // actions, and what can be done to it. The same facts as `fastctx w <id>`,
@@ -56,9 +56,6 @@ export interface DetailsOptions {
   /** Who lent it, for an agent another account lent the user; null for
    *  one of the user's own. */
   lentBy?: ((resident: ResidentNow) => string | null) | undefined;
-  /** The machines, as written, it may work on, and setting it: a machine,
-   *  or with null the one it lives on. None for a colleague. */
-  worksOn?: { places(): string[]; set(worksOn: string | null): Promise<void> } | undefined;
   /** The logins of an agent on a machine (named or as written), as that
    *  machine says them: each home's directory, "" for the default one,
    *  with who is logged in there. */
@@ -72,7 +69,7 @@ export interface Login {
   disabled?: boolean | undefined;
 }
 
-type Managing = "move" | "works";
+type Managing = "move";
 
 export class Details {
   readonly element: HTMLElement;
@@ -86,9 +83,6 @@ export class Details {
   private managing: Managing | null = null;
   /** Whether the projects to move it to are shown. */
   private moving = false;
-  /** Whether the machines it may work on are shown. */
-  private placing = false;
-  private worksNote = "";
   private confirm: Confirm | null = null;
   /** What each machine said of an agent's logins, by `machine/agent`,
    *  asked once while the card is about it. */
@@ -155,37 +149,6 @@ export class Details {
         case "remove":
           if (manage && this.shown) this.askRemove(manage, this.shown.detail.resident);
           return;
-        case "works":
-          this.placing = !this.placing;
-          this.redraw();
-          return;
-        case "works-on": {
-          const works = options.worksOn;
-          if (!works || !this.shown) return;
-          const place = button.dataset.place || null;
-          const lives = this.shown.detail.resident.about.machine;
-          this.placing = false;
-          this.managing = "works";
-          this.worksNote = "";
-          this.redraw();
-          works
-            .set(place)
-            .then(() => {
-              const about = this.shown?.detail.resident.about;
-              if (about && place) about.works_on = place;
-              else if (about) delete about.works_on;
-              this.worksNote = words.worksOnSet(place ?? lives, !place);
-            })
-            .catch((error: unknown) => {
-              this.worksNote = words.failed(error instanceof Error ? error.message : String(error));
-            })
-            .finally(() => {
-              this.managing = null;
-              this.spoken.textContent = this.worksNote;
-              this.redraw();
-            });
-          return;
-        }
       }
     });
   }
@@ -251,10 +214,7 @@ export class Details {
 
   set open(shown: boolean) {
     this.element.hidden = !shown;
-    if (!shown) {
-      this.moving = false;
-      this.placing = false;
-    }
+    if (!shown) this.moving = false;
   }
 
   /** The World could not say. */
@@ -377,43 +337,11 @@ export class Details {
         <span class="details-note">${escape(this.note)}</span>
       </div>
       ${section(words.manage, this.manageBody(r), " details-manage")}
-      ${section(words.worksOn, this.worksBody(r))}
       ${section(words.task, task)}
       ${section(words.colleagues, asked)}
       ${section(words.running, running)}
       ${section(words.actions(detail.actions.length, detail.actions_total), actions)}
       <p class="details-records"><span>${escape(words.records)}</span><code>${escape(`${about.machine}:${detail.records}`)}</code></p>`;
-  }
-
-  /** Where its commands start, with the machines to choose from when
-   *  asked; a colleague works where it lives. */
-  private worksBody(r: ResidentNow): string {
-    const { words, worksOn } = this.options;
-    const about = r.about;
-    if (this.options.lentBy?.(r)) return `<p class="details-colleagues"><span>${escape(words.worksLent)}</span></p>`;
-    const elsewhere = about.works_on && about.works_on !== about.machine ? about.works_on : null;
-    // Only a conversation the World opened chose where it works.
-    const changeable = !!worksOn && !r.removed && about.origin.kind !== "colleague" && about.world_started;
-    const doing = this.managing === "works";
-    const said = `<p class="details-colleagues"><span>${escape(elsewhere ? words.worksOnThere(elsewhere) : words.worksOnLives)}</span>${
-      changeable
-        ? `<button class="text-button" type="button" data-act="works" aria-expanded="${this.placing}"${doing ? " disabled" : ""}>${glyph("machine", 14)}<span>${escape(doing ? words.working : words.changeWorksOn)}</span></button>`
-        : ""
-    }</p>`;
-    const choices =
-      this.placing && worksOn
-        ? `<div class="details-move" role="group" aria-label="${escape(words.worksOn)}"><span class="details-faint">${escape(words.worksOn)}</span><div class="choice-options">${[
-            `<button type="button" class="choice${elsewhere ? "" : " chosen"}" data-act="works-on" data-place=""${elsewhere ? "" : ` disabled aria-current="true"`}>${escape(words.livesHere(about.machine))}</button>`,
-            ...worksOn
-              .places()
-              .filter((machine) => machine !== about.machine)
-              .map(
-                (machine) =>
-                  `<button type="button" class="choice${machine === elsewhere ? " chosen" : ""}" data-act="works-on" data-place="${escape(machine)}"${machine === elsewhere ? ` disabled aria-current="true"` : ""}>${escape(machine)}</button>`,
-              ),
-          ].join("")}</div></div>`
-        : "";
-    return `${said}${choices}${this.worksNote ? `<p class="details-note">${escape(this.worksNote)}</p>` : ""}`;
   }
 
   /** Move to a project, remove: what the World can do to it for the user,

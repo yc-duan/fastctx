@@ -1144,21 +1144,17 @@ pub async fn open_here(
     }
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, town.as_ref(), &attachments).await?;
-    let _birth = crate::here::born(node, &id, opened.acting.clone(), opened.works_on.clone());
+    let _birth = crate::here::born(node, &id, opened.acting.clone());
     let launching = command(node, opened.home.as_deref())?;
     let Command { program, env, .. } = launching.clone();
     // A login lent to another account starts without the browser of this
     // machine (`background::Start::lent`).
     let lent = node.works_here(&opened.acting).is_err();
-    let (words, heard) = crate::colleagues::instructions(
-        node,
-        &id,
-        town.as_ref(),
-        &Origin::User,
-        &opened.acting,
-        opened.works_on.as_ref(),
-    )
-    .await?;
+    let (words, heard) =
+        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting).await?;
+    // What it is told of its machines and folders its plugin adds to the
+    // first message's context, from the session's own directory.
+    crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
     let born_at = Timestamp::now();
     let about = About {
         id: id.clone(),
@@ -1170,7 +1166,7 @@ pub async fn open_here(
         world_started: true,
         model: None,
         acting: opened.acting,
-        works_on: opened.works_on,
+        focus: opened.focus,
         home: opened.home,
         callee: None,
     };
@@ -1203,8 +1199,8 @@ pub async fn open_here(
     written.map_err(|error| Failure::new(format!("writing the session's settings: {error}")))?;
     let cwd = directory.path().to_path_buf();
     let plugin = claude::plugin_dir(node.world.path());
-    // Its files other than images go where it works, or where the user
-    // chose, as later words' do.
+    // Its files other than images go where the user chose, as later words'
+    // do.
     let attachments = crate::attachments::place(node, &id, attachments, opened.files_on.as_ref()).await?;
     // The first words go in as the prompt the session starts with, which it
     // reads as the user's: they are. They are kept until its first turn

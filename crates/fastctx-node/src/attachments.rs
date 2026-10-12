@@ -1,10 +1,9 @@
 //! Verified user uploads, kept in the conversation's home on its host's
-//! machine. A session that works on another machine is given its files other
-//! than images there (`world-gui.md`): each is placed on that machine, in the
+//! machine. Where the user chose another machine for its files other than
+//! images (`world-gui.md`), each is placed on that machine, in the
 //! conversation's guest room there, while the upload kept where it lives
-//! stays the conversation's record. Where the user chose a machine for them,
-//! they go there instead; an agent lent to the account works on no machine,
-//! so for it the user must choose one.
+//! stays the conversation's record; an agent lent to the account cannot
+//! reach the machine it runs on, so for it the user must choose one.
 //!
 //! A receipt keeps the path its file had when it arrived. Where a file is
 //! now always comes from the layout: from the receipt, only the names of its
@@ -577,10 +576,9 @@ struct Need {
 
 /// The user's files for `resident`, of this machine, as its session is
 /// given them, each already resolved: images where it lives, whose host
-/// shows them to the model from here; other files on the machine it works
-/// on, where its commands handle them. A copy placed there before is placed
-/// again from the upload kept here, and so is one placed on a machine it no
-/// longer works on.
+/// shows them to the model from here; other files where it lives too, or
+/// on the machine the user chose for them. A copy placed there before is
+/// placed again from the upload kept here.
 pub async fn place(
     node: &Arc<Node>,
     resident: &ResidentId,
@@ -591,8 +589,8 @@ pub async fn place(
         return Ok(attachments);
     }
     let lent = crate::here::lent(node, resident);
-    // Where they go: where the user chose, else where it works when that is
-    // another machine, else here; a lent agent cannot reach here.
+    // Where they go: where the user chose, else here; a lent agent cannot
+    // reach here.
     let goes_to = match files_on {
         Some(files_on) if node.is_here(files_on) && lent => {
             return Err(Failure::not_run(format!(
@@ -601,7 +599,7 @@ pub async fn place(
         }
         Some(files_on) if node.is_here(files_on) => None,
         Some(files_on) => Some(files_on.clone()),
-        None => crate::here::elsewhere(node, resident),
+        None => None,
     };
     let acting = node.residents.about(resident).map(|(about, _)| about.acting).unwrap_or_default();
     let mut given = Vec::with_capacity(attachments.len());
@@ -622,17 +620,16 @@ pub async fn place(
     Ok(given)
 }
 
-/// Places `kept`, an upload of `resident` kept here, on `works_on`, where
-/// it works or where the user chose, for whom it works; answers the copy
-/// there.
+/// Places `kept`, an upload of `resident` kept here, on `goes_to`, where
+/// the user chose, for whom it works; answers the copy there.
 async fn send_placed(
     node: &Arc<Node>,
     acting: &Acting,
-    works_on: &Written,
+    goes_to: &Written,
     resident: &ResidentId,
     kept: Attachment,
 ) -> Result<Attachment, Failure> {
-    let town = match node.speaking(acting, works_on, Purpose::Hands) {
+    let town = match node.speaking(acting, goes_to, Purpose::Hands) {
         Ok((link, _)) => node.town_across(&link, kept.town.as_ref()),
         Err(_) => kept.town.clone(),
     };
@@ -652,15 +649,15 @@ async fn send_placed(
         })
     };
     let refused =
-        |why: String| Failure::new(format!("{} goes to {works_on} and did not get there: {why}", kept.file.name));
-    let mine = Address { machine: works_on.name.clone(), resident: resident.clone() };
-    match node.call_with_stream(acting, works_on, Purpose::Hands, call, feed).await {
+        |why: String| Failure::new(format!("{} goes to {goes_to} and did not get there: {why}", kept.file.name));
+    let mine = Address { machine: goes_to.name.clone(), resident: resident.clone() };
+    match node.call_with_stream(acting, goes_to, Purpose::Hands, call, feed).await {
         Ok(Ok(RemoteReply::Uploaded(placed)))
             if placed.id == kept.id && placed.file == kept.file && placed.owner == mine =>
         {
             Ok(placed)
         }
-        Ok(Ok(_)) => Err(refused(format!("{works_on} answered something other than the file kept there"))),
+        Ok(Ok(_)) => Err(refused(format!("{goes_to} answered something other than the file kept there"))),
         Ok(Err(failure)) => Err(refused(failure.message)),
         Err(failure) => Err(refused(failure.to_string())),
     }

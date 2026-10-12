@@ -18,6 +18,8 @@ import { presentation } from './presentation.js'
 //   inbox/<id>.json    what the node has for the session; read, never changed
 //   receipts/<id>      written once something was handed to the model
 //   stop.json          the turn the node asks to be stopped; read, never changed
+//   focus.md           the machines and folders the user pointed the
+//                      conversation at; read, never changed
 // Before a call to the World's own tools goes through, it writes which
 // session makes it to `calls/<call id>.json` there; the node takes
 // that file when the call arrives, and sweeps those of ended sessions.
@@ -692,6 +694,22 @@ async function transcript($, context, path) {
   }
 }
 
+// The machines and folders the user pointed a conversation the World opened
+// at, as the node keeps them in the session's directory: a block of the
+// context the first message carries, beside the instruction files, read
+// again whenever Claude Code reads that context again, as after compacting
+// the conversation. None where the node keeps none.
+const FOCUS_BLOCK = 'machinesAndFolders'
+
+async function focus($, context) {
+  try {
+    const text = await $.fs.read(context.dir + '/focus.md')
+    return text.trim() === '' ? null : text
+  } catch (error) {
+    return null
+  }
+}
+
 async function session($, registry, id, renew = false) {
   let context = registry.sessions.get(id)
   if (!context || (renew && context.closed)) {
@@ -810,6 +828,13 @@ export function register(on) {
     const context = await route($, registry, 'session.compact', e)
     return context.shown.compact(reports($, context), e, (input) => controlCompaction($, input, next))
   }).catch(($, e, next) => continueWithoutWorld($, 'session.compact', e, next))
+  on('prompt.context', async ($, e, next) => {
+    if (await removed($)) return next(e)
+    const result = await next(e)
+    const text = await focus($, await session($, registry, await $.session.id()))
+    if (text === null) return result
+    return { ...result, blocks: [...result.blocks.filter((block) => block.name !== FOCUS_BLOCK), { name: FOCUS_BLOCK, text }] }
+  }).catch(($, e, next) => continueWithoutWorld($, 'prompt.context', e, next))
   on('prompt.section', async ($, e, next) => {
     if (await removed($)) return next(e)
     if (!['env_info_simple', 'env_info_static'].includes(e.name)) return next(e)

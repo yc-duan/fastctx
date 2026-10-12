@@ -220,9 +220,7 @@ pub(crate) fn record_failure(node: &Node, resident: &ResidentId, id: &str, error
     if !node.residents.knows(resident) {
         return Err(io::Error::other("unknown resident"));
     }
-    let machine = crate::here::placed(node, resident)
-        .and_then(|(_, works_on)| works_on)
-        .map_or_else(|| node.machine(), |works_on| works_on.name);
+    let machine = node.machine();
     let directory = node.world.conversation(resident);
     let _transaction = crate::resident_storage::lock();
     let file = path(&directory, id);

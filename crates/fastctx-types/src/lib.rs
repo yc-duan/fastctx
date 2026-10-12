@@ -22,6 +22,7 @@ pub mod features;
 pub mod file_read;
 pub mod file_search;
 pub mod files;
+pub mod focus;
 pub mod hub_move;
 pub mod ipc;
 pub mod kernel;

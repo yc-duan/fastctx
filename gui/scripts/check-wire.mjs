@@ -35,6 +35,7 @@ import type { FileReadPart, FileReadResult } from "../src/world/file-read";
 import type { Attachment } from "../src/world/attachments";
 import type { Managed } from "../src/world/management";
 import type { FileSearchReply, FileSearchRequest } from "../src/world/file-search";
+import type { Folders } from "../src/world/focus";
 import type { PageView, PageSummary, PageVersion, PageConsent, PageResult } from "../src/world/pages";
 import type { Speaker } from "../src/world/events";
 import type { Writer, JobOwner, MapView } from "../src/world/world";
@@ -126,6 +127,13 @@ export const fixture = ${json.trimEnd()} satisfies {
   file_search: {
     calls: { call: "find_files"; machine: string | null; request: FileSearchRequest }[];
     replies: ({ reply: "files_found" } & FileSearchReply)[];
+    remote_calls: unknown;
+    remote_results: unknown;
+  };
+  // Walking a machine's folders to point a conversation at some.
+  focus: {
+    calls: { call: "folders"; machine: string | null; path: string | null }[];
+    replies: ({ reply: "folders" } & Folders)[];
     remote_calls: unknown;
     remote_results: unknown;
   };

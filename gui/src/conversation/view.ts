@@ -28,6 +28,7 @@ import type { Attachment } from "../world/attachments";
 import type { Decoding } from "../world/remote-lines";
 import type { RunFacts, WriteFact } from "../world/run-facts";
 import type { JsonValue } from "../world/wire";
+import { folderName, type Focus } from "../world/focus";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
@@ -143,6 +144,14 @@ interface Slot {
 
 /** Blocks drawn only near the reader; the others cost too little to wait. */
 const LAZY = new Set<Block["kind"]>(["activity-group", "prose", "heard", "ask", "question", "steps"]);
+
+/** A change of the machines and folders, as one line. */
+function focusSaid(focus: Focus, words: Words): string {
+  const items = focus.machines.flatMap((chosen) =>
+    chosen.folders.length ? chosen.folders.map((folder) => `${chosen.machine} · ${folderName(folder)}`) : [chosen.machine],
+  );
+  return items.length ? words.focusChanged(items.join(words.listSeparator)) : words.focusCleared;
+}
 
 export class ConversationView {
   private openRows = new Set<string>();
@@ -1004,12 +1013,14 @@ export class ConversationView {
             ? fact.to
               ? words.movedTo(fact.to)
               : words.movedOut
-            : fact.fact === "desk_free"
-              ? words.deskFree(fact.by.resident)
-              : fact.fact === "desk_taken"
-                ? words.deskTaken(fact.by.resident)
-                : words.deskOutside;
-        more = fact.fact === "moved" ? "text" : "";
+            : fact.fact === "focus"
+              ? focusSaid(fact.focus, words)
+              : fact.fact === "desk_free"
+                ? words.deskFree(fact.by.resident)
+                : fact.fact === "desk_taken"
+                  ? words.deskTaken(fact.by.resident)
+                  : words.deskOutside;
+        more = fact.fact === "moved" || fact.fact === "focus" ? "text" : "";
         break;
       }
       default:

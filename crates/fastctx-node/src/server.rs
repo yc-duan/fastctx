@@ -842,6 +842,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::file_search::call(node, &acting, machine, request).await.map(Reply::FilesFound)
         }
+        Call::Folders { machine, path } => {
+            users_voice(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            crate::focus::folders(node, &acting, machine, path).await.map(Reply::Folders)
+        }
         Call::Open { agent, town, node: target, text, model, reasoning_effort, attachments, choices } => {
             users_voice(node, peer)?;
             let options = fastctx_types::agents::SessionOptions { model, reasoning_effort };
@@ -1036,10 +1041,6 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 resident.or_else(|| thread.as_deref().and_then(|thread| node.residents.resident_of_thread(thread)));
             machines(node, resident.as_ref(), login.as_ref())
         }
-        Call::WorksOn { resident, machine, works_on } => {
-            users_voice(node, peer)?;
-            crate::here::set_anywhere(node, resident, machine, works_on).await.map(|()| Reply::Done)
-        }
         Call::WatchTools { .. } => Err(Failure::new("a tools watch is answered as it goes, not at once")),
     }
 }
@@ -1095,13 +1096,13 @@ async fn run(
     call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
     request.call_id = call_id.map(str::to_owned);
-    let (works_on, request) = crate::here::start(node, &resident, request);
-    let machine = works_on.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
+    let (goes_to, request) = crate::here::start(node, request);
+    let machine = goes_to.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
     if let Some(id) = call_id {
         crate::run_facts::begin_for(node, &resident, id, machine)
             .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
     }
-    let result = run_started(node, resident.clone(), town, request, works_on, target, call_id).await;
+    let result = run_started(node, resident.clone(), town, request, goes_to, target, call_id).await;
     if let Err(failure) = &result
         && let Some(id) = call_id
     {
@@ -1116,7 +1117,7 @@ async fn run_started(
     resident: ResidentId,
     town: Option<TownName>,
     request: RunRequest,
-    works_on: Option<fastctx_types::access::Written>,
+    goes_to: Option<fastctx_types::access::Written>,
     target: Option<MachineName>,
     call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
@@ -1128,10 +1129,9 @@ async fn run_started(
     }
     let script = request.script.clone();
     let started_at = jiff::Timestamp::now();
-    // A resident that works on another machine starts its scripts there,
-    // and a script of one `on` goes where it names (`world-run.md`, 这里).
-    let reply = match (works_on, request) {
-        (Some(works_on), request) => crate::here::run(node, &resident, town.clone(), request, &works_on).await?,
+    // A script of one `on` goes where it names (`world-run.md`, 这里).
+    let reply = match (goes_to, request) {
+        (Some(goes_to), request) => crate::here::run(node, &resident, town.clone(), request, &goes_to).await?,
         (None, request) => {
             // An agent lent to another account may not work where it runs,
             // so nothing starts here, and the machine goes unnamed
@@ -1307,29 +1307,13 @@ fn machines(
     resident: Option<&ResidentId>,
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<Reply, Failure> {
-    let placed = resident.and_then(|resident| crate::here::placed(node, resident));
-    let acting = placed.as_ref().map(|(acting, _)| acting.clone()).unwrap_or_default();
-    let (here, mut others) = crate::world::machines(node, &acting);
-    // The session's shell is where it works: that machine is "this one",
-    // and the one it lives on is among the others (`world-run.md`, 这里).
+    let acting = resident.and_then(|resident| crate::here::acting(node, resident)).unwrap_or_default();
+    let (here, others) = crate::world::machines(node, &acting);
     // An agent lent to another account has no shell anywhere, and the
     // machine it runs on is not one it may work on, so it goes unnamed.
-    let works_on =
-        placed.as_ref().and_then(|(_, works_on)| works_on.clone()).filter(|works_on| !node.is_here(works_on));
-    let lent = works_on.is_none() && node.works_here(&acting).is_err();
-    let (here, program) = match works_on {
-        Some(works_on) => {
-            let written = works_on.to_string();
-            others.retain(|other| *other != written);
-            others.push(here.to_string());
-            others.sort();
-            (Some(written), Some(here.to_string()))
-        }
-        None if lent => (None, None),
-        None => (Some(here.to_string()), None),
-    };
+    let here = node.works_here(&acting).is_ok().then(|| here.to_string());
     let collab = crate::collab::choices(node, resident, login)?.map(|choices| choices.offered);
-    Ok(Reply::Machines { here, others, program, collab })
+    Ok(Reply::Machines { here, others, collab })
 }
 
 /// `fastctx nodes`: this computer, and hub by hub the machines its logins

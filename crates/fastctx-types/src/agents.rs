@@ -249,17 +249,16 @@ pub struct Choices {
     /// than one that may open it there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<crate::access::HubAccount>,
-    /// The machine it works on, when not the one it lives on
-    /// (`world-run.md`, 这里).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub works_on: Option<crate::access::Written>,
+    /// The machines and folders the user points it to.
+    #[serde(default, skip_serializing_if = "crate::focus::Focus::is_empty")]
+    pub focus: crate::focus::Focus,
     /// The agent's home it uses on the machine it lives on, when not the
     /// default one there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<PathBuf>,
     /// Where the files attached to its first words go, other than images,
-    /// when the user chose: an agent lent to the account has no machine it
-    /// works on (`world-run.md`, 这里).
+    /// when the user chose: an agent lent to the account has no machine of
+    /// its own (`world-run.md`, 这里).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files_on: Option<crate::access::Written>,
 }
