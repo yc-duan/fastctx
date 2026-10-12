@@ -15,25 +15,107 @@
   flex-direction: column;
 }
 
+/* Rhythm: blocks part by a line's space; a turn begins further down. The
+   room is each block's own, above it, so a block's height holds it and the
+   blocks drawn near the reader are laid out as they would be among all the
+   others (`view.ts`). */
 .block {
   min-width: 0;
+  padding-top: var(--space-4);
 }
 
-/* Rhythm: blocks part by a line's space; a turn begins further down. */
-.block + .block {
-  margin-top: var(--space-4);
+.block.turn-start {
+  padding-top: var(--space-8);
 }
 
-.block + .block.from-user {
-  margin-top: var(--space-8);
+.block.first {
+  padding-top: 0;
 }
 
 .block-ended:empty {
   display: none;
 }
 
-.block-ended:empty + .block {
-  margin-top: var(--space-8);
+/* A long stretch's earlier rows, asked for from a quiet line above the
+   rows it shows. */
+.rows-earlier {
+  grid-column: 2 / -1;
+  justify-self: start;
+  height: var(--row-line);
+  padding: 0;
+  font: inherit;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: color var(--hover) ease;
+}
+
+.rows-earlier:hover,
+.rows-earlier:focus-visible {
+  color: var(--text-2);
+}
+
+/* The blocks above and below those drawn, as tall as they are. */
+.transcript-space {
+  flex: none;
+  overflow-anchor: none;
+}
+
+/* Turns not held, one quiet line between two strokes: how many, before or
+   between; while they are read, the strokes draw on. */
+.transcript {
+  --gap-row: 56px;
+}
+
+.gap-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  height: calc(var(--gap-row) - var(--space-4));
+  padding: 0;
+  font: inherit;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.block-gap.first .gap-row {
+  height: var(--gap-row);
+}
+
+.gap-line {
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+  transform-origin: center;
+}
+
+.gap-said {
+  flex: none;
+  transition: color var(--hover) ease;
+}
+
+.gap-row:hover .gap-said,
+.gap-row:focus-visible .gap-said {
+  color: var(--text-2);
+}
+
+.gap-row.loading .gap-line {
+  animation: gap-draw 1.4s var(--fold-easing) infinite alternate;
+}
+
+@keyframes gap-draw {
+  from { transform: scaleX(0.35); opacity: 0.5; }
+  to { transform: scaleX(1); opacity: 1; }
+}
+
+:root[data-reduced] .gap-row.loading .gap-line {
+  animation: none;
 }
 
 /* The user's words. */

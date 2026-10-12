@@ -701,11 +701,9 @@
    there is nothing to keep. */
 .talk-scroller {
   scrollbar-gutter: stable both-edges;
-}
-
-/* A block not yet drawn holds its room. */
-.transcript > .block.lazy {
-  display: block;
+  /* The view keeps the reader's place itself, as blocks near them are
+     drawn and let go (`view.ts`). */
+  overflow-anchor: none;
 }
 
 .act-sheet-info {

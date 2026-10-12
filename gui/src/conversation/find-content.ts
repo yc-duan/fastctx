@@ -83,6 +83,8 @@ export class FindContent {
     const stamp = String(block.stamp);
     const long = (key: string, row: string | undefined, index: number, text: string): FindPart =>
       part(key, stamp, { ...(row ? { row } : {}), long: index }, () => text.replace(/\n$/, ""));
+    // Turns not held are found by the shell, not here.
+    if (block.kind === "gap") return;
     if (block.kind !== "activity-group") {
       yield part("body", stamp, {}, () => this.rendering.entry(block));
       if (block.kind === "heard" && this.rendering.notice(block)) {
@@ -114,7 +116,7 @@ export class FindContent {
         const rowStamp = row.signature;
         yield part(`${row.key}/head`, rowStamp, { row: row.key }, () => row.text());
         if (row.key !== member.key) {
-          yield part(`${row.key}/diff`, rowStamp, { row: row.key, long: 0 }, (signal) => this.rendering.write(row.key, signal));
+          yield { ...part(`${row.key}/diff`, rowStamp, { row: row.key, long: 0 }, (signal) => this.rendering.write(row.key, signal)), remote: true };
         } else if (isThinking(member)) {
           const thoughts = run as ProseEntry[];
           yield part(`${row.key}/thinking`, rowStamp, { row: row.key, selector: ".thinking-text" }, () => this.prose(thoughtText(thoughts), thoughts.some((entry) => entry.writing)));

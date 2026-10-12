@@ -7,9 +7,28 @@ use fastctx_client::{Conversation, Update, World};
 use fastctx_net::link::Status;
 use fastctx_types::session::SessionEvent;
 use fastctx_types::{Address, MachineName, ResidentId};
+use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 
 use crate::Piece;
+use crate::transcript::Transcript;
+
+/// The history a reading gave, as what the page's watch is given next.
+fn given(transcript: &Mutex<Transcript>, history: &[SessionEvent]) -> Option<Piece> {
+    transcript
+        .lock()
+        .expect("transcript")
+        .history(history)
+        .unwrap_or_else(|error| Some(Piece::Ended { error: Some(error) }))
+}
+
+/// Sends the page what it is given next; false once the watch is over, as
+/// the page let go or what it holds could not be kept.
+fn deliver(pieces: &Channel<Piece>, piece: Option<Piece>) -> bool {
+    let Some(piece) = piece else { return true };
+    let ended = matches!(piece, Piece::Ended { .. });
+    pieces.send(piece).is_ok() && !ended
+}
 
 pub(crate) async fn open(
     world: &World,
@@ -77,12 +96,13 @@ pub(crate) async fn stream(
     resident: ResidentId,
     machine: Option<MachineName>,
     mut initial: Conversation,
+    transcript: Arc<Mutex<Transcript>>,
     pieces: Channel<Piece>,
 ) {
     if initial.has_cached_rest() {
         match initial.update().await {
             Ok(Update::History(history)) => {
-                if pieces.send(Piece::Reset { history }).is_err() {
+                if !deliver(&pieces, given(&transcript, &history)) {
                     return;
                 }
             }
@@ -116,7 +136,7 @@ pub(crate) async fn stream(
         {
             match kept.update().await {
                 Ok(Update::History(history)) => {
-                    if pieces.send(Piece::Reset { history }).is_err() {
+                    if !deliver(&pieces, given(&transcript, &history)) {
                         return;
                     }
                 }
@@ -139,7 +159,7 @@ pub(crate) async fn stream(
             };
             match read {
                 Ok((fresh, history)) => {
-                    if pieces.send(Piece::Reset { history }).is_err() {
+                    if !deliver(&pieces, given(&transcript, &history)) {
                         return;
                     }
                     conversation = Some(fresh);
@@ -163,12 +183,13 @@ pub(crate) async fn stream(
                 }
             } => {
                 match piece {
-                    Ok(Update::Current) => if pieces.send(Piece::Resumed).is_err() { return; },
-                    // It opens itself again, as `fastctx_client::Conversation` paces it.
-                    Ok(Update::Interrupted(interruption)) => if pieces.send(Piece::interrupted(&interruption)).is_err() { return; },
-                    Ok(Update::Moment(moment)) => if pieces.send(Piece::Event { event: moment.event }).is_err() { return; },
-                    Ok(Update::History(history)) => if pieces.send(Piece::Reset { history }).is_err() { return; },
-                    Ok(Update::Extended(history)) => if pieces.send(Piece::Extended { history }).is_err() { return; },
+                    // It opens itself again, as `fastctx_client::Conversation`
+                    // paces it; what it hands over goes through what the page
+                    // holds (`crate::transcript`).
+                    Ok(update) => {
+                        let piece = transcript.lock().expect("transcript").take(update).unwrap_or_else(|error| Some(Piece::Ended { error: Some(error) }));
+                        if !deliver(&pieces, piece) { return; }
+                    }
                     Err(error) => {
                         conversation = None;
                         let error = Some(error.to_string());

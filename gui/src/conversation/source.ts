@@ -1,25 +1,27 @@
-// Where a conversation is read from, as one seam: everything known of it so
-// far, then each thing as it happens. Today that is the World's watch on the
-// session (`../world/bridge.ts`), which hands the whole history and then the
-// live events. A copy kept on this device (`world-gui.md`, 对话: 每台设备上的
-// 缓存) stands in the same place: it answers at once with what it holds
-// (`replaced`), then with what is new since (`extended`), then live, and
-// reads it all again when the host rewrote its history (`replaced` again);
-// the page draws the first answer at once and each later part as it comes,
-// keeping what it drew wherever the keys are the same.
+// Where a conversation is read from, as one seam: the part its page opens
+// on, then each thing as it happens. Today that is the World's watch on the
+// session (`../world/bridge.ts`), whose shell keeps the whole conversation
+// and hands the page its latest turns, and the rest a part at a time as the
+// reader comes to it (`src-tauri/src/transcript.rs`). A copy kept on this
+// device (`world-gui.md`, 对话: 每台设备上的缓存) answers at once with what
+// it holds, then with what is new since, then live; the page draws the
+// first answer at once and each later part as it comes, keeping what it
+// drew wherever the keys are the same.
 
 import type { Address, SessionEvent } from "../world/events";
 import { after, whyOf } from "../world/again";
-import { unwatch, watch, type Piece } from "../world/bridge";
+import { conversationCut, conversationFind, conversationIndex, conversationLocate, conversationPart, unwatch, watch, type Piece } from "../world/bridge";
+import type { PartSource, Window } from "./conversation";
 
 export interface ConversationFeed {
-  /** Everything known so far, replacing what is shown. */
-  replaced(history: SessionEvent[]): void;
-  /** More of what came before what is live, after what is shown: what a
-   *  copy at hand did not hold yet. */
-  extended(history: SessionEvent[]): void;
-  /** One thing as it happens. */
-  happened(event: SessionEvent): void;
+  /** The part shown, in place of all held; `parts` reads the rest. */
+  window(window: Window, parts: PartSource): void;
+  /** Events after all that was given. */
+  extended(start: number, events: SessionEvent[]): void;
+  /** What came before arrived: what is held moves along. */
+  rebased(generation: number, offset: number, turnsAdded: number): void;
+  /** One thing as it happens, the `at`th event. */
+  happened(at: number, event: SessionEvent): void;
   /** The live part broke and is being read again: why, and since when. */
   interrupted(why: string | null, since: Date): void;
   /** It came back. */
@@ -29,7 +31,8 @@ export interface ConversationFeed {
 }
 
 export interface Reading {
-  /** Reads everything again, as when the host replaced or removed turns. */
+  /** Reads everything again, as when the host replaced or removed turns,
+   *  or what came did not follow what is held. */
   again(): void;
   close(): void;
 }
@@ -38,13 +41,25 @@ export interface ConversationSource {
   open(address: Address, feed: ConversationFeed): Reading;
 }
 
-/** The World's watch: a whole history, then live; events that come before
- *  the history wait for it. Each reading is a watch of its own. */
+/** The World's watch: the part it opens on, then live; pieces that come
+ *  before it wait for it. Each reading is a watch of its own, and the parts
+ *  it reads are read from its own. */
 export const watched: ConversationSource = {
   open(address, feed) {
     let id: number | null = null;
     let reading = 0;
     let closed = false;
+    const current = () => {
+      if (id === null) throw new Error("the conversation is not watched now");
+      return id;
+    };
+    const parts: PartSource = {
+      part: async (generation, edge) => conversationPart(current(), generation, edge),
+      locate: async (generation, turn) => conversationLocate(current(), generation, turn),
+      cut: async (generation, events) => conversationCut(current(), generation, events),
+      index: async (generation, start, end, docs) => conversationIndex(current(), generation, start, end, docs),
+      find: async (generation, query, held) => conversationFind(current(), generation, query, held),
+    };
     const take = (piece: Piece) => {
       switch (piece.kind) {
         case "resumed":
@@ -52,14 +67,18 @@ export const watched: ConversationSource = {
           return;
         case "event":
           feed.resumed();
-          feed.happened(piece.event);
+          feed.happened(piece.at, piece.event);
           return;
-        case "reset":
-          feed.replaced(piece.history);
+        case "window":
+          feed.resumed();
+          feed.window(piece.window, parts);
           return;
         case "extended":
           feed.resumed();
-          feed.extended(piece.history);
+          feed.extended(piece.start, piece.events);
+          return;
+        case "rebased":
+          feed.rebased(piece.generation, piece.offset, piece.turns_added);
           return;
         case "interrupted":
           feed.interrupted(piece.error, new Date(piece.since));
@@ -90,7 +109,7 @@ export const watched: ConversationSource = {
           id = started.id;
           tries = 0;
           since = null;
-          feed.replaced(started.history);
+          feed.window(started.window, parts);
           for (const piece of early) take(piece);
           ready = true;
         })

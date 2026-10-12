@@ -16,6 +16,7 @@ mod features;
 mod hub_moving;
 mod item_details;
 mod kept;
+mod transcript;
 
 #[cfg(desktop)]
 mod founding;
@@ -47,7 +48,6 @@ use fastctx_types::file_search::{FileSearchReply, FileSearchRequest};
 use fastctx_types::management::{Managed, Management};
 use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
 use fastctx_types::residents::Landed;
-use fastctx_types::session::SessionEvent;
 use fastctx_types::session::control::{Control, Controlled, Offers};
 use fastctx_types::town::{LookedUp, WhoScope, WorldWho};
 use fastctx_types::world::NodesReply;
@@ -81,6 +81,8 @@ mod titlebar;
 struct Shell {
     connection: connection::Connection,
     watches: Arc<Mutex<HashMap<u64, JoinHandle<()>>>>,
+    /// What each watched conversation holds for its page.
+    transcripts: Arc<transcript::Transcripts>,
     next: AtomicU64,
     page: AtomicU64,
     line_requests: line_reading::Requests,
@@ -99,6 +101,7 @@ impl Shell {
         for (_, watch) in self.watches.lock().expect("watch table").drain() {
             watch.abort();
         }
+        self.transcripts.close_all();
     }
 
     fn follow(
@@ -202,19 +205,28 @@ struct WorldNow {
     accounts: fastctx_types::accounts::AccountsReply,
 }
 
-/// One piece of a watched conversation, as the page receives it.
+/// One piece of a watched conversation, as the page receives it: the page
+/// holds a part of it near its reader (`transcript.rs`).
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum Piece {
     Resumed,
+    /// Events kept after all the page was given, from `start` on.
     Extended {
-        history: Vec<SessionEvent>,
+        start: usize,
+        events: Vec<Box<serde_json::value::RawValue>>,
     },
-    /// What came before is now this, in place of all that was given: the
-    /// rest of what this device keeps, the history as its machine has it
-    /// now, or the history read again on a phone that came back.
-    Reset {
-        history: Vec<SessionEvent>,
+    /// The page's part is now this, in place of all it holds: the history
+    /// as its machine has it now differs from what was given.
+    Window {
+        window: transcript::Window,
+    },
+    /// What came before the page's part arrived: what it holds stays, its
+    /// places moved along by `offset` events and `turns_added` turns.
+    Rebased {
+        generation: u64,
+        offset: usize,
+        turns_added: usize,
     },
     /// The live part broke and is being read again: why, and since when
     /// (milliseconds since the Unix epoch).
@@ -222,8 +234,10 @@ enum Piece {
         error: Option<String>,
         since: u64,
     },
+    /// One thing as it happened, the `at`th event of the conversation.
     Event {
-        event: SessionEvent,
+        at: usize,
+        event: Box<serde_json::value::RawValue>,
     },
     /// The watch is over: the node ended it, or the connection broke.
     Ended {
@@ -246,7 +260,7 @@ pub(crate) fn epoch_ms(at: std::time::SystemTime) -> u64 {
 #[derive(Serialize)]
 struct Watch {
     id: u64,
-    history: Vec<SessionEvent>,
+    window: transcript::Window,
 }
 
 #[derive(Serialize)]
@@ -286,11 +300,11 @@ async fn world_now(shell: tauri::State<'_, Shell>) -> Result<WorldNow, String> {
     Ok(WorldNow { here: nodes.machine.clone(), towns: towns.clone(), who, nodes, accounts })
 }
 
-/// Starts watching a resident: returns what came before, from what this
-/// device keeps of it at once where it keeps it, and sends each event
-/// after it down `pieces` until the page lets go; the rest of the history,
-/// and the history as its machine has it now when that is different, come
-/// as `reset` pieces.
+/// Starts watching a resident: returns the part of it the page opens on,
+/// its latest turns, from what this device keeps of it at once where it
+/// keeps it, and sends what follows down `pieces` until the page lets go.
+/// The shell keeps the rest of it for the page to ask for
+/// (`transcript.rs`).
 #[fastctx_gui_command::command]
 async fn watch(
     shell: tauri::State<'_, Shell>,
@@ -313,30 +327,39 @@ async fn watch(
     #[cfg(target_os = "android")]
     let (conversation, history) = android::watching::open(&world, resident.clone(), machine.clone(), false).await?;
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
+    let (transcript, window) = transcript::Transcript::new(&history)?;
+    drop(history);
+    let transcript = shell.transcripts.open(id, transcript);
     #[cfg(target_os = "android")]
-    let work = android::watching::stream(world, resident, machine, conversation, pieces);
+    let work = android::watching::stream(world, resident, machine, conversation, transcript, pieces);
     #[cfg(not(target_os = "android"))]
     let work = async move {
         let mut conversation = conversation;
         loop {
-            let piece = match conversation.update().await {
-                Ok(fastctx_client::Update::Current) => Piece::Resumed,
-                Ok(fastctx_client::Update::Interrupted(interruption)) => Piece::interrupted(&interruption),
-                Ok(fastctx_client::Update::Moment(moment)) => Piece::Event { event: moment.event },
-                Ok(fastctx_client::Update::History(history)) => Piece::Reset { history },
-                Ok(fastctx_client::Update::Extended(history)) => Piece::Extended { history },
+            let update = match conversation.update().await {
+                Ok(update) => update,
                 Err(error) => {
                     let _ = pieces.send(Piece::Ended { error: Some(error.to_string()) });
                     return;
                 }
             };
-            if pieces.send(piece).is_err() {
+            let piece = match transcript.lock().expect("transcript").take(update) {
+                Ok(Some(piece)) => piece,
+                Ok(None) => continue,
+                Err(error) => Piece::Ended { error: Some(error) },
+            };
+            let ended = matches!(piece, Piece::Ended { .. });
+            if pieces.send(piece).is_err() || ended {
                 return;
             }
         }
     };
-    shell.follow(page, id, work)?;
-    Ok(Watch { id, history })
+    let transcripts = shell.transcripts.clone();
+    shell.follow(page, id, async move {
+        work.await;
+        transcripts.close(id);
+    })?;
+    Ok(Watch { id, window })
 }
 
 #[tauri::command]
@@ -344,6 +367,7 @@ fn unwatch(shell: tauri::State<'_, Shell>, id: u64) {
     if let Some(task) = shell.watches.lock().expect("watch table").remove(&id) {
         task.abort();
     }
+    shell.transcripts.close(id);
 }
 
 /// The user's words to a resident, with the files uploaded for them; those
@@ -946,6 +970,7 @@ pub fn run() {
             app.manage(Shell {
                 connection,
                 watches: Arc::default(),
+                transcripts: Arc::default(),
                 next: AtomicU64::new(0),
                 page: AtomicU64::new(0),
                 line_requests: Default::default(),
@@ -1030,6 +1055,11 @@ pub fn run() {
             project_edit,
             watch,
             unwatch,
+            transcript::conversation_part,
+            transcript::conversation_cut,
+            transcript::conversation_locate,
+            transcript::conversation_index,
+            transcript::conversation_find,
             kept::kept_usage,
             kept::kept_clear,
             kept::kept_forget,

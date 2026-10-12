@@ -1,9 +1,17 @@
-// A conversation drawn in the page (`world-gui.md`, 对话). Each block has an
-// element of its own for as long as it is there, and what it shows is drawn
-// again only when it changed: an entry's stamp says when. Words streaming
-// in redraw the paragraph they add to, not the message, not the
-// conversation; a conversation thousands of tool calls long draws only the
-// blocks near the reader (`lazy.ts`).
+// A conversation drawn in the page (`world-gui.md`, 对话). Only the blocks
+// near the reader are on the page: a screen of them above and two below
+// what is in view, between two spaces that stand for the rest, each as tall
+// as the blocks it stands for (`heights.ts`: measured where a block was
+// drawn, taken to be what it holds where not). So a conversation of
+// thousands of turns is as light to read, scroll and stream into as a short
+// one: the page holds the same few dozen blocks, and an event redraws only
+// the block it changed. The reader never sees anything move: when what is
+// above them changes height, the view moves by as much, the block they read
+// staying where it is.
+//
+// Turns the page does not hold (`conversation.ts`) stand as a gap; when the
+// reader comes near one, its turns are read, from the side the reader comes
+// from.
 //
 // What a turn did between the things it said is a stretch of rows under one
 // heading. The heading stands as long as there is a row under it, keeps its
@@ -33,7 +41,8 @@ import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
 import { glyph } from "./glyphs";
 import { effortLabel } from "./effort-slider";
-import { isThinking, runsOf, type Activity, type Block, type Conversation, type Entry, type SendState, type ShownAttachment } from "./model";
+import { isThinking, runsOf, type Activity, type Block, type Entry, type Gap, type SendState, type ShownAttachment } from "./model";
+import type { Conversation } from "./conversation";
 import { escape, plain, render } from "./prose";
 import { numbered, parse } from "./diff";
 import { DiffLines, RemoteDiff, diffPaint, memoryDiff } from "./diff-lines";
@@ -49,11 +58,12 @@ import { chosenIn, drawQuestions, type QuestionWords } from "./question-card";
 import { StreamedProse } from "./stream-prose";
 import { TurnLine, time, type LineSays } from "./turn-line";
 import { fly, type Departure } from "./flight";
-import { Lazy, estimate } from "./lazy";
+import { estimate } from "./estimate";
+import { Heights } from "./heights";
 import { FindContent, displayedDiff, toolText } from "./find-content";
 import { clockSays, sections, stretchSays, thoughtOnly, thoughtText, thoughtTook } from "./stretch-says";
 import { displayedText, htmlText as displayedTextHtml, type TextMatch } from "./find-text";
-import type { FindChanges, FindMatch } from "./find-index";
+import { GAP, type FindChanges, type FindMatch, type FindPart } from "./find-index";
 
 export interface Context {
   words: Words;
@@ -68,6 +78,12 @@ export interface Context {
   /** The reader opened or closed something: the page stops keeping the
    *  newest in view, so nothing moves under their hand. */
   reading(): void;
+  /** Whether the page keeps the newest in view: then the foot is what is
+   *  drawn. Always, where none says. */
+  following?: (() => boolean) | undefined;
+  /** A gap came near the reader: its turns are read, from its end when the
+   *  reader is below it, from its start when above. */
+  near?: ((gap: Gap, side: "end" | "start") => void) | undefined;
   /** Where words being sent leave from (`flight.ts`). */
   departure?: (() => Departure | null) | undefined;
   /** Where another resident's conversation opens, where it can. */
@@ -107,6 +123,20 @@ interface Row {
 /** A write's row is keyed by its run's row and the write. */
 const WRITE = "~";
 
+/** How far beyond what is in view blocks are drawn, in screens: one above,
+ *  as a reader going up meets what was just there; two below, where the
+ *  newest comes in and a reader going down, back to it, goes faster. */
+const ABOVE = 1;
+const BELOW = 2;
+
+/** How far from what is drawn a block the reader has focus or a selection
+ *  in may be and still be kept drawn, in blocks. */
+const HOLD = 200;
+
+/** How many of its latest rows a stretch opens on, and how many more each
+ *  ask for the earlier brings: three screens of rows. */
+const STRETCH_ROWS = 60;
+
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 type AskEntry = Extract<Entry, { kind: "ask" }>;
 type HeardEntry = Extract<Entry, { kind: "heard" }>;
@@ -124,7 +154,7 @@ interface Stretch {
   heading: string;
 }
 
-/** A block's place in the page. */
+/** A block's place in the page, while it is near the reader. */
 interface Slot {
   key: string;
   element: HTMLElement;
@@ -136,14 +166,8 @@ interface Slot {
   /** What is done to a message's turn, under its words. */
   acts?: HTMLElement;
   stretch?: Stretch;
-  /** Its height when it was let go, kept while it is not drawn. */
-  height: number | null;
-  findSignature?: string;
   findRevision?: number;
 }
-
-/** Blocks drawn only near the reader; the others cost too little to wait. */
-const LAZY = new Set<Block["kind"]>(["activity-group", "prose", "heard", "ask", "question", "steps"]);
 
 /** A change of the machines and folders, as one line. */
 function focusSaid(focus: Focus, words: Words): string {
@@ -156,6 +180,9 @@ function focusSaid(focus: Focus, words: Words): string {
 export class ConversationView {
   private openRows = new Set<string>();
   private openStretches = new Set<string>();
+  /** How many of their latest rows long stretches show, where more than
+   *  `STRETCH_ROWS` were asked for. */
+  private stretchRows = new Map<string, number>();
   private slots = new Map<string, Slot>();
   private byElement = new WeakMap<HTMLElement, Slot>();
   /** Long texts open under rows, by row, to be let go when the row is. */
@@ -175,17 +202,29 @@ export class ConversationView {
   private skipped = new Set<string>();
   /** Words already sent up from the input, by key. */
   private flown = new Set<string>();
-  private findPending = new Set<string>();
+  /** What finding last read of each block, and blocks gone since. */
+  private findRead = new Map<string, string>();
   private findRemoved = new Set<string>();
-  private findOrder: string[] = [];
   private findWrites = new Map<string, { signature: string; lines: readonly string[] }>();
   private readonly findContent: FindContent;
-  private readonly layout: AnchorLayout;
-  private readonly lazy: Lazy;
+  private readonly layoutAnchor: AnchorLayout;
   private readonly line: TurnLine;
   /** The clocks of stretches running, brought up to date each second. */
   private clocks = new Set<HTMLElement>();
   private ticking = 0;
+  /** The blocks laid out, their heights, and the ones on the page. */
+  private blocks: Block[] = [];
+  private readonly heights = new Heights();
+  private measured = new Map<string, number>();
+  private guesses = new Map<string, { stamp: number; width: number; height: number }>();
+  private shown: Slot[] = [];
+  /** The spaces that stand for the blocks above and below those drawn. */
+  private readonly above: HTMLElement;
+  private readonly below: HTMLElement;
+  private readonly sizes: ResizeObserver;
+  private laying = 0;
+  /** Gaps asked to be read, so a gap near the reader is asked once. */
+  private asked = new Set<string>();
 
   constructor(
     private readonly root: HTMLElement,
@@ -193,6 +232,10 @@ export class ConversationView {
     private readonly context: Context,
   ) {
     root.classList.add("transcript");
+    this.above = document.createElement("div");
+    this.below = document.createElement("div");
+    this.above.className = this.below.className = "transcript-space";
+    root.append(this.above, this.below);
     this.findContent = new FindContent({
       words: context.words,
       attachment: (path) => conversation.attachmentName(path),
@@ -213,18 +256,13 @@ export class ConversationView {
       notice: (entry) => !!this.noticeOf(entry),
       write: (key, signal) => this.findWrite(key, signal),
     });
-    this.layout = new AnchorLayout(context.scroller, root);
+    this.layoutAnchor = new AnchorLayout(context.scroller, root);
     this.line = new TurnLine(context.words);
-    this.lazy = new Lazy(context.scroller, {
-      near: (element) => {
-        const slot = this.byElement.get(element);
-        if (slot && slot.signature === null && this.root.isConnected) this.draw(slot);
-      },
-      far: (element, height) => {
-        const slot = this.byElement.get(element);
-        if (slot) this.release(slot, height);
-      },
-    });
+    // A block drawn grows or shrinks (its pictures arrive, it is opened, the
+    // column narrows): its height is kept, and what is above the reader
+    // moving moves the view by as much.
+    this.sizes = new ResizeObserver((entries) => this.resized(entries));
+    context.scroller.addEventListener("scroll", this.scrolled, { passive: true });
     root.addEventListener("click", (event) => this.click(event));
     root.addEventListener("input", (event) => {
       // Words of one's own answer a question instead of an option.
@@ -255,92 +293,316 @@ export class ConversationView {
    *  what is new came as history rather than as it happened. */
   update(read = false): void {
     const blocks = this.conversation.blocks();
-    const says = this.lineSays(blocks);
     this.reading = read;
     // Words already on their way when the page is first drawn (the first
     // words of a conversation just begun) rose where they were sent.
     if (!this.live) for (const block of blocks) if (block.kind === "heard" && block.sending) this.flown.add(block.key);
-    const present = new Set<string>();
-    this.findOrder = blocks.map((block) => block.key);
-    const drawn: HTMLElement[] = [];
-    let previous: HTMLElement | null = null;
-    // The line stands before the first words waiting below it, else last.
-    let lineBefore: HTMLElement | null = null;
-    for (const block of blocks) {
-      present.add(block.key);
-      let slot = this.slots.get(block.key);
-      if (!slot) slot = this.slot(block, read);
-      slot.block = block;
-      const signature = this.findSignature(block);
-      if (slot.findSignature !== signature) {
-        slot.findSignature = signature;
-        this.findPending.add(block.key);
-      }
-      // The turn's line between blocks is passed over: it is placed after.
-      let want: Element | null = previous ? previous.nextElementSibling : this.root.firstElementChild;
-      if (want === this.line.element) want = want.nextElementSibling;
-      if (want !== slot.element) {
-        if (previous) previous.after(slot.element);
-        else this.root.prepend(slot.element);
-      }
-      previous = slot.element;
-      if (says && !lineBefore && block.kind === "heard" && block.sending !== undefined && block.intoTurn) lineBefore = slot.element;
-      if (slot.signature !== null && slot.signature !== this.signature(block)) {
-        this.draw(slot);
-        drawn.push(slot.element);
-      }
-    }
-    for (const [key, slot] of this.slots) {
-      if (present.has(key)) continue;
-      this.forget(slot);
-      this.lazy.unwatch(slot.element);
-      slot.element.remove();
-      this.slots.delete(key);
-      this.findPending.delete(key);
-      this.findRemoved.add(key);
-    }
+    this.adopt(blocks);
+    const drawn = this.lay(read);
+    const says = this.lineSays(blocks);
     // Words rising this frame land before the line beneath them is drawn.
     const flying = this.flights(blocks);
-    if (says) {
+    // The line stands before the first words waiting below it, else last;
+    // only while the foot is drawn.
+    const end = this.shown[this.shown.length - 1];
+    if (says && end && end.key === blocks[blocks.length - 1]?.key) {
+      let lineBefore: HTMLElement = this.below;
+      for (let index = this.shown.length - 1; index >= 0; index -= 1) {
+        const block = this.shown[index]!.block;
+        if (!(block.kind === "heard" && block.sending !== undefined && block.intoTurn)) break;
+        lineBefore = this.shown[index]!.element;
+      }
       this.line.say(says);
       this.line.place(this.root, lineBefore, this.live && !read, flying ? time(getComputedStyle(this.root), "--send") * 0.6 : 0);
     } else this.line.remove();
-    if (!this.live) {
-      this.live = true;
-      this.fillFromEnd(blocks);
-    }
+    this.live = true;
     this.tick();
     for (const element of drawn) void drawDiagrams(element).then(() => {
       const slot = this.byElement.get(element);
-      if (slot && element.querySelector(".diagram.drawn")) {
-        slot.findRevision = (slot.findRevision ?? 0) + 1;
-        this.findPending.add(slot.key);
-      }
+      if (slot && element.querySelector(".diagram.drawn")) slot.findRevision = (slot.findRevision ?? 0) + 1;
     });
   }
+
+  /** Takes in the blocks as they now stand: when blocks came or went, the
+   *  heights are laid out again, and what went is let go. */
+  private adopt(blocks: Block[]): void {
+    const old = this.blocks;
+    this.blocks = blocks;
+    let same = old.length === blocks.length;
+    for (let index = 0; same && index < blocks.length; index += 1) same = old[index]!.key === blocks[index]!.key;
+    if (same) return;
+    const present = new Set<string>();
+    for (const block of blocks) present.add(block.key);
+    for (const [key, slot] of this.slots) {
+      if (present.has(key)) continue;
+      this.hide(slot);
+      this.slots.delete(key);
+      this.measured.delete(key);
+      this.guesses.delete(key);
+      if (this.findRead.delete(key)) this.findRemoved.add(key);
+    }
+    this.shown = this.shown.filter((slot) => present.has(slot.key));
+    for (const key of this.asked) if (!present.has(key)) this.asked.delete(key);
+    this.heights.reset(
+      blocks.map((block) => block.key),
+      (key, index) => this.measured.get(key) ?? this.guess(blocks[index]!, index),
+    );
+  }
+
+  /** The blocks near the reader, drawn and in order between the two
+   *  spaces; the rest let go. Says which were drawn again. Unless `moved`
+   *  (the view was just put somewhere), the block the reader is at stays
+   *  where it is on the screen, whatever came or went above it. */
+  private lay(read = false, moved = false): HTMLElement[] {
+    const scroller = this.context.scroller;
+    const n = this.blocks.length;
+    const following = this.context.following?.() ?? true;
+    // Where the reader is, before anything moves.
+    const anchor = following || moved ? null : this.anchorNow();
+    const view = scroller.clientHeight || innerHeight;
+    const origin = this.origin();
+    let top = following ? Math.max(0, this.heights.total() - view) : scroller.scrollTop - origin;
+    const at = anchor ? this.heights.index(anchor.slot.key) : undefined;
+    if (anchor && at !== undefined) {
+      // Laid out as the heights now say, the reader's block is here: the
+      // view goes there first, and is set right once it is drawn.
+      top = this.heights.top(at) - (anchor.top - scroller.getBoundingClientRect().top);
+      scroller.scrollTop = origin + top;
+    }
+    let first = n ? this.heights.find(Math.max(0, top - view * ABOVE)) : 0;
+    let last = n ? this.heights.find(top + view * (1 + BELOW)) : -1;
+    // A block the reader has focus or a selection in stays, near enough.
+    for (const slot of this.shown) {
+      if (!this.holding(slot)) continue;
+      const index = this.heights.index(slot.key);
+      if (index === undefined) continue;
+      if (index < first && first - index <= HOLD) first = index;
+      if (index > last && index - last <= HOLD) last = index;
+    }
+    const wanted: Slot[] = [];
+    for (let index = first; index <= last; index += 1) wanted.push(this.slotOf(this.blocks[index]!));
+    const keep = new Set(wanted);
+    for (const slot of this.shown) if (!keep.has(slot)) this.hide(slot);
+    const drawn: HTMLElement[] = [];
+    let previous: Element = this.above;
+    for (let at = 0; at < wanted.length; at += 1) {
+      const slot = wanted[at]!;
+      const index = first + at;
+      this.spacing(slot, index);
+      if (previous.nextElementSibling !== slot.element) previous.after(slot.element);
+      previous = slot.element;
+      if (slot.signature === null) {
+        this.draw(slot, read);
+        this.sizes.observe(slot.element);
+      } else if (slot.signature !== this.signature(slot.block)) {
+        this.draw(slot, read);
+        drawn.push(slot.element);
+      }
+    }
+    this.shown = wanted;
+    this.above.style.height = `${n ? this.heights.top(first) : 0}px`;
+    this.below.style.height = `${n ? this.heights.total() - this.heights.top(last + 1) : 0}px`;
+    if (anchor) {
+      const moved = anchor.slot.element.isConnected ? anchor.slot.element.getBoundingClientRect().top - anchor.top : 0;
+      if (moved) scroller.scrollTop += moved;
+    }
+    // A gap near the reader is read, from the side the reader comes from.
+    const reader = following ? n : this.heights.find(Math.max(0, top));
+    for (const slot of wanted) {
+      const block = slot.block;
+      if (block.kind !== "gap" || block.loading || this.asked.has(block.key)) continue;
+      this.asked.add(block.key);
+      const index = this.heights.index(block.key) ?? 0;
+      this.context.near?.(block, index <= reader ? "end" : "start");
+    }
+    return drawn;
+  }
+
+  /** Lays out again where the reader scrolled, once a frame. */
+  private scrolled = (): void => {
+    if (this.laying) return;
+    this.laying = requestAnimationFrame(() => {
+      this.laying = 0;
+      if (this.root.isConnected) this.lay();
+    });
+  };
+
+  /** Heights that changed under blocks drawn: kept, and what changed above
+   *  the reader moves the view by as much. */
+  private resized(entries: ResizeObserverEntry[]): void {
+    const scroller = this.context.scroller;
+    const following = this.context.following?.() ?? true;
+    const reader = following ? Infinity : this.heights.find(Math.max(0, scroller.scrollTop - this.origin()));
+    let moved = 0;
+    for (const entry of entries) {
+      const slot = this.byElement.get(entry.target as HTMLElement);
+      if (!slot || !slot.element.isConnected || slot.signature === null) continue;
+      const index = this.heights.index(slot.key);
+      if (index === undefined) continue;
+      const height = entry.borderBoxSize[0]?.blockSize ?? (entry.target as HTMLElement).offsetHeight;
+      this.measured.set(slot.key, height);
+      const delta = this.heights.set(index, height);
+      if (index < reader) moved += delta;
+    }
+    if (moved && !following) scroller.scrollTop += moved;
+  }
+
+  /** The first block drawn and in view whose foot is below the top of the
+   *  view, and where its top is; none when the view was moved where
+   *  nothing is drawn. */
+  private anchorNow(): { slot: Slot; top: number } | null {
+    const view = this.context.scroller.getBoundingClientRect();
+    for (const slot of this.shown) {
+      if (slot.block.kind === "gap" || !slot.element.isConnected) continue;
+      const box = slot.element.getBoundingClientRect();
+      if (box.bottom > view.top) return box.top < view.bottom ? { slot, top: box.top } : null;
+    }
+    return null;
+  }
+
+  /** Where the first block would begin, in the scroll region's terms. */
+  private origin(): number {
+    const scroller = this.context.scroller;
+    return this.above.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+  }
+
+  /** Whether the reader has focus or a selection in a slot. */
+  private holding(slot: Slot): boolean {
+    if (slot.element.contains(document.activeElement)) return true;
+    const selection = getSelection();
+    return !!selection && selection.rangeCount > 0 && !selection.isCollapsed && selection.getRangeAt(0).intersectsNode(slot.element);
+  }
+
+  /** A block's place, made when it first comes near. */
+  private slotOf(block: Block): Slot {
+    let slot = this.slots.get(block.key);
+    if (!slot) {
+      const element = document.createElement("div");
+      element.dataset.key = block.key;
+      element.className = `block block-${block.kind === "activity-group" ? "activity" : block.kind}`;
+      if (block.kind === "prose") element.classList.add(`prose-${block.prose}`);
+      if (block.kind === "heard") {
+        const notice = this.noticeOf(block);
+        element.classList.add(notice ? "from-world" : !block.from || block.from.kind === "user" ? "from-user" : "from-other");
+        if (block.reply) element.classList.add("from-reply");
+      }
+      slot = { key: block.key, element, block, signature: null };
+      this.slots.set(block.key, slot);
+      this.byElement.set(element, slot);
+    }
+    slot.block = block;
+    return slot;
+  }
+
+  /** The room above a block, as its own: none for the first, more where a
+   *  turn begins, a line's space otherwise. */
+  private spacing(slot: Slot, index: number): void {
+    const previous = this.blocks[index - 1];
+    const block = slot.block;
+    const start =
+      (block.kind === "heard" && slot.element.classList.contains("from-user")) ||
+      (previous?.kind === "ended" && !this.context.words.turn(previous.end.how, previous.end.reason));
+    slot.element.classList.toggle("first", index === 0);
+    slot.element.classList.toggle("turn-start", index > 0 && start);
+  }
+
+  /** Lets a block go from the page, keeping its height. */
+  private hide(slot: Slot): void {
+    this.sizes.unobserve(slot.element);
+    this.forget(slot);
+    slot.element.replaceChildren();
+    slot.element.remove();
+    slot.signature = null;
+  }
+
+  /** How tall a block not drawn is taken to be, with the room above it:
+   *  what it holds at the column's width, and the room its turn's actions
+   *  take beneath it where it has them (`estimate.ts`). */
+  private guess(block: Block, index: number): number {
+    const { line, chars } = this.metrics();
+    const known = this.guesses.get(block.key);
+    if (known && known.stamp === block.stamp && known.width === chars) return known.height;
+    let height: number;
+    if (block.kind === "gap") height = this.room().gap;
+    else if (block.kind === "ended" && !this.context.words.turn(block.end.how, block.end.reason)) height = 0;
+    else {
+      const conversation = this.conversation;
+      const turn = block.kind === "heard" || block.kind === "prose" ? block.turn : null;
+      const has =
+        !!turn &&
+        conversation.turnEnded(turn) &&
+        ((block.kind === "heard" && !block.notice && !block.sending && (!block.from || block.from.kind === "user")) ||
+          (block.kind === "prose" && block.prose === "message" && conversation.lastMessageOf(turn) === block.key));
+      const touch = matchMedia("(hover: none)").matches;
+      const acts = !has ? 0 : !touch ? 32 : conversation.latestEnded() === turn ? 22 : 0;
+      const room = this.room();
+      const previous = this.blocks[index - 1];
+      const start = (block.kind === "heard" && (!block.from || block.from.kind === "user") && !block.notice) || previous?.kind === "ended";
+      height = estimate(block, line, chars, acts) + (index === 0 ? 0 : start ? room.turn : room.block);
+    }
+    this.guesses.set(block.key, { stamp: block.stamp, width: chars, height });
+    return height;
+  }
+
+  /** The body's line height and how many of its characters a line of the
+   *  column holds, for blocks not yet drawn. */
+  private metrics(): { line: number; chars: number } {
+    if (this.measuredMetrics) return this.measuredMetrics;
+    const style = getComputedStyle(this.root);
+    const size = parseFloat(style.fontSize) || 15;
+    const line = size * (parseFloat(style.getPropertyValue("--leading-prose")) || 1.68);
+    const width = this.root.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    const measured = { line, chars: Math.max(20, Math.floor((width > 0 ? width : size * 46) / (size * 0.55))) };
+    if (width > 0) this.measuredMetrics = measured;
+    return measured;
+  }
+  private measuredMetrics: { line: number; chars: number } | null = null;
+
+  /** The room above a block and a gap's own height, as the column's style
+   *  sets them. */
+  private room(): { block: number; turn: number; gap: number } {
+    if (this.rooms) return this.rooms;
+    const style = getComputedStyle(this.root);
+    const length = (name: string, fallback: number) => parseFloat(style.getPropertyValue(name)) || fallback;
+    this.rooms = { block: length("--space-4", 16), turn: length("--space-8", 32), gap: length("--gap-row", 56) };
+    return this.rooms;
+  }
+  private rooms: { block: number; turn: number; gap: number } | null = null;
 
   /** Changed display text, independently of which blocks are drawn. */
   findChanges(): FindChanges {
     const changed: FindChanges["changed"] = [];
-    for (const key of this.findPending) {
-      const slot = this.slots.get(key);
-      if (!slot) continue;
-      const parts = this.findContent.parts(slot.block);
-      const signature = `${slot.findSignature ?? ""}|${slot.findRevision ?? 0}`;
-      changed.push({ key, parts: slot.block.kind === "activity-group" ? parts : (function* () {
+    const order: string[] = [];
+    for (const block of this.blocks) {
+      if (block.kind === "gap") {
+        order.push(`${GAP}${block.start}:${block.end}`);
+        continue;
+      }
+      order.push(block.key);
+      const slot = this.slots.get(block.key);
+      const signature = `${this.findSignature(block)}|${slot?.findRevision ?? 0}`;
+      if (this.findRead.get(block.key) === signature) continue;
+      this.findRead.set(block.key, signature);
+      const parts = this.findContent.parts(block);
+      changed.push({ key: block.key, parts: block.kind === "activity-group" ? parts : (function* () {
         for (const part of parts) yield { ...part, stamp: `${signature}|${part.stamp}` };
       })() });
     }
     const removed = [...this.findRemoved];
-    this.findPending.clear();
     this.findRemoved.clear();
-    return { order: this.findOrder, changed, removed };
+    return { order, changed, removed };
+  }
+
+  /** What finding reads of a block, as it would read it here. */
+  findParts(block: Block): Iterable<FindPart> {
+    return this.findContent.parts(block);
   }
 
   /** Draws and opens just the selected match's ancestry. Existing folds
    * and unrelated line viewports keep their disclosure and scroll state. */
   async revealFind(match: FindMatch): Promise<void> {
     const target = match.document.target;
+    if (!this.bring(target.block)) return;
     const slot = this.slots.get(target.block);
     if (!slot) return;
     if (slot.signature === null) this.draw(slot);
@@ -356,6 +618,15 @@ export class ConversationView {
       stretch.box.inert = false;
       stretch.box.style.height = "";
       slot.signature = this.signature(slot.block);
+    }
+    // A row among a long stretch's earlier rows: its rows shown back to it.
+    if (target.row && stretch && slot.block.kind === "activity-group" && !stretch.drawn.has(target.row)) {
+      const keys = runsOf(slot.block.members).flatMap((run) => this.rowsOf(run)).map((one) => one.key);
+      const from = keys.indexOf(target.row);
+      if (from >= 0 && keys.length - from > (this.stretchRows.get(slot.key) ?? STRETCH_ROWS)) {
+        this.stretchRows.set(slot.key, Math.ceil((keys.length - from) / STRETCH_ROWS) * STRETCH_ROWS);
+        this.rows(stretch, slot.block);
+      }
     }
     const row = target.row === slot.key ? slot.element : target.row ? stretch?.drawn.get(target.row)?.element : undefined;
     if (row && (target.long !== undefined || target.selector !== undefined) && !this.openRows.has(target.row!)) {
@@ -380,6 +651,20 @@ export class ConversationView {
     for (let node = this.findRange(match)?.startContainer.parentElement; node && node !== slot.element; node = node.parentElement) {
       if (node instanceof HTMLDetailsElement) node.open = true;
     }
+  }
+
+  /** Brings a block onto the page, the view moved to it where it was far:
+   *  a third of the way down. False when it is not laid out. */
+  bring(key: string): boolean {
+    const index = this.heights.index(key);
+    if (index === undefined) return false;
+    const shown = this.slots.get(key);
+    if (shown?.signature !== null && shown?.element.isConnected) return true;
+    const scroller = this.context.scroller;
+    this.context.reading();
+    scroller.scrollTop = this.origin() + this.heights.top(index) - (scroller.clientHeight || innerHeight) / 3;
+    this.lay(false, true);
+    return this.slots.get(key)?.element.isConnected ?? false;
   }
 
   findRange(match: FindMatch): Range | null {
@@ -444,22 +729,44 @@ export class ConversationView {
   /** Where the reader is: the first block whose foot is below the top of
    *  the view, and how far its top is above that. */
   anchor(): { key: string; offset: number } | null {
-    const top = this.context.scroller.getBoundingClientRect().top;
-    for (const element of this.root.children) {
-      const slot = this.byElement.get(element as HTMLElement);
-      if (!slot) continue;
-      const box = element.getBoundingClientRect();
-      if (box.bottom > top) return { key: slot.key, offset: top - box.top };
-    }
-    return null;
+    const found = this.anchorNow();
+    if (!found) return null;
+    return { key: found.slot.key, offset: this.context.scroller.getBoundingClientRect().top - found.top };
   }
 
-  /** Puts the reader back where `anchor` says they were. */
-  restore(anchor: { key: string; offset: number }): void {
-    const slot = this.slots.get(anchor.key);
-    if (!slot) return;
+  /** Puts the reader back where `anchor` says they were; false when that
+   *  block is not laid out. */
+  restore(anchor: { key: string; offset: number }): boolean {
+    const index = this.heights.index(anchor.key);
+    if (index === undefined) return false;
     const scroller = this.context.scroller;
-    scroller.scrollTop += slot.element.getBoundingClientRect().top - scroller.getBoundingClientRect().top + anchor.offset;
+    scroller.scrollTop = this.origin() + this.heights.top(index) + anchor.offset;
+    this.lay(false, true);
+    const slot = this.slots.get(anchor.key);
+    if (slot?.element.isConnected) scroller.scrollTop += slot.element.getBoundingClientRect().top - scroller.getBoundingClientRect().top + anchor.offset;
+    return true;
+  }
+
+  /** How far, in screens, the blocks from `first` to `last` are from what
+   *  is in view: 0 where any of them is in view; null where they are not
+   *  laid out. */
+  screensFrom(first: string, last: string): number | null {
+    const from = this.heights.index(first);
+    const to = this.heights.index(last);
+    if (from === undefined || to === undefined) return null;
+    const scroller = this.context.scroller;
+    const view = scroller.clientHeight || innerHeight;
+    const top = scroller.scrollTop - this.origin();
+    const start = this.heights.top(from);
+    const end = this.heights.top(to + 1);
+    const apart = end < top ? top - end : start > top + view ? start - top - view : 0;
+    return apart / view;
+  }
+
+  /** The key of the block the reader is at. */
+  readerKey(): string | null {
+    const found = this.anchorNow();
+    return found?.slot.key ?? null;
   }
 
   /** Lets go of everything drawn, as the page is left for good. */
@@ -467,100 +774,11 @@ export class ConversationView {
     for (const slot of this.slots.values()) this.forget(slot);
     this.slots.clear();
     this.findWrites.clear();
-    this.lazy.close();
+    this.sizes.disconnect();
+    this.context.scroller.removeEventListener("scroll", this.scrolled);
+    cancelAnimationFrame(this.laying);
     this.line.remove();
     clearTimeout(this.ticking);
-  }
-
-  /** A block's place, made the first time it is laid out: drawn at once
-   *  when it comes into a live conversation, otherwise when it comes near. */
-  private slot(block: Block, read: boolean): Slot {
-    const element = document.createElement("div");
-    element.dataset.key = block.key;
-    element.className = `block block-${block.kind === "activity-group" ? "activity" : block.kind}`;
-    if (block.kind === "prose") element.classList.add(`prose-${block.prose}`);
-    if (block.kind === "heard") {
-      const notice = this.noticeOf(block);
-      element.classList.add(notice ? "from-world" : !block.from || block.from.kind === "user" ? "from-user" : "from-other");
-      if (block.reply) element.classList.add("from-reply");
-    }
-    const slot: Slot = { key: block.key, element, block, signature: null, height: null };
-    this.slots.set(block.key, slot);
-    this.byElement.set(element, slot);
-    if ((this.live && !read) || !LAZY.has(block.kind)) this.draw(slot);
-    else this.wait(slot);
-    if (LAZY.has(block.kind)) this.lazy.watch(element);
-    return slot;
-  }
-
-  /** A slot not drawn, holding the room it would take. */
-  private wait(slot: Slot): void {
-    slot.element.classList.add("lazy");
-    slot.element.style.height = `${Math.round(slot.height ?? this.estimate(slot.block))}px`;
-  }
-
-  /** How tall a block not yet drawn is taken to be (`lazy.ts`), with the
-   *  room its turn's actions take where it has them: under a pointer each
-   *  ended turn's, on a touch screen only the latest's. */
-  private estimate(block: Block): number {
-    const { line, chars } = this.metrics();
-    const conversation = this.conversation;
-    const turn = block.kind === "heard" || block.kind === "prose" ? block.turn : null;
-    const has =
-      !!turn &&
-      conversation.turnEnded(turn) &&
-      ((block.kind === "heard" && !block.notice && !block.sending && (!block.from || block.from.kind === "user")) ||
-        (block.kind === "prose" && block.prose === "message" && conversation.lastMessageOf(turn) === block.key));
-    const touch = matchMedia("(hover: none)").matches;
-    const acts = !has ? 0 : !touch ? 32 : conversation.latestEnded() === turn ? 22 : 0;
-    return estimate(block, line, chars, acts);
-  }
-
-  /** The body's line height and how many of its characters a line of the
-   *  column holds, for blocks not yet drawn. */
-  private metrics(): { line: number; chars: number } {
-    if (this.measured) return this.measured;
-    const style = getComputedStyle(this.root);
-    const size = parseFloat(style.fontSize) || 15;
-    const line = size * (parseFloat(style.getPropertyValue("--leading-prose")) || 1.68);
-    const width = this.root.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-    const measured = { line, chars: Math.max(20, Math.floor((width > 0 ? width : size * 46) / (size * 0.55))) };
-    if (width > 0) this.measured = measured;
-    return measured;
-  }
-  private measured: { line: number; chars: number } | null = null;
-
-  /** Draws the last blocks at once, a couple of screens of them, so the
-   *  newest are there the moment the conversation opens; the rest as the
-   *  reader comes to them. */
-  private fillFromEnd(blocks: readonly Block[]): void {
-    // Reckoned in the heights blocks are taken to be, so nothing is laid
-    // out until all of them are drawn.
-    const screen = this.context.scroller.clientHeight || innerHeight;
-    let filled = 0;
-    for (let index = blocks.length - 1; index >= 0 && filled < screen * 2; index -= 1) {
-      const block = blocks[index]!;
-      const slot = this.slots.get(block.key)!;
-      if (slot.signature === null) this.draw(slot);
-      filled += this.estimate(block);
-    }
-  }
-
-  /** Lets a slot far from the reader go, keeping its height; one the
-   *  reader has opened something in, is in, or has selected in, stays. */
-  private release(slot: Slot, height: number): void {
-    // A page out of view keeps what it drew, to be shown again as it was.
-    if (!this.root.isConnected) return;
-    if (slot.signature === null || !LAZY.has(slot.block.kind)) return;
-    if (this.openStretches.has(slot.key) || slot.element.querySelector("[aria-expanded=\"true\"]")) return;
-    if (slot.element.contains(document.activeElement)) return;
-    const selection = getSelection();
-    if (selection && selection.rangeCount && !selection.isCollapsed && selection.getRangeAt(0).intersectsNode(slot.element)) return;
-    this.forget(slot);
-    slot.element.replaceChildren();
-    slot.signature = null;
-    slot.height = height;
-    this.wait(slot);
   }
 
   /** Lets go of what a slot holds open. */
@@ -611,24 +829,38 @@ export class ConversationView {
   }
 
   /** Draws what a slot shows, as its block now stands. */
-  private draw(slot: Slot): void {
+  private draw(slot: Slot, read = this.reading): void {
     const { block, element } = slot;
-    if (slot.signature === null) {
-      element.classList.remove("lazy");
-      element.style.height = "";
+    const reading = this.reading;
+    this.reading = read;
+    try {
+      slot.signature = this.signature(block);
+      if (block.kind === "gap") {
+        element.innerHTML = this.gapRow(block);
+        return;
+      }
+      if (block.kind === "activity-group") {
+        this.stretch(slot, block);
+        return;
+      }
+      if (block.kind === "prose" && block.prose !== "plan") {
+        this.message(slot, block);
+        return;
+      }
+      this.letGo(block.key);
+      element.innerHTML = this.entry(block);
+      if (this.openRows.has(block.key)) this.fill(block.key, element);
+    } finally {
+      this.reading = reading;
     }
-    slot.signature = this.signature(block);
-    if (block.kind === "activity-group") {
-      this.stretch(slot, block);
-      return;
-    }
-    if (block.kind === "prose" && block.prose !== "plan") {
-      this.message(slot, block);
-      return;
-    }
-    this.letGo(block.key);
-    element.innerHTML = this.entry(block);
-    if (this.openRows.has(block.key)) this.fill(block.key, element);
+  }
+
+  /** Turns not held, as one quiet line: how many, before or between; while
+   *  they are read, a mark that moves. */
+  private gapRow(gap: Gap): string {
+    const { words } = this.context;
+    const said = gap.first ? words.turnsEarlier(gap.turns) : words.turnsBetween(gap.turns);
+    return `<button class="gap-row${gap.loading ? " loading" : ""}" type="button" data-gap="${escape(gap.key)}"><span class="gap-line" aria-hidden="true"></span><span class="gap-said">${escape(said)}</span><span class="gap-line" aria-hidden="true"></span></button>`;
   }
 
   /** A message: its words, drawn as they grow, and once its turn is over,
@@ -660,8 +892,10 @@ export class ConversationView {
     const waiting = conversation.waiting();
     const busy = conversation.busy();
     // The first words are on their way, and nothing has come back.
-    const spoken = blocks.some((block) => block.kind === "heard" && (!block.from || block.from.kind === "user") && !block.notice && block.sending?.state !== "failed");
-    if (!conversation.spoke() && spoken && busy) return { kind: "starting" };
+    if (!conversation.spoke() && busy) {
+      const spoken = blocks.some((block) => block.kind === "heard" && (!block.from || block.from.kind === "user") && !block.notice && block.sending?.state !== "failed");
+      if (spoken) return { kind: "starting" };
+    }
     if (!waiting && !busy) return null;
     let last: Block | undefined;
     for (let index = blocks.length - 1; index >= 0 && !last; index -= 1) {
@@ -675,12 +909,13 @@ export class ConversationView {
   }
 
   /** Words just sent rise from the input into their place, once the page
-   *  has laid them out; says whether any do. */
+   *  has laid them out; says whether any do. They are the last blocks. */
   private flights(blocks: readonly Block[]): boolean {
     const departure = this.context.departure;
     if (!departure) return false;
     let flying = false;
-    for (const block of blocks) {
+    for (let index = blocks.length - 1; index >= 0 && index >= blocks.length - 8; index -= 1) {
+      const block = blocks[index]!;
       if (block.kind !== "heard" || block.sending?.state !== "going" || this.flown.has(block.key)) continue;
       this.flown.add(block.key);
       const from = departure();
@@ -1041,7 +1276,7 @@ export class ConversationView {
     if (notice.kind === "job_ended") {
       const longs: LongText[] = [];
       if (notice.last?.text) {
-        const text = new LongText(notice.last.text, notice.job, this.layout, this.longWords());
+        const text = new LongText(notice.last.text, notice.job, this.layoutAnchor, this.longWords());
         longs.push(text);
         into.append(text.element);
       }
@@ -1148,9 +1383,29 @@ export class ConversationView {
    *  words, its heading having said the rest. */
   private rows(stretch: Stretch, group: Activity): void {
     const runs = runsOf(group.members);
-    const rows = thoughtOnly(group) ? [this.thoughtWords(runs[0] as ProseEntry[])] : runs.flatMap((run) => this.rowsOf(run));
+    const all = thoughtOnly(group) ? [this.thoughtWords(runs[0] as ProseEntry[])] : runs.flatMap((run) => this.rowsOf(run));
+    // A stretch of hundreds of steps opens on its latest; the earlier come
+    // a few screens at a time, from a line above them.
+    const limit = this.stretchRows.get(group.key) ?? STRETCH_ROWS;
+    const rows = all.length > limit ? all.slice(all.length - limit) : all;
+    const hidden = all.length - rows.length;
+    let earlier = stretch.rows.querySelector<HTMLButtonElement>(":scope > .rows-earlier");
+    if (hidden > 0) {
+      if (!earlier) {
+        earlier = document.createElement("button");
+        earlier.type = "button";
+        earlier.className = "rows-earlier";
+        earlier.dataset.earlier = group.key;
+        stretch.rows.prepend(earlier);
+      }
+      const said = this.context.words.stepsEarlier(hidden);
+      if (earlier.textContent !== said) earlier.textContent = said;
+    } else {
+      earlier?.remove();
+      earlier = null;
+    }
     const present = new Set<string>();
-    let previous: HTMLElement | null = null;
+    let previous: HTMLElement | null = earlier;
     for (const row of rows) {
       present.add(row.key);
       let drawn = stretch.drawn.get(row.key);
@@ -1233,8 +1488,10 @@ export class ConversationView {
       const said = clockSays(Number(clock.dataset.steps), Number(clock.dataset.since), words);
       if (clock.textContent !== said) {
         clock.textContent = said;
+        // What finding reads of its heading changed with it.
         const block = clock.closest<HTMLElement>(".block");
-        if (block?.dataset.key) this.findPending.add(block.dataset.key);
+        const slot = block ? this.byElement.get(block) : undefined;
+        if (slot) slot.findRevision = (slot.findRevision ?? 0) + 1;
       }
     }
     clearTimeout(this.ticking);
@@ -1470,7 +1727,7 @@ export class ConversationView {
         kind: numberedRows ? "diff" : "diff unnumbered",
       },
       path,
-      this.layout,
+      this.layoutAnchor,
       this.longWords(),
     );
   }
@@ -1599,7 +1856,7 @@ export class ConversationView {
       const out = document.createElement("div");
       out.className = "io-out";
       if (text) {
-        const long = new LongText(text, label, this.layout, this.longWords());
+        const long = new LongText(text, label, this.layoutAnchor, this.longWords());
         longs.push(long);
         out.append(long.element);
       }
@@ -1655,7 +1912,7 @@ export class ConversationView {
   private motionOf(box: HTMLElement): AnchoredHeight {
     let motion = this.motions.get(box);
     if (!motion) {
-      motion = new AnchoredHeight(box, this.layout);
+      motion = new AnchoredHeight(box, this.layoutAnchor);
       this.motions.set(box, motion);
     }
     return motion;
@@ -1692,9 +1949,31 @@ export class ConversationView {
 
   private click(event: Event): void {
     const target = (event.target as HTMLElement).closest<HTMLElement>(
-      "[data-open], [data-fold], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-question-pick], [data-question-send], [data-question-skip], [data-question-change]",
+      "[data-open], [data-fold], [data-gap], [data-earlier], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-question-pick], [data-question-send], [data-question-skip], [data-question-change]",
     );
     if (!target) return;
+    if (target.dataset.earlier !== undefined) {
+      // More of a long stretch's earlier rows, beneath the line asked: it
+      // stays where it is, the rest moving down.
+      const key = target.dataset.earlier;
+      const slot = this.slots.get(key);
+      if (slot?.stretch && slot.block.kind === "activity-group") {
+        this.context.reading();
+        this.stretchRows.set(key, (this.stretchRows.get(key) ?? STRETCH_ROWS) + STRETCH_ROWS);
+        this.rows(slot.stretch, slot.block);
+      }
+      return;
+    }
+    if (target.dataset.gap !== undefined) {
+      // A gap read at once where the reader asks: from its end, nearest what
+      // they read below it, unless they are above it.
+      const gap = this.slots.get(target.dataset.gap)?.block;
+      if (gap?.kind !== "gap" || gap.loading) return;
+      const index = this.heights.index(gap.key) ?? 0;
+      const reader = this.heights.find(Math.max(0, this.context.scroller.scrollTop - this.origin()));
+      this.context.near?.(gap, index <= reader ? "end" : "start");
+      return;
+    }
     if (target.dataset.questionPick !== undefined) {
       const fieldset = target.closest("fieldset");
       const pressed = target.getAttribute("aria-pressed") !== "true";
@@ -1711,10 +1990,7 @@ export class ConversationView {
     if (target.dataset.turnAct) {
       const turn = target.dataset.turn!;
       // Asking again sends the words of the turn's own question.
-      const entry =
-        target.dataset.turnAct === "rewind"
-          ? this.conversation.get(target.dataset.key ?? "")
-          : this.conversation.entries.find((candidate) => candidate.kind === "heard" && candidate.turn === turn && (!candidate.from || candidate.from.kind === "user"));
+      const entry = target.dataset.turnAct === "rewind" ? this.conversation.get(target.dataset.key ?? "") : this.conversation.turnWords(turn);
       this.context.turnAct?.(target.dataset.turnAct as "rewind" | "regenerate" | "fork", turn, entry?.kind === "heard" ? entry.text : null, entry?.kind === "heard" ? (entry.kept ?? []) : []);
       return;
     }
@@ -1723,10 +1999,7 @@ export class ConversationView {
       // answer as all it said.
       const entry = target.dataset.copy ? this.conversation.get(target.dataset.copy) : undefined;
       const text = target.dataset.copyTurn
-        ? this.conversation.entries
-            .filter((candidate): candidate is ProseEntry => candidate.kind === "prose" && candidate.prose === "message" && candidate.turn === target.dataset.copyTurn)
-            .map((candidate) => candidate.text)
-            .join("\n\n")
+        ? this.conversation.turnAnswer(target.dataset.copyTurn)
         : entry?.kind === "prose" || entry?.kind === "heard"
           ? entry.text
           : "";

@@ -15,6 +15,7 @@ import type { ConnectionState } from "./device";
 import type { Focus } from "./focus";
 import type { BytesRead, TextRead } from "../app/reader";
 import type { Address, MachineName, SessionEvent } from "./events";
+import type { Cut, Edge, FindDoc, Found, PartRead, Window } from "../conversation/conversation";
 import type { AccountChange, AccountsReply, HubAccount } from "./accounts";
 import type { HubMoveReply, HubMoveRequest } from "./hub-move";
 import type { RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
@@ -47,14 +48,19 @@ export interface WorldNow {
   accounts: AccountsReply;
 }
 
+/** A piece of a watched conversation: the page holds a part of it near its
+ *  reader, the shell the rest (`src-tauri/src/transcript.rs`). */
 export type Piece =
   | { kind: "resumed" }
-  | { kind: "extended"; history: SessionEvent[] }
-  | { kind: "event"; event: SessionEvent }
+  /** Events after all that was given, from `start` on. */
+  | { kind: "extended"; start: number; events: SessionEvent[] }
+  /** One thing as it happened, the `at`th event of the conversation. */
+  | { kind: "event"; at: number; event: SessionEvent }
   | { kind: "ended"; error: string | null }
-  /** The stream was read again: everything known, in place of what is
-   *  shown. */
-  | { kind: "reset"; history: SessionEvent[] }
+  /** The part the page holds is now this, in place of all it held. */
+  | { kind: "window"; window: Window }
+  /** What came before arrived: what the page holds stays, moved along. */
+  | { kind: "rebased"; generation: number; offset: number; turns_added: number }
   /** The stream broke and is being read again: why, and since when
    *  (milliseconds since the epoch). */
   | { kind: "interrupted"; error: string | null; since: number };
@@ -71,11 +77,12 @@ export function worldNow(): Promise<WorldNow> {
   return invoke<WorldNow>("world_now");
 }
 
-/** Watches a resident: what came before, then each piece as it comes. */
+/** Watches a resident: the part it opens on, then each piece as it
+ *  comes. */
 export async function watch(
   who: Address,
   onPiece: (piece: Piece) => void,
-): Promise<{ id: number; history: SessionEvent[] }> {
+): Promise<{ id: number; window: Window }> {
   const pieces = new Channel<Piece>();
   // A handler that throws stops the channel for good: Tauri delivers
   // pieces in order and never moves past one that failed. A piece the page
@@ -92,6 +99,33 @@ export async function watch(
 
 export function unwatch(id: number): Promise<void> {
   return invoke("unwatch", { id });
+}
+
+/** A part of a watched conversation the page does not hold; null when the
+ *  page asked about an earlier reading or there is nothing there. */
+export function conversationPart(id: number, generation: number, edge: Edge): Promise<PartRead | null> {
+  return invoke("conversation_part", { id, generation, edge });
+}
+
+/** Where a turn of a watched conversation first appears. */
+export function conversationLocate(id: number, generation: number, turn: string): Promise<number | null> {
+  return invoke("conversation_locate", { id, generation, turn });
+}
+
+/** Where the page can let go of what comes before its latest `events`. */
+export function conversationCut(id: number, generation: number, events: number): Promise<Cut | null> {
+  return invoke("conversation_cut", { id, generation, events });
+}
+
+/** Hands the shell the displayed text of a part, for finding. */
+export function conversationIndex(id: number, generation: number, start: number, end: number, docs: FindDoc[]): Promise<boolean> {
+  return invoke("conversation_index", { id, generation, start, end, docs });
+}
+
+/** Counts words in what the page does not hold and the shell has the text
+ *  of, and says what it has not. */
+export function conversationFind(id: number, generation: number, query: string, held: [number, number][]): Promise<Found | null> {
+  return invoke("conversation_find", { id, generation, query, held });
 }
 
 /** What this device keeps of the conversations it viewed: every byte, the

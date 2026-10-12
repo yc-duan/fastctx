@@ -99,7 +99,8 @@ import { ComposerSession } from "./conversation/composer";
 import { attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
 import { specimenComposer } from "./specimen/composer";
 import { ClaudeConsent } from "./app/claude-consent";
-import { Conversation } from "./conversation/model";
+import { Conversation } from "./conversation/conversation";
+import { LocalTranscript } from "./specimen/transcript";
 import { ConversationPage, type Someone } from "./conversation/page";
 import { KeptPages, type KeepablePage } from "./conversation/kept";
 import type { Seed } from "./conversation/starting";
@@ -652,8 +653,9 @@ function windowDrops(on: { over(over: boolean): void; dropped(paths: string[]): 
   };
 }
 
-/** A conversation as Markdown, named as its page names it. */
-function exported(conversation: Conversation, someone: Someone): () => string {
+/** A conversation as Markdown, named as its page names it: all of it, the
+ *  parts the page does not hold read from the shell. */
+function exported(conversation: Conversation, someone: Someone): () => Promise<string> {
   return () =>
     markdownOf(conversation, words, {
       title: conversation.title ?? `${someone.agent} · ${someone.machine}`,
@@ -672,7 +674,7 @@ function someoneAt(address: Address): string {
 }
 
 /** The card about the agent in a conversation, and how to fill it. */
-function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>, markdown?: () => string) {
+function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>, markdown?: () => Promise<string>) {
   return {
     card: new Details({
       words: detailsWords,
@@ -911,6 +913,9 @@ function specimenTalk(address: Address): KeepablePage {
     : (specimens[name === "codex-a51c" ? "asking" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
+  // A specimen keeps its whole history as a shell would, and its page holds
+  // the latest part of it (`specimen/transcript.ts`).
+  const kept = new LocalTranscript(sample.events, Number(params.get("partDelay") ?? 30));
   const seed = seeds.get(talkKey(address));
   seeds.delete(talkKey(address));
   if (seed) conversation.sending(seed.text, sample.here, seed.attached);
@@ -922,7 +927,7 @@ function specimenTalk(address: Address): KeepablePage {
       const key = sending(text, here, attached);
       turns += 1;
       playTimed(answering(text, `answer-${turns}`), (event) => {
-        conversation.event(event);
+        conversation.happened(kept.add(event), event);
         page.update();
         return true;
       });
@@ -1040,14 +1045,26 @@ function specimenTalk(address: Address): KeepablePage {
       setTimeout(next, event.event === "heard" ? 900 : 420);
     };
     next();
+  } else if (params.has("events")) {
+    // `?events=<address>`: a conversation's events, one a line, read whole
+    // as a shell would keep them, for looking at a real one.
+    void fetch(params.get("events")!)
+      .then((answer) => answer.text())
+      .then((text) => {
+        const events = text.split("\n").filter(Boolean).map((line) => JSON.parse(line) as SessionEvent);
+        const read = new LocalTranscript(events, Number(params.get("partDelay") ?? 30));
+        if (left) return;
+        conversation.open(read.window(), read);
+        page.update({ read: true });
+      });
   } else {
-    conversation.history(sample.events);
-    page.update();
+    conversation.open(kept.window(), kept);
+    page.update({ read: true });
     // What a made-to-measure specimen does next, each event its own task at
     // its rate, as a shell's channel hands them over.
     const take = (event: SessionEvent) => {
       if (left) return false;
-      conversation.event(event);
+      conversation.happened(kept.add(event), event);
       page.update();
       return true;
     };
@@ -1246,20 +1263,22 @@ function liveTalk(address: Address): KeepablePage {
     page.running(jobs, now);
   });
   // The conversation as the World's watch reads it (`conversation/source.ts`):
-  // what is new is shown at once; when the host replaced or removed turns,
-  // all of it is read again.
+  // the page holds its latest part and reads the rest as the reader comes to
+  // it; what is new is shown at once. When the host replaced or removed
+  // turns, or what came does not follow what is held, all of it is read
+  // again.
   const reading = watched.open(address, {
-    replaced: (history) => {
-      conversation.history(history);
+    window: (window, parts) => page.reopened(() => conversation.open(window, parts)),
+    extended: (start, events) => {
+      if (!conversation.extended(start, events)) reading.again();
       page.update({ read: true });
     },
-    extended: (history) => {
-      conversation.extend(history);
+    rebased: (generation, offset, turnsAdded) => {
+      conversation.rebased(generation, offset, turnsAdded);
       page.update({ read: true });
     },
-    happened: (event) => {
-      conversation.event(event);
-      if (conversation.stale) reading.again();
+    happened: (at, event) => {
+      if (!conversation.happened(at, event) || conversation.stale) reading.again();
       page.update();
     },
     interrupted: (why, since) => page.broken(why, since),

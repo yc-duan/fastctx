@@ -203,6 +203,16 @@ export function streamSpecimen(params: URLSearchParams): Stream {
     for (const piece of pieces(streamed)) later.push({ at: clock.next(5), event: "grew", turn, item: message, part: "text", text: piece });
     later.push({ at: clock.next(50), event: "finished", turn, item: { id: message, kind: "message", text: streamed } as Item });
     later.push({ at: clock.next(100), event: "turn_ended", turn, end: { how: "completed", reason: null, duration_ms: 30_000, last_message: null } });
+    // `more`: turns more, played live after it, as an agent left to work
+    // for hours goes on.
+    for (let n = turns + 2; n <= turns + 1 + Number(params.get("more") ?? 0); n += 1) {
+      const next = `t${n}`;
+      later.push({ at: clock.next(800), event: "heard", delivery: null, turn: next, from: user, text: `第 ${n} 件事：把 ctrl 的测试跑一遍，挂了就修。` });
+      later.push({ at: clock.next(200), event: "turn_started", turn: next });
+      for (let k = 0; k < perTurn; k += 1) later.push(...tool(clock, next, id(), n * perTurn + k));
+      later.push({ at: clock.next(300), event: "finished", turn: next, item: { id: id(), kind: "message", text: answer(n) } as Item });
+      later.push({ at: clock.next(100), event: "turn_ended", turn: next, end: { how: "completed", reason: null, duration_ms: perTurn * 1400, last_message: null } });
+    }
   }
   return {
     title: "ctrl 的测试",

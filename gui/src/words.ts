@@ -74,6 +74,13 @@ export interface Words {
   /** An open page, as the speaker of what it said. */
   aPage(name: string): string;
   compacted: string;
+  /** Turns not held, before everything held and between two parts. */
+  turnsEarlier(turns: number): string;
+  turnsBetween(turns: number): string;
+  /** Back to the newest, from far up a conversation. */
+  toLatest: string;
+  /** A long stretch's earlier rows, not shown yet. */
+  stepsEarlier(steps: number): string;
   turn(how: string, reason: string | null): string | null;
   wentOnAs(job: string): string;
   /** On a tool's row: it failed, where nothing else says so. */
@@ -308,6 +315,10 @@ export const zh: Words = {
   world: "Fastctx",
   aPage: (name) => `页面「${name}」`,
   compacted: "上下文已压缩",
+  turnsEarlier: (turns) => (turns > 0 ? `更早的 ${turns} 轮` : "更早的记录"),
+  turnsBetween: (turns) => (turns > 0 ? `中间还有 ${turns} 轮` : "中间还有记录"),
+  toLatest: "回到最新",
+  stepsEarlier: (steps) => `更早的 ${steps} 步`,
   turn: (how, reason) => {
     if (how === "completed") return null;
     const said = how === "failed" ? "本轮失败" : how === "interrupted" ? "本轮已停止" : `本轮结束：${how}`;
@@ -524,6 +535,10 @@ export const en: Words = {
   world: "Fastctx",
   aPage: (name) => `the page “${name}”`,
   compacted: "Context compacted",
+  turnsEarlier: (turns) => (turns === 1 ? "1 earlier turn" : turns > 0 ? `${turns} earlier turns` : "Earlier turns"),
+  turnsBetween: (turns) => (turns === 1 ? "1 more turn between" : turns > 0 ? `${turns} more turns between` : "More turns between"),
+  toLatest: "Back to latest",
+  stepsEarlier: (steps) => (steps === 1 ? "1 earlier step" : `${steps} earlier steps`),
   turn: (how, reason) => {
     if (how === "completed") return null;
     const said = how === "failed" ? "Turn failed" : how === "interrupted" ? "Turn stopped" : `Turn ended: ${how}`;

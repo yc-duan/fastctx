@@ -47,7 +47,7 @@ export interface DetailsOptions {
    *  resolves when that ends. */
   attach?: (() => Promise<void>) | undefined;
   /** The conversation as Markdown, for copying out. */
-  markdown?: (() => string) | undefined;
+  markdown?: (() => Promise<string>) | undefined;
   /** Managing it, where the World can. */
   manage?: Manage | undefined;
   /** "hangzhou · ada" for each account it works for; empty for this
@@ -106,7 +106,7 @@ export class Details {
       switch (button.dataset.act) {
         case "export":
           if (!options.markdown) return;
-          void navigator.clipboard.writeText(options.markdown()).then(
+          void options.markdown().then((text) => navigator.clipboard.writeText(text)).then(
             () => this.say(words.exported),
             (error: unknown) => this.say(String(error)),
           );

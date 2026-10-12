@@ -7,13 +7,27 @@
 import { layerOpened } from "../app/back";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
-import { FindIndex, type FindChanges, type FindMatch } from "./find-index";
+import { FindIndex, type FarHits, type FarMatch, type FindChanges, type FindMatch } from "./find-index";
 import { FindHighlights } from "./find-highlights";
 
 interface FindView {
   findChanges(): FindChanges;
   revealFind(match: FindMatch): Promise<void>;
   findRange(match: FindMatch): Range | null;
+  /** What the page does not hold (`find-far.ts`): counted by the shell,
+   *  read in where a match in it is gone to. */
+  far?: {
+    search(query: string): Promise<FarHits[]>;
+    /** Whether more may be found, as more is indexed. */
+    readonly more: boolean;
+    /** Moves as more is indexed. */
+    readonly grown: number;
+    /** What the page holds, as one word: what is counted far changes with it. */
+    held(): string;
+    /** Reads in the turns around event `at`, and draws them. */
+    reach(at: number): Promise<void>;
+    close(): void;
+  };
 }
 
 export interface FindWords {
@@ -31,7 +45,10 @@ export class Finder {
   private readonly input: HTMLInputElement;
   private readonly count: HTMLElement;
   private readonly index = new FindIndex();
-  private selected: FindMatch | null = null;
+  private selected: FindMatch | FarMatch | null = null;
+  /** What the shell was last asked for: the words, what the page held,
+   *  how much was indexed. */
+  private farAsked = "";
   private current = -1;
   private fresh = false;
   private pending = false;
@@ -115,6 +132,8 @@ export class Finder {
   close(): void {
     const inside = this.element.contains(document.activeElement);
     this.element.hidden = true;
+    this.view.far?.close();
+    this.farAsked = "";
     if (inside && this.before?.isConnected) this.before.focus({ preventScroll: true });
     this.before = null;
     this.revision += 1;
@@ -150,6 +169,12 @@ export class Finder {
         this.pending = false;
         await this.index.update(this.view.findChanges());
         this.index.search(this.input.value.toLowerCase());
+        const far = this.view.far;
+        const asked = far ? `${this.input.value}\u0001${far.held()}\u0001${far.grown}` : "";
+        if (far && asked !== this.farAsked) {
+          this.farAsked = asked;
+          this.index.setFar(await far.search(this.input.value));
+        }
         const same = this.selected ? this.index.position(this.selected) : -1;
         this.current = this.fresh || !this.selected ? this.index.total - 1
           : same >= 0 ? same : Math.min(this.current, this.index.total - 1);
@@ -177,22 +202,44 @@ export class Finder {
     await this.reveal();
   }
 
+  /** A match in what the page does not hold, once its turns are read in:
+   *  the same match, now where the page holds it. */
+  private async resolve(match: FarMatch): Promise<FindMatch | null> {
+    const far = this.view.far;
+    if (!far) return null;
+    await far.reach(match.far.at);
+    await this.index.update(this.view.findChanges());
+    this.index.search(this.input.value.toLowerCase());
+    this.farAsked = "";
+    return this.index.match(match.far.block, match.far.part, match.far.ordinal);
+  }
+
   private paint(): void {
     const selected = this.open ? this.selected : null;
-    const identity = selected ? `${selected.document.key}|${selected.document.stamp}|${selected.start}|${selected.end}` : null;
-    this.highlights.paint(this.open ? this.input.value.toLowerCase() : "", identity, () => selected ? this.view.findRange(selected) : null);
+    const identity = !selected ? null : "far" in selected ? `far|${selected.far.part}|${selected.far.ordinal}` : `${selected.document.key}|${selected.document.stamp}|${selected.start}|${selected.end}`;
+    this.highlights.paint(this.open ? this.input.value.toLowerCase() : "", identity, () => (selected && !("far" in selected) ? this.view.findRange(selected) : null));
     const query = this.input.value;
-    const said = !query ? "" : this.index.total ? this.words.count(this.current + 1, this.index.total) : this.words.none;
+    const more = this.view.far?.more ? "+" : "";
+    const said = !query ? "" : this.index.total ? `${this.words.count(this.current + 1, this.index.total)}${more}` : more ? "…" : this.words.none;
     if (this.count.textContent !== said) this.count.textContent = said;
     this.count.classList.toggle("none", !!query && !this.index.total);
   }
 
-  /** Brings the current match into view, opening what folds it away. */
+  /** Brings the current match into view, opening what folds it away; one
+   *  where the page holds nothing is read in first. */
   private async reveal(): Promise<void> {
-    const match = this.selected;
+    let match = this.selected;
     if (!match) return;
     const revision = this.revision;
     this.moved();
+    if ("far" in match) {
+      const found = await this.resolve(match);
+      if (revision !== this.revision || !this.open || !found) return;
+      this.selected = match = found;
+      const position = this.index.position(found);
+      if (position >= 0) this.current = position;
+      this.paint();
+    }
     await this.view.revealFind(match);
     if (revision !== this.revision || !this.open) return;
     this.paint();

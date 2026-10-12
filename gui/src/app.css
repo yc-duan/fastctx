@@ -84,6 +84,49 @@
   background: var(--bg);
 }
 
+/* The way back to the newest, from far up a conversation: a solid round
+   mark resting above the composer, its chevron pointing down. */
+.to-latest {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + var(--space-3));
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  color: var(--text-2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+  transform: translateX(-50%);
+  animation: to-latest-in var(--enter) ease-out;
+  transition: color var(--hover) ease;
+}
+
+.to-latest[hidden] {
+  display: none;
+}
+
+.to-latest:hover,
+.to-latest:focus-visible {
+  color: var(--text-strong);
+}
+
+@keyframes to-latest-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .to-latest {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 /* The conversation fades out beneath the composer rather than being cut. */
 .composer-dock::before {
   content: "";

@@ -27,14 +27,26 @@ import { FileLinks } from "./file-links";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { Pictures, type PictureSeams } from "./pictures";
 import { glyph } from "./glyphs";
-import type { Conversation } from "./model";
+import type { Conversation, Held } from "./conversation";
+import type { Gap } from "./model";
 import { escape, render } from "./prose";
 import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
+import { FarFind } from "./find-far";
 import { usageDetail } from "./usage-detail";
 import { ConversationView } from "./view";
 import { departureOf } from "./flight";
 import { detailOf } from "../app/problem";
+
+/** How many events the page holds at most, and how many its latest part
+ *  holds before what comes before its newest turns is let go, down to how
+ *  many (`ConversationPage.bound`). */
+const HELD_MOST = 6000;
+/** How many screens from what is in view a part may be and still be held,
+ *  whatever the page holds: the reader goes on into it. */
+const KEEP_SCREENS = 3;
+const LATEST_MOST = 2400;
+const LATEST_KEPT = 800;
 
 export interface Someone {
   /** "Claude" or "Codex": the agent by the name it goes by. */
@@ -167,6 +179,7 @@ export class ConversationPage {
   private note: HTMLElement;
   private chip: HTMLButtonElement;
   private finder: Finder;
+  private far: FarFind;
   /** Ctrl+F finds in the conversation while its page is shown. */
   private readonly findKey = (event: KeyboardEvent) => {
     if (!this.element.isConnected || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f" || event.altKey) return;
@@ -192,6 +205,7 @@ export class ConversationPage {
       )}
       <div class="talk-scroller scroller"><div class="conversation"></div></div>
       <footer class="composer-dock">
+        <button class="to-latest" type="button" hidden aria-label="${escape(words.toLatest)}" title="${escape(words.toLatest)}">${glyph("chevron", 18)}</button>
         <p class="composer-gone" hidden></p>
         <div class="composer-queue"></div>
         <form class="composer">
@@ -220,8 +234,28 @@ export class ConversationPage {
         findChanges: () => this.view.findChanges(),
         revealFind: (match) => this.view.revealFind(match),
         findRange: (match) => this.view.findRange(match),
+        // What the page does not hold is found by the shell, from text the
+        // page reads aside once (`find-far.ts`).
+        far: {
+          search: (query) => this.far.search(query),
+          get more() {
+            return far().more;
+          },
+          get grown() {
+            return far().grown;
+          },
+          held: () => options.conversation.bounds().join(";"),
+          reach: async (at) => {
+            await options.conversation.reach(at);
+            cancelAnimationFrame(this.frame);
+            this.render();
+          },
+          close: () => this.far.close(),
+        },
       },
     );
+    const far = () => this.far;
+    this.far = new FarFind(options.conversation, (block) => this.view.findParts(block), () => this.finder.refresh());
     this.scroller.before(this.finder.element);
     if (options.focus) {
       this.focusStrip(options.focus);
@@ -292,6 +326,9 @@ export class ConversationPage {
       reading: () => {
         this.following = false;
       },
+      following: () => this.following,
+      // Turns not held are read as the reader comes near them.
+      near: (gap, side) => void this.fillGap(gap, side),
       // Words being sent leave from where they were typed.
       departure: () => departureOf(this.input),
       questions: {
@@ -331,6 +368,11 @@ export class ConversationPage {
     if (options.pictures) {
       new Pictures(main, { words: words.pictures, here: options.here, machine: someone.machine, seams: options.pictures, say: (text) => this.say(text) });
     }
+
+    // What was read of the conversation from the shell is drawn as it comes.
+    options.conversation.changed = () => this.update({ read: true });
+    this.latest = this.element.querySelector<HTMLButtonElement>(".to-latest")!;
+    this.latest.addEventListener("click", () => this.toLatest());
 
     const form = this.element.querySelector("form")!;
     form.addEventListener("submit", (event) => {
@@ -384,8 +426,83 @@ export class ConversationPage {
         return;
       }
       this.following = scrollTop + clientHeight >= scrollHeight - 48;
+      this.drawLatest();
     });
   }
+
+  /** The way back to the newest, shown when the reader is far from it: more
+   *  than a screen above the foot, or with turns not held between. */
+  private latest: HTMLButtonElement;
+
+  private drawLatest(): void {
+    const { scrollTop, clientHeight, scrollHeight } = this.scroller;
+    const far = !this.following && (scrollHeight - scrollTop - clientHeight > clientHeight || this.options.conversation.gaps().some((gap) => !gap.first));
+    if (this.latest.hidden === !far) return;
+    this.latest.hidden = !far;
+  }
+
+  /** Back to the newest: at once, however far. */
+  private toLatest(): void {
+    this.following = true;
+    this.render();
+    this.scroller.scrollTop = this.scroller.scrollHeight;
+    this.drawLatest();
+  }
+
+  /** Reads the turns of a gap the reader came near, then draws them. */
+  private async fillGap(gap: Gap, side: "end" | "start"): Promise<void> {
+    await this.options.conversation.fill(gap, side);
+    this.update({ read: true });
+  }
+
+  /** The page holds a few thousand events of a conversation at most
+   *  (`conversation.ts`): past that, it lets go of the parts farthest from
+   *  the reader, and of what its latest part holds before its newest turns
+   *  while the reader keeps to the newest. Each costs the page about as
+   *  much as the events in it; these bounds hold several parts, a few
+   *  screens each, and stay well within what a phone's web view gives a
+   *  page. */
+  private bound(): void {
+    const conversation = this.options.conversation;
+    if (!conversation.windowed) return;
+    const parts = conversation.held();
+    const latest = parts[parts.length - 1]!;
+    // A turn is never cut in two: where the latest turn alone is longer,
+    // it is asked again only once that much more has come.
+    if (latest.end < this.trimmedAt) this.trimmedAt = 0;
+    if (this.following && latest.end - latest.start > LATEST_MOST && !this.trimming && latest.end - this.trimmedAt > LATEST_KEPT) {
+      this.trimming = true;
+      this.trimmedAt = latest.end;
+      void conversation.trim(LATEST_KEPT).finally(() => {
+        this.trimming = false;
+        this.update({ read: true });
+      });
+    }
+    let events = parts.reduce((sum, part) => sum + (part.end - part.start), 0);
+    if (events <= HELD_MOST) return;
+    // Only parts well away from what is in view go, the farthest first:
+    // what the reader is near stays, however much it holds.
+    const far = new Map<Held, number>();
+    for (const part of parts) {
+      if (part === latest) continue;
+      const blocks = part.fold.blocks();
+      const first = blocks[0];
+      const last = blocks[blocks.length - 1];
+      const screens = first && last ? this.view.screensFrom(first.key, last.key) : null;
+      if (screens !== null && screens > KEEP_SCREENS) far.set(part, screens);
+    }
+    let changed = false;
+    for (const [part] of [...far].sort((a, b) => b[1] - a[1])) {
+      if (events <= HELD_MOST) break;
+      conversation.release(part);
+      events -= part.end - part.start;
+      changed = true;
+    }
+    if (changed) this.update({ read: true });
+  }
+  private trimming = false;
+  /** Where the latest part ended when it was last cut, or tried. */
+  private trimmedAt = 0;
 
   /** Brings the page up to the conversation: what does not wait for the
    *  screen at once, and the drawing on the next frame, however many
@@ -423,6 +540,8 @@ export class ConversationPage {
     this.drawState();
     this.drawAction();
     if (follow) this.scroller.scrollTop = this.scroller.scrollHeight;
+    this.drawLatest();
+    this.bound();
   }
 
   /** Where the reader was, kept while the page is out of view: following
@@ -440,7 +559,34 @@ export class ConversationPage {
   resume(): void {
     this.render();
     if (this.following) this.scroller.scrollTop = this.scroller.scrollHeight;
-    else if (this.place) this.view.restore(this.place);
+    else if (this.place && !this.view.restore(this.place)) this.toLatest();
+  }
+
+  /** What is held is read again (`conversation.ts`): the reader stays
+   *  where they were, the turns they read read again where they are no
+   *  longer held. */
+  reopened(apply: () => void): void {
+    const place = this.following ? null : this.view.anchor();
+    const turn = place ? this.turnOf(place.key) : null;
+    apply();
+    this.update({ read: true });
+    if (!place) return;
+    cancelAnimationFrame(this.frame);
+    this.render();
+    if (this.view.restore(place)) return;
+    if (!turn) return;
+    void this.options.conversation.reachTurn(turn).then((reached) => {
+      this.render();
+      if (!reached || !this.view.restore(place)) this.toLatest();
+    });
+  }
+
+  /** The turn a block is in. */
+  private turnOf(key: string): string | null {
+    const entry = this.options.conversation.get(key);
+    if (entry && "turn" in entry && typeof entry.turn === "string" && entry.turn) return entry.turn;
+    const block = this.options.conversation.blocks().find((one) => one.key === key);
+    return block?.kind === "activity-group" ? block.turn : null;
   }
 
   /** Going back to a turn or forking from it, only where the host says it

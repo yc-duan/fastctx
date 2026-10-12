@@ -8,7 +8,8 @@
 // the words.
 
 import type { Words } from "../words";
-import { Conversation, type ShownAttachment } from "./model";
+import type { ShownAttachment } from "./model";
+import { Conversation } from "./conversation";
 import { ConversationView } from "./view";
 import type { Departure } from "./flight";
 

@@ -8,6 +8,12 @@
 // view keeps what it drew; and a stamp that moves whenever the entry does,
 // so a view draws again only what changed. An event costs the same however
 // long the conversation is: entries are found by index, never by search.
+//
+// A fold reads one part of a conversation: a page holds its latest turns
+// and whatever earlier parts its reader came to, each folded on its own
+// (`conversation.ts`). What a key cannot name of its own (a health note, an
+// item without an id) is named by its place in its fold, under the fold's
+// scope, so two folds never name two things alike.
 
 import type { Health, MachineName, Notice, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
 import type { Attachment, AttachmentSource } from "../world/attachments";
@@ -42,7 +48,11 @@ export interface ShownAttachment {
   recorded?: AttachmentSource;
 }
 
-export type Entry = { stamp: number } & (
+export type Entry = {
+  stamp: number;
+  /** Where in its fold the event that made it, or last placed it, was. */
+  at: number;
+} & (
   | {
       kind: "heard";
       key: string;
@@ -81,7 +91,7 @@ export type Entry = { stamp: number } & (
       /** Thinking: how long it took, where the host said. */
       took?: number;
       /** Thinking: the model response it was part of, whose thinking
-       *  tokens `Conversation.thinkingTokens` knows where they were told. */
+       *  tokens `Fold.thinkingTokens` knows where they were told. */
       response?: string;
     }
   | { kind: "tool"; key: string; item: string; turn: string; tool: Tool; began: number; ended: { at: number; use: Use } | null }
@@ -112,11 +122,28 @@ export interface Activity {
   members: Entry[];
   stamp: number;
   /** One of its tools started Claude Code's own subagent, which moves on
-   *  its own (`Conversation.agentStamp`). */
+   *  its own (`Fold.agentStamp`). */
   agents: boolean;
 }
 
-export type Block = Entry | Activity;
+/** Turns a page does not hold, standing where they are: before everything
+ *  it holds, or between two parts of it (`conversation.ts`). */
+export interface Gap {
+  kind: "gap";
+  key: string;
+  /** Moves when what it says does. */
+  stamp: number;
+  /** The events it stands for. */
+  start: number;
+  end: number;
+  turns: number;
+  /** Nothing is held before it. */
+  first: boolean;
+  /** Its turns are being read. */
+  loading: boolean;
+}
+
+export type Block = Entry | Activity | Gap;
 
 type Keyed = Extract<Entry, { item: string; turn: string }>;
 type Heard = Extract<Entry, { kind: "heard" }>;
@@ -136,8 +163,10 @@ interface Derived {
   heardFrom: boolean;
 }
 
-export class Conversation {
+export class Fold {
   entries: Entry[] = [];
+  /** What names this fold's own keys apart from every other fold's. */
+  constructor(private readonly scope = "") {}
   context: { used: number; window: number | null } | null = null;
   title: string | null = null;
   /** The model the host last answered with, where it says (Claude's
@@ -166,14 +195,16 @@ export class Conversation {
   /** Each turn's stretches of activity, in order, by the key of their first
    *  entry: a stretch keeps its place and key when its first entry goes. */
   private stretches = new Map<string, string[]>();
-  /** Keys handed out where an entry names nothing of its own; started
-   *  again with each reading, so a reading gives the same keys. */
-  private serial = 0;
+  /** How many events this fold has read, and the place of the one being
+   *  read. */
+  private folded = 0;
+  private current = 0;
   /** Words sent from here, numbered apart: they outlive a reading. */
   private sends = 0;
-  /** Entries by key, and by their turn and item. */
+  /** Entries by key, and by their turn and item; tools by their call. */
   private byKey = new Map<string, Entry>();
   private byItem = new Map<string, Keyed>();
+  private byCall = new Map<string, ToolEntry>();
   /** Each turn's entries, in the order they came. */
   private byTurn = new Map<string, Entry[]>();
   /** How many of the user's heard words each turn holds, for their keys. */
@@ -198,12 +229,14 @@ export class Conversation {
 
   private add(entry: Entry): void {
     entry.stamp = ++this.clock;
+    entry.at = this.current;
     this.entries.push(entry);
     this.index(entry);
   }
 
   private index(entry: Entry): void {
     this.byKey.set(entry.key, entry);
+    if (entry.kind === "tool") this.byCall.set(entry.item, entry);
     if ("item" in entry && "turn" in entry && typeof entry.turn === "string") this.byItem.set(itemKey(entry.turn, entry.item), entry as Keyed);
     const turn = "turn" in entry ? entry.turn : null;
     if (typeof turn === "string") {
@@ -230,12 +263,15 @@ export class Conversation {
     this.byKey.clear();
     this.byItem.clear();
     this.byTurn.clear();
+    this.byCall.clear();
     for (const entry of this.entries) this.index(entry);
     this.clock += 1;
   }
 
-  /** What came before, replacing what is shown. */
-  history(events: SessionEvent[]): void {
+  /** What came before, replacing what is shown; `carry`, what the part's
+   *  turns read of what came before it (its title, its context, the model
+   *  that answered), read first as nothing of its own. */
+  history(events: SessionEvent[], carry: SessionEvent[] = []): void {
     // Requests still waiting are kept: the host asked them, and they are
     // not part of the history it gives back. So are words sent from here
     // that this reading does not hold yet.
@@ -256,8 +292,15 @@ export class Conversation {
     this.thoughtTokens.clear();
     this.codexTotal = 0;
     this.codexResponses = 0;
-    this.serial = 0;
+    this.folded = 0;
+    this.current = 0;
     this.clock += 1;
+    this.replaying = true;
+    try {
+      for (const event of carry) this.read(event);
+    } finally {
+      this.replaying = false;
+    }
     this.extend(events);
     for (const ask of waiting) {
       if (ask.kind === "ask" && !this.entries.some((entry) => entry.kind === "ask" && askKey(entry.id) === askKey(ask.id))) this.add(ask);
@@ -292,7 +335,26 @@ export class Conversation {
     }
   }
 
+  /** One more event of this fold's part. */
   event(event: SessionEvent): void {
+    this.current = this.folded;
+    this.folded += 1;
+    this.read(event);
+  }
+
+  /** How many events of its part this fold has read. */
+  get size(): number {
+    return this.folded;
+  }
+
+  /** An event told after this fold's part about something in it, as the
+   *  facts a run's job tells as it goes on: read in place, the part still
+   *  ending where it did. */
+  late(event: SessionEvent): void {
+    this.read(event);
+  }
+
+  private read(event: SessionEvent): void {
     const at = Date.parse(event.at);
     switch (event.event) {
       case "turn_started":
@@ -324,6 +386,7 @@ export class Conversation {
             delete sent.intoTurn;
             sent.turn = heard.turn;
             sent.from = heard.from;
+            sent.at = this.current;
             // Heard now: it stands where the session took it in, after what
             // the turn did before it read them.
             this.entries.splice(this.entries.indexOf(sent), 1);
@@ -360,11 +423,20 @@ export class Conversation {
           ];
           const ordinal = this.heardIn.get(turnKey) ?? 0;
           this.heardIn.set(turnKey, ordinal + 1);
-          const key = event.delivery ? `h:${event.delivery}` : heard.message?.id ? `h:m:${heard.message.id}` : `h:${turnKey}:${ordinal}`;
+          // Words in a turn are told apart by their place in it; words in no
+          // turn, by their place in this fold.
+          const key = event.delivery
+            ? `h:${event.delivery}`
+            : heard.message?.id
+              ? `h:m:${heard.message.id}`
+              : turnKey
+                ? `h:${turnKey}:${ordinal}`
+                : `h:${this.scope}@${this.current}`;
           this.add({
             kind: "heard",
-            key: this.byKey.has(key) ? `${key}:${++this.serial}` : key,
+            key: this.byKey.has(key) ? `${key}:${this.scope}@${this.current}` : key,
             stamp: 0,
+            at: 0,
             from: heard.from,
             text: heard.text,
             turn: heard.turn,
@@ -397,6 +469,7 @@ export class Conversation {
             kind: "prose",
             key: itemEntryKey(event.turn, event.item),
             stamp: 0,
+            at: 0,
             item: event.item,
             turn: event.turn,
             prose: "message",
@@ -414,7 +487,7 @@ export class Conversation {
           shown.note = event.note;
           this.touch(shown);
         } else {
-          this.add({ kind: "steps", key: `p:${event.turn}`, stamp: 0, turn: event.turn, steps: event.steps, note: event.note });
+          this.add({ kind: "steps", key: `p:${event.turn}`, stamp: 0, at: 0, turn: event.turn, steps: event.steps, note: event.note });
         }
         return;
       }
@@ -442,13 +515,13 @@ export class Conversation {
           }
         }
         this.endedTurns.add(event.turn);
-        this.add({ kind: "ended", key: `e:${event.turn}`, stamp: 0, turn: event.turn, end: event.end });
+        this.add({ kind: "ended", key: `e:${event.turn}`, stamp: 0, at: 0, turn: event.turn, end: event.end });
         return;
       }
       case "delivery_uncertain":
         // Told once for each delivery; a reading and the live event may
         // both carry it.
-        if (!this.byKey.has(`u:${event.delivery}`)) this.add({ kind: "uncertain", key: `u:${event.delivery}`, stamp: 0, why: event.why });
+        if (!this.byKey.has(`u:${event.delivery}`)) this.add({ kind: "uncertain", key: `u:${event.delivery}`, stamp: 0, at: 0, why: event.why });
         return;
       case "health":
         this.health(event.health);
@@ -461,6 +534,7 @@ export class Conversation {
             kind: "ask",
             key: `a:${askKey(change.id)}`,
             stamp: 0,
+            at: 0,
             id: change.id,
             turn: event.turn,
             request: change.request,
@@ -477,7 +551,7 @@ export class Conversation {
         }
         if (change.kind === "forked") {
           if (!this.entries.some((entry) => entry.kind === "forked")) {
-            const forked: Entry = { kind: "forked", key: "f", stamp: ++this.clock, source: change.source };
+            const forked: Entry = { kind: "forked", key: "f", stamp: ++this.clock, at: this.current, source: change.source };
             this.entries.unshift(forked);
             this.index(forked);
           }
@@ -571,7 +645,7 @@ export class Conversation {
   private health(health: Health): void {
     const last = this.entries[this.entries.length - 1];
     if (last?.kind === "health" && last.health.kind === health.kind && last.health.text === health.text) return;
-    this.add({ kind: "health", key: `x:${++this.serial}`, stamp: 0, health });
+    this.add({ kind: "health", key: `x:${this.scope}@${this.current}`, stamp: 0, at: 0, health });
   }
 
   /** An item began or finished: shown where it first appeared, as it now
@@ -579,13 +653,13 @@ export class Conversation {
   private item(turn: string, native: import("../world/events").Item, at: number, finished: boolean): void {
     const startedAt = native.started_at ? Date.parse(native.started_at) : at;
     const id = native.id;
-    const key = id ? itemEntryKey(turn, id) : `n:${++this.serial}`;
+    const key = id ? itemEntryKey(turn, id) : `n:${this.scope}@${this.current}`;
     let fresh: Entry;
     const questions = native.kind === "message" ? questionsOf(native.detail) : null;
     if (questions) {
       const shown = id ? this.find(turn, id) : undefined;
       if (shown?.kind === "question") return;
-      const asked: Entry = { kind: "question", key, stamp: 0, item: id, turn, questions, answers: questions.map(() => null), version: 0 };
+      const asked: Entry = { kind: "question", key, stamp: 0, at: 0, item: id, turn, questions, answers: questions.map(() => null), version: 0 };
       if (shown) this.replace(shown, asked);
       else this.add(asked);
       return;
@@ -598,6 +672,7 @@ export class Conversation {
           kind: "prose",
           key,
           stamp: 0,
+          at: 0,
           item: id,
           turn,
           prose: native.kind,
@@ -608,7 +683,7 @@ export class Conversation {
         };
         break;
       case "agent_activity":
-        fresh = { kind: "activity", key, stamp: 0, item: id, turn, text: `${native.path}: ${native.activity}` };
+        fresh = { kind: "activity", key, stamp: 0, at: 0, item: id, turn, text: `${native.path}: ${native.activity}` };
         break;
       case "tool": {
         const { kind: _kind, id: _id, started_at: _started, detail: _detail, ...tool } = native;
@@ -618,6 +693,7 @@ export class Conversation {
           kind: "tool",
           key,
           stamp: 0,
+          at: 0,
           item: id,
           turn,
           tool,
@@ -629,7 +705,7 @@ export class Conversation {
       case "compaction":
         // Shown once it is done: the context it leaves is what counts.
         if (!finished) return;
-        fresh = { kind: "compaction", key, stamp: 0, item: id, turn };
+        fresh = { kind: "compaction", key, stamp: 0, at: 0, item: id, turn };
         break;
       case "hidden":
         // A completed item can remove a transient placeholder.
@@ -637,7 +713,7 @@ export class Conversation {
         return;
       case "other":
         if (!finished) return;
-        fresh = { kind: "other", key, stamp: 0, item: id, turn, hostKind: native.host_kind };
+        fresh = { kind: "other", key, stamp: 0, at: 0, item: id, turn, hostKind: native.host_kind };
         break;
     }
     if (!id) {
@@ -702,7 +778,7 @@ export class Conversation {
     const tokens = property(property(usage, "last") ?? null, "reasoningOutputTokens");
     if (!turn || typeof total !== "number" || typeof tokens !== "number" || total <= this.codexTotal) return;
     this.codexTotal = total;
-    const response = `codex:${++this.codexResponses}`;
+    const response = `codex:${this.scope}:${++this.codexResponses}`;
     this.thoughtTokens.set(response, tokens);
     for (const entry of this.byTurn.get(turn) ?? []) {
       if (entry.kind !== "prose" || entry.prose !== "thinking" || entry.writing || entry.response) continue;
@@ -727,6 +803,7 @@ export class Conversation {
   /** Puts `fresh` where `shown` stood. */
   private replace(shown: Entry, fresh: Entry): void {
     const index = this.entries.indexOf(shown);
+    fresh.at = shown.at;
     this.entries[index] = fresh;
     this.reindex();
     this.touch(fresh);
@@ -739,11 +816,7 @@ export class Conversation {
    *  where its output is. Writes join those already known; how the run
    *  stands is its own job's to say, the latest word kept. */
   private runFacts(update: JobFacts): void {
-    let entry: ToolEntry | undefined;
-    for (let index = this.entries.length - 1; index >= 0 && !entry; index -= 1) {
-      const candidate = this.entries[index]!;
-      if (candidate.kind === "tool" && candidate.item === update.call_id) entry = candidate;
-    }
+    const entry = this.byCall.get(update.call_id);
     if (!entry) return;
     const job = `${update.call_id}|${update.machine}|${update.job}`;
     const fresh = update.sequence > (this.sequences.get(job) ?? -1);
@@ -785,6 +858,34 @@ export class Conversation {
     return this.endedTurns.has(turn);
   }
 
+  /** Whether this fold holds anything of `turn`. */
+  holds(turn: string): boolean {
+    return this.byTurn.has(turn);
+  }
+
+  /** Whether this fold holds the tool a run's facts are about. */
+  holdsCall(call: string): boolean {
+    return this.byCall.has(call);
+  }
+
+  /** Lets go of what the events before `before` made: whole turns, the
+   *  fold's part now beginning there. Words still being sent and requests
+   *  still waiting stay. */
+  forget(before: number): void {
+    const kept = this.entries.filter(
+      (entry) => entry.at >= before || (entry.kind === "heard" && entry.sending !== undefined) || (entry.kind === "ask" && entry.state.state === "waiting"),
+    );
+    if (kept.length === this.entries.length) return;
+    this.entries = kept;
+    this.reindex();
+    for (const turn of [...this.endedTurns]) if (!this.byTurn.has(turn)) this.endedTurns.delete(turn);
+    for (const turn of [...this.stretches.keys()]) if (!this.byTurn.has(turn)) this.stretches.delete(turn);
+    for (const turn of [...this.heardIn.keys()]) if (turn && !this.byTurn.has(turn)) this.heardIn.delete(turn);
+    for (const entry of this.entries) entry.at -= before;
+    this.folded -= before;
+    this.current = Math.max(0, this.current - before);
+  }
+
   /** The last message a turn said, by key. */
   lastMessageOf(turn: string): string | null {
     return this.derived().lastMessage.get(turn) ?? null;
@@ -811,6 +912,7 @@ export class Conversation {
       kind: "heard",
       key,
       stamp: 0,
+      at: 0,
       from: here ? { kind: "user", machine: here } : null,
       text,
       turn: null,
@@ -854,7 +956,7 @@ export class Conversation {
         this.touch(entry);
       }
     }
-    this.add({ kind: "uncertain", key: "u:start", stamp: 0, why });
+    this.add({ kind: "uncertain", key: "u:start", stamp: 0, at: 0, why });
   }
 
   /** Whether any turn has been seen to begin or end. */
