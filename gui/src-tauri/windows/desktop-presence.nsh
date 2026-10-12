@@ -9,9 +9,8 @@
   ${If} $0 != 0
     Abort "World notification identity installation failed (exit $0)."
   ${EndIf}
-  ; This computer stays in the World from boot: the fastctx carried here is
-  ; put in place and its node kept by a service, an administrator asked once.
-  ; Declining leaves the installation standing; World's settings offer it.
+  ; Place the kernel and restore owned integrations. An enrolled computer
+  ; also restores its boot service; standalone use installs no boot service.
   ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --keep-connected'
 !macroend
 

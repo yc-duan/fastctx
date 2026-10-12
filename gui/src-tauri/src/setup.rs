@@ -15,6 +15,8 @@ use fastctx_types::layout::WorldDir;
 use serde::Serialize;
 
 mod hosts;
+#[cfg(windows)]
+mod membership;
 
 /// Where this computer stands.
 #[derive(Serialize)]
@@ -203,6 +205,12 @@ pub async fn keep(world: &World) -> Result<KeptNow, String> {
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
+    finish_keep(world, kept).await
+}
+
+/// Completes the shared service handover after installation, including a
+/// node installed together with the hub during local network creation.
+pub(crate) async fn finish_keep(world: &World, kept: Kept) -> Result<KeptNow, String> {
     if kept == Kept::Installed {
         yield_running(world.dir()).await?;
         #[cfg(target_os = "linux")]
@@ -222,30 +230,31 @@ pub async fn keep(world: &World) -> Result<KeptNow, String> {
     })
 }
 
-/// What installing World does for this computer besides the application
-/// (`world-network.md`, 登记了，就一直连着): the fastctx it carries put in
-/// place when there is none yet, and the service that keeps the node from
-/// boot, administrator rights asked for once; a node already running hands
-/// the World over to the service's. An update finds both there and changes
-/// neither: a newer World is put in place by the user, from the settings.
-/// Declined rights leave the installation standing; the settings offer the
-/// service again.
+/// Places World and restores its owned host integration at installation.
+/// An enrolled computer also restores its boot service; a standalone
+/// computer starts a node when an interface or agent needs it.
 #[cfg(windows)]
-pub fn keep_at_install() -> Result<String, String> {
+pub fn keep_at_install() -> Result<Option<String>, String> {
     let places = places()?;
-    let _uninstall = fastctx_platform::uninstall_gate::Gate::try_acquire(&places.root).map_err(|error| error.to_string())?
+    let _uninstall = fastctx_platform::uninstall_gate::Gate::try_acquire(&places.root)
+        .map_err(|error| error.to_string())?
         .ok_or("this World is still being uninstalled")?;
-    fastctx_install::uninstall::delete_file(&places.root.join("uninstalled.json")).map_err(|error| error.to_string())?;
-    fastctx_install::uninstall::delete_file(&places.root.join("uninstall-progress.json")).map_err(|error| error.to_string())?;
+    fastctx_install::uninstall::delete_file(&places.root.join("uninstalled.json"))
+        .map_err(|error| error.to_string())?;
+    fastctx_install::uninstall::delete_file(&places.root.join("uninstall-progress.json"))
+        .map_err(|error| error.to_string())?;
     if !places.installed().is_file() {
         place()?;
     }
     apply::restore_withdrawn(&places).map_err(|error| error.to_string())?;
+    if !membership::any(&WorldDir::under(&places.root)).map_err(|error| error.to_string())? {
+        return Ok(None);
+    }
     let (kept, _) = keep_connected(&places).map_err(|error| error.to_string())?;
     if kept == Kept::Installed {
         hand_over_running(&places)?;
     }
-    Ok(format!("{kept:?}"))
+    Ok(Some(format!("{kept:?}")))
 }
 
 /// Asks the node running for this World, if one is, to hand the World over
