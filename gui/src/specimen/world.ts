@@ -64,9 +64,11 @@ const action = (time: string, machine: string, hand: string, what: string, resul
 const address = (machine: string, resident: string): Address => ({ machine, resident });
 
 function facts(name: string, os: string, home: string): MachineFacts {
+  // As a node says: a Linux machine is a server, the laptop has a battery.
+  const form = os === "linux" ? "server" : name === "laptop" ? "laptop" : "desktop";
   return {
     name, os, arch: "x86_64", home, temp: os === "windows" ? `${home}/AppData/Local/Temp` : "/tmp",
-    shell: "", path_separator: os === "windows" ? "\\" : "/", case_sensitive: os !== "windows", version: "1.0.0",
+    shell: "", path_separator: os === "windows" ? "\\" : "/", case_sensitive: os !== "windows", version: "1.0.0", form,
   };
 }
 

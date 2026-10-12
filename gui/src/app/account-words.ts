@@ -90,6 +90,10 @@ export interface LoginWords {
    *  hub goes on. */
   createHub: string;
   remoteHub: string;
+  /** The name a server takes in the World: its host name to begin with,
+   *  read from it once signed in. */
+  serverName: string;
+  serverNameReading: string;
   /** Creating a World with this computer as its hub. */
   worldName: string;
   admin: string;
@@ -168,7 +172,7 @@ export const zhLogin: LoginWords = {
   notArch: "这台服务器的架构不受支持，只支持 x86_64 与 aarch64",
   addGo: "添加",
   adding: "正在添加…",
-  remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建世界", login: "这台电脑登录", join: "服务器加入", arrive: "中枢服务器搬过去" },
+  remoteSteps: { connect: "连接服务器", check: "查看服务器", upload: "上传程序", hub: "建网络", login: "这台电脑登录", join: "服务器加入", arrive: "中枢服务器搬过去" },
   another: "登录其他账号",
   hub: "中枢服务器地址",
   account: "账号",
@@ -190,8 +194,10 @@ export const zhLogin: LoginWords = {
   withPassword: "使用账号密码登录",
   scanFailed: "无法扫描",
   alone: "暂不加入",
-  aloneWhat: "这台电脑可以单独使用，之后随时加入或新建世界",
-  worldName: "世界名称",
+  aloneWhat: "这台电脑可以单独使用，之后随时加入或新建网络",
+  worldName: "网络名称",
+  serverName: "服务器名称",
+  serverNameReading: "正在读取它的主机名…",
   admin: "管理员账号",
   reach: "连接地址",
   reachWhat: "其他电脑通过这些地址连接这台电脑",
@@ -279,6 +285,8 @@ export const enLogin: LoginWords = {
   alone: "Not now",
   aloneWhat: "Use this computer on its own and join or create a network any time",
   worldName: "Network name",
+  serverName: "Server name",
+  serverNameReading: "Reading its host name…",
   admin: "Administrator account",
   reach: "Connection addresses",
   reachWhat: "Other computers connect to this one at these addresses",
@@ -1089,6 +1097,8 @@ export interface AccountWords {
   devices: string;
   devicesWhat: string;
   kinds: Record<MemberKind, string>;
+  /** A computer as its node says it is. */
+  forms: Record<"desktop" | "laptop" | "server", string>;
   machineTag: string;
   key(start: string): string;
   added(at: string): string;
@@ -1163,6 +1173,7 @@ export const zhAccount: AccountWords = {
   devices: "已登录的设备",
   devicesWhat: "丢失的设备可以在这里移除",
   kinds: { computer: "电脑", phone: "手机", web: "网页 AI" },
+  forms: { desktop: "台式机", laptop: "笔记本", server: "服务器" },
   machineTag: "机器",
   key: (start) => `密钥 ${start}`,
   added: (at) => `${at} 登录`,
@@ -1241,6 +1252,7 @@ export const enAccount: AccountWords = {
   devices: "Signed-in devices",
   devicesWhat: "Remove a lost device here",
   kinds: { computer: "computer", phone: "phone", web: "web AI" },
+  forms: { desktop: "desktop", laptop: "laptop", server: "server" },
   machineTag: "machine",
   key: (start) => `key ${start}`,
   added: (at) => `signed in ${at}`,

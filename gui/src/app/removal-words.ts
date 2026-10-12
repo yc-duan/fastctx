@@ -146,7 +146,7 @@ export const zhRemoval: RemovalWords = {
   },
   unfinished: "未完成",
   failedRun: failure(zhProblems, "卸载未完成"),
-  hubWarn: (world) => `这台电脑是「${world}」的中枢服务器。彻底移除将删除这个世界的所有账号、机器和项目，其他电脑将无法再连接。`,
+  hubWarn: (world) => `这台电脑是「${world}」的中枢服务器。彻底移除将删除这个网络的所有账号、机器和项目，其他电脑将无法再连接。`,
   typeName: (world) => `输入「${world}」以确认`,
   other: (path, version) => `PATH 中另有一个 fastctx${version ? ` ${version}` : ""}，不会被移除：${path}`,
   list: "查看清单",

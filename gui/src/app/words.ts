@@ -1473,7 +1473,7 @@ export const zhShell: ShellWords = {
   unanswered: (seconds) => `本机服务 ${seconds} 秒未响应`,
   thisOne: "本机",
   phone: "手机",
-  logIn: "加入世界",
+  logIn: "加入网络",
   networks: "网络",
   newNetwork: "新建网络",
   joinNetwork: "加入网络",

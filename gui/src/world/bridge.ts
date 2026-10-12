@@ -596,6 +596,12 @@ export function remoteProbe(host: string, port: number): Promise<RemoteKey> {
   return invoke("remote_probe", { host, port });
 }
 
+/** Signs in to the server whose key was confirmed and answers the name it
+ *  would take in the World, made from its host name. */
+export function remoteLook(server: RemoteServer): Promise<string> {
+  return invoke("remote_look", { server });
+}
+
 export function remoteHub(request: RemoteHub, step: (step: RemoteStep) => void): Promise<{ session: number; address: string; machine: string }> {
   const steps = new Channel<RemoteStep>();
   steps.onmessage = step;

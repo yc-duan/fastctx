@@ -153,14 +153,8 @@ pub async fn probe(host: &str, port: u16) -> Result<Probed, String> {
     Ok(Probed { address: address.to_string(), fingerprint, known })
 }
 
-/// Signs in, checks the server, and uploads the program for its
-/// architecture from `archives`, saying each step as it begins.
-pub async fn open(
-    server: &Server,
-    archives: &Path,
-    step: &impl Fn(&'static str) -> Result<(), String>,
-) -> Result<Remote, String> {
-    step("connect")?;
+/// Connects to the server whose key was confirmed and signs in.
+async fn sign_in(server: &Server) -> Result<(SocketAddr, Handle<Checked>), String> {
     let seen = Arc::new(Mutex::new(None));
     let checked = Checked { expected: Some(server.fingerprint.clone()), seen };
     let (address, connected) = connect(&server.host, server.port, checked).await?;
@@ -181,6 +175,29 @@ pub async fn open(
     if !accepted.success() {
         return Err(format!("{} did not accept {} with this password or key", server.host, server.user));
     }
+    Ok((address, handle))
+}
+
+/// Signs in and reads the server's own name, then leaves: the name it is
+/// offered in the World, and a way in that does not work is said before
+/// anything else is asked.
+pub async fn look(server: &Server) -> Result<String, String> {
+    let (_, handle) = sign_in(server).await?;
+    let named = run(&handle, "hostname", Vec::new()).await;
+    let _ = handle.disconnect(Disconnect::ByApplication, "", "").await;
+    let named = named?.ok("reading the server's name")?;
+    Ok(String::from_utf8_lossy(&named).trim().to_string())
+}
+
+/// Signs in, checks the server, and uploads the program for its
+/// architecture from `archives`, saying each step as it begins.
+pub async fn open(
+    server: &Server,
+    archives: &Path,
+    step: &impl Fn(&'static str) -> Result<(), String>,
+) -> Result<Remote, String> {
+    step("connect")?;
+    let (address, handle) = sign_in(server).await?;
 
     step("check")?;
     let facts = run(&handle, "uname -s; uname -m; id -u; hostname", Vec::new()).await?.ok("looking at the server")?;

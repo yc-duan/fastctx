@@ -41,6 +41,14 @@ pub(crate) async fn remote_probe(host: String, port: u16) -> Result<Probed, Stri
     ssh::probe(&host, port).await
 }
 
+/// Signs in to the server whose key was confirmed and answers the name it
+/// would take in the World, made from its host name.
+#[fastctx_gui_command::command]
+pub(crate) async fn remote_look(server: Server) -> Result<String, String> {
+    let hostname = ssh::look(&server).await?;
+    Ok(fastctx_types::MachineName::from_host(&hostname).to_string())
+}
+
 /// Connects, checks the server, uploads the program and makes the hub; the
 /// session stays open for the server to join.
 #[fastctx_gui_command::command]
@@ -50,7 +58,8 @@ pub(crate) async fn remote_hub(
     request: Request,
     steps: Channel<&'static str>,
 ) -> Result<Made, String> {
-    let (remote, made) = ssh::make_hub(&request, &carried(&app)?, |name| steps.send(name).map_err(|error| error.to_string())).await?;
+    let (remote, made) =
+        ssh::make_hub(&request, &carried(&app)?, |name| steps.send(name).map_err(|error| error.to_string())).await?;
     let machine = fastctx_types::MachineName::from_host(&made.hostname).to_string();
     Ok(Made { session: keep(&sessions, remote), address: made.address, machine })
 }
@@ -64,7 +73,8 @@ pub(crate) async fn remote_open(
     server: Server,
     steps: Channel<&'static str>,
 ) -> Result<Opened, String> {
-    let remote = ssh::open(&server, &carried(&app)?, &|name| steps.send(name).map_err(|error| error.to_string())).await?;
+    let remote =
+        ssh::open(&server, &carried(&app)?, &|name| steps.send(name).map_err(|error| error.to_string())).await?;
     let machine = fastctx_types::MachineName::from_host(remote.hostname()).to_string();
     Ok(Opened { session: keep(&sessions, remote), machine })
 }
@@ -94,7 +104,13 @@ pub(crate) async fn remote_join(
     steps: Channel<&'static str>,
 ) -> Result<(), String> {
     steps.send("join").map_err(|error| error.to_string())?;
-    let remote = sessions.open.lock().expect("never poisoned").get(&session).cloned().ok_or("the connection to the server is gone")?;
+    let remote = sessions
+        .open
+        .lock()
+        .expect("never poisoned")
+        .get(&session)
+        .cloned()
+        .ok_or("the connection to the server is gone")?;
     remote.join(&token).await?;
     if keep_open == Some(true) {
         return Ok(());
@@ -112,7 +128,13 @@ pub(crate) async fn remote_arrive(
     steps: Channel<&'static str>,
 ) -> Result<(), String> {
     steps.send("arrive").map_err(|error| error.to_string())?;
-    let remote = sessions.open.lock().expect("never poisoned").get(&session).cloned().ok_or("the connection to the server is gone")?;
+    let remote = sessions
+        .open
+        .lock()
+        .expect("never poisoned")
+        .get(&session)
+        .cloned()
+        .ok_or("the connection to the server is gone")?;
     remote.arrive().await
 }
 

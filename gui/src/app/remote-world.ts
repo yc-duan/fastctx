@@ -50,6 +50,9 @@ export type RemoteStep = "connect" | "check" | "upload" | "hub" | "join" | "arri
 
 export interface RemoteSeams {
   probe(host: string, port: number): Promise<RemoteKey>;
+  /** Signs in and answers the name the server would take in the World,
+   *  from its host name; a way in that does not work fails here. */
+  look(server: RemoteServer): Promise<string>;
   /** Connects, checks the system, uploads the program and makes the hub;
    *  the session stays open for the server to join. */
   hub(request: RemoteHub, step: (step: RemoteStep) => void): Promise<{ session: number; address: string; machine: string }>;
@@ -65,8 +68,8 @@ export interface RemoteSeams {
   login(address: string, admin: string, password: string, name: string | null): Promise<LoggedIn>;
   /** A one-time code for the server to join with, as a machine of `admin`. */
   token(hub: string, admin: string, machine: string): Promise<string>;
-  /** What is wrong with a server name as typed. */
-  nameProblem(kind: "hub", text: string): Promise<NameProblem | null>;
+  /** What is wrong with a World's or a machine's name as typed. */
+  nameProblem(kind: "machine" | "hub", text: string): Promise<NameProblem | null>;
 }
 
 /** What the server's own side says when sudo wants a password it was not
@@ -93,7 +96,11 @@ interface Progress {
 
 export class RemoteWorld {
   private stage: Stage = "server";
-  private typed = { host: "", sshPort: "22", user: "root", by: "password" as "password" | "key", world: "", admin: "", hubPort: "7443" };
+  private typed = { host: "", sshPort: "22", user: "root", by: "password" as "password" | "key", world: "", admin: "", hubPort: "7443", name: "" };
+  /** Reading the server's own name once the way in is known; the latest
+   *  reading only counts. */
+  private looking = false;
+  private looks = 0;
   private key: { text: string; name: string } | null = null;
   private secret = { login: "", passphrase: "", sudo: "", password: "", again: "" };
   private shown: RemoteKey | null = null;
@@ -190,7 +197,7 @@ export class RemoteWorld {
 
   private keep(): void {
     const value = (name: string) => this.body.querySelector<HTMLInputElement>(`[name="${name}"]`)?.value;
-    for (const name of ["host", "sshPort", "user", "world", "admin", "hubPort"] as const) this.typed[name] = value(name) ?? this.typed[name];
+    for (const name of ["host", "sshPort", "user", "world", "admin", "hubPort", "name"] as const) this.typed[name] = value(name) ?? this.typed[name];
     this.secret.login = value("login") ?? this.secret.login;
     this.secret.passphrase = value("passphrase") ?? this.secret.passphrase;
     this.secret.sudo = value("sudo") ?? this.secret.sudo;
@@ -252,6 +259,7 @@ export class RemoteWorld {
           // the server wants one.
           this.body.innerHTML = `<${form} class="welcome-form remote-form" autocomplete="off">
             <p class="remote-host mono">${escape(this.typed.user)}@${escape(this.typed.host)}</p>
+            ${this.nameField()}
             ${this.wantsSudo ? `<label class="field"><span class="field-label">${escape(words.sudoPassword)}</span><input name="sudo" type="password" required autocomplete="off" value="${escape(this.secret.sudo)}"></label>` : ""}
             <ol class="removal-list remote-steps"${this.progress.length ? "" : " hidden"}></ol>
             ${foot(making ? words.adding : words.addGo)}
@@ -267,7 +275,10 @@ export class RemoteWorld {
             ${field("admin", words.admin, `class="mono" required spellcheck="false" autocapitalize="off" pattern="${accountRule}" placeholder="me"`, this.typed.admin)}
           </div>
           ${newPasswordFields(words, { password: this.secret.password, again: this.secret.again })}
-          ${field("hubPort", words.port, 'class="mono" inputmode="numeric" pattern="[0-9]{2,5}" required', this.typed.hubPort)}
+          <div class="field-pair">
+            ${this.nameField()}
+            ${field("hubPort", words.port, 'class="mono" inputmode="numeric" pattern="[0-9]{2,5}" required', this.typed.hubPort)}
+          </div>
           ${this.wantsSudo ? `<label class="field"><span class="field-label">${escape(words.sudoPassword)}</span><input name="sudo" type="password" required autocomplete="off" value="${escape(this.secret.sudo)}"></label>` : ""}
           <ol class="removal-list remote-steps"${this.progress.length ? "" : " hidden"}></ol>
           ${foot(making ? words.creating : words.createGo)}
@@ -278,6 +289,79 @@ export class RemoteWorld {
         break;
       }
     }
+  }
+
+  /** The name the server takes in the World: its host name once read,
+   *  which the person may change. */
+  private nameField(): string {
+    const { words } = this.options;
+    const reading = this.looking && !this.typed.name ? ` placeholder="${escape(words.serverNameReading)}"` : "";
+    return `<label class="field"><span class="field-label">${escape(words.serverName)}</span><input name="name" class="mono" required spellcheck="false" autocapitalize="off"${reading} value="${escape(this.typed.name)}"></label>`;
+  }
+
+  /** Signs in to read the server's own name, offered as its name in the
+   *  World unless one was typed; a way in that does not work goes back to
+   *  where it was given, saying why. */
+  private lookUp(): void {
+    const server = this.server();
+    if (!server) return;
+    const asked = ++this.looks;
+    this.looking = true;
+    this.options.seams.look(server).then(
+      (name) => {
+        if (asked !== this.looks) return;
+        this.looking = false;
+        const input = this.body.querySelector<HTMLInputElement>("input[name=name]");
+        if (input) input.placeholder = "";
+        if (this.typed.name || input?.value) return;
+        this.typed.name = name;
+        if (input) input.value = name;
+      },
+      (error: unknown) => {
+        if (asked !== this.looks) return;
+        this.looking = false;
+        if (this.stage !== "world" || this.busy) return;
+        this.keep();
+        this.stage = "server";
+        this.draw();
+        const message = error instanceof Error ? error.message : String(error);
+        const said = sshSaid(message, this.options.words, false);
+        if (said) this.note(said, message);
+        else this.problem(error);
+      },
+    );
+  }
+
+  /** The server as the person gave it, once its key is known. */
+  private server(): RemoteServer | null {
+    const auth = this.auth();
+    if (!auth || !this.shown) return null;
+    return {
+      host: this.typed.host.trim(),
+      port: Number(this.typed.sshPort),
+      user: this.typed.user.trim(),
+      auth,
+      fingerprint: this.shown.fingerprint,
+      sudo: this.secret.sudo || (auth.kind === "password" ? auth.password : null),
+    };
+  }
+
+  /** The name the server joins under, checked; null, with the reason said
+   *  under the form, when it will not do. */
+  private async machineName(): Promise<string | null> {
+    const { words, seams } = this.options;
+    const name = this.typed.name.trim();
+    if (!name) {
+      this.note(this.looking ? words.serverNameReading : words.inField(words.serverName, words.nameSaid({ problem: "empty" })));
+      return null;
+    }
+    this.busy = true;
+    const problem = await seams.nameProblem("machine", name).finally(() => (this.busy = false));
+    if (problem) {
+      this.note(words.inField(words.serverName, words.nameSaid(problem)));
+      return null;
+    }
+    return name;
   }
 
   /** Each step with a pencil tick when done, a cross when it failed. */
@@ -343,6 +427,7 @@ export class RemoteWorld {
         if (this.shown.known === "changed") return this.note(words.fingerprintChanged, this.shown.fingerprint);
         this.stage = this.shown.known === "known" ? "world" : "key";
         this.draw();
+        if (this.stage === "world") this.lookUp();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const said = sshSaid(message, words, false);
@@ -356,10 +441,15 @@ export class RemoteWorld {
     if (this.stage === "key") {
       this.stage = "world";
       this.draw();
+      this.lookUp();
       return;
     }
     if (this.stage !== "world") return;
-    if (this.options.adding) return this.add(this.options.adding);
+    if (this.options.adding) {
+      const machine = await this.machineName();
+      if (machine) await this.add(this.options.adding, machine);
+      return;
+    }
     const { password } = this.secret;
     const world = this.typed.world.trim();
     const admin = this.typed.admin.trim();
@@ -367,6 +457,8 @@ export class RemoteWorld {
     const named = await seams.nameProblem("hub", world).finally(() => (this.busy = false));
     if (named) return this.note(words.nameSaid(named));
     if (!passwordReady(this.body, words, admin)) return;
+    const machine = await this.machineName();
+    if (!machine) return;
     const auth = this.auth()!;
     this.busy = true;
     this.stage = "making";
@@ -391,7 +483,6 @@ export class RemoteWorld {
       );
       this.mark("login", "doing");
       this.signedIn ??= await seams.login(this.made.address, admin, password, this.options.name());
-      const machine = this.made.machine;
       if (!this.joined) {
         this.mark("join", "doing");
         const token = await seams.token(this.signedIn.hub, admin, machine);
@@ -418,7 +509,7 @@ export class RemoteWorld {
   }
   /** A server added to a World there is: signed in to, checked, the
    *  program up; then a code by the name it will have, and it joins. */
-  private async add(adding: Adding): Promise<void> {
+  private async add(adding: Adding, machine: string): Promise<void> {
     const { words, seams } = this.options;
     const auth = this.auth()!;
     this.busy = true;
@@ -437,7 +528,6 @@ export class RemoteWorld {
         },
         step,
       );
-      const machine = this.opened.machine;
       if (!this.joined) {
         this.mark("join", "doing");
         const token = await adding.token(machine);

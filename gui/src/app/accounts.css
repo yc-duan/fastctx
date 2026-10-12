@@ -412,6 +412,29 @@ a.text-button {
   color: var(--wrong);
 }
 
+/* The hub and the account, each with what is done to it at the end of its
+   row; leaving the account alone at the foot of the section. */
+.account-facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
+}
+
+.account-fact {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+
+.account-facts .text-button {
+  flex: none;
+  margin: -6px calc(-1 * var(--space-3)) -6px 0;
+}
+
+.account-leave {
+  margin-top: var(--space-6);
+}
+
 .account-project {
   display: flex;
   flex-wrap: wrap;

@@ -178,6 +178,7 @@ import {
   hubMove,
   remoteArrive,
   remoteJoin,
+  remoteLook,
   remoteOpen,
   remoteProbe,
   journal as readJournal,
@@ -491,6 +492,7 @@ const change = async (login: Login, made: AccountChange): Promise<void> => {
 /** The way to make a World on a server over SSH, from this computer. */
 const remoteSeams: RemoteSeams = {
   probe: remoteProbe,
+  look: remoteLook,
   hub: remoteHub,
   open: remoteOpen,
   join: remoteJoin,

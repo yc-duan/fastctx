@@ -14,6 +14,10 @@ export function specimenRemote(): RemoteSeams {
   };
   return {
     probe: async (host, port) => ({ address: `203.0.113.20:${port}`, fingerprint: "SHA256:q1mWkC3Pz0b0n5yVZpA8k7m2sQ0Jt9eYxH4fR6uLwNc", known: host === "known" ? "known" : "unknown" }),
+    look: async () => {
+      await after(900);
+      return "izbp19mwh1hladmc1jby2gz";
+    },
     hub: async (request, step) => {
       await steps(["connect", "check", "upload", "hub"], step);
       return { session: 1, address: `203.0.113.20:${request.hubPort}`, machine: "hz-light-01" };

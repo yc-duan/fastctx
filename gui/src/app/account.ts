@@ -21,6 +21,7 @@ import { redrawKeepingFocus } from "./focus";
 import { linkSaid } from "./machines";
 import { link } from "./places";
 import { loginLabel, superOf } from "./reach";
+import { factsByMachine } from "./talk-row";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { Store } from "./store";
@@ -264,9 +265,19 @@ export class AccountPage implements Page {
     const me = hub.accounts.find((account) => account.name === login.account);
     const when = (at: string) => this.options.when(new Date(at), now);
     const linked = linkSaid(hub.link, this.options.machines);
-    const facts: [string, string][] = [
-      [words.hub, [hub.name, linked].filter(Boolean).join(" · ")],
-      [words.account, [login.account, me ? words.level[me.level] : ""].filter(Boolean).join(" · ")],
+    // Each fact with what is done to it at the end of its row: the hub is
+    // managed by its super administrator, the account's password changed.
+    const facts: { name: string; value: string; act: string }[] = [
+      {
+        name: words.hub,
+        value: [hub.name, linked].filter(Boolean).join(" · "),
+        act: me?.level === "super" && !me.locked ? `<a class="text-button quiet-button" href="${link({ kind: "admin" })}">${glyph("settings", 16)}<span>${escape(words.adminPage)}</span></a>` : "",
+      },
+      {
+        name: words.account,
+        value: [login.account, me ? words.level[me.level] : ""].filter(Boolean).join(" · "),
+        act: `<button class="text-button quiet-button" type="button" data-act="password">${glyph("key", 16)}<span>${escape(words.changePassword)}</span></button>`,
+      },
     ];
     const admin = superOf(world, login);
     const superNote = admin && admin !== login.account ? `<p class="machines-note account-super">${glyph("shield", 14)}<span>${escape(words.superNote(admin))}</span></p>` : "";
@@ -280,7 +291,7 @@ export class AccountPage implements Page {
     const inviteGlyph = (kind: TokenKind) => glyph(kind === "phone" ? "phone" : kind === "computer" ? "machine" : "command", 16);
     return `<section class="home-section account-section" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}">
       <h2 class="section-title account-title">${glyph("person", 18)}<span>${escape(loginLabel(login))}</span></h2>
-      <dl class="facts">${facts.map(([name, value]) => `<dt>${escape(name)}</dt><dd>${escape(value)}</dd>`).join("")}</dl>
+      <dl class="facts account-facts">${facts.map((fact) => `<dt>${escape(fact.name)}</dt><dd><span class="account-fact">${escape(fact.value)}</span>${fact.act}</dd>`).join("")}</dl>
       ${superNote}
       ${said}
       ${arrivals.length ? `<ul class="joined-lines" aria-live="polite">${arrivals.map((arrival) => this.arrival(arrival, now)).join("")}</ul>` : ""}
@@ -329,10 +340,7 @@ export class AccountPage implements Page {
               .join("")}</ul>`
           : `<p class="field-hint">${escape(words.noProjects)}</p>`
       }
-      <h3 class="account-part">${escape(words.password)}</h3>
-      <div class="account-acts">
-        <button class="text-button" type="button" data-act="password">${glyph("key", 16)}<span>${escape(words.changePassword)}</span></button>
-        ${me?.level === "super" && !me.locked ? `<a class="text-button" href="${link({ kind: "admin" })}">${glyph("settings", 16)}<span>${escape(words.adminPage)}</span></a>` : ""}
+      <div class="account-acts account-leave">
         <button class="text-button account-logout" type="button" data-act="logout">${glyph("logout", 16)}<span>${escape(words.logout)}</span></button>
       </div>
     </section>`;
@@ -347,6 +355,14 @@ export class AccountPage implements Page {
     </li>`;
   }
 
+  /** What a device is: a computer as it says itself, a desktop, a laptop
+   *  or a server, where its node has said; else as the hub knows it. */
+  private kindOf(device: MemberSeen, world: WorldNow): string {
+    const { words } = this.options;
+    const form = device.kind === "computer" ? factsByMachine(world).get(device.name)?.form : undefined;
+    return form ? words.forms[form] : words.kinds[device.kind];
+  }
+
   private device(device: MemberSeen, login: Login, world: WorldNow, when: (at: string) => string): string {
     const { words } = this.options;
     const here = device.name === world.accounts.machine;
@@ -356,7 +372,7 @@ export class AccountPage implements Page {
       <span class="dot" aria-hidden="true"></span>
       <span class="account-device-text">
         <span class="account-device-name">${escape(device.name)}${here ? `<span class="tag">${escape(words.thisOne)}</span>` : ""}${machine ? `<span class="tag">${escape(words.machineTag)}</span>` : ""}</span>
-        ${factRow([words.kinds[device.kind], words.added(when(device.added)), state, words.key(device.key)].map(escape), "account-device-facts")}
+        ${factRow([this.kindOf(device, world), words.added(when(device.added)), state, words.key(device.key)].map(escape), "account-device-facts")}
       </span>
       ${here ? "" : `<button class="text-button quiet-button" type="button" data-act="remove-device" data-name="${escape(device.name)}" data-machine="${machine ? "1" : "0"}">${escape(words.removeDevice)}</button>`}
     </li>`;

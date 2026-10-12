@@ -974,6 +974,8 @@ pub fn run() {
             #[cfg(desktop)]
             remote_world::remote_probe,
             #[cfg(desktop)]
+            remote_world::remote_look,
+            #[cfg(desktop)]
             remote_world::remote_hub,
             #[cfg(desktop)]
             remote_world::remote_open,
