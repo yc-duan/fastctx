@@ -26,9 +26,8 @@ def replies(fixtures):
     yield {"reply": "server_invitation", "command": "(set -e;echo x86_64 unavailable >&2;exit 1)"}
     yield {"reply": "arrived", "resident": ADDRESS["resident"], "town": "project"}
     yield {"reply": "machines", "here": "desktop", "others": ["laptop"]}
-    # Where its own program runs, and colleagues lent by another account:
-    # fields older readers ignore.
-    yield {"reply": "machines", "here": "desktop", "others": ["laptop"], "program": "server",
+    # Colleagues lent by another account: fields older readers ignore.
+    yield {"reply": "machines", "here": "desktop", "others": ["laptop"],
            "colleagues": "gpu.acme", "colleagues_lent": True}
     yield {"reply": "machines", "here": "desktop", "others": ["laptop"], "collab": {
         "callees": [{"name": "deep", "account": "ada", "use_when": "Check a precise point", "lives_on": "laptop"}],
