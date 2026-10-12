@@ -211,8 +211,34 @@ export class NetworkMap {
     if (html === this.labelled) return;
     this.labelled = html;
     this.labels.innerHTML = html;
-    // A name near the edge is moved in until the whole of it shows.
+    // A name beside its ring that would run off the edge goes under the
+    // ring, or over it, where it fits whole: moved in, it would cover the
+    // ring. Any other name near the edge is moved in until the whole of it
+    // shows.
     const box = this.element.getBoundingClientRect();
+    const inside = (rect: DOMRect) => rect.left >= box.left && rect.right <= box.right && rect.top >= box.top && rect.bottom <= box.bottom;
+    const meets = (a: DOMRect, b: DOMRect) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const others = (label: HTMLElement) =>
+      [...this.labels.querySelectorAll<HTMLElement>(".map-node, .map-hub, .map-ring")].filter((other) => other !== label).map((other) => other.getBoundingClientRect());
+    for (const label of this.labels.querySelectorAll<HTMLElement>(".map-node.start, .map-node.end")) {
+      const point = placed.nodes.get(label.dataset.key!);
+      if (!point || inside(label.getBoundingClientRect())) continue;
+      const reach = placed.ring + 16;
+      const beside = label.className;
+      const style = label.getAttribute("style") ?? "";
+      label.classList.remove("start", "end");
+      label.classList.add("middle");
+      const taken = others(label);
+      const fits = [point[1] + reach + 12, point[1] - reach - 10].some((y) => {
+        label.setAttribute("style", at([point[0], y]));
+        const rect = label.getBoundingClientRect();
+        return inside(rect) && !taken.some((other) => meets(rect, other));
+      });
+      if (!fits) {
+        label.className = beside;
+        label.setAttribute("style", style);
+      }
+    }
     for (const label of this.labels.querySelectorAll<HTMLElement>(".map-node, .map-hub")) {
       const rect = label.getBoundingClientRect();
       const x = rect.left < box.left ? box.left - rect.left : rect.right > box.right ? box.right - rect.right : 0;
