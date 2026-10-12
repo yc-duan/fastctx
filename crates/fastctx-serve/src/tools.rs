@@ -102,10 +102,15 @@ fn opening(machines: Option<&Machines>) -> String {
 
 /// `run`'s `cwd`: weaker models reach for it to work on another machine's
 /// files, which only `on` does.
-fn cwd_description(here: Option<&str>) -> String {
+fn cwd_description(here: Option<&str>, alone: bool) -> String {
     let here = here.map(|here| format!(" ({here})")).unwrap_or_default();
+    let elsewhere = if alone {
+        ""
+    } else {
+        " For a directory on another machine, write `on MACHINE` in the script and `cd` there."
+    };
     format!(
-        "Absolute path of a directory on this machine{here} to start in; without it, the home directory. For a directory on another machine, write `on MACHINE` in the script and `cd` there."
+        "Absolute path of a directory on this machine{here} to start in; without it, the home directory.{elsewhere}"
     )
 }
 
@@ -143,7 +148,7 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     if !lent {
         properties["cwd"] = json!({
             "type": "string",
-            "description": cwd_description(machines.and_then(|machines| machines.here.as_deref()))
+            "description": cwd_description(machines.and_then(|machines| machines.here.as_deref()), alone)
         });
     }
     json!({
@@ -263,7 +268,7 @@ Other machines: write `on MACHINE` before a command, or give it a script on stan
     EOF
 - The part sent there sees your script's variables, functions and shell options; PATH, HOME, LANG and the machine's other settings are its own.
 - Its output, exit code and standard input work like any command's, in pipelines and `if` too.
-- A script quoted as one word, such as `on server 'cd /srv && ls'`, is refused: use a here-document.
+- A script after `on MACHINE` goes on standard input, as a here-document; one quoted as a single word is refused.
 - If the connection drops, it goes on there, and its end still reaches you.
 - Every command here works there too, such as `on server fastctx view /srv/app/app.ini`.";
 

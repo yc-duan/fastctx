@@ -45,11 +45,11 @@ pub fn run(args: CopyArgs) -> anyhow::Result<ExitCode> {
     Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
 }
 
-/// `MACHINE:PATH`, or a path on this machine made absolute. A one-letter
-/// prefix is a Windows drive, not a machine.
+/// `MACHINE:PATH`, or a path on this machine made absolute. A prefix of one
+/// English letter is a Windows drive, not a machine.
 fn place(text: &str) -> anyhow::Result<Place> {
     if let Some((machine, path)) = text.split_once(':')
-        && machine.len() >= 2
+        && !(machine.len() == 1 && machine.as_bytes()[0].is_ascii_alphabetic())
         && let Ok(machine) = Written::parse(machine)
     {
         return Ok(Place { machine: Some(machine.name), hub: machine.hub, path: path.to_string() });

@@ -77,6 +77,7 @@ impl Device<'_> {
             proof: self.key.sign(Domain::Session, binding),
             kind: self.kind,
             register: self.register,
+            any_names: true,
         }
     }
 }

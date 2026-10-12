@@ -59,6 +59,7 @@ mod binary_reading;
 mod desktop_presence;
 mod line_reading;
 mod local_files;
+mod names;
 mod pages;
 mod reading;
 mod save_as;
@@ -905,6 +906,7 @@ pub fn run() {
             connection_state,
             select_connection,
             reconnect,
+            names::name_problem,
             accounts::login,
             accounts::login_token,
             accounts::open_account,

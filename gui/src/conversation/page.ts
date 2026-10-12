@@ -538,7 +538,22 @@ export class ConversationPage {
       return left ? session.send() : null;
     });
     this.sendingShared = sent.catch(() => {});
+    if (key) this.quiet(sent);
     this.follow(key, sent);
+  }
+
+  /** Words sent from the shared input are not shown in it a second time
+   *  while they rise: the node empties the input once it has them, and the
+   *  reply that says so arrives with the emptied draft already applied. */
+  private quiet(sent: Promise<unknown>): void {
+    const input = this.input;
+    input.classList.add("words-going");
+    const done = () => {
+      input.classList.remove("words-going");
+      input.removeEventListener("input", done);
+    };
+    input.addEventListener("input", done);
+    sent.then(done, done);
   }
 
   /** Words shown below the turn's line while on their way: where they

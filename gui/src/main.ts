@@ -109,6 +109,7 @@ import { specimens, type Specimen } from "./specimen/sessions";
 import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
 import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
 import { specimenRemote } from "./specimen/remote";
+import { specimenNameProblem } from "./specimen/names";
 import { specimenMachineLog } from "./specimen/machine-log";
 import type { RemoteSeams } from "./app/remote-world";
 import { specimenClaudeOffers, specimenComputer, specimenFiles, specimenOffers, specimenOutput, specimenPhone, specimenPicture, specimenRead, specimenUpload } from "./specimen/seams";
@@ -172,6 +173,7 @@ import {
   type WorldNow,
   login,
   loginToken,
+  nameProblem,
   openAccount,
   createWorld,
   hereAddresses,
@@ -403,6 +405,7 @@ const remoteSeams: RemoteSeams = {
   join: remoteJoin,
   close: remoteClose,
   login: (address, admin, password, name) => login(address, admin, password, true, name),
+  nameProblem,
   token: async (hub, admin, machine) => {
     // An hour is the time the server has to use it: it does at once.
     const token = await accountChange(hub, admin, { change: "token", register: true, name: machine, kind: "computer", expires: new Date(Date.now() + 3_600_000).toISOString() });
@@ -428,6 +431,7 @@ const tokens = new Tokens({
   server: (login, name, hours) =>
     live ? serverCommand(login.hubName, login.account, name, hours) : Promise.resolve("echo 'Specimen: no real token or download'"),
   when: (at) => when(at, new Date()),
+  nameProblem: live ? nameProblem : specimenNameProblem,
   // Over SSH only from a computer: a phone carries no Linux program.
   remote:
     live && !onComputer()
@@ -1371,6 +1375,7 @@ function show(next: Place): void {
         // shows the button when asked as a phone.
         scan: canScan() ? scanToken : !live && params.has("phone") ? async () => "FX5SPECIMEN" : undefined,
         keep: asDevice ? undefined : () => (live ? keepHere() : notLive()),
+        nameProblem: live ? nameProblem : specimenNameProblem,
         drawing: {
           element: loginMap.element,
           mark: (machine) => {

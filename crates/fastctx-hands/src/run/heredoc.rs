@@ -235,12 +235,7 @@ pub(super) fn mark_on_pipes(source: &str) -> String {
         let name = std::str::from_utf8(&machine.text).ok()?;
         // A machine's name, or `name.hub`: at run time the two ends go
         // straight only when they are of one hub.
-        let part = |part: &str| {
-            !part.is_empty()
-                && !part.starts_with('-')
-                && part.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        };
-        let named = !machine.dynamic && name.split('.').count() <= 2 && name.split('.').all(part);
+        let named = !machine.dynamic && fastctx_types::access::Written::parse(name).is_ok();
         (written && named).then(|| (head.offset, name.to_string(), words.count()))
     };
     let mut marks: std::collections::BTreeMap<usize, (bool, Option<String>)> = std::collections::BTreeMap::new();

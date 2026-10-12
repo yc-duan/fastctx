@@ -17,11 +17,12 @@ use fastctx_net::directory::{Account, Member};
 use fastctx_net::login::HubSecrets;
 use fastctx_net::sign::{Bytes, Domain, PublicKey, Signature};
 use fastctx_net::wire::{Down, Joining, Refusal, SILENCE, Up};
-use fastctx_types::AccountName;
 use fastctx_types::machine_log::{Action, Actor, LoginMethod, Outcome};
+use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;
 use tokio::time::Instant;
 
+use crate::store::Store;
 use crate::{Hub, Socket, recv, refuse, send};
 
 /// Tries allowed in a row before each must wait.
@@ -313,6 +314,66 @@ fn record_opening(hub: &Hub, peer: SocketAddr, account: &AccountName, outcome: O
     result
 }
 
+/// That `asked` is taken: by a name written as it is, or written another
+/// way, as `GPU-2` takes `gpu-2`.
+pub(crate) fn taken_by(asked: &MachineName, taken: &MachineName) -> String {
+    if asked.as_str() == taken.as_str() {
+        format!("the name {asked} is taken on this hub")
+    } else {
+        format!("the name {asked} is taken on this hub, written {taken}")
+    }
+}
+
+/// What a device of a release from before names of any language is told
+/// when the hub has such a name.
+pub(crate) const OLDER_RELEASE: &str = "this hub has names beyond lowercase English letters, digits and hyphens, which this release of fastctx cannot read; update fastctx";
+
+/// Whether the hub or one of its members has a name that a release from
+/// before names of any language cannot read.
+pub(crate) fn beyond_older_releases(store: &Store) -> bool {
+    !store.hub.name.is_ascii_word() || store.book.directory.members.iter().any(|member| !member.name.is_ascii_word())
+}
+
+/// Names of any language reach every member in what the hub sends it, and a
+/// release from before them cannot read such a name: it would lose its hub
+/// over it. So a device of such a release comes in only while every name on
+/// the hub is one it reads, and a name it cannot read comes in only while
+/// every other member's last session said it reads them.
+fn readable(store: &Store, joining: &Joining) -> Result<(), String> {
+    if !joining.any_names && beyond_older_releases(store) {
+        return Err(format!("{OLDER_RELEASE} and log in again"));
+    }
+    let directory = &store.book.directory;
+    let name = directory.by_key(&joining.key).map_or(&joining.name, |member| &member.name);
+    match unread(store, name, Some(&joining.key)) {
+        Some(reason) => Err(reason),
+        None => Ok(()),
+    }
+}
+
+/// Why `name` cannot come into the hub now, if it cannot: members other
+/// than `except` whose last session did not say they read it.
+pub(crate) fn unread(store: &Store, name: &MachineName, except: Option<&PublicKey>) -> Option<String> {
+    if name.is_ascii_word() {
+        return None;
+    }
+    let older: Vec<String> = store
+        .book
+        .directory
+        .members
+        .iter()
+        .filter(|member| Some(&member.key) != except)
+        .filter(|member| !store.letters.get(&member.name).is_some_and(|letters| letters.any_names))
+        .map(|member| member.name.to_string())
+        .collect();
+    (!older.is_empty()).then(|| {
+        format!(
+            "the name {name} goes beyond lowercase English letters, digits and hyphens, and {} last connected with a release of fastctx that cannot read such a name; update fastctx there, or choose a name of lowercase English letters, digits and hyphens",
+            older.join(", ")
+        )
+    })
+}
+
 /// Whether the joining device holds the key it names, on this connection.
 fn proved(member: &Joining, binding: &[u8; 32]) -> Result<(), String> {
     member
@@ -336,6 +397,7 @@ fn join(
         let mut store = hub.store();
         let before = store.book.clone();
         let result = (|| {
+            readable(&store, joining)?;
             let found = store.book.directory.account(account).cloned();
             let found = found.ok_or_else(|| format!("there is no account {account}"))?;
             if found.locked {
@@ -351,8 +413,8 @@ fn join(
                     member.name.clone()
                 }
                 None => {
-                    if directory.member(&joining.name).is_some() {
-                        return Err(format!("the name {} is taken on this hub; log in under another", joining.name));
+                    if let Some(taken) = directory.member(&joining.name) {
+                        return Err(format!("{}; log in under another", taken_by(&joining.name, &taken.name)));
                     }
                     let home = (register && joining.kind.is_computer()).then(|| account.clone());
                     directory.members.push(Member {

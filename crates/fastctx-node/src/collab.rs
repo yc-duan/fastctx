@@ -230,7 +230,7 @@ fn asked_path(node: &Node, asker: &ResidentId, colleague: &fastctx_types::Addres
         .join("codex")
         .join("asked")
         .join(asker.as_str())
-        .join(colleague.machine.as_str())
+        .join(&*colleague.machine.file_name())
         .join(format!("{}.json", colleague.resident))
 }
 

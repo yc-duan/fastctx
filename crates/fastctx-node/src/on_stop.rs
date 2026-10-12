@@ -37,8 +37,7 @@ fn pending_stops(node: &Node) -> PathBuf {
 }
 
 fn pending_path(node: &Node, owner: &Address, machine: &MachineName, request: &str) -> PathBuf {
-    let id =
-        crate::speech::fixed_id("stop", &[owner.machine.as_str(), owner.resident.as_str(), machine.as_str(), request]);
+    let id = crate::speech::fixed_id("stop", &[owner.machine.key(), owner.resident.as_str(), machine.key(), request]);
     pending_stops(node).join(format!("{id}.json"))
 }
 
