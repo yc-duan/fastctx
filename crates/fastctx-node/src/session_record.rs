@@ -5,6 +5,7 @@ use std::io;
 use std::path::Path;
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
+use fastctx_types::layout::ConversationDir;
 use fastctx_types::session::SessionEvent;
 use serde::{Deserialize, Serialize};
 
@@ -16,14 +17,14 @@ struct Recorded {
     event: SessionEvent,
 }
 
-pub fn append(directory: &Path, key: &str, event: &SessionEvent) -> io::Result<bool> {
-    let records = directory.join("session-events");
+pub fn append(directory: &ConversationDir, key: &str, event: &SessionEvent) -> io::Result<bool> {
+    let records = directory.session_events();
     let path = records.join(format!("{key}.json"));
     if path.try_exists()? {
         return Ok(false);
     }
     ensure_private_dir(&records)?;
-    let counter = directory.join("session-events-sequence.json");
+    let counter = directory.session_sequence();
     let previous: u64 = match std::fs::read(&counter) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -40,8 +41,8 @@ pub fn append(directory: &Path, key: &str, event: &SessionEvent) -> io::Result<b
     Ok(true)
 }
 
-pub fn history(directory: &Path) -> io::Result<Vec<SessionEvent>> {
-    let mut records = read(&directory.join("session-events"))?;
+pub fn history(directory: &ConversationDir) -> io::Result<Vec<SessionEvent>> {
+    let mut records = read(&directory.session_events())?;
     // Old files cannot tell the order of equal timestamps. Their filename
     // supplies a deterministic tie break; new files carry the actual order.
     records.sort_by(|(left_name, left), (right_name, right)| {
@@ -51,26 +52,6 @@ pub fn history(directory: &Path) -> io::Result<Vec<SessionEvent>> {
             .then_with(|| left_name.cmp(right_name))
     });
     Ok(records.into_iter().map(|(_, record)| record.event).collect())
-}
-
-/// Reconcile the allocator after a resident's event files were carried to
-/// another town, including a return to a directory with an older counter.
-pub fn carried(from: &Path, to: &Path) -> io::Result<()> {
-    let mut sequence =
-        read(&to.join("session-events"))?.iter().filter_map(|(_, record)| record.sequence).max().unwrap_or(0);
-    for directory in [from, to] {
-        match std::fs::read(directory.join("session-events-sequence.json")) {
-            Ok(bytes) => sequence = sequence.max(serde_json::from_slice(&bytes).map_err(io::Error::other)?),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-    }
-    ensure_private_dir(to)?;
-    publish(
-        &to.join("session-events-sequence.json"),
-        &serde_json::to_vec(&sequence).map_err(io::Error::other)?,
-        Permissions::Private,
-    )
 }
 
 fn read(directory: &Path) -> io::Result<Vec<(String, Recorded)>> {

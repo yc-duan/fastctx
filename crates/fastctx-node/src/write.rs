@@ -38,16 +38,21 @@ pub(crate) fn write_job(
     op: WriteOp,
     job: Option<&fastctx_types::JobId>,
 ) -> io::Result<WriteOutcome> {
-    let directory = world.owner(here, town, owner);
+    let directory = world.owner(here, owner);
     let seen = load_seen(&directory.seen())?;
     let mut writer = Writer::new(world, here.as_str())?;
-    if let Some(job) = job {
-        let record: fastctx_types::run::JobRecord = serde_json::from_slice(&std::fs::read(directory.job_record(job))?)?;
+    // A job an older program still runs keeps its record where that program
+    // put it, and its scratch beside it.
+    let record_path = job.map(|job| world.job_record(here, town, &owner.clone().into(), job));
+    let job_directory =
+        record_path.as_ref().and_then(|path| path.parent()?.parent()).map(fastctx_types::layout::ConversationDir::at);
+    if let (Some(job), Some(path), Some(job_directory)) = (job, &record_path, &job_directory) {
+        let record: fastctx_types::run::JobRecord = serde_json::from_slice(&std::fs::read(path)?)?;
         if record.owner.resident() != Some(owner) || record.end.is_some() {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "write does not belong to an active job"));
         }
         if record.call_id.is_some() {
-            writer = writer.with_facts(directory.out().join(format!("{job}.tmp")).join("diffs"), here.clone())?;
+            writer = writer.with_facts(job_directory.job_scratch(job).join("diffs"), here.clone())?;
         }
     }
     let outcome = match op {
@@ -60,17 +65,17 @@ pub(crate) fn write_job(
         Ok(result) => &result.changes,
         Err(error) => &error.changes,
     };
-    if let Some(job) = job {
+    if let Some(path) = &record_path {
         for change in changes {
             if let Some(fact) = &change.fact {
-                crate::run_facts::write(&directory.job_record(job).with_extension("writes"), fact)?;
+                crate::run_facts::write(&path.with_extension("writes"), fact)?;
             }
         }
     }
     let written: Vec<Seen> =
         changes.iter().map(seen_after).collect::<io::Result<Vec<_>>>()?.into_iter().flatten().collect();
     if !written.is_empty() {
-        crate::residents::record_seen(world, here, owner, town, &written)?;
+        crate::residents::record_seen(world, here, owner, &written)?;
     }
     Ok(outcome)
 }

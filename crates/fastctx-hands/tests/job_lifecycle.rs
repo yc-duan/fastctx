@@ -26,7 +26,7 @@ fn main() -> Result {
         Some("supervise") => {
             run::supervisor::supervise_with(Path::new(&args[1]), Path::new(&args[2]), |world, job| {
                 let bash = PathBuf::from(std::env::var_os("FASTCTX_TEST_BASH").expect("test bash"));
-                let script = world.job_owner(&job.machine, job.town.as_ref(), &job.owner).job_script(&job.id);
+                let script = world.job_owner(&job.machine, &job.owner).job_script(&job.id);
                 Ok(shell::Prepared {
                     program: bash,
                     args: vec!["--noprofile".into(), "--norc".into(), display(&script).into()],
@@ -238,8 +238,8 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
             .unwrap();
         let ClientFrame::Call { id, call } =
             serde_json::from_slice(&connection.recv().await.unwrap().unwrap()).unwrap();
-        let Call::JobChanged { job, owner, town } = call else { panic!("unexpected supervisor call") };
-        let record = record::read(&world.job_owner(&machine, town.as_ref(), &owner).job_record(&job)).unwrap();
+        let Call::JobChanged { job, owner, town: _ } = call else { panic!("unexpected supervisor call") };
+        let record = record::read(&world.job_owner(&machine, &owner).job_record(&job)).unwrap();
         notified.lock().unwrap().push(record);
         // The supervisor only needs the call to complete; a refused reply
         // still proves delivery through the actual node protocol.

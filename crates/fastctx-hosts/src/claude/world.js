@@ -9,7 +9,7 @@ import { presentation } from './presentation.js'
 // then.
 //
 // It talks to the fastctx node only through files in the session's own
-// directory, `<world>/claude/<session id>/`:
+// directory, reserved by the node before its first write:
 //   session.json       written when the session starts
 //   transcript.json    where Claude Code keeps the session's own record
 //   limits.json        the account's limits as the session last read them
@@ -19,7 +19,7 @@ import { presentation } from './presentation.js'
 //   receipts/<id>      written once something was handed to the model
 //   stop.json          the turn the node asks to be stopped; read, never changed
 // Before a call to the World's own tools goes through, it writes which
-// session makes it to `<world>/claude-calls/<call id>.json`; the node takes
+// session makes it to `calls/<call id>.json` there; the node takes
 // that file when the call arrives, and sweeps those of ended sessions.
 // Which turn took what it handed over is an event of its own, before the
 // end of that turn: the node owes that turn's end to whoever it was from.
@@ -473,7 +473,12 @@ async function looked($, context) {
 
 async function startSession($, context) {
   const id = context.sessionId
-  context.dir = WORLD + '/claude/' + id
+  const command = [FASTCTX, 'claude-session-directory', WORLD, id]
+  command.push('--cwd', await $.session.cwd())
+  if (context.previous !== null && context.previous !== undefined) command.push('--previous', context.previous)
+  const reservedDirectory = await $.process.run(command)
+  if (reservedDirectory.exitCode !== 0) throw new Error('reserving the Claude session directory: ' + reservedDirectory.stderr)
+  context.dir = JSON.parse(reservedDirectory.stdout)
   // A reload can happen in the same clock tick, with old reports still
   // pending. Their reserved names survive in events or applied.
   for (const sub of ['events', 'applied']) {
@@ -946,7 +951,7 @@ async function proveCall($, context, id) {
   if (typeof id !== 'string' || id.length === 0) throw new Error('the call has no tool_use_id to identify it by')
   let name = ''
   for (let i = 0; i < id.length; i++) name += id.charCodeAt(i).toString(16).padStart(4, '0')
-  await $.fs.write(WORLD + '/claude-calls/' + name + '.json', JSON.stringify({ tool_use_id: id, registration: context.registration }))
+  await $.fs.write(context.dir + '/calls/' + name + '.json', JSON.stringify({ tool_use_id: id, registration: context.registration }))
 }
 
 async function worldTools($, registry) {

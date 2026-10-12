@@ -20,7 +20,7 @@ use std::sync::Arc;
 use fastctx_hands::told;
 use fastctx_hosts::codex::{Input, SendError};
 use fastctx_types::ipc::Failure;
-use fastctx_types::layout::ResidentDir;
+use fastctx_types::layout::ConversationDir;
 use fastctx_types::remote::Letter;
 use fastctx_types::residents::{
     About, Delivery, FIRST_WORDS_CHARS, Landed, MessageKind, MessageLine, Notice, Origin, Outcome, Pending,
@@ -100,7 +100,7 @@ pub(crate) async fn tell_here_locked(
     if !removed || matches!(delivery.notice, Notice::Words { .. } | Notice::Attached { .. }) {
         node.residents.active(to)?;
     }
-    let (about, town) = node
+    let (about, _) = node
         .residents
         .about(to)
         .ok_or_else(|| Failure::new(format!("no resident {to} lives on {}", node.machine())))?;
@@ -110,7 +110,7 @@ pub(crate) async fn tell_here_locked(
         Owed::Working => Vec::new(),
         Owed::Nobody => Vec::new(),
     };
-    let directory = node.world.resident(town.as_ref(), to);
+    let directory = node.world.conversation(to);
     let pending = Pending { delivery, readers, state: PendingState::Waiting, working, session: None };
     let kept = {
         let (directory, pending) = (directory.clone(), pending.clone());
@@ -150,7 +150,7 @@ pub async fn hand_over(
     node: &Arc<Node>,
     to: &ResidentId,
     about: &About,
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     pending: Pending,
 ) -> Result<Landed, Failure> {
     let gate = node.residents.management(to)?;
@@ -162,7 +162,7 @@ async fn hand_over_locked(
     node: &Arc<Node>,
     to: &ResidentId,
     about: &About,
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     pending: Pending,
 ) -> Result<Landed, Failure> {
     // Background delivery can load a thread before it submits a turn. Keep
@@ -212,7 +212,7 @@ async fn into_thread(
     node: &Arc<Node>,
     id: &ResidentId,
     thread: &str,
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     pending: Pending,
 ) -> Result<Landed, Failure> {
     submit_thread(node, id, thread, directory, pending, false, false)
@@ -231,8 +231,8 @@ pub async fn send_composer(
     let gate = node.residents.management(id)?;
     let _reading = gate.read().await;
     node.residents.active(id)?;
-    let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new("unknown resident"))?;
-    let directory = node.world.resident(town.as_ref(), id);
+    let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new("unknown resident"))?;
+    let directory = node.world.conversation(id);
     if about.world_started
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
@@ -254,7 +254,7 @@ async fn submit_thread(
     node: &Arc<Node>,
     id: &ResidentId,
     thread: &str,
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     pending: Pending,
     single: bool,
     idle_only: bool,
@@ -411,7 +411,7 @@ async fn submit_thread(
 pub async fn bind(
     node: &Arc<Node>,
     id: &ResidentId,
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     handover: &mut crate::delivery::Handover,
     turn: &str,
 ) -> Result<(), Failure> {
@@ -472,8 +472,10 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
             notice,
         },
     };
-    let Some((_, town)) = node.residents.about(id) else { return };
-    let directory = node.world.resident(town.as_ref(), id);
+    if !node.residents.knows(id) {
+        return;
+    }
+    let directory = node.world.conversation(id);
     match crate::delivery::event(&directory, &format!("heard:{}", delivery.id), &event) {
         Ok(true) => node.watchers.publish(id, &event),
         Ok(false) => return,
@@ -496,7 +498,7 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
             node.log.line(format_args!("recording that {id}'s question was answered: {error}"));
         }
     }
-    if let Some((about, town)) = node.residents.about(id)
+    if let Some((about, _)) = node.residents.about(id)
         && matches!(about.origin, Origin::Colleague { .. })
         && matches!(delivery.notice, Notice::Words { .. })
     {
@@ -504,14 +506,14 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
             at: delivery.at,
             what: MessageKind::Heard { from: from.clone(), turn: Some(turn.to_string()), text: text.clone() },
         };
-        let directory = node.world.resident(town.as_ref(), id);
+        let directory = node.world.conversation(id);
         if let Err(error) = crate::residents::append_message(&directory, &line) {
             node.log.line(format_args!("recording what {id} heard: {error}"));
         }
     }
 }
 
-async fn set_state(directory: &ResidentDir, id: &NoticeId, state: PendingState) -> Result<(), Failure> {
+async fn set_state(directory: &ConversationDir, id: &NoticeId, state: PendingState) -> Result<(), Failure> {
     let (directory, id) = (directory.clone(), id.clone());
     tokio::task::spawn_blocking(move || crate::inbox::set_state(&directory, &id, state))
         .await
@@ -520,7 +522,7 @@ async fn set_state(directory: &ResidentDir, id: &NoticeId, state: PendingState) 
 }
 
 /// Something kept went in: it is no longer kept, and its id is known.
-pub async fn settle(node: &Arc<Node>, directory: &ResidentDir, id: &NoticeId) -> Result<Option<Pending>, Failure> {
+pub async fn settle(node: &Arc<Node>, directory: &ConversationDir, id: &NoticeId) -> Result<Option<Pending>, Failure> {
     let (directory, id) = (directory.clone(), id.clone());
     let node = node.clone();
     tokio::task::spawn_blocking(move || crate::inbox::settle(&node, &directory, &id))
@@ -538,7 +540,7 @@ pub async fn restore(node: &Arc<Node>) {
         if resident.removed.is_some() {
             continue;
         }
-        let directory = node.world.resident(resident.town.as_ref(), &resident.id);
+        let directory = node.world.conversation(&resident.id);
         let result = async {
             // An older node may have saved only part of a terminal outbox.
             // Its saved outcome remains authoritative for every reader.
@@ -577,7 +579,7 @@ pub async fn recover(node: &Arc<Node>) {
     for resident in node.residents.everyone() {
         let node = node.clone();
         tokio::spawn(async move {
-            let directory = node.world.resident(resident.town.as_ref(), &resident.id);
+            let directory = node.world.conversation(&resident.id);
             if resident.removed.is_some() {
                 crate::turns::pay(&node, &resident.id, &directory).await;
                 return;
@@ -632,7 +634,7 @@ pub fn resume(node: &Arc<Node>, runtime: &tokio::runtime::Handle) {
         let node = node.clone();
         runtime.spawn(async move {
             let Some(_answering) = node.handoff.call() else { return };
-            let directory = node.world.resident(resident.town.as_ref(), &resident.id);
+            let directory = node.world.conversation(&resident.id);
             let result = async {
                 let speaking = node.residents.speaking(&resident.id).expect("resident on record");
                 let guard = speaking.lock().await;

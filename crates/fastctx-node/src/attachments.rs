@@ -1,10 +1,15 @@
-//! Verified user uploads, kept with the resident on its host's machine.
-//! A session that works on another machine is given its files other than
-//! images there (`world-gui.md`): each is placed on that machine, beside the
-//! session's other things there, while the upload kept where it lives stays
-//! the conversation's record. Where the user chose a machine for them, they
-//! go there instead; an agent lent to the account works on no machine, so
-//! for it the user must choose one.
+//! Verified user uploads, kept in the conversation's home on its host's
+//! machine. A session that works on another machine is given its files other
+//! than images there (`world-gui.md`): each is placed on that machine, in the
+//! conversation's guest room there, while the upload kept where it lives
+//! stays the conversation's record. Where the user chose a machine for them,
+//! they go there instead; an agent lent to the account works on no machine,
+//! so for it the user must choose one.
+//!
+//! A receipt keeps the path its file had when it arrived. Where a file is
+//! now always comes from the layout: from the receipt, only the names of its
+//! directory and of the file itself are taken, and only as hints that the
+//! receipt found there must then match.
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -17,6 +22,7 @@ use fastctx_platform::ipc::FrameReader;
 use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::attachments::{Attachment, UPLOAD_CHUNK, UploadFile, UploadTarget, Uploaded};
 use fastctx_types::ipc::Failure;
+use fastctx_types::layout::{ConversationDir, Kind};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use serde::{Deserialize, Serialize};
@@ -57,6 +63,7 @@ pub async fn upload(
     composer: Option<fastctx_types::composer::UploadScope>,
     mut source: FrameReader,
 ) -> Result<Uploaded, Failure> {
+    let _operation = node.data_operations.read().await;
     validate_file(&file)?;
     let machine = match machine {
         Some(machine) => machine,
@@ -216,6 +223,7 @@ pub async fn receive(
     composer: Option<fastctx_types::composer::UploadScope>,
     mut stream: Stream,
 ) -> Result<Uploaded, Failure> {
+    let _operation = node.data_operations.read().await;
     validate_file(&file)?;
     if let Some(cached) = cached(node, from, &target, &file, composer.as_ref()).await? {
         return Ok(cached);
@@ -275,23 +283,22 @@ async fn prepare(node: &Arc<Node>, target: UploadTarget, file: UploadFile) -> Re
             getrandom::fill(&mut identity).map_err(failure)?;
             let resident: ResidentId =
                 format!("{agent}-{:032x}", u128::from_be_bytes(identity)).parse().map_err(failure)?;
-            let directory = node.world.resident(town.as_ref(), &resident);
+            let directory = node.world.conversation(&resident);
             std::fs::create_dir_all(directory.path()).map_err(failure)?;
-            write_new(&directory.path().join("attachment-draft.json"), &Draft { agent, town: town.clone() })?;
+            write_new(&directory.draft(), &Draft { agent, town: town.clone() })?;
             (resident, town)
         }
         UploadTarget::Draft { resident, town } => {
-            let directory = node.world.resident(town.as_ref(), &resident);
-            let draft: Draft = read_json(&directory.path().join("attachment-draft.json"))?;
+            let directory = node.world.conversation(&resident);
+            let draft: Draft = read_json(&directory.draft())?;
             if draft.town != town || node.residents.about(&resident).is_some() {
                 return Err(failure("that upload draft is already open or belongs to another town"));
             }
             (resident, town)
         }
     };
-    // Uploads stay where they occurred when a resident changes towns. No
-    // resident-transition lock may be held while network bytes arrive.
-    let directory = node.world.resident(town.as_ref(), &resident).path().join("attachments");
+    // No resident storage lock may be held while network bytes arrive.
+    let directory = node.world.conversation(&resident).attachments();
     std::fs::create_dir_all(&directory).map_err(failure)?;
     let id = crate::speech::new_id("attachment");
     let directory = directory.join(id.as_str());
@@ -323,7 +330,15 @@ fn arriving_in(directory: &Path, mut attachment: Attachment) -> Result<Arriving,
     };
     let path = directory.join(name);
     attachment.path = crate::world::native(&path);
-    Ok(Arriving { attachment, temporary, path, output: Some(output), received: 0, hash: Sha256::new() })
+    Ok(Arriving {
+        attachment,
+        temporary,
+        path,
+        output: Some(output),
+        received: 0,
+        hash: Sha256::new(),
+        unpublished: false,
+    })
 }
 
 struct Arriving {
@@ -333,6 +348,7 @@ struct Arriving {
     output: Option<std::fs::File>,
     received: u64,
     hash: Sha256,
+    unpublished: bool,
 }
 
 impl Arriving {
@@ -355,7 +371,9 @@ impl Arriving {
         }
         self.output.take().expect("upload is open").sync_all().map_err(failure)?;
         std::fs::rename(&self.temporary, &self.path).map_err(failure)?;
+        self.unpublished = true;
         write_new(&self.path.parent().expect("attachment directory").join("receipt.json"), &self.attachment)?;
+        self.unpublished = false;
         Ok(self.attachment.clone())
     }
 }
@@ -363,6 +381,11 @@ impl Arriving {
 impl Drop for Arriving {
     fn drop(&mut self) {
         drop(self.output.take());
+        if self.unpublished
+            && let Err(error) = std::fs::remove_file(&self.path)
+        {
+            eprintln!("removing unpublished upload {}: {error}", self.path.display());
+        }
         if let Err(error) = std::fs::remove_file(&self.temporary)
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -372,9 +395,12 @@ impl Drop for Arriving {
 }
 
 fn write_new(path: &std::path::Path, value: &impl Serialize) -> Result<(), Failure> {
-    let mut file = std::fs::OpenOptions::new().create_new(true).write(true).open(path).map_err(failure)?;
-    serde_json::to_writer(&mut file, value).map_err(failure)?;
-    file.sync_all().map_err(failure)
+    fastctx_platform::publish_new(
+        path,
+        &serde_json::to_vec(value).map_err(failure)?,
+        fastctx_platform::Permissions::Private,
+    )
+    .map_err(failure)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T, Failure> {
@@ -410,7 +436,7 @@ fn slot_name(attachment: &Attachment) -> Option<&str> {
 
 /// The upload kept here for `attachment` of `resident`: the one it names, or
 /// the one a copy placed on another machine was made from, known by its id
-/// and its file.
+/// and its file. What it gives says where the file is now.
 fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Result<Attachment, Failure> {
     let unknown = || failure(format!("{} was not attached for {resident} on {}", attachment.file.name, node.machine()));
     if attachment.owner.resident != *resident {
@@ -421,32 +447,70 @@ fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Res
     // supplies only a slot hint under this resident; stored equality below
     // still authenticates the whole receipt before any bytes are opened.
     let slot = if placed { attachment.id.as_str() } else { slot_name(attachment).unwrap_or(attachment.id.as_str()) };
-    let receipt = |town: Option<&TownName>| {
-        node.world.resident(town, resident).path().join("attachments").join(slot).join("receipt.json")
+    let load = |room: &ConversationDir| -> Result<Option<Attachment>, Failure> {
+        match std::fs::read(room.attachments().join(slot).join("receipt.json")) {
+            Ok(bytes) => serde_json::from_slice::<Attachment>(&bytes).map(Some).map_err(failure),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(failure(error)),
+        }
     };
-    let load = |town| match std::fs::read(receipt(town)) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(failure),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(failure(error)),
+    let same = |kept: &Attachment| {
+        if placed {
+            kept.id == attachment.id && kept.file == attachment.file
+        } else {
+            kept.id == attachment.id && kept.owner == attachment.owner && kept.file == attachment.file
+        }
     };
-    let mut kept: Option<Attachment> = load(attachment.town.as_ref())?;
-    // A copy placed on a machine of another hub went outside any project
-    // there; the upload it was made from is under the project it was for.
-    if kept.is_none() && placed {
-        let towns = node.world.towns().map_err(failure)?;
-        for town in towns.iter().map(Some).chain([None]) {
-            if let Some(found) = load(town)? {
-                kept = Some(found);
+    // A copy placed here sits in the guest room its path names; an upload
+    // made here, or the original a copy elsewhere was made from, in the
+    // conversation's home. One moved from an older layout may sit in any
+    // room of this resident.
+    let hinted = if placed { None } else { room_named(node, attachment) };
+    let home = node.world.conversation(resident);
+    let mut rooms: Vec<ConversationDir> = hinted.into_iter().chain([home]).collect();
+    let mut found = None;
+    for pass in 0..2 {
+        for room in &rooms {
+            if let Some(kept) = load(room)?.filter(&same) {
+                found = Some((room.clone(), kept));
                 break;
             }
         }
+        if found.is_some() || pass == 1 {
+            break;
+        }
+        rooms = node
+            .world
+            .kept()
+            .map_err(failure)?
+            .into_iter()
+            .filter(|kept| kept.kind.resident() == resident)
+            .map(|kept| kept.directory)
+            .collect();
     }
-    let kept = kept.ok_or_else(Failure::original_gone)?;
-    let same = if placed { kept.id == attachment.id && kept.file == attachment.file } else { kept == *attachment };
-    if !same {
-        return Err(failure("the attachment receipt differs from the stored upload"));
-    }
+    let (room, mut kept) = match found {
+        Some(found) => found,
+        None if rooms.iter().any(|room| load(room).ok().flatten().is_some()) => {
+            return Err(failure("the attachment receipt differs from the stored upload"));
+        }
+        None => return Err(Failure::original_gone()),
+    };
+    let leaf = Path::new(&kept.path).file_name().ok_or_else(|| failure("the stored upload has no filename"))?;
+    kept.path = crate::world::native(&room.attachments().join(slot).join(leaf));
     Ok(kept)
+}
+
+/// The room a copy placed on this machine names in its path: the guest room
+/// of the conversation it was placed for, when its name says so.
+fn room_named(node: &Node, attachment: &Attachment) -> Option<ConversationDir> {
+    let room = Path::new(&attachment.path).parent()?.parent()?.parent()?.file_name()?.to_str()?;
+    match Kind::of(room)? {
+        Kind::Guest(owner) if owner.resident == attachment.owner.resident => Some(node.world.guest(&owner)),
+        Kind::Unplaced(id) if id == attachment.owner.resident => {
+            Some(ConversationDir::at(&node.world.conversations().join(room)))
+        }
+        _ => None,
+    }
 }
 
 /// Locate an immutable original from its recorded receipt, including when
@@ -457,15 +521,7 @@ pub(crate) fn verified_original(
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> Result<(String, fastctx_platform::file_read::Snapshot), Failure> {
     let kept = kept_here(node, &attachment.owner.resident, attachment)?;
-    let leaf =
-        std::path::Path::new(&kept.path).file_name().ok_or_else(|| failure("the stored upload has no filename"))?;
-    let path = node
-        .world
-        .resident(kept.town.as_ref(), &kept.owner.resident)
-        .path()
-        .join("attachments")
-        .join(slot_name(&kept).ok_or_else(|| failure("the stored upload has no valid receipt slot"))?)
-        .join(leaf);
+    let path = PathBuf::from(&kept.path);
     let file = fastctx_platform::file_read::open(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound { Failure::original_gone() } else { failure(error) }
     })?;
@@ -641,11 +697,13 @@ pub async fn take_placed(
     attachment: Attachment,
     mut stream: Stream,
 ) -> Result<Attachment, Failure> {
+    let _operation = node.data_operations.read().await;
     validate_file(&attachment.file)?;
-    if attachment.owner != (Address { machine: from.clone(), resident: resident.clone() }) {
+    let origin = Address { machine: from.clone(), resident: resident.clone() };
+    if attachment.owner != origin {
         return Err(Failure::not_run(format!("{from} places files only of its own sessions")));
     }
-    let base = node.world.resident(attachment.town.as_ref(), &resident).path().join("attachments");
+    let base = node.world.guest(&origin).attachments();
     let wanted = Attachment { owner: Address { machine: node.machine(), resident }, ..attachment };
     let (directory, held) = {
         let wanted = wanted.clone();
@@ -697,6 +755,26 @@ fn slot(base: &Path, wanted: &Attachment) -> Result<(PathBuf, Option<Attachment>
     unreachable!("some directory is free")
 }
 
+/// A draft reserved for one Open: the lock spans host creation, and once the
+/// conversation is recorded its lock file goes with it.
+pub struct Opening {
+    lock: Option<FileLock>,
+    directory: Option<ConversationDir>,
+}
+
+impl Drop for Opening {
+    fn drop(&mut self) {
+        drop(self.lock.take());
+        if let Some(directory) = &self.directory
+            && directory.about().exists()
+            && let Err(error) = std::fs::remove_file(directory.draft_lock())
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!("removing {}: {error}", directory.draft_lock().display());
+        }
+    }
+}
+
 /// Reserves a draft for precisely one Open. The lock spans host creation;
 /// the ordinary resident record prevents reusing the draft after success.
 pub async fn opening(
@@ -704,25 +782,25 @@ pub async fn opening(
     agent: &AgentName,
     town: Option<&TownName>,
     attachments: &[Attachment],
-) -> Result<(ResidentId, Option<FileLock>), Failure> {
+) -> Result<(ResidentId, Opening), Failure> {
     let Some(first) = attachments.first() else {
-        return Ok((node.residents.new_id(agent)?, None));
+        return Ok((node.residents.new_id(agent)?, Opening { lock: None, directory: None }));
     };
     let id = first.owner.resident.clone();
     if first.owner.machine != node.machine() || first.town.as_ref() != town {
         return Err(failure("the upload draft belongs to another machine or town"));
     }
-    let directory = node.world.resident(town, &id);
-    let draft: Draft = read_json(&directory.path().join("attachment-draft.json"))?;
+    let directory = node.world.conversation(&id);
+    let draft: Draft = read_json(&directory.draft())?;
     if draft.agent != *agent || draft.town.as_ref() != town {
         return Err(failure("the upload draft is for another agent or town"));
     }
-    let lock = FileLock::try_acquire(&directory.path().join("attachment-open.lock"))
+    let lock = FileLock::try_acquire(&directory.draft_lock())
         .map_err(failure)?
         .ok_or_else(|| failure("this upload draft is already being opened"))?;
     if node.residents.about(&id).is_some() {
         return Err(failure("this upload draft has already been opened"));
     }
     resolve(node, &id, attachments).await?;
-    Ok((id, Some(lock)))
+    Ok((id, Opening { lock: Some(lock), directory: Some(directory) }))
 }

@@ -142,6 +142,9 @@ pub struct ThreadSpec {
     /// desktop app's sidebar; given once, when it is started. Without one,
     /// the client that shows it first names it from its words.
     pub name: Option<String>,
+    /// Where the model and reasoning chosen for its next turns are kept,
+    /// among its conversation's own records.
+    pub choices: PathBuf,
 }
 
 /// Words for a thread.
@@ -708,7 +711,7 @@ impl CodexHost {
             entry.tools_missing = None;
             entry.spec.clone().ok_or_else(|| format!("how the Codex thread {thread} was started is not known"))?
         };
-        let selection = controls::Selection::read(&self.workdir, thread)?;
+        let selection = controls::Selection::read(&spec.choices)?;
         let answer = server
             .request(
                 "thread/resume",

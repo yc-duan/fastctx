@@ -105,8 +105,7 @@ pub(crate) async fn open(
             if path != expected && record.stderr.as_ref().is_none_or(|stderr| std::path::Path::new(stderr) != path) {
                 return Err(failed("the path is not this job's output"));
             }
-            let job_record =
-                node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_record(&record.id);
+            let job_record = node.world.job_owner(&node.machine(), &record.owner).job_record(&record.id);
             let notes_record = (path == expected).then(|| job_record.clone());
             (Some(job_record), notes_record)
         }

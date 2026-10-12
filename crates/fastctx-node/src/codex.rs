@@ -83,10 +83,72 @@ pub async fn adopt(node: &Arc<Node>) {
 /// app-server's end. What the agent did is in the thread's own record,
 /// and what grows an item is for those watching live; were the node to
 /// stop, its app-server stops with it and nobody watches.
+///
+/// A thread nobody claims may still be one the World is starting or forking,
+/// whose reports can come before Codex answers which thread it is; its
+/// reports are kept for as long as such a start is unanswered. Once none is,
+/// a thread nobody claimed is none of the World's, such as a subagent Codex
+/// itself spawned: its reports go, and the World keeps none of its text.
 #[derive(Default)]
 pub struct Unclaimed {
     state: std::sync::Mutex<Reports>,
     workers: crate::leases::Registry<String, tokio::sync::Mutex<()>>,
+    starting: std::sync::Mutex<usize>,
+}
+
+/// A thread the World is starting or forking, until it is claimed or the
+/// start failed.
+pub struct Starting {
+    node: Arc<Node>,
+}
+
+/// Holds reports of threads nobody claims until the thread started now is
+/// claimed: keep it from before Codex is asked until after `claim`.
+pub fn starting(node: &Arc<Node>) -> Starting {
+    *node.unclaimed.starting.lock().expect("never poisoned") += 1;
+    Starting { node: node.clone() }
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        let none = {
+            let mut starting = self.node.unclaimed.starting.lock().expect("never poisoned");
+            *starting -= 1;
+            *starting == 0
+        };
+        // The reports' lock first, as keeping a report takes them.
+        if none {
+            let mut state = self.node.unclaimed.state.lock().expect("never poisoned");
+            state.queues.retain(|thread, _| self.node.residents.resident_of_thread(thread).is_some());
+            if *self.node.unclaimed.starting.lock().expect("never poisoned") == 0
+                && let Err(error) = discard_unclaimed(&self.node)
+            {
+                self.node.log.line(format_args!("removing reports of threads nobody claimed: {error}"));
+            }
+        }
+    }
+}
+
+/// Removes what was kept of threads nobody claimed. The caller holds the
+/// reports' lock, so no report is being kept meanwhile; a claimed thread's
+/// reports were taken in when it was claimed.
+fn discard_unclaimed(node: &Node) -> std::io::Result<()> {
+    let entries = match std::fs::read_dir(node.world.path().join("codex-reports")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let path = entry?.path();
+        let claimed = path.extension().is_some_and(|extension| extension == "json")
+            && serde_json::from_slice::<KeptReports>(&std::fs::read(&path)?)
+                .ok()
+                .is_some_and(|kept| node.residents.resident_of_thread(&kept.thread).is_some());
+        if !claimed {
+            std::fs::remove_file(path)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -101,7 +163,14 @@ struct KeptReports {
 }
 
 fn pending_path(node: &Node, thread: &str) -> std::path::PathBuf {
-    node.world.path().join("codex-reports").join(format!("{}.jsonl", crate::speech::fixed_id("thread", &[thread])))
+    match node.residents.resident_of_thread(thread) {
+        Some(id) => node.world.conversation(&id).books().join("host-reports.jsonl"),
+        None => node
+            .world
+            .path()
+            .join("codex-reports")
+            .join(format!("{}.jsonl", crate::speech::fixed_id("thread", &[thread]))),
+    }
 }
 
 fn restore(node: &Node, thread: &str, state: &mut Reports) -> std::io::Result<()> {
@@ -166,10 +235,8 @@ fn durable(event: &HostEvent) -> bool {
 }
 
 fn save(node: &Node, thread: &str, events: &[HostEvent]) -> std::io::Result<()> {
-    let directory = node.world.path().join("codex-reports");
-    fastctx_platform::ensure_private_dir(&directory)?;
-    let key = crate::speech::fixed_id("thread", &[thread]);
-    let path = directory.join(format!("{key}.json"));
+    let path = pending_path(node, thread).with_extension("json");
+    fastctx_platform::ensure_private_dir(path.parent().expect("report directory"))?;
     let events: Vec<_> = events.iter().filter(|event| durable(event)).cloned().collect();
     if events.is_empty() {
         return match std::fs::remove_file(path) {
@@ -191,15 +258,9 @@ fn enqueue(node: &Arc<Node>, thread: String, event: HostEvent) -> std::io::Resul
         let mut state = node.unclaimed.state.lock().expect("never poisoned");
         let claimed = node.residents.resident_of_thread(&thread).is_some();
         if !claimed {
-            use std::io::Write;
-            let path = pending_path(node, &thread);
-            fastctx_platform::ensure_private_dir(path.parent().expect("reports directory"))?;
-            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-            let mut bytes = serde_json::to_vec(&event).map_err(std::io::Error::other)?;
-            bytes.push(b'\n');
-            file.write_all(&bytes)?;
-            if durable(&event) {
-                file.sync_all()?;
+            let starting = *node.unclaimed.starting.lock().expect("never poisoned") > 0;
+            if starting && durable(&event) {
+                state.queues.entry(thread).or_default().push(event.clone());
             }
             node.codex.acknowledge(&event);
             node.handoff.changed();
@@ -275,8 +336,7 @@ async fn drain(node: &Arc<Node>, thread: &str) {
                 Err(error) => Err(error),
             },
             HostEvent::Desk { turn, desk, .. } => {
-                let town = node.residents.town_of(&id).flatten();
-                let directory = node.world.resident(town.as_ref(), &id);
+                let directory = node.world.conversation(&id);
                 match crate::delivery::terminal(&directory, &turn) {
                     Ok(None) => {
                         crate::desk::used(node, &id, &turn, desk);
@@ -338,6 +398,8 @@ async fn drain(node: &Arc<Node>, thread: &str) {
 }
 
 /// Restores report queues before hearing any more from the new app-server.
+/// Nothing is being started as the node starts: what was kept of a thread
+/// nobody claimed goes.
 pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
     {
         let mut state = node.unclaimed.state.lock().expect("never poisoned");
@@ -370,6 +432,9 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
             {
                 node.log.line(format_args!("restoring pending reports for {thread}: {error}"));
             }
+        }
+        if let Err(error) = discard_unclaimed(&node) {
+            node.log.line(format_args!("removing reports of threads nobody claimed: {error}"));
         }
     }
     let threads: Vec<String> = node.unclaimed.state.lock().expect("never poisoned").queues.keys().cloned().collect();

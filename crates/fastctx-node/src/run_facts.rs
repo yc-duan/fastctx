@@ -8,7 +8,7 @@ pub(crate) use updates::job as update_job;
 
 use crate::Node;
 use fastctx_platform::{Permissions, publish, publish_new};
-use fastctx_types::layout::ResidentDir;
+use fastctx_types::layout::ConversationDir;
 use fastctx_types::run::{OutputPiece, RunReply};
 use fastctx_types::run_facts::{OutputRef, RunFacts, WriteFact};
 use fastctx_types::session::{Happened, SessionEvent, What};
@@ -90,16 +90,16 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
     })
 }
 
-fn path(directory: &ResidentDir, id: &str) -> std::path::PathBuf {
+fn path(directory: &ConversationDir, id: &str) -> std::path::PathBuf {
     // Host ids are opaque input, never path components.
     directory.calls().join(format!("{}.json", fastctx_hands::files::content_hash(id.as_bytes())))
 }
 
-pub(crate) fn keep(directory: &ResidentDir, id: &str, facts: &RunFacts) -> io::Result<()> {
+pub(crate) fn keep(directory: &ConversationDir, id: &str, facts: &RunFacts) -> io::Result<()> {
     storage::keep(directory, id, facts, false)
 }
 
-pub(crate) fn attach(directory: &ResidentDir, event: &mut SessionEvent) -> io::Result<()> {
+pub(crate) fn attach(directory: &ConversationDir, event: &mut SessionEvent) -> io::Result<()> {
     let item = match &mut event.happened {
         Happened::Began { item, .. } | Happened::Updated { item, .. } | Happened::Finished { item, .. } => item,
         _ => return Ok(()),
@@ -139,8 +139,10 @@ pub(crate) fn keep_for(
     id: &str,
     facts: &RunFacts,
 ) -> io::Result<()> {
-    let (_, town) = node.residents.about(resident).ok_or_else(|| io::Error::other("unknown resident"))?;
-    storage::keep(&node.world.resident(town.as_ref(), resident), id, facts, true)
+    if !node.residents.knows(resident) {
+        return Err(io::Error::other("unknown resident"));
+    }
+    storage::keep(&node.world.conversation(resident), id, facts, true)
 }
 
 pub(crate) fn keep_reply(
@@ -149,8 +151,10 @@ pub(crate) fn keep_reply(
     id: &str,
     facts: &RunFacts,
 ) -> io::Result<()> {
-    let (_, town) = node.residents.about(resident).ok_or_else(|| io::Error::other("unknown resident"))?;
-    keep(&node.world.resident(town.as_ref(), resident), id, facts)
+    if !node.residents.knows(resident) {
+        return Err(io::Error::other("unknown resident"));
+    }
+    keep(&node.world.conversation(resident), id, facts)
 }
 
 pub(crate) fn read_since(record: &Path, cursor: &mut u64) -> io::Result<Vec<WriteFact>> {

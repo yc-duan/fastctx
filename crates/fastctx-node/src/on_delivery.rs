@@ -108,8 +108,8 @@ struct Parked {
     delivery: Delivery,
 }
 
-fn directory(node: &Node) -> PathBuf {
-    node.world.path().join("on-deliveries")
+fn directory(node: &Node, owner: &Address) -> PathBuf {
+    node.world.owner(&node.machine(), owner).book("on-deliveries")
 }
 
 fn receipt(
@@ -124,7 +124,7 @@ fn receipt(
     if let Some(request) = request {
         parts.push(request.as_str());
     }
-    named(node, &parts).with_extension("taken")
+    named(node, &Address { machine: owner.clone(), resident: to.clone() }, &parts).with_extension("taken")
 }
 
 fn cancellation(
@@ -134,31 +134,41 @@ fn cancellation(
     machine: &MachineName,
     request: &NoticeId,
 ) -> PathBuf {
-    named(node, &[owner.key(), to.as_str(), machine.key(), request.as_str()]).with_extension("stopped")
+    named(
+        node,
+        &Address { machine: owner.clone(), resident: to.clone() },
+        &[owner.key(), to.as_str(), machine.key(), request.as_str()],
+    )
+    .with_extension("stopped")
 }
 
 pub(crate) fn cancelled(node: &Node, origin: &OnOrigin, machine: &MachineName) -> io::Result<()> {
     let Some(request) = &origin.request else { return Ok(()) };
     let _state = node.on_deliveries.state.lock().expect("never poisoned");
     let path = cancellation(node, &origin.resident.machine, &origin.resident.resident, machine, request);
-    ensure_private_dir(&directory(node))?;
+    ensure_private_dir(path.parent().expect("receipt directory"))?;
     publish(&path, b"", Permissions::Private)
 }
 
-fn named(node: &Node, parts: &[&str]) -> PathBuf {
+fn named(node: &Node, owner: &Address, parts: &[&str]) -> PathBuf {
     let mut hash = Sha256::new();
     for part in parts {
         hash.update(part.as_bytes());
         hash.update([0]);
     }
     let name: String = hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
-    directory(node).join(name)
+    directory(node, owner).join(name)
+}
+
+fn receipt_exists(node: &Node, path: &std::path::Path) -> io::Result<bool> {
+    Ok(path.try_exists()?
+        || node.world.path().join("on-deliveries").join(path.file_name().expect("receipt name")).try_exists()?)
 }
 
 fn stopped(node: &Node, to: &ResidentId, machine: &MachineName, request: Option<&NoticeId>) -> io::Result<bool> {
     request
         .map(|request| {
-            Ok(cancellation(node, &node.machine(), to, machine, request).try_exists()?
+            Ok(receipt_exists(node, &cancellation(node, &node.machine(), to, machine, request))?
                 || crate::on_stop::pending_cancellation(node, to, machine, request)?)
         })
         .transpose()
@@ -192,15 +202,17 @@ pub(crate) fn park(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> io
         ensure_private_dir(path.parent().expect("receipt directory"))?;
         publish(&path, b"", Permissions::Private)?;
         let owner = Address { machine: node.machine(), resident: to.clone() };
-        let (_, town) = node.residents.about(to).ok_or_else(|| io::Error::other("the completion owner is unknown"))?;
-        let directory = node.world.resident(town.as_ref(), to);
+        if !node.residents.knows(to) {
+            return Err(io::Error::other("the completion owner is unknown"));
+        }
+        let directory = node.world.conversation(to);
         let id = crate::inbox::end_id(&owner, machine, job, request.as_ref());
         crate::inbox::consume(&directory, &id)?;
         let letter = crate::speech::fixed_id("letter", &[machine.key(), id.as_str()]);
         crate::inbox::consume(&directory, &letter)?;
         return Ok(true);
     }
-    if path.try_exists()? || stopped(node, to, machine, request.as_ref())? {
+    if receipt_exists(node, &path)? || stopped(node, to, machine, request.as_ref())? {
         return Ok(true);
     }
     let owner = Address { machine: node.machine(), resident: to.clone() };
@@ -208,7 +220,7 @@ pub(crate) fn park(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> io
     if !nested && !held(&state, &owner, machine, job, request.as_ref()) {
         return Ok(false);
     }
-    ensure_private_dir(&directory(node))?;
+    ensure_private_dir(path.parent().expect("receipt directory"))?;
     let parked = Parked { to: to.clone(), delivery: delivery.clone() };
     let bytes = serde_json::to_vec(&parked).map_err(io::Error::other)?;
     match publish_new(&path.with_extension("json"), &bytes, Permissions::Private) {
@@ -238,15 +250,18 @@ pub(crate) fn resume(node: &Arc<Node>) {
 }
 
 async fn drain(node: &Arc<Node>) -> io::Result<()> {
-    let entries = match std::fs::read_dir(directory(node)) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
+    let entries =
+        node.world.book_directories("on-deliveries")?.into_iter().flat_map(|directory| {
+            match std::fs::read_dir(directory) {
+                Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect::<Vec<_>>(),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+                Err(error) => vec![Err(error)],
+            }
+        });
     let mut failed = false;
     for entry in entries {
         let path = match entry {
-            Ok(entry) => entry.path(),
+            Ok(path) => path,
             Err(error) => {
                 failed = true;
                 node.log.line(format_args!("reading held on completions: {error}"));
@@ -277,7 +292,7 @@ async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> io::Result<()> {
         if held(&state, &owner, machine, job, request.as_ref()) {
             return Ok(());
         }
-        receipt(node, &node.machine(), &parked.to, machine, job, request.as_ref()).try_exists()?
+        receipt_exists(node, &receipt(node, &node.machine(), &parked.to, machine, job, request.as_ref()))?
             || stopped(node, &parked.to, machine, request.as_ref())?
     };
     if !taken && let Some(follower) = follower.as_ref().filter(|follower| *follower != &node.machine()) {
@@ -325,6 +340,6 @@ pub(crate) fn status(
     request: Option<&NoticeId>,
 ) -> io::Result<(bool, bool)> {
     let state = node.on_deliveries.state.lock().expect("never poisoned");
-    let taken = receipt(node, &owner.machine, &owner.resident, machine, job, request).try_exists()?;
+    let taken = receipt_exists(node, &receipt(node, &owner.machine, &owner.resident, machine, job, request))?;
     Ok((taken, held(&state, owner, machine, job, request)))
 }

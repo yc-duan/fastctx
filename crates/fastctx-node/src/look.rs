@@ -94,7 +94,7 @@ pub(crate) fn read_here(
     }
     if ResidentId::try_from(id).is_ok() {
         let Some(record) = record else { return Ok(None) };
-        let directory = world.resident(record.town.as_ref(), &record.id);
+        let directory = world.conversation(&record.id);
         let mut actions: Vec<Action> = lines(&directory.actions())?;
         let actions_total = actions.len();
         actions.drain(..actions_total.saturating_sub(ACTIONS));

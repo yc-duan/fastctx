@@ -1,35 +1,66 @@
 //! A resident's records on this machine (`world-town.md`, 居民目录): who it
-//! is (`about`), what it is doing (`now`), what it did (`actions`), what it
-//! saw (`seen`), and for a colleague what it was told and answered
-//! (`messages`). Each line file grows by whole lines; `about` is written
-//! once; `now` is replaced whole, so a reader sees one version or the next.
+//! is (`about`), which project it is in (`town`), what it is doing (`now`),
+//! what it did (`actions`), what it saw (`seen`), and for a colleague what it
+//! was told and answered (`messages`). Each line file grows by whole lines;
+//! `about`, `town` and `now` are replaced whole, so a reader sees one
+//! version or the next.
 
 use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::Path;
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
-use fastctx_types::layout::{ResidentDir, WorldDir};
-use fastctx_types::residents::{About, Action, MessageLine, Moved, Now, Seen};
-use fastctx_types::{Address, MachineName, ResidentId, TownName};
+use fastctx_types::layout::{ConversationDir, WorldDir};
+use fastctx_types::residents::{About, Action, MessageLine, Now, Places, Seen};
+use fastctx_types::{Address, MachineName, ResidentId};
+use jiff::Timestamp;
 
-/// Writes a new resident's `about`; fails if it has one.
-pub fn create(directory: &ResidentDir, about: &About) -> io::Result<()> {
+/// Writes a new resident's `about` and the project it starts in; fails if
+/// it has an `about`.
+pub fn create(directory: &ConversationDir, about: &About, places: &Places) -> io::Result<()> {
     ensure_private_dir(directory.path())?;
+    // Its project first: a directory with an `about` is a resident, and a
+    // resident's project is always known.
+    write_places(directory, places)?;
     publish_new(&directory.about(), &json(about)?, Permissions::Private)
 }
 
 /// Replaces a resident's `about`, as when its host first tells the World
 /// which session it is.
-pub fn write_about(directory: &ResidentDir, about: &About) -> io::Result<()> {
+pub fn write_about(directory: &ConversationDir, about: &About) -> io::Result<()> {
     publish(&directory.about(), &json(about)?, Permissions::Private)
 }
 
-pub fn read_about(directory: &ResidentDir) -> io::Result<About> {
+pub fn read_about(directory: &ConversationDir) -> io::Result<About> {
     read_json(&directory.about())
 }
 
+/// The projects the resident has been in. One written before projects were
+/// recorded apart was born in no project.
+pub fn read_places(directory: &ConversationDir, about: &About) -> io::Result<Places> {
+    match read_json(&directory.town()) {
+        Ok(places) => Ok(places),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Places::born(None, about.born_at)),
+        Err(error) => Err(error),
+    }
+}
+
+/// Replaces the resident's projects whole: changing projects is this one
+/// write, which either happened or did not.
+pub fn write_places(directory: &ConversationDir, places: &Places) -> io::Result<()> {
+    publish(&directory.town(), &json(places)?, Permissions::Private)
+}
+
+/// When the user removed the resident from the World, if they did.
+pub fn read_removed(directory: &ConversationDir) -> io::Result<Option<Timestamp>> {
+    match read_json(&directory.removed()) {
+        Ok(at) => Ok(Some(at)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// The resident's `now`; `None` when its host never told the World.
-pub fn read_now(directory: &ResidentDir) -> io::Result<Option<Now>> {
+pub fn read_now(directory: &ConversationDir) -> io::Result<Option<Now>> {
     match read_json::<serde_json::Value>(&directory.now()) {
         Ok(mut value) => {
             // Earlier nodes stored a single turn's readers as an array.
@@ -49,157 +80,96 @@ pub fn read_now(directory: &ResidentDir) -> io::Result<Option<Now>> {
     }
 }
 
-pub fn write_now(directory: &ResidentDir, now: &Now) -> io::Result<()> {
+pub fn write_now(directory: &ConversationDir, now: &Now) -> io::Result<()> {
     publish(&directory.now(), &json(now)?, Permissions::Private)
 }
 
-/// Where the resident went from this directory, if it moved.
-pub fn read_moved(directory: &ResidentDir) -> io::Result<Option<Moved>> {
-    match read_json(&directory.moved()) {
-        Ok(moved) => Ok(Some(moved)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-/// Moves a resident from the town `from` to `to`: its old directory is
-/// marked as left first, then its directory in `to` is made, or marked as
-/// its home again, with its `about` and `now`. What it saw comes along, as
-/// writing checks it; what waits to be told to it moves. Every step can be
-/// taken again, so a move cut short is finished by moving again.
-pub fn move_to(
-    world: &WorldDir,
-    id: &ResidentId,
-    from: Option<&TownName>,
-    to: Option<&TownName>,
-    about: &About,
-    now: Option<&Now>,
-) -> io::Result<()> {
+pub fn append_message(directory: &ConversationDir, message: &MessageLine) -> io::Result<()> {
     let _transaction = crate::resident_storage::lock();
-    let old = world.resident(from, id);
-    let moved = Moved { to: to.cloned(), at: jiff::Timestamp::now() };
-    publish(&old.moved(), &json(&moved)?, Permissions::Private)?;
-    let new = world.resident(to, id);
-    ensure_private_dir(new.path())?;
-    let recovered = if now.is_none() { read_now(&old)? } else { None };
-    if let Some(now) = now.or(recovered.as_ref()) {
-        write_now(&new, now)?;
-    }
-    match std::fs::read(old.seen()) {
-        Ok(seen) => append_bytes(&new.seen(), &seen)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    // These are active obligations and receipt identities, not town history.
-    // Copy before publishing arrival; an interrupted move resumes from old.
-    for name in [
-        "calls",
-        "inbox",
-        "outbox",
-        "delivery-receipts",
-        "handovers",
-        "uncertain",
-        "turns",
-        "turn-sessions",
-        "session-events",
-        "composer.json",
-        "composer-receipts",
-        "composer-uploads",
-        "composer-ended",
-    ] {
-        copy_state(&old.path().join(name), &new.path().join(name), true)?;
-    }
-    crate::session_record::carried(old.path(), new.path())?;
-    merge_receipts(&old, &new)?;
-    arrive_in(world, id, to, about)?;
-    Ok(())
-}
-
-/// Makes the resident's directory in `town` its home: written with its
-/// `about`, and no longer marked as left if it lived there before.
-pub fn arrive_in(world: &WorldDir, id: &ResidentId, town: Option<&TownName>, about: &About) -> io::Result<()> {
-    let directory = world.resident(town, id);
-    ensure_private_dir(directory.path())?;
-    write_about(&directory, about)?;
-    match std::fs::remove_file(directory.moved()) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-        _ => Ok(()),
-    }
-}
-
-pub fn append_message(directory: &ResidentDir, message: &MessageLine) -> io::Result<()> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    append_lines(&current.messages(), std::slice::from_ref(message))
+    append_lines(&directory.messages(), std::slice::from_ref(message))
 }
 
 /// Appends one action to a resident's `actions`.
-pub fn record_action(
-    world: &WorldDir,
-    resident: &ResidentId,
-    town: Option<&TownName>,
-    action: &Action,
-) -> io::Result<()> {
+pub fn record_action(world: &WorldDir, resident: &ResidentId, action: &Action) -> io::Result<()> {
     let _transaction = crate::resident_storage::lock();
-    append_lines(&world.resident(town, resident).actions(), std::slice::from_ref(action))
+    append_lines(&world.conversation(resident).actions(), std::slice::from_ref(action))
 }
 
 /// Appends what a resident saw on this machine to its `seen` record here,
 /// one line per file, all in one write so each call's lines stay together.
-pub fn record_seen(
-    world: &WorldDir,
-    here: &MachineName,
-    owner: &Address,
-    town: Option<&TownName>,
-    seen: &[Seen],
-) -> io::Result<()> {
+pub fn record_seen(world: &WorldDir, here: &MachineName, owner: &Address, seen: &[Seen]) -> io::Result<()> {
     let _transaction = crate::resident_storage::lock();
-    let directory = world.owner(here, town, owner);
-    ensure_private_dir(directory.path())?;
+    let directory = world.owner(here, owner);
+    ensure_private_dir(&directory.books())?;
     append_lines(&directory.seen(), seen)
 }
 
 /// Records a shell write where it happened, including a visiting resident.
-pub fn record_owned_action(
-    world: &WorldDir,
-    here: &MachineName,
-    owner: &Address,
-    town: Option<&TownName>,
-    action: &Action,
-) -> io::Result<()> {
+pub fn record_owned_action(world: &WorldDir, here: &MachineName, owner: &Address, action: &Action) -> io::Result<()> {
     let _transaction = crate::resident_storage::lock();
-    let directory = world.owner(here, town, owner);
+    let directory = world.owner(here, owner);
     ensure_private_dir(directory.path())?;
     append_lines(&directory.actions(), std::slice::from_ref(action))
 }
 
 /// A resident's latest action: the last line of its `actions`, read from
 /// the end, so a record of any length costs the same.
-pub fn last_action(world: &WorldDir, resident: &ResidentId, town: Option<&TownName>) -> io::Result<Option<Action>> {
-    let path = world.resident(town, resident).actions();
-    let mut file = match std::fs::File::open(&path) {
+pub fn last_action(world: &WorldDir, resident: &ResidentId) -> io::Result<Option<Action>> {
+    last_action_before(&world.conversation(resident).actions(), None, None)
+}
+
+/// The latest action in `actions` from `from` on and before `until`, read
+/// from the end until one is found or the lines are older than `from`.
+pub fn last_action_before(
+    actions: &Path,
+    from: Option<Timestamp>,
+    until: Option<Timestamp>,
+) -> io::Result<Option<Action>> {
+    let mut file = match std::fs::File::open(actions) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let length = file.metadata()?.len();
-    // Read back from the end until a whole last line is in hand.
-    let mut tail = Vec::new();
-    let mut from = length;
+    let mut end = file.metadata()?.len();
+    // Lines are read back from the end; each step reads what lies before
+    // the lines already looked at.
+    let mut carried = Vec::new();
     loop {
-        let step = from.min(4096);
-        from -= step;
-        file.seek(SeekFrom::Start(from))?;
+        let step = end.min(4096);
+        let start = end - step;
+        file.seek(SeekFrom::Start(start))?;
         let mut chunk = vec![0u8; step as usize];
         file.read_exact(&mut chunk)?;
-        chunk.extend_from_slice(&tail);
-        tail = chunk;
-        let body = tail.strip_suffix(b"\n").unwrap_or(&tail);
-        if let Some(newline) = body.iter().rposition(|&b| b == b'\n') {
-            return parse(&path, &body[newline + 1..]).map(Some);
+        chunk.extend_from_slice(&carried);
+        let mut body: &[u8] = &chunk;
+        // Whole lines in what is held: those after the first newline, or
+        // everything once the start of the file is reached.
+        loop {
+            let trimmed = body.strip_suffix(b"\n").unwrap_or(body);
+            let (rest, line) = match trimmed.iter().rposition(|&b| b == b'\n') {
+                Some(newline) => (&trimmed[..=newline], &trimmed[newline + 1..]),
+                None if start == 0 => (&trimmed[..0], trimmed),
+                None => break,
+            };
+            if !line.is_empty() {
+                let action: Action = parse(actions, line)?;
+                if from.is_some_and(|from| action.at < from) {
+                    return Ok(None);
+                }
+                if until.is_none_or(|until| action.at < until) {
+                    return Ok(Some(action));
+                }
+            }
+            body = rest;
+            if body.is_empty() {
+                break;
+            }
         }
-        if from == 0 {
-            return if body.is_empty() { Ok(None) } else { parse(&path, body).map(Some) };
+        if start == 0 {
+            return Ok(None);
         }
+        carried = body.to_vec();
+        end = start;
     }
 }
 
@@ -209,12 +179,8 @@ fn append_lines<T: serde::Serialize>(path: &Path, lines: &[T]) -> io::Result<()>
         serde_json::to_writer(&mut bytes, line).map_err(io::Error::other)?;
         bytes.push(b'\n');
     }
-    append_bytes(path, &bytes)
-}
-
-fn append_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(bytes)
+    file.write_all(&bytes)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
@@ -230,74 +196,4 @@ fn json(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     bytes.push(b'\n');
     Ok(bytes)
-}
-
-fn copy_state(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
-    let entries = match std::fs::read_dir(from) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    ensure_private_dir(to)?;
-    for entry in entries {
-        let entry = entry?;
-        if entry.file_type()?.is_file() && !entry.file_name().to_string_lossy().starts_with('.') {
-            let destination = to.join(entry.file_name());
-            if replace || !destination.exists() {
-                publish(&destination, &std::fs::read(entry.path())?, Permissions::Private)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Older completed moves carried only inbox files. Recover their receipts
-/// and unpaid answers without replacing newer records in the active town.
-pub fn carry_obligations(
-    world: &WorldDir,
-    id: &ResidentId,
-    from: Option<&TownName>,
-    to: Option<&TownName>,
-) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let old = world.resident(from, id);
-    let new = world.resident(to, id);
-    for name in [
-        "inbox",
-        "outbox",
-        "delivery-receipts",
-        "handovers",
-        "uncertain",
-        "turns",
-        "turn-sessions",
-        "session-events",
-        "host-reports",
-        "composer.json",
-        "composer-receipts",
-        "composer-uploads",
-        "composer-ended",
-    ] {
-        copy_state(&old.path().join(name), &new.path().join(name), false)?;
-    }
-    crate::session_record::carried(old.path(), new.path())?;
-    merge_receipts(&old, &new)
-}
-
-fn merge_receipts(old: &ResidentDir, new: &ResidentDir) -> io::Result<()> {
-    let mut receipts = std::collections::BTreeSet::new();
-    for directory in [old, new] {
-        match std::fs::read_to_string(directory.delivered()) {
-            Ok(text) => receipts.extend(text.lines().map(str::to_string)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-    }
-    if !receipts.is_empty() {
-        publish(
-            &new.delivered(),
-            (receipts.into_iter().collect::<Vec<_>>().join("\n") + "\n").as_bytes(),
-            Permissions::Private,
-        )?;
-    }
-    Ok(())
 }

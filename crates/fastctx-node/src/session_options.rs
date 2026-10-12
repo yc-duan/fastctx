@@ -1,4 +1,4 @@
-//! User selections survive a node restart and a resident changing towns.
+//! User selections survive a node restart, kept with the conversation's books.
 
 use fastctx_types::ResidentId;
 use fastctx_types::agents::SessionOptions;
@@ -7,7 +7,7 @@ use fastctx_types::ipc::Failure;
 use crate::Node;
 
 fn path(node: &Node, id: &ResidentId) -> std::path::PathBuf {
-    node.world.path().join("codex").join("options").join(format!("{id}.json"))
+    node.world.conversation(id).session_options()
 }
 
 pub fn keep(node: &Node, id: &ResidentId, options: &SessionOptions) -> Result<(), Failure> {

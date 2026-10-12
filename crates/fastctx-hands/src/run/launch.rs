@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use fastctx_platform::{Permissions, current_identity, ensure_private_dir, publish_new, spawn_detached};
 use fastctx_types::ipc::Failure;
-use fastctx_types::layout::{ResidentDir, WorldDir};
+use fastctx_types::layout::{ConversationDir, WorldDir};
 use fastctx_types::run::{JobProgram, JobRecord, OutputMode, RunRequest};
 use fastctx_types::{JobId, MachineName, ProcessIdentity, TownName};
 
@@ -105,7 +105,7 @@ pub fn launch_with_io_registered(
     Ok(Launched { job, record: record_path, output, stderr, supervisor: started.identity })
 }
 
-type Prepared = (JobId, PathBuf, Option<PathBuf>, PathBuf, ResidentDir);
+type Prepared = (JobId, PathBuf, Option<PathBuf>, PathBuf, ConversationDir);
 
 fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Result<Prepared, Failure> {
     super::preread::check(&launch.request.script)?;
@@ -119,7 +119,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
         }
     }
     let cwd = starting_directory(launch)?;
-    let resident = launch.world.job_owner(launch.machine, launch.town, launch.owner);
+    let resident = launch.world.job_owner(launch.machine, launch.owner);
     let (job, output) = reserve(&resident).map_err(|error| failure("could not reserve a job", &error))?;
     let stderr = if mode == OutputMode::Separate {
         let path = output.with_extension("stderr.log");
@@ -207,7 +207,7 @@ fn starting_directory(launch: &Launch<'_>) -> Result<PathBuf, Failure> {
 
 /// Picks an unused job id. The output file, created exclusively, is what
 /// reserves it.
-fn reserve(resident: &ResidentDir) -> io::Result<(JobId, PathBuf)> {
+fn reserve(resident: &ConversationDir) -> io::Result<(JobId, PathBuf)> {
     ensure_private_dir(resident.path())?;
     std::fs::create_dir_all(resident.jobs())?;
     std::fs::create_dir_all(resident.out())?;

@@ -24,7 +24,7 @@ use super::{control, output, record, shell};
 /// Runs the job at `record_path` until nothing of it runs any more.
 pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Result<()> {
     supervise_with(world, record_path, |world, record| {
-        let resident = world.job_owner(&record.machine, record.town.as_ref(), &record.owner);
+        let resident = world.job_owner(&record.machine, &record.owner);
         let (program, args) = shell::command(&resident.job_script(&record.id))?;
         shell::ensure_prelude(fastctx_dir)?;
         let fastctx_home = std::env::var_os("FASTCTX_HOME");
@@ -126,7 +126,7 @@ impl Job {
         // before the shell has been spawned.
         record::write(&self.path, &self.record)?;
         if let Some(request) = self.record.on.as_ref().and_then(|on| on.request.as_ref()) {
-            let directory = self.world.job_owner(&self.record.machine, self.record.town.as_ref(), &self.record.owner);
+            let directory = self.world.job_owner(&self.record.machine, &self.record.owner);
             if directory.jobs().join(format!("request-{request}.stopped")).try_exists()? {
                 self.record.stop = Some(StopRequested {
                     at: Timestamp::now(),

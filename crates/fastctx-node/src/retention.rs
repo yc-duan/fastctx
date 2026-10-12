@@ -1,5 +1,9 @@
-//! Command artifacts expire after their end reaches its reader. Product
-//! records and unconfirmed delivery evidence never enter this collector.
+//! Command artifacts expire after their end reaches its reader, or, for a
+//! conversation the user removed, after it was removed: its end can reach no
+//! reader then. Product records and unconfirmed delivery evidence never enter
+//! this collector. The same hourly round retires the bookkeeping of removed
+//! conversations that owe nothing, and removes the directories of the
+//! earlier layout their jobs have left.
 
 use std::fs;
 use std::io;
@@ -31,9 +35,27 @@ impl Default for Settings {
 
 pub(crate) use crate::job_receipts::{confirmed, received, received_from, wait_taken};
 
+/// How many days full command output stays after the model got its answer.
+pub(crate) fn days(world: &fastctx_types::layout::WorldDir) -> io::Result<u32> {
+    match fs::read(world.retention()) {
+        Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
+            .map(|settings| settings.command_artifact_days)
+            .map_err(io::Error::other),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Settings::default().command_artifact_days),
+        Err(error) => Err(error),
+    }
+}
+
+/// Keeps full command output `days` days from now on; the collector reads
+/// the setting again when it changes.
+pub(crate) fn set_days(world: &fastctx_types::layout::WorldDir, days: u32) -> io::Result<()> {
+    let bytes = serde_json::to_vec(&Settings { command_artifact_days: days }).map_err(io::Error::other)?;
+    fastctx_platform::publish(&world.retention(), &bytes, Permissions::Private)
+}
+
 pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
     use notify::Watcher as _;
-    let settings = node.world.path().join("retention.json");
+    let settings = node.world.retention();
     create(&settings, &Settings::default())?;
     let weak = Arc::downgrade(node);
     let settings_changed = Arc::new(tokio::sync::Notify::new());
@@ -83,6 +105,19 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
             if !maintenance {
                 continue;
             }
+            let retiring = node.clone();
+            match tokio::task::spawn_blocking(move || {
+                let _collecting = retiring.disk.lock().expect("never poisoned");
+                crate::books::retire(&retiring)
+                    .and(crate::claude::garbage::collect(&retiring.world))
+                    .and(crate::gather::sweep(&retiring.world))
+            })
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => node.log.line(format_args!("retiring bookkeeping: {error}")),
+                Err(error) => node.log.line(format_args!("retiring bookkeeping: {error}")),
+            }
             let collecting = node.clone();
             match tokio::task::spawn_blocking(move || crate::program_collection::collect(&collecting)).await {
                 Ok(Ok(())) => {}
@@ -118,7 +153,9 @@ fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
         }
         let collected = if path.with_extension("delivered").try_exists()? {
             crate::job_watch::collect(node, &path)
-        } else { Ok(()) };
+        } else {
+            Ok(())
+        };
         match collected {
             Ok(()) => {}
             Err(error) => {
@@ -131,8 +168,7 @@ fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
 }
 
 fn collect(node: &Arc<Node>, now: Timestamp) -> io::Result<()> {
-    let settings: Settings =
-        serde_json::from_slice(&fs::read(node.world.path().join("retention.json"))?).map_err(io::Error::other)?;
+    let settings: Settings = serde_json::from_slice(&fs::read(node.world.retention())?).map_err(io::Error::other)?;
     let lifetime = i64::from(settings.command_artifact_days) * DAY as i64;
     let _collecting = node.disk.lock().expect("never poisoned");
     collect_records(
@@ -178,7 +214,29 @@ fn collect_records(
                     Ok(bytes) => serde_json::from_slice::<JobDelivery>(&bytes).map_err(io::Error::other)?,
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
                         let Some(delivery) = legacy_delivery(world, &path, &job)? else {
-                            pending = true;
+                            // Its conversation was removed: its end reaches
+                            // nobody, and it goes as if it had then.
+                            match unreadable_since(world, &job)? {
+                                Some(at) => {
+                                    let delivery = JobDelivery {
+                                        job: job.id.clone(),
+                                        output: job.output.clone(),
+                                        at,
+                                        shown_whole: false,
+                                    };
+                                    if job.end.is_none()
+                                        || program::in_use(&job)?
+                                        || !unfollowed(&path)
+                                        || path.with_extension("owed").try_exists()?
+                                        || !expired(now, delivery.at, lifetime)
+                                    {
+                                        pending = true;
+                                    } else {
+                                        forget(&path)?;
+                                    }
+                                }
+                                None => pending = true,
+                            }
                             continue;
                         };
                         create(&marker, &delivery)?;
@@ -222,16 +280,17 @@ fn collect_records(
                 {
                     continue;
                 }
-                if let Some(delivered) = fastctx_install::renewal::read_json::<Timestamp>(&scratch.join(".delivered"))?
-                    && expired(now, delivered, lifetime)
+                if fastctx_install::renewal::read_json::<Timestamp>(&scratch.join(".delivered"))?.is_some()
+                    && retired_owner(world, &directory)?
+                    && idle(&directory)
                 {
                     fastctx_platform::owned_directory::delete(&scratch)?;
                 }
             }
             if !pending
                 && idle(&directory)
+                && retired_owner(world, &directory)?
                 && let Some(delivered) = latest
-                && expired(now, delivered, lifetime)
             {
                 collect_out(&directory.join("out"), delivered)?;
             }
@@ -240,13 +299,44 @@ fn collect_records(
     Ok(())
 }
 
+/// Temporary paths remain usable for as long as their conversation does.
+/// A removed home whose books retired has no model or delivery reader left.
+fn retired_owner(world: &fastctx_types::layout::WorldDir, directory: &Path) -> io::Result<bool> {
+    let directory = if directory.parent().and_then(Path::file_name).is_some_and(|name| name == "legacy") {
+        directory.parent().and_then(Path::parent).expect("legacy is inside a conversation")
+    } else {
+        directory
+    };
+    let Some(name) = directory.file_name().and_then(|name| name.to_str()) else { return Ok(false) };
+    let Some(fastctx_types::layout::Kind::Home(id)) = fastctx_types::layout::Kind::of(name) else { return Ok(false) };
+    let home = world.conversation(&id);
+    Ok(crate::residents::read_removed(&home)?.is_some() && home.path().join("books-retired").try_exists()?)
+}
+
+/// Since when the end of `job` can reach no reader: the job ran here for a
+/// conversation that lives here and that the user removed, and it ended.
+fn unreadable_since(
+    world: &fastctx_types::layout::WorldDir,
+    job: &fastctx_types::run::JobRecord,
+) -> io::Result<Option<Timestamp>> {
+    let (Some(owner), Some(end)) = (job.owner.resident(), &job.end) else { return Ok(None) };
+    if owner.machine != job.machine {
+        return Ok(None);
+    }
+    let removed = crate::residents::read_removed(&world.conversation(&owner.resident))?;
+    Ok(removed.map(|removed| removed.max(end.at)))
+}
+
 fn legacy_delivery(
     world: &fastctx_types::layout::WorldDir,
     path: &Path,
     job: &fastctx_types::run::JobRecord,
 ) -> io::Result<Option<JobDelivery>> {
     let Some(owner) = job.owner.resident() else { return Ok(None) };
-    if job.on.is_some() || path.with_extension("wait-taken").try_exists()? || path.with_extension("copied").try_exists()? {
+    if job.on.is_some()
+        || path.with_extension("wait-taken").try_exists()?
+        || path.with_extension("copied").try_exists()?
+    {
         return Ok(None);
     }
     // Only a local resident's own execution can share this machine's
@@ -270,24 +360,20 @@ fn legacy_delivery(
         return Ok(None);
     }
     let id = crate::inbox::end_id(owner, &job.machine, &job.id, job.on.as_ref().and_then(|on| on.request.as_ref()));
-    for parent in world.resident_parents()? {
-        let resident = parent.join(owner.resident.as_str());
-        for directory in [resident.clone(), resident.join("archive")] {
-            let receipt = directory.join("delivery-receipts").join(id.as_str());
-            let metadata = match fs::symlink_metadata(&receipt) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
-            };
-            if !metadata.is_file() || fastctx_platform::owned_directory::is_link(&metadata) {
-                return Err(io::Error::other("unexpected legacy delivery receipt"));
-            }
-            if !fs::read(&receipt)?.is_empty() { continue; }
-            let at = Timestamp::try_from(metadata.modified()?).map_err(io::Error::other)?;
-            return Ok(Some(JobDelivery { job: job.id.clone(), output: job.output.clone(), at, shown_whole: false }));
-        }
+    let receipt = world.conversation(&owner.resident).delivery_receipts().join(id.as_str());
+    let metadata = match fs::symlink_metadata(&receipt) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !metadata.is_file() || fastctx_platform::owned_directory::is_link(&metadata) {
+        return Err(io::Error::other("unexpected legacy delivery receipt"));
     }
-    Ok(None)
+    if !fs::read(&receipt)?.is_empty() {
+        return Ok(None);
+    }
+    let at = Timestamp::try_from(metadata.modified()?).map_err(io::Error::other)?;
+    Ok(Some(JobDelivery { job: job.id.clone(), output: job.output.clone(), at, shown_whole: false }))
 }
 
 fn expired(now: Timestamp, delivered: Timestamp, lifetime: i64) -> bool {

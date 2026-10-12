@@ -1,5 +1,6 @@
-//! Inactive resident projections live on disk. The canonical town records
-//! rebuild this per-node cache at startup; it is never a second durable authority.
+//! Inactive resident projections live on disk. The canonical conversation
+//! records rebuild this per-node cache at startup; it is never a second
+//! durable authority.
 
 use super::{Live, here};
 use fastctx_types::ResidentId;
@@ -62,6 +63,17 @@ impl Cache {
             self.clean.insert(id.clone(), bytes);
         }
         self.entries.get_mut(id)
+    }
+
+    /// Forgets `id` altogether, here and on disk.
+    pub fn remove(&mut self, id: &ResidentId) {
+        self.entries.remove(id);
+        self.clean.remove(id);
+        match std::fs::remove_file(self.path(id)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => failed(&format!("removing resident cache for {id}"), error),
+        }
     }
 
     pub fn ids(&self) -> Box<dyn Iterator<Item = ResidentId> + Send> {

@@ -86,7 +86,7 @@ pub async fn ask(
     if let Some(account) = &account {
         crate::collab::keep_asked(node, &asker, &colleague, account)?;
     }
-    record(node, &asker, town, action).await;
+    record(node, &asker, action).await;
     Ok(colleague)
 }
 
@@ -199,6 +199,8 @@ pub async fn ask_here(
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
     let _birth = crate::here::born(node, &id, acting.clone(), None);
     let (spec, heard) = thread_spec(node, &id, &origin, town.as_ref(), &acting, None, home.as_deref()).await?;
+    // Until it is claimed below, reports of threads nobody claims are kept.
+    let _starting = crate::codex::starting(node);
     let (thread, model) = node.codex.home(home.as_deref())?.start_thread(spec).await.map_err(|error| {
         Failure::new(format!("starting Codex on {}, where colleagues live: {error}", node.machine()))
     })?;
@@ -239,7 +241,7 @@ pub async fn ask_here(
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;
     node.residents.set_heard(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
-    let directory = node.world.resident(town.as_ref(), &id);
+    let directory = node.world.conversation(&id);
     let asked = MessageLine { at: born_at, what: MessageKind::Asked { from: asker.clone(), text: prompt.clone() } };
     if let Err(error) = crate::residents::append_message(&directory, &asked) {
         node.log.line(format_args!("recording what {id} was asked: {error}"));
@@ -354,6 +356,7 @@ pub async fn thread_spec(
             developer_instructions,
             config,
             name,
+            choices: node.world.conversation(id).choices(),
         },
         heard,
     ))
@@ -372,10 +375,7 @@ pub fn heard_now(node: &Node, town: Option<&TownName>) -> std::io::Result<Heard>
 /// stands: it means nothing to the resident, but groups a town's sessions
 /// together in the hosts' own lists (`world-town.md`).
 pub(crate) fn standing(node: &Node, town: Option<&TownName>) -> Result<PathBuf, Failure> {
-    let directory = match town {
-        Some(town) => node.world.path().join("towns").join(town.as_str()),
-        None => node.world.path().join("outside"),
-    };
+    let directory = node.world.standing(town);
     fastctx_platform::ensure_private_dir(&directory)
         .map_err(|error| Failure::new(format!("making {}: {error}", directory.display())))?;
     Ok(directory)
@@ -465,7 +465,6 @@ fn words(
 pub async fn message(
     node: &Arc<Node>,
     from: ResidentId,
-    town: Option<TownName>,
     to: ResidentId,
     to_machine: Option<MachineName>,
     text: String,
@@ -476,7 +475,7 @@ pub async fn message(
     let at = Timestamp::now();
     let machine = match to_machine {
         Some(machine) => machine,
-        None => locate(node, &from, town.as_ref(), &to).await?,
+        None => locate(node, &from, &to).await?,
     };
     let to = Address { machine, resident: to };
     let sender = Address { machine: here, resident: from.clone() };
@@ -528,21 +527,16 @@ pub async fn message(
         what: to.resident.to_string(),
         result,
     };
-    record(node, &from, town, action).await;
+    record(node, &from, action).await;
     Ok((to, landed))
 }
 
 /// Which machine the resident `to` lives on, for words from `from`: the
 /// machine `from` asked it on, when it did; this machine, when it lives
 /// here; otherwise whichever machine says it lives there.
-async fn locate(
-    node: &Arc<Node>,
-    from: &ResidentId,
-    town: Option<&TownName>,
-    to: &ResidentId,
-) -> Result<MachineName, Failure> {
+async fn locate(node: &Arc<Node>, from: &ResidentId, to: &ResidentId) -> Result<MachineName, Failure> {
     let here = node.machine();
-    let actions = node.world.resident(town, from).actions();
+    let actions = node.world.conversation(from).actions();
     let asked = tokio::task::spawn_blocking({
         let to = to.to_string();
         move || asked_on(&actions, &to)
@@ -615,9 +609,9 @@ pub fn left(node: &Arc<Node>, resident: ResidentId) {
     tokio::spawn(async move {
         let address = Address { machine: node.machine(), resident: resident.clone() };
         sleep_idle(&node, &address);
-        let Some(town) = node.residents.town_of(&resident) else { return };
-        let acting = node.residents.about(&resident).map(|(about, _)| about.acting).unwrap_or_default();
-        let actions = node.world.resident(town.as_ref(), &resident).actions();
+        let Some((about, _)) = node.residents.about(&resident) else { return };
+        let acting = about.acting;
+        let actions = node.world.conversation(&resident).actions();
         let machines = tokio::task::spawn_blocking(move || asked_machines(&actions)).await.unwrap_or_default();
         for machine in machines.into_iter().filter(|machine| *machine != address.machine) {
             let id = speech::fixed_id("left", &[resident.as_str(), &Timestamp::now().as_millisecond().to_string()]);
@@ -673,11 +667,10 @@ fn asked_on(actions: &std::path::Path, to: &str) -> Option<MachineName> {
         .map(|action| action.machine)
 }
 
-async fn record(node: &Arc<Node>, resident: &ResidentId, town: Option<TownName>, action: Action) {
+async fn record(node: &Arc<Node>, resident: &ResidentId, action: Action) {
     let (world, resident) = (node.world.clone(), resident.clone());
     let recorded =
-        tokio::task::spawn_blocking(move || crate::residents::record_action(&world, &resident, town.as_ref(), &action))
-            .await;
+        tokio::task::spawn_blocking(move || crate::residents::record_action(&world, &resident, &action)).await;
     if let Ok(Err(error)) | Err(error) = recorded.map_err(std::io::Error::other) {
         node.log.line(format_args!("recording an action: {error}"));
     }

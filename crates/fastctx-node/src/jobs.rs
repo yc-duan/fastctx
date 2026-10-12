@@ -45,7 +45,7 @@ impl Jobs {
     ) -> Result<(), Failure> {
         // With nobody waiting there is nobody to wake.
         let _ = self.changes.send(job.clone());
-        let path = node.world.job_owner(&node.machine(), town.as_ref(), &owner).job_record(&job);
+        let path = node.world.job_record(&node.machine(), town.as_ref(), &owner, &job);
         let record = read(&path).await.inspect_err(|_| {
             crate::inbox::retry_job(node, &path);
         })?;
@@ -55,7 +55,7 @@ impl Jobs {
             Vec::new()
         };
         crate::run_facts::update_job(node, &path, writes).map_err(|error| failure("updating call facts", error))?;
-        crate::inbox::tell_if_ended(node, &record).await.map_err(|error| {
+        crate::inbox::tell_if_ended(node, &path, &record).await.map_err(|error| {
             crate::inbox::retry_job(node, &path);
             failure("telling the job's end", error)
         })
@@ -82,6 +82,12 @@ impl Jobs {
         registration: Option<crate::on::Registration>,
         account: Option<fastctx_types::access::HubAccount>,
     ) -> Result<run::Launched, Failure> {
+        let _operation = node.data_operations.read().await;
+        if let Some(address) = owner.resident()
+            && address.machine == node.machine()
+        {
+            node.residents.active(&address.resident)?;
+        }
         let (world, machine, executable) = (node.world.clone(), node.machine(), node.fastctx.clone());
         let registering = node.clone();
         let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
@@ -134,7 +140,7 @@ impl Jobs {
         request: RunRequest,
         account: Option<fastctx_types::access::HubAccount>,
     ) -> Result<(RunReply, JobRecord), Failure> {
-        let (world, machine) = (&node.world, &node.machine());
+        let machine = &node.machine();
         let wait = match request.wait {
             None => WAIT,
             Some(seconds) if u64::from(seconds) <= LONGEST_WAIT.as_secs() => Duration::from_secs(seconds.into()),
@@ -209,16 +215,16 @@ impl Jobs {
             // The job goes on past this answer: its end is owed to the
             // resident who started it. It may have ended between the answer
             // and the marker, and then nobody else would tell.
-            let (world, here, job, path) =
-                (world.clone(), machine.clone(), launched.job.clone(), launched.record.clone());
-            let now = tokio::task::spawn_blocking(move || crate::inbox::owe_job(&world, &here, &job, &path))
+            let path = launched.record.clone();
+            let now = tokio::task::spawn_blocking(move || crate::inbox::owe_job(&path))
                 .await
                 .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?
                 .map_err(|error| failure("noting that the job's end is owed", error))?;
-            crate::inbox::tell_if_ended(node, &now).await.map_err(|error| failure("telling the job's end", error))?;
+            crate::inbox::tell_if_ended(node, &launched.record, &now)
+                .await
+                .map_err(|error| failure("telling the job's end", error))?;
         }
-        let visited =
-            visited(&node.world.job_owner(machine, record.town.as_ref(), &record.owner).jobs(), &launched.job);
+        let visited = visited(&node.world.job_owner(machine, &record.owner).jobs(), &launched.job);
         let state = state(&record);
         // Why it answered says something only of a job that still runs.
         let answered = answered.filter(|_| state == RunState::Running);
@@ -228,7 +234,7 @@ impl Jobs {
             .map_err(|error| Failure::new(format!("reading completion receipts: {error}")))?
             .map_err(|error| failure("reading completion receipts", error))?;
         if let Some(owner) = record.owner.resident().filter(|owner| owner.machine == *machine) {
-            let directory = node.world.resident(record.town.as_ref(), &owner.resident);
+            let directory = node.world.conversation(&owner.resident);
             crate::job_receipts::apply_consumed(&directory, &consumed)
                 .map_err(|error| failure("reading completion receipts", error))?;
         }
@@ -262,24 +268,36 @@ impl Jobs {
 /// 输出). Only `owner`'s own finished jobs go, never one owed word of its
 /// end or sent here by another machine's `on`.
 pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_types::Address, job: JobId) {
-    let directory = node.world.job_owner(&node.machine(), town.as_ref(), &owner.clone().into());
-    let path = directory.job_record(&job);
+    let path = node.world.job_record(&node.machine(), town.as_ref(), &owner.clone().into(), &job);
     let checked = {
         let path = path.clone();
         tokio::task::spawn_blocking(move || -> std::io::Result<Option<JobRecord>> {
             let record = record::read(&path)?;
             let finished = matches!(record.end, Some(Ended { how: EndedHow::Finished, .. }));
-            Ok((record.owner == owner && finished && record.on.is_none() && !directory.job_owed(&job).try_exists()?).then_some(record))
+            Ok((record.owner == owner
+                && finished
+                && record.on.is_none()
+                && !path.with_extension("owed").try_exists()?)
+            .then_some(record))
         })
         .await
     };
     match checked {
         Ok(Ok(Some(record))) => {
             let owner = record.owner.resident().expect("checked resident");
-            if let Err(error) = crate::retention::received(node, owner, &fastctx_types::run::JobDelivery {
-                job: record.id.clone(), output: record.output.clone(), at: Timestamp::now(), shown_whole: true,
-            }) { node.log.line(format_args!("recording job delivery: {error}")); }
-        },
+            if let Err(error) = crate::retention::received(
+                node,
+                owner,
+                &fastctx_types::run::JobDelivery {
+                    job: record.id.clone(),
+                    output: record.output.clone(),
+                    at: Timestamp::now(),
+                    shown_whole: true,
+                },
+            ) {
+                node.log.line(format_args!("recording job delivery: {error}"));
+            }
+        }
         Ok(Ok(None)) => {}
         Ok(Err(error)) => node.log.line(format_args!("removing a job shown whole: {error}")),
         Err(error) => node.log.line(format_args!("removing a job shown whole: {error}")),
@@ -484,9 +502,9 @@ pub fn still_running(
         machine: here.clone(),
         resident: resident.clone(),
     });
+    let address = fastctx_types::Address { machine: here.clone(), resident: resident.clone() };
     let mut running = Vec::new();
-    for town in std::iter::once(None).chain(world.towns()?.into_iter().map(Some)) {
-        let jobs = world.job_owner(here, town.as_ref(), &owner).jobs();
+    for jobs in world.job_directories(here, &address)? {
         for owed in read_dir(&jobs)? {
             if owed.extension().is_none_or(|extension| extension != "owed") {
                 continue;
@@ -526,11 +544,11 @@ pub(crate) fn running_for(
     here: &fastctx_types::MachineName,
     owner: &fastctx_types::Address,
 ) -> Vec<fastctx_types::access::HubAccount> {
+    let directories = world.job_directories(here, owner).unwrap_or_default();
     let owner = fastctx_types::run::JobOwner::Resident(owner.clone());
-    let towns = world.towns().unwrap_or_default();
     let mut accounts = Vec::new();
-    for town in std::iter::once(None).chain(towns.iter().map(Some)) {
-        let Ok(entries) = std::fs::read_dir(world.job_owner(here, town, &owner).jobs()) else { continue };
+    for jobs in directories {
+        let Ok(entries) = std::fs::read_dir(jobs) else { continue };
         for path in entries.flatten().map(|entry| entry.path()) {
             if path.extension().is_none_or(|extension| extension != "json") {
                 continue;

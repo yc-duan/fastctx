@@ -10,6 +10,8 @@ mod android;
 mod collab;
 mod composer;
 mod connection;
+#[cfg(desktop)]
+mod data;
 mod features;
 
 #[cfg(desktop)]
@@ -58,12 +60,12 @@ mod binary_reading;
 mod desktop_presence;
 #[cfg(windows)]
 mod installer_lines;
-#[cfg(windows)]
-mod package_removal;
 mod line_reading;
 mod local_files;
 mod logins;
 mod names;
+#[cfg(windows)]
+mod package_removal;
 mod pages;
 mod reading;
 mod save_as;
@@ -903,6 +905,8 @@ pub fn run() {
             features::features_read,
             features::features_set,
             features::features_watch,
+            #[cfg(desktop)]
+            data::data,
             accounts::account_change,
             accounts::server_command,
             accounts::agent_homes,

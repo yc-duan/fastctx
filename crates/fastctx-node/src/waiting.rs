@@ -19,7 +19,12 @@ use crate::Node;
 
 /// Waits until every job in `jobs` ends. `caller` is the resident whose
 /// shell asked, if any.
-pub async fn wait(node: &Arc<Node>, caller: Option<Address>, jobs: Vec<JobId>, parent: Option<JobId>) -> Result<Ready, Failure> {
+pub async fn wait(
+    node: &Arc<Node>,
+    caller: Option<Address>,
+    jobs: Vec<JobId>,
+    parent: Option<JobId>,
+) -> Result<Ready, Failure> {
     let here = node.machine();
     // Listening before the records are read, so no end is missed.
     let mut changes = node.jobs.subscribe();
@@ -61,7 +66,7 @@ pub async fn wait(node: &Arc<Node>, caller: Option<Address>, jobs: Vec<JobId>, p
             if owner.machine == node.machine() {
                 let gate = node.residents.management(&owner.resident)?;
                 let _claiming = gate.write().await;
-                let directory = node.world.resident(record.town.as_ref(), &owner.resident);
+                let directory = node.world.conversation(&owner.resident);
                 for pending in crate::inbox::pending(&directory).map_err(|error| Failure::new(error.to_string()))? {
                     if pending.delivery.id == crate::inbox::job_notice_id(&record)
                         && pending.state == fastctx_types::residents::PendingState::Waiting
@@ -101,9 +106,14 @@ pub(crate) struct Ready {
 impl Ready {
     pub(crate) async fn take(self, delivered: bool) -> Result<(), Failure> {
         let Reply::Waited { records } = &self.reply else { unreachable!("a wait answers with records") };
-        let jobs = records.iter().map(|record| fastctx_types::run::CompletedJob {
-            machine: record.machine.clone(), job: record.id.clone(), output: record.output.clone(),
-        }).collect::<Vec<_>>();
+        let jobs = records
+            .iter()
+            .map(|record| fastctx_types::run::CompletedJob {
+                machine: record.machine.clone(),
+                job: record.id.clone(),
+                output: record.output.clone(),
+            })
+            .collect::<Vec<_>>();
         if delivered {
             crate::retention::wait_taken(&self.held.node, self.caller.as_ref(), self.parent.as_ref(), &jobs)
                 .map_err(|error| Failure::new(format!("recording waited ends: {error}")))?;
@@ -182,7 +192,7 @@ impl Held {
                 if let Some(owner) = record.owner.resident().filter(|owner| owner.machine == self.node.machine()) {
                     let gate = self.node.residents.management(&owner.resident)?;
                     let _taking = gate.write().await;
-                    let directory = self.node.world.resident(record.town.as_ref(), &owner.resident);
+                    let directory = self.node.world.conversation(&owner.resident);
                     crate::inbox::consume(&directory, &crate::inbox::job_notice_id(&record))
                         .map_err(|error| Failure::new(error.to_string()))?;
                 } else if let Some(owner) = record.owner.resident() {
@@ -210,8 +220,7 @@ impl Held {
                     crate::job_receipts::consumed(&self.node, owner, &acting, id, notice)
                         .map_err(|error| Failure::new(error.to_string()))?;
                 }
-                let owed =
-                    self.node.world.job_owner(&self.node.machine(), record.town.as_ref(), &record.owner).job_owed(job);
+                let owed = self.node.world.job_owner(&self.node.machine(), &record.owner).job_owed(job);
                 match tokio::fs::remove_file(&owed).await {
                     Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                         Err(Failure::new(format!("{}: {error}", owed.display())))

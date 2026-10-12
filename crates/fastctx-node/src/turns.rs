@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use fastctx_types::layout::ResidentDir;
+use fastctx_types::layout::ConversationDir;
 use fastctx_types::residents::{
     Delivery, LAST_SAID_CHARS, MessageKind, MessageLine, Notice, Origin, Owing, Pending, Trouble,
 };
@@ -30,7 +30,7 @@ use crate::speech::{self, Owed};
 /// Something a host reported about a resident's session.
 /// Applies a report before the source acknowledges or deletes it.
 pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -> std::io::Result<()> {
-    let Some((about, town)) = node.residents.about(id) else {
+    let Some((about, _)) = node.residents.about(id) else {
         return Err(std::io::Error::other("unknown resident"));
     };
     if let Happened::Heard { message: Some(message), .. } = &event.happened
@@ -43,7 +43,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
     {
         return Ok(());
     }
-    let directory = node.world.resident(town.as_ref(), id);
+    let directory = node.world.conversation(id);
     if about.host.agent.as_str() == "claude" {
         crate::claude::turn_facts::observe(&directory, &event.happened)?;
     }
@@ -203,8 +203,8 @@ async fn finish_at(
     additional: &[Address],
     ended_at: Option<Timestamp>,
 ) -> std::io::Result<()> {
-    let Some((about, town)) = node.residents.about(id) else { return Ok(()) };
-    let directory = node.world.resident(town.as_ref(), id);
+    let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
+    let directory = node.world.conversation(id);
     if about.host.agent.as_str() == "claude" && end.facts.is_none() {
         end.facts = crate::claude::turn_facts::finish(&directory, turn)?.map(Box::new);
     }
@@ -228,6 +228,9 @@ async fn finish_at(
         readers.extend(handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()));
     }
     let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at)?;
+    if !first && directory.path().join("books-retired").try_exists()? {
+        return Ok(());
+    }
     if about.host.agent.as_str() == "claude" {
         crate::claude::turn_facts::settled(&directory, turn)?;
     }
@@ -300,7 +303,7 @@ async fn keep_answers(
     node: &Arc<Node>,
     id: &ResidentId,
     origin: &Origin,
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     key: &str,
     turn: &str,
     end: &TurnEnd,
@@ -344,7 +347,7 @@ async fn keep_answers(
 pub fn pay<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
-    directory: &'a ResidentDir,
+    directory: &'a ConversationDir,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
     Box::pin(async move {
         node.ready().await;
@@ -393,6 +396,14 @@ pub fn pay<'a>(
                 }
             }
             if landed.is_err() || matches!(landed, Ok(fastctx_types::residents::Landed::Uncertain { .. })) {
+                if landed.is_err()
+                    && answer.to.machine == node.machine()
+                    && !node.residents.knows(&answer.to.resident)
+                    && !node.world.conversation(&answer.to.resident).about().exists()
+                    && let Err(error) = crate::inbox::without_reader(directory, &answer)
+                {
+                    node.log.line(format_args!("settling the answer without a local recipient: {error}"));
+                }
                 continue;
             }
             if let Err(error) = crate::inbox::paid(directory, &answer.delivery.id) {
@@ -408,7 +419,7 @@ pub fn pay<'a>(
 pub async fn unsettled(
     node: &Arc<Node>,
     id: &ResidentId,
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     pending: Pending,
     how: TurnHow,
     why: String,
@@ -428,7 +439,7 @@ pub async fn unsettled(
 pub async fn unresolved(
     node: &Arc<Node>,
     id: &ResidentId,
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     handover: &mut crate::delivery::Handover,
     how: TurnHow,
     why: String,
@@ -533,8 +544,8 @@ fn health_event(
     event: SessionEvent,
 ) -> std::io::Result<()> {
     let at = event.at;
-    let Some((about, town)) = node.residents.about(id) else { return Ok(()) };
-    let directory = node.world.resident(town.as_ref(), id);
+    let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
+    let directory = node.world.conversation(id);
     let key = serde_json::to_string(&event).map_err(std::io::Error::other)?;
     let first = crate::delivery::event(&directory, &key, &event)?;
     let finished = turn.as_deref().map(|turn| crate::delivery::terminal(&directory, turn)).transpose()?.flatten();
@@ -583,11 +594,11 @@ pub async fn stopped(node: &Arc<Node>, id: &ResidentId, turn: &str, reason: Stri
 pub async fn recover(node: &Arc<Node>, unfinished: Vec<(ResidentId, String)>) {
     let reason = format!("the node on {} restarted while it ran", node.machine());
     for (id, turn) in unfinished {
-        if let Some((about, town)) = node.residents.about(&id)
+        if let Some((about, _)) = node.residents.about(&id)
             && about.host.agent.as_str() == "claude"
             && node.residents.now(&id).and_then(|now| now.turn).as_deref() == Some(&turn)
         {
-            let directory = node.world.resident(town.as_ref(), &id);
+            let directory = node.world.conversation(&id);
             if crate::delivery::terminal(&directory, &turn).is_ok_and(|end| end.is_none())
                 && let Some(session) = about.session
                 && let Err(error) = fastctx_hosts::claude::exchange::stop(

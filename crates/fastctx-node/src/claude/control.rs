@@ -226,23 +226,7 @@ pub(super) async fn invoke(node: &Arc<Node>, resident: &ResidentId, control: Val
     // The activation's process stream also ends when its plugin unloads.
     // Its exit, a clear or reload, or the reply settles this one-shot.
     let reply = receiver.await.map_err(|_| Failure::new("the Claude control bridge stopped"))?;
-    std::fs::remove_file(&path).map_err(failure)?;
-    for suffix in ["json", "done"] {
-        let path = directory.join("replies").join(format!("{key}.{suffix}"));
-        if let Err(error) = std::fs::remove_file(path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(failure(error));
-        }
-    }
-    for side in ["inbox", "replies"] {
-        let path = directory.join(side).join(format!("{key}.parts"));
-        if let Err(error) = std::fs::remove_dir_all(path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(failure(error));
-        }
-    }
+    collect_invocation(&directory, &key).map_err(failure)?;
     reply.map_err(Failure::new)
 }
 
@@ -328,6 +312,14 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
             }
         }
     }
+    for path in crate::retention::entries(&directory.join("replies"))? {
+        if path.extension().is_some_and(|extension| extension == "done")
+            && let Some(key) = path.file_stem().and_then(|key| key.to_str())
+            && !node.claude.bridge.calls.lock().expect("never poisoned").contains_key(key)
+        {
+            collect_invocation(&directory, key)?;
+        }
+    }
     let entries = match std::fs::read_dir(directory.join("requests")) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -345,6 +337,9 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
         let key = waiting.question.address().to_string();
         if let Some(resolution) = files::read::<Answer>(&path.join("resolved.json"))? {
             resolved(node, &key, resolution)?;
+            if !fastctx_platform::is_alive(&waiting.process)? {
+                fastctx_platform::owned_directory::delete(&path)?;
+            }
             continue;
         }
         if waiting.question.host != host
@@ -380,6 +375,18 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
         }
     }
     waiting_state(node, resident)
+}
+
+pub(super) fn collect_invocation(directory: &Path, key: &str) -> std::io::Result<()> {
+    for side in ["inbox", "replies"] {
+        for extension in ["json", "done", "parts"] {
+            match fastctx_platform::owned_directory::delete(&directory.join(side).join(format!("{key}.{extension}"))) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {

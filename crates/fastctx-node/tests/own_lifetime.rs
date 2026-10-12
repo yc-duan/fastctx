@@ -42,7 +42,7 @@ fn main() -> anyhow::Result<()> {
         Some("supervise") => {
             let fastctx = std::env::current_exe()?;
             run::supervisor::supervise_with(Path::new(&args[1]), Path::new(&args[2]), |world, job| {
-                let resident = world.job_owner(&job.machine, job.town.as_ref(), &job.owner);
+                let resident = world.job_owner(&job.machine, &job.owner);
                 let root = PathBuf::from(std::env::var_os("FASTCTX_TEST_ROOT").expect("test root"));
                 let bash = PathBuf::from(std::env::var_os("FASTCTX_TEST_BASH").expect("test bash"));
                 let environment = shell::environment_from(

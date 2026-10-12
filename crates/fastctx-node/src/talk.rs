@@ -19,7 +19,7 @@ use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::agents::Choices;
 use fastctx_types::attachments::Attachment;
 use fastctx_types::ipc::Failure;
-use fastctx_types::layout::ResidentDir;
+use fastctx_types::layout::ConversationDir;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{About, Activity, Host, Landed, Now, Origin};
 use fastctx_types::session::{SessionEvent, Watched};
@@ -186,14 +186,15 @@ pub async fn watch_here(
     node: &Arc<Node>,
     resident: &ResidentId,
 ) -> Result<(Vec<SessionEvent>, mpsc::UnboundedReceiver<SessionEvent>), Failure> {
-    let (about, town) = node
+    let (about, _) = node
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
     let mut events = node.watchers.watch(resident);
-    let directory = node.world.resident(town.as_ref(), resident);
-    let recorded =
-        |directory: &ResidentDir| crate::delivery::history(directory).map_err(|error| Failure::new(error.to_string()));
+    let directory = node.world.conversation(resident);
+    let recorded = |directory: &ConversationDir| {
+        crate::delivery::history(directory).map_err(|error| Failure::new(error.to_string()))
+    };
     let (recorded, hosted) = match &about.session {
         Some(thread) if about.world_started && about.host.agent.as_str() == "codex" => {
             crate::homes::available(node, &about)?;
@@ -582,6 +583,8 @@ pub async fn open_here(
         opened.home.as_deref(),
     )
     .await?;
+    // Until it is claimed below, reports of threads nobody claims are kept.
+    let _starting = crate::codex::starting(node);
     let (thread, model) = node.codex.home(opened.home.as_deref())?.start_thread(spec).await.map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {

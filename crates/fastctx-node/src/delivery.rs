@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
-use fastctx_types::layout::ResidentDir;
+use fastctx_types::layout::ConversationDir;
 use fastctx_types::residents::Pending;
 use fastctx_types::session::{SessionEvent, TurnEnd};
 use fastctx_types::{Address, NoticeId};
@@ -33,9 +33,8 @@ pub struct Finished {
     pub readers: Vec<Address>,
 }
 
-pub fn begin(directory: &ResidentDir, inputs: Vec<Pending>) -> io::Result<Handover> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
+pub fn begin(directory: &ConversationDir, inputs: Vec<Pending>) -> io::Result<Handover> {
+    let _transaction = crate::resident_storage::lock();
     let ids: Vec<&str> = inputs.iter().map(|input| input.delivery.id.as_str()).collect();
     let id = crate::speech::fixed_id("handover", &ids);
     let handover = Handover { id, inputs, turn: None, unresolved: None, attempting: true };
@@ -60,16 +59,14 @@ fn attempting() -> bool {
     true
 }
 
-pub fn refused(directory: &ResidentDir, handover: &mut Handover) -> io::Result<()> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
+pub fn refused(directory: &ConversationDir, handover: &mut Handover) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
     handover.attempting = false;
     write(&handover_path(directory, &handover.id), handover)
 }
 
-pub fn accept(directory: &ResidentDir, handover: &mut Handover, turn: &str) -> io::Result<()> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
+pub fn accept(directory: &ConversationDir, handover: &mut Handover, turn: &str) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
     if handover.turn.as_deref().is_some_and(|prior| prior != turn) {
         return Err(io::Error::other("one handover cannot belong to two turns"));
     }
@@ -91,9 +88,8 @@ pub fn accept(directory: &ResidentDir, handover: &mut Handover, turn: &str) -> i
     Ok(())
 }
 
-pub fn unresolved(directory: &ResidentDir, handover: &mut Handover, end: TurnEnd) -> io::Result<()> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
+pub fn unresolved(directory: &ConversationDir, handover: &mut Handover, end: TurnEnd) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
     if handover.turn.is_some() {
         return Err(io::Error::other("a handover with a known turn is not an unknown submission"));
     }
@@ -104,15 +100,15 @@ pub fn unresolved(directory: &ResidentDir, handover: &mut Handover, end: TurnEnd
     Ok(())
 }
 
-fn handovers_here(directory: &ResidentDir) -> io::Result<Vec<Handover>> {
-    let mut handovers: Vec<Handover> = list(&directory.path().join("handovers"))?;
+fn handovers_here(directory: &ConversationDir) -> io::Result<Vec<Handover>> {
+    let mut handovers: Vec<Handover> = list(&directory.handovers())?;
     for handover in &mut handovers {
         accepted_turn(directory, handover)?;
     }
     Ok(handovers)
 }
 
-fn accepted_turn(directory: &ResidentDir, handover: &mut Handover) -> io::Result<()> {
+fn accepted_turn(directory: &ConversationDir, handover: &mut Handover) -> io::Result<()> {
     let path = handover_path(directory, &handover.id).with_extension("accepted");
     if let Some(turn) = optional::<String>(&path)? {
         if handover.turn.as_ref().is_some_and(|prior| prior != &turn) {
@@ -123,17 +119,15 @@ fn accepted_turn(directory: &ResidentDir, handover: &mut Handover) -> io::Result
     Ok(())
 }
 
-pub fn input_turn(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<String>> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
+pub fn input_turn(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<String>> {
+    let _transaction = crate::resident_storage::lock();
     Ok(handovers_here(directory)?.into_iter().find_map(|handover| {
         handover.inputs.iter().any(|input| input.delivery.id == *id).then_some(handover.turn).flatten()
     }))
 }
 
-pub fn input_uncertainty(directory: &ResidentDir, id: &NoticeId) -> io::Result<Option<String>> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
+pub fn input_uncertainty(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<String>> {
+    let _transaction = crate::resident_storage::lock();
     Ok(handovers_here(directory)?.into_iter().find_map(|handover| {
         if handover.inputs.iter().any(|input| input.delivery.id == *id) {
             handover.unresolved.and_then(|end| end.reason)
@@ -143,25 +137,29 @@ pub fn input_uncertainty(directory: &ResidentDir, id: &NoticeId) -> io::Result<O
     }))
 }
 
-fn terminal_here(directory: &ResidentDir, turn: &str) -> io::Result<Option<Finished>> {
+fn terminal_here(directory: &ConversationDir, turn: &str) -> io::Result<Option<Finished>> {
     optional(&terminal_path(directory, turn))
 }
 
 /// The first terminal outcome is authoritative. Later readers can be added
 /// when acceptance was reported after completion, without changing the end.
-pub fn finish(directory: &ResidentDir, turn: &str, end: TurnEnd, readers: &[Address]) -> io::Result<(Finished, bool)> {
+pub fn finish(
+    directory: &ConversationDir,
+    turn: &str,
+    end: TurnEnd,
+    readers: &[Address],
+) -> io::Result<(Finished, bool)> {
     finish_at(directory, turn, end, readers, None)
 }
 
 pub fn finish_at(
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     turn: &str,
     end: TurnEnd,
     readers: &[Address],
     ended_at: Option<Timestamp>,
 ) -> io::Result<(Finished, bool)> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
+    let _transaction = crate::resident_storage::lock();
     let prior = terminal_here(directory, turn)?;
     let first = prior.is_none();
     let mut finished = prior.unwrap_or_else(|| Finished {
@@ -181,17 +179,15 @@ pub fn finish_at(
     Ok((finished, first))
 }
 
-pub fn terminals(directory: &ResidentDir) -> io::Result<Vec<Finished>> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
-    list(&directory.path().join("turns"))
+pub fn terminals(directory: &ConversationDir) -> io::Result<Vec<Finished>> {
+    let _transaction = crate::resident_storage::lock();
+    list(&directory.turns())
 }
 
-pub fn remember_session(directory: &ResidentDir, turn: &str, session: &str) -> io::Result<()> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
+pub fn remember_session(directory: &ConversationDir, turn: &str, session: &str) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
     let key = crate::speech::fixed_id("turn", &[turn]);
-    let path = directory.path().join("turn-sessions").join(format!("{key}.json"));
+    let path = directory.turn_sessions().join(format!("{key}.json"));
     match create(&path, &session) {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
             if read::<String>(&path)? != session {
@@ -203,33 +199,30 @@ pub fn remember_session(directory: &ResidentDir, turn: &str, session: &str) -> i
     }
 }
 
-pub fn session(directory: &ResidentDir, turn: &str) -> io::Result<Option<String>> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
+pub fn session(directory: &ConversationDir, turn: &str) -> io::Result<Option<String>> {
+    let _transaction = crate::resident_storage::lock();
     let key = crate::speech::fixed_id("turn", &[turn]);
-    optional(&directory.path().join("turn-sessions").join(format!("{key}.json")))
+    optional(&directory.turn_sessions().join(format!("{key}.json")))
 }
 
-pub fn event(directory: &ResidentDir, key: &str, event: &SessionEvent) -> io::Result<bool> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
+pub fn event(directory: &ConversationDir, key: &str, event: &SessionEvent) -> io::Result<bool> {
+    let _transaction = crate::resident_storage::lock();
     let key = crate::speech::fixed_id("event", &[key]);
-    crate::session_record::append(directory.path(), key.as_str(), event)
+    crate::session_record::append(directory, key.as_str(), event)
 }
 
-pub fn history(directory: &ResidentDir) -> io::Result<Vec<SessionEvent>> {
-    let (_transaction, current) = crate::resident_storage::current(directory)?;
-    let directory = &current;
-    crate::session_record::history(directory.path())
+pub fn history(directory: &ConversationDir) -> io::Result<Vec<SessionEvent>> {
+    let _transaction = crate::resident_storage::lock();
+    crate::session_record::history(directory)
 }
 
-fn handover_path(directory: &ResidentDir, id: &NoticeId) -> PathBuf {
-    directory.path().join("handovers").join(format!("{id}.json"))
+fn handover_path(directory: &ConversationDir, id: &NoticeId) -> PathBuf {
+    directory.handovers().join(format!("{id}.json"))
 }
 
-fn terminal_path(directory: &ResidentDir, turn: &str) -> PathBuf {
+fn terminal_path(directory: &ConversationDir, turn: &str) -> PathBuf {
     let id = crate::speech::fixed_id("turn", &[turn]);
-    directory.path().join("turns").join(format!("{id}.json"))
+    directory.turns().join(format!("{id}.json"))
 }
 
 fn list<T: serde::de::DeserializeOwned>(directory: &Path) -> io::Result<Vec<T>> {
@@ -273,11 +266,11 @@ fn create(path: &Path, value: &impl Serialize) -> io::Result<()> {
     publish_new(path, &serde_json::to_vec(value).map_err(io::Error::other)?, Permissions::Private)
 }
 
-pub fn handovers(directory: &ResidentDir) -> io::Result<Vec<Handover>> {
-    let (_transaction, directory) = crate::resident_storage::current(directory)?;
-    handovers_here(&directory)
+pub fn handovers(directory: &ConversationDir) -> io::Result<Vec<Handover>> {
+    let _transaction = crate::resident_storage::lock();
+    handovers_here(directory)
 }
-pub fn terminal(directory: &ResidentDir, turn: &str) -> io::Result<Option<Finished>> {
-    let (_transaction, directory) = crate::resident_storage::current(directory)?;
-    terminal_here(&directory, turn)
+pub fn terminal(directory: &ConversationDir, turn: &str) -> io::Result<Option<Finished>> {
+    let _transaction = crate::resident_storage::lock();
+    terminal_here(directory, turn)
 }

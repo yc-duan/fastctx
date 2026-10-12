@@ -17,7 +17,7 @@ pub(super) async fn finish(
     reply: &Value,
     from: Option<&str>,
 ) -> Result<(), Failure> {
-    let (about, town) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
+    let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let session = about.session.ok_or_else(|| Failure::new("Claude has not identified the fork yet"))?;
     let directory = exchange::sessions(node.world.path()).join(&session);
     let cut = transcript::HistoryCut {
@@ -98,7 +98,7 @@ pub(super) async fn finish(
     )
     .await?;
     if let Some(from) = from {
-        let record = crate::delivery::history(&node.world.resident(town.as_ref(), resident)).map_err(failure)?;
+        let record = crate::delivery::history(&node.world.conversation(resident)).map_err(failure)?;
         let previous: std::collections::HashSet<_> = record
             .iter()
             .flat_map(|event| match &event.happened {

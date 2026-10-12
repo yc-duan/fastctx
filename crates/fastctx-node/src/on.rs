@@ -120,10 +120,11 @@ impl Pieces {
         };
         let complete = !through_exit && !matches!(&end, OnEnd::Exited { remaining, .. } if *remaining > 0);
         if origin.resident.machine == node.machine() && !consumed.is_empty() {
-            let directory = node.world.resident(origin.town.as_ref(), &origin.resident.resident);
-            tokio::task::spawn_blocking(move || {
-                crate::job_receipts::apply_consumed(&directory, &consumed)
-            }).await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())?;
+            let directory = node.world.conversation(&origin.resident.resident);
+            tokio::task::spawn_blocking(move || crate::job_receipts::apply_consumed(&directory, &consumed))
+                .await
+                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())?;
         }
         let (taken, receipt) = oneshot::channel();
         self.0.send(Piece::End { end, taken }).await.map_err(|_| "the on that sent it left".to_string())?;
@@ -131,10 +132,15 @@ impl Pieces {
         if received {
             let context = self.2.lock().expect("never poisoned");
             let job = context.job.as_ref().expect("started before end");
-            crate::job_receipts::on_taken(&context.node, context.parent.as_deref(), &context.origin,
-                &context.destination, &context.acting, crate::job_receipts::OnCompletion {
-                    job, consumed: &context.consumed, through_exit: !complete,
-                }).map_err(|error| error.to_string())?;
+            crate::job_receipts::on_taken(
+                &context.node,
+                context.parent.as_deref(),
+                &context.origin,
+                &context.destination,
+                &context.acting,
+                crate::job_receipts::OnCompletion { job, consumed: &context.consumed, through_exit: !complete },
+            )
+            .map_err(|error| error.to_string())?;
         }
         Ok(received)
     }
@@ -170,7 +176,7 @@ pub(crate) fn sent_for(node: &Node, job: Option<&JobId>) -> Option<fastctx_types
 /// before the end stops the job.
 pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) -> Result<OnFollowing, Failure> {
     origin.call_id = if let Some(job) = &request.job {
-        let path = node.world.owner(&node.machine(), origin.town.as_ref(), &origin.resident).job_record(job);
+        let path = node.world.owner(&node.machine(), &origin.resident).job_record(job);
         fastctx_hands::run::record::read(&path)
             .map_err(|error| Failure::new(format!("reading the on's job: {error}")))?
             .call_id
@@ -181,9 +187,20 @@ pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) ->
     origin.follower = Some(node.machine());
     let (pieces, receiver) = mpsc::channel(QUEUED_PIECES);
     let (stop, stopping) = watch::channel(false);
-    let parent = request.job.as_ref().map(|job| node.world.job_owner(&node.machine(), origin.town.as_ref(), &origin.resident.clone().into()).job_record(job));
-    let context = ReceiptContext { node: node.clone(), parent, acting: acting(node, &origin), origin: origin.clone(),
-        destination: request.written(), job: None, consumed: Vec::new(), through_exit: false };
+    let parent = request
+        .job
+        .as_ref()
+        .map(|job| node.world.job_owner(&node.machine(), &origin.resident.clone().into()).job_record(job));
+    let context = ReceiptContext {
+        node: node.clone(),
+        parent,
+        acting: acting(node, &origin),
+        origin: origin.clone(),
+        destination: request.written(),
+        job: None,
+        consumed: Vec::new(),
+        through_exit: false,
+    };
     let pieces = Pieces(pieces, stopping, Arc::new(Mutex::new(context)));
     let node = node.clone();
     tokio::spawn(async move {
@@ -657,8 +674,8 @@ async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> 
     };
     let (world, origin) = (node.world.clone(), origin.clone());
     tokio::task::spawn_blocking(move || {
-        let directory = world.resident(origin.town.as_ref(), &origin.resident.resident);
-        let (_transaction, directory) = crate::resident_storage::current(&directory)?;
+        let directory = world.conversation(&origin.resident.resident);
+        let _transaction = crate::resident_storage::lock();
         let mut bytes = match std::fs::read(directory.actions()) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -691,10 +708,10 @@ async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &J
     tokio::task::spawn_blocking(move || -> std::io::Result<()> {
         let owner = JobOwner::Resident(origin.resident.clone());
         if origin.resident.machine == here {
-            crate::residents::record_action(&world, &origin.resident.resident, origin.town.as_ref(), &action)?;
+            crate::residents::record_action(&world, &origin.resident.resident, &action)?;
         }
         if let Some(parent) = &request.job {
-            let directory = world.job_owner(&here, origin.town.as_ref(), &owner);
+            let directory = world.job_owner(&here, &owner);
             let line = format!("{} {job}\n", request.machine);
             append(&directory.jobs().join(format!("{parent}.on")), line.as_bytes())?;
         }
@@ -1017,7 +1034,7 @@ pub async fn serve_follow(
 /// The record of the `on` job `job` of the resident in `origin`.
 pub(crate) fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result<PathBuf, Failure> {
     let owner = JobOwner::Resident(origin.resident.clone());
-    let path = node.world.job_owner(&node.machine(), origin.town.as_ref(), &owner).job_record(job);
+    let path = node.world.job_record(&node.machine(), origin.town.as_ref(), &owner, job);
     match fastctx_hands::run::record::read(&path) {
         Ok(record)
             if record
@@ -1061,7 +1078,7 @@ impl Staged {
         stream: &mut Stream,
     ) -> Result<Self, Failure> {
         let owner = JobOwner::Resident(origin.resident.clone());
-        let directory = node.world.job_owner(&node.machine(), origin.town.as_ref(), &owner).out();
+        let directory = node.world.job_owner(&node.machine(), &owner).out();
         let name = random_name().map_err(|error| Failure::new(format!("naming the package: {error}")))?;
         let created = directory.clone();
         tokio::task::spawn_blocking(move || std::fs::create_dir_all(&created))
@@ -1247,7 +1264,13 @@ impl Sink<'_> {
     }
 
     /// Hands over the end; true when the other side says it has it.
-    async fn ended(&mut self, end: OnEnd, lettered: bool, consumed: Vec<fastctx_types::NoticeId>, through_exit: bool) -> Result<bool, String> {
+    async fn ended(
+        &mut self,
+        end: OnEnd,
+        lettered: bool,
+        consumed: Vec<fastctx_types::NoticeId>,
+        through_exit: bool,
+    ) -> Result<bool, String> {
         match self {
             Sink::Stream(stream) => {
                 stream.say(&OnWord::Ended { end, lettered, consumed, through_exit }).await?;
@@ -1260,9 +1283,7 @@ impl Sink<'_> {
                     }
                 }
             }
-            Sink::Local(pieces) => {
-                pieces.receipt(consumed, through_exit).ended(end).await
-            },
+            Sink::Local(pieces) => pieces.receipt(consumed, through_exit).ended(end).await,
         }
     }
 
@@ -1321,12 +1342,15 @@ async fn hand_over(
             sink.facts(crate::run_facts::writes(record_path).map_err(|error| error.to_string())?).await?;
             // A letter goes only for an end nobody followed, and takes the
             // marker that it is owed: without one, the letter went.
-            let owed = node.world.job_owner(&node.machine(), record.town.as_ref(), &record.owner).job_owed(job);
+            let owed = node.world.job_owner(&node.machine(), &record.owner).job_owed(job);
             let lettered = record.end.is_some() && matches!(tokio::fs::try_exists(&owed).await, Ok(false));
             let complete = record.end.is_some();
             let (node, path) = (node.clone(), record_path.to_path_buf());
-            let consumed = tokio::task::spawn_blocking(move || crate::job_receipts::snapshot_through(&node, &path, !complete))
-                .await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())?;
+            let consumed =
+                tokio::task::spawn_blocking(move || crate::job_receipts::snapshot_through(&node, &path, !complete))
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| error.to_string())?;
             return sink.ended(end, lettered, consumed, !complete).await.map(|taken| Handed { taken, complete });
         }
         if quiet_since.elapsed() >= STILL_EVERY {

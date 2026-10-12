@@ -104,25 +104,20 @@ fn images(root: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
 fn stop_claude_without_node(installation: &Installation, world: &WorldDir) -> anyhow::Result<()> {
     use fastctx_hosts::claude::background;
     let mut sessions = Vec::new();
-    for parent in world.resident_parents()? {
-        for resident in crate::entries(&parent)? {
-            let directory = resident.path();
-            let about_file = if directory.join("about").try_exists()? {
-                directory.join("about")
-            } else {
-                directory.join("archive/about")
-            };
-            if let Some(about) = crate::read::<fastctx_types::residents::About>(&about_file)?
-                && about.world_started
-                && about.host.agent.as_str() == "claude"
-            {
-                sessions.push((
-                    about.home.unwrap_or_else(|| installation.claude_home.clone()),
-                    about.session.context("a World-started Claude session has no identity")?,
-                ));
-            }
+    for about_file in crate::inventory::abouts(world)? {
+        if let Some(about) = crate::read::<fastctx_types::residents::About>(&about_file)?
+            && about.world_started
+            && about.host.agent.as_str() == "claude"
+        {
+            sessions.push((
+                about.home.unwrap_or_else(|| installation.claude_home.clone()),
+                about.session.context("a World-started Claude session has no identity")?,
+            ));
         }
     }
+    // An earlier layout kept a resident's record in each town it lived in.
+    sessions.sort();
+    sessions.dedup();
     if sessions.is_empty() {
         return Ok(());
     }

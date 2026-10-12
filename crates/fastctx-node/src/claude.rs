@@ -21,6 +21,7 @@ pub(crate) mod calls;
 pub(crate) mod control;
 mod fork;
 mod fork_history;
+pub(crate) mod garbage;
 pub(crate) mod history;
 mod image_records;
 pub(crate) use image_records::paths as image_records;
@@ -42,7 +43,7 @@ use std::sync::{Arc, Mutex};
 use fastctx_hands::told;
 use fastctx_hosts::claude::{self, background, exchange};
 use fastctx_types::ipc::Failure;
-use fastctx_types::layout::ResidentDir;
+use fastctx_types::layout::ConversationDir;
 use fastctx_types::residents::{About, Activity, Host, Landed, Notice, Now, Origin, Pending, PendingState};
 use fastctx_types::session::{Happened, Speaker};
 use fastctx_types::{AgentName, MachineName, ResidentId, TownName};
@@ -111,6 +112,9 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     fastctx_platform::ensure_private_dir(&sessions)?;
     let (changed, mut changes) = mpsc::unbounded_channel::<PathBuf>();
     let root = sessions.clone();
+    let conversations = node.world.conversations();
+    fastctx_platform::ensure_private_dir(&conversations)?;
+    let homes = conversations.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         match event {
             Ok(event) => {
@@ -120,6 +124,14 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
                         && let Some(first) = rest.components().next()
                     {
                         let _ = changed.send(root.join(first));
+                    } else if let Ok(rest) = path.strip_prefix(&homes) {
+                        let mut parts = rest.iter();
+                        if parts.next().is_some()
+                            && parts.next().is_some_and(|name| name == "claude")
+                            && let Some(session) = parts.next()
+                        {
+                            let _ = changed.send(root.join(session));
+                        }
                     }
                 }
             }
@@ -132,6 +144,8 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     })
     .map_err(std::io::Error::other)?;
     notify::Watcher::watch(&mut watcher, &sessions, notify::RecursiveMode::Recursive).map_err(std::io::Error::other)?;
+    notify::Watcher::watch(&mut watcher, &conversations, notify::RecursiveMode::Recursive)
+        .map_err(std::io::Error::other)?;
     let node = node.clone();
     tokio::spawn(async move {
         // Kept for as long as the node watches.
@@ -308,8 +322,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                             .is_some_and(|(about, _)| about.session.as_deref() == Some(&session));
                         if !current && matches!(event.happened, Happened::TurnStarted { .. } | Happened::Health { .. })
                         {
-                            let town = node.residents.town_of(&resident).flatten();
-                            let directory = node.world.resident(town.as_ref(), &resident);
+                            let directory = node.world.conversation(&resident);
                             let key = match &event.happened {
                                 Happened::TurnStarted { turn } => format!("started:{turn}"),
                                 _ => serde_json::to_string(&event).map_err(std::io::Error::other)?,
@@ -544,8 +557,10 @@ async fn taken(
     turn: &str,
     which: impl Fn(&Pending) -> bool,
 ) -> std::io::Result<()> {
-    let Some(town) = node.residents.town_of(resident) else { return Ok(()) };
-    let directory = node.world.resident(town.as_ref(), resident);
+    if !node.residents.knows(resident) {
+        return Ok(());
+    }
+    let directory = node.world.conversation(resident);
     let speaking = node.residents.speaking(resident).expect("known resident");
     let _speaking = speaking.lock().await;
     crate::delivery::remember_session(&directory, turn, session)?;
@@ -584,10 +599,10 @@ async fn uncertain_inputs(
     ids: Option<&[String]>,
     why: String,
 ) -> std::io::Result<()> {
-    let Some(town) = node.residents.town_of(resident) else {
+    if !node.residents.knows(resident) {
         return Ok(());
-    };
-    let directory = node.world.resident(town.as_ref(), resident);
+    }
+    let directory = node.world.conversation(resident);
     let known: HashSet<_> = crate::delivery::handovers(&directory)?
         .into_iter()
         .filter(|handover| handover.turn.is_some())
@@ -660,8 +675,8 @@ async fn ended_for_process(
         return Ok(());
     }
     control::ended(node, session);
-    let Some((about, town)) = node.residents.about(resident) else { return Ok(()) };
-    let directory = node.world.resident(town.as_ref(), resident);
+    let Some((about, _)) = node.residents.about(resident) else { return Ok(()) };
+    let directory = node.world.conversation(resident);
     let current = about.session.as_deref() == Some(session);
     let mut turns = std::collections::BTreeSet::new();
     if let Some(now) = node.residents.now(resident) {
@@ -739,7 +754,16 @@ pub fn removed(node: &Node, resident: &ResidentId) {
 pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_types::residents::Whereabouts, Failure> {
     let world = node.world.path().to_path_buf();
     let id = tool_use_id.to_string();
-    let registration = tokio::task::spawn_blocking(move || claude::calls::take(&world, &id))
+    let sessions: Vec<_> = node
+        .claude
+        .state
+        .lock()
+        .expect("never poisoned")
+        .sessions
+        .keys()
+        .map(|session| exchange::sessions(&world).join(session))
+        .collect();
+    let registration = tokio::task::spawn_blocking(move || claude::calls::take_from(&world, &id, sessions))
         .await
         .map_err(|error| Failure::new(format!("reading Claude call evidence: {error}")))?
         .map_err(|error| Failure::new(format!("pairing Claude call {tool_use_id}: {error}")))?;
@@ -803,10 +827,9 @@ async fn pair(node: &Arc<Node>, session: &str) {
     };
     if newer {
         if let Some(prior) = current.as_deref().filter(|prior| *prior != session)
-            && let Some((_, town)) = node.residents.about(&resident)
             && let Some(now) = node.residents.now(&resident)
         {
-            let directory = node.world.resident(town.as_ref(), &resident);
+            let directory = node.world.conversation(&resident);
             for turn in now.owed.keys().chain(now.turn.iter()) {
                 if let Err(error) = crate::delivery::remember_session(&directory, turn, prior) {
                     node.log.line(format_args!("remembering the prior conversation: {error}"));
@@ -845,8 +868,10 @@ async fn pair(node: &Arc<Node>, session: &str) {
     }
     // What waited for the resident before its mod was there goes to the mod,
     // and stays kept until the mod says which turn took it.
-    let Some(town) = node.residents.town_of(&resident) else { return };
-    let directory = node.world.resident(town.as_ref(), &resident);
+    if !node.residents.knows(&resident) {
+        return;
+    }
+    let directory = node.world.conversation(&resident);
     let waiting = {
         let directory = directory.clone();
         tokio::task::spawn_blocking(move || crate::inbox::pending(&directory)).await
@@ -888,7 +913,7 @@ pub async fn deliver(
     node: &Arc<Node>,
     to: &ResidentId,
     about: &About,
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     pending: &Pending,
 ) -> Option<Result<Landed, Failure>> {
     let delivering = node.claude.delivering.get_or_insert_with(to, Default::default);
@@ -960,7 +985,7 @@ pub async fn deliver(
 async fn failed_wake(
     node: &Arc<Node>,
     resident: &ResidentId,
-    directory: &ResidentDir,
+    directory: &ConversationDir,
     id: &fastctx_types::NoticeId,
     error: Failure,
 ) -> Result<Landed, Failure> {
@@ -987,7 +1012,7 @@ async fn failed_wake(
 
 /// Puts something kept into the mod's inbox; it is kept until the mod says
 /// which turn took it.
-fn into_inbox(node: &Node, session: &str, directory: &ResidentDir, pending: &Pending) -> Result<Landed, Failure> {
+fn into_inbox(node: &Node, session: &str, directory: &ConversationDir, pending: &Pending) -> Result<Landed, Failure> {
     let taking = node.taking.lock().expect("never poisoned");
     if taking.iter().any(|(_, id)| *id == pending.delivery.id) {
         return Ok(Landed::Waiting {
@@ -1159,12 +1184,12 @@ pub async fn open_here(
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
     node.residents.set_heard(&id, heard);
     crate::session_options::keep(node, &id, &options)?;
-    let directory = node.world.resident(town.as_ref(), &id);
-    let settings = directory.path().join("claude-settings.json");
-    let instructions = directory.path().join("claude-instructions.md");
+    let directory = node.world.conversation(&id);
+    let settings = directory.claude_settings();
+    let instructions = directory.claude_instructions();
     let written = std::fs::write(&settings, settings_json()).and_then(|()| std::fs::write(&instructions, words));
     written.map_err(|error| Failure::new(format!("writing the session's settings: {error}")))?;
-    let cwd = crate::colleagues::standing(node, town.as_ref())?;
+    let cwd = directory.path().to_path_buf();
     let plugin = claude::plugin_dir(node.world.path());
     // Its files other than images go where it works, or where the user
     // chose, as later words' do.

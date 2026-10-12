@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::io;
 use std::path::{Component, Path};
+use std::sync::Arc;
 
 use fastctx_hosts::claude::exchange::{self, Registration};
 use fastctx_platform::{Permissions, publish_new};
@@ -11,6 +12,93 @@ use fastctx_types::{AgentName, ResidentId};
 use jiff::Timestamp;
 
 use crate::Node;
+
+/// Creates the home and compatibility alias before a new mod publishes any
+/// files. Existing legacy writers keep their path until they have exited.
+pub(crate) async fn directory(
+    node: &Arc<Node>,
+    session: String,
+    previous: Option<String>,
+    cwd: Option<String>,
+    process: Option<fastctx_types::ProcessIdentity>,
+) -> Result<String, fastctx_types::ipc::Failure> {
+    let _operation = node.data_operations.read().await;
+    let reading = node.claude.reading.get_or_insert_with(&session, Default::default);
+    let _reading = reading.lock().await;
+    let known = cwd.as_deref().and_then(|cwd| {
+        let cwd = Path::new(cwd);
+        let id = ResidentId::try_from(cwd.file_name()?.to_str()?).ok()?;
+        let (about, _) = node.residents.about(&id)?;
+        (about.world_started
+            && about.host.agent.as_str() == "claude"
+            && crate::homes::same_dir(cwd, node.world.conversation(&id).path()))
+        .then_some(id)
+    });
+    // A World launch holds births.read until the background CLI returns.
+    // Its native cwd already identifies its home, independently of that ID.
+    let _births = if known.is_none() { Some(node.claude.births.write().await) } else { None };
+    let observing = process.clone();
+    let reserve = || -> io::Result<String> {
+        validate_session(&session)?;
+        let source = exchange::sessions(node.world.path()).join(&session);
+        fastctx_platform::ensure_private_dir(&source)?;
+        let registration = Registration {
+            session,
+            previous,
+            at: None,
+            instance: None,
+            process,
+            inbox_address: None,
+            entrypoint: None,
+            model: None,
+            version: None,
+        };
+        let id = match known {
+            Some(id) => {
+                crate::gather::claude_room(&node.world, &id, &registration.session)?;
+                let path = source.join("resident.json");
+                match std::fs::read(&path) {
+                    Ok(bytes) if serde_json::from_slice::<ResidentId>(&bytes).map_err(io::Error::other)? != id => {
+                        return Err(io::Error::other("the Claude session belongs to another conversation"));
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        publish_new(&path, &serde_json::to_vec(&id).map_err(io::Error::other)?, Permissions::Private)?;
+                    }
+                    Err(error) => return Err(error),
+                }
+                node.residents.set_session(&node.world, &id, &registration.session, None, None)?;
+                id
+            }
+            None => resident(node, &registration)?,
+        };
+        node.residents.active(&id).map_err(|failure| io::Error::other(failure.message))?;
+        if registration.process.is_some() {
+            fastctx_platform::publish(
+                &source.join("session.json"),
+                &serde_json::to_vec(&registration).map_err(io::Error::other)?,
+                Permissions::Private,
+            )?;
+            node.residents.set_claude_here(&id, true);
+        }
+        let mut state = node.claude.state.lock().expect("never poisoned");
+        if state
+            .sessions
+            .get(&registration.session)
+            .is_none_or(|prior| prior.registration.process != registration.process)
+        {
+            state.sessions.insert(registration.session.clone(), super::Session { registration, resident: Some(id) });
+        }
+        Ok(crate::world::native(&std::fs::canonicalize(&source)?))
+    };
+    let result = reserve()
+        .map_err(|error| fastctx_types::ipc::Failure::new(format!("reserving the Claude session directory: {error}")));
+    if result.is_ok() {
+        super::process::observe(node, observing);
+        node.claude.changed.notify_waiters();
+    }
+    result
+}
 
 /// Called with the node's births lock held for writing.
 /// A clear chain can arrive in any order, including only after a restart.
@@ -116,6 +204,7 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
     };
     let bytes = serde_json::to_vec(&id).map_err(io::Error::other)?;
     for registration in chain.iter().rev() {
+        crate::gather::claude_room(&node.world, &id, &registration.session)?;
         let path = root.join(&registration.session).join("resident.json");
         match std::fs::read(&path) {
             Ok(bytes) => {
@@ -145,6 +234,7 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
 pub(crate) fn validate_session(session: &str) -> io::Result<()> {
     let mut components = Path::new(session).components();
     if session.is_empty()
+        || session.starts_with('.')
         || session.contains(['/', '\\', ':'])
         || !matches!(components.next(), Some(Component::Normal(_)))
         || components.next().is_some()

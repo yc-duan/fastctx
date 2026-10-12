@@ -18,6 +18,7 @@ mod asked;
 mod attach;
 mod attachment_files;
 mod attachments;
+mod books;
 mod claude;
 pub mod claude_request;
 mod codex;
@@ -27,12 +28,14 @@ mod composer;
 mod consent;
 mod control;
 mod copy;
+mod data;
 mod delivery;
 mod desk;
 mod devices;
 mod features;
 mod file_read;
 mod file_search;
+mod gather;
 pub mod handoff;
 mod here;
 mod homes;
@@ -82,6 +85,8 @@ pub mod thumbnail;
 mod town;
 mod turns;
 mod uninstall;
+mod unpublished;
+mod unstarted;
 mod user_images;
 mod waiting;
 mod watch;
@@ -120,6 +125,7 @@ pub(crate) struct Node {
     jobs: jobs::Jobs,
     job_watches: job_watch::Watches,
     disk: std::sync::Mutex<()>,
+    data_operations: tokio::sync::RwLock<()>,
     disk_changed: tokio::sync::Notify,
     disk_due: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     job_readers: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
@@ -326,6 +332,19 @@ pub async fn run_prepared(
     }
     let fastctx = world_program::prepare(fastctx_root).context("preparing the stable World program")?;
 
+    // An older World's records go into one directory per conversation before
+    // anything reads them.
+    unpublished::collect(world.path()).context("collecting unpublished World records")?;
+    fastctx_platform::owned_directory::delete(&world.image_reading())
+        .context("collecting image reads left by the previous node")?;
+    let gathered = gather::gather(&world).context("gathering conversations into their directories")?;
+    for name in &gathered.moved {
+        log.line(format_args!("gathered {name} into its directory"));
+    }
+    for (path, error) in &gathered.problems {
+        log.line(format_args!("could not gather {}: {error}", path.display()));
+    }
+    unstarted::collect(&world).context("collecting preparations that never became jobs")?;
     let reconciled = jobs::reconcile(&world)?;
     for path in &reconciled.interrupted {
         log.line(format_args!("marked interrupted: {}", path.display()));
@@ -373,6 +392,7 @@ pub async fn run_prepared(
         jobs: jobs::Jobs::new(),
         job_watches: Default::default(),
         disk: Default::default(),
+        data_operations: Default::default(),
         disk_changed: Default::default(),
         disk_due: Default::default(),
         job_readers: Default::default(),

@@ -1,9 +1,10 @@
-//! Membership tombstones survive host reconnects. Archive records without
-//! changing the paths held by running job supervisors and output writers.
+//! Removal is recorded in the conversation's own directory and survives
+//! host reconnects. Nothing moves: running jobs keep the paths they hold, and
+//! the records stay where they are until the user deletes the conversation.
 
 use std::io;
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish_new};
+use fastctx_platform::{Permissions, publish_new};
 use fastctx_types::ResidentId;
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
@@ -12,11 +13,7 @@ use jiff::Timestamp;
 use super::Residents;
 
 pub fn removal(world: &WorldDir, id: &ResidentId) -> io::Result<Option<Timestamp>> {
-    match std::fs::read(world.removed(id)) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(io::Error::other),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
+    super::records::read_removed(&world.conversation(id))
 }
 
 pub(super) fn refused(id: &ResidentId) -> Failure {
@@ -47,68 +44,59 @@ impl Residents {
             .ok_or_else(|| Failure::new(format!("no resident {id} lives here")))
     }
 
-    /// Mark membership removed first. If archiving is interrupted, startup
-    /// finishes it; a reconnect can never turn partial removal into arrival.
-    pub fn remove(&self, world: &WorldDir, id: &ResidentId) -> io::Result<Vec<String>> {
+    /// Records that the user removed `id`; a reconnect can never turn it
+    /// back into an arrival. Returns its directory, where its records stay.
+    pub fn remove(&self, world: &WorldDir, id: &ResidentId) -> io::Result<String> {
         let mut state = self.lock();
         let _transaction = crate::resident_storage::lock();
-        {
-            let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown resident"))?;
-            if live.removed.is_none() {
-                let at = Timestamp::now();
-                let path = world.removed(id);
-                ensure_private_dir(path.parent().expect("tombstone parent"))?;
-                publish_new(&path, &serde_json::to_vec(&at).map_err(io::Error::other)?, Permissions::Private)?;
-                live.removed = Some(at);
+        let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown resident"))?;
+        let directory = world.conversation(id);
+        if live.removed.is_none() {
+            let at = Timestamp::now();
+            match publish_new(
+                &directory.removed(),
+                &serde_json::to_vec(&at).map_err(io::Error::other)?,
+                Permissions::Private,
+            ) {
+                Ok(()) => live.removed = Some(at),
+                // A removal that was recorded before the node last stopped.
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    live.removed = super::records::read_removed(&directory)?;
+                }
+                Err(error) => return Err(error),
             }
         }
-        archive(world, id)
+        Ok(crate::world::native(directory.path()))
     }
-}
 
-fn archive(world: &WorldDir, id: &ResidentId) -> io::Result<Vec<String>> {
-    let mut paths = Vec::new();
-    for parent in world.resident_parents()? {
-        let base = parent.join(id.as_str());
-        if !base.is_dir() {
-            continue;
-        }
-        let destination = base.join("archive");
-        ensure_private_dir(&destination)?;
-        for entry in std::fs::read_dir(&base)? {
-            let entry = entry?;
-            if matches!(entry.file_name().to_str(), Some("archive" | "jobs" | "out" | "artifacts-delivered.json")) {
-                continue;
-            }
-            let target = destination.join(entry.file_name());
-            if target.exists() {
-                return Err(io::Error::other(format!(
-                    "both {} and {} exist; neither was overwritten",
-                    entry.path().display(),
-                    target.display()
-                )));
-            }
-            std::fs::rename(entry.path(), target)?;
-        }
-        paths.push(crate::world::native(&destination));
-    }
-    Ok(paths)
-}
-
-pub(super) fn recover(world: &WorldDir) -> io::Result<()> {
-    let directory = world.path().join("removed-residents");
-    let entries = match std::fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    for entry in entries {
-        let path = entry?.path();
-        let Some(id) = path.file_stem().and_then(|name| name.to_str()).and_then(|name| name.parse().ok()) else {
-            continue;
+    /// Forgets a resident whose conversation was deleted from this machine:
+    /// it is no longer on record, and a session that comes back as it is a
+    /// new one.
+    pub fn forget(&self, id: &ResidentId) {
+        let mut state = self.lock();
+        let Some(live) = state.live.get(id) else { return };
+        let session = live.about.session.clone();
+        let inbox = live.inbox.clone();
+        let asked_by = match &live.about.origin {
+            fastctx_types::residents::Origin::Colleague { asked_by, .. } => Some(asked_by.clone()),
+            fastctx_types::residents::Origin::User => None,
         };
-        removal(world, &id)?;
-        archive(world, &id)?;
+        if let Some(session) = &session {
+            if state.threads.get::<ResidentId>(session).as_ref() == Some(id) {
+                state.threads.remove(session);
+            }
+            state.forget_session(session);
+        }
+        if let Some(inbox) = inbox
+            && state.inboxes.get::<ResidentId>(&inbox).as_ref() == Some(id)
+        {
+            state.inboxes.remove(&inbox);
+        }
+        if let Some(asked_by) = asked_by
+            && let Some(started) = state.colleagues.get_mut(&asked_by)
+        {
+            started.retain(|colleague| colleague != id);
+        }
+        state.live.remove(id);
     }
-    Ok(())
 }

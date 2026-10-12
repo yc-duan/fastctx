@@ -63,7 +63,7 @@ test('loads, streams without waiting for disk, and retains the old session after
   on('session.model', () => ({ value: 'fixture' }))
   on('session.surfaces', () => ({ value: ['terminal', 'vscode'] }))
   on('session.version', () => ({ value: { version: '2.1.289' } }))
-  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify(e.argv[1] === 'claude-session-directory' ? e.argv[2] + '/claude/' + e.argv[3] : { pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('process.spawn', guard)
   on('fs.write', async (_, e) => {
     if (blockWrites && e.path.replaceAll('\\', '/').endsWith('.json') && JSON.parse(e.text).kind === 'batch') {
@@ -137,11 +137,11 @@ test('proves only World calls, before they run, and distinguishes clear from res
   let failProof = false
   let failReports = false
   let executed = 0
-  const proofs = () => [...files.keys()].filter((path) => path.includes('/claude-calls/'))
+  const proofs = () => [...files.keys()].filter((path) => path.includes('/calls/'))
   const proof = (id: string) => {
     let name = ''
     for (let i = 0; i < id.length; i++) name += id.charCodeAt(i).toString(16).padStart(4, '0')
-    const path = proofs().find((path) => path.endsWith('/claude-calls/' + name + '.json'))
+    const path = proofs().find((path) => path.endsWith('/calls/' + name + '.json'))
     return path === undefined ? undefined : JSON.parse(files.get(path)!)
   }
   on('mcp.connect', () => ({ value: { isConnected: true, server: serverName } }))
@@ -151,13 +151,13 @@ test('proves only World calls, before they run, and distinguishes clear from res
   on('session.model', () => ({ value: 'fixture' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.version', () => ({ value: { version: '2.1.289' } }))
-  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify(e.argv[1] === 'claude-session-directory' ? e.argv[2] + '/claude/' + e.argv[3] : { pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('process.spawn', guard)
   on('config.list', () => ({ value: [] }))
   on('session.messages', () => ({ value: [] }))
   on('fs.write', (_, e) => {
     const path = e.path.replaceAll('\\', '/')
-    if (failProof && path.includes('/claude-calls/')) return { deny: 'fixture: disk refused' }
+    if (failProof && path.includes('/calls/')) return { deny: 'fixture: disk refused' }
     if (failReports && (path.includes('/events/') || path.endsWith('/presentation.json'))) return { deny: 'fixture: reports unavailable' }
     files.set(path, e.text)
     return { value: undefined }
@@ -250,7 +250,7 @@ test('World failures preserve native operations before and after initialization'
   on('config.list', () => ({ value: [] }))
   on('agent.list', () => ({ value: [] }))
   on('session.usage', () => ({ value: usage() }))
-  on('process.run', () => ({ value: { exitCode: 0, stdout: JSON.stringify({ pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify(e.argv[1] === 'claude-session-directory' ? e.argv[2] + '/claude/' + e.argv[3] : { pid: 123, token: 'fixture-lifetime' }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('process.spawn', async function* (_, e, next) {
     if (e.argv[1] === 'claude-control-guard') {
       yield { stream: 'stdout', text: JSON.stringify({ process: { pid: 124, token: 'activation' }, parent: { pid: 123, token: 'fixture-lifetime' } }) + '\n' }
