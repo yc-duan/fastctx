@@ -612,11 +612,11 @@ fn sudo_hub_at(dir: &std::path::Path, executable: &std::path::Path) -> anyhow::R
         sudo.args(["-S", "-p", ""]);
     }
     let status = sudo
-        .arg(&executable)
+        .arg(executable)
         .args(["service", "hub", "install", "--dir"])
         .arg(dir)
         .arg("--executable")
-        .arg(&executable)
+        .arg(executable)
         .status()
         .map_err(|error| anyhow::anyhow!("starting sudo for the hub's service: {error}"))?;
     anyhow::ensure!(status.success(), "sudo service registration failed ({status}); run the command above to finish");
