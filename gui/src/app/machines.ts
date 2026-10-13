@@ -1259,9 +1259,15 @@ export class MachinesPage implements Page {
     if (strip && this.people.acts(world, strip[1]!, strip[2]!).length) key = personKey(strip[1]!, strip[2]!);
     const acts: Act[] = key ? this.actsOf(key, world) : [{ act: "fit", label: words.fit, icon: "expand" }];
     if (!acts.length) return;
-    if (key && !key.startsWith("who:")) this.selected = key;
+    // A person's menu stands for them alone: what was chosen on the drawing
+    // gives way, and a sheet says whose it is.
+    const person = key ? personOf(key) : null;
+    if (person) {
+      this.selected = null;
+      this.detailsOpen = false;
+    } else if (key) this.selected = key;
     this.menuFor = { key, at, sheet };
-    this.menu.innerHTML = acts
+    this.menu.innerHTML = (person && sheet ? `<p class="map-menu-head">${escape(person.account)}</p>` : "") + acts
       .map(
         (act) =>
           `<button class="map-menu-item${act.danger ? " danger" : ""}" type="button" role="menuitem" data-map-act="${act.act}" data-key="${escape(key ?? "")}">${glyph(act.icon, 16)}<span>${escape(act.label)}</span></button>`,

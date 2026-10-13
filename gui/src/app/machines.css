@@ -453,6 +453,15 @@
   min-height: 48px;
 }
 
+/* Whose menu a sheet is, where nothing chosen above it says. */
+.map-menu-head {
+  margin: 0 0 var(--space-2);
+  padding: 0 var(--space-2);
+  font-family: var(--font-reading);
+  font-size: 17px;
+  color: var(--text-strong);
+}
+
 @keyframes map-sheet-rise {
   from {
     transform: translateY(100%);
