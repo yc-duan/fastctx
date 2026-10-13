@@ -65,6 +65,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting).await?;
     let directory = node.world.conversation(&id);
     fastctx_platform::ensure_private_dir(directory.path()).map_err(failure)?;
+    let cwd = crate::colleagues::standing(node, town.as_ref())?;
     let assisting = node.works_here(&source.acting).is_err();
     let at = Timestamp::now();
     let about = About {
@@ -93,10 +94,9 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         )?;
         let settings = directory.claude_settings();
         let instructions = directory.claude_instructions();
-        std::fs::write(&settings, super::settings_json())
+        std::fs::write(&settings, super::settings_json(&id))
             .and_then(|()| std::fs::write(&instructions, words))
             .map_err(failure)?;
-        let cwd = directory.path().to_path_buf();
         let plugin = claude::plugin_dir(node.world.path());
         let world = node.world.path().to_path_buf();
         let source_session = session.clone();

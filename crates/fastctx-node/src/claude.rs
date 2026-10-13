@@ -1258,9 +1258,9 @@ pub async fn open_here(
     let directory = node.world.conversation(&id);
     let settings = directory.claude_settings();
     let instructions = directory.claude_instructions();
-    let written = std::fs::write(&settings, settings_json()).and_then(|()| std::fs::write(&instructions, words));
+    let written = std::fs::write(&settings, settings_json(&id)).and_then(|()| std::fs::write(&instructions, words));
     written.map_err(|error| Failure::new(format!("writing the session's settings: {error}")))?;
-    let cwd = directory.path().to_path_buf();
+    let cwd = crate::colleagues::standing(node, town.as_ref())?;
     let plugin = claude::plugin_dir(node.world.path());
     // Its files other than images go where the user chose, as later words'
     // do.
@@ -1385,14 +1385,31 @@ fn trust(directories: &[&Path], env: &[(OsString, OsString)]) -> Result<(), Stri
     Ok(())
 }
 
-/// Settings for a background session the World starts: the host's limit on
-/// a tool answer opened past the World's own (`world-view.md`, 一次给多少),
-/// and the host's own shell, file and search tools turned off, since the
-/// World's take their place. The session runs without approvals
-/// (`background::settings_args`), so nothing else needs allowing.
-fn settings_json() -> String {
+/// Takes back the trust `trust` gave `directory`, and whatever lies inside
+/// it, in the login whose home is `home` (the user's default when `None`).
+pub(crate) fn untrust(directory: &Path, home: Option<&Path>) -> Result<(), String> {
+    let env = environment().map_err(|failure| failure.message)?;
+    let configured = match home {
+        Some(home) => Some(home.as_os_str().to_owned()),
+        None => env.into_iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR")).map(|(_, value)| value),
+    };
+    let key = claude::trust::uninstall_key(directory).map_err(|error| error.to_string())?;
+    claude::trust::remove_world_trust(configured.as_deref(), &key).map(|_| ()).map_err(|error| error.to_string())
+}
+
+/// Settings for a background session the World starts for the conversation
+/// `id`: the host's limit on a tool answer opened past the World's own
+/// (`world-view.md`, 一次给多少), the host's own shell, file and search tools
+/// turned off, since the World's take their place, and the conversation,
+/// which its plugin reads back from them when it starts. The session runs
+/// without approvals (`background::settings_args`), so nothing else needs
+/// allowing.
+fn settings_json(id: &ResidentId) -> String {
     let settings = serde_json::json!({
-        "env": { "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string() },
+        "env": {
+            "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string(),
+            "FASTCTX_CONVERSATION": id.as_str(),
+        },
         "permissions": {
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
         },

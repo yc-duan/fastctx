@@ -213,14 +213,22 @@ pub(super) fn conversations(node: &Node) -> io::Result<BTreeMap<String, Measured
                 one.claude_home = Some(home.clone());
                 keeping_days = host::claude_keeping(&home, crate::homes::same_dir(&home, &claude_default)).days;
                 let mut said = false;
+                let own = host::claude_own_project(&home, directory.path())?;
                 for (session, exchange) in &sessions {
                     let (files, pointed) = host::claude_session_files(&home, session, exchange.as_deref())?;
                     said |= pointed;
                     for file in files {
                         transcript_present |= file.extension().is_some_and(|extension| extension == "jsonl");
+                        if own.as_deref().is_some_and(|own| crate::homes::within(own, &file)) {
+                            continue;
+                        }
                         one.host.add(tally(&file)?);
                         one.host_files.push(file);
                     }
+                }
+                if let Some(own) = own {
+                    one.host.add(tally(&own)?);
+                    one.host_files.push(own);
                 }
                 if !sessions.is_empty() {
                     host_record = HostRecord::Missing { bytes: one.host.bytes };

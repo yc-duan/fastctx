@@ -161,6 +161,16 @@ pub(super) fn claude_session_files(
     Ok((files, said))
 }
 
+/// The folder Claude Code keeps under `home`'s `projects` for sessions that
+/// stood in `directory`, when there is one. Claude sessions the World started
+/// before they stood in their project's directory stood in the conversation's
+/// own, so nothing but that conversation is kept there.
+pub(super) fn claude_own_project(home: &Path, directory: &Path) -> io::Result<Option<PathBuf>> {
+    use fastctx_hosts::claude::projects;
+    let folder = home.join("projects").join(projects::slug(&projects::cwd_text(directory)?));
+    Ok(folder.is_dir().then_some(folder))
+}
+
 pub(super) fn claude_home(fallback: &Path, exchange: Option<&Path>) -> io::Result<PathBuf> {
     let transcript = exchange.map(fastctx_hosts::claude::exchange::transcript).transpose()?.flatten();
     Ok(transcript

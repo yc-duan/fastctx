@@ -60,6 +60,7 @@ test('loads, streams without waiting for disk, and retains the old session after
   ] as const
   on('session.id', () => ({ value: sessionId }))
   on('session.cwd', () => ({ value: '/fixture' }))
+  on('settings.read', () => ({ value: {} }))
   on('session.model', () => ({ value: 'fixture' }))
   on('session.surfaces', () => ({ value: ['terminal', 'vscode'] }))
   on('session.version', () => ({ value: { version: '2.1.289' } }))
@@ -148,6 +149,7 @@ test('proves only World calls, before they run, and distinguishes clear from res
   on('session.usage', () => ({ value: usage() }))
   on('session.id', () => ({ value: sessionId }))
   on('session.cwd', () => ({ value: '/fixture' }))
+  on('settings.read', () => ({ value: {} }))
   on('session.model', () => ({ value: 'fixture' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.version', () => ({ value: { version: '2.1.289' } }))
@@ -243,6 +245,7 @@ test('World failures preserve native operations before and after initialization'
   on('mcp.connect', () => ({ value: { isConnected: false, reason: 'disabled', message: 'fixture' } }))
   on('session.id', () => ({ value: sessionId }))
   on('session.cwd', () => ({ value: '/fixture' }))
+  on('settings.read', () => ({ value: {} }))
   on('session.model', () => ({ value: 'fixture' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.version', () => ({ value: { version: '2.1.294' } }))

@@ -20,22 +20,38 @@ pub(crate) async fn directory(
     session: String,
     previous: Option<String>,
     cwd: Option<String>,
+    conversation: Option<String>,
     process: Option<fastctx_types::ProcessIdentity>,
 ) -> Result<String, fastctx_types::ipc::Failure> {
     let _operation = node.data_operations.read().await;
     let reading = node.claude.reading.get_or_insert_with(&session, Default::default);
     let _reading = reading.lock().await;
-    let known = cwd.as_deref().and_then(|cwd| {
-        let cwd = Path::new(cwd);
-        let id = ResidentId::try_from(cwd.file_name()?.to_str()?).ok()?;
-        let (about, _) = node.residents.about(&id)?;
-        (about.world_started
-            && about.host.agent.as_str() == "claude"
-            && crate::homes::same_dir(cwd, node.world.conversation(&id).path()))
-        .then_some(id)
-    });
+    let started_here = |id: &ResidentId| {
+        node.residents.about(id).is_some_and(|(about, _)| about.world_started && about.host.agent.as_str() == "claude")
+    };
+    // The settings a session the World started was started with name its
+    // conversation. Before its sessions stood in their project's directory,
+    // a conversation's own directory was where they stood.
+    let known = match conversation {
+        Some(conversation) => {
+            let id = ResidentId::try_from(conversation.as_str())
+                .ok()
+                .filter(|id| started_here(id))
+                .ok_or_else(|| {
+                    fastctx_types::ipc::Failure::new(format!(
+                        "the Claude session was started for {conversation}, not a Claude conversation the World started here"
+                    ))
+                })?;
+            Some(id)
+        }
+        None => cwd.as_deref().and_then(|cwd| {
+            let cwd = Path::new(cwd);
+            let id = ResidentId::try_from(cwd.file_name()?.to_str()?).ok()?;
+            (started_here(&id) && crate::homes::same_dir(cwd, node.world.conversation(&id).path())).then_some(id)
+        }),
+    };
     // A World launch holds births.read until the background CLI returns.
-    // Its native cwd already identifies its home, independently of that ID.
+    // Its settings already name its conversation, independently of that ID.
     let _births = if known.is_none() { Some(node.claude.births.write().await) } else { None };
     let observing = process.clone();
     let reserve = || -> io::Result<String> {

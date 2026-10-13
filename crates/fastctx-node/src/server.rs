@@ -733,11 +733,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
     }
     active_caller(node, peer)?;
     match call {
-        Call::ClaudeSessionDirectory { session, previous, cwd, process } => {
+        Call::ClaudeSessionDirectory { session, previous, cwd, process, conversation } => {
             if !matches!(peer, Peer::Session { host } if host.agent.as_str() == "claude") {
                 users_voice(node, peer)?;
             }
-            crate::claude::pairing::directory(node, session, previous, cwd, process)
+            crate::claude::pairing::directory(node, session, previous, cwd, conversation, process)
                 .await
                 .map(|path| Reply::ClaudeSessionDirectory { path })
         }

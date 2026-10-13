@@ -24,6 +24,7 @@ test('uses the public controls and request return types through the official eng
   on('mcp.connect', () => ({ value: { isConnected: false, reason: 'disabled', message: 'fixture' } }))
   on('session.id', () => ({ value: 'control-fixture' }))
   on('session.cwd', () => ({ value: '/fixture' }))
+  on('settings.read', () => ({ value: {} }))
   on('session.model', () => ({ value: model }))
   on('session.messages', () => ({ value: [] }))
   on('session.surfaces', () => ({ value: ['terminal'] }))

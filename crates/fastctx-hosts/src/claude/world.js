@@ -519,11 +519,24 @@ async function looked($, context) {
   }
 }
 
+// The conversation the World started this session for, as the settings it
+// was started with (`--settings`) name it: the World's sessions stand in
+// their project's directory together, so nothing else tells them apart
+// before Claude Code says which session it started. Claude Code's daemon
+// starts and wakes a background session with those settings (2.1.296).
+async function startedFor($) {
+  const flag = await $.settings.read({ source: 'flag' })
+  const named = flag.env === undefined || flag.env === null ? undefined : flag.env.FASTCTX_CONVERSATION
+  return typeof named === 'string' && named !== '' ? named : null
+}
+
 async function startSession($, context) {
   const id = context.sessionId
   const command = [FASTCTX, 'claude-session-directory', WORLD, id]
   command.push('--cwd', await $.session.cwd())
   if (context.previous !== null && context.previous !== undefined) command.push('--previous', context.previous)
+  const conversation = await startedFor($)
+  if (conversation !== null) command.push('--conversation', conversation)
   const reservedDirectory = await $.process.run(command)
   if (reservedDirectory.exitCode !== 0) throw new Error('reserving the Claude session directory: ' + reservedDirectory.stderr)
   context.dir = JSON.parse(reservedDirectory.stdout)

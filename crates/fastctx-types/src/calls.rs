@@ -85,6 +85,10 @@ pub enum Call {
         previous: Option<String>,
         cwd: Option<String>,
         process: Option<crate::ProcessIdentity>,
+        /// The conversation the World started the session for, as the
+        /// settings it was started with name it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation: Option<String>,
     },
     /// Run a script for a resident of this machine, on this machine or on
     /// the machine `node` names.

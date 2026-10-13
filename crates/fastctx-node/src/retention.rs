@@ -110,6 +110,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 let _collecting = retiring.disk.lock().expect("never poisoned");
                 crate::books::retire(&retiring)
                     .and(crate::claude::garbage::collect(&retiring.world))
+                    .and(crate::claude::garbage::untrust_departed(&retiring))
                     .and(crate::gather::sweep(&retiring.world))
             })
             .await

@@ -1,8 +1,9 @@
 //! Claude Code 2.1.296 keeps diagnostics and task output outside its login
 //! directory, keyed by the working directory. Session history is excluded.
 
-use crate::claude_cache_paths::{Roots, cwd_text, slug};
+use crate::claude_cache_paths::Roots;
 use crate::{Action, Request, Step};
+use fastctx_hosts::claude::projects::{cwd_text, slug};
 use fastctx_types::uninstall::Item;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -31,7 +32,7 @@ pub(crate) fn include_at(request: &mut Request, roots: &Roots) -> anyhow::Result
         }
     }
     let mut working_directories =
-        directories.iter().map(|directory| cwd_text(directory)).collect::<anyhow::Result<Vec<_>>>()?;
+        directories.iter().map(|directory| cwd_text(directory)).collect::<std::io::Result<Vec<_>>>()?;
     let world_cwd = PathBuf::from(cwd_text(&world)?);
     // A previous removal can have erased towns already. The name is only a
     // discovery filter; the log's actual cwd supplies the ownership evidence.

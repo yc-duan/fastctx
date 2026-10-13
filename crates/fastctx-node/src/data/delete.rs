@@ -208,6 +208,18 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
             .await
             .map_err(|error| Stop::Failed(error.to_string()))?
             .map_err(|error| Stop::Failed(format!("deleting Claude Code's record of it: {error}")))?;
+            // Its sessions stood in its own directory before they stood in
+            // their project's, and the World trusted that directory for it.
+            if about.world_started {
+                let directory = node.world.conversation(&about.id).path().to_path_buf();
+                let home = about.home.clone();
+                tokio::task::spawn_blocking(move || crate::claude::untrust(&directory, home.as_deref()))
+                    .await
+                    .map_err(|error| Stop::Failed(error.to_string()))?
+                    .map_err(|error| {
+                        Stop::Failed(format!("taking back its directory's trust in Claude Code: {error}"))
+                    })?;
+            }
         }
         _ => {}
     }

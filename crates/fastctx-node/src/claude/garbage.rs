@@ -1,10 +1,14 @@
-//! Exchange leftovers retire when their writer and request helper have ended.
+//! What the World's Claude sessions leave behind: exchange leftovers retire
+//! when their writer and request helper have ended, and what Claude Code
+//! keeps for deleted conversations' directories goes.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use fastctx_hosts::claude::{control, exchange};
+use fastctx_hosts::claude::{control, exchange, projects, trust};
 use fastctx_types::layout::WorldDir;
+
+use crate::Node;
 
 pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
     let mut sessions = crate::retention::entries(&exchange::sessions(world.path()))?;
@@ -47,6 +51,48 @@ pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
             {
                 fastctx_platform::owned_directory::delete(&path)?;
             }
+        }
+    }
+    Ok(())
+}
+
+/// Takes back the trust the World gave in Claude Code to the directories of
+/// conversations deleted since, and the folders Claude Code kept for them.
+/// Sessions the World started stood in their conversation's own directory
+/// before they stood in their project's; a conversation deleted then took
+/// its sessions' records, but left these.
+pub(crate) fn untrust_departed(node: &Node) -> io::Result<()> {
+    let conversations = node.world.conversations();
+    if !conversations.is_dir() {
+        return Ok(());
+    }
+    let key = trust::uninstall_key(&conversations)?;
+    let env = crate::claude::environment().map_err(|failure| io::Error::other(failure.message))?;
+    let default = crate::homes::claude_default(&env, &fastctx_platform::user_home()?);
+    let default_config =
+        env.iter().find(|(name, _)| name.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR")).map(|(_, value)| value.clone());
+    let mut homes: Vec<Option<PathBuf>> = vec![None];
+    for record in node.residents.everyone() {
+        if record.about.world_started && record.about.host.agent.as_str() == "claude" {
+            homes.push(record.about.home);
+        }
+    }
+    homes.sort();
+    homes.dedup();
+    for home in homes {
+        let config = home.clone().map(PathBuf::into_os_string).or_else(|| default_config.clone());
+        for entry in trust::world_entries(config.as_deref(), &key)? {
+            let directory = PathBuf::from(&entry);
+            if directory.try_exists()? {
+                continue;
+            }
+            trust::remove_world_trust(config.as_deref(), &entry)?;
+            let claude = home.as_deref().unwrap_or(&default);
+            let folder = claude.join("projects").join(projects::slug(&projects::cwd_text(&directory)?));
+            if folder.is_dir() {
+                fastctx_platform::owned_directory::delete(&folder)?;
+            }
+            node.log.line(format_args!("took back Claude Code's trust of {entry}, a deleted conversation's directory"));
         }
     }
     Ok(())

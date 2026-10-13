@@ -70,6 +70,8 @@ enum Command {
         previous: Option<String>,
         #[arg(long)]
         cwd: Option<String>,
+        #[arg(long)]
+        conversation: Option<String>,
     },
     /// Wait for the person answering one public Claude mod request.
     #[command(hide = true)]
@@ -381,8 +383,8 @@ fn main() -> ExitCode {
         Command::Ui => ui(),
         Command::HostChange(args) => host_change::run(args),
         Command::ParentProcess => parent_process(),
-        Command::ClaudeSessionDirectory { world, session, previous, cwd } => {
-            claude_session_directory::run(&world, session, previous, cwd)
+        Command::ClaudeSessionDirectory { world, session, previous, cwd, conversation } => {
+            claude_session_directory::run(&world, session, previous, cwd, conversation)
         }
         Command::ClaudeRequest { directory } => {
             fastctx_node::claude_request::run(&directory, false).map_err(Into::into)

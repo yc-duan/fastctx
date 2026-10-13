@@ -20,6 +20,7 @@ mod context;
 pub mod control;
 pub mod exchange;
 pub mod models;
+pub mod projects;
 pub mod startup;
 pub mod subagents;
 pub mod tail;

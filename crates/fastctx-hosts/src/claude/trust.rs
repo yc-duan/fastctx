@@ -173,6 +173,18 @@ fn within(name: &str, key: &str) -> bool {
             && same(&name[..key.len()], key))
 }
 
+/// The keys of the project entries of the World's directory `key` and of
+/// every directory inside it, as Claude's state holds them now.
+pub fn world_entries(config_dir: Option<&std::ffi::OsStr>, key: &str) -> io::Result<Vec<String>> {
+    let paths = StatePaths::resolve(config_dir)?;
+    let Some(bytes) = state_file::read(&paths.file)? else { return Ok(Vec::new()) };
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Claude state is not UTF-8"))?;
+    let mut root = object(text.strip_prefix('\u{feff}').unwrap_or(text), "root")?;
+    let projects = member(&mut root, "projects", "projects")?;
+    Ok(projects.into_keys().filter(|name| within(name, key)).collect())
+}
+
 /// Removes the project entries of the World's directory `key` and of every
 /// directory inside it, where its sessions ran, preserving every other byte.
 /// The World made those directories, so no entry for them predates it. The
