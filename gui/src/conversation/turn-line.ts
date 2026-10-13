@@ -1,13 +1,20 @@
 // The turn's line (`world-gui.md`, 对话): at the foot of a conversation
-// while its model works, a pen writing loops in clay ink, one lively word
-// picked for the turn, and how long the turn has run. It is there for the
-// whole of a turn, whatever the turn is doing, and it is a boundary: above
-// it what the session has taken in, below it words sent that it has not
-// read yet.
+// while its model works, an ellipsis being dotted by hand, 「……」, the way
+// a sentence that is not finished trails off on paper, and how long the
+// turn has run. The pen taps the six dots onto a faint pencil
+// underdrawing, the two marks a breath apart, each dot blooming a little as
+// the ink soaks into the paper; they stand a moment, dry away together, and
+// are written again, so the line never stands still while the model works.
+// While the first words are on their way the dots are pencil, not ink;
+// waiting on the user, they stand still in the accent.
 //
-// It comes in softly and goes at once, when the turn ends or is stopped.
-// The pen keeps writing where the system asks for less motion: it is the
-// one sign that the model is at work.
+// It is there for the whole of a turn, whatever the turn is doing, and it
+// is a boundary: above it what the session has taken in, below it words
+// sent that it has not read yet. It comes in softly and goes at once, when
+// the turn ends or is stopped. The dots go on where the system asks for
+// less motion: they are the one sign that the model is at work.
+
+import { blot, seeded } from "../pen/shapes";
 
 /** What the line says. */
 export type LineSays =
@@ -20,16 +27,25 @@ export type LineSays =
 
 export interface LineWords {
   starting: string;
+  working: string;
   waitingForYou: string;
-  /** The words the line picks one of for each turn. */
-  lively: readonly string[];
   took(ms: number): string;
 }
 
-/** The pen's loops: a cursive double loop traced in pencil, the clay ink
- *  going over it and taken up again from where it began, round and round. */
-const LOOPS = "M1.2 9.6c2.2.2 4.6-2.1 4.6-5.1 0-2.2-2.4-2.1-2 .6.5 3.4 3.3 4.6 5.7 4.5 2.4-.1 4.5-2.4 4.5-5.1 0-2.2-2.4-2-2 .7.5 3.2 3.4 4.3 6.6 3.6";
-const PEN = `<svg viewBox="0 0 20 12" aria-hidden="true"><path class="pen-trace" d="${LOOPS}"/><path class="pen-ink" pathLength="100" d="${LOOPS}"/></svg>`;
+/** Where the six dots of 「……」 sit: two marks of three, a breath apart. */
+const PLACES = [3, 9, 15, 23.5, 29.5, 35.5];
+const DOTS = PLACES.map((x, index) => blot([x, 5.5], 1.75, seeded(`ellipsis:${index}`)));
+/** The ink a dot spreads into the paper as it lands. */
+const BLOOMS = PLACES.map((x, index) => blot([x, 5.5], 3.4, seeded(`ellipsis-bloom:${index}`)));
+const ELLIPSIS = `<svg viewBox="0 0 39 11" aria-hidden="true"><path class="ellipsis-trace" d="${DOTS.join("")}"/>${DOTS.map((dot, index) => `<path class="ellipsis-bloom" d="${BLOOMS[index]}"/><path class="ellipsis-ink" d="${dot}"/>`).join("")}</svg>`;
+
+/** One writing of the ellipsis, in milliseconds: when each dot lands, when
+ *  the ink begins to dry, when it is gone, and the whole, after which the
+ *  pen begins again. */
+const LANDS = [0, 300, 600, 1080, 1380, 1680];
+const DRIES = 3500;
+const DRY = 700;
+const WHOLE = 4500;
 
 export class TurnLine {
   readonly element: HTMLElement;
@@ -37,16 +53,65 @@ export class TurnLine {
   private readonly time: HTMLElement;
   private since: number | null = null;
   private ticking = 0;
-  /** The word picked for the turn under way. */
-  private word = "";
+  /** The pen's strokes, held still while the turn waits on the user. */
+  private strokes: Animation[] = [];
 
   constructor(private readonly words: LineWords) {
     this.element = document.createElement("div");
     this.element.className = "turn-status";
     this.element.setAttribute("role", "status");
-    this.element.innerHTML = `<span class="turn-status-mark" aria-hidden="true">${PEN}</span><span class="turn-status-step"></span><span class="turn-status-time" aria-hidden="true"></span>`;
+    this.element.innerHTML = `<span class="turn-status-mark">${ELLIPSIS}</span><span class="turn-status-step"></span><span class="turn-status-time" aria-hidden="true"></span>`;
     this.step = this.element.querySelector<HTMLElement>(".turn-status-step")!;
     this.time = this.element.querySelector<HTMLElement>(".turn-status-time")!;
+    this.write();
+  }
+
+  /** Sets the pen to writing the ellipsis, over and over: each dot lands
+   *  at its moment and blooms, all six dry together, and the pen comes
+   *  back. The dots go on where the system asks for less motion: they are
+   *  the one sign that the model works. */
+  private write(): void {
+    const inks = [...this.element.querySelectorAll<SVGPathElement>(".ellipsis-ink")];
+    const blooms = [...this.element.querySelectorAll<SVGPathElement>(".ellipsis-bloom")];
+    const at = (ms: number) => Math.min(1, ms / WHOLE);
+    inks.forEach((ink, index) => {
+      const land = LANDS[index]!;
+      // A little later from left to right, as ink laid later dries later.
+      const dries = DRIES + index * 40;
+      const inked = ink.animate(
+        eased([
+          { offset: 0, opacity: 0, transform: "scale(0.4)" },
+          { offset: at(land), opacity: 0, transform: "scale(0.4)" },
+          { offset: at(land + 110), opacity: 1, transform: "scale(1.18)" },
+          { offset: at(land + 260), opacity: 1, transform: "scale(1)" },
+          { offset: at(dries), opacity: 1, transform: "scale(1)" },
+          { offset: at(dries + DRY), opacity: 0, transform: "scale(1)" },
+          { offset: 1, opacity: 0, transform: "scale(1)" },
+        ]),
+        { duration: WHOLE, iterations: Infinity },
+      );
+      const bloomed = blooms[index]!.animate(
+        eased([
+          { offset: 0, opacity: 0, transform: "scale(0.5)" },
+          { offset: at(land + 60), opacity: 0, transform: "scale(0.5)" },
+          { offset: at(land + 160), opacity: 0.32, transform: "scale(0.8)" },
+          { offset: at(land + 900), opacity: 0, transform: "scale(1.25)" },
+          { offset: 1, opacity: 0, transform: "scale(1.25)" },
+        ]),
+        { duration: WHOLE, iterations: Infinity },
+      );
+      this.strokes.push(inked, bloomed);
+    });
+  }
+
+  /** Holds the pen with the ellipsis written whole, or lets it write on. */
+  private hold(still: boolean): void {
+    for (const stroke of this.strokes) {
+      if (still && stroke.playState !== "paused") {
+        stroke.pause();
+        stroke.currentTime = DRIES - 1;
+      } else if (!still && stroke.playState === "paused") stroke.play();
+    }
   }
 
   get shown(): boolean {
@@ -56,12 +121,16 @@ export class TurnLine {
   /** Says `says`. */
   say(says: LineSays): void {
     const { words } = this;
-    if (!this.word) this.word = words.lively[Math.floor(Math.random() * words.lively.length)] ?? "";
-    const step = says.kind === "starting" ? `${words.starting}…` : says.kind === "waiting" ? (says.said ? words.waitingForYou : "") : `${this.word}…`;
+    const step = says.kind === "waiting" && says.said ? words.waitingForYou : "";
+    const heard = says.kind === "starting" ? words.starting : says.kind === "waiting" ? words.waitingForYou : words.working;
     this.element.classList.toggle("waiting", says.kind === "waiting");
     this.element.classList.toggle("starting", says.kind === "starting");
     if (this.step.textContent !== step) this.step.textContent = step;
+    // The dots say nothing to a screen reader; the state does.
+    const mark = this.element.querySelector<HTMLElement>(".turn-status-mark")!;
+    if (mark.getAttribute("aria-label") !== heard) mark.setAttribute("aria-label", heard);
     this.since = says.kind === "working" ? says.since : null;
+    this.hold(says.kind === "waiting");
     this.tick();
   }
 
@@ -79,12 +148,11 @@ export class TurnLine {
     if (duration > 0) this.element.animate([{ opacity: 0 }, { opacity: 1 }], { duration, delay: after, easing: "ease-out", fill: "backwards" });
   }
 
-  /** Takes the line away at once; the next turn picks its own word. */
+  /** Takes the line away at once. */
   remove(): void {
     if (!this.element.isConnected) return;
     for (const animation of this.element.getAnimations()) animation.cancel();
     this.element.remove();
-    this.word = "";
     clearTimeout(this.ticking);
   }
 
@@ -95,6 +163,12 @@ export class TurnLine {
     if (this.time.textContent !== said) this.time.textContent = said;
     if (this.since !== null && this.element.isConnected) this.ticking = window.setTimeout(() => this.tick(), 1000);
   }
+}
+
+/** Keyframes that each ease out into the next: an easing on the whole
+ *  animation would bend its clock instead, and the dots would land early. */
+function eased(frames: Keyframe[]): Keyframe[] {
+  return frames.map((frame) => ({ ...frame, easing: "ease-out" }));
 }
 
 /** A duration from a design token, in milliseconds. */

@@ -103,9 +103,6 @@ export interface Words {
   thoughtFor(ms: number): string;
   /** The tokens a run of thinking took: "1.2k tokens". */
   thinkingTokens(n: number): string;
-  /** What the turn's line says the model is doing, one picked for each
-   *  turn, as the hosts' own spinners say it. */
-  lively: readonly string[];
   plan: string;
   copyMessage: string;
   copyCode: string;
@@ -355,7 +352,6 @@ export const zh: Words = {
   thought: "Thought",
   thoughtFor: (ms) => `Thought for ${clock(ms)}`,
   thinkingTokens: (n) => tokensSaid(n),
-  lively: ["琢磨", "推敲", "研墨", "构思", "酝酿", "斟酌", "盘算", "落笔", "打磨", "掂量", "端详", "运笔"],
   plan: "计划",
   copyMessage: "复制",
   copyCode: "复制代码",
@@ -601,7 +597,6 @@ export const en: Words = {
   thought: "Thought",
   thoughtFor: (ms) => `Thought for ${clock(ms)}`,
   thinkingTokens: (n) => tokensSaid(n),
-  lively: ["Mulling", "Inking", "Sketching", "Pondering", "Weighing", "Drafting", "Tinkering", "Musing", "Puzzling", "Whittling", "Penciling", "Ruminating"],
   plan: "Plan",
   copyMessage: "Copy",
   copyCode: "Copy code",
