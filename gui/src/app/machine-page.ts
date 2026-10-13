@@ -557,7 +557,7 @@ export class MachinePage implements Page {
     const shape = cards.map((card) => [card.name, card.up, card.hardware, card.speed, (card.addresses ?? []).join(",")].join("|")).join(";");
     if (shape !== this.cardsShape) {
       this.cardsShape = shape;
-      this.cardsBox.innerHTML = `<h2 class="mp-card-title">${escape(words.network)}</h2><ul class="mp-list">${cards
+      this.cardsBox.innerHTML = `<h2 class="mp-card-title">${escape(words.cards)}</h2><ul class="mp-list">${cards
         .map(
           (card, index) => `<li class="mp-net${card.up ? "" : " off"}" data-card="${index}">
             <div class="mp-net-head"><span class="mp-net-name" title="${escape(card.name)}">${escape(card.name)}</span>${card.speed ? `<span class="tag">${escape(bits(card.speed))}</span>` : ""}${

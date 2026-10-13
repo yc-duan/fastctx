@@ -32,6 +32,9 @@ export interface MachinePageWords {
   memory: string;
   gpu: string;
   network: string;
+  /** The section listing each network card, apart from the network the
+   *  machine is in. */
+  cards: string;
   disks: string;
   connection: string;
   about: string;
@@ -126,6 +129,7 @@ export const zhMachinePage: MachinePageWords = {
   memory: "内存",
   gpu: "显卡",
   network: "网络",
+  cards: "网卡",
   disks: "磁盘",
   connection: "连线",
   about: "关于",
@@ -208,6 +212,7 @@ export const enMachinePage: MachinePageWords = {
   memory: "Memory",
   gpu: "Graphics",
   network: "Network",
+  cards: "Network cards",
   disks: "Disks",
   connection: "Connection",
   about: "About",
