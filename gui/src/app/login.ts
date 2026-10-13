@@ -105,7 +105,7 @@ export class LoginPage implements Page {
       <div class="welcome scroller">
         <header class="welcome-hero">
           ${heroMark()}
-          <h1 class="welcome-title">World</h1>
+          <h1 class="welcome-title">Fastctx</h1>
           <p class="welcome-lede">${escape(words.lede)}</p>
         </header>
         <div class="welcome-body"></div>

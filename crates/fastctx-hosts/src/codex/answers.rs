@@ -24,7 +24,7 @@ impl Request {
     fn validate(&self, answer: &Value) -> Result<(), String> {
         if !self.supported() {
             return Err(format!(
-                "the World does not answer {} in this mode through a stable 0.160 interface",
+                "Fastctx does not answer {} in this mode through a stable 0.160 interface",
                 self.method
             ));
         }

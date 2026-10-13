@@ -1420,7 +1420,7 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                     continue;
                 }
                 (host.log)(format!("declined the app-server's {method} request"));
-                let _ = server.refuse(id, -32601, "The World does not answer this request.");
+                let _ = server.refuse(id, -32601, "Fastctx does not answer this request.");
             }
             Inbound::Exited { why, drained } => {
                 host.exited(&server, why);

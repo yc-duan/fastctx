@@ -53,7 +53,7 @@ export interface Face {
 /** Connects to the host, and asks it for the World's faces. */
 export async function connect(name: string, version: string, start: PageContext, fonts: (faces: Face[]) => void): Promise<Bridge> {
   const host = window.parent;
-  if (host === window) throw new Error("this page is not inside a host: open it in World");
+  if (host === window) throw new Error("this page is not inside a host: open it in Fastctx");
   let serial = 0;
   const waiting = new Map<string, { resolve(value: unknown): void; reject(error: Error): void }>();
   const listeners = new Set<(context: PageContext) => void>();

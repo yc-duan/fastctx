@@ -92,7 +92,7 @@ export function specimenPageTools(view: PageView, now: (tool: string, args: Reco
     if (tool === "run") gate({ kind: "run", machine: String(args.machine), script: String(args.command) }, { kind: "run", machine: String(args.machine), script: String(args.command) });
     if (tool === "say") gate({ kind: "say", to: { resident: String(args.resident), machine: String(args.machine) }, text: String(args.text) }, { kind: "say", to: { resident: String(args.resident), machine: String(args.machine) } });
     const answer = answers[tool];
-    if (!answer) throw new Error(`World has no tool ${tool} for a page`);
+    if (!answer) throw new Error(`Fastctx has no tool ${tool} for a page`);
     await new Promise((resolve) => setTimeout(resolve, tool === "run" || tool === "say" ? 900 : 120));
     return answer(args);
   };

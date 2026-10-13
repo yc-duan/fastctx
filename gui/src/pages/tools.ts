@@ -91,7 +91,7 @@ export function toolsFor(options: ToolsOptions): (tool: string, args: Record<str
   const now = async () => {
     if (!store.world.get()) await store.refresh();
     const world = store.world.get();
-    if (!world) throw new Error(store.trouble.get() ?? "the World has not answered");
+    if (!world) throw new Error(store.trouble.get() ?? "Fastctx has not answered");
     return world;
   };
 
@@ -183,27 +183,27 @@ export function toolsFor(options: ToolsOptions): (tool: string, args: Record<str
 
     async run(args) {
       const result = await options.act({ kind: "run", machine: text(args.machine, "machine"), script: text(args.command, "command") });
-      if (result.kind !== "run") throw new Error("the World answered something other than a run");
+      if (result.kind !== "run") throw new Error("Fastctx answered something other than a run");
       return { exit: exit(result), output: printed(result) };
     },
 
     async say(args) {
       const to = { resident: text(args.resident, "resident"), machine: text(args.machine, "machine") };
       const result = await options.act({ kind: "say", to, text: text(args.text, "text") });
-      if (result.kind !== "said") throw new Error("the World answered something other than words said");
+      if (result.kind !== "said") throw new Error("Fastctx answered something other than words said");
       return { delivered: true };
     },
 
     async "journal.add"(args) {
       const result = await options.act({ kind: "journal", journal: text(args.journal, "journal"), text: text(args.text, "text") });
-      if (result.kind !== "entry_added") throw new Error("the World answered something other than an entry");
+      if (result.kind !== "entry_added") throw new Error("Fastctx answered something other than an entry");
       return { id: result.id };
     },
   };
 
   return (tool, args) => {
     const known = Object.prototype.hasOwnProperty.call(tools, tool) ? tools[tool as keyof Tools] : undefined;
-    if (!known) return Promise.reject(new Error(`World has no tool ${tool} for a page`));
+    if (!known) return Promise.reject(new Error(`Fastctx has no tool ${tool} for a page`));
     return known(args);
   };
 }

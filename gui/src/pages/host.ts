@@ -230,9 +230,9 @@ export class PageHost {
         }
       }
       case "ui/open-link":
-        throw new Error("World does not open links for a page: the page reaches the World only through its tools");
+        throw new Error("Fastctx does not open links for a page: a page acts only through its tools");
       default:
-        throw new Unknown(`World does not answer ${method}`);
+        throw new Unknown(`Fastctx does not answer ${method}`);
     }
   }
 }
