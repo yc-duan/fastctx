@@ -88,6 +88,8 @@ impl Watchdog {
             self.read(name)?;
             delete(&file(name))?;
         }
+        // A persistent timer leaves systemd's record of when it last fired.
+        delete(&Path::new("/var/lib/systemd/timers").join(format!("stamp-{}", self.timer)))?;
         Ok(())
     }
 

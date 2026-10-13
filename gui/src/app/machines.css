@@ -911,7 +911,7 @@
 
   .sheet-acts {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(52px, 1fr));
+    grid-template-columns: repeat(var(--acts, 5), minmax(0, 1fr));
     gap: 2px;
     margin: var(--space-3) 0 var(--space-2);
   }
@@ -935,7 +935,47 @@
     background: var(--hairline);
   }
 
-  .sheet-act.danger {
+  .sheet-act span {
+    white-space: nowrap;
+  }
+
+  /* A setting, or what cannot be taken back: a whole row each, a solid
+     fill a shade off the sheet, the switch or nothing at its end. */
+  .sheet-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: var(--space-1) 0 var(--space-3);
+  }
+
+  .sheet-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 48px;
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-m);
+    background: var(--fill);
+    color: var(--text);
+    font-size: var(--size-ui);
+    text-align: left;
+  }
+
+  .sheet-row:active {
+    background: var(--fill-strong);
+  }
+
+  .sheet-row .glyph {
+    color: var(--text-2);
+  }
+
+  .sheet-row-label {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .sheet-row.danger,
+  .sheet-row.danger .glyph {
     color: var(--wrong);
   }
 

@@ -87,6 +87,8 @@ interface Act {
   label: string;
   icon: GlyphName;
   danger?: boolean;
+  /** For a setting that is on or off, whether it is on. */
+  on?: boolean;
 }
 
 
@@ -821,7 +823,7 @@ export class MachinesPage implements Page {
     const admin = this.adminOf(spot.machine, world);
     const member = admin ? this.memberOf(spot.machine, admin, world) : undefined;
     const direct: Act[] =
-      member?.kind !== "computer" ? [] : member.direct?.length ? [{ act: "direct", label: words.stopDirect, icon: "link" }] : member.reach ? [{ act: "direct", label: words.allowDirect, icon: "link" }] : [];
+      member?.kind !== "computer" ? [] : member.direct?.length ? [{ act: "direct", label: words.stopDirect, icon: "link", on: true }] : member.reach ? [{ act: "direct", label: words.allowDirect, icon: "link", on: false }] : [];
     // Its owner and the network's administrator rename it.
     const rename: Act[] = renamerOf(spot.machine, world, this.options.change, this.options.renaming.here)
       ? [{ act: "rename", label: this.options.renaming.words.rename, icon: "edit" }]
@@ -842,14 +844,27 @@ export class MachinesPage implements Page {
   private sheetActs(key: string, world: WorldNow): string {
     // The sheet is a hub's details; a machine's are on its own page.
     const acts = this.actsOf(key, world).filter((act) => act.act !== "details" || key.startsWith("m:"));
-    return acts.length
-      ? `<div class="sheet-acts">${acts
-          .map(
-            (act) =>
-              `<button class="sheet-act${act.danger ? " danger" : ""}" type="button" data-map-act="${act.act}" data-key="${escape(key)}">${glyph(act.icon, 18)}<span>${escape(act.label)}</span></button>`,
-          )
+    // Verbs share one row of equal columns; a setting is a row of its own
+    // with its switch, and what cannot be taken back stands apart below.
+    const verbs = acts.filter((act) => act.on === undefined && !act.danger);
+    const settings = acts.filter((act) => act.on !== undefined);
+    const dangers = acts.filter((act) => act.danger);
+    const { words } = this.options;
+    const row = verbs.length
+      ? `<div class="sheet-acts" style="--acts:${verbs.length}">${verbs
+          .map((act) => `<button class="sheet-act" type="button" data-map-act="${act.act}" data-key="${escape(key)}">${glyph(act.icon, 18)}<span>${escape(act.label)}</span></button>`)
           .join("")}</div>`
       : "";
+    const switches = settings
+      .map(
+        (act) =>
+          `<button class="sheet-row sheet-switch" type="button" role="switch" aria-checked="${act.on}" data-map-act="${act.act}" data-key="${escape(key)}">${glyph(act.icon, 18)}<span class="sheet-row-label">${escape(act.act === "direct" ? words.allowDirect : act.label)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>`,
+      )
+      .join("");
+    const removals = dangers
+      .map((act) => `<button class="sheet-row danger" type="button" data-map-act="${act.act}" data-key="${escape(key)}">${glyph(act.icon, 18)}<span class="sheet-row-label">${escape(act.label)}</span></button>`)
+      .join("");
+    return row + (switches || removals ? `<div class="sheet-rows">${switches}${removals}</div>` : "");
   }
 
   /** The logins whose own a machine is: this computer's account on each
