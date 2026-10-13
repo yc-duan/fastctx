@@ -229,6 +229,10 @@ pub enum Speaker {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub id: String,
+    /// The name it was shown under while it streamed, before its host kept
+    /// it under this one: whoever holds that item holds this one instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<String>,
     /// Where the item first appeared, so completed-only history preserves
     /// the presentation order of overlapping items.
     #[serde(default, skip_serializing_if = "Option::is_none")]

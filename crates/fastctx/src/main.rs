@@ -89,9 +89,17 @@ enum Command {
         #[arg(value_parser = paths::parser())]
         world: PathBuf,
     },
-    /// A lifetime witness for a Claude mod activation.
+    /// A lifetime witness for a Claude mod activation, and the line that
+    /// wakes it when the node leaves its session something.
     #[command(hide = true)]
-    ClaudeControlGuard,
+    ClaudeControlGuard {
+        /// The session's directory, watched for what the node leaves there.
+        #[arg(long, value_parser = paths::parser(), requires = "root")]
+        watch: Option<PathBuf>,
+        /// fastctx's root, where a removal leaves its marker.
+        #[arg(long, value_parser = paths::parser())]
+        root: Option<PathBuf>,
+    },
     #[command(hide = true)]
     ClaudeSessionPolicy {
         #[arg(value_parser = paths::parser())]
@@ -341,7 +349,7 @@ fn main() -> ExitCode {
             | Command::ClaudeRequest { .. }
             | Command::ClaudeElicitation { .. }
             | Command::ClaudeControlOwner { .. }
-            | Command::ClaudeControlGuard
+            | Command::ClaudeControlGuard { .. }
             | Command::ClaudeSessionPolicy { .. }
             | Command::Uninstall(_)
     );
@@ -381,7 +389,9 @@ fn main() -> ExitCode {
         }
         Command::ClaudeElicitation { world } => fastctx_node::claude_request::run(&world, true).map_err(Into::into),
         Command::ClaudeControlOwner { world } => fastctx_node::claude_request::owner(&world).map_err(Into::into),
-        Command::ClaudeControlGuard => fastctx_node::claude_request::guard().map_err(Into::into),
+        Command::ClaudeControlGuard { watch, root } => {
+            fastctx_node::claude_request::guard(watch.as_deref().zip(root.as_deref())).map_err(Into::into)
+        }
         Command::ClaudeSessionPolicy { world, session, messages, after_compact } => {
             fastctx_node::claude_request::policy(&world, &session, messages, after_compact.as_deref())
                 .map_err(Into::into)

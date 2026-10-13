@@ -559,9 +559,13 @@ fn names(happened: &Happened) -> Vec<String> {
         | Happened::Finished { turn: at, item }
         | Happened::Updated { turn: at, item } => {
             turn(at);
-            // Items in no turn the World saw are their own.
+            // Items in no turn the World saw are their own, together with
+            // the draft they replace.
             if at.is_empty() {
                 names.push(format!("i:{}", item.id));
+                if let Some(draft) = &item.draft {
+                    names.push(format!("i:{draft}"));
+                }
             }
         }
         Happened::Grew { turn: at, item, .. } => {

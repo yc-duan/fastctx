@@ -3,9 +3,10 @@
 
 use std::sync::Arc;
 
+use fastctx_types::agents::{AgentLimits, Fact};
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::{About, Activity, Now, Origin};
-use fastctx_types::session::control::{Control, Controlled, Offers};
+use fastctx_types::session::control::{Control, Controlled, Limit, Offers};
 use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
@@ -33,7 +34,36 @@ pub(super) fn reported(node: &Node, resident: &ResidentId, thread: &str, event: 
 
 pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, Failure> {
     let (codex, thread) = thread(node, resident)?;
-    codex.offers(&thread).await.map_err(Failure::new)
+    let mut offers = codex.offers(&thread).await.map_err(Failure::new)?;
+    let dir = codex.config_home().to_path_buf();
+    let kept = {
+        let node = node.clone();
+        tokio::task::spawn_blocking(move || crate::logins::limits::kept_of(&node, &dir))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(|error| Failure::new(format!("reading Codex's limits: {error}")))?
+    };
+    if let (Some(usage), Fact::Known { value }) = (offers.usage.as_mut(), kept) {
+        usage.limits = limits(&value);
+        usage.limits_at = Some(value.observed_at);
+    }
+    Ok(offers)
+}
+
+/// The login's limits as the conversation shows them, each window named
+/// with its length.
+fn limits(kept: &AgentLimits) -> Vec<Limit> {
+    kept.windows
+        .iter()
+        .map(|window| Limit {
+            name: match window.minutes {
+                Some(minutes) => format!("{} {minutes}m", window.name),
+                None => window.name.clone(),
+            },
+            used_percent: serde_json::Number::from_f64(f64::from(window.used_tenths) / 10.0),
+            resets_at: window.resets_at,
+        })
+        .collect()
 }
 
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Control) -> Result<Controlled, Failure> {
@@ -72,7 +102,20 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             }
             "status" | "usage" | "skills" => {
                 no_args(args)?;
-                let offers = offers(node, resident).await?;
+                let mut offers = offers(node, resident).await?;
+                // The user asked: the account's limits and usage are read
+                // from OpenAI now.
+                if name != "skills" {
+                    let mut fresh = codex.read_usage(&thread).await.map_err(Failure::new)?;
+                    if let Some(kept) = &offers.usage {
+                        fresh.context = kept.context.clone();
+                        fresh.cost_usd = kept.cost_usd.clone();
+                        if let (Some(fresh), Some(kept)) = (fresh.raw.as_object_mut(), kept.raw.as_object()) {
+                            fresh.extend(kept.iter().map(|(key, value)| (key.clone(), value.clone())));
+                        }
+                    }
+                    offers.usage = Some(fresh);
+                }
                 let value = match name.as_str() {
                     "usage" => serde_json::to_value(offers.usage),
                     "skills" => serde_json::to_value(
@@ -131,6 +174,12 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
         Control::Command { name, args, path: None } if name == "debug-config" => {
             no_args(&args)?;
             done(&codex.read_config(&thread).await.map_err(Failure::new)?.to_string())
+        }
+        // A speed is a choice kept for the next turn, like a model: nothing
+        // is listed for it.
+        Control::Command { name, args, path: None } if name == "tier" && !args.trim().is_empty() => {
+            let selected = codex.select_tier(&thread, args.trim(), false).await.map_err(Failure::new)?;
+            done(&format!("Service tier {selected} saved for the next World turn."))
         }
         Control::Command { name, args, path } => {
             if path.is_none() {

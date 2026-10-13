@@ -83,7 +83,9 @@ export type What =
   | { kind: "hidden"; host_kind: string }
   | { kind: "other"; host_kind: string };
 
-export type Item = { id: string; started_at?: Timestamp; detail?: JsonValue } & What;
+/** `draft` is the name it streamed under before its host kept it under
+ *  `id`: whoever holds that item holds this one instead. */
+export type Item = { id: string; draft?: string; started_at?: Timestamp; detail?: JsonValue } & What;
 
 export type Part = "text" | "output";
 

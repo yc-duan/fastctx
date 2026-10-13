@@ -261,7 +261,7 @@ pub fn read(item: &Value, completed: bool) -> Read {
     {
         tool.status = ToolStatus::Running;
     }
-    Read::Item(Item { id, what, detail: Some(item.clone()), started_at: None })
+    Read::Item(Item { draft: None, id, what, detail: Some(item.clone()), started_at: None })
 }
 
 /// What a finished item tells of Codex's own agents: which call started
@@ -453,6 +453,7 @@ fn array(value: &Value, key: &str) -> Vec<Value> {
 /// Hidden items still have identities that an approval review can reference.
 fn unshown(item: &Value) -> Read {
     Read::Item(Item {
+        draft: None,
         id: text(item, "id").unwrap_or_default(),
         started_at: None,
         detail: Some(item.clone()),

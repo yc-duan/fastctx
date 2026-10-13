@@ -107,6 +107,7 @@ pub fn fixtures() -> Fixtures {
                         used_percent: Some(12.into()),
                         resets_at: Some("2026-10-05T00:00:00Z".parse().unwrap()),
                     }],
+                    limits_at: Some("2026-10-04T23:50:00Z".parse().unwrap()),
                     cost_usd: None,
                     raw: json!({"accountRateLimits":{"error":"usage unavailable"}}),
                 }),

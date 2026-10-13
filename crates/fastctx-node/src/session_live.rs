@@ -179,6 +179,7 @@ mod tests {
         for index in 0..1024 {
             let turn = index.to_string();
             let item = Item {
+                draft: None,
                 id: "message".into(),
                 started_at: Some(at),
                 detail: None,
@@ -211,6 +212,7 @@ mod tests {
         let at = jiff::Timestamp::from_millisecond(1_000).unwrap();
         let event = |happened| SessionEvent { at, happened };
         let item = |text: &str| Item {
+            draft: None,
             id: "same".into(),
             started_at: Some(at),
             detail: None,

@@ -241,6 +241,9 @@ pub struct Usage {
     pub context: Option<ContextUsage>,
     /// The account's limits, as the host's latest answer had them.
     pub limits: Vec<Limit>,
+    /// When those limits were read or last pushed; older nodes do not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits_at: Option<Timestamp>,
     /// What the session has cost so far, in US dollars, when the host says;
     /// kept as the host's number.
     pub cost_usd: Option<Number>,

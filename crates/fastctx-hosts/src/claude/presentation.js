@@ -202,12 +202,14 @@ export function presentation(reserve, currentTurn) {
             : undefined
           let shown
           if (streamed !== undefined) {
+            // Kept now under the name Claude Code's own record gives it, the
+            // name a history read from that record shows it by: the draft it
+            // streamed as is that same item, once, however it is read later.
             streamed.stored = true
-            shown = { ...shownOf(streamed), ...(typeof text === 'string' && { text }), detail: block }
-            if (!streamed.ended) {
-              streamed.ended = true
-              reports.stream({ event: 'finished', turn: turn ?? '', item: shown })
-            }
+            streamed.ended = true
+            shown = { ...shownOf(streamed), id: JSON.stringify([result.uuid, index]), draft: streamed.id,
+              ...(typeof text === 'string' && { text }), detail: block }
+            reports.stream({ event: 'finished', turn: turn ?? '', item: shown })
           } else {
             // A block with nothing streamed (thinking whose display sends no
             // pieces, a non-streamed response) is first seen as it is stored,

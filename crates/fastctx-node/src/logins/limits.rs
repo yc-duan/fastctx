@@ -63,6 +63,11 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<()> {
     })
 }
 
+/// The limits of the Codex login in `dir` as they were last read or pushed.
+pub(crate) fn kept_of(node: &Node, dir: &Path) -> std::io::Result<Fact<AgentLimits>> {
+    Ok(of(&kept::read(node)?, dir))
+}
+
 /// The kept limits of the Codex login in `dir`.
 pub(super) fn of(kept: &kept::Kept, dir: &Path) -> Fact<AgentLimits> {
     match kept.codex.limits.iter().find(|known| crate::homes::same_dir(&known.dir, dir)) {

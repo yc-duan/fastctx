@@ -1,6 +1,7 @@
 // What the frame around every page says: the sidebar, the new conversation,
 // the settings. In the user's words (`world-gui.md`, 用词).
 
+import { dollars, underCent } from "../world/money";
 import type { AskWords } from "../conversation/asks";
 import type { SaidWords } from "../conversation/said";
 import type { CommandWords } from "../conversation/commands";
@@ -1065,10 +1066,15 @@ export interface ComposerWords {
     context: string;
     contextUsed(used: number, window: number | null): string;
     limits: string;
+    /** How old the limits shown are: they are what the host last pushed. */
+    asOf(minutes: number): string;
     window(name: string): string;
     used(percent: string): string;
     resets(at: Date): string;
-    cost(usd: string): string;
+    /** What Claude Code reckons the conversation has cost so far. */
+    cost(usd: number): string;
+    /** How that figure is reckoned, said where the pointer rests. */
+    costWhy: string;
     none: string;
     /** A part of the context, by the name the host's /context gives it. */
     part(name: string): string;
@@ -1232,6 +1238,8 @@ export const zhComposer: ComposerWords = {
     context: "上下文",
     contextUsed: (used, window) => (window ? `${used.toLocaleString()} / ${window.toLocaleString()}` : used.toLocaleString()),
     limits: "额度",
+    asOf: (minutes) =>
+      minutes < 1 ? "截至刚刚" : minutes < 60 ? `截至 ${minutes} 分钟前` : minutes < 1440 ? `截至 ${Math.round(minutes / 60)} 小时前` : `截至 ${Math.round(minutes / 1440)} 天前`,
     window: (name) => {
       const minutes = /(\d+)m$/.exec(name);
       if (minutes) {
@@ -1242,7 +1250,8 @@ export const zhComposer: ComposerWords = {
     },
     used: (percent) => `已用 ${percent}%`,
     resets: (at) => `${at.getMonth() + 1}月${at.getDate()}日 ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")} 重置`,
-    cost: (usd) => `本次对话 $${usd}`,
+    cost: (usd) => (underCent(usd) ? "本次对话 不到 $0.01" : `本次对话 约 ${dollars(usd)}`),
+    costWhy: "按 API 标价折算。订阅登录并没有花这笔钱；按 Esc 打断的那次请求 Claude Code 不记，所以只会偏少。",
     none: "暂无用量数据",
     part: (name) =>
       ({
@@ -1422,6 +1431,8 @@ export const enComposer: ComposerWords = {
     context: "Context",
     contextUsed: (used, window) => (window ? `${used.toLocaleString()} / ${window.toLocaleString()}` : used.toLocaleString()),
     limits: "Limits",
+    asOf: (minutes) =>
+      minutes < 1 ? "as of just now" : minutes < 60 ? `as of ${minutes} min ago` : minutes < 1440 ? `as of ${Math.round(minutes / 60)} h ago` : `as of ${Math.round(minutes / 1440)} d ago`,
     window: (name) => {
       const minutes = /(\d+)m$/.exec(name);
       if (minutes) {
@@ -1432,7 +1443,8 @@ export const enComposer: ComposerWords = {
     },
     used: (percent) => `${percent}% used`,
     resets: (at) => `Resets ${at.toLocaleString("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}`,
-    cost: (usd) => `This conversation $${usd}`,
+    cost: (usd) => (underCent(usd) ? "This conversation under $0.01" : `This conversation about ${dollars(usd)}`),
+    costWhy: "Reckoned at the API's list prices. A subscription login is not charged this; a request stopped with Esc is not counted, so it can only read low.",
     none: "No usage data",
     part: (name) => name,
     lastCall: "Last request",

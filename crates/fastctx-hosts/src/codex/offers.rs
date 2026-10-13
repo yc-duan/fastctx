@@ -74,43 +74,18 @@ impl Speeds {
 }
 
 impl CodexHost {
+    /// The models the app-server lists, kept until it is replaced: the
+    /// catalog is read when the conversation is looked at, never for a choice.
     pub(super) async fn models(&self, server: &AppServer) -> Result<Vec<ModelOffer>, String> {
-        let entries = pages(server, "model/list", json!({"includeHidden":false})).await?;
-        entries
-            .iter()
-            .map(|model| {
-                Ok(ModelOffer {
-                    id: string(model, "model")?,
-                    name: model["displayName"].as_str().map(str::to_string),
-                    description: model["description"].as_str().map(str::to_string),
-                    efforts: model["supportedReasoningEfforts"]
-                        .as_array()
-                        .ok_or("model has no supportedReasoningEfforts")?
-                        .iter()
-                        .map(|effort| string(effort, "reasoningEffort"))
-                        .collect::<Result<_, _>>()?,
-                    default_effort: model["defaultReasoningEffort"].as_str().map(str::to_string),
-                    default: model["isDefault"].as_bool().ok_or("model has no isDefault")?,
-                    service_tiers: match model.get("serviceTiers") {
-                        None => Vec::new(),
-                        Some(value) => value
-                            .as_array()
-                            .ok_or("model has no serviceTiers array")?
-                            .iter()
-                            .map(|tier| {
-                                Ok(ServiceTierOffer {
-                                    id: string(tier, "id")?,
-                                    name: string(tier, "name")?,
-                                    description: string(tier, "description")?,
-                                })
-                            })
-                            .collect::<Result<_, String>>()?,
-                    },
-                    default_service_tier: model["defaultServiceTier"].as_str().map(str::to_string),
-                    context_window: None,
-                })
-            })
-            .collect()
+        let models = listed(server).await?;
+        self.lock().catalog = Some(models.clone());
+        Ok(models)
+    }
+
+    /// The catalog last listed, if any; a choice made before any listing is
+    /// checked by Codex itself when the next turn starts.
+    pub(super) fn catalog(&self) -> Option<Vec<ModelOffer>> {
+        self.lock().catalog.clone()
     }
 
     async fn skills(&self, server: &AppServer, thread: &str) -> Result<Vec<Value>, String> {
@@ -121,7 +96,9 @@ impl CodexHost {
             .and_then(|entry| entry.spec.as_ref())
             .map(|spec| spec.cwd.clone())
             .ok_or("this thread's working directory is not known")?;
-        let answer = server.request("skills/list", json!({"cwds":[cwd],"forceReload":true})).await?;
+        // Codex keeps its skill catalog and says when it changes
+        // (`skills/changed`), so it is not read from disk again here.
+        let answer = server.request("skills/list", json!({"cwds":[cwd],"forceReload":false})).await?;
         let entries = answer["data"].as_array().ok_or("skills/list answered without data")?;
         let mut skills = Vec::new();
         for entry in entries {
@@ -151,15 +128,9 @@ impl CodexHost {
             }
         }
         let skills = self.skills(&server, thread).await?;
-        let read_at = jiff::Timestamp::now();
-        let limits = server.request("account/rateLimits/read", json!({})).await;
-        if let Ok(answer) = &limits {
-            self.limits_heard(read_at, super::account::LimitsHow::Read(answer.clone()));
-        }
-        let account_usage = match server.request("account/usage/read", json!({"threadId":thread})).await {
-            Ok(usage) => usage,
-            Err(error) => json!({"error":error}),
-        };
+        // The account's limits and usage are not read here: reading them asks
+        // OpenAI, which only the user's own asking does (`usage`); the limits
+        // Codex pushes while it works are what is shown.
         let mut commands: Vec<CommandOffer> = COMMANDS
             .iter()
             .map(|(name, description, args, arguments)| CommandOffer {
@@ -211,12 +182,15 @@ impl CodexHost {
                 }
             }
         }
-        let mut controls = vec![ControlKind::Command, ControlKind::Model, ControlKind::Rename, ControlKind::Fork];
-        if entry.turn.is_none() && !entry.submitted {
-            controls.push(ControlKind::Compact);
-        } else {
-            commands.retain(|command| command.path.is_some() || !matches!(command.name.as_str(), "compact" | "review"));
-        }
+        // What it can do at all, not just between turns: a compaction asked
+        // for while a turn runs is refused then, and the interface waits.
+        let mut controls = vec![
+            ControlKind::Command,
+            ControlKind::Model,
+            ControlKind::Rename,
+            ControlKind::Fork,
+            ControlKind::Compact,
+        ];
         if entry.metadata["historyMode"] == "paginated" && entry.metadata["ephemeral"] != true {
             controls.push(ControlKind::Rewind);
         }
@@ -230,41 +204,9 @@ impl CodexHost {
             })
         });
         let mut usage = Usage { context, ..Usage::default() };
-        let account = match limits {
-            Ok(answer) => {
-                let snapshots: Vec<(&str, &Value)> = match answer["rateLimitsByLimitId"].as_object() {
-                    Some(buckets) if !buckets.is_empty() => {
-                        buckets.iter().map(|(name, value)| (name.as_str(), value)).collect()
-                    }
-                    _ => vec![("codex", &answer["rateLimits"])],
-                };
-                for (bucket, snapshot) in snapshots {
-                    for kind in ["primary", "secondary"] {
-                        let window = &snapshot[kind];
-                        if window.is_null() {
-                            continue;
-                        }
-                        let duration =
-                            window["windowDurationMins"].as_u64().map(|mins| format!(" {mins}m")).unwrap_or_default();
-                        let reset = window["resetsAt"]
-                            .as_i64()
-                            .map(jiff::Timestamp::from_second)
-                            .transpose()
-                            .map_err(|error| format!("Codex reported an invalid rate-limit reset: {error}"))?;
-                        usage.limits.push(Limit {
-                            name: format!("{bucket} {kind}{duration}"),
-                            used_percent: window["usedPercent"].as_number().cloned(),
-                            resets_at: reset,
-                        });
-                    }
-                }
-                answer
-            }
-            Err(error) => json!({"error":error}),
-        };
         // Thread usage is explicitly an estimate in 0.160. Preserve its
         // credits/USD-micros contract instead of calling it a final cost.
-        usage.raw = json!({"tokenUsage":entry.usage,"accountRateLimits":account,"accountUsage":account_usage});
+        usage.raw = json!({"tokenUsage":entry.usage});
         Ok(Offers {
             checkpoints: None,
             history_limits: None,
@@ -277,6 +219,22 @@ impl CodexHost {
             service_tier: entry.selection.service_tier.clone().or_else(|| entry.service_tier.clone()),
             usage: Some(usage),
         })
+    }
+
+    /// The account's limits and usage as OpenAI says them now: asked only
+    /// when the user asks (`/usage`, `/status`).
+    pub async fn read_usage(self: &Arc<Self>, thread: &str) -> Result<Usage, String> {
+        let server = self.server().await?;
+        let read_at = jiff::Timestamp::now();
+        let limits = server.request("account/rateLimits/read", json!({})).await?;
+        self.limits_heard(read_at, super::account::LimitsHow::Read(limits.clone()));
+        let account_usage = match server.request("account/usage/read", json!({"threadId":thread})).await {
+            Ok(usage) => usage,
+            Err(error) => json!({"error":error}),
+        };
+        let mut usage = Usage { limits: limits_of(&limits)?, limits_at: Some(read_at), ..Usage::default() };
+        usage.raw = json!({"accountRateLimits":limits,"accountUsage":account_usage});
+        Ok(usage)
     }
 
     pub async fn skill(
@@ -329,6 +287,74 @@ impl CodexHost {
         };
         server.request("review/start", json!({"threadId":thread,"target":target,"delivery":"inline"})).await
     }
+}
+
+async fn listed(server: &AppServer) -> Result<Vec<ModelOffer>, String> {
+    let entries = pages(server, "model/list", json!({"includeHidden":false})).await?;
+    entries
+        .iter()
+        .map(|model| {
+            Ok(ModelOffer {
+                id: string(model, "model")?,
+                name: model["displayName"].as_str().map(str::to_string),
+                description: model["description"].as_str().map(str::to_string),
+                efforts: model["supportedReasoningEfforts"]
+                    .as_array()
+                    .ok_or("model has no supportedReasoningEfforts")?
+                    .iter()
+                    .map(|effort| string(effort, "reasoningEffort"))
+                    .collect::<Result<_, _>>()?,
+                default_effort: model["defaultReasoningEffort"].as_str().map(str::to_string),
+                default: model["isDefault"].as_bool().ok_or("model has no isDefault")?,
+                service_tiers: match model.get("serviceTiers") {
+                    None => Vec::new(),
+                    Some(value) => value
+                        .as_array()
+                        .ok_or("model has no serviceTiers array")?
+                        .iter()
+                        .map(|tier| {
+                            Ok(ServiceTierOffer {
+                                id: string(tier, "id")?,
+                                name: string(tier, "name")?,
+                                description: string(tier, "description")?,
+                            })
+                        })
+                        .collect::<Result<_, String>>()?,
+                },
+                default_service_tier: model["defaultServiceTier"].as_str().map(str::to_string),
+                context_window: None,
+            })
+        })
+        .collect()
+}
+
+/// Every window of an `account/rateLimits/read` answer, each bucket named.
+fn limits_of(answer: &Value) -> Result<Vec<Limit>, String> {
+    let snapshots: Vec<(&str, &Value)> = match answer["rateLimitsByLimitId"].as_object() {
+        Some(buckets) if !buckets.is_empty() => buckets.iter().map(|(name, value)| (name.as_str(), value)).collect(),
+        _ => vec![("codex", &answer["rateLimits"])],
+    };
+    let mut limits = Vec::new();
+    for (bucket, snapshot) in snapshots {
+        for kind in ["primary", "secondary"] {
+            let window = &snapshot[kind];
+            if window.is_null() {
+                continue;
+            }
+            let duration = window["windowDurationMins"].as_u64().map(|mins| format!(" {mins}m")).unwrap_or_default();
+            let reset = window["resetsAt"]
+                .as_i64()
+                .map(jiff::Timestamp::from_second)
+                .transpose()
+                .map_err(|error| format!("Codex reported an invalid rate-limit reset: {error}"))?;
+            limits.push(Limit {
+                name: format!("{bucket} {kind}{duration}"),
+                used_percent: window["usedPercent"].as_number().cloned(),
+                resets_at: reset,
+            });
+        }
+    }
+    Ok(limits)
 }
 
 fn string(value: &Value, field: &str) -> Result<String, String> {

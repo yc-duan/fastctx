@@ -53,38 +53,44 @@ impl CodexHost {
         model: Option<String>,
         effort: Option<String>,
     ) -> Result<(), String> {
-        let server = self.server().await?;
-        self.ensure_loaded(&server, thread).await?;
-        let models = self.models(&server).await?;
+        // A choice is only kept for the next turn: the thread is not loaded
+        // and nothing is listed for it, so nothing is asked of Codex now.
+        let models = self.catalog();
         let mut state = self.lock();
         let entry = state.threads.get_mut(thread).ok_or("unknown Codex thread")?;
+        let choices = entry.spec.as_ref().ok_or("how the Codex thread was started is not known")?.choices.clone();
+        // A thread not loaded since its app-server started knows its earlier
+        // choices only from where they were kept.
+        let kept = if entry.loaded { entry.selection.clone() } else { Selection::read(&choices)? };
         let selection = Selection {
-            model: model.or_else(|| entry.selection.model.clone()).or_else(|| entry.model.clone()),
-            effort: effort.or_else(|| entry.selection.effort.clone()).or_else(|| entry.effort.clone()),
-            service_tier: entry.selection.service_tier.clone().or_else(|| entry.service_tier.clone()),
+            model: model.or_else(|| kept.model.clone()).or_else(|| entry.model.clone()),
+            effort: effort.or_else(|| kept.effort.clone()).or_else(|| entry.effort.clone()),
+            service_tier: kept.service_tier.clone().or_else(|| entry.service_tier.clone()),
         };
         let selected = selection.model.as_deref().ok_or("Codex has not reported this thread's model")?;
-        let model = models
-            .iter()
-            .find(|model| model.id == selected)
-            .ok_or_else(|| format!("Codex does not offer model {selected}"))?;
-        if let Some(effort) = &selection.effort
-            && !model.efforts.contains(effort)
-        {
-            return Err(format!(
-                "model {selected} does not offer reasoning effort {effort}; choose one of: {}",
-                model.efforts.join(", ")
-            ));
+        if let Some(models) = &models {
+            let model = models
+                .iter()
+                .find(|model| model.id == selected)
+                .ok_or_else(|| format!("Codex does not offer model {selected}"))?;
+            if let Some(effort) = &selection.effort
+                && !model.efforts.contains(effort)
+            {
+                return Err(format!(
+                    "model {selected} does not offer reasoning effort {effort}; choose one of: {}",
+                    model.efforts.join(", ")
+                ));
+            }
+            if let Some(tier) = &selection.service_tier
+                && tier != "default"
+                && !model.service_tiers.iter().any(|offer| &offer.id == tier)
+            {
+                return Err(format!(
+                    "model {selected} does not offer service tier {tier}; select /tier default before changing models"
+                ));
+            }
         }
-        if let Some(tier) = &selection.service_tier
-            && tier != "default"
-            && !model.service_tiers.iter().any(|offer| &offer.id == tier)
-        {
-            return Err(format!(
-                "model {selected} does not offer service tier {tier}; select /tier default before changing models"
-            ));
-        }
-        selection.write(&entry.spec.as_ref().ok_or("how the Codex thread was started is not known")?.choices)?;
+        selection.write(&choices)?;
         entry.selection = selection;
         Ok(())
     }

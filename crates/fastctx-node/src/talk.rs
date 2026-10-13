@@ -378,7 +378,33 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>, agent
             _ => true,
         })
         .collect();
+    // What the host's record holds is the one shown of anything both tell
+    // under one name: a Claude reply seen as it streamed is recorded under
+    // the name its row in Claude Code's file gives it.
+    let held: std::collections::HashSet<(String, String)> = history
+        .iter()
+        .filter_map(|event| match &event.happened {
+            Happened::Finished { turn, item } | Happened::Updated { turn, item } => {
+                Some((turn.clone(), item.id.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    // A draft recorded before its row was kept (a reply cut short, kept
+    // after its stream ended) is the item that names it as its draft.
+    let drafts: std::collections::HashSet<(String, String)> = recorded
+        .iter()
+        .filter_map(|event| match &event.happened {
+            Happened::Finished { turn, item } => Some((turn.clone(), item.draft.clone()?)),
+            _ => None,
+        })
+        .collect();
     for mut event in recorded {
+        if let Happened::Finished { turn, item } | Happened::Updated { turn, item } = &event.happened
+            && (held.contains(&(turn.clone(), item.id.clone())) || drafts.contains(&(turn.clone(), item.id.clone())))
+        {
+            continue;
+        }
         // Native words are reconstructed from the host, including the
         // stable picture coordinates. Older nodes also recorded them here.
         if matches!(&event.happened, Happened::Heard { delivery: None, from: None, message: Some(message), .. }

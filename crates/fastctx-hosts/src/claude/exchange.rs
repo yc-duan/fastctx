@@ -502,8 +502,13 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             };
             let output = super::content::content(&content);
             let tool = super::tools::tool(&tool, input, output, status, ms);
-            let item =
-                Item { id: item, started_at: Some(started_at), detail: Some(detail), what: What::Tool(Box::new(tool)) };
+            let item = Item {
+                draft: None,
+                id: item,
+                started_at: Some(started_at),
+                detail: Some(detail),
+                what: What::Tool(Box::new(tool)),
+            };
             vec![happened(at, Happened::Finished { turn: turn_of(turn), item })]
         }
         ModEvent::Uncertain { deliveries, text } => vec![Reported::Uncertain { ids: deliveries, text }],
@@ -515,6 +520,7 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             // a second message from the host's trimmed summary of a stream.
             if !streamed && let Some(text) = &answer {
                 let item = Item {
+                    draft: None,
                     id: format!("{turn}-answer"),
                     started_at: None,
                     detail: None,
@@ -551,8 +557,13 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
         }
         ModEvent::ToolStart { turn, at, item, tool, input, started_at } => {
             let tool = super::tools::tool(&tool.unwrap_or_default(), input, Vec::new(), ToolStatus::Running, None);
-            let item =
-                Item { id: item.unwrap_or_default(), started_at, detail: None, what: What::Tool(Box::new(tool)) };
+            let item = Item {
+                draft: None,
+                id: item.unwrap_or_default(),
+                started_at,
+                detail: None,
+                what: What::Tool(Box::new(tool)),
+            };
             vec![happened(at, Happened::Began { turn: turn_of(turn), item })]
         }
         ModEvent::ToolEnd { turn, at, item, tool, input, output, failed, declined, ms } => {
@@ -562,8 +573,13 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
                 (false, false) => ToolStatus::Done,
             };
             let tool = super::tools::tool(&tool.unwrap_or_default(), input, output, status, ms);
-            let item =
-                Item { id: item.unwrap_or_default(), started_at: None, detail: None, what: What::Tool(Box::new(tool)) };
+            let item = Item {
+                draft: None,
+                id: item.unwrap_or_default(),
+                started_at: None,
+                detail: None,
+                what: What::Tool(Box::new(tool)),
+            };
             vec![happened(at, Happened::Finished { turn: turn_of(turn), item })]
         }
         ModEvent::Trouble { at, file, text } => {

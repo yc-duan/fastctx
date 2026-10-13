@@ -42,35 +42,37 @@ impl CodexHost {
     /// Select a tier ID, or toggle a catalog tier by its slash name. Settings
     /// are saved only after validating the model currently selected for World.
     pub async fn select_tier(self: &Arc<Self>, thread: &str, id: &str, toggle: bool) -> Result<String, String> {
-        let server = self.server().await?;
-        self.ensure_loaded(&server, thread).await?;
+        // Kept for the next turn: the thread is not loaded for it, and the
+        // catalog is the one last listed.
         if id != "default" && !super::offers::Speeds::of(&self.read_config(thread).await?).on(id) {
             return Err(format!(
                 "Codex has {} turned off; it would leave this service tier out of its requests",
                 super::offers::Speeds::mode(id)
             ));
         }
-        let models = self.models(&server).await?;
+        let models = self.catalog();
         let mut state = self.lock();
         let entry = state.threads.get_mut(thread).ok_or("unknown Codex thread")?;
-        let model = entry
-            .selection
-            .model
-            .as_ref()
-            .or(entry.model.as_ref())
-            .ok_or("Codex has not reported this thread's model")?;
+        let choices = entry.spec.as_ref().ok_or("how the Codex thread was started is not known")?.choices.clone();
+        // A thread not loaded since its app-server started knows its earlier
+        // choices only from where they were kept.
+        let kept = if entry.loaded { entry.selection.clone() } else { super::controls::Selection::read(&choices)? };
         let model =
-            models.iter().find(|offer| &offer.id == model).ok_or("the selected model is absent from the catalog")?;
-        if id != "default" && !model.service_tiers.iter().any(|tier| tier.id == id) {
-            return Err(format!("model {} does not offer service tier {id}", model.id));
+            kept.model.clone().or_else(|| entry.model.clone()).ok_or("Codex has not reported this thread's model")?;
+        if let Some(models) = &models {
+            let model =
+                models.iter().find(|offer| offer.id == model).ok_or("the selected model is absent from the catalog")?;
+            if id != "default" && !model.service_tiers.iter().any(|tier| tier.id == id) {
+                return Err(format!("model {} does not offer service tier {id}", model.id));
+            }
         }
         // Catalog defaults are presentation metadata, not a report that the
         // tier is active. Core 0.160's get_service_tier(None, ...) keeps None.
-        let current = entry.selection.service_tier.as_ref().or(entry.service_tier.as_ref());
+        let current = kept.service_tier.as_ref().or(entry.service_tier.as_ref());
         let selected = if toggle && current.is_some_and(|current| current == id) { "default" } else { id };
-        let mut selection = entry.selection.clone();
+        let mut selection = kept;
         selection.service_tier = Some(selected.into());
-        selection.write(&entry.spec.as_ref().ok_or("how the Codex thread was started is not known")?.choices)?;
+        selection.write(&choices)?;
         entry.selection = selection;
         Ok(selected.into())
     }

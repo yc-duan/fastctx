@@ -6,6 +6,12 @@
 const sessions = new Map()
 const turns = new Map()
 const controlStarting = new Map()
+// What else a session's helper wakes besides its controls: world.js's look.
+const wakes = new Map()
+
+function controlWake(sessionId, look) {
+  wakes.set(sessionId, look)
+}
 
 function controlBytes(text) {
   let size = 0
@@ -55,7 +61,10 @@ async function controlOpen($, sessions, sessionId) {
   await $.fs.write(directory + '/closed/.created', '')
   const files = await controlNames($, directory)
   const prior = files.includes('host.json') ? JSON.parse(await $.fs.read(directory + '/host.json')) : null
-  const guard = $.process.spawn({ argv: [FASTCTX, 'claude-control-guard'] })
+  // Besides witnessing this activation's lifetime, the helper says `look`
+  // whenever the node leaves the session something, and `removed` when
+  // fastctx's removal begins (then it ends).
+  const guard = $.process.spawn({ argv: [FASTCTX, 'claude-control-guard', '--watch', WORLD + '/claude/' + sessionId, '--root', ROOT] })
   try {
     let header = '', stderr = ''
     while (!header.includes('\n')) {
@@ -64,7 +73,7 @@ async function controlOpen($, sessions, sessionId) {
       if (piece.value.stream === 'stdout') header += piece.value.text
       else stderr += piece.value.text
     }
-    const identity = JSON.parse(header)
+    const identity = JSON.parse(header.slice(0, header.indexOf('\n')))
     const host = {
       session: sessionId, process: identity.process, parent: identity.parent,
       command_contract: 2,
@@ -77,7 +86,8 @@ async function controlOpen($, sessions, sessionId) {
       routing: files.includes('routing.json') ? JSON.parse(await $.fs.read(directory + '/routing.json')) : null,
       checkpoints: files.includes('checkpoints.json') ? await readReport($, directory + '/checkpoints') : { messages: [], turns: {}, full: false, uuids: [] },
       rewind: null, compacting: false, automaticModel: false,
-      sequence: 0, calls: new Map(), replies: new Map(), handled: new Set(), pending: new Map(), timer: null, guard }
+      sequence: 0, calls: new Map(), replies: new Map(), handled: new Set(), pending: new Map(), timer: null, guard,
+      heard: header.slice(header.indexOf('\n') + 1), again: false }
     const closed = await controlNames($, directory + '/closed')
     state.lastUuid = state.checkpoints.last_uuid ?? undefined
     state.lastRawUuid = state.checkpoints.last_raw_uuid ?? undefined
@@ -92,8 +102,9 @@ async function controlOpen($, sessions, sessionId) {
     await controlWrite($, directory + '/activity.json', { instance: host.instance, turn: null })
     await $.fs.write(directory + '/host.done', '')
     sessions.set(sessionId, state)
-    state.timer = $.clock.every(LOOK_MS, () => controlPoll($, state))
     void controlWatchGuard($, state)
+    // Controls asked for before this activation are taken at once.
+    void controlPoll($, state)
     return state
   } catch (error) {
     await guard.return()
@@ -103,45 +114,83 @@ async function controlOpen($, sessions, sessionId) {
 
 async function controlWatchGuard($, state) {
   try {
+    controlHeard($, state, '')
     for await (const piece of state.guard) {
       if (piece.stream === 'stderr') $.ui.log('World control lifetime helper: ' + piece.text, { to: 'debug' })
+      else controlHeard($, state, piece.text)
     }
-    if (!state.closed) throw new Error('the World control lifetime helper exited')
+    if (!state.closed && !gone.seen) throw new Error('the World control lifetime helper exited')
   } catch (error) {
     if (!state.closed) $.ui.log(String(error), { to: 'debug' })
   } finally {
     // The node observes the child itself. No filesystem call from an
     // already-unloaded module is needed to release its pending controls.
     state.closed = true
-    state.timer.cancel()
+    state.timer?.cancel()
   }
 }
 
+// One line per wake-up from the helper.
+function controlHeard($, state, text) {
+  state.heard += text
+  let end
+  while ((end = state.heard.indexOf('\n')) >= 0) {
+    const said = state.heard.slice(0, end).trim()
+    state.heard = state.heard.slice(end + 1)
+    if (said === 'removed') gone.seen = true
+    else if (said !== 'look') continue
+    void controlPoll($, state)
+    const look = wakes.get(state.host.session)
+    if (look !== undefined) void look()
+  }
+}
+
+// Tries the controls again a while later when a poll could not finish.
+function controlRetry($, state) {
+  if (state.timer !== null || state.closed || gone.seen) return
+  state.timer = $.clock.after(LOOK_MS, () => {
+    state.timer = null
+    void controlPoll($, state)
+  })
+}
+
 async function controlPoll($, state) {
-  if (state.closed || state.looking) return
+  if (state.closed) return
+  if (state.looking) {
+    state.again = true
+    return
+  }
   if (await removed($)) {
     state.closed = true
-    state.timer.cancel()
+    state.timer?.cancel()
     await state.guard.return()
     return
   }
   state.looking = true
   try {
-    if (await $.session.id() !== state.host.session) return
-    const present = (await controlNames($, state.directory + '/inbox')).sort()
-    state.handled = new Set([...state.handled].filter((file) => present.includes(file)))
-    for (const file of present) {
-      if (!file.endsWith('.json') || state.handled.has(file)) continue
-      const request = await readReport($, state.directory + '/inbox/' + file.slice(0, -5))
-      if (request.instance !== state.host.instance) continue
-      state.handled.add(file)
-      // The scanner alone is serialized. A command waiting in the host must
-      // not hold the scanner, offers, config writes or question answers.
-      const pending = controlReply($, state, file, request)
-      state.pending.set(file, pending)
-      void pending.catch((error) => $.ui.log(String(error), { to: 'debug' }))
-        .finally(() => state.pending.delete(file))
-    }
+    do {
+      state.again = false
+      if (await $.session.id() !== state.host.session) return
+      const present = (await controlNames($, state.directory + '/inbox')).sort()
+      state.handled = new Set([...state.handled].filter((file) => present.includes(file)))
+      for (const file of present) {
+        if (!file.endsWith('.json') || state.handled.has(file)) continue
+        const request = await readReport($, state.directory + '/inbox/' + file.slice(0, -5))
+        if (request.instance !== state.host.instance) continue
+        state.handled.add(file)
+        // The scanner alone is serialized. A command waiting in the host must
+        // not hold the scanner, offers, config writes or question answers.
+        const pending = controlReply($, state, file, request)
+        state.pending.set(file, pending)
+        void pending.catch((error) => {
+          $.ui.log(String(error), { to: 'debug' })
+          controlRetry($, state)
+        }).finally(() => state.pending.delete(file))
+      }
+    } while (state.again)
+  } catch (error) {
+    $.ui.log('World controls: ' + String(error), { to: 'debug' })
+    controlRetry($, state)
   } finally {
     state.looking = false
   }
@@ -176,9 +225,9 @@ async function controlExecute($, state, control) {
     const commands = await controlCatalog($, state)
     const rows = await $.config.list()
     const usage = await $.session.usage({ breakdown: 'summary' })
-    const controls = ['command']
-    if (state.busy === false) controls.push('compact', 'rewind')
-    controls.push('model', 'agents', 'agent_messages')
+    // What it can do at all: a compaction or rewind asked for while a turn
+    // runs is refused then, and the interface waits for the turn's end.
+    const controls = ['command', 'compact', 'rewind', 'model', 'agents', 'agent_messages']
     if (commands.some((command) => command.name === 'rename')) controls.push('rename')
     return {
       checkpoints: Object.entries(state.checkpoints.turns).map(([turn, point]) => ({ turn,
@@ -317,6 +366,12 @@ async function startControls($) { await controlBegin($, sessions) }
 async function startControlTurn($, e) {
     const state = await controlBegin($, sessions)
     if (state === null) return
+    // The choices this turn runs with are read as it starts: the node keeps
+    // one made while the session was not running in the same files.
+    await state.selecting
+    const files = await controlNames($, state.directory)
+    if (files.includes('selection.json')) state.selection = JSON.parse(await $.fs.read(state.directory + '/selection.json')) ?? {}
+    if (files.includes('routing.json')) state.routing = JSON.parse(await $.fs.read(state.directory + '/routing.json'))
     state.busy = true
     state.turn = e.turnId
     state.engineTurn = e.turnId
@@ -351,7 +406,7 @@ async function endControls($, e) {
     const state = sessions.get(e.sessionId)
     if (state) {
       state.closed = true
-      state.timer.cancel()
+      state.timer?.cancel()
       try {
         await controlWrite($, state.directory + '/closed/' + state.host.instance + '.json', { reason: e.reason })
       } finally {

@@ -30,7 +30,7 @@ fn event(happened: Happened) -> SessionEvent {
 }
 
 fn item(id: &str, what: What) -> Item {
-    Item { id: id.into(), started_at: None, detail: None, what }
+    Item { draft: None, id: id.into(), started_at: None, detail: None, what }
 }
 
 fn changes() -> Vec<SessionChange> {
@@ -390,6 +390,10 @@ pub fn fixtures() -> Fixtures {
         events.push(event(Happened::Updated { turn: turn.clone(), item: item.clone() }));
         events.push(event(Happened::Finished { turn: turn.clone(), item }));
     }
+    // A reply kept under its host's own name after it streamed as a draft.
+    let mut kept = item("[\"row-uuid\",1]", What::Message { text: "kept".into() });
+    kept.draft = Some("[\"turn-1\",0,1,\"text\"]".into());
+    events.push(event(Happened::Finished { turn: turn.clone(), item: kept }));
     for (part, revision) in [(Part::Text, None), (Part::Output, Some(0)), (Part::Output, Some(u64::MAX))] {
         events.push(event(Happened::Grew {
             turn: turn.clone(),

@@ -298,6 +298,9 @@ struct State {
     server_users: usize,
     server: Option<(Arc<AppServer>, Launch)>,
     threads: cache::Threads,
+    /// The models the running app-server last listed. Choosing a model or an
+    /// effort checks against it rather than asking again.
+    catalog: Option<Vec<fastctx_types::session::control::ModelOffer>>,
 }
 
 struct StateGuard<'a>(std::sync::MutexGuard<'a, State>);
@@ -391,7 +394,13 @@ impl CodexHost {
             env,
             log,
             events,
-            state: Mutex::new(State { threads, notification_sequence: 0, server_users: 0, server: None }),
+            state: Mutex::new(State {
+                threads,
+                notification_sequence: 0,
+                server_users: 0,
+                server: None,
+                catalog: None,
+            }),
             finished,
             generation: Mutex::new(()),
             starting: tokio::sync::Mutex::new(()),
@@ -865,6 +874,7 @@ impl CodexHost {
                 thread.usage = None;
             }
             state.server = Some((server.clone(), launch.clone()));
+            state.catalog = None;
             state.threads.restarted();
         }
         tokio::spawn(pump(server.clone(), inbound, Arc::downgrade(self)));
@@ -959,6 +969,22 @@ impl CodexHost {
         // The login's limits, which no thread owns.
         if method == "account/rateLimits/updated" {
             self.limits_heard(at, account::LimitsHow::Updated(params["rateLimits"].clone()));
+            return;
+        }
+        // The login's skills changed on disk: every thread it holds offers
+        // other commands from now on, and whoever looks asks again.
+        if method == "skills/changed" {
+            let threads: Vec<String> = {
+                let mut state = self.lock();
+                let loaded = state.threads.keys().cloned().collect::<Vec<_>>();
+                loaded
+                    .into_iter()
+                    .filter(|thread| state.threads.get(thread).is_some_and(|entry| entry.loaded))
+                    .collect()
+            };
+            for thread in threads {
+                self.emit(&thread, at, Happened::Changed { turn: None, change: SessionChange::CommandsChanged });
+            }
             return;
         }
         self.observe_controls(method, params);

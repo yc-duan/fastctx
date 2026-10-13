@@ -7019,6 +7019,17 @@
       },
       {
         "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "[\"row-uuid\",1]",
+          "draft": "[\"turn-1\",0,1,\"text\"]",
+          "kind": "message",
+          "text": "kept"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
         "event": "grew",
         "turn": "turn-1",
         "item": "tool-0",
@@ -16764,6 +16775,7 @@
               "resets_at": "2026-10-05T00:00:00Z"
             }
           ],
+          "limits_at": "2026-10-04T23:50:00Z",
           "cost_usd": null,
           "raw": {
             "accountRateLimits": {

@@ -12,11 +12,96 @@ use serde_json::{Value, json};
 
 /// A process stream gives the mod activation an observable lifetime even
 /// when its plugin unloads while the Claude process remains alive.
-pub fn guard() -> io::Result<()> {
+///
+/// Given the session's directory and fastctx's root, it also wakes the mod:
+/// a line `look` whenever the node leaves the session something (words in
+/// its inbox, a stop, a control), so the mod takes it at once instead of on
+/// a clock; and a line `removed` when fastctx's removal begins, after which
+/// it ends, releasing the program the removal deletes.
+pub fn guard(watch: Option<(&Path, &Path)>) -> io::Result<()> {
     let parent = fastctx_platform::host_process::parent_identity()?;
     output(&json!({"process":fastctx_platform::current_identity()?, "parent":parent}))?;
     io::stdout().flush()?;
-    fastctx_platform::host_process::wait_for_exit(&parent)
+    match watch {
+        None => fastctx_platform::host_process::wait_for_exit(&parent),
+        Some((session, root)) => wake(&parent, session, root),
+    }
+}
+
+enum Woken {
+    Look,
+    Removed,
+    Exited(io::Result<()>),
+}
+
+fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()> {
+    let inbox = session.join("inbox");
+    let controls = session.join("control").join("inbox");
+    for directory in [&inbox, &controls] {
+        std::fs::create_dir_all(directory)?;
+    }
+    let (sender, receiver) = mpsc::channel();
+    let changes = sender.clone();
+    let (watched, marker) = (session.to_path_buf(), root.join("uninstalled.json"));
+    let (inbox_seen, controls_seen) = (inbox.clone(), controls.clone());
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        let Ok(event) = event else {
+            // The watch itself faltered: a look finds whatever is there.
+            let _ = changes.send(Woken::Look);
+            return;
+        };
+        for path in &event.paths {
+            let parent = path.parent();
+            let woken = if *path == marker {
+                Some(Woken::Removed)
+            } else if parent == Some(watched.as_path()) && path.file_name().is_some_and(|name| name == "stop.json")
+                || (parent == Some(inbox_seen.as_path()) || parent == Some(controls_seen.as_path()))
+                    && path.extension().is_some_and(|extension| extension == "json")
+            {
+                Some(Woken::Look)
+            } else {
+                None
+            };
+            if let Some(woken) = woken {
+                let _ = changes.send(woken);
+            }
+        }
+    })
+    .map_err(io::Error::other)?;
+    for directory in [session, inbox.as_path(), controls.as_path(), root] {
+        notify::Watcher::watch(&mut watcher, directory, notify::RecursiveMode::NonRecursive)
+            .map_err(io::Error::other)?;
+    }
+    let parent = parent.clone();
+    std::thread::spawn(move || {
+        let _ = sender.send(Woken::Exited(fastctx_platform::host_process::wait_for_exit(&parent)));
+    });
+    if root.join("uninstalled.json").try_exists()? {
+        return say("removed");
+    }
+    let mut out = io::stdout();
+    loop {
+        let mut woken = receiver.recv().map_err(io::Error::other)?;
+        // Changes that came together wake the mod once.
+        loop {
+            match woken {
+                Woken::Exited(result) => return result,
+                Woken::Removed => return say("removed"),
+                Woken::Look => match receiver.try_recv() {
+                    Ok(next) => woken = next,
+                    Err(_) => break,
+                },
+            }
+        }
+        writeln!(out, "look")?;
+        out.flush()?;
+    }
+}
+
+fn say(line: &str) -> io::Result<()> {
+    let mut out = io::stdout();
+    writeln!(out, "{line}")?;
+    out.flush()
 }
 
 /// The owner of queued controls, or null once that node lifetime ended.

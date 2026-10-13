@@ -3,7 +3,7 @@ import { test, expect, mock } from 'claude-code/testing'
 // A loader/engine contract test: fixtures stand for host facts. This does
 // not assert account eligibility, model execution or CLI forking behavior.
 test('uses the public controls and request return types through the official engine', async ($, on) => {
-  const clock = mock.clock(on)
+  mock.clock(on)
   mock.env(on, {})
   on('ui.log', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
@@ -19,6 +19,8 @@ test('uses the public controls and request return types through the official eng
   const questions: any[] = []
   let requestAnswer: any = { kind: 'pass', reason: 'no watcher' }
   let cancelledQuestions = 0
+  // The control helper says `look` when the node leaves the session something.
+  let wakeGuard = () => {}
   on('mcp.connect', () => ({ value: { isConnected: false, reason: 'disabled', message: 'fixture' } }))
   on('session.id', () => ({ value: 'control-fixture' }))
   on('session.cwd', () => ({ value: '/fixture' }))
@@ -68,10 +70,15 @@ test('uses the public controls and request return types through the official eng
       return { value: { code: 0, signal: null } }
     }
     if (e.argv[1] === 'claude-control-guard') {
+      expect(e.argv[2]).toBe('--watch')
+      expect(normalize(e.argv[3])).toBe(normalize(e.argv[5]) + '/world/claude/control-fixture')
       const text = JSON.stringify({ process: { pid: 124, token: 'activation' }, parent: { pid: 123, token: 'lifetime' } }) + '\n'
       yield { stream: 'stdout', text: text.slice(0, 5) }
       yield { stream: 'stdout', text: text.slice(5) }
-      await new Promise<void>((resolve) => next.signal.addEventListener('abort', () => resolve(), { once: true }))
+      while (await new Promise<boolean>((resolve) => {
+        wakeGuard = () => resolve(true)
+        next.signal.addEventListener('abort', () => resolve(false), { once: true })
+      })) yield { stream: 'stdout', text: 'look\n' }
       return { value: { code: 0, signal: null } }
     }
     const request = JSON.parse(e.input!)
@@ -102,7 +109,7 @@ test('uses the public controls and request return types through the official eng
     const key = 'control-' + ++sequence
     files.set(directory + '/inbox/' + key + '.json', JSON.stringify({ instance: host.instance, controller: { pid: 123, token: 'lifetime' }, control }))
     const done = new Promise<void>((resolve) => markers.set(directory + '/replies/' + key + '.done', resolve))
-    await clock.advance(2000)
+    wakeGuard()
     await done
     markers.delete(directory + '/replies/' + key + '.done')
     expect(files.has(directory + '/replies/' + key + '.done')).toBe(true)
@@ -132,7 +139,6 @@ test('uses the public controls and request return types through the official eng
   expect((await invoke({ do: 'compact' })).ok).toEqual({ kind: 'refused', said: 'host veto' })
   await $.turn.start({ turnId: 'turn-1', text: 'work' })
   expect((await invoke({ do: 'compact' })).error).toContain('between turns')
-  expect((await invoke({ do: 'offers' })).ok.controls.includes('compact')).toBe(false)
   const question = { question: 'Which?', header: 'Pick', options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }], multiSelect: true }
   const native = await $.tool.call({ tool: 'AskUserQuestion', tool_use_id: 'q1', questions: [question] })
   expect(native.result).toEqual({ native: true })

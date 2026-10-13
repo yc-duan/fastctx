@@ -309,6 +309,9 @@ impl Transcript {
     fn item(&mut self, turn: String, native: fastctx_types::session::Item, at: Timestamp, finished: bool) {
         let started_at = native.started_at.unwrap_or(at);
         let id = native.id;
+        if let Some(draft) = &native.draft {
+            self.renamed(&turn, draft, &id);
+        }
         let what = native.what;
         let prose = |kind, text: String, took: Option<u64>| Item::Prose {
             item: id.clone(),
@@ -400,15 +403,37 @@ impl Transcript {
         }
     }
 
-    fn find(&mut self, turn: &str, id: &str) -> Option<&mut Item> {
-        self.items.iter_mut().find(|item| match item {
+    /// An item its host kept under a name of its own after it streamed as
+    /// `draft`: the shown draft becomes that item where it stands; a copy
+    /// already read from the host's record stays the one shown.
+    fn renamed(&mut self, turn: &str, draft: &str, id: &str) {
+        if self.find(turn, id).is_some() {
+            self.items.retain(|item| !Self::named(item, turn, draft));
+        } else if let Some(
+            Item::Prose { item, .. }
+            | Item::Tool { item, .. }
+            | Item::Compaction { item, .. }
+            | Item::Other { item, .. }
+            | Item::Activity { item, .. },
+        ) = self.find(turn, draft)
+        {
+            *item = id.to_string();
+        }
+    }
+
+    fn named(item: &Item, turn: &str, id: &str) -> bool {
+        match item {
             Item::Prose { item, turn: own, .. }
             | Item::Tool { item, turn: own, .. }
             | Item::Compaction { item, turn: own }
             | Item::Other { item, turn: own, .. }
             | Item::Activity { item, turn: own, .. } => item == id && own == turn,
             _ => false,
-        })
+        }
+    }
+
+    fn find(&mut self, turn: &str, id: &str) -> Option<&mut Item> {
+        self.items.iter_mut().find(|item| Self::named(item, turn, id))
     }
 
     /// Words the user is sending; returns the number they are known by

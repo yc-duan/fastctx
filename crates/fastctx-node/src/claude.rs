@@ -983,7 +983,7 @@ pub async fn deliver(
         // when the session runs, and when the user opens it again.
         return Some(into_inbox(node, to, &session, directory, pending));
     }
-    Some(match running(node, about.home.as_deref(), &session).await {
+    Some(match alive(node, about.home.as_deref(), &session).await {
         Ok(true) => into_inbox(node, to, &session, directory, pending),
         // Its supervisor stopped it: the words wake it, as they are, and its
         // next turn takes them.
@@ -1098,6 +1098,20 @@ fn words(notice: &Notice) -> (String, bool) {
         Notice::Words { from: Speaker::User { .. }, text } => (text.clone(), true),
         Notice::Attached { message, text } => (message.render(text), true),
         notice => (told::told(notice), false),
+    }
+}
+
+/// Whether the session's process is alive, to hand it words: its mod named
+/// that process when it registered, so no `claude` command runs for each
+/// delivery. A session not heard since this node started is asked of
+/// Claude Code itself.
+async fn alive(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<bool, Failure> {
+    let registration =
+        node.claude.state.lock().expect("never poisoned").sessions.get(session).map(|entry| entry.registration.clone());
+    match registration {
+        Some(registration) => pairing::present(node, &registration)
+            .map_err(|error| Failure::new(format!("checking whether the Claude session runs: {error}"))),
+        None => running(node, home, session).await,
     }
 }
 

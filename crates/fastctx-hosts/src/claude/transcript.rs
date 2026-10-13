@@ -738,7 +738,7 @@ impl Transcript {
             at,
             happened: Happened::Finished {
                 turn: String::new(),
-                item: Item { id, started_at: Some(started_at), detail: Some(detail), what },
+                item: Item { draft: None, id, started_at: Some(started_at), detail: Some(detail), what },
             },
         });
     }

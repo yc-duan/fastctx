@@ -68,6 +68,7 @@ impl Thought {
             happened: Happened::Finished {
                 turn: turn.to_string(),
                 item: Item {
+                    draft: None,
                     id: item.to_string(),
                     started_at,
                     detail: Some(self.block.clone()),

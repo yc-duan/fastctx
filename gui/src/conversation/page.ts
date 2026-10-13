@@ -555,10 +555,11 @@ export class ConversationPage {
     if (how.read) this.read = true;
     // The commands it offers changed (a plugin loaded, a description came).
     if (this.options.conversation.takeOffersChanged()) void this.askOffers();
-    // What it offers is asked again whenever a turn ends: a command, a
-    // compaction or a new model may have changed it.
+    // A host that keeps a checkpoint per turn (Claude) has one more once a
+    // turn ends; nothing else it offers changes with a turn, and what does
+    // change is said by the host (commands, above).
     const moving = this.options.conversation.moving();
-    if (this.wasMoving && !moving) void this.askOffers();
+    if (this.wasMoving && !moving && this.offered?.checkpoints) void this.askOffers();
     this.wasMoving = moving;
     this.releaseQueued();
     if (!this.frame) this.frame = requestAnimationFrame(() => this.render());
@@ -870,7 +871,7 @@ export class ConversationPage {
       const space = text.indexOf(" ");
       const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
       const args = space < 0 ? "" : text.slice(space + 1).trim();
-      const command = commandFor(commandsOf(this.offered, this.options.controls.words.commands), name, args);
+      const command = commandFor(commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving()), name, args);
       if (command?.arguments === "required" && !args) {
         this.say(this.options.controls.words.commands.needsArgs(usageOf(command)));
         return;
@@ -1017,15 +1018,7 @@ export class ConversationPage {
     holder.append(this.commandMenu.element);
     this.modelPanel = new ModelPanel(this.chip, this.options.words.english ? enModelPanel : zhModelPanel, this.options.words.english, {
       model: (model, effort) => this.setModel(model, effort),
-      tier: async (id) => {
-        const done = await this.run({ name: "tier", description: "", args: null, arguments: "optional", control: null, source: null }, id, { do: "command", name: "tier", args: id }, true);
-        // Taken: shown as the host has it now; its fresh offers follow.
-        if (done && this.offered) {
-          this.offered = { ...this.offered, service_tier: id };
-          this.drawChip();
-          this.sayNextTurn();
-        }
-      },
+      tier: (id) => this.setTier(id),
     });
     holder.append(this.modelPanel.element);
     void this.askOffers();
@@ -1202,8 +1195,21 @@ export class ConversationPage {
       this.context.setAttribute("aria-expanded", "false");
       return;
     }
+    if (!this.fillUsage(pop)) return;
+    layerOpened({ isOpen: () => !pop.hidden && pop.isConnected, close: () => this.toggleUsage() });
+    pop.hidden = false;
+    this.context.setAttribute("aria-expanded", "true");
+    // What the host pushed since the page last asked; nothing is read
+    // afresh from the provider for this.
+    void this.askOffers().then(() => {
+      if (!pop.hidden) this.fillUsage(pop);
+    });
+  }
+
+  /** Draws the usage pop-up from what the page holds. */
+  private fillUsage(pop: HTMLElement): boolean {
     const words = this.options.controls?.words.usage;
-    if (!words) return;
+    if (!words) return false;
     const usage = this.offered?.usage ?? null;
     const context = this.options.conversation.context ?? usage?.context ?? null;
     const detail = usageDetail(usage?.raw);
@@ -1228,6 +1234,10 @@ export class ConversationPage {
       const { input, cached, output, reasoning } = detail.last;
       rows.push(`<div class="usage-row"><span class="usage-name">${escape(words.lastCall)}</span><span class="usage-fact">${escape(words.last(input, cached, output, reasoning))}</span></div>`);
     }
+    if (usage?.limits.length && usage.limits_at) {
+      const minutes = Math.max(0, Math.floor((Date.now() - new Date(usage.limits_at).getTime()) / 60000));
+      rows.push(`<div class="usage-row"><span class="usage-name">${escape(words.limits)}</span><span class="usage-fact">${escape(words.asOf(minutes))}</span></div>`);
+    }
     for (const limit of usage?.limits ?? []) {
       const percent = limit.used_percent;
       rows.push(
@@ -1235,12 +1245,10 @@ export class ConversationPage {
       );
     }
     if (usage?.cost_usd !== null && usage?.cost_usd !== undefined) {
-      rows.push(`<div class="usage-row"><span class="usage-fact">${escape(words.cost(String(usage.cost_usd)))}</span></div>`);
+      rows.push(`<div class="usage-row" title="${escape(words.costWhy)}"><span class="usage-fact">${escape(words.cost(Number(usage.cost_usd)))}</span></div>`);
     }
     pop.innerHTML = `<div class="usage-title">${escape(words.title)}</div>${rows.join("") || `<div class="menu-empty">${escape(words.none)}</div>`}`;
-    layerOpened({ isOpen: () => !pop.hidden && pop.isConnected, close: () => this.toggleUsage() });
-    pop.hidden = false;
-    this.context.setAttribute("aria-expanded", "true");
+    return true;
   }
 
   /** Starting again from the user's words, or forking from a turn: said
@@ -1316,7 +1324,7 @@ export class ConversationPage {
     const typed = /^\/(\S*)$/.exec(this.input.value);
     if (!typed) return menu.hide();
     const prefix = typed[1]!.toLowerCase();
-    const found = commandsOf(this.offered, this.options.controls.words.commands).filter((command) =>
+    const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving()).filter((command) =>
       command.name.toLowerCase().startsWith(prefix),
     );
     menu.show(found, this.options.controls.words.commands.noCommands);
@@ -1365,14 +1373,32 @@ export class ConversationPage {
     );
   }
 
+  /** A choice in the model panel is shown at once with what the next turn
+   *  runs with; the host only keeps it for that turn, and a refusal takes
+   *  it back. */
   private async setModel(model: string | null, effort: string | null): Promise<void> {
+    const before = this.offered;
+    if (before) this.choose({ ...before, model: model ?? before.model, effort: effort ?? before.effort });
     const done = await this.run({ name: "model", description: "", args: null, arguments: "optional", control: "model", source: null }, "", { do: "model", model, effort }, true);
-    // Taken: shown as the host has it now; its fresh offers follow.
-    if (done && this.offered) {
-      this.offered = { ...this.offered, model: model ?? this.offered.model, effort: effort ?? this.offered.effort };
-      this.drawChip();
-      this.sayNextTurn();
-    }
+    if (!done && before) this.unchoose(before);
+  }
+
+  private async setTier(id: string): Promise<void> {
+    const before = this.offered;
+    if (before) this.choose({ ...before, service_tier: id });
+    const done = await this.run({ name: "tier", description: "", args: null, arguments: "optional", control: null, source: null }, id, { do: "command", name: "tier", args: id }, true);
+    if (!done && before) this.unchoose(before);
+  }
+
+  private choose(next: Offers): void {
+    this.offered = next;
+    this.drawChip();
+    this.sayNextTurn();
+  }
+
+  private unchoose(before: Offers): void {
+    this.offered = before;
+    this.drawChip();
   }
 
   /** What the next turn runs with, said under the input once the host took
@@ -1430,11 +1456,9 @@ export class ConversationPage {
     if (!quiet) this.say(words.running(command.name));
     try {
       const done = await controls.control(what);
-      // The caller says what was taken.
-      if (quiet && (done.kind === "done" || done.kind === "reported")) {
-        void this.askOffers();
-        return true;
-      }
+      // A choice kept for the next turn: the caller already shows it, and
+      // nothing else changed for it to be asked again.
+      if (quiet && (done.kind === "done" || done.kind === "reported" || done.kind === "selected")) return true;
       if (done.kind === "forked") {
         this.say(words.done(command.name));
         controls.forked(done.resident);

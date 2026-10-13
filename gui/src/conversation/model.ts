@@ -676,6 +676,7 @@ export class Fold {
   private item(turn: string, native: import("../world/events").Item, at: number, finished: boolean): void {
     const startedAt = native.started_at ? Date.parse(native.started_at) : at;
     const id = native.id;
+    if (id && native.draft) this.renamed(turn, native.draft, id);
     const key = id ? itemEntryKey(turn, id) : `n:${this.scope}@${this.current}`;
     let fresh: Entry;
     const questions = native.kind === "message" ? questionsOf(native.detail) : null;
@@ -933,6 +934,21 @@ export class Fold {
 
   private find(turn: string, id: string): Keyed | undefined {
     return this.byItem.get(itemKey(turn, id));
+  }
+
+  /** An item its host kept under a name of its own after it streamed as
+   *  `draft`: the drawn draft becomes that item, where it stands; a copy
+   *  already read from the host's record stays the one shown. */
+  private renamed(turn: string, draft: string, id: string): void {
+    const shown = this.find(turn, draft);
+    if (!shown) return;
+    if (this.find(turn, id)) {
+      this.remove((entry) => entry === shown);
+      return;
+    }
+    shown.item = id;
+    this.reindex();
+    this.touch(shown);
   }
 
   /** An entry by its key. */

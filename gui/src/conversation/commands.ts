@@ -48,8 +48,11 @@ export interface MenuCommand {
 
 /** The commands a conversation offers now: the World's for the controls
  *  it takes, then its host's under the names left. */
-export function commandsOf(offers: Offers | null, words: CommandWords): MenuCommand[] {
-  const own: MenuCommand[] = (offers?.commands ?? []).map((command: CommandOffer) => ({
+/** What `/` offers. While a turn runs, compaction (and Codex's review, which
+ *  starts a turn of its own) waits for it to end, so it is not offered. */
+export function commandsOf(offers: Offers | null, words: CommandWords, moving = false): MenuCommand[] {
+  const waits = (name: string) => moving && (name === "compact" || name === "review");
+  const own: MenuCommand[] = (offers?.commands ?? []).filter((command) => command.path || !waits(command.name)).map((command: CommandOffer) => ({
     name: command.name,
     description: (command.source === "codex" && !command.path && words.host[command.name]) || command.description,
     args: command.args,
@@ -71,7 +74,7 @@ export function commandsOf(offers: Offers | null, words: CommandWords): MenuComm
       { name: "stop", description: words.stop, args: null, arguments: "none", control: "stop" },
     ] as const
   )
-    .filter((command) => controls.has(command.control))
+    .filter((command) => controls.has(command.control) && !waits(command.name))
     .map((command) => ({ ...command, source: words.world, host: hostOf(command.name) }));
   const standing = new Set(world.map((command) => command.name));
   return [...world, ...own.filter((command) => command.path || !standing.has(command.name))];

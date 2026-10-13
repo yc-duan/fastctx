@@ -79,6 +79,8 @@ export interface ServiceTierOffer {
 export interface Usage {
   context: { used: number; window: number | null } | null;
   limits: { name: string; used_percent: number | null; resets_at: string | null }[];
+  /** When the limits were read or last pushed; older nodes do not say. */
+  limits_at?: string | null;
   cost_usd: number | null;
   raw: JsonValue;
 }

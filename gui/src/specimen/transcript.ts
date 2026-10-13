@@ -246,7 +246,11 @@ function names(event: SessionEvent): string[] {
     case "finished":
     case "updated":
       turn(event.turn);
-      if (!event.turn) names.push(`i:${event.item.id}`);
+      // Items in no turn are their own, together with the draft they replace.
+      if (!event.turn) {
+        names.push(`i:${event.item.id}`);
+        if (event.item.draft) names.push(`i:${event.item.draft}`);
+      }
       break;
     case "grew":
       turn(event.turn);

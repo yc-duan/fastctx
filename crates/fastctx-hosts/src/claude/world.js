@@ -29,10 +29,16 @@ import { presentation } from './presentation.js'
 // in $.process.spawn, released when its node, host, turn or viewers leave.
 // MCP ownership is resolved from $.mcp.connect and $.session.usage at startup.
 // The inbox address identifies native-shell commands, never MCP calls.
+//
+// Nothing here runs on a clock while all is well: the session's control
+// helper says `look` whenever the node leaves the session something (words,
+// a stop, a control), and turn boundaries look on their own. A clock runs
+// only to try again what failed.
 
 const WORLD = __FASTCTX_WORLD__
 const FASTCTX = __FASTCTX_COMMAND__
-// Inbox polling cadence; a tool boundary can deliver words sooner.
+// How soon what failed is tried again, and how long an answer to whether
+// fastctx is being removed is kept.
 const LOOK_MS = __FASTCTX_LOOK_MS__
 // Claude Code limits each fs read/write to 4 MiB of UTF-8.
 const FILE_BYTES = 4 * 1024 * 1024
@@ -82,16 +88,22 @@ function conversation(sessionId, previous) {
     logicalTime: 0,
     hostProcess: null,
     registration: null,
-    requestInFlight: false,
-    submissionTurns: [],
-    // A submission that entered before the turn taking it started.
-    awaiting: null,
+    // Submissions Claude Code took, oldest first, each waiting for its turn.
+    accepted: [],
+    // Rows of this plugin's prompts kept since the last turn started.
+    entered: 0,
+    // Set while this plugin appends a row of its own at a tool boundary.
+    appending: false,
     handled: new Set(),
     failing: new Set(),
     held: [],
     submitting: [],
     owed: [],
     looking: false,
+    // A look was asked for while one ran; it runs again before it ends.
+    again: false,
+    // Something a later look can settle failed in this one.
+    unsettled: false,
     stopped: null,
     writing: Promise.resolve(),
     streamBatch: null,
@@ -163,7 +175,10 @@ function event($, context, kind, fields) {
   context.unwritten.set(name, { body })
   const written = context.writing.then(() => writePending($, context, name))
   // A failed report fails its caller; it never counts as an acknowledgment.
-  context.writing = written.catch(() => { context.failedReports.add(name) })
+  context.writing = written.catch(() => {
+    context.failedReports.add(name)
+    retry($, context)
+  })
   return written
 }
 
@@ -183,9 +198,6 @@ async function writePending($, context, name) {
 // serialization outside the generator; while earlier IO runs, arriving pieces
 // share this batch. Other reports seal it so they cannot overtake any piece.
 function streamEvent($, context, entry) {
-  // A stream can first expose prose after session.end already cancelled the
-  // old poller. Its reports still need the same retry and receipt lifecycle.
-  if (context.timer === null) context.timer = $.clock.every(LOOK_MS, () => look($, context))
   let batch = context.streamBatch
   if (batch === null) {
     const { id: name } = reserved(context)
@@ -200,9 +212,13 @@ function streamEvent($, context, entry) {
       report.sequence = nextName(context)
       await writePending($, context, name)
     })
-    // Keep the batch for the session's retry loop; failure must not reject or
-    // cancel the host stream, which has already received the same pieces.
-    context.writing = written.catch(() => { context.failedReports.add(name) })
+    // Keep the batch to be written again; failure must not reject or cancel
+    // the host stream, which has already received the same pieces. A stream
+    // can expose prose even after session.end.
+    context.writing = written.catch(() => {
+      context.failedReports.add(name)
+      retry($, context)
+    })
   }
   batch.events.push({ ...entry, at: reserved(context).at })
 }
@@ -238,12 +254,13 @@ function activity($, context) {
 }
 
 // A receipt tells the node the model has it. One that cannot be written is
-// written at the next look; meanwhile it is not handed over again.
+// written at a later look; meanwhile it is not handed over again.
 async function receipt($, context, delivery, how, acceptedTurn = context.turn) {
   try {
     await $.fs.write(context.dir + '/receipts/' + delivery.id, JSON.stringify({ at: stamp(), how, turn: acceptedTurn }))
   } catch (error) {
     context.owed.push([delivery, how, acceptedTurn])
+    retry($, context)
   }
 }
 
@@ -262,51 +279,52 @@ function handed($, context, deliveries, turn, how) {
   return event($, context, 'handed', { deliveries: deliveries.map((delivery) => delivery.id), turn, how })
 }
 
-// Submits words as a new turn; the turn that takes them is told when it
-// starts. Returns whether they went.
+// Submits words as a new turn. Returns whether Claude Code took them.
+//
+// Which turn takes them is not read from any text: Claude Code keeps the
+// prompt as a row stamped with this plugin as its origin, and finishes every
+// `session.append` hook on a turn's rows before it starts that turn. So the
+// turn that starts after such a row is the one that took it (`entered`,
+// `startTurn`), whether the prompt began its turn at once or waited behind a
+// running one. Until then nothing else is submitted, so each submission is
+// one turn of its own and the order of rows is the order of submissions.
 async function submit($, context, deliveries, prompt) {
-  if (context.closed || context.submitting.length > 0) return false
+  if (context.closed || context.submitting.length > 0 || context.accepted.length > 0) return false
   context.submitting.push(...deliveries)
-  if ((await $.session.id()) !== context.sessionId) {
-    context.submitting.splice(0, context.submitting.length)
-    return false
-  }
-  for (const delivery of deliveries) {
-    await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ at: stamp(), turn: context.turn, state: 'submitting' }))
-  }
   try {
-    context.requestInFlight = true
-    context.submissionTurns.splice(0, context.submissionTurns.length)
-    const result = await $.prompt.submit(prompt)
-    context.requestInFlight = false
-    if (result.drop !== undefined) throw new Error(result.drop)
-    const candidates = context.submissionTurns.filter((started) => took(started.text, result.text))
-    if (candidates.length === 0) {
-      // The prompt entered; the turn it starts begins once the session is
-      // idle, which may be only after this very hook returns (a submission at
-      // the end of a turn). The next turn with its text is the one that took
-      // it (`startTurn`); meanwhile nothing else is submitted.
-      context.awaiting = { text: result.text, deliveries }
-      return true
-    }
-    context.submitting.splice(0, context.submitting.length)
-    if (candidates.length !== 1) {
-      await uncertain($, context, deliveries.map((delivery) => delivery.id), 'the host did not identify one consuming turn for this submission')
-      return true
-    }
-    await submitted($, context, deliveries, candidates[0].turnId)
-    return true
-  } catch (error) {
-    context.requestInFlight = false
-    if (!deliveries.some((delivery) => context.submitting.includes(delivery))) throw error
+    if ((await $.session.id()) !== context.sessionId) return false
     for (const delivery of deliveries) {
-      const at = context.submitting.indexOf(delivery)
-      if (at >= 0) context.submitting.splice(at, 1)
+      await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ at: stamp(), turn: context.turn, state: 'submitting' }))
     }
+    // Its row and turn can come before the call answers.
+    context.accepted.push(deliveries)
+    let refusal = null
+    try {
+      const result = await $.prompt.submit(prompt)
+      if (result.drop !== undefined) refusal = result.drop
+    } catch (error) {
+      refusal = String(error)
+    }
+    if (refusal === null) return true
+    const waiting = context.accepted.indexOf(deliveries)
+    // A turn took them already; whatever the call said after that, they went.
+    if (waiting < 0) {
+      worldFailure($, 'prompt.submit', new Error(refusal))
+      return true
+    }
+    context.accepted.splice(waiting, 1)
     for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
-    await trouble($, context, deliveries[0].id, 'it could not be handed over: ' + error)
+    context.unsettled = true
+    await trouble($, context, deliveries[0].id, 'it could not be handed over: ' + refusal)
     return false
+  } finally {
+    context.submitting.splice(0, context.submitting.length)
   }
+}
+
+// A row of a prompt this plugin submitted was kept; the next turn takes it.
+function entered(context) {
+  context.entered += 1
 }
 
 // Says that `acceptedTurn` took what was submitted.
@@ -318,7 +336,7 @@ async function submitted($, context, deliveries, acceptedTurn) {
 // Hands everything held to the model in one new turn; on failure it is
 // held again, before anything held since.
 async function flush($, context, how) {
-  if (context.closed || context.busy || context.submitting.length > 0 || context.held.length === 0) return
+  if (context.closed || context.busy || waiting(context) || context.held.length === 0) return
   const deliveries = [context.held.shift()]
   if (deliveries[0].as_user !== true) {
     while (context.held.length > 0 && context.held[0].as_user !== true) deliveries.push(context.held.shift())
@@ -327,6 +345,11 @@ async function flush($, context, how) {
     ? { text: deliveries[0].text, asUser: true }
     : { text: deliveries.map(framed).join('\n\n') }
   if (!(await submit($, context, deliveries, prompt))) context.held.unshift(...deliveries)
+}
+
+// Whether a submission is still on its way into a turn of its own.
+function waiting(context) {
+  return context.submitting.length > 0 || context.accepted.length > 0
 }
 
 // The names in one of the session's directories, or null when they cannot
@@ -354,6 +377,18 @@ async function trouble($, context, name, text) {
   await event($, context, 'trouble', { file: name, text })
 }
 
+// Tries again, a while later, what a look could not settle. One try waits at
+// a time; a look in between settles it sooner.
+function retry($, context) {
+  if (context.timer !== null || gone.seen) return
+  context.timer = $.clock.after(LOOK_MS, () => {
+    context.timer = null
+    look($, context).catch((error) => worldFailure($, 'look', error))
+  })
+}
+
+// Takes what the node left the session: a stop, words, failed reports and
+// receipts to write again. Asked while it runs, it runs once more after.
 async function look($, context) {
   if (await removed($)) {
     if (context.timer) {
@@ -364,27 +399,35 @@ async function look($, context) {
   }
   const current = !context.closed && (await $.session.id()) === context.sessionId
   if (current) await stopping($, context)
-  if (context.looking) return
+  if (context.looking) {
+    context.again = true
+    return
+  }
   context.looking = true
   try {
-    await settle($, context)
-    const retry = context.writing.then(async () => {
-      for (const name of context.failedReports) {
-        await writePending($, context, name)
-        context.failedReports.delete(name)
+    do {
+      context.again = false
+      context.unsettled = false
+      await settle($, context)
+      const written = context.writing.then(async () => {
+        for (const name of context.failedReports) {
+          await writePending($, context, name)
+          context.failedReports.delete(name)
+        }
+      })
+      context.writing = written.catch(() => {})
+      try {
+        await written
+        if (!context.closed && current) await looked($, context)
+      } catch (error) {
+        context.unsettled = true
+        worldFailure($, 'look', error)
       }
-    })
-    context.writing = retry.catch(() => {})
-    await retry
-    if (context.closed && context.timer && context.owed.length === 0 && context.unwritten.size === 0) {
-      context.timer.cancel()
-      context.timer = null
-    }
-    if (context.closed || !current) return
-    await looked($, context)
+    } while (context.again)
   } finally {
     context.looking = false
   }
+  if (context.unsettled || context.failedReports.size > 0 || context.owed.length > 0) retry($, context)
 }
 
 // Stops the running turn when the node asks for it. Only the turn that is
@@ -413,7 +456,10 @@ async function looked($, context) {
   // What has a receipt was handed over already, perhaps before this mod
   // loaded again. Without knowing which, anything handed over could repeat.
   const receipts = await listing($, context, 'receipts')
-  if (receipts === null) return
+  if (receipts === null) {
+    context.unsettled = true
+    return
+  }
   if (!context.busy) await flush($, context, 'submitted')
   const receipted = new Set(receipts)
   // Node acknowledgment writes receipts before retiring handed reports.
@@ -450,10 +496,11 @@ async function looked($, context) {
         }
       }
     } catch (error) {
+      context.unsettled = true
       await trouble($, context, name, 'it could not be read: ' + error)
       continue
     }
-    if (context.busy || context.submitting.length > 0) {
+    if (context.busy || waiting(context)) {
       context.held.push(delivery)
       context.handled.add(name)
       continue
@@ -468,8 +515,7 @@ async function looked($, context) {
       continue
     }
     context.failing.delete(name)
-    // The turn.start callback writes the receipt together with handed.
-    // Successful submission alone does not identify a consuming turn.
+    // The turn that takes it writes the receipt together with handed.
   }
 }
 
@@ -543,7 +589,9 @@ async function startSession($, context) {
   await observeModels($, context)
   // What already waits when the session starts again is handed over, not
   // skipped: a closed session's answers are what it should see on return.
-  context.timer = $.clock.every(LOOK_MS, () => look($, context))
+  // After that, the session's control helper says when there is more.
+  controlWake(id, () => look($, context).catch((error) => worldFailure($, 'look', error)))
+  $.clock.after(0, () => look($, context).catch((error) => worldFailure($, 'look', error)))
   // Background observations retain this conversation even after /clear.
   context.observe = (happened) => {
     try {
@@ -560,28 +608,18 @@ async function startSession($, context) {
   context.thought = ({ uuid, turn, item }) => streamEvent($, context, { kind: 'thought', uuid, turn, item })
 }
 
-// Whether a turn starting with `started` is the one that took the prompt
-// whose text entered as `entered`. The person's own words start their turn
-// bare; anything else a plugin submits starts it inside the host's frame,
-// "The <plugin> plugin sent a message:" before and a note after (2.1.289).
-function took(started, entered) {
-  return started === entered || (entered !== '' && started.includes(entered))
-}
-
 async function startTurn($, context, e, next) {
   await startControlTurn($, e)
   context.busy = true
   context.turn = e.turnId
-  if (context.requestInFlight) context.submissionTurns.push({ turnId: e.turnId, text: e.text })
-  const awaited = context.awaiting !== null && took(e.text, context.awaiting.text) ? context.awaiting : null
-  if (awaited !== null) {
-    context.awaiting = null
-    context.submitting.splice(0, context.submitting.length)
-  }
+  // The rows of this plugin's prompts kept since the last turn began are
+  // what this turn takes (`submit`).
+  const took = context.accepted.splice(0, context.entered)
+  context.entered = 0
   const started = event($, context, 'turn_start', { turn: context.turn })
   const saved = activity($, context)
   await Promise.all([started, saved])
-  if (awaited !== null) await submitted($, context, awaited.deliveries, e.turnId)
+  for (const deliveries of took) await submitted($, context, deliveries, e.turnId)
   return next(e)
 }
 
@@ -643,7 +681,13 @@ async function boundary($, context, e, next) {
     throw error
   }
   try {
-    const appended = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: deliveries.map(framed).join('\n\n') }] } })
+    context.appending = true
+    let appended
+    try {
+      appended = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: deliveries.map(framed).join('\n\n') }] } })
+    } finally {
+      context.appending = false
+    }
     if (appended.deny !== undefined) {
       for (const delivery of deliveries) await $.fs.write(context.dir + '/attempts/' + delivery.id, JSON.stringify({ state: 'refused' }))
       context.held.unshift(...deliveries)
@@ -668,23 +712,18 @@ async function endSession($, context, e, next) {
   // Process liveness alone would otherwise resurrect this closed one.
   await $.fs.write(context.dir + '/closed/' + context.registration.instance, '')
   context.streamBatch = null
-  if (context.awaiting !== null) {
-    const { deliveries } = context.awaiting
-    context.awaiting = null
-    context.submitting.splice(0, context.submitting.length)
+  for (const deliveries of context.accepted.splice(0, context.accepted.length)) {
     await uncertain($, context, deliveries.map((delivery) => delivery.id), 'the session ended before a turn took what was submitted')
   }
+  context.entered = 0
   const { id: name, at } = reserved(context)
   const body = JSON.stringify({ kind: 'session_end', at, instance: context.registration.instance, reason: e.reason, pending: [...context.unwritten.keys()].map((name) => name + '.json') })
   context.unwritten.set(name, { body })
   try {
     await writePending($, context, name)
-    if (context.timer && context.owed.length === 0 && context.unwritten.size === 0) {
-      context.timer.cancel()
-      context.timer = null
-    }
   } catch (error) {
     context.failedReports.add(name)
+    retry($, context)
     throw error
   }
   return next(e)
@@ -819,6 +858,8 @@ export function register(on) {
     const shown = e.agentId === undefined ? context.shown : agentPresentation(context, e.agentId)
     const reported = e.agentId === undefined ? reports($, context) : agentReports(reports($, context), e.agentId)
     const result = await shown.append(reported, e, next)
+    if (e.agentId === undefined && e.door === 'prompt' && result.deny === undefined && !context.appending
+      && e.origin?.kind === 'plugin' && e.origin.name === $.plugin.name) entered(context)
     if (state !== null && result.deny === undefined && ['user', 'assistant', 'attachment', 'system'].includes(result.message.type)) {
       state.lastRawUuid = result.uuid
       state.checkpoints.last_raw_uuid = result.uuid
