@@ -5,7 +5,7 @@
 //! <hub>/tls/certificate.der   the hub's certificate, pinned by every member
 //! <hub>/tls/key.der
 //! <hub>/login.secret          the hub's OPAQUE secrets (`fastctx_net::login::HubSecrets`)
-//! <hub>/directory.json        accounts and their password records, members, shares, loans,
+//! <hub>/directory.json        accounts and their password records, members, shares, assistance,
 //!                             acting, projects, enrollment tokens, removed members
 //!                             and 90 days of machine-layer change records
 //! <hub>/letters.json          where each member's letters stand
@@ -216,7 +216,7 @@ impl Store {
     }
 
     /// The directory as kept; one kept in the shape before sharing and
-    /// lending (`crate::upgrade`) is kept again in today's, after a copy of
+    /// assistance (`crate::upgrade`) is kept again in today's, after a copy of
     /// it as it was is left beside it, which going back to the earlier
     /// fastctx needs. What changed is said too, and kept beside it. The
     /// relays a directory kept before direct connections replaced them are

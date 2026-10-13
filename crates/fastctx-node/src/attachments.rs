@@ -2,7 +2,7 @@
 //! machine. Where the user chose another machine for its files other than
 //! images (`world-gui.md`), each is placed on that machine, in the
 //! conversation's guest room there, while the upload kept where it lives
-//! stays the conversation's record; an agent lent to the account cannot
+//! stays the conversation's record; an agent assisting the account cannot
 //! reach the machine it runs on, so for it the user must choose one.
 //!
 //! A receipt keeps the path its file had when it arrived. Where a file is
@@ -738,11 +738,11 @@ pub async fn place(
     if attachments.is_empty() {
         return Ok(attachments);
     }
-    let lent = crate::here::lent(node, resident);
-    // Where they go: where the user chose, else here; a lent agent cannot
-    // reach here.
+    let assisting = crate::here::assisting(node, resident);
+    // Where they go: where the user chose, else here; an assisting agent
+    // cannot reach here.
     let goes_to = match files_on {
-        Some(files_on) if node.is_here(files_on) && lent => {
+        Some(files_on) if node.is_here(files_on) && assisting => {
             return Err(Failure::not_run(format!(
                 "{files_on} is the computer this agent runs on, which it cannot reach; choose one of your machines for the files"
             )));
@@ -758,7 +758,7 @@ pub async fn place(
         given.push(match &goes_to {
             _ if kept.is_image() => kept,
             Some(goes_to) => send_placed(node, &acting, goes_to, resident, kept).await?,
-            None if lent && files_on.is_none() => {
+            None if assisting && files_on.is_none() => {
                 return Err(Failure::not_run(format!(
                     "{} cannot stay where this agent runs, a computer it cannot reach; choose one of your machines for the files",
                     kept.file.name

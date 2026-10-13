@@ -886,7 +886,7 @@ impl fastctx_net::link::Node for Handler {
 /// The machines a session working for `acting` may work on, each as it is
 /// written here: its name, or `name.hub` where another hub this computer is
 /// on has a different computer of that name. A computer on several hubs is
-/// one machine. One whose agents alone it was lent is not among them.
+/// one machine. One whose agents alone assist it is not among them.
 pub fn machines(node: &Node, acting: &Acting) -> (MachineName, Vec<String>) {
     let here = node.machine();
     let mut others: Vec<String> = Vec::new();

@@ -3,13 +3,13 @@
 
 use fastctx_types::AccountName;
 use fastctx_types::accounts::{
-    AccountChange, AccountSeen, ActingSeen, HubAccounts, LendSeen, MemberSeen, PlanSeen, ProjectSeen, ShareSeen,
+    AccountChange, AccountSeen, ActingSeen, AssistSeen, HubAccounts, MemberSeen, PlanSeen, ProjectSeen, ShareSeen,
 };
 use fastctx_types::world::LinkState;
 use jiff::Timestamp;
 
 use super::{Link, Status};
-use crate::directory::Lend;
+use crate::directory::Assist;
 use crate::wire::{Change, Told};
 
 impl Link {
@@ -38,9 +38,9 @@ impl Link {
         };
         let wire = match change {
             AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
-            AccountChange::Lend { machine, to, agent, home, lent, until } => {
+            AccountChange::Assist { machine, to, agent, home, assisting, until } => {
                 return self
-                    .lend(account, Lend { machine, account: to, agent, home, until }, lent)
+                    .assist(account, Assist { machine, account: to, agent, home, until }, assisting)
                     .await
                     .map(|()| None);
             }
@@ -83,35 +83,38 @@ impl Link {
         }
     }
 
-    /// Lends `lend`'s login as `account`, or takes it back. A hub from
-    /// before loans had deadlines drops the deadline it does not know and
-    /// lends without one; a loan meant to end must not outlive it, so it is
-    /// taken back at once and the owner told why.
-    async fn lend(&self, account: &AccountName, lend: Lend, lent: bool) -> Result<(), String> {
-        let change = |lent: bool, until: Option<Timestamp>| Change::Lend {
-            machine: lend.machine.clone(),
-            to: lend.account.clone(),
-            agent: lend.agent.clone(),
-            home: lend.home.clone(),
-            lent,
+    /// Lets `assist`'s login assist as `account`, or no longer. A hub from
+    /// before assistance had deadlines drops the deadline it does not know
+    /// and keeps the assistance without one; one meant to end must not
+    /// outlive it, so it is ended at once and the owner told why.
+    async fn assist(&self, account: &AccountName, assist: Assist, assisting: bool) -> Result<(), String> {
+        let change = |assisting: bool, until: Option<Timestamp>| Change::Assist {
+            machine: assist.machine.clone(),
+            to: assist.account.clone(),
+            agent: assist.agent.clone(),
+            home: assist.home.clone(),
+            assisting,
             until,
         };
-        self.manage(account, change(lent, lend.until)).await?;
-        if !lent || lend.until.is_none() {
+        self.manage(account, change(assisting, assist.until)).await?;
+        if !assisting || assist.until.is_none() {
             return Ok(());
         }
         let hub = self.hub_name();
-        // The view read again after the change: the loan with its deadline,
-        // the loan without one (a hub that does not know deadlines), or not
-        // what was just asked (the view could not be read again).
-        let why = match self.view().lends.iter().find(|found| found.same(&lend)).map(|found| found.until) {
-            Some(kept) if kept == lend.until => return Ok(()),
-            Some(None) => format!("the hub {hub} keeps no deadline on a loan; upgrade it to lend until a set time"),
-            _ => format!("the hub {hub} could not be asked whether it kept the deadline; lend again"),
+        // The view read again after the change: the assistance with its
+        // deadline, the assistance without one (a hub that does not know
+        // deadlines), or not what was just asked (the view could not be
+        // read again).
+        let why = match self.view().assists.iter().find(|found| found.same(&assist)).map(|found| found.until) {
+            Some(kept) if kept == assist.until => return Ok(()),
+            Some(None) => {
+                format!("the hub {hub} keeps no deadline on assistance; upgrade it to assist until a set time")
+            }
+            _ => format!("the hub {hub} could not be asked whether it kept the deadline; give the assistance again"),
         };
         match self.manage(account, change(false, None)).await {
-            Ok(_) => Err(format!("{why}. The login was taken back")),
-            Err(error) => Err(format!("{why}. Taking the login back failed too: {error}; take it back by hand")),
+            Ok(_) => Err(format!("{why}. The assistance was ended")),
+            Err(error) => Err(format!("{why}. Ending the assistance failed too: {error}; end it by hand")),
         }
     }
 
@@ -172,15 +175,15 @@ impl Link {
                 .iter()
                 .map(|share| ShareSeen { machine: share.machine.clone(), account: share.account.clone() })
                 .collect(),
-            lends: view
-                .lends
+            assists: view
+                .assists
                 .iter()
-                .map(|lend| LendSeen {
-                    machine: lend.machine.clone(),
-                    account: lend.account.clone(),
-                    agent: lend.agent.clone(),
-                    home: lend.home.clone(),
-                    until: lend.until,
+                .map(|assist| AssistSeen {
+                    machine: assist.machine.clone(),
+                    account: assist.account.clone(),
+                    agent: assist.agent.clone(),
+                    home: assist.home.clone(),
+                    until: assist.until,
                 })
                 .collect(),
             plans: view

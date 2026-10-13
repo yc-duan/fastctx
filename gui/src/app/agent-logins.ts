@@ -1,4 +1,4 @@
-// The agents (`world-gui.md`, 账号、机器、共享与借出; `world-agent-logins.md`):
+// The agents (`world-gui.md`, 账号、机器、共享与协助; `world-agent-logins.md`):
 // Codex and Claude Code each in their own tab. Opening the page starts no
 // program: it reads what each machine's node recorded of its agents, and
 // a machine never scanned shows only the agent's mark and 「扫描这台电脑」.
@@ -9,7 +9,7 @@
 // the login join the list the World uses. A listed login is a slip: one
 // line of who, a small tag for its plan (and for Claude's long-lived
 // token), with the workbench on a bar for each usage window, the stamp,
-// and a 「⋯」 with removing, lending, reading the limits again and its
+// and a 「⋯」 with removing, assisting others, reading the limits again and its
 // directory. Every machine of the network the user may look at comes under
 // the same tab, each in its own section; the user's own other machines are
 // scanned and hooked up from here too, by their own nodes.
@@ -30,7 +30,7 @@ import type { AgentLoginsWords } from "./agent-logins-words";
 import type { Confirm } from "./confirm";
 import { FolderSheet } from "./folder-sheet";
 import { redrawKeepingFocus } from "./focus";
-import { LendSheet, type Loan } from "./lend-sheet";
+import { AssistSheet, type Assistance } from "./assist-sheet";
 import { detailOf } from "./problem";
 import { machinesOf, owns, ownerOf } from "./reach";
 import type { Page } from "./shell";
@@ -74,8 +74,8 @@ interface Shown {
   tag: string | null;
   /** The record, or why there is none. */
   heard: { kind: "answered"; logins: MachineLogins } | { kind: "away"; said: string };
-  /** The account that owns it among this device's, who lends what is on it
-   *  and sets plans; null on a machine of another's. */
+  /** The account that owns it among this device's, who lets what is on it
+   *  assist others and sets plans; null on a machine of another's. */
   owner: AccountLogin | null;
 }
 
@@ -93,7 +93,7 @@ export class AgentLoginsPage implements Page {
   private readonly body: HTMLElement;
   private readonly stop: () => void;
   private readonly sheet: AgentChangeSheet;
-  private readonly lending: LendSheet;
+  private readonly assistSheet: AssistSheet;
   private readonly choosing: FolderSheet;
   private agent: Agent = keptTab();
   private record: WorldLogins | null = null;
@@ -125,7 +125,7 @@ export class AgentLoginsPage implements Page {
       </div>
       <div class="logins-body scroller"></div>`;
     this.body = this.element.querySelector<HTMLElement>(".logins-body")!;
-    this.lending = new LendSheet(options.access);
+    this.assistSheet = new AssistSheet(options.access);
     this.sheet = new AgentChangeSheet(options.changeWords, {
       preview: (target) => options.preview(target.machine, target.agent, target.dir, target.into),
       change: (target, raise) => options.change(target.machine, target.agent, target.dir, target.into, raise),
@@ -315,7 +315,7 @@ export class AgentLoginsPage implements Page {
     const plan = token ? this.planOf(machine, login, world) : (identity?.plan ?? null);
     const who = identity?.email ?? dirName(login.dir);
     const changing = login.change && !login.change.end;
-    const lent = this.lentTo(machine, login, world);
+    const assisting = this.assistancesOf(machine, login, world);
     const versions = agent.programs
       .filter((_, index) => login.programs.includes(index))
       .map((program) => programLine(program, words))
@@ -335,7 +335,7 @@ export class AgentLoginsPage implements Page {
       ${this.options.workbench.peek() ? this.bars(login.limits, now) : ""}
       <div class="logins-slip-foot">
         <span class="logins-stamp${changing ? " busy" : ""}">${changing ? escape(login.change!.into ? words.applying : words.removing) : `${glyph("check", 14)}${escape(words.applied)}`}</span>
-        ${lent.length ? `<span class="logins-lent">${escape(words.lentTo)}${lent.map((loan) => this.loanTag(machine.name, login.dir, loan, now)).join("")}</span>` : ""}
+        ${assisting.length ? `<span class="logins-assisting">${escape(words.assisting)}${assisting.map((one) => this.assistanceTag(machine.name, login.dir, one, now)).join("")}</span>` : ""}
       </div>
       ${note ? `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` : ""}
     </li>`;
@@ -389,41 +389,41 @@ export class AgentLoginsPage implements Page {
     return null;
   }
 
-  private lentTo(machine: Shown, login: Login, world: WorldNow | null): Loan[] {
+  private assistancesOf(machine: Shown, login: Login, world: WorldNow | null): Assistance[] {
     if (!machine.owner) return [];
     const home = login.default ? null : login.dir;
-    return (this.hubOf(machine.owner, world)?.lends ?? [])
-      .filter((lend) => lend.machine === machine.name && lend.agent === this.agent && (lend.home ?? null) === home)
-      .map((lend) => ({ to: lend.account, until: lend.until ?? null }));
+    return (this.hubOf(machine.owner, world)?.assists ?? [])
+      .filter((assist) => assist.machine === machine.name && assist.agent === this.agent && (assist.home ?? null) === home)
+      .map((assist) => ({ to: assist.account, until: assist.until ?? null }));
   }
 
-  /** One loan on a slip: whom to, and the day it ends when it does;
-   *  pressed, its deadline opens to be changed; its cross takes it back. */
-  private loanTag(machine: string, dir: string, loan: Loan, now: Date): string {
+  /** One account assisted, on a slip: whom, and the day it ends when it
+   *  does; pressed, its deadline opens to be changed; its cross ends it. */
+  private assistanceTag(machine: string, dir: string, assistance: Assistance, now: Date): string {
     const { words, access } = this.options;
-    const at = `data-machine="${escape(machine)}" data-dir="${escape(dir)}" data-to="${escape(loan.to)}"`;
-    const until = loan.until ? new Date(loan.until) : null;
+    const at = `data-machine="${escape(machine)}" data-dir="${escape(dir)}" data-to="${escape(assistance.to)}"`;
+    const until = assistance.until ? new Date(assistance.until) : null;
     const said = until ? access.moment.until(until, now) : access.when.none;
-    return `<span class="tag lend-tag"><button class="lend-tag-open" type="button" data-act="lend-edit" ${at} title="${escape(`${access.changeUntil} · ${said}`)}">${escape(loan.to)}${until ? `<span class="lend-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}</button><button class="lend-tag-x" type="button" data-act="unlend" ${at} aria-label="${escape(words.takeBack(loan.to))}" title="${escape(words.takeBack(loan.to))}">${glyph("cross", 12)}</button></span>`;
+    return `<span class="tag assist-tag"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil} · ${said}`)}">${escape(assistance.to)}${until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : ""}</button><button class="assist-tag-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assistance.to))}" title="${escape(words.endAssist(assistance.to))}">${glyph("cross", 12)}</button></span>`;
   }
 
-  /** The lend sheet for one login, with `editing`'s deadline open. */
-  private openLend(machineName: string, dir: string, editing: string | null): void {
+  /** The assist sheet for one login, with `editing`'s deadline open. */
+  private openAssist(machineName: string, dir: string, editing: string | null): void {
     const { options } = this;
     const found = this.find(machineName, dir);
     const owner = found?.machine.owner;
     if (!found?.login || !owner) return;
     const home = found.login.default ? undefined : dir;
     const label = this.target(machineName, dir, true)?.who ?? dirName(dir);
-    this.lending.open(
-      options.access.lendTitle(label, machineName),
-      this.lentTo(found.machine, found.login, options.store.world.peek()),
-      async (to, until, lent) => {
-        const ends = lent && until ? { until: until.toISOString() } : {};
-        await options.change_(owner, { change: "lend", machine: machineName, to, agent: this.agent, ...(home ? { home } : {}), lent, ...ends });
+    this.assistSheet.open(
+      options.access.assistTitle(label, machineName),
+      this.assistancesOf(found.machine, found.login, options.store.world.peek()),
+      async (to, until, assisting) => {
+        const ends = assisting && until ? { until: until.toISOString() } : {};
+        await options.change_(owner, { change: "assist", machine: machineName, to, agent: this.agent, ...(home ? { home } : {}), assisting, ...ends });
         await options.store.refresh();
         const again = this.find(machineName, dir);
-        return again?.login ? this.lentTo(again.machine, again.login, options.store.world.peek()) : [];
+        return again?.login ? this.assistancesOf(again.machine, again.login, options.store.world.peek()) : [];
       },
       editing,
     );
@@ -492,14 +492,14 @@ export class AgentLoginsPage implements Page {
       case "menu":
         this.openMenu(button, machine, dir);
         return;
-      case "lend-edit":
-        this.openLend(machine, dir, button.dataset.to ?? null);
+      case "assist-edit":
+        this.openAssist(machine, dir, button.dataset.to ?? null);
         return;
-      case "unlend": {
+      case "assist-end": {
         const found = this.find(machine, dir);
         if (!found?.machine.owner || !found.login) return;
         await this.quietly(button, `s:${machine}:${dir}`, async () => {
-          await this.options.change_(found.machine.owner!, { change: "lend", machine, to: button.dataset.to ?? "", agent: this.agent, ...(found.login!.default ? {} : { home: dir }), lent: false });
+          await this.options.change_(found.machine.owner!, { change: "assist", machine, to: button.dataset.to ?? "", agent: this.agent, ...(found.login!.default ? {} : { home: dir }), assisting: false });
           await this.options.store.refresh();
         });
         return;
@@ -507,7 +507,7 @@ export class AgentLoginsPage implements Page {
     }
   }
 
-  /** The slip's 「⋯」: remove, lend, read the limits again, the directory,
+  /** The slip's 「⋯」: remove, assist others, read the limits again, the directory,
    *  and on a token login the plan the administrator shows. */
   private openMenu(anchor: HTMLElement, machineName: string, dir: string): void {
     const { words, store } = this.options;
@@ -525,7 +525,7 @@ export class AgentLoginsPage implements Page {
     element.setAttribute("role", "menu");
     element.innerHTML = [
       mine ? `<button class="map-menu-item danger" type="button" role="menuitem" data-menu="remove">${glyph("archive", 16)}<span>${escape(words.remove)}</span></button>` : "",
-      found.machine.owner ? `<button class="map-menu-item" type="button" role="menuitem" data-menu="lend">${glyph("person", 16)}<span>${escape(words.lend)}</span></button>` : "",
+      found.machine.owner ? `<button class="map-menu-item" type="button" role="menuitem" data-menu="assist">${glyph("person", 16)}<span>${escape(words.assist)}</span></button>` : "",
       this.options.workbench.peek() ? `<button class="map-menu-item" type="button" role="menuitem" data-menu="limits">${glyph("reread", 16)}<span>${escape(words.rereadLimits)}</span></button>` : "",
       `<button class="map-menu-item" type="button" role="menuitem" data-menu="copy" title="${escape(login.dir)}">${glyph("folder", 16)}<span>${escape(words.copyDir)}</span></button>`,
       identity?.method === "oauth_token" && admin
@@ -555,8 +555,8 @@ export class AgentLoginsPage implements Page {
         if (target) this.sheet.open(target);
         return;
       }
-      case "lend":
-        this.openLend(machineName, dir, null);
+      case "assist":
+        this.openAssist(machineName, dir, null);
         return;
       case "limits":
         await this.quietly(null, key, () => options.limits(machineName, this.agent, dir));

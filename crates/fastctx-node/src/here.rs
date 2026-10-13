@@ -144,13 +144,11 @@ pub(crate) fn check_named(node: &Node, acting: &Acting, script: &str) -> Result<
     Ok(())
 }
 
-/// Whether `resident`, of this machine, is an agent lent to the account it
-/// works for, which may not work here and so has no here
+/// Whether `resident`, of this machine, is an agent assisting the account
+/// it works for, which may not work here and so has no here
 /// (`world-run.md`, 这里).
-pub(crate) fn lent(node: &Node, resident: &ResidentId) -> bool {
-    node.residents
-        .about(resident)
-        .is_some_and(|(about, _)| node.works_here(&about.acting).is_err())
+pub(crate) fn assisting(node: &Node, resident: &ResidentId) -> bool {
+    node.residents.about(resident).is_some_and(|(about, _)| node.works_here(&about.acting).is_err())
 }
 
 /// Where a run goes, and what runs there: another machine, or here when it
@@ -286,11 +284,7 @@ pub(crate) async fn run(
             .insert((resident.clone(), reply.job.clone()), (to.clone(), town));
     } else {
         let command = crate::jobs::first_line(&script);
-        left_running(
-            node,
-            resident,
-            &Elsewhere { machine: to.clone(), job: reply.job.clone(), command, started_at },
-        );
+        left_running(node, resident, &Elsewhere { machine: to.clone(), job: reply.job.clone(), command, started_at });
     }
     Ok(reply)
 }

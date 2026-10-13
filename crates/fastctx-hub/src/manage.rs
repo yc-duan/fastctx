@@ -1,5 +1,5 @@
 //! Changes an account makes on its hub (`fastctx_net::wire::Change`): which
-//! of its machines it shares and which agents' logins it lends, which
+//! of its machines it shares and which agents' logins assist others, which
 //! machines of others still act for it, its devices, tokens and password,
 //! its projects; and, for the super administrator, the accounts and the
 //! hub's settings (`world-network.md`, 账号只有两级).
@@ -10,7 +10,7 @@
 //! Opening a project is the one change a machine acting for an account may
 //! make for it, as a resident working there opens one.
 
-use fastctx_net::directory::{Account, Lend, Level, LoginPlan, Project, Share};
+use fastctx_net::directory::{Account, Assist, Level, LoginPlan, Project, Share};
 use fastctx_net::login::HubSecrets;
 use fastctx_net::sign::Bytes;
 use fastctx_net::token::{Token, TokenSecret};
@@ -26,12 +26,12 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
     let mut ended = Vec::new();
     let told = {
         let mut store = hub.store();
-        // A loan past its deadline is taken back first, as the hub's own
-        // doing, so no change is made over it: lending that login again is a
-        // new loan, which the borrower uses again before its machine acts
-        // for them once more.
-        let expired = crate::lends::end_due(&mut store, Timestamp::now())
-            .map_err(|error| format!("the hub could not take back a loan past its deadline: {error}"))?;
+        // An assistance past its deadline is ended first, as the hub's own
+        // doing, so no change is made over it: letting that login assist
+        // again is a new assistance, which the account uses again before
+        // its machine acts for it once more.
+        let expired = crate::assists::end_due(&mut store, Timestamp::now())
+            .map_err(|error| format!("the hub could not end an assistance past its deadline: {error}"))?;
         let before = store.book.clone();
         let action = crate::machine_log::action(&change, &before);
         let authenticated = match &change {
@@ -136,17 +136,17 @@ fn apply(
             }
             Ok(Told::Done)
         }
-        Change::Lend { machine, to, agent, home, lent, until } => {
+        Change::Assist { machine, to, agent, home, assisting, until } => {
             let directory = &mut store.book.directory;
             let owner = own_machine(directory, account, super_, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
-            if lent && until.is_some_and(|until| until <= Timestamp::now()) {
-                return Err("the loan's deadline has already passed".to_string());
+            if assisting && until.is_some_and(|until| until <= Timestamp::now()) {
+                return Err("the assistance's deadline has already passed".to_string());
             }
-            let lend = Lend { machine, account: to, agent, home, until: until.filter(|_| lent) };
-            directory.lends.retain(|existing| !existing.same(&lend));
-            if lent {
-                directory.lends.push(lend);
+            let assist = Assist { machine, account: to, agent, home, until: until.filter(|_| assisting) };
+            directory.assists.retain(|existing| !existing.same(&assist));
+            if assisting {
+                directory.assists.push(assist);
             }
             Ok(Told::Done)
         }
@@ -356,7 +356,7 @@ fn own_machine(
 }
 
 /// Checks `to` is an account other than `owner`, whose machine `machine` is:
-/// within one account nothing is shared or lent.
+/// within one account nothing is shared and no agent assists.
 fn other_account(
     directory: &fastctx_net::directory::Directory,
     owner: &AccountName,
@@ -402,18 +402,18 @@ fn log_out(
     Ok(())
 }
 
-/// What was shared and lent of `name`, and what it acted for, goes with it
-/// as a machine.
+/// What was shared of `name`, the assistance of its agents, and what it
+/// acted for go with it as a machine.
 fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &MachineName) {
     directory.shares.retain(|share| share.machine != *name);
-    directory.lends.retain(|lend| lend.machine != *name);
+    directory.assists.retain(|assist| assist.machine != *name);
     directory.plans.retain(|plan| plan.machine != *name);
     directory.acting.retain(|acting| acting.machine != *name);
 }
 
-/// Takes the member `name` off the hub: its logins, what was shared and lent
-/// of it and what it acted for go, its key is remembered as removed, and its
-/// session ends.
+/// Takes the member `name` off the hub: its logins, what was shared of it,
+/// the assistance of its agents and what it acted for go, its key is
+/// remembered as removed, and its session ends.
 fn remove_member(
     store: &mut Store,
     name: &MachineName,
@@ -440,7 +440,8 @@ fn remove_member(
 }
 
 /// Deletes `name`: its machines leave the hub, its logins and what it
-/// shared, lent and was shared and lent go, its projects are archived whole.
+/// shared and was shared, and the assistance it gave and was given go, its
+/// projects are archived whole.
 /// The super administrator is not deleted: it hands that on first.
 fn delete_account(
     store: &mut Store,
@@ -479,7 +480,7 @@ fn delete_account(
     let book = &mut store.book;
     book.directory.accounts.retain(|account| account.name != *name);
     book.directory.shares.retain(|share| share.account != *name);
-    book.directory.lends.retain(|lend| lend.account != *name);
+    book.directory.assists.retain(|assist| assist.account != *name);
     book.directory.acting.retain(|acting| acting.account != *name);
     let (archived, kept): (Vec<Project>, Vec<Project>) =
         std::mem::take(&mut book.directory.projects).into_iter().partition(|project| project.owner == *name);

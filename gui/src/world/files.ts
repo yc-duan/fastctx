@@ -47,7 +47,7 @@ const typed = (error: unknown): never => {
 };
 
 /** A file the user sent, made small by the machine keeping it; an agent
- *  lent to the user may show those it was sent. */
+ *  assisting the user may show those it was sent. */
 export function attachmentThumbnail(attachment: AttachmentSource, max: number): Promise<Thumbnail> {
   return invoke<Thumbnail>("thumbnail_attachment", { attachment, max }).catch(typed);
 }

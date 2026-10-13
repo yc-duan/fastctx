@@ -1,4 +1,4 @@
-// The machines a login may use (`world-gui.md`, 账号、机器、共享与借出),
+// The machines a login may use (`world-gui.md`, 账号、机器、共享与协助),
 // drawn: the account's World as a hand-drawn map that moves under the hand
 // (`machine-map.ts`). Choosing a hub or a machine floats its actions beside
 // it, small icons that say what they do when pointed at; the right button,
@@ -26,7 +26,7 @@ import { agentName, osName, titleOf } from "../world/names";
 import type { AccessWords, MachinesWords } from "./account-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
-import { LendSheet, type Loan } from "./lend-sheet";
+import { AssistSheet, type Assistance } from "./assist-sheet";
 import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
@@ -35,7 +35,7 @@ import { RING } from "./map-layout";
 import { mapOf } from "./map-of";
 import type { MapNode } from "./map-nodes";
 import { link, talkLink } from "./places";
-import { borrowedOf, groupsOf, isComputer, isSuper, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Borrowed, type Machine } from "./reach";
+import { assistantsOf, groupsOf, isComputer, isSuper, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Assistant, type Machine } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { jobsOf, residentsOf, type Store } from "./store";
@@ -64,7 +64,7 @@ export interface MachinesOptions {
 }
 
 /** One thing on the map, as the page knows it. */
-type Spot = { kind: "machine"; machine: Machine } | { kind: "lent"; lent: Borrowed[] } | { kind: "hub"; hub: HubAccounts };
+type Spot = { kind: "machine"; machine: Machine } | { kind: "assist"; assistants: Assistant[] } | { kind: "hub"; hub: HubAccounts };
 
 type GlyphName = Parameters<typeof glyph>[0];
 
@@ -138,7 +138,7 @@ export class MachinesPage implements Page {
   private scale = 1;
   private note: { machine: string; text: string } | null = null;
   private readonly giving: GiveSheet;
-  private readonly lending: LendSheet;
+  private readonly assistSheet: AssistSheet;
   private readonly moving: HubMoving;
   /** While the server's new place is chosen: what to do, and why a machine
    *  pressed cannot take it. */
@@ -168,7 +168,7 @@ export class MachinesPage implements Page {
   constructor(private readonly options: MachinesOptions) {
     const { words } = options;
     this.giving = new GiveSheet(options.access);
-    this.lending = new LendSheet(options.access);
+    this.assistSheet = new AssistSheet(options.access);
     this.moving = new HubMoving({ ...options.moving, words, access: options.access, confirm: options.confirm, changed: () => this.redraw() });
     this.title = options.focus ?? words.title;
     this.selected = options.focus ? `m:${options.focus}` : null;
@@ -329,22 +329,22 @@ export class MachinesPage implements Page {
         if (login) void this.takeBack(button, login, to, { change: "share", machine, to, shared: false }, { change: "share", machine, to, shared: true });
         return;
       }
-      case "lend-edit":
-        if (login) this.lend(login, machine, button.dataset.agent ?? "", button.dataset.home ?? null, button.dataset.to ?? null);
+      case "assist-edit":
+        if (login) this.assist(login, machine, button.dataset.agent ?? "", button.dataset.home ?? null, button.dataset.to ?? null);
         return;
-      case "unlend": {
+      case "assist-end": {
         const to = button.dataset.to ?? "";
         const agent = button.dataset.agent ?? "";
         const home = button.dataset.home ? { home: button.dataset.home } : {};
-        // Lent again by the undo, it ends when it was to.
+        // Given again by the undo, it ends when it was to.
         const until = button.dataset.until ? { until: button.dataset.until } : {};
         if (login)
           void this.takeBack(
             button,
             login,
             `${agentName(agent)} · ${to}`,
-            { change: "lend", machine, to, agent, ...home, lent: false },
-            { change: "lend", machine, to, agent, ...home, lent: true, ...until },
+            { change: "assist", machine, to, agent, ...home, assisting: false },
+            { change: "assist", machine, to, agent, ...home, assisting: true, ...until },
           );
         return;
       }
@@ -570,32 +570,30 @@ export class MachinesPage implements Page {
     });
   }
 
-  /** A change made at once, with nothing to read first: taking back a
-   *  share or a loan, which can be given again as easily. */
-  /** The lend sheet for `agent`'s login `home` on `machine`, lent as
+  /** The assist sheet for `agent`'s login `home` on `machine`, given as
    *  `login`, with `editing`'s deadline open. */
-  private lend(login: Login, machine: string, agent: string, home: string | null, editing: string | null): void {
+  private assist(login: Login, machine: string, agent: string, home: string | null, editing: string | null): void {
     const { options } = this;
-    const loans = (): Loan[] =>
-      (this.hubOf(login)?.lends ?? [])
-        .filter((lend) => lend.machine === machine && lend.agent === agent && (lend.home ?? null) === home)
-        .map((lend) => ({ to: lend.account, until: lend.until ?? null }));
+    const assistances = (): Assistance[] =>
+      (this.hubOf(login)?.assists ?? [])
+        .filter((assist) => assist.machine === machine && assist.agent === agent && (assist.home ?? null) === home)
+        .map((assist) => ({ to: assist.account, until: assist.until ?? null }));
     const name = home ? `${agentName(agent)} · ${home.split(/[\\/]/).filter(Boolean).pop() ?? home}` : agentName(agent);
-    this.lending.open(
-      options.access.lendTitle(name, machine),
-      loans(),
-      async (to, until, lent) => {
-        const ends = lent && until ? { until: until.toISOString() } : {};
-        await options.change(login, { change: "lend", machine, to, agent, ...(home ? { home } : {}), lent, ...ends });
+    this.assistSheet.open(
+      options.access.assistTitle(name, machine),
+      assistances(),
+      async (to, until, assisting) => {
+        const ends = assisting && until ? { until: until.toISOString() } : {};
+        await options.change(login, { change: "assist", machine, to, agent, ...(home ? { home } : {}), assisting, ...ends });
         await options.store.refresh();
         this.redraw();
-        return loans();
+        return assistances();
       },
       editing,
     );
   }
 
-  /** Takes back a share or a loan at once; for a moment it can be given
+  /** Takes back a share or ends an assistance at once; for a moment it can be given
    *  again from the drawing's corner. */
   private async takeBack(button: HTMLButtonElement, login: Login, label: string, take: AccountChange, give: AccountChange): Promise<void> {
     const machine = button.closest<HTMLElement>("[data-machine]")?.dataset.machine ?? "";
@@ -625,11 +623,11 @@ export class MachinesPage implements Page {
     const spots = new Map<string, Spot>();
     for (const hub of world.accounts.hubs) if (hub.logins.length) spots.set(`hub:${hub.hub}`, { kind: "hub", hub });
     for (const machine of machinesOf(world)) spots.set(`m:${machine.written}`, { kind: "machine", machine });
-    for (const lent of borrowedOf(world)) {
-      const key = `lent:${lent.written}`;
+    for (const assistant of assistantsOf(world)) {
+      const key = `assist:${assistant.written}`;
       const known = spots.get(key);
-      if (known?.kind === "lent") known.lent.push(lent);
-      else spots.set(key, { kind: "lent", lent: [lent] });
+      if (known?.kind === "assist") known.assistants.push(assistant);
+      else spots.set(key, { kind: "assist", assistants: [assistant] });
     }
     return spots;
   }
@@ -638,8 +636,8 @@ export class MachinesPage implements Page {
     if (!world) return;
     const { words } = this.options;
     const spots = this.spots(world);
-    // A machine named in the address may be one an agent is lent on.
-    if (this.selected?.startsWith("m:") && !spots.has(this.selected) && spots.has(`lent:${this.selected.slice(2)}`)) this.selected = `lent:${this.selected.slice(2)}`;
+    // A machine named in the address may be one whose agent assists.
+    if (this.selected?.startsWith("m:") && !spots.has(this.selected) && spots.has(`assist:${this.selected.slice(2)}`)) this.selected = `assist:${this.selected.slice(2)}`;
     if (this.selected && !spots.has(this.selected)) this.selected = null;
     this.drawMap(world);
     const spot = this.selected ? spots.get(this.selected) : undefined;
@@ -664,7 +662,7 @@ export class MachinesPage implements Page {
       : framed.length > 1
         ? this.framedPanel(framed, world)
       : spot && open
-        ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "lent" ? this.lentPanel(spot.lent, world, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
+        ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "assist" ? this.assistPanel(spot.assistants, world, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
         : "";
     if (html !== this.drawn) {
       this.drawn = html;
@@ -738,7 +736,7 @@ export class MachinesPage implements Page {
 
   /** The drawing: each hub the account is on with the ring that adds a
    *  machine there, each machine it may work on, and each machine of
-   *  another an agent is lent on. A machine come to a hub one was on its
+   *  another whose agent assists it. A machine come to a hub one was on its
    *  way to is circled as it arrives. */
   private drawMap(world: WorldNow): void {
     const { hubs, nodes, hubLabels, links } = mapOf(world, this.options.words);
@@ -793,7 +791,7 @@ export class MachinesPage implements Page {
         details,
       ];
     }
-    if (spot.kind === "lent") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
+    if (spot.kind === "assist") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
     const owners = this.ownersOf(spot.machine, world);
     // Direct connections are the network's administrator's to allow: to a
     // computer, while it is online to be checked, and no longer at any time.
@@ -864,8 +862,8 @@ export class MachinesPage implements Page {
       }
       return;
     }
-    if (spot.kind === "lent") {
-      if (act === "talk") this.options.talk(spot.lent[0]!.written);
+    if (spot.kind === "assist") {
+      if (act === "talk") this.options.talk(spot.assistants[0]!.written);
       return;
     }
     const machine = spot.machine;
@@ -1159,8 +1157,8 @@ export class MachinesPage implements Page {
   }
 
   /** The head of the panel: a name, its tags, and whether it is online. */
-  private panelHead(name: string, tags: string[], state: { kind: string; said: string }, lent = false): string {
-    return `<header class="panel-head ${state.kind}${lent ? " lent" : ""}"><span class="dot" aria-hidden="true"></span><h2 class="panel-title">${escape(name)}</h2>${tags.join("")}<span class="panel-state">${escape(state.said)}</span></header>`;
+  private panelHead(name: string, tags: string[], state: { kind: string; said: string }, assisting = false): string {
+    return `<header class="panel-head ${state.kind}${assisting ? " assist" : ""}"><span class="dot" aria-hidden="true"></span><h2 class="panel-title">${escape(name)}</h2>${tags.join("")}<span class="panel-state">${escape(state.said)}</span></header>`;
   }
 
   private tag(text: string, kind = "", title = ""): string {
@@ -1302,22 +1300,22 @@ export class MachinesPage implements Page {
     const own = owners.length
       ? `<div class="panel-acts" data-hub="${escape(owners[0]!.hub)}" data-account="${escape(owners[0]!.account)}">${machine.here ? "" : this.button("remove", words.remove, " data-danger", glyph("close", 14))}</div>`
       : "";
-    // Whom an agent on it is lent to, taken back here as on the agents page.
-    const lending = owners
+    // Whom an agent on it assists, ended here as on the agents page.
+    const assisting = owners
       .map((login) => {
-        const lends = (this.hubOf(login)?.lends ?? []).filter((lend) => lend.machine === machine.name);
-        if (!lends.length) return "";
-        const chips = lends
-          .map((lend) => {
-            const label = `${agentName(lend.agent)} · ${lend.account}`;
-            const at = `data-to="${escape(lend.account)}" data-agent="${escape(lend.agent)}"${lend.home ? ` data-home="${escape(lend.home)}"` : ""}${lend.until ? ` data-until="${escape(lend.until)}"` : ""}`;
-            const until = lend.until ? new Date(lend.until) : null;
+        const assists = (this.hubOf(login)?.assists ?? []).filter((assist) => assist.machine === machine.name);
+        if (!assists.length) return "";
+        const chips = assists
+          .map((assist) => {
+            const label = `${agentName(assist.agent)} · ${assist.account}`;
+            const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}`;
+            const until = assist.until ? new Date(assist.until) : null;
             const said = until ? access.moment.until(until, now) : access.when.none;
-            const day = until ? `<span class="lend-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
-            return `<span class="chip lend-chip"><button class="lend-tag-open" type="button" data-act="lend-edit" ${at} title="${escape(`${access.changeUntil} · ${said}`)}">${escape(label)}${day}</button><button class="chip-x" type="button" data-act="unlend" ${at} aria-label="${escape(words.takeBack(label))}" title="${escape(words.takeBack(label))}">${glyph("close", 12)}</button></span>`;
+            const day = until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
+            return `<span class="chip assist-chip"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil} · ${said}`)}">${escape(label)}${day}</button><button class="chip-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assist.account))}" title="${escape(words.endAssist(assist.account))}">${glyph("close", 12)}</button></span>`;
           })
           .join("");
-        return `<div class="panel-give" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}"><div class="given-row"><span class="given-label">${escape(words.lentTo)}</span>${chips}</div></div>`;
+        return `<div class="panel-give" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}"><div class="given-row"><span class="given-label">${escape(words.assisting)}</span>${chips}</div></div>`;
       })
       .join("");
     const note = this.note?.machine === machine.name ? `<p class="machine-note">${escape(this.note.text)}</p>` : "";
@@ -1331,7 +1329,7 @@ export class MachinesPage implements Page {
       ${hubs ? `<ul class="panel-hubs">${hubs}</ul>` : ""}
       ${direct}
       ${sharing}
-      ${lending}
+      ${assisting}
       ${this.present(machine.name, world, viewer)}
       ${this.agentsLink(machine.written)}
       ${note}
@@ -1356,20 +1354,20 @@ export class MachinesPage implements Page {
     return `<div class="panel-direct"><span class="given-label">${escape(words.directRow)}</span><span class="panel-direct-list">${said.join(`<span class="sep">·</span>`)}</span>${at.length ? `<p class="panel-direct-at">${escape(words.takesDirectAt(at.join("、")))}</p>` : ""}</div>`;
   }
 
-  /** What is known of a machine of another's an agent is lent on: whose
+  /** What is known of a machine of another's whose agent assists: whose
    *  it is, that it is no machine of the account's to work on, and the
-   *  lent logins, each a way into a conversation. */
-  private lentPanel(lent: Borrowed[], world: WorldNow, now: Date, acts = ""): string {
+   *  assisting logins, each a way into a conversation. */
+  private assistPanel(assistants: Assistant[], world: WorldNow, now: Date, acts = ""): string {
     const { words } = this.options;
-    const first = lent[0]!;
+    const first = assistants[0]!;
     const reaching = machineActsFor(world, first.machine, first.login);
-    const tags = [this.tag(words.lentShort(first.owner ?? ""), "tag-lent", words.borrowedSaid(first.owner ?? "")), reaching ? this.tag(words.reaching, "tag-reach", words.reachingWhat) : ""];
+    const tags = [this.tag(words.assistShort(first.owner ?? ""), "tag-assist", words.assistantSaid(first.owner ?? "")), reaching ? this.tag(words.reaching, "tag-reach", words.reachingWhat) : ""];
     const state = this.stateOf(first.online, first.since, false, now);
     return `<article class="panel-machine" data-machine="${escape(first.machine)}">
       ${this.panelHead(first.written, tags, state, true)}
       ${acts}
-      <p class="panel-said" title="${escape(words.borrowedSaid(first.owner ?? ""))}">${glyph("colleague", 14)}<span>${escape(words.borrowedNote)}</span></p>
-      ${lent
+      <p class="panel-said" title="${escape(words.assistantSaid(first.owner ?? ""))}">${glyph("colleague", 14)}<span>${escape(words.assistantNote)}</span></p>
+      ${assistants
         .filter((one) => one.until)
         .map((one) => `<p class="panel-said">${glyph("history", 14)}<span>${escape(`${agentName(one.agent)} ${this.options.access.moment.until(new Date(one.until!), now)}`)}</span></p>`)
         .join("")}

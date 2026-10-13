@@ -2,7 +2,7 @@
 //! with a new agent, a project opened or its record written anew, logging
 //! this computer in to an account or out of one, adding another device, a
 //! member taken out of an account. Choices come from what the
-//! World says now: the machines online, the agents lent to this computer's
+//! World says now: the machines online, the agents assisting this computer's
 //! accounts, the projects that span the chosen machine, the accounts this
 //! computer is logged in to.
 
@@ -16,16 +16,16 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
 use super::{Page, project, quiet, talk, wrong};
-use crate::app::{Act, Ctx, Data, Done, Feed, Job, Lent};
+use crate::app::{Act, Assisting, Ctx, Data, Done, Feed, Job};
 use crate::design::Role;
 use crate::editor::{Edit, Editor};
 use crate::paint::{self, Row};
 use crate::text;
 use crate::words::FieldName as Key;
 
-/// How a machine choice names an agent lent to this computer's accounts:
+/// How a machine choice names an agent assisting this computer's accounts:
 /// this, then its place among them.
-const LENT: &str = "lent:";
+const ASSISTING: &str = "assisting:";
 
 pub struct FormPage {
     kind: Kind,
@@ -37,7 +37,7 @@ pub struct FormPage {
     result: Option<Vec<Line<'static>>>,
     nodes: Option<NodesReply>,
     towns: Vec<TownSummary>,
-    lent: Vec<Lent>,
+    assisting: Vec<Assisting>,
     top: usize,
 }
 
@@ -109,7 +109,7 @@ impl FormPage {
             result: None,
             nodes: None,
             towns: Vec::new(),
-            lent: Vec::new(),
+            assisting: Vec::new(),
             top: 0,
         }
     }
@@ -236,11 +236,11 @@ impl FormPage {
 
     pub fn data(&mut self, ctx: &Ctx, data: Data) -> Act {
         match data {
-            Data::Choices { nodes, towns, lent } => {
+            Data::Choices { nodes, towns, assisting } => {
                 if let Ok(nodes) = nodes {
                     self.nodes = Some(nodes);
                 }
-                self.lent = lent;
+                self.assisting = assisting;
                 if let Ok(towns) = towns {
                     self.towns = towns;
                 }
@@ -281,7 +281,7 @@ impl FormPage {
             }
         }
         let towns = self.towns.clone();
-        let self_lent = self.lent.clone();
+        let self_assisting = self.assisting.clone();
         let words = ctx.words;
         let initial = match &self.kind {
             Kind::EditProject { machines, .. } => machines.clone(),
@@ -305,16 +305,16 @@ impl FormPage {
                     (shown, machine.to_string())
                 })
                 .collect();
-            // An agent lent to one of this computer's accounts lives on a
+            // An agent assisting one of this computer's accounts lives on a
             // machine of another's, which it works for them from.
-            options.extend(self_lent.iter().enumerate().map(|(at, lent)| {
+            options.extend(self_assisting.iter().enumerate().map(|(at, assisting)| {
                 (
-                    words.lent_choice(
-                        lent.machine.as_str(),
-                        lent.owner.as_ref().map(|owner| owner.as_str()),
-                        lent.agent.as_str(),
+                    words.assisting_choice(
+                        assisting.machine.as_str(),
+                        assisting.owner.as_ref().map(|owner| owner.as_str()),
+                        assisting.agent.as_str(),
                     ),
-                    format!("{LENT}{at}"),
+                    format!("{ASSISTING}{at}"),
                 )
             }));
             *index = options.iter().position(|(_, value)| *value == chosen).unwrap_or(0);
@@ -550,20 +550,22 @@ impl FormPage {
                     Some(TownName::try_from(town).map_err(|error| error.to_string())?)
                 };
                 let machine = self.value(Key::Machine);
-                // A lent agent is the agent lent, in the login lent, for the
-                // account it is lent to.
-                if let Some(lent) =
-                    machine.strip_prefix(LENT).and_then(|at| at.parse::<usize>().ok()).and_then(|at| self.lent.get(at))
+                // An assisting agent is that agent, in the login that
+                // assists, for the account it assists.
+                if let Some(assisting) = machine
+                    .strip_prefix(ASSISTING)
+                    .and_then(|at| at.parse::<usize>().ok())
+                    .and_then(|at| self.assisting.get(at))
                 {
                     let choices = fastctx_types::agents::Choices {
-                        account: Some(lent.to.clone()),
-                        home: lent.home.clone(),
+                        account: Some(assisting.to.clone()),
+                        home: assisting.home.clone(),
                         ..Default::default()
                     };
                     return Ok(Job::Open {
-                        agent: lent.agent.clone(),
+                        agent: assisting.agent.clone(),
                         town,
-                        node: Some(lent.machine.clone()),
+                        node: Some(assisting.machine.clone()),
                         text,
                         choices,
                     });

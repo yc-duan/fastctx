@@ -1,6 +1,7 @@
-/* Accounts and the machines they use (`world-gui.md`, 账号、机器、共享与借出):
-   logging in, the machines page grouped by account with the agents lent to
-   each, the sheets that share a machine, lend a login and set the relays,
+/* Accounts and the machines they use (`world-gui.md`, 账号、机器、共享与协助):
+   logging in, the machines page grouped by account with the agents
+   assisting each, the sheets that share a machine, let a login assist and
+   set the relays,
    the account page, the super administrator's page, and the sidebar's
    parts, one an account. */
 
@@ -149,9 +150,9 @@ a.text-button {
   color: var(--text);
 }
 
-/* An agent lent to the account, on a machine of another's: clay, as its
-   ring is on the drawing. */
-.tag.tag-lent {
+/* An agent of another's assisting the account, on a machine of theirs:
+   clay, as its ring is on the drawing. */
+.tag.tag-assist {
   background: var(--accent-wash);
   color: var(--text);
 }
@@ -634,7 +635,7 @@ a.text-button {
 }
 
 /* A sentence set off in the margin, as a reader pencils beside a passage:
-   what the super administrator may do, what a lent agent cannot touch, what
+   what the super administrator may do, what an assisting agent cannot touch, what
    using another's agent lets happen. A ruled line down its left edge, in
    graphite, or in clay where it asks for care. */
 .machines-note,

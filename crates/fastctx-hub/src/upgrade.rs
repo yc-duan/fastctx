@@ -1,21 +1,21 @@
 //! The directory a hub kept before accounts had two levels and machines were
-//! shared and their agents' logins lent (`world-network.md`), read into
-//! today's shape.
+//! shared and their agents' logins assisted others (`world-network.md`),
+//! read into today's shape.
 //!
 //! That hub kept `admin` and `may_register` on each account, `grants` of two
 //! switches, working on a machine and using its agents, and `trust` of an
 //! account in a machine. Today an account is the super administrator or a
 //! member; working on a machine comes with all its agents; an agent's login
-//! is lent alone; and a machine acts for an account it is not logged in to
+//! assists alone; and a machine acts for an account it is not logged in to
 //! because the account used an agent there. What the old switches said maps
 //! onto that without giving anyone more than they had:
 //!
 //! - the earliest opened administrator that is not locked becomes the super
 //!   administrator, every other account a member;
 //! - a grant that let an account work on a machine becomes a share of it;
-//! - a grant of the agents alone becomes loans of that machine's default
-//!   Codex and Claude Code logins, which were all the agents it named then
-//!   that every machine has;
+//! - a grant of the agents alone becomes the assistance of that machine's
+//!   default Codex and Claude Code logins, which were all the agents it
+//!   named then that every machine has;
 //! - an account's trust in a machine becomes that machine acting for it.
 
 use jiff::Timestamp;
@@ -36,7 +36,8 @@ pub(crate) fn upgrade(mut book: Value) -> (Value, Vec<String>) {
     let grants = take_list(object, "grants");
     let trust = take_list(object, "trust");
     let mut shares = take_list(object, "shares");
-    let mut lends = take_list(object, "lends");
+    // Kept under `lends`, as `Directory` writes its assistance.
+    let mut assists = take_list(object, "lends");
     let mut acting = take_list(object, "acting");
     for grant in grants {
         let (Some(machine), Some(account)) = (grant.get("machine").cloned(), grant.get("account").cloned()) else {
@@ -50,12 +51,12 @@ pub(crate) fn upgrade(mut book: Value) -> (Value, Vec<String>) {
             shares.push(json!({ "machine": machine, "account": account }));
         } else if agents {
             said.push(format!(
-                "{} could use the agents on {}: their default Codex and Claude Code logins are lent to it now",
+                "{} could use the agents on {}: their default Codex and Claude Code logins assist it now",
                 text(&account),
                 text(&machine)
             ));
             for agent in ["codex", "claude"] {
-                lends.push(json!({ "machine": machine, "account": account, "agent": agent }));
+                assists.push(json!({ "machine": machine, "account": account, "agent": agent }));
             }
         }
     }
@@ -68,7 +69,7 @@ pub(crate) fn upgrade(mut book: Value) -> (Value, Vec<String>) {
         acting.push(json!({ "machine": machine, "account": account, "since": now }));
     }
     object.insert("shares".to_string(), Value::Array(shares));
-    object.insert("lends".to_string(), Value::Array(lends));
+    object.insert("lends".to_string(), Value::Array(assists));
     object.insert("acting".to_string(), Value::Array(acting));
     (book, said)
 }

@@ -168,8 +168,9 @@ export function jobsOf(world: WorldNow | null): RunningJob[] {
 }
 
 /** Whom the resident or job `id` on `machine` works for, when that is other
- *  accounts than the viewer's: "bob", or "bob, carol". A machine lent to
- *  several accounts shows what each runs there, marked with whose it is. */
+ *  accounts than the viewer's: "bob", or "bob, carol". A machine whose
+ *  agents assist several accounts shows what each runs there, marked with
+ *  whose it is. */
 export function worksFor(others: WhoFor[] | undefined, machine: string, id: string): string | null {
   const other = others?.find((o) => o.machine === machine && o.id === id);
   return other ? other.accounts.join(", ") : null;

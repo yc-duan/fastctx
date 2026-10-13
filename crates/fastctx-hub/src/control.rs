@@ -334,7 +334,7 @@ fn handle(
     };
     match frame {
         Up::Ping { n, paths } => {
-            crate::lends::heard(hub);
+            crate::assists::heard(hub);
             reply(Down::Pong { n });
             if let Some(paths) = paths {
                 lines(hub, name, generation, paths);
@@ -521,7 +521,8 @@ fn login_asked(message: &Envelope) -> Option<(AgentName, Option<std::path::PathB
 /// on when it did not: an agent of another's machine that works for an
 /// account has to reach the account's machines, and using it is the
 /// account's word for that (`world-network.md`, 一台机器什么时候能代一个
-/// 账号访问别的机器). Being shared a machine or lent a login does not do it.
+/// 账号访问别的机器). Being shared a machine or assisted by a login does not
+/// do it.
 fn use_agent(hub: &Hub, message: &Envelope, standing: &Standing) -> Result<(), String> {
     let Some((agent, home)) = login_asked(message) else { return Ok(()) };
     let (account, to) = (&standing.account, &standing.to);

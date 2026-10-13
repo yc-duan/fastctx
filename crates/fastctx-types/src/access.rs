@@ -1,7 +1,7 @@
-//! Who may use what (`world-network.md`, 共享机器与借出智能体): an account
+//! Who may use what (`world-network.md`, 共享机器与智能体协助): an account
 //! works on its own machines and on those shared with it, with every agent
 //! logged in there; on another's machine it may use only the agents' logins
-//! lent to it. A project is an account's, and may be shared with others.
+//! assisting it. A project is an account's, and may be shared with others.
 
 use serde::{Deserialize, Serialize};
 
@@ -119,8 +119,8 @@ impl std::fmt::Debug for HubId {
 
 /// What an account may do on a machine. Its own machine, one shared with it
 /// and, for the hub's super administrator, every machine give both; a login
-/// lent to it there gives `agents` alone, for that login only, which the
-/// directory names (`world-network.md`, 共享机器与借出智能体).
+/// assisting it there gives `agents` alone, for that login only, which the
+/// directory names (`world-network.md`, 共享机器与智能体协助).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Rights {
     /// Run commands on it, read and write its files, move files to and from
@@ -128,7 +128,7 @@ pub struct Rights {
     /// Working on a machine comes with every agent logged in on it.
     pub hands: bool,
     /// Open sessions of agents logged in on it and talk to them: all of
-    /// them with `hands`, else only the logins lent to the account.
+    /// them with `hands`, else only the logins assisting the account.
     pub agents: bool,
 }
 

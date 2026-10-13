@@ -847,7 +847,7 @@ export function register(on) {
     if (await removed($)) return next(e)
     if (!['env_info_simple', 'env_info_static'].includes(e.name)) return next(e)
     const context = await session($, registry, await $.session.id())
-    return (await sessionPolicy($, context)).lent ? { text: null } : next(e)
+    return (await sessionPolicy($, context)).assisting ? { text: null } : next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'prompt.section', e, next))
   on('classic.PostModelSwitch', async ($, e, next) => {
     if (await removed($)) return next(e)

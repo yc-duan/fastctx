@@ -52,7 +52,7 @@ export interface PictureSeams {
   /** A file on `machine`, made at most `max` pixels on its longer side by
    *  the machine holding it, as an address an `<img>` takes. */
   thumbnail(machine: MachineName, path: string, max: number): Promise<string>;
-  /** The same for a file the user sent, which an agent lent to the user
+  /** The same for a file the user sent, which an agent assisting the user
    *  may show too. A failure that carries `gone` says whether the picture
    *  is nowhere to be had. */
   attachmentThumbnail(attachment: AttachmentSource, max: number): Promise<string>;
@@ -410,8 +410,8 @@ class PictureViewer {
         this.original = URL.createObjectURL(blob);
         this.place(this.original, shown);
       },
-      // A borrower may not read the original itself; the screen-sized one
-      // stays.
+      // An account an agent assists may not read the original itself;
+      // the screen-sized one stays.
       () => {
         if (shown === this.shown) this.original = null;
       },

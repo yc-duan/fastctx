@@ -257,7 +257,7 @@ pub struct Choices {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<PathBuf>,
     /// Where the files attached to its first words go, other than images,
-    /// when the user chose: an agent lent to the account has no machine of
+    /// when the user chose: an agent assisting the account has no machine of
     /// its own (`world-run.md`, 这里).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files_on: Option<crate::access::Written>,

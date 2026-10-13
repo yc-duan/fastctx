@@ -404,16 +404,20 @@ pub enum Change {
         to: AccountName,
         shared: bool,
     },
-    /// Lends `agent`'s login `home` on `machine`, one of the account's own,
-    /// to `to`, or no longer; none is that agent's default login there.
-    /// Lent again, the loan takes the deadline given now, or none.
-    Lend {
+    /// Lets `agent`'s login `home` on `machine`, one of the account's own,
+    /// assist `to`, or no longer; none is that agent's default login there.
+    /// Given again, the assistance takes the deadline given now, or none.
+    /// Sent under the name hubs of every version read: a hub that cannot
+    /// read a change ends the connection that sent it.
+    #[serde(rename = "lend")]
+    Assist {
         machine: MachineName,
         to: AccountName,
         agent: fastctx_types::AgentName,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         home: Option<std::path::PathBuf>,
-        lent: bool,
+        #[serde(rename = "lent")]
+        assisting: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         until: Option<Timestamp>,
     },
@@ -481,8 +485,8 @@ pub enum Change {
         to: AccountName,
     },
     /// Deletes an account: its machines leave the hub, what it shared and
-    /// lent and was shared and lent goes, its projects are archived for the
-    /// super administrator to hand on.
+    /// was shared and the assistance it gave and was given go, its projects
+    /// are archived for the super administrator to hand on.
     DeleteAccount {
         name: AccountName,
     },

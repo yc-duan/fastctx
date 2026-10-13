@@ -155,7 +155,7 @@ export function keptForget(address: Address): Promise<void> {
 
 /** The user's words to a resident, with the files uploaded for them;
  *  those other than images go to `filesOn` when the user chose a machine
- *  (an agent lent to them works on none of its own). */
+ *  (an agent assisting them works on none of its own). */
 /** Why words were not said: `again` when no answer came, so saying them
  *  again under the same id is how they go on. */
 export interface NotSaid {
@@ -222,7 +222,7 @@ export interface Choices {
    *  default one there. */
   colleagues_home?: string;
   /** Where the files attached to its first words go, other than images,
-   *  for an agent lent to the user. */
+   *  for an agent assisting the user. */
   files_on?: string;
 }
 

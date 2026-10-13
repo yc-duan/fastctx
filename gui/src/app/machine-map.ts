@@ -1,12 +1,12 @@
 // The machines page's drawing as a canvas (`world-gui.md`, 账号、机器、共享与
-// 借出): the account's World drawn by hand on graph paper (`map-layout.ts`),
+// 协助): the account's World drawn by hand on graph paper (`map-layout.ts`),
 // moved and zoomed (`../map-canvas`). The hub at the top, square lines down
 // to a box for each group of machines by whose they are, its name on a title
 // strip, and the machines standing in a grid inside, names to the right.
 // The names are written on the paper and grow and shrink with it. Nearer,
 // the drawing shows what each machine is and the agents on it. The account's
 // own end with a dashed ring that adds a machine. A machine of another
-// whose agent alone is lent is a broken ring of clay; one out of reach is
+// whose agent alone assists is a broken ring of clay; one out of reach is
 // drawn with a dry pen. A machine others may connect to directly wears a
 // dashed halo, in pencil until the hub has checked it: every machine that
 // reaches it links with it, so the links are not drawn one by one; which
@@ -409,8 +409,8 @@ export class MachineMap {
       const online = node.online === true;
       const random = seeded(`map:${node.key}`);
       // The ring: graphite for the account's own and others' machines it
-      // works on, clay and broken where an agent alone is lent.
-      if (node.hold === "lent") {
+      // works on, clay and broken where an agent alone assists.
+      if (node.hold === "assist") {
         for (const d of ticks(ringPoints(point, RING, 64), 9, 5.5, 2, random)) add(d, around(point, RING + 4), online ? "marker" : "dry", online ? clay : graphite, online ? 1 : 0.5);
       } else if (online) {
         add(circle(point, RING, 2, random), around(point, RING + 4), "marker", graphite, 0.9);
@@ -454,7 +454,7 @@ export class MachineMap {
     this.boxes.innerHTML = placement.groups
       .map((group) => {
         const { x, y, width, height } = group.box;
-        const tone = group.kind === "mine" ? "mine" : group.kind.startsWith("lent:") ? "lent" : "others";
+        const tone = group.kind === "mine" ? "mine" : group.kind.startsWith("assist:") ? "assist" : "others";
         const strip = group.folded
           ? `<rect class="box-title" x="${x}" y="${y}" width="${width}" height="${TITLE}" rx="7"/>`
           : `<rect class="box-body" x="${x}" y="${y}" width="${width}" height="${height}" rx="7"/><path class="box-title" d="M${x} ${y + TITLE}V${y + 7}Q${x} ${y} ${x + 7} ${y}H${x + width - 7}Q${x + width} ${y} ${x + width} ${y + 7}V${y + TITLE}Z"/>`;

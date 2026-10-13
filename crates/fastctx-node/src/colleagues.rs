@@ -299,9 +299,9 @@ pub async fn ask_here(
 /// What a thread the World holds is started and resumed with: where it is,
 /// with its town's map, and whom it works for, and the World's tools under
 /// its own name. Also what it is told of its town by that. `home` is the
-/// Codex login it is of, none for the default one here; a login lent to
+/// Codex login it is of, none for the default one here; a login assisting
 /// another account goes without the hands that work this machine's screen
-/// and browser (`codex::lend`).
+/// and browser (`codex::assisting`).
 pub async fn thread_spec(
     node: &Arc<Node>,
     id: &ResidentId,
@@ -334,13 +334,15 @@ pub async fn thread_spec(
     if started.as_ref().is_some_and(|started| !started.callee.screen) || node.works_here(acting).is_err() {
         let config_home = home.unwrap_or_else(|| node.codex.default().config_home());
         let (servers, plugins) = codex::desktop_hands(config_home).map_err(Failure::new)?;
-        codex::lend(&mut config, &servers, &plugins);
+        codex::assisting(&mut config, &servers, &plugins);
     }
     crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
     let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting).await?;
     // The machines and folders the user pointed it at, in the words its
     // thread started with, each time it is resumed (`crate::focus`).
-    if let Some(opening) = crate::focus::opening(&node.world.conversation(id))?.filter(|opening| !opening.note.is_empty()) {
+    if let Some(opening) =
+        crate::focus::opening(&node.world.conversation(id))?.filter(|opening| !opening.note.is_empty())
+    {
         developer_instructions.push_str("\n\n");
         developer_instructions.push_str(&opening.note);
     }
@@ -397,10 +399,10 @@ pub(crate) async fn instructions(
     acting: &Acting,
 ) -> Result<(String, Heard), Failure> {
     let heard = heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
-    // An agent lent to another account is given the machines it may work
+    // An agent assisting another account is given the machines it may work
     // on, and never the name of the one it runs on (`world-run.md`, 这里).
-    let lent = node.works_here(acting).is_err().then(|| crate::world::machines(node, acting).1);
-    let words = words(id, &node.machine(), lent.as_deref(), town, origin);
+    let assisting = node.works_here(acting).is_err().then(|| crate::world::machines(node, acting).1);
+    let words = words(id, &node.machine(), assisting.as_deref(), town, origin);
     let text = match town {
         Some(town) => format!("{words}\n\n{}", crate::town::map::brief(node, town).await?),
         None => words,
@@ -408,13 +410,13 @@ pub(crate) async fn instructions(
     Ok((text, heard))
 }
 
-/// `lent` holds the machines it may work on when it is an agent another
-/// account lent, which may not work on this machine: none of its scripts
-/// starts here, and this machine goes unnamed.
+/// `assisting` holds the machines it may work on when it is an agent
+/// assisting another account, which may not work on this machine: none of
+/// its scripts starts here, and this machine goes unnamed.
 fn words(
     id: &ResidentId,
     machine: &MachineName,
-    lent: Option<&[String]>,
+    assisting: Option<&[String]>,
     town: Option<&TownName>,
     origin: &Origin,
 ) -> String {
@@ -432,17 +434,17 @@ fn words(
         ),
         Origin::User => "The user started this session from fastctx and talks to you here.".to_string(),
     };
-    // That it has no shell where it lives, for an agent another account
-    // lent (`world-network.md`, 共享机器与借出智能体).
+    // That it has no shell where it lives, for an agent assisting another
+    // account (`world-network.md`, 共享机器与智能体协助).
     // Many users have this one computer only: other machines are spoken of
     // as `run`'s description lists them, never assumed.
     let on =
         "when `run`'s description lists other machines, `on MACHINE` in the script runs a part of it on one of them";
-    let (who, runs, elsewhere) = match lent {
+    let (who, runs, elsewhere) = match assisting {
         Some(machines) => (
             "an agent session working on the user's machines, which fastctx connects".to_string(),
             "Each script is a single `on MACHINE`, which runs it there".to_string(),
-            format!("\n\n{}", fastctx_hands::lent::opening(machines)),
+            format!("\n\n{}", fastctx_hands::assist::opening(machines)),
         ),
         None => {
             (format!("an agent session on {machine}"), format!("It runs bash on this machine; {on}"), String::new())

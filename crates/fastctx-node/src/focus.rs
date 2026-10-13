@@ -101,7 +101,12 @@ pub(crate) async fn outline_here(folders: Vec<String>, within: Duration) -> Vec<
 
 /// What the model is told of `focus`, read now; none when it points to
 /// nothing. `home` is the machine the session's shell is on, if it has one.
-pub(crate) async fn note(node: &Arc<Node>, acting: &Acting, home: Option<&MachineName>, focus: &Focus) -> Option<String> {
+pub(crate) async fn note(
+    node: &Arc<Node>,
+    acting: &Acting,
+    home: Option<&MachineName>,
+    focus: &Focus,
+) -> Option<String> {
     if focus.is_empty() {
         return None;
     }
@@ -180,7 +185,7 @@ async fn read(node: &Arc<Node>, acting: &Acting, machine: &FocusedMachine) -> Re
 }
 
 /// The machine the shell of a session working for `acting` here is on;
-/// none for an agent another account lent.
+/// none for an agent assisting another account.
 fn home(node: &Node, acting: &Acting) -> Option<MachineName> {
     node.works_here(acting).is_ok().then(|| node.machine())
 }
@@ -188,7 +193,12 @@ fn home(node: &Node, acting: &Acting) -> Option<MachineName> {
 /// What a conversation opened with `focus` is told of it from its first
 /// turn on, kept with it: for Codex in the instructions its thread starts
 /// with, for Claude in its plugin's block of context.
-pub(crate) async fn open(node: &Arc<Node>, directory: &ConversationDir, acting: &Acting, focus: &Focus) -> Result<(), Failure> {
+pub(crate) async fn open(
+    node: &Arc<Node>,
+    directory: &ConversationDir,
+    acting: &Acting,
+    focus: &Focus,
+) -> Result<(), Failure> {
     fastctx_platform::ensure_private_dir(directory.path())
         .map_err(|error| Failure::new(format!("making the conversation's directory: {error}")))?;
     let note = note(node, acting, home(node, acting).as_ref(), focus).await;
@@ -257,7 +267,12 @@ pub(crate) fn pointable(about: &About) -> Result<(), Failure> {
 
 /// The user pointed the conversation at `focus`, which is now in its
 /// record: what it is told of them is kept, and the change told to it.
-pub(crate) async fn changed(node: &Arc<Node>, id: &ResidentId, about: &About, focus: &Focus) -> Result<Delivery, Failure> {
+pub(crate) async fn changed(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    about: &About,
+    focus: &Focus,
+) -> Result<Delivery, Failure> {
     let directory = node.world.conversation(id);
     let note = note(node, &about.acting, home(node, &about.acting).as_ref(), focus).await;
     keep(&directory, note.as_deref())?;

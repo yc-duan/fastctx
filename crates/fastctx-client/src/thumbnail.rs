@@ -6,8 +6,8 @@ use crate::cache::pictures;
 use crate::{Error, World};
 
 impl World {
-    /// Read an upload by its server receipt, including an agent host lent
-    /// without permission to read arbitrary files on that host. A device
+    /// Read an upload by its server receipt, including one of an agent
+    /// assisting from a host the account may not read arbitrary files on. A device
     /// that keeps what it views asks for each size of a picture once.
     pub async fn thumbnail_attachment(
         &self,

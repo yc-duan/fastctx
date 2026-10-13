@@ -156,8 +156,8 @@ export interface Words {
   removedNote: string;
   waitingForYou: string;
   on(machine: string): string;
-  /** Under the title of a conversation with an agent lent to the user. */
-  lentBy(owner: string): string;
+  /** Under the title of a conversation with an agent assisting the user. */
+  assistFrom(owner: string): string;
   /** Between the names in a short list. */
   listSeparator: string;
   /** The button under the first lines of something long: "+ 28 行". */
@@ -404,7 +404,7 @@ export const zh: Words = {
   removedNote: "已移除，对话仅供查看",
   waitingForYou: "等待回复",
   on: (machine) => machine,
-  lentBy: (owner) => `来自 ${owner}`,
+  assistFrom: (owner) => `来自 ${owner}`,
   listSeparator: "、",
   moreLines: (n) => `+ ${n.toLocaleString("zh-CN")} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
@@ -649,7 +649,7 @@ export const en: Words = {
   removedNote: "Removed; the conversation is read-only",
   waitingForYou: "Waiting for your reply",
   on: (machine) => machine,
-  lentBy: (owner) => `from ${owner}`,
+  assistFrom: (owner) => `from ${owner}`,
   listSeparator: ", ",
   moreLines: (n) => `+ ${n.toLocaleString("en")} more line${n === 1 ? "" : "s"}`,
   unchangedLines: (n) => `${n} unchanged lines`,

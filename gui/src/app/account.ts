@@ -1,5 +1,5 @@
 // The accounts this computer or device is logged in to (`world-gui.md`,
-// 账号、机器、共享与借出), one after another: the hub and how it is reached,
+// 账号、机器、共享与协助), one after another: the hub and how it is reached,
 // and whether the account is its super administrator or a member, a member
 // told what the super administrator may do; who came into the account
 // lately, each with "that wasn't me"; the devices logged in, each

@@ -703,8 +703,9 @@ pub enum Reply {
     Nodes(NodesReply),
     Machines {
         /// Where the session's shell starts, as written: the machine it
-        /// lives on. None for an agent another account lent: it may not
-        /// work where it runs, and each of its commands names its machine.
+        /// lives on. None for an agent assisting from another account: it
+        /// may not work where it runs, and each of its commands names its
+        /// machine.
         here: Option<String>,
         /// The other machines it may work on.
         others: Vec<String>,

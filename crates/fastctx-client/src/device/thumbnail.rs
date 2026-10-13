@@ -1,4 +1,4 @@
-//! A receipt may belong to an agent lent to only one of this device's accounts.
+//! A receipt may belong to an agent assisting only one of this device's accounts.
 
 use crate::Error;
 use fastctx_types::access::Purpose;

@@ -559,7 +559,7 @@
   grid-column: 1 / -1;
 }
 
-/* Whose a job is, on a machine lent to several accounts. */
+/* Whose a job is, on a machine whose agents assist several accounts. */
 .tag.tag-account {
   display: inline-flex;
   align-items: center;

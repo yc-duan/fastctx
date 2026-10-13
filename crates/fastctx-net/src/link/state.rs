@@ -153,7 +153,7 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
 }
 
 /// Whether the view at `path` was given by a hub from before accounts had
-/// two levels and machines were shared and their agents lent: it kept
+/// two levels and machines were shared and their agents assisted others: it kept
 /// `grants` and `trust`, and accounts without a level. Its words meant
 /// other things then, and the cut a member holds cannot be read into
 /// today's shape the way the hub reads its whole directory, so it is

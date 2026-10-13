@@ -107,15 +107,15 @@ fn hub() -> HubAccounts {
             },
         ],
         shares: vec![ShareSeen { machine: "desktop".parse().unwrap(), account: "bo".parse().unwrap() }],
-        lends: vec![
-            LendSeen {
+        assists: vec![
+            AssistSeen {
                 machine: "desktop".parse().unwrap(),
                 account: "cy".parse().unwrap(),
                 agent: "codex".parse().unwrap(),
                 home: None,
                 until: None,
             },
-            LendSeen {
+            AssistSeen {
                 machine: "gpu".parse().unwrap(),
                 account: "ada".parse().unwrap(),
                 agent: "claude".parse().unwrap(),
@@ -156,12 +156,12 @@ pub fn fixtures() -> Fixtures {
         ],
         changes: vec![
             AccountChange::Share { machine: machine(), to: "bo".parse().unwrap(), shared: true },
-            AccountChange::Lend {
+            AccountChange::Assist {
                 machine: machine(),
                 to: "cy".parse().unwrap(),
                 agent: "codex".parse().unwrap(),
                 home: Some("C:/Users/ada/.codex-work".into()),
-                lent: true,
+                assisting: true,
                 until: Some("2026-10-20T10:00:00Z".parse().unwrap()),
             },
             AccountChange::Plan {

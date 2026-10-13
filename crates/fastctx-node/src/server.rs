@@ -1171,13 +1171,13 @@ async fn run_started(
     let reply = match (goes_to, request) {
         (Some(goes_to), request) => crate::here::run(node, &resident, town.clone(), request, &goes_to).await?,
         (None, request) => {
-            // An agent lent to another account may not work where it runs,
+            // An agent assisting another account may not work where it runs,
             // so nothing starts here, and the machine goes unnamed
-            // (`world-network.md`, 共享机器与借出智能体).
+            // (`world-network.md`, 共享机器与智能体协助).
             if let Some((about, _)) = node.residents.about(&resident)
                 && node.works_here(&about.acting).is_err()
             {
-                return Err(Failure::not_run(lent_refusal(node, &script)));
+                return Err(Failure::not_run(assisting_refusal(node, &script)));
             }
             let owner = Address { machine: here.clone(), resident: resident.clone() };
             node.jobs.run(node, owner.into(), town.clone(), request, None).await?.0
@@ -1198,13 +1198,13 @@ async fn run_started(
     Ok(reply)
 }
 
-/// Why a script of an agent lent to another account did not run: it named
-/// the computer the agent runs on, which it may not work on, or it was not
-/// a single `on` (`world-run.md`, 这里).
-fn lent_refusal(node: &Node, script: &str) -> String {
+/// Why a script of an agent assisting another account did not run: it
+/// named the computer the agent runs on, which it may not work on, or it
+/// was not a single `on` (`world-run.md`, 这里).
+fn assisting_refusal(node: &Node, script: &str) -> String {
     match crate::here::single_on(script) {
-        Some((machine, _)) if node.is_here(&machine) => fastctx_hands::lent::here_refused(&machine.to_string()),
-        _ => fastctx_hands::lent::SCRIPT_REFUSED.to_string(),
+        Some((machine, _)) if node.is_here(&machine) => fastctx_hands::assist::here_refused(&machine.to_string()),
+        _ => fastctx_hands::assist::SCRIPT_REFUSED.to_string(),
     }
 }
 
@@ -1347,7 +1347,7 @@ fn machines(
 ) -> Result<Reply, Failure> {
     let acting = resident.and_then(|resident| crate::here::acting(node, resident)).unwrap_or_default();
     let (here, others) = crate::world::machines(node, &acting);
-    // An agent lent to another account has no shell anywhere, and the
+    // An agent assisting another account has no shell anywhere, and the
     // machine it runs on is not one it may work on, so it goes unnamed.
     let here = node.works_here(&acting).is_ok().then(|| here.to_string());
     let collab = crate::collab::choices(node, resident, login)?.map(|choices| choices.offered);

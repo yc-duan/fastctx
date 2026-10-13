@@ -1,8 +1,9 @@
 //! What an account sees of this machine's answers to the World-wide asks
-//! (`world-network.md`, 共享机器与借出智能体): an account that may work on
+//! (`world-network.md`, 共享机器与智能体协助): an account that may work on
 //! this machine sees everything on it, each resident with whom it works
-//! for; one lent some of its agents' logins sees only those logins and the
-//! residents that work for it, with their jobs and what happened to them.
+//! for; one some of its agents' logins assist sees only those logins and
+//! the residents that work for it, with their jobs and what happened to
+//! them.
 
 use fastctx_types::agents::AgentsReply;
 use fastctx_types::run::JobOwner;
@@ -74,16 +75,16 @@ pub fn since(node: &Node, asker: &Asker, mut reply: SinceReply) -> SinceReply {
 }
 
 /// Which agents are logged in here is the machine's: an account that may
-/// work here sees them all, one lent some of their logins sees those alone.
+/// work here sees them all, one some of their logins assist sees those alone.
 pub fn agents(view: &fastctx_net::directory::View, asker: &Asker, mut reply: AgentsReply) -> AgentsReply {
     if asker.hands {
         return reply;
     }
     let here = view.me.clone();
     reply.agents.retain(|facts| {
-        view.lent(&asker.account, &here).any(|lend| {
-            lend.agent == facts.agent
-                && match (&lend.home, &facts.home) {
+        view.assisting(&asker.account, &here).any(|assist| {
+            assist.agent == facts.agent
+                && match (&assist.home, &facts.home) {
                     (None, None) => true,
                     (None, Some(home)) => home.found == fastctx_types::agents::HomeFound::Default,
                     (Some(dir), Some(home)) => crate::homes::same_dir(dir, &home.dir),

@@ -1490,15 +1490,15 @@ pub fn desktop_hands(codex_home: &Path) -> Result<(Vec<String>, Vec<String>), St
     Ok((servers, plugins))
 }
 
-/// What a thread of a login lent to another account goes without, added to
-/// `config` (`world-network.md`, 共享机器与借出智能体): the hands that work
-/// the screen and the browser of the machine it runs on, `desktop_hands`,
-/// which the account lent may not touch. Everything else of the login comes
-/// along as its owner set it up: its other MCP servers, plugins, skills,
-/// hooks, memories and AGENTS.md, and the account's apps; a lent agent is a
-/// whole one. Codex's own shell and image viewer are off for every thread
+/// What a thread of a login assisting another account goes without, added
+/// to `config` (`world-network.md`, 共享机器与智能体协助): the hands that
+/// work the screen and the browser of the machine it runs on,
+/// `desktop_hands`, which the account assisted may not touch. Everything
+/// else of the login comes along as its owner set it up: its other MCP
+/// servers, plugins, skills, hooks, memories and AGENTS.md, and the
+/// account's apps; an assisting agent is a whole one. Codex's own shell and image viewer are off for every thread
 /// the World starts, `run` doing their work.
-pub fn lend(config: &mut Value, servers: &[String], plugins: &[String]) {
+pub fn assisting(config: &mut Value, servers: &[String], plugins: &[String]) {
     for name in servers {
         config["mcp_servers"][name] = json!({ "enabled": false });
     }

@@ -225,7 +225,7 @@ impl TalkPage {
                     self.stopping = false;
                     self.note = Some(wrong(ctx, ctx.words.not_stopped(&text::first_line(&why))));
                 }
-                (Job::Attach { .. }, Ok(Done::Attachable(command))) => return Act::Lend(command),
+                (Job::Attach { .. }, Ok(Done::Attachable(command))) => return Act::HandOver(command),
                 (Job::Attach { .. }, Err(why)) => {
                     self.note = Some(wrong(ctx, ctx.words.attach_failed(&text::first_line(&why))));
                 }

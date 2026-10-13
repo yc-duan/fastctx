@@ -8,7 +8,7 @@ pub mod encoding;
 pub mod files;
 pub mod folders;
 pub mod image;
-pub mod lent;
+pub mod assist;
 pub mod lines;
 pub mod outline;
 pub mod pages;

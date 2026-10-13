@@ -143,25 +143,26 @@ export interface NewTalkWords {
    *  chosen. */
   agent: string;
   /** The agents' groups: on the user's own machines, on machines of
-   *  others they may work on (all shared with them, or not), lent. */
+   *  others they may work on (all shared with them, or not), assisting
+   *  them. */
   mine: string;
   others(allShared: boolean): string;
-  lent: string;
+  assisting: string;
   ownedBy(owner: string): string;
   noAgents: string;
-  /** A login lent, which its machine does not list. */
-  lentGone: string;
+  /** An assisting login, which its machine does not list. */
+  assistantGone: string;
   /** A login whose usage window is spent goes on with credits. */
   onCredits: string;
   /** Which account it works for. */
   account: string;
-  /** What a lent agent works on: the hover of its lent mark. */
-  lentWorks(owner: string): string;
-  /** An agent lent to the account, by whom. */
-  lentBy(owner: string): string;
-  /** When a borrowed login goes back to its owner. */
-  lentUntil(at: Date, now: Date): string;
-  /** A lent agent was given files other than images, and no machine of
+  /** What an assisting agent works on: the hover of its mark. */
+  assistantWorks(owner: string): string;
+  /** An agent assisting the account, whose it is. */
+  assistFrom(owner: string): string;
+  /** When an assistance ends. */
+  assistUntil(at: Date, now: Date): string;
+  /** An assisting agent was given files other than images, and no machine of
    *  the user's can take them. */
   noFilePlace: string;
   project: string;
@@ -201,15 +202,15 @@ export const zhNewTalk: NewTalkWords = {
   agent: "智能体",
   mine: "我的机器",
   others: (allShared) => (allShared ? "共享给我的" : "其他机器"),
-  lent: "借给我的",
+  assisting: "协助我的",
   ownedBy: (owner) => `${owner} 的`,
   noAgents: "没有可用的智能体",
-  lentGone: "该登录已不可用",
+  assistantGone: "该登录已不可用",
   onCredits: "使用 credits",
   account: "账号",
-  lentWorks: (owner) => `来自 ${owner}，在你的机器上工作，不接触 ${owner} 的电脑`,
-  lentBy: (owner) => `来自 ${owner}`,
-  lentUntil: (at, now) => `到 ${zhMoment.short(at, now)}`,
+  assistantWorks: (owner) => `来自 ${owner}，在你的机器上工作，不接触 ${owner} 的电脑`,
+  assistFrom: (owner) => `来自 ${owner}`,
+  assistUntil: (at, now) => `到 ${zhMoment.short(at, now)}`,
   noFilePlace: "没有能放文件的机器",
   project: "项目",
   outsideProject: "不在项目里",
@@ -240,15 +241,15 @@ export const enNewTalk: NewTalkWords = {
   agent: "Agent",
   mine: "My machines",
   others: (allShared) => (allShared ? "Shared with me" : "Other machines"),
-  lent: "Lent to me",
+  assisting: "Assisting me",
   ownedBy: (owner) => `${owner}'s`,
   noAgents: "No agents available",
-  lentGone: "Login unavailable",
+  assistantGone: "Login unavailable",
   onCredits: "on credits",
   account: "Account",
-  lentWorks: (owner) => `From ${owner}; works on your machines, never on ${owner}'s computer`,
-  lentBy: (owner) => `from ${owner}`,
-  lentUntil: (at, now) => `until ${enMoment.short(at, now)}`,
+  assistantWorks: (owner) => `From ${owner}; works on your machines, never on ${owner}'s computer`,
+  assistFrom: (owner) => `from ${owner}`,
+  assistUntil: (at, now) => `until ${enMoment.short(at, now)}`,
   noFilePlace: "No machine can take the files",
   project: "Project",
   outsideProject: "No project",
@@ -702,8 +703,8 @@ export interface DetailsWords {
   trouble: string;
   task: string;
   colleagues: string;
-  /** An agent lent to the user: who lent it. */
-  lentBy: string;
+  /** An agent assisting the user: whose it is. */
+  assistFrom: string;
   actingFor: string;
   separator: string;
   /** Which login of its agent it uses, where not the default one. */
@@ -766,7 +767,7 @@ export const zhDetails: DetailsWords = {
   trouble: "异常",
   task: "任务",
   colleagues: "调用的模型",
-  lentBy: "来自",
+  assistFrom: "来自",
   actingFor: "所属账号",
   separator: "、",
   login: "登录",
@@ -825,7 +826,7 @@ export const enDetails: DetailsWords = {
   trouble: "Issues",
   task: "Task",
   colleagues: "Models it called",
-  lentBy: "From",
+  assistFrom: "From",
   actingFor: "Account",
   separator: ", ",
   login: "Login",

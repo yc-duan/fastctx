@@ -21,7 +21,7 @@ import "./app/sheet.css";
 import "./app/pages.css";
 import "./app/accounts.css";
 import "./app/when.css";
-import "./app/lend.css";
+import "./app/assist.css";
 import "./app/machines.css";
 import "./app/agents.css";
 import "./app/features.css";
@@ -92,7 +92,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, zhAccount, zhAdmin, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
-import { borrowedBy, borrowedOf, fileHome, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
 import { Details, type Manage } from "./conversation/details";
@@ -351,7 +351,7 @@ function agentsOn(machine: string | null) {
   if (live) return agents(machine);
   const names = machine
     ? [machine]
-    : [...new Set([...machinesOf(specimen.world).filter((one) => one.here || one.online).map((one) => one.name), ...borrowedOf(specimen.world).map((one) => one.machine)])];
+    : [...new Set([...machinesOf(specimen.world).filter((one) => one.here || one.online).map((one) => one.name), ...assistantsOf(specimen.world).map((one) => one.machine)])];
   return Promise.resolve({ machine: specimen.world.here, machines: names.flatMap((name) => specimenAgents(name, specimen.now).machines) });
 }
 
@@ -695,9 +695,9 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
       markdown,
       manage: live ? liveManage(address) : specimenManage(),
       logins: loginsOn,
-      lentBy: (r) => {
-        const lent = borrowedBy(store.world.peek(), r);
-        return lent ? (lent.owner ?? lent.machine) : null;
+      assistFrom: (r) => {
+        const assistant = assistantOf(store.world.peek(), r);
+        return assistant ? (assistant.owner ?? assistant.machine) : null;
       },
       actingFor: (r) => {
         const acting = r.about.acting;
@@ -722,7 +722,7 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
 }
 
 /** The machine the agent at `address` lives on, where an account it works
- *  for may work on it (not so for an agent lent to the user), and the login
+ *  for may work on it (not so for an agent assisting the user), and the login
  *  it works for among this computer's, as this computer reaches them. */
 function livesFor(address: Address): { lives: Machine | null; login: Login | null } {
   const world = store.world.peek();
@@ -735,14 +735,14 @@ function livesFor(address: Address): { lives: Machine | null; login: Login | nul
 }
 
 /** The machines the conversation at `address` may be pointed at: where it
- *  lives and those an account it works for may work on; for an agent lent
- *  to the user, the account's own. */
+ *  lives and those an account it works for may work on; for an agent
+ *  assisting the user, the account's own. */
 function focusPlacesFor(address: Address): FocusPlace[] {
   const world = store.world.peek();
   const known = residentAt(world, address);
-  const lent = known ? borrowedBy(world, known) : null;
+  const assistant = known ? assistantOf(world, known) : null;
   const found = livesFor(address);
-  const machines = lent ? filePlaces(world, lent.login) : found.lives ? workPlaces(world, found.lives, found.login) : [];
+  const machines = assistant ? filePlaces(world, assistant.login) : found.lives ? workPlaces(world, found.lives, found.login) : [];
   return machines.map((machine) => ({ written: machine.written, name: machine.name, here: machine.here, online: machine.here ? true : machine.online }));
 }
 
@@ -840,7 +840,7 @@ function home(): Page {
     event: (event) => {
       if (event.kind !== "select" || !event.key) return;
       const { key } = event;
-      location.hash = key.startsWith("hub:") ? link({ kind: "account" }) : key.startsWith("group:") ? link({ kind: "machines" }) : link({ kind: "machine", name: key.replace(/^(m|lent):/, "") });
+      location.hash = key.startsWith("hub:") ? link({ kind: "account" }) : key.startsWith("group:") ? link({ kind: "machines" }) : link({ kind: "machine", name: key.replace(/^(m|assist):/, "") });
     },
   });
   const page = new HomePage({
@@ -1095,11 +1095,11 @@ function specimenTalk(address: Address): KeepablePage {
 function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address): Someone | null {
   const known = residentAt(world, address);
   if (!known) return null;
-  const lent = borrowedBy(world, known);
+  const assistant = assistantOf(world, known);
   return {
     agent: agentName(known.about.host.agent),
     machine: address.machine,
-    lentBy: lent ? (lent.owner ?? lent.machine) : null,
+    assistFrom: assistant ? (assistant.owner ?? assistant.machine) : null,
     focus: known.removed ? null : focusOf(known),
     model: known.about.model ?? null,
     project: known.town ? (world?.towns.find((t) => t.town === known.town)?.record.name ?? known.town) : null,
@@ -1191,15 +1191,15 @@ function liveTalk(address: Address): KeepablePage {
       },
       drops: windowDrops,
       filesOn: (() => {
-        const lentAs = () => {
+        const assistantNow = () => {
           const known = residentAt(store.world.peek(), address);
-          return known ? borrowedBy(store.world.peek(), known) : null;
+          return known ? assistantOf(store.world.peek(), known) : null;
         };
         return {
-          lent: () => lentAs() !== null,
+          assisting: () => assistantNow() !== null,
           place: () => {
-            const lent = lentAs();
-            return lent ? fileHome(store.world.peek(), lent.login) : null;
+            const assistant = assistantNow();
+            return assistant ? fileHome(store.world.peek(), assistant.login) : null;
           },
           nowhere: (english ? enNewTalk : zhNewTalk).noFilePlace,
         };
@@ -1864,7 +1864,7 @@ const welcomed = {
 
 if (live) {
   // A computer is useful on its own: it opens on its agents and is never
-  // sent to join a network (`world-gui.md`, 账号、机器、共享与借出). Only
+  // sent to join a network (`world-gui.md`, 账号、机器、共享与协助). Only
   // when fastctx is not on it yet is the way on to put it there.
   let decided = false;
   effect(() => {

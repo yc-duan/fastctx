@@ -221,7 +221,8 @@ pub(crate) fn recover_startups(node: &Arc<Node>) {
 }
 
 /// Publishes what the session's mod waits for before its system prompt and
-/// its first model request: whether it is lent, and its model and effort.
+/// its first model request: whether it assists another account, and its
+/// model and effort.
 /// It is published as soon as the session is identified, transcript or not:
 /// Claude Code may build the system prompt before the session-start hook
 /// that reports where the transcript is, so waiting for that would hold the
@@ -259,7 +260,7 @@ fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Resu
             }
         }
     }
-    let value = serde_json::json!({"instance": registration.instance, "lent": node.works_here(&about.acting).is_err(), "model": options.model,
+    let value = serde_json::json!({"instance": registration.instance, "assisting": node.works_here(&about.acting).is_err(), "model": options.model,
         "effort": options.reasoning_effort, "last_uuid": last_uuid, "context_uuids":context_uuids, "context_tail":context_tail});
     let bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;
     fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
@@ -1195,9 +1196,9 @@ pub async fn open_here(
     let _birth = crate::here::born(node, &id, opened.acting.clone());
     let launching = command(node, opened.home.as_deref())?;
     let Command { program, env, .. } = launching.clone();
-    // A login lent to another account starts without the browser of this
-    // machine (`background::Start::lent`).
-    let lent = node.works_here(&opened.acting).is_err();
+    // A login assisting another account starts without the browser of this
+    // machine (`background::Start::assisting`).
+    let assisting = node.works_here(&opened.acting).is_err();
     let (words, heard) =
         crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &opened.acting).await?;
     // What it is told of its machines and folders its plugin adds to the
@@ -1276,7 +1277,7 @@ pub async fn open_here(
             first_words: &text,
             model: options.model.as_deref(),
             reasoning_effort: options.reasoning_effort.as_deref(),
-            lent,
+            assisting,
         };
         let args = background::start_args(&start);
         trust(&[world.as_path(), cwd.as_path()], &env)?;

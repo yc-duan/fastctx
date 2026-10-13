@@ -1609,7 +1609,7 @@
                 "account": "bo"
               }
             ],
-            "lends": [
+            "assists": [
               {
                 "machine": "desktop",
                 "account": "cy",
@@ -1682,12 +1682,12 @@
         "shared": true
       },
       {
-        "change": "lend",
+        "change": "assist",
         "machine": "desktop",
         "to": "cy",
         "agent": "codex",
         "home": "C:/Users/ada/.codex-work",
-        "lent": true,
+        "assisting": true,
         "until": "2026-10-20T10:00:00Z"
       },
       {

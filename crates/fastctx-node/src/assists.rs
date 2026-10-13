@@ -1,11 +1,11 @@
-//! A session on a login lent to another account works for the accounts
-//! that borrowed it (`world-network.md`, 共享机器与借出智能体), and takes a
-//! new turn only while one of them may still use that login here. When the
-//! loan is taken back or reaches its deadline, the turn already running
+//! A session on a login assisting another account works for the accounts
+//! it assists (`world-network.md`, 共享机器与智能体协助), and takes a new
+//! turn only while one of them may still use that login here. When the
+//! assistance is ended or reaches its deadline, the turn already running
 //! goes on, which the owner sees and may stop (收回立刻生效); nothing starts
 //! another: words, a colleague's answer or a queued message for it stay
-//! kept, and go in with whatever is next handed to it once the login is
-//! lent to them again.
+//! kept, and go in with whatever is next handed to it once the login
+//! assists them again.
 
 use fastctx_types::access::Acting;
 use fastctx_types::ipc::Failure;
@@ -36,7 +36,7 @@ pub(crate) fn may_turn(node: &Node, about: &About) -> Result<(), Failure> {
         return Ok(());
     }
     Err(Failure::not_run(format!(
-        "the {} login this conversation runs on is no longer lent to {}; what is for it waits until it is lent again",
+        "the {} login this conversation runs on no longer assists {}; what is for it waits until it assists them again",
         about.host.agent,
         refused.join(", ")
     )))

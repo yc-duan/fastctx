@@ -17,7 +17,7 @@ import { SendQueue, type Queued } from "./queue";
 import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
 import type { ComposerUpdated } from "../world/composer";
 import { NodeQueue } from "./node-queue";
-import { NodeTray, type LentFiles } from "./node-tray";
+import { NodeTray, type AssistantFiles } from "./node-tray";
 import { Menu, commandFor, commandRow, commandsOf, usageOf, type MenuCommand } from "./commands";
 import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { effortLabel } from "./effort-slider";
@@ -56,9 +56,9 @@ export interface Someone {
   agent: string;
   /** The machine it lives on. */
   machine: string;
-  /** Who lent it, for an agent another account lent the user: it works on
-   *  no machine by default, each command naming one. */
-  lentBy?: string | null;
+  /** Whose agent it is, for one of another account assisting the user: it
+   *  works on no machine by default, each command naming one. */
+  assistFrom?: string | null;
   /** The machines and folders it is pointed at; null for a conversation
    *  the user cannot point, one they did not open from here. */
   focus?: Focus | null;
@@ -131,9 +131,9 @@ export interface PageOptions {
     /** Files dropped onto the window, by path, where the shell gives
      *  them so; returns how to stop listening. */
     drops?(on: { over(over: boolean): void; dropped(paths: string[]): void }): () => void;
-    /** For an agent lent to the user, which has no machine it works on:
+    /** For an agent assisting the user, which has no machine it works on:
      *  the machine of the user's its files other than images go to. */
-    filesOn?: LentFiles;
+    filesOn?: AssistantFiles;
   };
   /** Files on the agent's machine, found as the user types `@` and a few
    *  letters; the one chosen goes into the words as its path. */
@@ -708,8 +708,8 @@ export class ConversationPage {
     this.unbindShared = bindComposer(this.input, session.draft);
     if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
     const say = (why: string) => this.say(why, why, true);
-    const lentFiles = this.options.attach?.filesOn ?? null;
-    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say, lentFiles, (text, attachments, sending) => {
+    const assistantFiles = this.options.attach?.filesOn ?? null;
+    this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say, assistantFiles, (text, attachments, sending) => {
       const shown = attachments.map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
       const key = this.options.conversation.sending(text, this.options.here || null, shown);
       this.update();
@@ -717,7 +717,7 @@ export class ConversationPage {
     });
     this.queue.element.replaceWith(this.nodeQueue.element);
     if (this.options.attach && this.tray) {
-      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, lentFiles);
+      this.nodeTray = new NodeTray(this.options.attach.words, session, session.draft, say, assistantFiles);
       this.tray.element.replaceWith(this.nodeTray.element);
     }
     session.subscribe((state) => {
@@ -854,11 +854,11 @@ export class ConversationPage {
     }
     const session = this.session;
     const files = session ? (this.nodeTray?.files ?? 0) : (this.tray?.files ?? 0);
-    const lent = this.options.attach?.filesOn;
-    const placing = !!lent && files > 0 && lent.lent();
-    const filesOn = !placing ? null : this.nodeTray ? this.nodeTray.chosen : lent!.place();
+    const assistant = this.options.attach?.filesOn;
+    const placing = !!assistant && files > 0 && assistant.assisting();
+    const filesOn = !placing ? null : this.nodeTray ? this.nodeTray.chosen : assistant!.place();
     if (placing && !filesOn) {
-      this.say(lent!.nowhere);
+      this.say(assistant!.nowhere);
       return;
     }
     const attached = !session && this.tray?.count ? { ...this.tray.take(), filesOn } : { refs: [], shown: [], filesOn: null };
@@ -1734,11 +1734,11 @@ export class ConversationPage {
     // its words as they stream would be too many to hear.
     if (this.said !== null && this.said !== now) this.spoken.textContent = `${someone.agent} · ${now}`;
     this.said = now;
-    // Under the title, where it lives, and who lent it.
+    // Under the title, where it lives, and whose agent assists.
     const facts = [
       now,
       title ? `${someone.agent} · ${someone.machine}` : null,
-      someone.lentBy ? words.lentBy(someone.lentBy) : null,
+      someone.assistFrom ? words.assistFrom(someone.assistFrom) : null,
       someone.project,
       this.options.conversation.answeredBy ?? someone.model,
     ].filter(Boolean) as string[];

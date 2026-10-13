@@ -1,6 +1,6 @@
 // Accounts on the hubs this computer uses, as the shell hands them over
 // (`fastctx_types::accounts`, `::access`): each account's level, the
-// machines shared and the agents' logins lent between accounts, the
+// machines shared and the agents' logins assisting other accounts, the
 // machines of others whose agents may reach an account's machines, the
 // devices logged in, the projects, and who came into an account lately.
 // Serialized replies, before any presentation.
@@ -13,8 +13,8 @@ export type HubName = string;
 export type HubId = string;
 
 /** What an account may do on a machine (`fastctx_types::access::Rights`):
- *  work on it, which brings every agent there; or use only the logins lent
- *  to it there. */
+ *  work on it, which brings every agent there; or use only the logins
+ *  assisting it there. */
 export interface Rights {
   hands: boolean;
   agents: boolean;
@@ -105,15 +105,15 @@ export interface ShareSeen {
   account: AccountName;
 }
 
-/** One login of an agent on a machine, lent to an account. */
-export interface LendSeen {
+/** One login of an agent on a machine, assisting an account. */
+export interface AssistSeen {
   machine: MachineName;
   account: AccountName;
   agent: string;
   /** The login's directory as that machine writes it; null for the
    *  agent's default login there. */
   home: string | null;
-  /** When the loan ends by itself; null while the owner keeps it lent. */
+  /** When the assistance ends by itself; null while the owner keeps it on. */
   until: Timestamp | null;
 }
 
@@ -167,7 +167,7 @@ export interface HubAccounts {
   accounts: AccountSeen[];
   members: MemberSeen[];
   shares: ShareSeen[];
-  lends: LendSeen[];
+  assists: AssistSeen[];
   /** Plans the super administrator set on logins that name none. */
   plans: PlanSeen[];
   acting: ActingSeen[];
@@ -186,7 +186,7 @@ export interface AccountsReply {
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
-  | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home?: string; lent: boolean; until?: Timestamp }
+  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp }
   | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null }
   | { change: "stop_acting"; machine: MachineName }
   /** The administrator's change: the server checks it reaches the machine

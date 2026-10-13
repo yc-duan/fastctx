@@ -1280,9 +1280,9 @@ impl Words {
         }
     }
 
-    /// A choice of an agent lent to this computer's accounts: the machine it
-    /// lives on, whose that is, and which agent.
-    pub fn lent_choice(&self, machine: &str, owner: Option<&str>, agent: &str) -> String {
+    /// A choice of an agent assisting this computer's accounts: the machine
+    /// it lives on, whose that is, and which agent.
+    pub fn assisting_choice(&self, machine: &str, owner: Option<&str>, agent: &str) -> String {
         let agent = if agent == "claude" {
             "Claude"
         } else if agent == "codex" {
@@ -1291,10 +1291,10 @@ impl Words {
             agent
         };
         match (self.lang, owner) {
-            (Lang::Zh, Some(owner)) => format!("{agent} · {machine}（借自 {owner}）"),
-            (Lang::Zh, None) => format!("{agent} · {machine}（借来的）"),
-            (Lang::En, Some(owner)) => format!("{agent} on {machine} (lent by {owner})"),
-            (Lang::En, None) => format!("{agent} on {machine} (lent)"),
+            (Lang::Zh, Some(owner)) => format!("{agent} · {machine}（来自 {owner} 的协助）"),
+            (Lang::Zh, None) => format!("{agent} · {machine}（协助）"),
+            (Lang::En, Some(owner)) => format!("{agent} on {machine} (assisting, from {owner})"),
+            (Lang::En, None) => format!("{agent} on {machine} (assisting)"),
         }
     }
 

@@ -1,5 +1,5 @@
 // The machines page's film, before this computer is in any network
-// (`world-gui.md`, 账号、机器、共享与借出). Someone who came for `run` sees
+// (`world-gui.md`, 账号、机器、共享与协助). Someone who came for `run` sees
 // what a network is for: the agent on this computer works on every machine
 // in it, a long job goes on there with the computer closed, files go from
 // machine to machine, and a machine can be shared. Twenty-three seconds; the

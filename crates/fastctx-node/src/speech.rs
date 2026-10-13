@@ -172,7 +172,7 @@ async fn hand_over_locked(
     };
     node.ready().await;
     node.residents.active(to)?;
-    if let Err(error) = crate::homes::available(node, about).and_then(|()| crate::loans::may_turn(node, about)) {
+    if let Err(error) = crate::homes::available(node, about).and_then(|()| crate::assists::may_turn(node, about)) {
         return Ok(Landed::Waiting { why: Some(error.message), answered: answered(node, to, about) });
     }
     if let Some(landed) = crate::claude::deliver(node, to, about, directory, &pending).await {
@@ -262,7 +262,7 @@ async fn submit_thread(
     // Its home's app-server holds its thread.
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new(format!("{id} has no record here")))?;
     crate::homes::available(node, &about)?;
-    crate::loans::may_turn(node, &about)?;
+    crate::assists::may_turn(node, &about)?;
     let codex = node.codex.of(&about)?;
     // Its tools start before the words go in, outside the lock others' words
     // and its turns' ends wait on.
@@ -336,9 +336,8 @@ async fn submit_thread(
     } else {
         batch.iter().find(|kept| typed(&kept.delivery.notice)).map(|kept| kept.delivery.id.clone())
     };
-    let (mut taken, left): (Vec<Pending>, Vec<Pending>) = batch
-        .into_iter()
-        .partition(|kept| !typed(&kept.delivery.notice) || Some(&kept.delivery.id) == first.as_ref());
+    let (mut taken, left): (Vec<Pending>, Vec<Pending>) =
+        batch.into_iter().partition(|kept| !typed(&kept.delivery.notice) || Some(&kept.delivery.id) == first.as_ref());
     if let Some(at) = taken.iter().position(|kept| Some(&kept.delivery.id) == first.as_ref()) {
         let words = taken.remove(at);
         taken.insert(0, words);
@@ -380,7 +379,9 @@ async fn submit_thread(
             ),
             client,
         ),
-        batch => (Input::Text(batch.iter().map(|kept| said(&kept.delivery.notice)).collect::<Vec<_>>().join("\n\n")), client),
+        batch => {
+            (Input::Text(batch.iter().map(|kept| said(&kept.delivery.notice)).collect::<Vec<_>>().join("\n\n")), client)
+        }
     };
     for kept in &batch {
         set_state(directory, &kept.delivery.id, PendingState::Sending).await?;

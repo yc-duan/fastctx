@@ -83,19 +83,19 @@ impl Screen {
     /// and takes it back: meanwhile the screen the user had shows and every
     /// key goes to that program alone, as the input reader is stopped; it
     /// starts again, sending to `input`, and the whole screen is drawn anew.
-    pub fn lend<T>(
+    pub fn hand_over<T>(
         &mut self,
         input: &tokio::sync::mpsc::UnboundedSender<crate::input::Input>,
         run: impl FnOnce() -> T,
     ) -> io::Result<T> {
         let _ = self.terminal.show_cursor();
         restore();
-        let lent = run();
+        let returned = run();
         enable_raw_mode()?;
         execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
         crate::input::start(input.clone())?;
         self.terminal.clear()?;
-        Ok(lent)
+        Ok(returned)
     }
 }
 

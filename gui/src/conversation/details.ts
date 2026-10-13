@@ -53,9 +53,9 @@ export interface DetailsOptions {
   /** "hangzhou · ada" for each account it works for; empty for this
    *  computer's logins. */
   actingFor(resident: ResidentNow): string[];
-  /** Who lent it, for an agent another account lent the user; null for
-   *  one of the user's own. */
-  lentBy?: ((resident: ResidentNow) => string | null) | undefined;
+  /** Whose agent it is, for one of another account assisting the user;
+   *  null for one of the user's own. */
+  assistFrom?: ((resident: ResidentNow) => string | null) | undefined;
   /** The logins of an agent on a machine (named or as written), as that
    *  machine says them: each home's directory, "" for the default one,
    *  with who is logged in there. */
@@ -272,7 +272,7 @@ export class Details {
         ? words.askedBy(this.options.someone(about.origin.asked_by), about.origin.label)
         : words.openedByYou;
     const acting = this.options.actingFor(r);
-    const lentBy = this.options.lentBy?.(r) ?? null;
+    const assistFrom = this.options.assistFrom?.(r) ?? null;
     // Which login it uses, where it is not its machine's default one: who
     // is logged in there, as that machine says, else the directory.
     const login = about.home
@@ -283,7 +283,7 @@ export class Details {
       [words.model, about.model ? about.model : ""],
       [words.machine, about.machine],
       [words.login, login],
-      [words.lentBy, lentBy ?? ""],
+      [words.assistFrom, assistFrom ?? ""],
       [words.actingFor, acting.join(words.separator)],
       [words.host, `${agentName(about.host.agent)} ${about.host.version}${about.world_started ? ` · ${words.startedByWorld}` : ""}`],
       [words.origin, origin],

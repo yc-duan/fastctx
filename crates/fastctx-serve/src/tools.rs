@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 /// The machines a session works on as its tools were listed: this one, and
 /// the others its scope reaches.
 pub struct Machines {
-    /// Where the session's shell starts; none for an agent another account
-    /// lent, each of whose commands names its machine.
+    /// Where the session's shell starts; none for an agent assisting another
+    /// account, each of whose commands names its machine.
     pub here: Option<String>,
     /// The other machines it may work on.
     pub others: Vec<String>,
@@ -20,7 +20,7 @@ pub struct Machines {
 }
 
 impl Machines {
-    fn lent(&self) -> bool {
+    fn assisting(&self) -> bool {
         self.here.is_none()
     }
 
@@ -70,15 +70,15 @@ pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<
 /// Where the session's shell is and which machines it may work on, first
 /// thing in the description, said the same way for every session; a model
 /// that knows them reaches the right one by the user's words. An agent
-/// another account lent is told it may not work where it runs, and that each
-/// of its commands names its machine (`fastctx_hands::lent`).
+/// assisting another account is told it may not work where it runs, and
+/// that each of its commands names its machine (`fastctx_hands::assist`).
 fn opening(machines: Option<&Machines>) -> String {
     const SHELL: &str = "This tool is your shell on all of them, with no address, login or key; `fastctx nodes` shows which are online.";
     let Some(machines) = machines else {
         return "This tool is your shell: it runs a bash script on this machine. When the user has other machines connected by fastctx, `on MACHINE` inside the script runs a part of it on one of them, with no address, login or key; `fastctx nodes` lists them.".to_string();
     };
     let Some(here) = &machines.here else {
-        return format!("{}\n{SHELL}", fastctx_hands::lent::opening(&machines.others));
+        return format!("{}\n{SHELL}", fastctx_hands::assist::opening(&machines.others));
     };
     if machines.others.is_empty() {
         return format!("This tool is your shell on {here}, this machine.");
@@ -108,11 +108,11 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     let writing = if writes_off { "" } else { RUN_WRITING };
     let ends = if woken { RUN_ENDS_WOKEN } else { RUN_ENDS_ASKED };
     let exec = if codex { RUN_EXEC } else { "" };
-    let lent = machines.is_some_and(Machines::lent);
+    let assisting = machines.is_some_and(Machines::assisting);
     let alone = machines.is_some_and(Machines::alone);
-    let start = if lent { RUN_START_LENT } else { RUN_START };
-    let together = if lent {
-        format!("{}\n{RUN_TOGETHER_LENT}", run_together(writes_off, alone))
+    let start = if assisting { RUN_START_ASSISTING } else { RUN_START };
+    let together = if assisting {
+        format!("{}\n{RUN_TOGETHER_ASSISTING}", run_together(writes_off, alone))
     } else {
         run_together(writes_off, alone)
     };
@@ -133,9 +133,9 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
             "description": WAIT_DESCRIPTION
         }
     });
-    // A lent agent's scripts start nowhere: each is one `on`, which starts
-    // in that machine's home.
-    if !lent {
+    // An assisting agent's scripts start nowhere: each is one `on`, which
+    // starts in that machine's home.
+    if !assisting {
         properties["cwd"] = json!({
             "type": "string",
             "description": cwd_description(machines.and_then(|machines| machines.here.as_deref()), alone)
@@ -180,10 +180,10 @@ Shell:
 const RUN_START: &str = "\
 - Each call is a fresh login shell, starting in the home directory, or in `cwd`. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together; output too long to show whole comes back as its start and end, and the answer names the file that holds all of it.";
 
-const RUN_START_LENT: &str = "\
+const RUN_START_ASSISTING: &str = "\
 - Each call is a fresh login shell on the machine its `on` names, starting in that machine's home directory. Nothing carries over between calls, and standard input is empty. Standard output and standard error come back together; output too long to show whole comes back as its start and end, and the answer names the file that holds all of it.";
 
-const RUN_TOGETHER_LENT: &str = "\
+const RUN_TOGETHER_ASSISTING: &str = "\
 For you, each of these goes inside one `on`, as in `on laptop <<'EOF'`, then the commands, then `EOF`.";
 
 const RUN_SHELL_REST: &str = "\
@@ -304,7 +304,7 @@ fn ask_colleague_definition(woken: bool, collab: &fastctx_types::collab::Offered
     let lives = collab.callees.iter().map(|callee| {
         let lives = match &callee.lives_on {
             Some(lives_on) => format!("It lives on {lives_on}, the machine configured for this callee, and its scripts start there; it reaches the other machines the same way you do, with `on`."),
-            None => "It is an agent another account lent the user: it has no access to the computer it runs on, so each of its commands names its machine with `on`, and it reaches that account's machines.".to_string(),
+            None => "It is another account's agent, assisting the user: it has no access to the computer it runs on, so each of its commands names its machine with `on`, and it reaches the machines of the account it works for.".to_string(),
         };
         let account = callee.account.as_ref().map(|account| format!("It works for account {account}. ")).unwrap_or_default();
         format!("{}: {}\n{account}{lives}", callee.name, callee.use_when)

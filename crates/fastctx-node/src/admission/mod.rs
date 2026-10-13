@@ -135,14 +135,14 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             return Err(refuse(format!("{resident} does not work for the account {}", caller.account)));
         }
     }
-    // Of another's machine, an account lent its agents' logins uses those
-    // logins alone (`world-network.md`, 共享机器与借出智能体).
+    // Of another's machine, an account its agents' logins assist uses
+    // those logins alone (`world-network.md`, 共享机器与智能体协助).
     let login = |agent: &fastctx_types::AgentName, home: Option<&std::path::Path>| {
         if hands || view.may_use_login(&caller.account, &here, agent, home) {
             return Ok(());
         }
         let login = home.map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
-        Err(refuse(format!("the {agent} login {login} on {here} is not lent to the account {}", caller.account)))
+        Err(refuse(format!("the {agent} login {login} on {here} does not assist the account {}", caller.account)))
     };
     match call {
         RemoteCall::Open { agent, home, .. } => login(agent, home.as_deref())?,

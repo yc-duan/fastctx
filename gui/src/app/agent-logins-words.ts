@@ -1,4 +1,4 @@
-// What the agents page says (`world-gui.md`, 账号、机器、共享与借出): short
+// What the agents page says (`world-gui.md`, 账号、机器、共享与协助): short
 // labels on the slips, the folders searched for logins, the change card's
 // lines, and what stays a hover away.
 
@@ -61,14 +61,14 @@ export interface AgentLoginsWords {
   apply: string;
   more: string;
   remove: string;
-  lend: string;
+  assist: string;
   rereadLimits: string;
   copyDir: string;
   copied: string;
   plan: string;
   planNone: string;
-  lentTo: string;
-  takeBack(account: string): string;
+  assisting: string;
+  endAssist(account: string): string;
   /** The usage bars and their hover. */
   window(name: string, minutes: number | null): string;
   used(percent: string): string;
@@ -146,14 +146,14 @@ export const zhAgentLogins: AgentLoginsWords = {
   apply: "接入",
   more: "更多",
   remove: "移除",
-  lend: "借给…",
+  assist: "协助…",
   rereadLimits: "重读额度",
   copyDir: "复制目录",
   copied: "已复制",
   plan: "套餐",
   planNone: "不标",
-  lentTo: "借给",
-  takeBack: (account) => `收回 ${account}`,
+  assisting: "协助",
+  endAssist: (account) => `结束对 ${account} 的协助`,
   window: (name, minutes) => {
     if (name.startsWith("five_hour") || minutes === 300) return "5h";
     if (name.startsWith("seven_day") || minutes === 10080) return "7d";
@@ -224,14 +224,14 @@ export const enAgentLogins: AgentLoginsWords = {
   apply: "Hook up",
   more: "More",
   remove: "Remove",
-  lend: "Lend to…",
+  assist: "Assist…",
   rereadLimits: "Read limits again",
   copyDir: "Copy directory",
   copied: "Copied",
   plan: "Plan",
   planNone: "None",
-  lentTo: "Lent to",
-  takeBack: (account) => `Take back from ${account}`,
+  assisting: "Assisting",
+  endAssist: (account) => `Stop assisting ${account}`,
   window: (name, minutes) => {
     if (name.startsWith("five_hour") || minutes === 300) return "5h";
     if (name.startsWith("seven_day") || minutes === 10080) return "7d";

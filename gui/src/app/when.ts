@@ -1,4 +1,4 @@
-// A moment picked by hand (`world-gui.md`, 借出): a month of days and a
+// A moment picked by hand (`world-gui.md`, 协助): a month of days and a
 // column each of hours and minutes, on this device's clock, never in the
 // past. It may also be no moment at all, for what has no end; then the
 // calendar waits dimmed, and picking a day in it sets one.

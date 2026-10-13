@@ -1,5 +1,5 @@
 // The super administrator's page of a hub (`world-gui.md`, 账号、机器、共享与
-// 借出): for each hub this computer or device is logged in to as its super
+// 协助): for each hub this computer or device is logged in to as its super
 // administrator, what being it means and handing it to another account,
 // whether anyone may open an account, every account, and every project
 // with the account it belongs to. Accounts are opened, always as members,

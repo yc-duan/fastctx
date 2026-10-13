@@ -1,6 +1,6 @@
-// What the owner of a machine sets on it (`world-network.md`, 共享机器与借出
-// 智能体): whom the machine is shared with, working on it and every agent
-// there; whom one login of an agent on it is lent to, that login alone;
+// What the owner of a machine sets on it (`world-network.md`, 共享机器与智能体
+// 协助): whom the machine is shared with, working on it and every agent
+// there; whom one login of an agent on it assists, that login alone;
 // each said plainly with what the owner gives and sees. Each change is the
 // account's own, made at once; the hub refuses what it may not do, and the
 // sheet stays open with why.

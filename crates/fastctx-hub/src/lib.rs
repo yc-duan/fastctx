@@ -6,7 +6,7 @@
 //! company firewalls need no open port. The hub is where who is who is
 //! decided: accounts and their passwords, the devices logged in to them,
 //! the machines registered under them, the machines shared and the agents'
-//! logins lent between accounts, the machines acting for them, and projects. It
+//! logins assisting other accounts, the machines acting for them, and projects. It
 //! passes calls between connected members and keeps letters for those that
 //! are away, only when the directory allows what is said; pairs the two
 //! ends of each data transfer; and keeps the projects' ledgers. It sees
@@ -27,7 +27,7 @@ mod control;
 mod data;
 mod direct;
 mod ledger;
-mod lends;
+mod assists;
 mod log;
 mod login;
 mod machine_log;
@@ -201,9 +201,10 @@ pub(crate) struct Hub {
     log: Arc<log::Log>,
     machine_log_changed: tokio::sync::Notify,
     moving: moving::Moving,
-    /// Told when the directory changes, so the loans' deadlines are read again.
-    lends_changed: tokio::sync::Notify,
-    next_lend_end: lends::NextEnd,
+    /// Told when the directory changes, so the assistance's deadlines are
+    /// read again.
+    assists_changed: tokio::sync::Notify,
+    next_assist_end: assists::NextEnd,
 }
 
 /// A member's open control connection.
@@ -311,7 +312,7 @@ impl Hub {
     /// look again, and what lost the standing it was allowed under ends.
     fn changed(&self) {
         self.machine_log_changed.notify_one();
-        self.lends_changed.notify_one();
+        self.assists_changed.notify_one();
         let outs: Vec<mpsc::UnboundedSender<Out>> =
             self.sessions().values().map(|session| session.out.clone()).collect();
         for out in outs {
@@ -377,9 +378,9 @@ pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
 
 async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::Result<Next> {
     let mut store = Store::open(dir)?;
-    // A loan whose deadline passed while the hub was stopped is taken back
-    // before any member is heard.
-    lends::end_due(&mut store, Timestamp::now())?;
+    // An assistance whose deadline passed while the hub was stopped is
+    // ended before any member is heard.
+    assists::end_due(&mut store, Timestamp::now())?;
     let certificate = HubCertificate {
         certificate: std::fs::read(Store::certificate_file(dir))?,
         key: std::fs::read(Store::key_file(dir))?,
@@ -419,8 +420,8 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         log,
         machine_log_changed: tokio::sync::Notify::new(),
         moving: moving::Moving::new(switched),
-        lends_changed: tokio::sync::Notify::new(),
-        next_lend_end: lends::NextEnd::default(),
+        assists_changed: tokio::sync::Notify::new(),
+        next_assist_end: assists::NextEnd::default(),
     });
     if driven {
         moving::out::drive(&hub);
@@ -441,7 +442,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
             },
             () = shutdown_signal() => break false,
             expired = machine_log::expire(&hub) => expired?,
-            ended = lends::expire(&hub) => ended?,
+            ended = assists::expire(&hub) => ended?,
             Ok(()) = &mut switch => break true,
         }
     };

@@ -1,5 +1,5 @@
 // What hooking a login up or removing it would change in a file, read as a
-// change reads in a conversation (`world-gui.md`, 账号、机器、共享与借出). The
+// change reads in a conversation (`world-gui.md`, 账号、机器、共享与协助). The
 // node names each setting that would change by its key path, with its
 // values where they are the World's own; here they are written back as the
 // file writes them: a TOML table's keys under its header, a JSON setting

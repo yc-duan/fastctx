@@ -1,8 +1,8 @@
 // What this computer or device reaches (`world-network.md`): every machine
 // its logins may work on, this computer itself among them when it is one;
-// the agents' logins other accounts lent them, on machines that are not
+// the agents' logins of other accounts assisting them, on machines that are not
 // theirs to work on; and for each login, the account's share of the World:
-// its machines, the agents lent to it, its projects. Every page that lists
+// its machines, the agents assisting it, its projects. Every page that lists
 // machines, agents or groups by account reads them from here, so they all
 // agree.
 
@@ -36,10 +36,10 @@ export interface MachineOn {
   rights: [AccountName, Rights][];
 }
 
-/** One login of an agent another account lent to one of this computer's
- *  logins, on a machine of theirs that login may not work on. */
-export interface Borrowed {
-  /** The login it is lent to. */
+/** One login of an agent of another account assisting one of this
+ *  computer's logins, on a machine of theirs that login may not work on. */
+export interface Assistant {
+  /** The login it assists. */
   login: Login;
   machine: MachineName;
   written: string;
@@ -51,7 +51,7 @@ export interface Borrowed {
   /** The login's directory as that machine writes it; null for the
    *  agent's default login there. */
   home: string | null;
-  /** When the loan ends by itself; null while its owner keeps it lent. */
+  /** When the assistance ends by itself; null while its owner keeps it on. */
   until: Timestamp | null;
 }
 
@@ -62,8 +62,8 @@ export interface Group {
   hub: HubAccounts | null;
   /** The machines it may work on, this computer first, where it is one. */
   machines: Machine[];
-  /** The agents lent to it on machines of others. */
-  borrowed: Borrowed[];
+  /** The agents of others assisting it, on their machines. */
+  assistants: Assistant[];
   /** The projects, by their short names. */
   towns: string[];
 }
@@ -98,7 +98,7 @@ export function machinesOf(world: WorldNow | null): Machine[] {
   }
   for (const hub of nodes.hubs) {
     // A machine none of the logins may work on is not theirs to list,
-    // whatever agents on it are lent to them.
+    // whatever agents on it assist them.
     for (const node of hub.machines.filter((node) => node.rights.some(([, rights]) => rights.hands))) {
       const on: MachineOn = { hub: hub.hub, hubName: hub.name, owner: node.owner, rights: node.rights };
       const known = byWritten.get(node.written);
@@ -148,49 +148,50 @@ export function ownerOf(machine: Machine, login: Login): AccountName | null {
   return machine.on.find((on) => on.hub === login.hub)?.owner ?? null;
 }
 
-/** Every agent's login lent to one of this computer's logins, on a machine
- *  that login may not work on: where it may work, the agent is its anyway. */
-export function borrowedOf(world: WorldNow | null): Borrowed[] {
+/** Every agent's login assisting one of this computer's logins, on a
+ *  machine that login may not work on: where it may work, the agent is its
+ *  anyway. */
+export function assistantsOf(world: WorldNow | null): Assistant[] {
   if (!world) return [];
   const machines = machinesOf(world);
   const named = new Map<string, number>();
-  for (const hub of world.accounts.hubs) for (const lend of hub.lends) named.set(lend.machine, (named.get(lend.machine) ?? 0) + 1);
-  const borrowed: Borrowed[] = [];
+  for (const hub of world.accounts.hubs) for (const assist of hub.assists) named.set(assist.machine, (named.get(assist.machine) ?? 0) + 1);
+  const assistants: Assistant[] = [];
   for (const hub of world.accounts.hubs) {
-    for (const lend of hub.lends) {
-      if (!hub.logins.includes(lend.account)) continue;
-      const login: Login = { hub: hub.hub, hubName: hub.name, account: lend.account };
-      const workable = machines.some((machine) => machine.name === lend.machine && machine.on.some((on) => on.hub === hub.hub) && rightsOn(machine, login).hands);
+    for (const assist of hub.assists) {
+      if (!hub.logins.includes(assist.account)) continue;
+      const login: Login = { hub: hub.hub, hubName: hub.name, account: assist.account };
+      const workable = machines.some((machine) => machine.name === assist.machine && machine.on.some((on) => on.hub === hub.hub) && rightsOn(machine, login).hands);
       if (workable) continue;
-      const member = hub.members.find((member) => member.name === lend.machine);
-      // Two hubs each with a computer of this name lending it: written
+      const member = hub.members.find((member) => member.name === assist.machine);
+      // Two hubs each with a computer of this name assisting: written
       // with its hub, as `on` writes it.
-      const elsewhere = world.accounts.hubs.some((other) => other.hub !== hub.hub && (other.members.some((m) => m.name === lend.machine) || other.lends.some((l) => l.machine === lend.machine)));
-      borrowed.push({
+      const elsewhere = world.accounts.hubs.some((other) => other.hub !== hub.hub && (other.members.some((m) => m.name === assist.machine) || other.assists.some((a) => a.machine === assist.machine)));
+      assistants.push({
         login,
-        machine: lend.machine,
-        written: elsewhere ? `${lend.machine}.${hub.name}` : lend.machine,
+        machine: assist.machine,
+        written: elsewhere ? `${assist.machine}.${hub.name}` : assist.machine,
         owner: member?.home ?? null,
         online: member ? member.online : null,
         since: member?.since ?? null,
-        agent: lend.agent,
-        home: lend.home,
-        until: lend.until ?? null,
+        agent: assist.agent,
+        home: assist.home,
+        until: assist.until ?? null,
       });
     }
   }
-  return borrowed;
+  return assistants;
 }
 
-/** The borrowed logins on one machine, as `name` or as written. */
-export function borrowedOn(world: WorldNow | null, machine: string): Borrowed[] {
-  return borrowedOf(world).filter((one) => one.machine === machine || one.written === machine);
+/** The assisting logins on one machine, as `name` or as written. */
+export function assistantsOn(world: WorldNow | null, machine: string): Assistant[] {
+  return assistantsOf(world).filter((one) => one.machine === machine || one.written === machine);
 }
 
 export function groupsOf(world: WorldNow | null): Group[] {
   if (!world) return [];
   const machines = machinesOf(world);
-  const borrowed = borrowedOf(world);
+  const assistants = assistantsOf(world);
   const logins = loginsOf(world.accounts);
   const groups = logins.map((login): Group => {
     const hub = world.accounts.hubs.find((hub) => hub.hub === login.hub) ?? null;
@@ -198,7 +199,7 @@ export function groupsOf(world: WorldNow | null): Group[] {
       login,
       hub,
       machines: machines.filter((machine) => machine.here || rightsOn(machine, login).hands),
-      borrowed: borrowed.filter((one) => sameLogin(one.login, login)),
+      assistants: assistants.filter((one) => sameLogin(one.login, login)),
       towns: (hub?.projects ?? [])
         .filter((project) => project.owner === login.account || project.granted.includes(login.account))
         .map((project) => project.name),
@@ -216,7 +217,7 @@ export function groupsOf(world: WorldNow | null): Group[] {
  *  computer's; otherwise every one that may use the machine it is on. */
 export function residentIn(world: WorldNow, group: Group, resident: ResidentNow): boolean {
   const lives = resident.about.machine;
-  if (!group.machines.some((machine) => machine.name === lives) && !group.borrowed.some((one) => one.machine === lives)) return false;
+  if (!group.machines.some((machine) => machine.name === lives) && !group.assistants.some((one) => one.machine === lives)) return false;
   const acting = resident.about.acting;
   if (!acting || acting.kind === "here") return true;
   const ours = loginsOf(world.accounts);
@@ -224,13 +225,13 @@ export function residentIn(world: WorldNow, group: Group, resident: ResidentNow)
   return !mine.length || mine.some((account) => account.hub === group.login.hub && account.account === group.login.account);
 }
 
-/** The login a resident on a machine lent to this computer's logins
- *  borrows, where it is one: it lives on a machine none of the logins it
- *  works for may work on, among the agents lent to them there. */
-export function borrowedBy(world: WorldNow | null, resident: ResidentNow): Borrowed | null {
-  const lent = borrowedOn(world, resident.about.machine).filter((one) => one.agent === resident.about.host.agent);
+/** The assisting login a resident is of, where it is one: it lives on a
+ *  machine none of the logins it works for may work on, among the agents
+ *  assisting them there. */
+export function assistantOf(world: WorldNow | null, resident: ResidentNow): Assistant | null {
+  const found = assistantsOn(world, resident.about.machine).filter((one) => one.agent === resident.about.host.agent);
   const acting = resident.about.acting;
-  return lent.find((one) => acting?.kind === "accounts" && acting.accounts.some((account) => sameLogin(one.login, account))) ?? null;
+  return found.find((one) => acting?.kind === "accounts" && acting.accounts.some((account) => sameLogin(one.login, account))) ?? null;
 }
 
 /** The logins that may open a conversation with an agent on `machine`, a
@@ -252,14 +253,14 @@ export function workPlaces(world: WorldNow | null, lives: Machine, login: Login 
   });
 }
 
-/** Where files a lent agent is given may go: the machines the account it
+/** Where files an assisting agent is given may go: the machines the account it
  *  works for may work on, this computer only where it is the account's own
  *  machine, for only a machine can take them. */
 export function filePlaces(world: WorldNow | null, login: Login): Machine[] {
   return machinesOf(world).filter((machine) => (machine.here ? owns(machine, login) : rightsOn(machine, login).hands));
 }
 
-/** Where files other than images go for a lent agent, which works on no
+/** Where files other than images go for an assisting agent, which works on no
  *  machine of its own: the machine in front of the user, where it can take
  *  them; else the first of the account's own that is online; else the first
  *  online it may work on. The model is told where they are. */
@@ -273,14 +274,14 @@ export function loginKey(machine: string, agent: string, home: string | null): s
   return `${machine}|${agent}|${home ?? ""}`;
 }
 
-/** Whether a login lent with `lent` (its directory, or null for the
+/** Whether the login given as `home` (its directory, or null for the
  *  default one) is the one a machine says as `dir` (null for its default
  *  one): written alike, but for case and slashes on a machine that writes
  *  paths either way. */
-export function sameHome(lent: string | null, dir: string | null): boolean {
-  if (lent === null || dir === null) return lent === dir;
+export function sameHome(home: string | null, dir: string | null): boolean {
+  if (home === null || dir === null) return home === dir;
   const plain = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  return plain(lent) === plain(dir);
+  return plain(home) === plain(dir);
 }
 
 /** "hangzhou · ada": a login as the user reads it. */

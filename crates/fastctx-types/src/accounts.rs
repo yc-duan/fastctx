@@ -1,6 +1,6 @@
 //! Accounts on the hubs this computer uses, as the command line and the
 //! interfaces see and change them (`world-network.md`): logging in and out,
-//! machines shared and agents' logins lent between accounts, the machines
+//! machines shared and agents' logins assisting other accounts, the machines
 //! that act for an account, devices, tokens and passwords, and the super
 //! administrator's accounts.
 
@@ -40,8 +40,8 @@ pub enum Level {
     /// The hub's first account, and its controller: it may do everything,
     /// on every machine. A hub has one, who may hand it to another account.
     Super,
-    /// Registers its own computers as machines, shares them, lends their
-    /// agents' logins, and opens projects.
+    /// Registers its own computers as machines, shares them, lets their
+    /// agents' logins assist other accounts, and opens projects.
     #[default]
     Member,
 }
@@ -112,17 +112,18 @@ pub enum AccountChange {
         to: AccountName,
         shared: bool,
     },
-    /// Lends one login of an agent on `machine`, one of the account's own,
-    /// to `to`; or no longer. `home` is the login's directory as `machine`
-    /// writes it, none for that agent's default login there. `until` is
-    /// when the loan ends by itself; lending again sets it anew.
-    Lend {
+    /// Lets one login of an agent on `machine`, one of the account's own,
+    /// assist `to`; or no longer. `home` is the login's directory as
+    /// `machine` writes it, none for that agent's default login there.
+    /// `until` is when the assistance ends by itself; assisting again sets
+    /// it anew.
+    Assist {
         machine: MachineName,
         to: AccountName,
         agent: AgentName,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         home: Option<PathBuf>,
-        lent: bool,
+        assisting: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         until: Option<Timestamp>,
     },
@@ -223,7 +224,7 @@ pub struct HubAccounts {
     pub accounts: Vec<AccountSeen>,
     pub members: Vec<MemberSeen>,
     pub shares: Vec<ShareSeen>,
-    pub lends: Vec<LendSeen>,
+    pub assists: Vec<AssistSeen>,
     /// The plans the hub's super administrator set on logins that name
     /// none.
     #[serde(default)]
@@ -296,16 +297,17 @@ pub struct ShareSeen {
     pub account: AccountName,
 }
 
-/// One login of an agent on a machine, lent to an account.
+/// One login of an agent on a machine, assisting an account.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LendSeen {
+pub struct AssistSeen {
     pub machine: MachineName,
     pub account: AccountName,
     pub agent: AgentName,
     /// The login's directory as that machine writes it; none for the
     /// agent's default login there.
     pub home: Option<PathBuf>,
-    /// When the loan ends by itself; none while the owner keeps it lent.
+    /// When the assistance ends by itself; none while the owner keeps it
+    /// on.
     pub until: Option<Timestamp>,
 }
 

@@ -1,5 +1,5 @@
-// What the pages about accounts say (`world-gui.md`, 账号、机器、共享与借出):
-// logging in; the machines a login may use, the agents lent to it, and what
+// What the pages about accounts say (`world-gui.md`, 账号、机器、共享与协助):
+// logging in; the machines a login may use, the agents assisting it, and what
 // is set on them; the account itself, with its level, its devices, who came
 // into it, the machines whose agents may reach its machines, the one-time
 // tokens that let another device in, its password and its projects; and the
@@ -362,11 +362,12 @@ export interface MachinesWords {
   superInShort(owner: string): string;
   sharedIn(owner: string): string;
   superIn(owner: string): string;
-  /** Whom this account shared its machine with, and lent a login to,
-   *  each taken back with a press. */
+  /** Whom this account shared its machine with, and whom a login of it
+   *  assists, each ended with a press. */
   sharedTo: string;
-  lentTo: string;
+  assisting: string;
   takeBack(to: string): string;
+  endAssist(to: string): string;
   separator: string;
   /** A machine of another whose agents may reach this account's machines. */
   reaching: string;
@@ -405,15 +406,16 @@ export interface MachinesWords {
   homeHidden(name: string): string;
   homeNotChanged(why: string): string;
   share: string;
-  lend: string;
+  assist: string;
   remove: string;
-  /** An agent lent to the account, on a machine of another's: the tag on
-   *  the map, the one line on its panel, and the saying behind both. */
-  lentShort(owner: string): string;
-  borrowedNote: string;
-  borrowedSaid(owner: string): string;
-  /** A lent login its machine does not list. */
-  borrowedGone: string;
+  /** An agent of another's assisting the account, on a machine of theirs:
+   *  the tag on the map, the one line on its panel, and the saying behind
+   *  both. */
+  assistShort(owner: string): string;
+  assistantNote: string;
+  assistantSaid(owner: string): string;
+  /** An assisting login its machine does not list. */
+  assistantGone: string;
   talk: string;
   /** On its own, in no network: the film of what a network is for, and the
    *  two ways into one. */
@@ -437,7 +439,8 @@ export interface MachinesWords {
   details: string;
   closeDetails: string;
   actions: string;
-  /** A share or loan taken back from the drawing, and giving it again. */
+  /** A share or an assistance ended from the drawing, and giving it
+   *  again. */
   tookBack(to: string): string;
   undo: string;
   confirm: string;
@@ -446,10 +449,10 @@ export interface MachinesWords {
    *  its ring. */
   takesDirect: string;
   /** The groups round a hub, written along their arcs: the account's own
-   *  machines, and those an agent is lent on from another. Others' are
+   *  machines, and those whose agent assists from another. Others' are
    *  named by `ownedBy`. */
   mineGroup: string;
-  lentGroup(owner: string): string;
+  assistGroup(owner: string): string;
   /** Under a group's name on the drawing: how many, how many online. */
   groupSub(count: number, online: number): string;
   /** A machine's direct links, in its details. */
@@ -577,8 +580,9 @@ export const zhMachines: MachinesWords = {
   sharedIn: (owner) => `${owner} 共享给你，可使用其上所有智能体；你在上面的操作 ${owner} 可见`,
   superIn: (owner) => `成员 ${owner} 的机器，你作为管理员可以使用；你的操作 ${owner} 可见`,
   sharedTo: "共享给",
-  lentTo: "借给",
+  assisting: "协助",
   takeBack: (to) => `收回 ${to}`,
+  endAssist: (to) => `结束对 ${to} 的协助`,
   separator: "、",
   reaching: "可访问你的机器",
   reachingWhat: "你用过这台机器上的智能体，它们可以访问你的机器；可在账号页撤销",
@@ -613,12 +617,12 @@ export const zhMachines: MachinesWords = {
   homeHidden: (name) => `已隐藏 ${name}`,
   homeNotChanged: failure(zhProblems, "操作失败"),
   share: "共享",
-  lend: "借出",
+  assist: "协助",
   remove: "移除",
-  lentShort: (owner) => `来自 ${owner}`,
-  borrowedNote: "在你的机器上工作",
-  borrowedSaid: (owner) => `${owner} 借给你；它在你的机器上工作，不接触 ${owner} 的这台电脑`,
-  borrowedGone: "该登录已不可用",
+  assistShort: (owner) => `来自 ${owner}`,
+  assistantNote: "在你的机器上工作",
+  assistantSaid: (owner) => `${owner} 的智能体在协助你；它在你的机器上工作，不接触 ${owner} 的这台电脑`,
+  assistantGone: "该登录已不可用",
   talk: "新对话",
   film: {
     captions: ["你的智能体在这台电脑上干活", "几台机器连到一台中枢服务器，就成了一个网络", "它在每一台上都能干活：写一句 on gpu，活就在那台跑", "合上电脑，那边照样跑完，结果等它回来", "文件在机器之间直接搬，机器也能共享给别人"],
@@ -648,7 +652,7 @@ export const zhMachines: MachinesWords = {
   more: "细节",
   takesDirect: "别的机器可以直接连到这台",
   mineGroup: "我的",
-  lentGroup: (owner) => `来自 ${owner}`,
+  assistGroup: (owner) => `来自 ${owner}`,
   groupSub: (count, online) => `${count} 台 · ${online} 在线`,
   directRow: "直连",
   directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
@@ -662,7 +666,7 @@ export const zhMachines: MachinesWords = {
   framedClear: "取消选择",
   framedShareTitle: (n) => `共享这 ${n} 台`,
   framedRemoveTitle: (n) => `移除这 ${n} 台？`,
-  framedRemoveWhat: (names) => `${names.join("、")} 将断开中枢服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`,
+  framedRemoveWhat: (names) => `${names.join("、")} 将断开中枢服务器并退出所有账号，共享与协助随之失效。机器上的数据不受影响。`,
   allowDirect: "允许直接连到这台",
   stopDirect: "不再允许直接连到这台",
   directTitle: (machine) => `允许直接连到 ${machine}`,
@@ -732,11 +736,12 @@ export const zhMachines: MachinesWords = {
     switch (a.change) {
       case "share":
         return a.shared ? `把 ${a.machine} 共享给 ${a.to}` : `收回 ${a.machine} 对 ${a.to} 的共享`;
+      // Assistance, under the names the hub first wrote it under.
       case "lend":
-        if (!a.lent) return `收回借给 ${a.to} 的 ${agentName(a.agent)}`;
-        return `把 ${a.machine} 上的 ${agentName(a.agent)} 借给 ${a.to}${a.until ? `，到 ${zhMoment.stamp(new Date(a.until))}` : ""}`;
+        if (!a.lent) return `结束 ${a.machine} 上的 ${agentName(a.agent)} 对 ${a.to} 的协助`;
+        return `让 ${a.machine} 上的 ${agentName(a.agent)} 协助 ${a.to}${a.until ? `，到 ${zhMoment.stamp(new Date(a.until))}` : ""}`;
       case "lend_ended":
-        return `借给 ${a.to} 的 ${agentName(a.agent)} 到期收回`;
+        return `${agentName(a.agent)} 对 ${a.to} 的协助到期结束`;
       case "plan":
         return a.plan ? `把 ${a.machine} 上 ${agentName(a.agent)} 的套餐标为 ${a.plan}` : `去掉 ${a.machine} 上 ${agentName(a.agent)} 的套餐标记`;
       case "stop_acting":
@@ -801,8 +806,9 @@ export const enMachines: MachinesWords = {
   sharedIn: (owner) => `Shared with you by ${owner}, with all its agents; ${owner} can see what you do on it`,
   superIn: (owner) => `Member ${owner}'s machine, available to you as administrator; ${owner} can see what you do on it`,
   sharedTo: "Shared with",
-  lentTo: "Lent to",
+  assisting: "Assisting",
   takeBack: (to) => `Revoke ${to}`,
+  endAssist: (to) => `Stop assisting ${to}`,
   separator: ", ",
   reaching: "can access your machines",
   reachingWhat: "You used an agent on this machine, so its agents can access your machines; revoke on the Account page",
@@ -837,12 +843,12 @@ export const enMachines: MachinesWords = {
   homeHidden: (name) => `Hid ${name}`,
   homeNotChanged: failure(enProblems, "Couldn't complete"),
   share: "Share",
-  lend: "Lend",
+  assist: "Assist",
   remove: "Remove",
-  lentShort: (owner) => `from ${owner}`,
-  borrowedNote: "Works on your machines",
-  borrowedSaid: (owner) => `Lent to you by ${owner}; it works on your machines and never touches ${owner}'s computer`,
-  borrowedGone: "Login unavailable",
+  assistShort: (owner) => `from ${owner}`,
+  assistantNote: "Works on your machines",
+  assistantSaid: (owner) => `${owner}'s agent assisting you; it works on your machines and never touches ${owner}'s computer`,
+  assistantGone: "Login unavailable",
   talk: "New conversation",
   film: {
     captions: ["Your agent works on this computer", "Machines that reach one hub make a network", "It works on any of them: write on gpu, and the job runs there", "Close the computer: the job runs on, and its result waits", "Files go straight between machines, and a machine can be shared"],
@@ -872,7 +878,7 @@ export const enMachines: MachinesWords = {
   more: "Details",
   takesDirect: "Other machines may connect to it directly",
   mineGroup: "Mine",
-  lentGroup: (owner) => `From ${owner}`,
+  assistGroup: (owner) => `From ${owner}`,
   groupSub: (count, online) => `${count} · ${online} online`,
   directRow: "Direct",
   directUp: (peer, ms) => `${peer}${ms !== undefined ? ` ${ms} ms` : ""}`,
@@ -886,7 +892,7 @@ export const enMachines: MachinesWords = {
   framedClear: "Clear",
   framedShareTitle: (n) => `Share these ${n}`,
   framedRemoveTitle: (n) => `Remove these ${n}?`,
-  framedRemoveWhat: (names) => `${names.join(", ")} will leave the hub and every account; their shares and loans end. Nothing on the machines is touched.`,
+  framedRemoveWhat: (names) => `${names.join(", ")} will leave the hub and every account; their shares and assistance end. Nothing on the machines is touched.`,
   allowDirect: "Allow direct connections",
   stopDirect: "Stop direct connections",
   directTitle: (machine) => `Allow direct connections to ${machine}`,
@@ -956,11 +962,12 @@ export const enMachines: MachinesWords = {
     switch (a.change) {
       case "share":
         return a.shared ? `Shared ${a.machine} with ${a.to}` : `Stopped sharing ${a.machine} with ${a.to}`;
+      // Assistance, under the names the hub first wrote it under.
       case "lend":
-        if (!a.lent) return `Took back ${agentName(a.agent)} from ${a.to}`;
-        return `Lent ${agentName(a.agent)} on ${a.machine} to ${a.to}${a.until ? ` until ${enMoment.stamp(new Date(a.until))}` : ""}`;
+        if (!a.lent) return `Ended the assistance of ${agentName(a.agent)} on ${a.machine} to ${a.to}`;
+        return `Let ${agentName(a.agent)} on ${a.machine} assist ${a.to}${a.until ? ` until ${enMoment.stamp(new Date(a.until))}` : ""}`;
       case "lend_ended":
-        return `${agentName(a.agent)} lent to ${a.to} came back at its end`;
+        return `The assistance of ${agentName(a.agent)} to ${a.to} reached its end`;
       case "plan":
         return a.plan ? `Marked ${agentName(a.agent)} on ${a.machine} as ${a.plan}` : `Cleared the plan of ${agentName(a.agent)} on ${a.machine}`;
       case "stop_acting":
@@ -989,22 +996,24 @@ export const enMachines: MachinesWords = {
   },
 };
 
-/** The sheets on a machine: whom its owner shares it with, whom it lends
- *  one login of an agent on it, and removing it. */
+/** The sheets on a machine: whom its owner shares it with, whom one login
+ *  of an agent on it assists, and removing it. */
 export interface AccessWords {
   shareTitle(machine: string): string;
   shareWhat: string;
   shareSees: string;
   sharedTo: string;
   shareGo: string;
-  lendTitle(login: string, machine: string): string;
-  lendWhat: string;
-  lendSees: string;
-  lentTo: string;
-  lendGo: string;
-  /** The lend sheet's own: whom to lend to, until when, and changing it. */
-  lendWho: string;
-  lendUntil: string;
+  assistTitle(login: string, machine: string): string;
+  assistWhat: string;
+  assistSees: string;
+  assisting: string;
+  assistGo: string;
+  /** The assist sheet's own: whom it assists, until when, changing it and
+   *  ending it. */
+  assistWho: string;
+  assistUntil: string;
+  endAssist: string;
   changeUntil: string;
   untilPassed: string;
   save: string;
@@ -1031,13 +1040,14 @@ export const zhAccess: AccessWords = {
   shareSees: "对方的操作会在这台机器上真实运行，请只共享给信任的人。",
   sharedTo: "已共享给",
   shareGo: "共享",
-  lendTitle: (login, machine) => `借出 ${machine} 上的 ${login}`,
-  lendWhat: "只借出这个登录，不含机器；它在对方的机器上为对方工作。",
-  lendSees: "会使用这个登录的订阅额度，运行过程在你的机器上可见、可停止。",
-  lentTo: "已借给",
-  lendGo: "借出",
-  lendWho: "借给",
-  lendUntil: "截止",
+  assistTitle: (login, machine) => `让 ${machine} 上的 ${login} 协助他人`,
+  assistWhat: "只用这个登录协助对方，不共享机器；它在对方的机器上为对方工作。",
+  assistSees: "会使用这个登录的订阅额度，运行过程在你的机器上可见、可停止。",
+  assisting: "正在协助",
+  assistGo: "协助",
+  assistWho: "协助谁",
+  assistUntil: "截止",
+  endAssist: "结束",
   changeUntil: "改截止时间",
   untilPassed: "这个截止时间已经过了",
   save: "保存",
@@ -1049,7 +1059,7 @@ export const zhAccess: AccessWords = {
   toHint: "对方的账号名",
   takeBack: "收回",
   removeTitle: (machine) => `移除 ${machine}？`,
-  removeWhat: (machine) => `${machine} 将断开中枢服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`,
+  removeWhat: (machine) => `${machine} 将断开中枢服务器并退出所有账号，共享与协助随之失效。机器上的数据不受影响。`,
   removeGo: "移除",
   reason: "原因",
   reasonDefault: "removed",
@@ -1064,13 +1074,14 @@ export const enAccess: AccessWords = {
   shareSees: "What they do runs for real on this machine. Share only with people you trust.",
   sharedTo: "Shared with",
   shareGo: "Share",
-  lendTitle: (login, machine) => `Lend ${login} on ${machine}`,
-  lendWhat: "Only this login is lent, not the machine; it works for them on their machines.",
-  lendSees: "It uses this login's subscription. You can see and stop it on your machine.",
-  lentTo: "Lent to",
-  lendGo: "Lend",
-  lendWho: "Lend to",
-  lendUntil: "Ends",
+  assistTitle: (login, machine) => `Let ${login} on ${machine} assist others`,
+  assistWhat: "Only this login assists them, not the machine; it works for them on their machines.",
+  assistSees: "It uses this login's subscription. You can see and stop it on your machine.",
+  assisting: "Assisting",
+  assistGo: "Assist",
+  assistWho: "Assist",
+  assistUntil: "Ends",
+  endAssist: "End",
   changeUntil: "Change when it ends",
   untilPassed: "That time has already passed",
   save: "Save",
@@ -1082,7 +1093,7 @@ export const enAccess: AccessWords = {
   toHint: "Their account name",
   takeBack: "Revoke",
   removeTitle: (machine) => `Remove ${machine}?`,
-  removeWhat: (machine) => `${machine} will disconnect from the hub and sign out of every account; its shares and loans end. Data on it is untouched.`,
+  removeWhat: (machine) => `${machine} will disconnect from the hub and sign out of every account; its shares and assistance end. Data on it is untouched.`,
   removeGo: "Remove",
   reason: "Reason",
   reasonDefault: "removed",
@@ -1194,7 +1205,7 @@ export const zhAccount: AccountWords = {
   removeDeviceTitle: (name) => `移除 ${name}？`,
   removeDeviceWhat: (name, account, machine) =>
     machine
-      ? `${name} 将断开中枢服务器并退出所有账号，共享与借出随之失效。机器上的数据不受影响。`
+      ? `${name} 将断开中枢服务器并退出所有账号，共享与协助随之失效。机器上的数据不受影响。`
       : `${name} 将退出 ${account}。`,
   removeDeviceGo: "移除",
   invite: "添加设备",
@@ -1236,7 +1247,7 @@ export const zhAccount: AccountWords = {
   logoutTitle: (login) => `退出 ${login}？`,
   logoutWhat: (login, registered) =>
     registered
-      ? `这台电脑将退出 ${login}，不再作为它的机器，共享与借出随之失效。电脑上的数据不受影响。`
+      ? `这台电脑将退出 ${login}，不再作为它的机器，共享与协助随之失效。电脑上的数据不受影响。`
       : `这台设备将退出 ${login}。`,
   logoutGo: "退出",
   adminPage: "管理中枢服务器",
@@ -1273,7 +1284,7 @@ export const enAccount: AccountWords = {
   removeDeviceTitle: (name) => `Remove ${name}?`,
   removeDeviceWhat: (name, account, machine) =>
     machine
-      ? `${name} will disconnect from the hub and sign out of every account; its shares and loans end. Data on it is untouched.`
+      ? `${name} will disconnect from the hub and sign out of every account; its shares and assistance end. Data on it is untouched.`
       : `${name} will be signed out of ${account}.`,
   removeDeviceGo: "Remove",
   invite: "Add device",
@@ -1315,7 +1326,7 @@ export const enAccount: AccountWords = {
   logoutTitle: (login) => `Sign out of ${login}?`,
   logoutWhat: (login, registered) =>
     registered
-      ? `This computer will sign out of ${login} and stop being its machine; its shares and loans end. Data on it is untouched.`
+      ? `This computer will sign out of ${login} and stop being its machine; its shares and assistance end. Data on it is untouched.`
       : `This device will sign out of ${login}.`,
   logoutGo: "Sign out",
   adminPage: "Manage hub",
@@ -1497,7 +1508,7 @@ export const zhAdmin: AdminWords = {
     [
       "此操作无法撤销。",
       machines.length ? `名下机器 ${machines.join("、")} 将被移除。` : "",
-      "共享与借出随之失效。",
+      "共享与协助随之失效。",
       projects.length ? `项目 ${projects.join("、")} 将归档保留，可转交给其他账号。` : "",
     ].join(""),
   deleteGo: "删除",
@@ -1559,7 +1570,7 @@ export const enAdmin: AdminWords = {
     [
       "This can't be undone. ",
       machines.length ? `Its machines ${machines.join(", ")} will be removed. ` : "",
-      "Its shares and loans end. ",
+      "Its shares and assistance end. ",
       projects.length ? `Projects ${projects.join(", ")} are archived and can be transferred.` : "",
     ].join(""),
   deleteGo: "Delete",

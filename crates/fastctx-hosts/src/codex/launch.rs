@@ -4,7 +4,7 @@
 //! The ChatGPT desktop app records its own `codex.exe` in the user's Codex
 //! configuration, as the `CODEX_CLI_PATH` of its Computer Use server
 //! (`[mcp_servers.node_repl.env]`). That binary, started with the flags the
-//! app uses, lends every thread the app's Computer Use, plugins and
+//! app uses, gives every thread the app's Computer Use, plugins and
 //! connectors. The app moves the binary when it upgrades and renames the
 //! Computer Use pipe when it restarts, rewriting the configuration each
 //! time, so the configuration is read again before every start. Without the

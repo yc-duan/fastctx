@@ -74,10 +74,10 @@ pub struct ShareArgs {
 }
 
 #[derive(Args)]
-pub struct LendArgs {
+pub struct AssistArgs {
     /// One of the account's machines.
     machine: MachineName,
-    /// The account the login is lent to.
+    /// The account the login assists.
     to: AccountName,
     /// The agent: codex or claude.
     #[arg(long)]
@@ -86,12 +86,13 @@ pub struct LendArgs {
     /// CLAUDE_CONFIG_DIR); the agent's default login there when not given.
     #[arg(long)]
     home: Option<std::path::PathBuf>,
-    /// Take the login back.
+    /// End the assistance.
     #[arg(long)]
     off: bool,
-    /// When the loan ends by itself: a date and time on this computer's
-    /// clock, such as "2026-10-20 18:00", or a full timestamp. Lending
-    /// again without it keeps the login lent until taken back.
+    /// When the assistance ends by itself: a date and time on this
+    /// computer's clock, such as "2026-10-20 18:00", or a full timestamp.
+    /// Given again without it, the login assists until the assistance is
+    /// ended.
     #[arg(long, conflicts_with = "off", value_parser = deadline)]
     until: Option<Timestamp>,
     #[arg(long = "as")]
@@ -302,24 +303,24 @@ pub fn share(args: ShareArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn lend(args: LendArgs) -> anyhow::Result<()> {
+pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
     let owner = account_or_owner(args.hub.as_ref(), args.owner, Some(&args.machine))?;
     let login = args.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
-    let change = AccountChange::Lend {
+    let change = AccountChange::Assist {
         machine: args.machine.clone(),
         to: args.to.clone(),
         agent: args.agent.clone(),
         home: args.home,
-        lent: !args.off,
+        assisting: !args.off,
         until: args.until,
     };
     self::change(args.hub, owner, change)?;
     if args.off {
-        println!("the {} login {login} on {} is no longer lent to {}", args.agent, args.machine, args.to);
+        println!("the {} login {login} on {} no longer assists {}", args.agent, args.machine, args.to);
     } else {
         let until = args.until.map(|until| format!(" until {}", local(until))).unwrap_or_default();
         println!(
-            "the {} login {login} on {} is lent to {}{until}: the account and its plan go with it, not the machine, and you see all it does there",
+            "the {} login {login} on {} assists {}{until}: the account and its plan go with it, not the machine, and you see all it does there",
             args.agent, args.machine, args.to
         );
     }
@@ -849,13 +850,13 @@ fn render_accounts(reply: &AccountsReply, now: Timestamp) -> String {
         for share in &hub.shares {
             text.push_str(&format!("shared {} with {}\n", share.machine, share.account));
         }
-        for lend in &hub.lends {
+        for assist in &hub.assists {
             let login =
-                lend.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
-            let until = lend.until.map(|until| format!(" until {}", local(until))).unwrap_or_default();
+                assist.home.as_ref().map(|home| home.display().to_string()).unwrap_or_else(|| "default".to_string());
+            let until = assist.until.map(|until| format!(" until {}", local(until))).unwrap_or_default();
             text.push_str(&format!(
-                "lent the {} login {login} on {} to {}{until}\n",
-                lend.agent, lend.machine, lend.account
+                "the {} login {login} on {} assists {}{until}\n",
+                assist.agent, assist.machine, assist.account
             ));
         }
         for acting in &hub.acting {

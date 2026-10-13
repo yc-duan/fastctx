@@ -2,7 +2,7 @@
 //! scans, takings-up and changes asked of their own nodes. Only a machine's
 //! owner scans it or changes its logins (`world-agent-logins.md`: the list is
 //! the machine owner's to change); another account that may see the machine
-//! sees its listed logins, and one lent some of them sees those alone.
+//! sees its listed logins, and one some of them assist sees those alone.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -65,7 +65,7 @@ pub(crate) async fn query(
 }
 
 /// What this machine's record shows another account: everything to one
-/// that may work here; to one lent logins, those listed logins alone.
+/// that may work here; to one logins assist, those listed logins alone.
 pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut logins: MachineLogins) -> MachineLogins {
     if asker.hands {
         return logins;
@@ -79,9 +79,9 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
         side.candidates.clear();
         side.elsewhere.clear();
         side.listed.retain(|login| {
-            view.lent(&asker.account, &here).any(|lend| {
-                lend.agent.as_str() == agent
-                    && match &lend.home {
+            view.assisting(&asker.account, &here).any(|assist| {
+                assist.agent.as_str() == agent
+                    && match &assist.home {
                         None => login.default,
                         Some(dir) => crate::homes::same_dir(dir, &login.dir),
                     }
@@ -104,11 +104,11 @@ pub(crate) fn may_see(
     default: bool,
 ) -> bool {
     asker.hands
-        || view.lent(&asker.account, &view.me).any(|lend| {
-            lend.agent == *agent
-                && match &lend.home {
+        || view.assisting(&asker.account, &view.me).any(|assist| {
+            assist.agent == *agent
+                && match &assist.home {
                     None => default,
-                    Some(lent) => crate::homes::same_dir(lent, dir),
+                    Some(home) => crate::homes::same_dir(home, dir),
                 }
         })
 }
@@ -254,7 +254,7 @@ pub(crate) async fn answer(
                 .iter()
                 .chain(&side.candidates)
                 .find(|login| crate::homes::same_dir(&login.dir, &dir))
-                // One lent a login sees it only while it is listed.
+                // One a login assists sees it only while it is listed.
                 .filter(|login| {
                     may_see(view, asker, &agent, &login.dir, login.default)
                         && (asker.hands || login.integration == fastctx_types::agents::Integration::In)

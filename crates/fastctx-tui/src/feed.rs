@@ -146,27 +146,27 @@ async fn ask(world: &World, feed: &Feed) -> Data {
         Feed::Nodes => Data::Nodes(world.nodes().await.map_err(text)),
         Feed::Choices => {
             let (nodes, towns, accounts) = tokio::join!(world.nodes(), world.towns(), world.accounts());
-            // A lent agent is offered when the accounts can be asked; the
-            // machines and projects stand without it.
-            let lent = accounts
+            // An assisting agent is offered when the accounts can be asked;
+            // the machines and projects stand without it.
+            let assisting = accounts
                 .map(|accounts| {
                     accounts
                         .hubs
                         .iter()
                         .flat_map(|hub| {
-                            hub.lends.iter().filter(|lend| hub.logins.contains(&lend.account)).map(|lend| {
-                                crate::app::Lent {
-                                    machine: lend.machine.clone(),
-                                    agent: lend.agent.clone(),
-                                    home: lend.home.clone(),
+                            hub.assists.iter().filter(|assist| hub.logins.contains(&assist.account)).map(|assist| {
+                                crate::app::Assisting {
+                                    machine: assist.machine.clone(),
+                                    agent: assist.agent.clone(),
+                                    home: assist.home.clone(),
                                     owner: hub
                                         .members
                                         .iter()
-                                        .find(|member| member.name == lend.machine)
+                                        .find(|member| member.name == assist.machine)
                                         .and_then(|member| member.home.clone()),
                                     to: fastctx_types::access::HubAccount {
                                         hub: hub.hub.clone(),
-                                        account: lend.account.clone(),
+                                        account: assist.account.clone(),
                                     },
                                 }
                             })
@@ -174,7 +174,7 @@ async fn ask(world: &World, feed: &Feed) -> Data {
                         .collect()
                 })
                 .unwrap_or_default();
-            Data::Choices { nodes: nodes.map_err(text), towns: towns.map_err(text), lent }
+            Data::Choices { nodes: nodes.map_err(text), towns: towns.map_err(text), assisting }
         }
         Feed::Watch { .. } => unreachable!("a watch is not asked"),
     }

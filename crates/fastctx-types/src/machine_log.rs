@@ -36,17 +36,22 @@ pub enum Action {
         to: AccountName,
         shared: bool,
     },
-    Lend {
+    /// Written under the name it was first written under, so hubs and
+    /// nodes of every version read one another's records.
+    #[serde(rename = "lend")]
+    Assist {
         machine: MachineName,
         to: AccountName,
         agent: AgentName,
         home: Option<PathBuf>,
-        lent: bool,
+        #[serde(rename = "lent")]
+        assisting: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         until: Option<Timestamp>,
     },
-    /// A loan reached its deadline and the hub took it back.
-    LendEnded {
+    /// An assistance reached its deadline and the hub ended it.
+    #[serde(rename = "lend_ended")]
+    AssistEnded {
         machine: MachineName,
         to: AccountName,
         agent: AgentName,
@@ -143,7 +148,8 @@ pub enum Action {
         agent: AgentName,
         home: Option<PathBuf>,
     },
-    /// A permission removed implicitly by a share, loan, or account change.
+    /// A permission removed implicitly by a share, an assistance, or an
+    /// account change.
     ActingStopped {
         machine: MachineName,
         account: AccountName,

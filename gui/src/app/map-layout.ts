@@ -1,9 +1,9 @@
 // Where the machines page draws each hub and machine (`world-gui.md`, 账号、
-// 机器、共享与借出), read from the top. The hub stands at the top; under it,
+// 机器、共享与协助), read from the top. The hub stands at the top; under it,
 // joined by a bus of square lines, a box for each group of machines by
 // whose they are, as a comment box gathers nodes in a blueprint: the
 // account's own first, then each other account's shared with it, then those
-// an agent is lent on from another. A box has a title strip with the
+// whose agent assists from another. A box has a title strip with the
 // group's name, and its machines stand in a grid inside, one to a row and a
 // new column every ten, their names to the right. The box lies under the
 // lines and does not break them: the line down from the bus runs on through
@@ -49,7 +49,7 @@ const HUB_GAP = 160;
 export interface GroupNode {
   key: string;
   hub: string;
-  /** "mine", "of:<account>" or "lent:<account>". */
+  /** "mine", "of:<account>" or "assist:<account>". */
   kind: string;
   label: string;
   count: number;
@@ -101,7 +101,7 @@ interface Remembered {
   places: Record<string, number>;
 }
 
-const HOLD_RANK: Record<MapNode["hold"], number> = { mine: 0, others: 1, lent: 2 };
+const HOLD_RANK: Record<MapNode["hold"], number> = { mine: 0, others: 1, assist: 2 };
 
 /** The order a machine first takes in its group: this computer, then by
  *  name. */
@@ -109,7 +109,7 @@ function firstOrder(a: MapNode, b: MapNode): number {
   return Number(b.here) - Number(a.here) || HOLD_RANK[a.hold] - HOLD_RANK[b.hold] || a.name.localeCompare(b.name);
 }
 
-/** The order of groups under a hub: the account's own, others', lent. */
+/** The order of groups under a hub: the account's own, others', assisting. */
 function groupRank(key: string): number {
   return key === "mine" ? 0 : key.startsWith("of:") ? 1 : 2;
 }

@@ -8,7 +8,7 @@
 // Above them, small labels say what the words go to, and each opens what it
 // can be: which agent, as one of its logins, chosen among those the user
 // holds, grouped as they hold them (on their own machines, on machines of
-// others they may work on, lent to them by another account), each with who
+// others they may work on, assisting them from another account), each with who
 // is logged in and how much of its usage is spent, as its machine says; the
 // project; and the machines and folders the conversation is about, among
 // those its account may use, told to the agent as where its work is and
@@ -17,7 +17,7 @@
 // it thinks are the conversation's own chip and panel. Above the input, the
 // chosen agent's mark and the place's name; nothing more.
 //
-// An agent lent to the user runs on a machine it may not touch: each of its
+// An agent assisting the user runs on a machine it may not touch: each of its
 // commands names one of the user's machines, and the files attached for
 // it, other than images, go to a machine of the user's without asking
 // (`fileHome`). Which agents may call which models is the model
@@ -49,7 +49,7 @@ import type { Address } from "../world/events";
 import { accountOf, homeChoice, homeLabel, homesOf, installed, listed, loggedOut, windowsShort, type HomeWords } from "./agent-homes";
 import type { ConsentHome } from "./claude-consent";
 import {
-  borrowedOf,
+  assistantsOf,
   fileHome,
   filePlaces,
   groupsOf,
@@ -61,7 +61,7 @@ import {
   owns,
   sameLogin,
   workPlaces,
-  type Borrowed,
+  type Assistant,
   type Machine,
 } from "./reach";
 import type { Store } from "./store";
@@ -78,14 +78,14 @@ export interface Begun {
   /** What was attached, already on the machine, for the agent to start with. */
   attachments: Attachment[];
   /** The account it works for, where the user chose among several or the
-   *  agent is lent to one. */
+   *  agent assists one. */
   account: HubAccount | null;
   /** The machines and folders it is pointed at. */
   focus: Focus;
   /** The agent's login on the machine it lives on, as its home's
    *  directory; null for the default one. */
   home: string | null;
-  /** Where its files other than images go, for an agent lent to the user. */
+  /** Where its files other than images go, for an agent assisting the user. */
   filesOn: string | null;
 }
 
@@ -134,8 +134,8 @@ interface Choice {
 }
 
 /** How the user holds a machine: their own, another's they may work on,
- *  or another's with only an agent's login lent to them. */
-type Hold = "mine" | "others" | "lent";
+ *  or another's with only an agent's login assisting them. */
+type Hold = "mine" | "others" | "assist";
 
 /** One agent's login a conversation may begin with. */
 interface Option {
@@ -146,8 +146,8 @@ interface Option {
   /** As the World is told it: the home's directory, or null for the
    *  default one. */
   home: string | null;
-  /** Lent to one of the user's logins. */
-  lent: Borrowed | null;
+  /** Assisting one of the user's logins. */
+  assistant: Assistant | null;
 }
 
 /** One machine in the picker, with the logins on it. */
@@ -224,7 +224,7 @@ export class NewTalk {
   private focusFrom: { town: string | null } | null = null;
   private focusTouched = false;
   private readonly focusPanel: FocusPanel;
-  /** Where the files of a lent agent go, as written. */
+  /** Where the files of an assisting agent go, as written. */
   private filesOn: string | null = null;
   private asked = new Map<string, Asked>();
   /** Every machine is being asked about its agents. */
@@ -408,7 +408,7 @@ export class NewTalk {
         },
       },
       () => {
-        // A file other than an image goes, for a lent agent, to a machine
+        // A file other than an image goes, for an assisting agent, to a machine
         // of the user's.
         this.placeFiles();
         this.drawStart();
@@ -555,21 +555,21 @@ export class NewTalk {
         : agentsKnown.map((agent) => this.option(machine.name, machine.written, agent, null, null));
       lines.push({ hold: mine ? "mine" : "others", machine: machine.name, written: machine.written, here: machine.here, online: machine.here ? true : machine.online, owner, shared, options });
     }
-    for (const lent of borrowedOf(world)) {
-      let line = lines.find((one) => one.hold === "lent" && one.written === lent.written);
+    for (const assistant of assistantsOf(world)) {
+      let line = lines.find((one) => one.hold === "assist" && one.written === assistant.written);
       if (!line) {
-        line = { hold: "lent", machine: lent.machine, written: lent.written, here: false, online: lent.online, owner: lent.owner, shared: false, options: [] };
+        line = { hold: "assist", machine: assistant.machine, written: assistant.written, here: false, online: assistant.online, owner: assistant.owner, shared: false, options: [] };
         lines.push(line);
       }
-      if (!line.options.some((option) => option.agent === lent.agent && option.home === lent.home)) {
-        line.options.push(this.option(lent.machine, lent.written, lent.agent, lent.home, lent));
+      if (!line.options.some((option) => option.agent === assistant.agent && option.home === assistant.home)) {
+        line.options.push(this.option(assistant.machine, assistant.written, assistant.agent, assistant.home, assistant));
       }
     }
     return lines;
   }
 
-  private option(machine: string, written: string, agent: string, home: string | null, lent: Borrowed | null): Option {
-    return { key: loginKey(machine, agent, home), machine, written, agent, home, lent };
+  private option(machine: string, written: string, agent: string, home: string | null, assistant: Assistant | null): Option {
+    return { key: loginKey(machine, agent, home), machine, written, agent, home, assistant };
   }
 
   /** The option chosen, as it stands now. */
@@ -587,11 +587,11 @@ export class NewTalk {
   }
 
   /** The logins that may open a conversation with an option's agent, and
-   *  the one it works for: the only one, the one picked, or for a lent
-   *  agent the login it is lent to. */
+   *  the one it works for: the only one, the one picked, or for an
+   *  assisting agent the login it assists. */
   private openers(world: WorldNow | null, option: Option | null): { all: Login[]; chosen: Login | null } {
     if (!option) return { all: [], chosen: null };
-    if (option.lent) return { all: [option.lent.login], chosen: option.lent.login };
+    if (option.assistant) return { all: [option.assistant.login], chosen: option.assistant.login };
     const lives = this.lives(world, option);
     const all = lives ? openersOn(world, lives) : [];
     const key = (login: Login) => `${login.hub}/${login.account}`;
@@ -606,7 +606,7 @@ export class NewTalk {
   /** The machine an option's agent lives on, where the user may work on
    *  it. */
   private lives(world: WorldNow | null, option: Option | null): Machine | null {
-    if (!option || option.lent) return null;
+    if (!option || option.assistant) return null;
     return machinesOf(world).find((machine) => machine.name === option.machine) ?? null;
   }
 
@@ -651,12 +651,12 @@ export class NewTalk {
   }
 
   /** Who is logged in to a login, where that tells it apart: the machine
-   *  has several of its agent's logins, or it is lent. */
+   *  has several of its agent's logins, or it assists. */
   private who(option: Option, line: Line): string | null {
     const facts = this.factsOf(option);
     if (!facts) return null;
     const several = line.options.filter((other) => other.agent === option.agent).length > 1;
-    return several || option.lent ? (accountOf(facts).email ?? homeLabel(facts, this.options.homeWords)) : null;
+    return several || option.assistant ? (accountOf(facts).email ?? homeLabel(facts, this.options.homeWords)) : null;
   }
 
   /** One login as a choice: the program; who is logged in where that tells
@@ -675,7 +675,7 @@ export class NewTalk {
     else if (!asked || asked.state === "asking" || (this.askingAll && !facts && asked.state !== "known")) note = words.asking;
     else if (asked.state === "offline") note = words.offline;
     else if (asked.state === "unknown") note = words.unsure;
-    else if (!facts) note = option.lent ? words.lentGone : words.notInstalled;
+    else if (!facts) note = option.assistant ? words.assistantGone : words.notInstalled;
     else if (loggedOut(facts)) note = words.loggedOut;
     else {
       who = this.who(option, line);
@@ -695,7 +695,7 @@ export class NewTalk {
     const groups: { hold: Hold; title: string; lines: Line[] }[] = [
       { hold: "mine", title: words.mine, lines: lines.filter((line) => line.hold === "mine") },
       { hold: "others", title: words.others(lines.every((line) => line.hold !== "others" || line.shared)), lines: lines.filter((line) => line.hold === "others") },
-      { hold: "lent", title: words.lent, lines: lines.filter((line) => line.hold === "lent") },
+      { hold: "assist", title: words.assisting, lines: lines.filter((line) => line.hold === "assist") },
     ];
     const machineLine = (line: Line) => {
       const notes = [line.here ? words.here : "", line.owner && line.hold !== "mine" ? words.ownedBy(line.owner) : "", line.online === false ? words.offline : ""].filter(Boolean);
@@ -852,17 +852,17 @@ export class NewTalk {
     if (option && line) {
       const who = this.who(option, line);
       const asking = !this.factsOf(option) && this.askingAll;
-      const lent = option.lent;
-      const sub = lent ? [words.lentBy(lent.owner ?? ""), lent.until ? words.lentUntil(new Date(lent.until), new Date()) : ""].filter(Boolean).join(" · ") : option.written;
+      const assistant = option.assistant;
+      const sub = assistant ? [words.assistFrom(assistant.owner ?? ""), assistant.until ? words.assistUntil(new Date(assistant.until), new Date()) : ""].filter(Boolean).join(" · ") : option.written;
       const said = [programName(option.agent), sub, who].filter(Boolean).join(" · ");
       chips.push(
         label(
           "agent",
           markOf(option.agent),
           `<span class="talk-chip-name">${escape(programName(option.agent))}</span><span class="talk-chip-sub">${escape(sub)}</span>${who ? `<span class="talk-chip-sub who">${escape(who)}</span>` : ""}${asking ? `<span class="talk-chip-sub">${escape(words.asking)}</span>` : ""}`,
-          option.lent ? `${said}
-${words.lentWorks(option.lent.owner ?? "")}` : said,
-          option.lent ? " lent" : "",
+          option.assistant ? `${said}
+${words.assistantWorks(option.assistant.owner ?? "")}` : said,
+          option.assistant ? " assist" : "",
         ),
       );
     } else {
@@ -921,13 +921,13 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
   }
 
   /** The machines its account may use: where it lives and those the
-   *  account may work on; for a lent agent, the account's own. */
+   *  account may work on; for an assisting agent, the account's own. */
   private focusPlaces(): FocusPlace[] {
     const world = this.options.store.world.peek();
     const option = this.chosenOption();
     const login = this.loginFor(world, option);
     const lives = this.lives(world, option);
-    const machines = option?.lent ? (login ? filePlaces(world, login) : []) : lives ? workPlaces(world, lives, login) : [];
+    const machines = option?.assistant ? (login ? filePlaces(world, login) : []) : lives ? workPlaces(world, lives, login) : [];
     return machines.map((machine) => ({ written: machine.written, name: machine.name, here: machine.here, online: machine.here ? true : machine.online }));
   }
 
@@ -998,13 +998,13 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
     this.models.update(offers);
   }
 
-  /** For a lent agent given files other than images: the user's machine
+  /** For an assisting agent given files other than images: the user's machine
    *  they go to. */
   private placeFiles(): void {
     const world = this.options.store.world.peek();
     const option = this.chosenOption();
     const login = this.loginFor(world, option);
-    this.filesOn = option?.lent && login && (this.tray?.files ?? 0) > 0 ? fileHome(world, login) : null;
+    this.filesOn = option?.assistant && login && (this.tray?.files ?? 0) > 0 ? fileHome(world, login) : null;
   }
 
   private drawStart(): void {
@@ -1012,7 +1012,7 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
     const option = this.chosenOption(lines);
     const line = lines.find((one) => option && one.options.includes(option));
     const said = this.input.value.trim() !== "" || (this.tray?.count ?? 0) > 0;
-    const filesNowhere = !!option?.lent && (this.tray?.files ?? 0) > 0 && !this.filesOn;
+    const filesNowhere = !!option?.assistant && (this.tray?.files ?? 0) > 0 && !this.filesOn;
     this.start.disabled = this.busy || !option || !line || !this.startable(option, line) || !said || filesNowhere;
     // No machine of the user's can take the files: said, as nothing else
     // would say why it cannot begin.
@@ -1054,7 +1054,7 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
     remember("agent", option.agent);
     const world = this.options.store.world.peek();
     const login = this.loginFor(world, option);
-    if (login && !option.lent) remember("account", `${login.hub}/${login.account}`);
+    if (login && !option.assistant) remember("account", `${login.hub}/${login.account}`);
     if (this.model) remember(`model:${option.agent}`, this.model);
     if (this.effort) remember(`effort:${option.agent}`, this.effort);
     const { words } = this.options;
@@ -1090,7 +1090,7 @@ ${words.lentWorks(option.lent.owner ?? "")}` : said,
         account: login ? { hub: login.hub, account: login.account } : null,
         focus: this.focus,
         home: option.home,
-        filesOn: option.lent && (this.tray?.files ?? 0) > 0 ? this.filesOn : null,
+        filesOn: option.assistant && (this.tray?.files ?? 0) > 0 ? this.filesOn : null,
       });
       // Begun: the page is empty again for the next conversation here.
       this.input.value = "";

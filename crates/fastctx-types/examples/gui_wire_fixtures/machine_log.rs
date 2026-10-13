@@ -10,23 +10,23 @@ pub fn fixtures() -> Vec<Page> {
     let actions = vec![
         Action::Collab { version: 2 },
         Action::Share { machine: machine(), to: to(), shared: true },
-        Action::Lend {
+        Action::Assist {
             machine: machine(),
             to: to(),
             agent: "codex".parse().unwrap(),
             home: Some("/home/me/agent".into()),
-            lent: false,
+            assisting: false,
             until: None,
         },
-        Action::Lend {
+        Action::Assist {
             machine: machine(),
             to: to(),
             agent: "claude".parse().unwrap(),
             home: None,
-            lent: true,
+            assisting: true,
             until: Some(at),
         },
-        Action::LendEnded { machine: machine(), to: to(), agent: "claude".parse().unwrap(), home: None },
+        Action::AssistEnded { machine: machine(), to: to(), agent: "claude".parse().unwrap(), home: None },
         Action::Plan { machine: machine(), agent: "claude".parse().unwrap(), home: None, plan: Some(PlanLabel::Free) },
         Action::StopActing { machine: machine() },
         Action::Relays {

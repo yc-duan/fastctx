@@ -7,8 +7,9 @@
 // own upload has it. One whose connection broke waits to go on from where
 // it stopped (`world-network.md`, 断开不是结束).
 //
-// For an agent lent to the user, files other than images go to one of the
-// user's machines (`world-run.md`, 借来的智能体没有「这里」), without asking.
+// For an agent assisting the user, files other than images go to one of
+// the user's machines (`world-run.md`, 协助的智能体没有「这里」), without
+// asking.
 // The node keeps that machine with the words, the one the first device to
 // send them gave, so they go to one machine whichever device sends.
 
@@ -27,11 +28,11 @@ interface Sending {
   preview: string | null;
 }
 
-/** For an agent lent to the user, which has no machine it works on: where
- *  its files other than images go. */
-export interface LentFiles {
-  /** Whether the agent is lent. */
-  lent(): boolean;
+/** For an agent assisting the user, which has no machine it works on:
+ *  where its files other than images go. */
+export interface AssistantFiles {
+  /** Whether the agent assists the user. */
+  assisting(): boolean;
   /** The user's machine they go to, as written in the World, or null when
    *  none can take them. */
   place(): string | null;
@@ -53,7 +54,7 @@ export class NodeTray {
     private readonly document: ComposerDocument,
     /** Something could not be attached or taken out: said by the composer. */
     private readonly failed: (why: string) => void,
-    private readonly lentFiles: LentFiles | null = null,
+    private readonly assistantFiles: AssistantFiles | null = null,
   ) {
     this.element = window.document.createElement("ul");
     this.element.className = "attach-tray";
@@ -107,10 +108,10 @@ export class NodeTray {
     return (draft?.attachments ?? []).filter((one) => !one.media_type.startsWith("image/") && !IMAGE.test(one.name)).length;
   }
 
-  /** Whether files other than images go with the words to a lent agent,
-   *  and so need a machine of the user's. */
+  /** Whether files other than images go with the words to an assisting
+   *  agent, and so need a machine of the user's. */
   get placing(): boolean {
-    return !!this.lentFiles?.lent() && this.files > 0;
+    return !!this.assistantFiles?.assisting() && this.files > 0;
   }
 
   /** Where the files other than images go: the machine kept with the
@@ -118,7 +119,7 @@ export class NodeTray {
    *  or none can take them. */
   get chosen(): string | null {
     if (!this.placing) return null;
-    return this.draft()?.files_on ?? this.lentFiles!.place();
+    return this.draft()?.files_on ?? this.assistantFiles!.place();
   }
 
   /** Gives the node the machine, when it does not have it yet: just before

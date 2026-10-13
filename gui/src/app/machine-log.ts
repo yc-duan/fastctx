@@ -1,5 +1,5 @@
 // The hub's record of changes to machines, opened from the drawing's corner
-// (`world-gui.md`, 账号、机器、共享与借出): who asked, from which device, what
+// (`world-gui.md`, 账号、机器、共享与协助): who asked, from which device, what
 // changed, and whether it was done. On a phone it rises from below.
 
 import { glyph } from "../conversation/glyphs";

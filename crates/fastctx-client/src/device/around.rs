@@ -333,8 +333,8 @@ impl Device {
         for session in self.sessions() {
             let view = session.link.view();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
-            // The machines its accounts may work on; one whose lent agents
-            // alone they may use is no machine of theirs to list.
+            // The machines its accounts may work on; one whose agents only
+            // assist them is no machine of theirs to list.
             let reachable: Vec<Reachable> = self
                 .reachable()
                 .into_iter()

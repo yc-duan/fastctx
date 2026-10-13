@@ -224,14 +224,16 @@ enum Command {
     /// for a server, the line that installs and registers it.
     Token(world::TokenArgs),
     /// The hubs this computer is on, with their accounts, machines, what is
-    /// shared and lent, and projects, and who came into its accounts.
+    /// shared, which agents assist whom, and projects, and who came into its
+    /// accounts.
     Accounts,
     /// Share one of an account's machines with another account: it may work
     /// on it and use every agent on it. Or take it back.
     Share(world::ShareArgs),
-    /// Lend one agent's login on one of an account's machines to another
-    /// account: that login, not the machine. Or take it back.
-    Lend(world::LendArgs),
+    /// Let one agent's login on one of an account's machines assist another
+    /// account: that login works for it, the machine is not given. Or end
+    /// the assistance.
+    Assist(world::AssistArgs),
     /// The agents on a machine of another account, which this account used,
     /// no longer reach this account's machines.
     Disallow(world::DisallowArgs),
@@ -428,7 +430,7 @@ fn main() -> ExitCode {
         Command::Accounts => world::accounts(),
         Command::Data(args) => data::run(args),
         Command::Share(args) => world::share(args),
-        Command::Lend(args) => world::lend(args),
+        Command::Assist(args) => world::assist(args),
         Command::Disallow(args) => world::disallow(args),
         Command::Remove(args) => world::remove(args),
         Command::Direct(args) => world::direct(args),
@@ -467,7 +469,7 @@ const PEOPLE_ONLY: [&str; 22] = [
     "token",
     "accounts",
     "share",
-    "lend",
+    "assist",
     "disallow",
     "remove",
     "direct",

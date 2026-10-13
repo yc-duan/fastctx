@@ -1,8 +1,8 @@
 // The account's World as the drawing shows it (`machine-map.ts`): each hub
 // the account is on, each machine it may work on, and each machine of
-// another an agent is lent on, with what the drawing marks on it. The front
-// page and the machines page draw the same thing; a machine is keyed
-// `m:<name>`, a machine an agent is lent on `lent:<name>`, a hub `hub:<id>`.
+// another whose agent assists it, with what the drawing marks on it. The
+// front page and the machines page draw the same thing; a machine is keyed
+// `m:<name>`, one whose agent assists `assist:<name>`, a hub `hub:<id>`.
 // Between two machines, the direct link each holds with the other, as the
 // two say.
 
@@ -10,7 +10,7 @@ import { loginsOf, type LinkSeen } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { MapHub, MapLink, MapNode } from "./map-nodes";
 import { osName } from "../world/names";
-import { borrowedOf, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
+import { assistantsOf, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
 import { residentsOf } from "./store";
 
 export interface MapWords {
@@ -19,9 +19,9 @@ export interface MapWords {
    *  its ring. */
   takesDirect: string;
   mineGroup: string;
-  lentGroup(owner: string): string;
-  lentShort(owner: string): string;
-  borrowedSaid(owner: string): string;
+  assistGroup(owner: string): string;
+  assistShort(owner: string): string;
+  assistantSaid(owner: string): string;
   reachingWhat: string;
   hubOnline: string;
   hubConnecting: string;
@@ -71,22 +71,22 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       group: owner ? { key: `of:${owner}`, label: words.ownedBy(owner) } : { key: "mine", label: words.mineGroup },
     });
   }
-  const lent = new Set<string>();
-  for (const one of borrowedOf(world)) {
-    if (lent.has(one.written)) continue;
-    lent.add(one.written);
+  const assisting = new Set<string>();
+  for (const one of assistantsOf(world)) {
+    if (assisting.has(one.written)) continue;
+    assisting.add(one.written);
     nodes.push({
-      key: `lent:${one.written}`,
+      key: `assist:${one.written}`,
       name: one.written,
-      sub: words.lentShort(one.owner ?? ""),
+      sub: words.assistShort(one.owner ?? ""),
       hubs: [one.login.hub],
       here: false,
       online: one.online,
-      hold: "lent",
+      hold: "assist",
       reaching: machineActsFor(world, one.machine, one.login),
       marks: marks(one.machine),
-      title: words.borrowedSaid(one.owner ?? ""),
-      group: { key: `lent:${one.owner ?? ""}`, label: words.lentGroup(one.owner ?? "") },
+      title: words.assistantSaid(one.owner ?? ""),
+      group: { key: `assist:${one.owner ?? ""}`, label: words.assistGroup(one.owner ?? "") },
     });
   }
   return { hubs, nodes, hubLabels, links: linksOf(world, nodes) };

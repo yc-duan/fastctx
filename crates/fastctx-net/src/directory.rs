@@ -2,7 +2,7 @@
 //!
 //! The hub is where this is decided: accounts and their level, the
 //! computers and phones logged in to them, the machines registered under
-//! them, the machines shared and the agents' logins lent between accounts,
+//! them, the machines shared and the agents' logins assisting other accounts,
 //! the machines that act for an account because it used an agent there,
 //! and whose each project is. Every member is given its own view of it
 //! (`View`), cut to what concerns it, and checks what reaches it against
@@ -76,11 +76,11 @@ pub struct Share {
     pub account: AccountName,
 }
 
-/// One login of an agent on a machine, lent to an account that is not the
-/// machine's: that login, and not the machine; until a deadline, when the
-/// owner set one.
+/// One login of an agent on a machine, assisting an account that is not the
+/// machine's: that login works for the account, which is not given the
+/// machine; until a deadline, when the owner set one.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Lend {
+pub struct Assist {
     pub machine: MachineName,
     pub account: AccountName,
     pub agent: AgentName,
@@ -88,24 +88,24 @@ pub struct Lend {
     /// agent's default login there, which follows its user's environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<PathBuf>,
-    /// When the loan ends by itself; none while the owner keeps it lent.
+    /// When the assistance ends by itself; none while the owner keeps it on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<Timestamp>,
 }
 
-impl Lend {
-    /// Whether this lends `agent`'s login `home` there.
+impl Assist {
+    /// Whether this is `agent`'s login `home` there.
     pub fn is(&self, agent: &AgentName, home: Option<&Path>) -> bool {
         self.agent == *agent && self.home.as_deref() == home
     }
 
-    /// Whether `other` lends the same login to the same account, whatever
-    /// its deadline.
-    pub fn same(&self, other: &Lend) -> bool {
+    /// Whether `other` is the same login assisting the same account,
+    /// whatever its deadline.
+    pub fn same(&self, other: &Assist) -> bool {
         self.machine == other.machine && self.account == other.account && other.is(&self.agent, self.home.as_deref())
     }
 
-    /// Whether it still lends at `now`: its deadline, if any, is later.
+    /// Whether it still assists at `now`: its deadline, if any, is later.
     pub fn live(&self, now: Timestamp) -> bool {
         self.until.is_none_or(|until| until > now)
     }
@@ -171,8 +171,9 @@ pub struct Directory {
     pub members: Vec<Member>,
     #[serde(default)]
     pub shares: Vec<Share>,
-    #[serde(default)]
-    pub lends: Vec<Lend>,
+    /// Written `lends`, the name hubs and members of every version read.
+    #[serde(default, rename = "lends")]
+    pub assists: Vec<Assist>,
     /// Plans set by hand on logins that name none.
     #[serde(default)]
     pub plans: Vec<LoginPlan>,
@@ -219,18 +220,25 @@ impl Directory {
         self.shares.iter().any(|share| share.account == *account && share.machine == *machine)
     }
 
-    /// The agents' logins on `machine` lent to `account` now. A loan past
-    /// its deadline lends nothing from that moment, on the hub and on every
-    /// member alike, before the hub has taken it off the list.
-    pub fn lent<'a>(&'a self, account: &'a AccountName, machine: &'a MachineName) -> impl Iterator<Item = &'a Lend> {
+    /// The agents' logins on `machine` assisting `account` now. An
+    /// assistance past its deadline gives nothing from that moment, on the
+    /// hub and on every member alike, before the hub has taken it off the
+    /// list.
+    pub fn assisting<'a>(
+        &'a self,
+        account: &'a AccountName,
+        machine: &'a MachineName,
+    ) -> impl Iterator<Item = &'a Assist> {
         let now = Timestamp::now();
-        self.lends.iter().filter(move |lend| lend.account == *account && lend.machine == *machine && lend.live(now))
+        self.assists
+            .iter()
+            .filter(move |assist| assist.account == *account && assist.machine == *machine && assist.live(now))
     }
 
     /// What `account` may do on `machine`: everything on its own machines,
     /// on those shared with it and, for the super administrator, on every
-    /// machine; the lent logins alone on another's; nothing on what is no
-    /// machine.
+    /// machine; the logins assisting it alone on another's; nothing on what
+    /// is no machine.
     pub fn rights(&self, account: &AccountName, machine: &MachineName) -> Rights {
         let Some(member) = self.member(machine) else { return Rights::NONE };
         if !member.is_machine() {
@@ -239,12 +247,12 @@ impl Directory {
         if member.home.as_ref() == Some(account) || self.is_super(account) || self.shared(account, machine) {
             return Rights::ALL;
         }
-        Rights { hands: false, agents: self.lent(account, machine).next().is_some() }
+        Rights { hands: false, agents: self.assisting(account, machine).next().is_some() }
     }
 
     /// Whether `account` may use `agent`'s login `home` on `machine` (none
     /// is that agent's default login there): any login of a machine it may
-    /// work on, else one lent to it.
+    /// work on, else one assisting it.
     pub fn may_use_login(
         &self,
         account: &AccountName,
@@ -252,13 +260,14 @@ impl Directory {
         agent: &AgentName,
         home: Option<&Path>,
     ) -> bool {
-        self.rights(account, machine).hands || self.lent(account, machine).any(|lend| lend.is(agent, home))
+        self.rights(account, machine).hands || self.assisting(account, machine).any(|assist| assist.is(agent, home))
     }
 
     /// Whether `member` may act for `account`: the account is logged in on
-    /// it, or used an agent there and may still use the agents there. A
-    /// loan past its deadline ends that from the same moment as the loan,
-    /// before the hub drops the record of the use (`settle_acting`).
+    /// it, or used an agent there and may still use the agents there. An
+    /// assistance past its deadline ends that from the same moment as the
+    /// assistance, before the hub drops the record of the use
+    /// (`settle_acting`).
     pub fn may_act_for(&self, account: &AccountName, member: &MachineName) -> bool {
         self.logged_in(member, account)
             || (self.acting.iter().any(|acting| acting.account == *account && acting.machine == *member)
@@ -341,7 +350,7 @@ impl Directory {
             Some(_) => match purpose {
                 Purpose::Hands if rights.agents => {
                     format!(
-                        "the account {account} was lent an agent on {to}, not the machine, so it may not work on {to}"
+                        "an agent on {to} assists the account {account}, which is not given the machine, so it may not work on {to}"
                     )
                 }
                 Purpose::Hands => format!("the account {account} may not work on {to}"),
@@ -387,8 +396,8 @@ impl Directory {
 
     /// Drops what no longer stands of what acts for accounts: a machine acts
     /// for an account that used an agent there only while the account may
-    /// still use agents there, so a share or a loan taken back takes it
-    /// along, and lending again needs another use.
+    /// still use agents there, so a share or an assistance ended takes it
+    /// along, and assisting again needs another use.
     pub fn settle_acting(&mut self) {
         let keep: Vec<bool> =
             self.acting.iter().map(|acting| self.rights(&acting.account, &acting.machine).agents).collect();

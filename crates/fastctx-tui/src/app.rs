@@ -49,7 +49,7 @@ pub enum Act {
     Do(Job),
     /// This terminal goes to an agent's own program until it exits; the
     /// page hears how it went (`Data::Returned`).
-    Lend(HostCommand),
+    HandOver(HostCommand),
 }
 
 /// Something to ask of the World for a page.
@@ -213,17 +213,18 @@ pub enum Feed {
     },
 }
 
-/// One login of an agent another account lent to one of this computer's,
-/// on a machine of that account's (`world-network.md`, 共享机器与借出智能体).
+/// One login of an agent of another account assisting one of this
+/// computer's, on a machine of that account's (`world-network.md`,
+/// 共享机器与智能体协助).
 #[derive(Clone, Debug)]
-pub struct Lent {
+pub struct Assisting {
     pub machine: MachineName,
     pub agent: AgentName,
     /// The login's directory there; none for the agent's default login.
     pub home: Option<std::path::PathBuf>,
     /// Whose machine it is.
     pub owner: Option<AccountName>,
-    /// The account it is lent to.
+    /// The account it assists.
     pub to: fastctx_types::access::HubAccount,
 }
 
@@ -245,8 +246,8 @@ pub enum Data {
     Choices {
         nodes: Result<NodesReply, String>,
         towns: Result<Vec<TownSummary>, String>,
-        /// The agents other accounts lent to this computer's.
-        lent: Vec<Lent>,
+        /// The agents of other accounts assisting this computer's.
+        assisting: Vec<Assisting>,
     },
     History(Vec<SessionEvent>),
     Event(SessionEvent),
@@ -291,8 +292,8 @@ pub struct App {
     pages: Vec<(u64, Page)>,
     next_id: u64,
     pub quit: bool,
-    /// A program a page asked to lend the terminal to, and that page.
-    lent: Option<(u64, HostCommand)>,
+    /// A program a page asked to hand the terminal to, and that page.
+    handed: Option<(u64, HostCommand)>,
     started: Instant,
     /// A paste is arriving: this many characters so far.
     pasting: Option<usize>,
@@ -306,7 +307,7 @@ impl App {
             pages: vec![(0, root)],
             next_id: 1,
             quit: false,
-            lent: None,
+            handed: None,
             started: Instant::now(),
             pasting: None,
         }
@@ -425,16 +426,16 @@ impl App {
                 Vec::new()
             }
             Act::Do(job) => vec![(id, job)],
-            Act::Lend(command) => {
-                self.lent = Some((id, command));
+            Act::HandOver(command) => {
+                self.handed = Some((id, command));
                 Vec::new()
             }
         }
     }
 
-    /// The program to lend the terminal to, and the page that asked.
-    pub fn take_lent(&mut self) -> Option<(u64, HostCommand)> {
-        self.lent.take()
+    /// The program to hand the terminal to, and the page that asked.
+    pub fn take_handed(&mut self) -> Option<(u64, HostCommand)> {
+        self.handed.take()
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {

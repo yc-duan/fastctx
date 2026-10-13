@@ -1,4 +1,4 @@
-// An agent's homes on a machine (`world-gui.md`, 账号、机器、共享与借出): each is
+// An agent's homes on a machine (`world-gui.md`, 账号、机器、共享与协助): each is
 // one login of that agent, Codex's `CODEX_HOME` or Claude Code's
 // `CLAUDE_CONFIG_DIR`, and the machine answers once for each. Who is logged
 // in there, the plan, and how much of each usage window is spent are said as

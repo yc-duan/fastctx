@@ -84,8 +84,8 @@ impl History {
         let mut names: BTreeSet<MachineName> = BTreeSet::new();
         match &action {
             Action::Share { machine, to, .. }
-            | Action::Lend { machine, to, .. }
-            | Action::LendEnded { machine, to, .. } => {
+            | Action::Assist { machine, to, .. }
+            | Action::AssistEnded { machine, to, .. } => {
                 names.insert(machine.clone());
                 accounts.insert(to.clone());
             }
@@ -133,7 +133,11 @@ impl History {
                     directory.shares.iter().filter(|share| share.account == *name).map(|share| share.machine.clone()),
                 );
                 names.extend(
-                    directory.lends.iter().filter(|lend| lend.account == *name).map(|lend| lend.machine.clone()),
+                    directory
+                        .assists
+                        .iter()
+                        .filter(|assist| assist.account == *name)
+                        .map(|assist| assist.machine.clone()),
                 );
                 for project in &directory.projects {
                     if project.owner == *name || project.granted.contains(name) {
@@ -183,7 +187,11 @@ impl History {
                     directory.shares.iter().filter(|share| share.machine == name).map(|share| share.account.clone()),
                 );
                 accounts.extend(
-                    directory.lends.iter().filter(|lend| lend.machine == name).map(|lend| lend.account.clone()),
+                    directory
+                        .assists
+                        .iter()
+                        .filter(|assist| assist.machine == name)
+                        .map(|assist| assist.account.clone()),
                 );
             }
         }
@@ -270,13 +278,13 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
         Change::Share { machine, to, shared } => {
             Action::Share { machine: machine.clone(), to: to.clone(), shared: *shared }
         }
-        Change::Lend { machine, to, agent, home, lent, until } => Action::Lend {
+        Change::Assist { machine, to, agent, home, assisting, until } => Action::Assist {
             machine: machine.clone(),
             to: to.clone(),
             agent: agent.clone(),
             home: home.clone(),
-            lent: *lent,
-            until: until.filter(|_| *lent),
+            assisting: *assisting,
+            until: until.filter(|_| *assisting),
         },
         Change::Plan { machine, agent, home, plan } => {
             Action::Plan { machine: machine.clone(), agent: agent.clone(), home: home.clone(), plan: *plan }

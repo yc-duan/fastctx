@@ -16,7 +16,7 @@ export interface MapNode {
   hubs: string[];
   here: boolean;
   online: boolean | null;
-  hold: "mine" | "others" | "lent";
+  hold: "mine" | "others" | "assist";
   /** Its agents may reach the account's machines. */
   reaching: boolean;
   /** The agents on it, by what they are doing. */
@@ -34,7 +34,7 @@ export interface MapNode {
    *  measured. */
   hubMs?: number | undefined;
   /** Whose it is, as the drawing groups machines round their hub: the
-   *  account's own, one other's, or lent by one other. */
+   *  account's own, one other's, or one other's whose agent assists it. */
   group?: { key: string; label: string } | undefined;
 }
 

@@ -1,4 +1,4 @@
-// Coming into a World (`world-gui.md`, 账号、机器、共享与借出). A computer
+// Coming into a World (`world-gui.md`, 账号、机器、共享与协助). A computer
 // that is in none yet is offered two ways: join one with the server's
 // address, an account and its password, or create one with this computer
 // as its server and the person its administrator. A phone scans the code a
@@ -394,7 +394,7 @@ export class LoginPage implements Page {
 
   /** What is left for the person once in: a startup service that did not
    *  install. Nothing when all is well. Agents are not set up here
-   *  (`world-gui.md`, 账号、机器、共享与借出): their own page does that. */
+   *  (`world-gui.md`, 账号、机器、共享与协助): their own page does that. */
   private wanting(): { kept: string } {
     const { words } = this.options;
     const kept = this.done?.kept;

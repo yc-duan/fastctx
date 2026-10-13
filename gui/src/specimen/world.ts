@@ -11,7 +11,7 @@ import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
 
 const at = (time: string) => `2026-10-04T${time}Z`;
-/** A loan's deadline some days from the moment the specimen is opened, at
+/** An assistance's deadline some days from the moment the specimen is opened, at
  *  that day's six in the evening, so it is always ahead. */
 const daysAhead = (days: number) => {
   const until = new Date();
@@ -111,9 +111,9 @@ function many(): Node[] {
 
 /** The hubs this desktop is logged in to, as `nodes` and `accounts` see
  *  them: its own, where it is the super administrator, has shared lab with
- *  ada and lent ada a Codex login of this computer's, and once used an
- *  agent on bo's gpu; and with `two`, a second one at work, where it is a
- *  member that ops shared build with and lent the Claude on render. */
+ *  ada and lets a Codex login of this computer's assist ada, and once used
+ *  an agent on bo's gpu; and with `two`, a second one at work, where it is a
+ *  member that ops shared build with and whom the Claude on render assists. */
 function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
   const link = { kind: "online" as const, since: at("01:10:02"), hub: "203.0.113.10:7443", route: { kind: "card" as const, name: "Ethernet" } };
   const nodes: HubNodes[] = [
@@ -175,7 +175,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         member("gpu", "computer", ["bo"], "bo", "03:30:00", true, "be3f0a77"),
       ],
       shares: [{ machine: "lab", account: "ada" }],
-      lends: [
+      assists: [
         { machine: "desktop", account: "ada", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: daysAhead(3) },
         { machine: "desktop", account: "bo", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: null },
       ],
@@ -216,7 +216,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         member("render", "computer", ["ops"], "ops", "00:07:00", true, "4e11d3a9"),
       ],
       shares: [{ machine: "build", account: "yc" }],
-      lends: [{ machine: "render", account: "yc", agent: "claude", home: null, until: daysAhead(1) }],
+      assists: [{ machine: "render", account: "yc", agent: "claude", home: null, until: daysAhead(1) }],
       plans: [{ machine: "render", agent: "claude", home: null, plan: "max" }],
       acting: [{ machine: "build", account: "yc", since: at("09:15:00") }],
       projects: [{ name: "ingest", owner: "yc", granted: [] }],
@@ -299,7 +299,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
               command: "python train.py --epochs 400 --joint all",
               output: "/home/me/.fastctx/world/towns/mark50/residents/codex-3c77/out/j-p0q1r2.log",
             },
-            // lab is lent to bob too: what bob runs there shows, marked as his.
+            // lab is shared with bob too: what bob runs there shows, marked as his.
             {
               job: "j-b0b7e1",
               machine: "lab",
@@ -373,7 +373,7 @@ export function specimenNow(two = false): { world: WorldNow; now: Date; lastVisi
  *  computer, a second Codex login for work, nearly spent, and a second
  *  Claude login that was logged out; on lab, Claude Code installed but not
  *  logged in; on server, Claude Code logged in but not yet let to work
- *  unasked; on render, another's, only the Claude lent to this account. */
+ *  unasked; on render, another's, only the Claude assisting this account. */
 export function specimenAgents(machine: string, at: Date = new Date()): WorldAgents {
   const efforts = (names: string[]) => names.map((effort) => ({ effort, description: "" }));
   const now = at.getTime();
@@ -464,7 +464,7 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
     integration: { kind: "known", value: "out" },
     unattended: { kind: "known", value: false },
   };
-  // A machine of another answers only with the logins lent to the asker.
+  // A machine of another answers only with the logins assisting the asker.
   const asks: AgentFacts = { ...claude, unattended: { kind: "known", value: false } };
   const agents =
     machine === "desktop" ? [codex, claude, work, personal] : machine === "render" ? [claude] : machine === "server" ? [codex, asks] : [codex, claude];
@@ -475,18 +475,18 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
 }
 
 /** The changes a specimen takes as asked: where other machines connect to
- *  a machine directly, so the machines page shows what follows, and loans
- *  with their deadlines; nothing really connects. Anything else it refuses. */
+ *  a machine directly, so the machines page shows what follows, and
+ *  assistance with its deadlines; nothing really connects. Anything else it refuses. */
 export function specimenChange(world: WorldNow | null, hub: string, made: AccountChange): WorldNow | null {
   if (!world) return null;
-  if (made.change === "lend") {
-    if (made.lent && made.until && new Date(made.until) <= new Date()) throw new Error("the loan's deadline has already passed");
+  if (made.change === "assist") {
+    if (made.assisting && made.until && new Date(made.until) <= new Date()) throw new Error("the assistance's deadline has already passed");
     const home = made.home ?? null;
     const hubs = world.accounts.hubs.map((one) => {
       if (one.hub !== hub) return one;
-      const kept = one.lends.filter((lend) => !(lend.machine === made.machine && lend.account === made.to && lend.agent === made.agent && lend.home === home));
-      const lends = made.lent ? [...kept, { machine: made.machine, account: made.to, agent: made.agent, home, until: made.until ?? null }] : kept;
-      return { ...one, lends };
+      const kept = one.assists.filter((assist) => !(assist.machine === made.machine && assist.account === made.to && assist.agent === made.agent && assist.home === home));
+      const assists = made.assisting ? [...kept, { machine: made.machine, account: made.to, agent: made.agent, home, until: made.until ?? null }] : kept;
+      return { ...one, assists };
     });
     return { ...world, accounts: { ...world.accounts, hubs } };
   }

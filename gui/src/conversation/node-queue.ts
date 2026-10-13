@@ -9,7 +9,7 @@
 import type { ComposerSession, ComposerSessionState } from "./composer";
 import { bindComposer, type ComposerDocument } from "./composer";
 import type { AttachWords } from "./attach";
-import { NodeTray, type LentFiles } from "./node-tray";
+import { NodeTray, type AssistantFiles } from "./node-tray";
 import type { QueueWords } from "./queue";
 import type { Attachment } from "../world/attachments";
 import type { ComposerUpdated } from "../world/composer";
@@ -36,7 +36,7 @@ export class NodeQueue {
     private readonly session: ComposerSession,
     /** Something could not be done: said by the composer. */
     private readonly failed: (why: string) => void,
-    private readonly lentFiles: LentFiles | null = null,
+    private readonly assistantFiles: AssistantFiles | null = null,
     /** A line sent at once: the page shows it below the turn's line until
      *  the session takes it in (walkthrough items 9, 10). */
     private readonly sentNow: ((text: string, attachments: readonly Attachment[], sending: Promise<ComposerUpdated>) => void) | null = null,
@@ -107,7 +107,7 @@ export class NodeQueue {
       field.className = "queue-edit";
       field.rows = 2;
       field.setAttribute("aria-label", this.words.edit);
-      const tray = this.attachWords ? new NodeTray(this.attachWords, this.session, document, this.failed, this.lentFiles) : null;
+      const tray = this.attachWords ? new NodeTray(this.attachWords, this.session, document, this.failed, this.assistantFiles) : null;
       this.editing = { id, document, field, tray, unbind: bindComposer(field, document) };
       this.draw();
       field.focus();

@@ -61,17 +61,11 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let inherited = super::fork_history::retained(node, resident, &session, through.as_deref())?;
     let id = node.residents.new_id(&source.host.agent)?;
     let super::Command { program, env, .. } = super::command(node, source.home.as_deref())?;
-    let (words, heard) = crate::colleagues::instructions(
-        node,
-        &id,
-        town.as_ref(),
-        &Origin::User,
-        &source.acting,
-    )
-    .await?;
+    let (words, heard) =
+        crate::colleagues::instructions(node, &id, town.as_ref(), &Origin::User, &source.acting).await?;
     let directory = node.world.conversation(&id);
     fastctx_platform::ensure_private_dir(directory.path()).map_err(failure)?;
-    let lent = node.works_here(&source.acting).is_err();
+    let assisting = node.works_here(&source.acting).is_err();
     let at = Timestamp::now();
     let about = About {
         id: id.clone(),
@@ -117,7 +111,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
                 first_words: "",
                 model: selected_model.as_deref(),
                 reasoning_effort: selected_effort.as_deref(),
-                lent,
+                assisting,
             };
             super::trust(&[world.as_path(), cwd.as_path()], &env)?;
             background::claude(&program, &background::fork_args(&source_session, &start), &cwd, &env)

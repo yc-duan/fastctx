@@ -1,5 +1,5 @@
 // Hooking an agent's login up to the World, or removing it (`world-gui.md`,
-// 账号、机器、共享与借出): a real change to the agent, so a card of its own.
+// 账号、机器、共享与协助): a real change to the agent, so a card of its own.
 // A drawing of its own hands giving way to `run`; what is put in, turned off
 // and left alone, each a short label and a few tags, the sentence behind
 // them on hover; the programs that use the login, as tags; what happens to

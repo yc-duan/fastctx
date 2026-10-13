@@ -1,5 +1,5 @@
 // A new password and its repeat, the same wherever one is set
-// (`world-gui.md`, 账号、机器、共享与借出): before anything is typed, the bar it
+// (`world-gui.md`, 账号、机器、共享与协助): before anything is typed, the bar it
 // must clear is said quietly under it; as it is typed, what it still lacks,
 // then how strong it is in three marks; what is wrong when the form is sent
 // is said there too, beside the fields, not at the foot of the form.

@@ -120,7 +120,7 @@
   text-overflow: ellipsis;
 }
 
-.talk-chip.lent .talk-chip-sub:not(.who) {
+.talk-chip.assist .talk-chip-sub:not(.who) {
   color: var(--accent);
 }
 

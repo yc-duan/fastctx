@@ -35,11 +35,11 @@ pub struct Start<'a> {
     pub first_words: &'a str,
     pub model: Option<&'a str>,
     pub reasoning_effort: Option<&'a str>,
-    /// The login is lent to another account (`world-network.md`, 共享机器与
-    /// 借出智能体): it goes without Claude in Chrome, which works the browser
+    /// The login assists another account (`world-network.md`, 共享机器与
+    /// 智能体协助): it goes without Claude in Chrome, which works the browser
     /// of the machine it runs on. Everything else of the login comes along as
-    /// its owner set it up; a lent agent is a whole one.
-    pub lent: bool,
+    /// its owner set it up; an assisting agent is a whole one.
+    pub assisting: bool,
 }
 
 /// `claude --bg` chooses the session's id itself and ignores `--session-id`
@@ -74,7 +74,7 @@ fn settings_args(start: &Start) -> Vec<OsString> {
         "--append-system-prompt-file".into(),
         start.instructions.into(),
     ];
-    if start.lent {
+    if start.assisting {
         args.push("--no-chrome".into());
     }
     if let Some(model) = start.model {

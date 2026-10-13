@@ -4,7 +4,7 @@
 //! A member sees itself; the accounts it may act for, the machines they may
 //! use and the devices logged in to them; the accounts that may use it, and
 //! the members that may act for those, which is whom calls to it come from;
-//! the shares, loans, acting and projects of all these accounts; the hub's
+//! the shares, assistance, acting and projects of all these accounts; the hub's
 //! super administrator, whom every member is told of, since it may use them
 //! all; whether each member it sees is online, since when, through which
 //! machine, and how its lines go; and every machine that allows direct
@@ -98,17 +98,18 @@ fn cut(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Direc
             || all.member(machine).and_then(|machine| machine.home.as_ref()).is_some_and(|home| mine.contains(home))
     };
     let shares: Vec<_> = all.shares.iter().filter(|share| concerns(&share.account, &share.machine)).cloned().collect();
-    let lends: Vec<_> = all.lends.iter().filter(|lend| concerns(&lend.account, &lend.machine)).cloned().collect();
+    let assists: Vec<_> =
+        all.assists.iter().filter(|assist| concerns(&assist.account, &assist.machine)).cloned().collect();
     let named: BTreeSet<&AccountName> = accounts
         .iter()
         .chain(shares.iter().map(|share| &share.account))
-        .chain(lends.iter().map(|lend| &lend.account))
+        .chain(assists.iter().map(|assist| &assist.account))
         .chain(all.super_account().map(|account| &account.name))
         .collect();
     Directory {
         accounts: all.accounts.iter().filter(|account| named.contains(&account.name)).cloned().collect(),
         shares,
-        lends,
+        assists,
         plans: all.plans.iter().filter(|plan| seen.contains(&plan.machine)).cloned().collect(),
         acting: all
             .acting

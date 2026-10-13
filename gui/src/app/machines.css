@@ -613,7 +613,7 @@
   box-shadow: inset 0 0 0 1.4px var(--text-3);
 }
 
-.panel-head.lent .dot {
+.panel-head.assist .dot {
   background: none;
   box-shadow: inset 0 0 0 1.8px var(--accent);
 }
@@ -700,8 +700,8 @@
   color: var(--caution);
 }
 
-/* Whom it is shared with, or a login lent to, each a pill taken back with
-   its cross, and the way to give it to another at the end. */
+/* Whom it is shared with, or whom a login of it assists, each a pill
+   ended with its cross, and the way to give it to another at the end. */
 .given-row {
   display: flex;
   flex-wrap: wrap;
@@ -1332,11 +1332,11 @@
   fill: color-mix(in srgb, var(--pen-clay) 16%, transparent);
 }
 
-.map-boxes .lent .box-body {
+.map-boxes .assist .box-body {
   fill: color-mix(in srgb, var(--pen-clay) 4%, transparent);
 }
 
-.map-boxes .lent .box-title {
+.map-boxes .assist .box-title {
   fill: color-mix(in srgb, var(--pen-clay) 9%, transparent);
 }
 

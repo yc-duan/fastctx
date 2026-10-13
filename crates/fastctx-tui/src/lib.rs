@@ -92,8 +92,8 @@ async fn live(world: World) -> anyhow::Result<()> {
         }
         // The terminal goes to an agent's own program; the World goes on
         // meanwhile, and what it says waits to be drawn.
-        if let Some((page, command)) = app.take_lent() {
-            let returned = screen.lend(&input_sender, || fastctx_client::host::run(&command))?;
+        if let Some((page, command)) = app.take_handed() {
+            let returned = screen.hand_over(&input_sender, || fastctx_client::host::run(&command))?;
             let returned = returned.map(|status| status.code()).map_err(|error| error.to_string());
             for (page, job) in app.data(page, app::Data::Returned(returned)) {
                 feed::run(world.clone(), answer_sender.clone(), page, job);
