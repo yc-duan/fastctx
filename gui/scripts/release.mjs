@@ -14,7 +14,7 @@ const unsigned = args.includes("--unsigned");
 const notesFile = args.filter(arg => arg !== "--unsigned");
 if (notesFile.length > 1) throw new Error("Usage: node scripts/release.mjs [--unsigned] [notes.md]");
 const linux = process.platform === "linux";
-if (!linux && process.platform !== "win32") throw new Error("World release packaging supports Windows and Linux");
+if (!linux && process.platform !== "win32") throw new Error("Fastctx release packaging supports Windows and Linux");
 if (linux && !unsigned) throw new Error("Linux packages must finish native notices and verification with scripts/release-linux.sh; updater signing is a separate step");
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("CLAUDE")));
 env.RUSTUP_TOOLCHAIN = toolchain.slice(1);
@@ -47,11 +47,12 @@ const release = JSON.parse(readFileSync(join(gui, "src-tauri", "tauri.release.co
 const config = { bundle: { ...release.bundle, externalBin: ["binaries/fastctx"], createUpdaterArtifacts: !unsigned } };
 if (linux) {
   config.bundle.targets = ["deb", "appimage"];
+  // Debian keeps a package's notices under its name, which Tauri makes the product's in kebab case.
   config.bundle.linux = { deb: { depends: ["pkexec"], files: {
-    "/usr/share/doc/world/copyright": "licenses/copyright",
-    "/usr/share/doc/world/LICENSE-APACHE": "licenses/LICENSE-APACHE",
-    "/usr/share/doc/world/NOTICE": "licenses/NOTICE",
-    "/usr/share/doc/world/THIRD_PARTY_LICENSES.md": "licenses/THIRD_PARTY_LICENSES.md",
+    "/usr/share/doc/fastctx/copyright": "licenses/copyright",
+    "/usr/share/doc/fastctx/LICENSE-APACHE": "licenses/LICENSE-APACHE",
+    "/usr/share/doc/fastctx/NOTICE": "licenses/NOTICE",
+    "/usr/share/doc/fastctx/THIRD_PARTY_LICENSES.md": "licenses/THIRD_PARTY_LICENSES.md",
   } } };
 }
 run(["build", ...(unsigned ? ["--no-sign"] : []), "--config", JSON.stringify(config), "--", "--locked", "-j", env.CARGO_BUILD_JOBS ?? "4"], gui);

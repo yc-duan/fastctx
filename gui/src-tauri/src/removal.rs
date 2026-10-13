@@ -251,7 +251,7 @@ fn finish(app: &AppHandle, everything: bool) -> Result<(), String> {
         .ok_or("this Fastctx is not running from an installed deb or an AppImage")?;
     let identity = fastctx_platform::current_identity().map_err(|error| error.to_string())?;
     let temporary =
-        tempfile::Builder::new().prefix("world-appimage-uninstall-").tempdir().map_err(|error| error.to_string())?;
+        tempfile::Builder::new().prefix("fastctx-appimage-uninstall-").tempdir().map_err(|error| error.to_string())?;
     fastctx_platform::ensure_private_dir(temporary.path()).map_err(|error| error.to_string())?;
     let helper = temporary.path().join("fastctx");
     std::fs::copy(program()?, &helper).map_err(|error| error.to_string())?;

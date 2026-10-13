@@ -9,7 +9,9 @@ use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 
-const REGISTRY: &str = "/var/lib/world/installations";
+const REGISTRY: &str = "/var/lib/fastctx/installations";
+/// Tauri names the Debian package after the product, `Fastctx`, in kebab case.
+const PACKAGE: &str = "fastctx";
 
 #[derive(Serialize, Deserialize)]
 struct Registration {
@@ -66,8 +68,8 @@ pub fn before_remove() -> anyhow::Result<()> {
     }
     if Path::new(REGISTRY).try_exists()? && crate::entries(Path::new(REGISTRY))?.is_empty() {
         std::fs::remove_dir(REGISTRY)?;
-        if crate::entries(Path::new("/var/lib/world"))?.is_empty() {
-            std::fs::remove_dir("/var/lib/world")?;
+        if crate::entries(Path::new("/var/lib/fastctx"))?.is_empty() {
+            std::fs::remove_dir("/var/lib/fastctx")?;
         }
     }
     Ok(())
@@ -86,7 +88,7 @@ fn withdraw(mut installation: Installation) -> anyhow::Result<()> {
         }
     }
     request.system_results = results;
-    let temporary = tempfile::Builder::new().prefix("world-package-user-").tempdir()?;
+    let temporary = tempfile::Builder::new().prefix("fastctx-package-user-").tempdir()?;
     let program = temporary.path().join("fastctx");
     std::fs::copy(std::env::current_exe()?, &program)?;
     let input = temporary.path().join("request.json");
@@ -162,7 +164,7 @@ fn groups(name: &std::ffi::CStr, gid: u32) -> anyhow::Result<Vec<u32>> {
 }
 
 /// The approval obtained for kernel cleanup remains in this helper until
-/// World requests package removal and its exact process lifetime exits.
+/// Fastctx requests package removal and its exact process lifetime exits.
 pub(crate) async fn finish(request: &crate::Request) -> anyhow::Result<()> {
     let installation = &request.installation;
     let control = installation.application_control.as_ref().context("the graphical package handoff is absent")?;
@@ -181,12 +183,12 @@ pub(crate) async fn finish(request: &crate::Request) -> anyhow::Result<()> {
         }
         tokio::select! {
             change = changes.recv() => { change.context("watching package removal stopped")??; },
-            ended = fastctx_platform::host_process::exited(identity) => { ended?; anyhow::bail!("World exited without requesting package removal"); },
+            ended = fastctx_platform::host_process::exited(identity) => { ended?; anyhow::bail!("Fastctx exited without requesting package removal"); },
         }
     }
     fastctx_platform::host_process::exited(identity).await?;
     complete(installation)?;
-    let status = std::process::Command::new("dpkg").args(["--remove", "world"]).status()?;
+    let status = std::process::Command::new("dpkg").args(["--remove", PACKAGE]).status()?;
     anyhow::ensure!(status.success(), "the Debian package uninstaller exited {status}");
     if request.plan.everything {
         crate::finish_application(&installation.root)?;
@@ -236,7 +238,7 @@ pub(crate) fn schedule_cleanup(directory: &Path) -> anyhow::Result<()> {
         std::env::current_exe()?.parent() == Some(directory)
             && directory
                 .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with("world-appimage-uninstall-")
+                .is_some_and(|name| name.to_string_lossy().starts_with("fastctx-appimage-uninstall-")
                     || name.to_string_lossy().starts_with("fastctx-uninstall-admin-")),
         "the cleanup directory is not this helper's private directory"
     );

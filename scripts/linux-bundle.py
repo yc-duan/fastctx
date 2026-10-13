@@ -56,7 +56,7 @@ def native_notices(appdir):
         if not path.is_file() or path.is_symlink():
             continue
         relative = path.relative_to(appdir)
-        if relative in gui_files or relative.parts[:3] == ('usr', 'lib', 'Fastctx') or relative.parts[:4] == ('usr', 'share', 'doc', 'world'):
+        if relative in gui_files or relative.parts[:3] == ('usr', 'lib', 'Fastctx') or relative.parts[:4] == ('usr', 'share', 'doc', 'fastctx'):
             continue
         if relative.parts[:3] in (('usr', 'share', 'icons'), ('usr', 'share', 'applications')):
             continue
@@ -146,6 +146,9 @@ def main():
     version = json.loads((ROOT/'gui/src-tauri/tauri.conf.json').read_text())['version']
     if subprocess.check_output(['dpkg-deb', '-f', str(deb), 'Version'], text=True).strip() != version:
         raise ValueError('Debian package version differs from the GUI')
+    # The uninstaller removes the package by this name (crates/fastctx-uninstall/src/package.rs).
+    if subprocess.check_output(['dpkg-deb', '-f', str(deb), 'Package'], text=True).strip() != 'fastctx':
+        raise ValueError('The Debian package is not named fastctx, the name the uninstaller removes')
     launcher = appdir/'AppRun'
     if launcher.is_symlink():
         launcher.unlink()
@@ -163,7 +166,7 @@ def main():
     resources = one(path for path in appdir.rglob('THIRD_PARTY_LICENSES.md') if path.parent.name == 'licenses')
     resources.write_bytes(full_notices)
     (resources.parent/'THIRD_PARTY_LINUX.json').write_bytes(inventory_data)
-    documentation = appdir/'usr/share/doc/world'
+    documentation = appdir/'usr/share/doc/fastctx'
     documentation.mkdir(parents=True, exist_ok=True)
     (documentation/'THIRD_PARTY_LICENSES.md').write_bytes(full_notices)
     (documentation/'copyright').write_bytes((ROOT/'gui/src-tauri/licenses/copyright').read_bytes()+('\n'+native_text+'\n'+runtime_text+'\n'+marker).encode())
@@ -203,17 +206,17 @@ def main():
         run('dpkg-deb', '-e', deb, debdir/'DEBIAN')
         shutil.copyfile(ROOT/'gui/scripts/deb-prerm', debdir/'DEBIAN/prerm')
         (debdir/'DEBIAN/prerm').chmod(0o755)
-        run('dpkg-deb', '--root-owner-group', '--build', debdir, work/'world.deb')
-        shutil.copyfile(work/'world.deb', deb)
+        run('dpkg-deb', '--root-owner-group', '--build', debdir, work/'fastctx.deb')
+        shutil.copyfile(work/'fastctx.deb', deb)
         deb_expected = dict(expected)
         deb_expected['THIRD_PARTY_LICENSES.md'] = notices.read_bytes()
         verify_payload(debdir, deb_expected)
-        if (debdir/'usr/share/doc/world/copyright').read_bytes() != (ROOT/'gui/src-tauri/licenses/copyright').read_bytes():
+        if (debdir/'usr/share/doc/fastctx/copyright').read_bytes() != (ROOT/'gui/src-tauri/licenses/copyright').read_bytes():
             raise ValueError('Debian copyright resource differs')
     args.output.mkdir(parents=True, exist_ok=True)
     for artifact in (deb, image):
         shutil.copy2(artifact, args.output/artifact.name)
-    (args.output/'world-linux-native.json').write_text(json.dumps(inventory, indent=2)+'\n')
+    (args.output/'fastctx-linux-native.json').write_text(json.dumps(inventory, indent=2)+'\n')
     (args.output/'GUI-SHA256SUMS').write_text(''.join(f'{sha(path)}  {path.name}\n' for path in (deb, image)))
     print(f'Verified deb and AppImage, {len(inventory)} native files, matching kernel and legal resources')
 

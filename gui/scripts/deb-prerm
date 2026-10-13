@@ -5,5 +5,5 @@ set -eu
 case "$1" in
   remove) /usr/bin/fastctx uninstall package ;;
   upgrade|deconfigure|failed-upgrade) ;;
-  *) printf 'Unsupported World prerm action: %s\n' "$1" >&2; exit 1 ;;
+  *) printf 'Unsupported Fastctx prerm action: %s\n' "$1" >&2; exit 1 ;;
 esac
