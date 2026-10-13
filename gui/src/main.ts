@@ -30,6 +30,7 @@ import "./app/removal.css";
 import "./app/data-page.css";
 import "./app.css";
 import "./home/home.css";
+import "./home/front.css";
 import "./project/project.css";
 import "./pages/pages.css";
 
@@ -229,7 +230,7 @@ import {
 import { en, zh } from "./words";
 import { updating } from "./world/updater";
 import { desktopAvailable } from "./world/desktop";
-import { notifying, startPresence } from "./app/presence";
+import { answerWith, notifying, startPresence } from "./app/presence";
 import { installAccess } from "./app/access";
 import { installBack, setPageBack } from "./app/back";
 import { installFrame } from "./app/frame";
@@ -260,6 +261,20 @@ const specimen = specimenNow(params.get("accounts") === "2");
 if (params.get("accounts") === "0") {
   specimen.world.accounts.hubs = [];
   specimen.world.nodes.hubs = [];
+}
+// `?quiet`: a quiet morning, nothing waiting, nothing come back, nobody at
+// work.
+if (params.has("quiet")) {
+  for (const machine of specimen.world.who.machines) {
+    if (machine.kind !== "answered") continue;
+    machine.reply.residents = machine.reply.residents.map((r) => (r.now ? { ...r, now: { ...r.now, activity: "idle", waiting_for_user: false, turn: null } } : r));
+    machine.reply.residents.forEach((r) => {
+      if (r.now) delete r.now.asked;
+    });
+    machine.reply.jobs = [];
+    delete machine.reply.busy;
+  }
+  if (specimen.away) specimen.away.happenings = [];
 }
 const store = createStore(() => ({ world: specimen.world, now: specimen.now }));
 const live = store.live;
@@ -693,6 +708,17 @@ async function specimenRenamed(address: Address, name: string): Promise<Controll
   return { kind: "done", said: null };
 }
 
+/** A specimen's agent takes an answer a while after it is given. */
+async function specimenAnswered(address: Address): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 1600));
+  await specimenActOn(address, (r) => {
+    if (!r.now) return r;
+    const { asked: _answered, ...now } = r.now;
+    return { ...r, now };
+  });
+  void store.refresh();
+}
+
 async function specimenForgot(address: Address): Promise<Forgetting> {
   await specimenActOn(address, () => null);
   return "asked";
@@ -964,11 +990,17 @@ function home(): Page {
   const page = new HomePage({
     drawing: drawing.element,
     words: homeWords,
-    ended: words.ended,
     lastVisit,
     link: talkLink,
     head: head(""),
     newTalk: () => beginTalk(),
+    // An answer from here goes in once, however long the way is closed, as
+    // one from a notification does (`world-network.md`, 断开不是结束).
+    answer: (address, asked, choice) => {
+      if (!live) return specimenAnswered(address);
+      const id = crypto.randomUUID();
+      return untilAnswered(() => talk(address, answerWith(asked, choice), [], null, id), () => {}, address.machine);
+    },
   });
   let away: Away | null = live ? null : specimen.away;
   // What happened while the reader was away is asked of every machine when

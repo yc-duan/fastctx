@@ -1,0 +1,629 @@
+/* The front page (`home/page.ts`): the drawing of the World above, a board
+   under it. On a wide screen the board stands in two columns, what waits
+   and what came back on the left, what is at work on the right, each
+   scrolling on its own under the drawing; narrower, one column that scrolls
+   under it; on a phone the page scrolls whole, the drawing going up with
+   it. Parts are solid where they ask something of the reader and plain rows
+   otherwise; marks are the sidebar's. */
+
+.front-page {
+  --front-width: min(100% - 2 * var(--gutter), 1080px);
+  container-type: inline-size;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Here the head carries only the way back to the sidebar, over the
+   drawing. */
+.front-page > .page-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+.front-page > .page-head .page-head-title {
+  display: none;
+}
+
+/* Scrolled on a phone, the head stands on the paper. */
+.front-page > .page-head {
+  right: 0;
+  transition: background-color var(--hover) ease;
+}
+
+.front-page.scrolled > .page-head {
+  background: var(--bg);
+}
+
+.front-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.front-map {
+  flex: none;
+  position: relative;
+  width: var(--front-width);
+  height: clamp(170px, 26dvh, 260px);
+  margin: var(--space-2) auto 0;
+}
+
+.front-map > .machine-map {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+}
+
+/* The board. Its edges fade, so what scrolls slips under the drawing
+   rather than being cut. */
+.front-board {
+  flex: 1;
+  min-height: 0;
+  width: var(--front-width);
+  margin: var(--space-3) auto 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  column-gap: var(--space-10);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--space-6)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--space-6)), transparent);
+}
+
+.front-column {
+  min-width: 0;
+  padding: var(--space-3) 0 var(--space-10);
+}
+
+@container (min-width: 860px) {
+  .front-board.two {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    overflow: hidden;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .front-board.two > .front-column {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--space-6)), transparent);
+    mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--space-6)), transparent);
+  }
+
+  /* Alone, what is at work keeps a reading width. */
+  .front-board:not(.two) > .front-column {
+    width: min(100%, 640px);
+    justify-self: center;
+  }
+}
+
+.front-part + .front-part {
+  margin-top: var(--space-8);
+}
+
+/* A part's title: quiet, with how many or how long beside it. */
+.front-title,
+.front-subtitle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-reading);
+  font-size: var(--size-small);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+
+.front-subtitle {
+  margin-top: var(--space-6);
+}
+
+.front-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Marks shared by every row: the agent, the machine, how long. */
+.front-agent,
+.front-device {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.front-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+}
+
+.front-for,
+.front-at {
+  flex: none;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* What waits: a solid card each, washed in the accent, by what it asks. */
+.front-cards {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.front-card {
+  position: relative;
+  border-radius: var(--radius-l);
+  background: var(--accent-wash);
+  transition: background-color var(--hover) ease;
+}
+
+.front-card:has(.front-card-link:hover) {
+  background: color-mix(in srgb, var(--accent-wash), var(--accent) 7%);
+}
+
+.front-card-link {
+  display: grid;
+  gap: 6px;
+  padding: 12px var(--space-4) 12px var(--space-3);
+  color: inherit;
+  text-decoration: none;
+  border-radius: inherit;
+}
+
+.front-card-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.front-card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+}
+
+.front-card-head .front-name {
+  flex: 0 1 auto;
+}
+
+.front-card-head .front-device {
+  margin-left: auto;
+}
+
+.front-ask {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  color: var(--text);
+}
+
+.front-ask-glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  height: calc(var(--size-ui) * var(--leading-ui));
+  color: var(--accent);
+}
+
+.front-ask-text {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.front-ask.code .front-ask-text {
+  font-family: var(--font-code);
+  font-size: var(--size-code);
+  color: var(--text-2);
+}
+
+.front-ask.quiet {
+  color: var(--text-2);
+}
+
+/* Its answers, where a question offers them: solid, side by side. */
+.front-answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 var(--space-4) 12px calc(var(--space-3) + 16px + 9px);
+}
+
+.front-answer {
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--bg);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--size-ui);
+  cursor: pointer;
+  transition: background-color var(--hover) ease;
+}
+
+.front-answer:hover,
+.front-answer:focus-visible {
+  outline: 0;
+  background: var(--bg-elevated);
+}
+
+.front-answers.given {
+  align-items: center;
+  gap: 6px;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.front-answers.given .glyph {
+  color: var(--accent);
+}
+
+/* What came back: the time away as a ruled line with a blot for each
+   conversation, then a line each by what it last said. */
+.front-timeline {
+  position: relative;
+  height: 34px;
+  margin: 0 7px var(--space-2);
+}
+
+.front-rule {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  width: 100%;
+  height: 12px;
+  color: var(--text-3);
+  opacity: 0.55;
+  filter: url(#pen-rule-lite);
+}
+
+.front-mark {
+  position: absolute;
+  top: 14px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  transition: color var(--hover) ease, transform var(--hover) ease;
+}
+
+.front-mark svg {
+  filter: url(#pen-marker-lite);
+}
+
+.front-mark.failed {
+  color: var(--wrong);
+}
+
+.front-mark.lit,
+.front-mark:focus-visible {
+  outline: 0;
+  color: var(--accent);
+  transform: scale(1.35);
+}
+
+.front-mark.failed.lit {
+  color: var(--wrong);
+}
+
+.front-from,
+.front-to {
+  position: absolute;
+  bottom: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.front-from {
+  left: -7px;
+}
+
+.front-to {
+  right: -7px;
+}
+
+.front-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.front-result > a {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: 9px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 8px var(--space-3) 9px;
+  border-radius: var(--radius-m);
+  color: inherit;
+  text-decoration: none;
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  transition: background-color var(--hover) ease;
+}
+
+.front-result > a:hover,
+.front-result.lit > a,
+.front-result > a:focus-visible {
+  outline: 0;
+  background: var(--hairline);
+}
+
+.front-said {
+  grid-column: 2 / 4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text-2);
+}
+
+.front-result.failed .front-said {
+  color: var(--wrong);
+}
+
+.front-missing {
+  margin: var(--space-3) var(--space-3) 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.front-missing.wrong {
+  color: var(--wrong);
+}
+
+/* What is at work: a row each, marked as the sidebar marks it; one asked
+   to help hangs under the one that asked. */
+.front-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.front-called {
+  margin-left: 21px;
+}
+
+.front-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-m);
+  color: inherit;
+  text-decoration: none;
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  transition: background-color var(--hover) ease;
+}
+
+.front-row:hover,
+.front-row:focus-visible {
+  outline: 0;
+  background: var(--hairline);
+}
+
+.front-row .front-name {
+  flex: 0 1 auto;
+}
+
+.front-row .front-device {
+  margin-left: auto;
+}
+
+.front-pulse {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 1.8px var(--accent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.front-pulse.troubled {
+  box-shadow: inset 0 0 0 1.8px var(--caution);
+}
+
+.front-jobs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.front-job {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 32px;
+  padding: 3px var(--space-3);
+  border-radius: var(--radius-m);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color var(--hover) ease;
+}
+
+.front-job:hover,
+.front-job:focus-visible {
+  outline: 0;
+  background: var(--hairline);
+}
+
+.front-job-glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.front-command {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.front-job .front-device {
+  margin-left: auto;
+}
+
+.front-whose {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px 1px 5px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+/* Nothing in a part: a quiet line, and the way to begin where nobody works. */
+.front-quiet {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0 var(--space-3);
+  font-size: var(--size-ui);
+  color: var(--text-3);
+}
+
+.front-begin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 var(--space-3) 0 10px;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--size-ui);
+  cursor: pointer;
+  transition: background-color var(--hover) ease;
+}
+
+.front-begin:hover,
+.front-begin:focus-visible {
+  outline: 0;
+  background: var(--fill-strong);
+}
+
+.front-begin .glyph {
+  color: var(--accent);
+}
+
+.front-trouble {
+  margin: 0 0 var(--space-3);
+  font-size: var(--size-ui);
+  color: var(--caution);
+}
+
+.front-begin-link {
+  font-size: var(--size-ui);
+  color: var(--accent);
+}
+
+/* The board rises into place once, as the page opens. */
+.front-board.arriving .front-title,
+.front-board.arriving .front-card,
+.front-board.arriving .front-timeline,
+.front-board.arriving .front-result,
+.front-board.arriving .front-rows > li,
+.front-board.arriving .front-jobs > li {
+  animation: front-rise 0.7s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.front-board.arriving li:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+.front-board.arriving li:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+.front-board.arriving li:nth-child(n + 4) {
+  animation-delay: 180ms;
+}
+
+@keyframes front-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+:root[data-reduced] .front-board.arriving * {
+  animation: none !important;
+}
+
+:root[data-reduced] .front-pulse {
+  animation: none;
+}
+
+/* On a phone the page scrolls whole: the drawing goes up with what is
+   under it, so it keeps the room to be read. */
+@container (max-width: 640px) {
+  .front-body {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+
+  .front-map {
+    height: clamp(220px, 36dvh, 320px);
+  }
+
+  .front-board {
+    flex: none;
+    margin-top: var(--space-2);
+    overflow: visible;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}

@@ -37,6 +37,8 @@ const TWIG = 22;
 const ROW = 74;
 const COLUMN = 230;
 const NAME = 150;
+/** How tall a machine's name and the line under it stand, at their size. */
+const LABEL = 28;
 /** At most this many machines stand in one column before the next. */
 export const ROWS = 10;
 /** On a narrow screen: how far right of the spine the boxes stand. */
@@ -93,6 +95,13 @@ export interface LayoutChoices {
   /** Whether the account's own box ends with the place the dashed ring that
    *  adds a machine waits in. */
   vacant?: boolean;
+  /** How many times their size the names are drawn: a still drawing drawn
+   *  small draws them larger to keep them readable, and they take the room
+   *  they need. */
+  grow?: number;
+  /** The room a name takes beside its ring at its size: what a still
+   *  drawing measures of its own names, the widest a name may be otherwise. */
+  room?: number;
 }
 
 interface Remembered {
@@ -149,7 +158,12 @@ export class MapLayout {
   }
 
   update(hubs: readonly MapHub[], nodes: readonly MapNode[], choices: LayoutChoices = {}): Placement {
-    const { links = [], folded = new Set<string>(), narrow = false, rows = ROWS, vacant = true } = choices;
+    const { links = [], folded = new Set<string>(), narrow = false, rows = ROWS, vacant = true, grow = 1, room = NAME } = choices;
+    // The room a name takes beside its ring, across a column and down a
+    // row, as large as it is drawn.
+    const NAME_AT = room * grow;
+    const COLUMN_AT = TWIG + RING * 2 + (room + COLUMN - TWIG - RING * 2 - NAME) * grow;
+    const ROW_AT = Math.max(ROW, LABEL * grow + ROW - RING * 2);
     const ending = (kind: string) => vacant && kind === "mine";
     for (const hub of [...hubs].sort((a, b) => a.id.localeCompare(b.id))) if (!this.hubOrder.includes(hub.id)) this.hubOrder.push(hub.id);
     const live = new Set(hubs.map((hub) => hub.id));
@@ -189,8 +203,8 @@ export class MapLayout {
         const perColumn = narrow ? Math.max(1, cells) : rows;
         const columns = Math.max(1, Math.ceil(cells / perColumn));
         const tall = Math.min(cells, perColumn);
-        const width = TRUNK + TWIG + PAD + (columns - 1) * COLUMN + RING * 2 + NAME;
-        const height = fold ? TITLE : TITLE + PAD * 2 + (tall - 1) * ROW + RING * 2;
+        const width = TRUNK + TWIG + PAD + (columns - 1) * COLUMN_AT + RING * 2 + NAME_AT;
+        const height = fold ? TITLE : TITLE + PAD * 2 + (tall - 1) * ROW_AT + RING * 2;
         return { kind, key, members, fold, width, height, perColumn };
       });
       if (narrow) {
@@ -209,9 +223,9 @@ export class MapLayout {
           branches.push({ points: [[0, join], [trunk, join]], hub: id });
           if (!block.fold) {
             const slots: (MapNode | null)[] = [...block.members, ...(ending(block.kind) ? [null] : [])];
-            branches.push({ points: [[trunk, join], [trunk, y + TITLE + PAD + RING + (slots.length - 1) * ROW]], hub: id });
+            branches.push({ points: [[trunk, join], [trunk, y + TITLE + PAD + RING + (slots.length - 1) * ROW_AT]], hub: id });
             slots.forEach((slot, row) => {
-              const at: Point = [trunk + TWIG + RING, y + TITLE + PAD + RING + row * ROW];
+              const at: Point = [trunk + TWIG + RING, y + TITLE + PAD + RING + row * ROW_AT];
               branches.push({ points: [[trunk, at[1]], [trunk + TWIG - 3, at[1]]], hub: id, machine: slot?.key, out: !!slot && slot.online !== true });
               if (slot) machines.set(slot.key, at);
               else this.vacancies.set(id, at);
@@ -244,16 +258,16 @@ export class MapLayout {
           const columns = Math.ceil(slots.length / rows);
           const fork = top + TITLE + PAD * 0.55;
           for (let column = 0; column < columns; column += 1) {
-            const trunk = x + TRUNK + column * COLUMN;
+            const trunk = x + TRUNK + column * COLUMN_AT;
             const last = Math.min(rows, slots.length - column * rows) - 1;
-            branches.push({ points: [[trunk, column ? fork : busY], [trunk, top + TITLE + PAD + RING + last * ROW]], hub: id });
+            branches.push({ points: [[trunk, column ? fork : busY], [trunk, top + TITLE + PAD + RING + last * ROW_AT]], hub: id });
           }
-          if (columns > 1) branches.push({ points: [[drop, fork], [x + TRUNK + (columns - 1) * COLUMN, fork]], hub: id });
+          if (columns > 1) branches.push({ points: [[drop, fork], [x + TRUNK + (columns - 1) * COLUMN_AT, fork]], hub: id });
           slots.forEach((slot, index) => {
             const column = Math.floor(index / rows);
             const row = index % rows;
-            const trunk = x + TRUNK + column * COLUMN;
-            const at: Point = [trunk + TWIG + RING, top + TITLE + PAD + RING + row * ROW];
+            const trunk = x + TRUNK + column * COLUMN_AT;
+            const at: Point = [trunk + TWIG + RING, top + TITLE + PAD + RING + row * ROW_AT];
             branches.push({ points: [[trunk, at[1]], [trunk + TWIG - 3, at[1]]], hub: id, machine: slot?.key, out: !!slot && slot.online !== true });
             if (slot) machines.set(slot.key, at);
             else this.vacancies.set(id, at);
@@ -267,14 +281,16 @@ export class MapLayout {
       left += width + HUB_GAP;
     }
     // No hub to hang on: a row, as before any network is joined.
-    nodes.filter((node) => !hubOf(node)).sort(byOrder).forEach((node, index) => machines.set(node.key, [index * COLUMN, TITLE]));
+    nodes.filter((node) => !hubOf(node)).sort(byOrder).forEach((node, index) => machines.set(node.key, [index * COLUMN_AT, TITLE]));
 
     this.write(new Set(nodes.map((node) => node.key)));
-    // Room round everything: the hub's name above it, the boxes below.
+    // Room round everything: the hub's name above it, as large as it is
+    // drawn, the boxes below.
+    const above = 40 + 30 * grow;
     const xs = [...hubPoints.values(), ...machines.values()].map((p) => p[0]).concat(groups.flatMap((group) => [group.box.x, group.box.x + group.box.width]));
     const ys = [...hubPoints.values(), ...machines.values()].map((p) => p[1]).concat(groups.flatMap((group) => [group.box.y, group.box.y + group.box.height]));
     const bounds = xs.length
-      ? { x: Math.min(...xs) - 40, y: Math.min(...ys) - 70, width: Math.max(...xs) - Math.min(...xs) + 80, height: Math.max(...ys) - Math.min(...ys) + 110 }
+      ? { x: Math.min(...xs) - 40, y: Math.min(...ys) - above, width: Math.max(...xs) - Math.min(...xs) + 80, height: Math.max(...ys) - Math.min(...ys) + above + 40 }
       : { x: -100, y: -100, width: 200, height: 200 };
     return { hubs: hubPoints, machines, groups, branches, bounds };
   }

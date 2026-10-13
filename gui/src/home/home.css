@@ -1,91 +1,6 @@
-/* The front page, on one screen: the drawing, the day, then a board of
-   what needs the reader and what happened, side by side where there is
-   room. Each column of the board scrolls on its own; the drawing and the
-   day stay. No cards and no boxes; parts are set apart by space and by
-   fine rules, as in a book. */
-
-.home-page {
-  --board: min(100% - 2 * var(--gutter), var(--column));
-  container-type: inline-size;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-/* Here the head carries only the way back to the sidebar, over the
-   drawing; the day is the page's title. */
-.home-page > .page-head {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 1;
-}
-
-.home-page > .page-head .page-head-title {
-  display: none;
-}
-
-.frontispiece {
-  flex: none;
-  position: relative;
-  width: min(100% - 2 * var(--gutter), 1080px);
-  height: clamp(220px, 35dvh, 360px);
-  margin: var(--space-2) auto 0;
-}
-
-/* The drawing is the machines page's, to be pointed at here too. */
-.frontispiece > .machine-map {
-  position: absolute;
-  inset: 0;
-  min-height: 0;
-}
-
-/* The day. Its title comes into focus once, when the page opens. */
-.dateline {
-  flex: none;
-  width: var(--board);
-  margin: var(--space-3) auto 0;
-}
-
-.dateline-day {
-  margin: 0;
-  font-family: var(--font-emphasis);
-  font-weight: 400;
-  font-size: var(--size-title);
-  line-height: var(--leading-heading);
-  letter-spacing: 0.01em;
-  color: var(--text-strong);
-  animation: focus 1.1s cubic-bezier(0.2, 0, 0, 1) both;
-}
-
-@keyframes focus {
-  from {
-    filter: blur(8px);
-    opacity: 0;
-    letter-spacing: 0.08em;
-  }
-}
-
-/* A stroke of clay under the day, drawn as a hand underlines. */
-.dateline-day::after {
-  content: "";
-  display: block;
-  width: 6.5em;
-  height: 0.55em;
-  margin-top: 0.1em;
-  background: var(--pen-clay);
-  opacity: 0.85;
-  -webkit-mask: var(--pen-underline) 0 0 / 100% 100% no-repeat;
-  mask: var(--pen-underline) 0 0 / 100% 100% no-repeat;
-}
-
-.dateline-facts {
-  margin: var(--space-2) 0 0;
-  font-size: var(--size-ui);
-  color: var(--text-2);
-  line-height: var(--leading-ui);
-}
+/* What a project's page and the settings draw with: a board of sections,
+   each a quiet title over its rows, the people at work and the jobs that
+   run. The front page has its own (`front.css`). */
 
 .sep {
   margin: 0 0.5em;
@@ -133,15 +48,7 @@
   min-height: auto;
 }
 
-.board-column.away {
-  padding-top: 0;
-}
-
 @container (min-width: 920px) {
-  .home-page {
-    --board: min(100% - 2 * var(--gutter), 1080px);
-  }
-
   .board {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     column-gap: var(--space-12);
@@ -154,60 +61,11 @@
     overscroll-behavior: contain;
     scrollbar-width: thin;
   }
-
-  .board-column.away {
-    padding-top: var(--space-3);
-  }
-}
-
-/* Opening the page, each line on the board rises into place a moment
-   after the one above it. */
-.board.arriving .people > li,
-.board.arriving .chronicle > li,
-.board.arriving .section-title {
-  animation: rise 0.6s cubic-bezier(0.2, 0, 0, 1) both;
-}
-
-.board.arriving li:nth-child(2) {
-  animation-delay: 60ms;
-}
-
-.board.arriving li:nth-child(3) {
-  animation-delay: 120ms;
-}
-
-.board.arriving li:nth-child(4) {
-  animation-delay: 180ms;
-}
-
-.board.arriving li:nth-child(5) {
-  animation-delay: 240ms;
-}
-
-.board.arriving li:nth-child(n + 6) {
-  animation-delay: 300ms;
-}
-
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
 }
 
 /* Sections: a quiet title with a rule running out from it. */
 .home-section + .home-section {
   margin-top: var(--space-8);
-}
-
-.board-column.away .home-section {
-  margin-top: var(--space-8);
-}
-
-@container (min-width: 920px) {
-  .board-column.away .home-section {
-    margin-top: 0;
-  }
 }
 
 .section-title {
@@ -231,7 +89,7 @@
   mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
 }
 
-:is(.home-page, .project-page, .journal-page) :is(ul, ol):not(.prose *) {
+:is(.project-page, .journal-page) :is(ul, ol):not(.prose *) {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -247,19 +105,6 @@
 .idle {
   margin-top: var(--space-2);
   padding-left: calc(var(--rail-glyph) + var(--rail-gap));
-}
-
-.begin {
-  color: var(--text-2);
-  background: radial-gradient(circle, var(--accent) 1px, transparent 1.6px) 0 100% / 7px 2px repeat-x;
-  padding: 0 2px 2px;
-  border-radius: 2px;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
-}
-
-.begin:hover {
-  color: var(--text);
-  background-color: var(--accent-wash);
 }
 
 .tag {
@@ -421,106 +266,6 @@
   }
 }
 
-/* What happened while the reader was away: time, a glyph on a rail, the
-   fact, and the words it left where it left any. */
-.chronicle {
-  --time: 3.4em;
-}
-
-.event {
-  position: relative;
-  display: grid;
-  grid-template-columns: var(--time) 18px minmax(0, 1fr);
-  column-gap: var(--rail-gap);
-  padding: 6px 0;
-}
-
-.event:has(> .event-link) {
-  display: block;
-  padding: 0;
-}
-
-.event-link {
-  display: grid;
-  grid-template-columns: var(--time) 18px minmax(0, 1fr);
-  column-gap: var(--rail-gap);
-  margin: 0 calc(-1 * var(--space-2));
-  padding: 6px var(--space-2);
-  border-radius: var(--radius-s);
-  color: inherit;
-  text-decoration: none;
-  transition: background-color var(--hover) ease;
-}
-
-.event-link:hover {
-  background: var(--hairline);
-}
-
-.event + .event::before {
-  content: "";
-  position: absolute;
-  left: calc(var(--time) + var(--rail-gap) + 8.5px);
-  top: -9px;
-  height: 12px;
-  width: 1px;
-  background: var(--hairline);
-}
-
-.event time {
-  font-size: var(--size-small);
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-  line-height: calc(var(--size-ui) * var(--leading-ui));
-  text-align: right;
-}
-
-.event .rail {
-  height: calc(var(--size-ui) * var(--leading-ui));
-  display: grid;
-  place-items: center;
-  color: var(--text-3);
-}
-
-.event-body {
-  min-width: 0;
-}
-
-.event-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: var(--space-2);
-  font-size: var(--size-ui);
-  line-height: var(--leading-ui);
-  color: var(--text);
-}
-
-.event.wrong .event-line {
-  color: var(--wrong);
-}
-
-.event.caution .event-line {
-  color: var(--caution);
-}
-
-.said {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  margin-top: 2px;
-  font-size: var(--size-ui);
-  line-height: var(--leading-prose);
-  color: var(--text-quote);
-}
-
-.day {
-  padding: var(--space-4) 0 var(--space-1) calc(var(--time) + var(--rail-gap) + 18px + var(--rail-gap));
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
 /* Jobs nobody watches any more. */
 .job {
   display: grid;
@@ -572,22 +317,6 @@
   color: var(--text-3);
 }
 
-:root[data-reduced] .board.arriving .people > li,
-:root[data-reduced] .board.arriving .chronicle > li,
-:root[data-reduced] .board.arriving .section-title,
-:root[data-reduced] .ask,
-:root[data-reduced] .dateline-day {
+:root[data-reduced] .ask {
   animation: none;
-}
-
-/* Under the chronicle: the machines whose part could not be asked, so an
-   empty or short list is never taken for a quiet World. */
-.away-missing {
-  margin: var(--space-3) 0 0;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.away-missing.wrong {
-  color: var(--wrong);
 }

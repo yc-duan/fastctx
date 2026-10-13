@@ -1,29 +1,30 @@
-// The World's front page: what the reader finds on coming back, on one
-// screen. A drawing of the World as it is, each machine on it a way to the
-// machines page; the day and how long they were
-// away; then, side by side where there is room, who is waiting on them and
-// who is at work, and what happened meanwhile. Each of those scrolls on its
-// own; the drawing and the day stay. Every line is a fact the World holds;
-// nothing is summarised by a model. Projects and machines are in the
-// sidebar, not here.
+// The World's front page: what the reader finds on coming back
+// (`world-gui.md`, 回来时). Above, the drawing of the World as it is, each
+// machine on it a way to its page. Under it, side by side where there is
+// room: what waits for the reader, each conversation by what it asks,
+// answered here where it offers its answers, and what came back while the
+// reader was away, a line a conversation by what it last said, along a line
+// of the time away; then what is at work now, the conversations and the
+// commands running. A part with nothing in it is not drawn. Every line is a
+// fact the World holds; nothing is summarised by a model.
 
 import type { VersionMismatch } from "../world/renewal";
 import { fileLink } from "../app/places";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import { factRow } from "../design/fact-row";
 import { redrawKeepingFocus } from "../app/focus";
+import { answerButtons } from "../app/presence";
 import type { Address } from "../world/events";
-import { ownerResident, type JobOwner, type ResidentNow, type RunningJob, type Writer } from "../world/world";
+import type { Asked, ResidentNow, RunningJob } from "../world/world";
+import { ownerResident } from "../world/world";
 import { worksFor } from "../app/store";
-import type { Away, Happening, WorldState } from "./model";
+import { blot, ruled, seeded } from "../pen/shapes";
+import type { Happening, WorldState } from "./model";
 import type { HomeWords } from "./words";
 import { agentName, titleOf } from "../world/names";
 
 export interface HomeOptions {
   words: HomeWords;
-  /** The conversation words, for how an ending is said. */
-  ended(how: string): string;
   /** When the reader last looked at this page, when known. */
   lastVisit: Date | null;
   /** Where a resident's conversation opens. */
@@ -34,43 +35,80 @@ export interface HomeOptions {
   newTalk(): void;
   /** The drawing of the World, kept up by whoever made it. */
   drawing: HTMLElement;
+  /** Answers what an agent asked with one of the answers it offered, however
+   *  long the way to its machine is closed. */
+  answer(address: Address, asked: Asked, choice: number): Promise<unknown>;
 }
+
+type Glyph = Parameters<typeof glyph>[0];
+
+const ASK_GLYPHS: Record<Asked["what"], Glyph> = {
+  answer: "ask",
+  command: "terminal",
+  change: "edit",
+  tool: "tool",
+  plan: "tasks",
+  form: "page",
+  other: "ask",
+};
+
+/** What came back of one conversation while the reader was away: its last
+ *  turn that ended, and how. */
+interface Came {
+  key: string;
+  address: Address;
+  at: Date;
+  failed: boolean;
+  said: string;
+  r: ResidentNow | undefined;
+}
+
+const keyOf = (address: Address) => `${address.machine}\n${address.resident}`;
+const addressOf = (r: ResidentNow): Address => ({ machine: r.about.machine, resident: r.about.id });
 
 export class HomePage {
   readonly element: HTMLElement;
   private world: WorldState | null = null;
   private now = new Date();
   private drawn = "";
-  private day: HTMLElement;
-  private facts: HTMLElement;
-  private present: HTMLElement;
-  private away: HTMLElement;
+  private readonly board: HTMLElement;
+  /** Answers given here, by the question they answer, until the World says
+   *  it was answered. */
+  private readonly answered = new Map<string, string>();
 
   constructor(private readonly options: HomeOptions) {
     this.element = document.createElement("div");
-    this.element.className = "home-page";
-    this.element.innerHTML = `
-      ${options.head}
-      <div class="frontispiece"></div>
-      <header class="dateline">
-        <h1 class="dateline-day"></h1>
-        <p class="dateline-facts"></p>
-      </header>
-      <div class="board arriving">
-        <div class="board-column present scroller"></div>
-        <div class="board-column away scroller"></div>
-      </div>`;
-    this.element.querySelector<HTMLElement>(".frontispiece")!.append(options.drawing);
-    this.day = this.element.querySelector<HTMLElement>(".dateline-day")!;
-    this.facts = this.element.querySelector<HTMLElement>(".dateline-facts")!;
-    this.present = this.element.querySelector<HTMLElement>(".present")!;
-    this.away = this.element.querySelector<HTMLElement>(".away")!;
-    this.element.addEventListener("click", (event) => {
-      if ((event.target as HTMLElement).closest(".begin")) options.newTalk();
+    this.element.className = "front-page";
+    this.element.innerHTML = `${options.head}<div class="front-body"><div class="front-map"></div><div class="front-board arriving"></div></div>`;
+    this.element.querySelector<HTMLElement>(".front-map")!.append(options.drawing);
+    this.board = this.element.querySelector<HTMLElement>(".front-board")!;
+    // On a phone the page scrolls whole: once it has, its head stands on the
+    // paper, so what scrolls passes under it.
+    const body = this.element.querySelector<HTMLElement>(".front-body")!;
+    body.addEventListener("scroll", () => this.element.classList.toggle("scrolled", body.scrollTop > 4), { passive: true });
+    this.board.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest(".front-begin")) {
+        options.newTalk();
+        return;
+      }
+      const button = target.closest<HTMLButtonElement>(".front-answer");
+      if (button) this.answer(button);
     });
+    // A mark on the line of the time away and its conversation's line light
+    // together.
+    const light = (event: Event, on: boolean) => {
+      const key = (event.target as HTMLElement).closest<HTMLElement>("[data-came]")?.dataset.came;
+      if (!key) return;
+      for (const element of this.board.querySelectorAll<HTMLElement>("[data-came]")) {
+        if (element.dataset.came === key) element.classList.toggle("lit", on);
+      }
+    };
+    this.board.addEventListener("pointerover", (event) => light(event, true));
+    this.board.addEventListener("pointerout", (event) => light(event, false));
     // What is on the board rises into place when the page opens, and only
     // then: later changes appear where they are.
-    setTimeout(() => this.element.querySelector(".board")?.classList.remove("arriving"), 1600);
+    setTimeout(() => this.board.classList.remove("arriving"), 1600);
   }
 
   /** Shows the World as it now stands; when nothing shown has changed, the
@@ -78,96 +116,58 @@ export class HomePage {
   update(world: WorldState, now: Date): void {
     this.world = world;
     this.now = now;
-    const { words } = this.options;
-    this.day.textContent = words.dateline(now);
-
     const residents = this.residents();
-    const jobs = world.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []));
-    const waiting = residents.filter((r) => r.now?.waiting_for_user);
-    const busy = residents.filter((r) => r.now?.activity === "busy" && !r.now.waiting_for_user);
-    const idle = residents.filter((r) => r.here && r.now?.activity !== "busy");
-    const present = new Set(residents.filter((r) => r.here).map((r) => `${r.about.id}@${r.about.machine}`));
-    // A job a page started has no resident to attend it.
-    const unattended = jobs.filter((job) => {
-      const owner = ownerResident(job.owner);
-      return !owner || !present.has(`${owner.resident}@${owner.machine}`);
-    });
-    const machines = world.nodes;
-    const online = machines.filter((node) => node.online).length;
-    const idleLine = idle.length
-      ? `<p class="idle">${escape(words.idle(idle.map((r) => this.name(r)).join(words.listSeparator)))}</p>`
-      : "";
+    const asking = residents.filter((r) => r.now?.waiting_for_user || r.now?.asked).sort((a, b) => waited(a) - waited(b));
+    const asks = new Set(asking.map((r) => keyOf(addressOf(r))));
+    // Answers given here hold until their question goes.
+    const open = new Set(asking.map((r) => r.now?.asked?.id).filter(Boolean));
+    for (const id of this.answered.keys()) if (!open.has(id)) this.answered.delete(id);
+    const busy = residents
+      .filter((r) => r.now?.activity === "busy" && !asks.has(keyOf(addressOf(r))))
+      .sort((a, b) => Date.parse(a.now!.since) - Date.parse(b.now!.since));
+    const jobs = world.machines
+      .flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []))
+      .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
+    const came = this.came(asks);
 
-    const facts = [
-      this.options.lastVisit ? words.lastHere(words.ago(now.getTime() - this.options.lastVisit.getTime())) : words.firstTime,
-      words.machinesOnline(online, machines.length),
-      words.agentsWorking(busy.length + waiting.length),
-    ];
-    const factsHtml = factRow(facts.map(escape));
-
-    const presentHtml = [
-      waiting.length
-        ? this.section("waiting", words.waiting, `<ul class="people">${waiting.map((r) => this.someone(r, true)).join("")}</ul>`)
-        : "",
-      this.section(
-        "now",
-        words.now,
-        busy.length
-          ? `<ul class="people">${busy.map((r) => this.someone(r, false)).join("")}</ul>${idleLine}`
-          : `<p class="quiet">${escape(words.nobodyWorking)} <button class="begin" type="button">${escape(words.begin)}</button></p>${idleLine}`,
-      ),
-      unattended.length
-        ? this.section("unattended", words.unattended, `<ul class="jobs">${unattended.map((job) => this.job(job)).join("")}</ul>`)
-        : "",
-    ].join("");
-    // What happened meanwhile is shown only where the World can say it.
-    const awayHtml = world.away ? this.section("away", words.away, this.chronicle(world.away)) : "";
-
-    const drawn = factsHtml + presentHtml + awayHtml;
-    if (drawn !== this.drawn) {
-      this.drawn = drawn;
-      redrawKeepingFocus(this.element, () => {
-        this.facts.innerHTML = factsHtml;
-        this.present.innerHTML = presentHtml;
-        this.away.innerHTML = awayHtml;
-        this.away.hidden = !awayHtml;
-      });
-    }
+    const first = [asking.length ? this.asks(asking) : "", this.away(came)].join("");
+    const second = this.working(busy, jobs);
+    const html = first ? `<div class="front-column">${first}</div><div class="front-column">${second}</div>` : `<div class="front-column">${second}</div>`;
+    this.draw(html, !!first);
   }
 
-  /** The World could not be asked: said where the facts would be, with
-   *  what was last shown left as it was. */
-  /** `old` is the World's version where it is older than the interface,
-   *  which is then what is said instead of the refusal itself. */
+  /** The World could not be asked: said where the board would be. `old` is
+   *  the World's version where it is older than the interface, which is then
+   *  what is said instead of the refusal itself. */
   unreachable(why: string, now: Date, old: VersionMismatch | null = null): void {
     const { words } = this.options;
-    this.day.textContent = words.dateline(now);
-    this.facts.innerHTML = old
-      ? `<span class="fact unreachable">${escape(words.oldWorld(old.node_version, old.client_version))}</span><a class="text-button set-up" href="#/settings">${escape(words.renewThere)}</a>`
-      : `<span class="fact unreachable" title="${escape(why)}">${escape(words.unreachable(why))}</span><a class="text-button set-up" href="#/login">${escape(words.setUp)}</a>`;
-    this.drawn = "";
+    this.now = now;
+    const html = old
+      ? `<div class="front-column"><p class="front-trouble">${escape(words.oldWorld(old.node_version, old.client_version))}</p><a class="front-begin-link" href="#/settings">${escape(words.renewThere)}</a></div>`
+      : `<div class="front-column"><p class="front-trouble" title="${escape(why)}">${escape(words.unreachable(why))}</p><a class="front-begin-link" href="#/login">${escape(words.setUp)}</a></div>`;
+    this.draw(html, false);
+  }
+
+  private draw(html: string, two: boolean): void {
+    if (html === this.drawn) return;
+    this.drawn = html;
+    redrawKeepingFocus(this.board, () => {
+      this.board.classList.toggle("two", two);
+      this.board.innerHTML = html;
+    });
   }
 
   private residents(): ResidentNow[] {
     return (this.world?.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => !r.removed);
   }
 
-  private section(kind: string, title: string, body: string): string {
-    return `<section class="home-section section-${kind}"><h2 class="section-title">${escape(title)}</h2>${body}</section>`;
-  }
-
-  /** Who it is and where: the agent on its machine. */
-  private who(r: ResidentNow): string {
-    return this.options.words.someone(agentName(r.about.host.agent), r.about.machine);
+  private knownAt(address: Address): ResidentNow | undefined {
+    return this.world?.known.find((r) => r.about.id === address.resident && r.about.machine === address.machine);
   }
 
   /** What it is called: its conversation's name, or who it is. */
   private name(r: ResidentNow): string {
-    return titleOf(r) ?? this.who(r);
-  }
-
-  private knownAt(address: Address): ResidentNow | undefined {
-    return this.world?.known.find((r) => r.about.id === address.resident && r.about.machine === address.machine);
+    return titleOf(r) ?? this.options.words.someone(agentName(r.about.host.agent), r.about.machine);
   }
 
   private nameOf(address: Address): string {
@@ -175,178 +175,227 @@ export class HomePage {
     return known ? this.name(known) : `${address.resident} · ${address.machine}`;
   }
 
-  /** Who is at an address and where, without what it is called. */
-  private whoAt(address: Address): string {
-    const known = this.knownAt(address);
-    return known ? this.who(known) : `${address.resident} · ${address.machine}`;
-  }
-
-  private since(at: string): string {
-    return this.options.words.lasted(this.now.getTime() - Date.parse(at));
-  }
-
-  private someone(r: ResidentNow, waiting: boolean): string {
+  /** What a pointer resting on a conversation's name is told beyond the name
+   *  it sees: who it is and where, the project it is in, and whose it was
+   *  called by. */
+  private about(r: ResidentNow | undefined, name: string): string {
+    if (!r) return name;
     const { words } = this.options;
-    // Under a name, who it is; under a colleague's, whose colleague too.
-    const under = [r.about.origin.kind === "colleague" ? words.colleagueOf(this.nameOf(r.about.origin.asked_by)) : null, titleOf(r) ? this.who(r) : null].filter(Boolean);
-    const origin = under.length ? `<span class="someone-origin">${escape(under.join(" · "))}</span>` : "";
-    const action = r.last_action;
-    const doing = waiting
-      ? `<span class="someone-doing">${escape(words.waitingFor)}</span>`
-      : action
-        ? `<span class="someone-doing">${action.machine !== r.about.machine ? `<span class="where">${escape(action.machine)}</span>` : ""}<span class="what">${escape(action.what)}</span></span>`
+    const who = words.someone(agentName(r.about.host.agent), r.about.machine);
+    const project = r.town ? (this.world?.towns.find((town) => town.town === r.town)?.record.name ?? r.town) : "";
+    const called = r.about.origin.kind === "colleague" ? words.colleagueOf(this.nameOf(r.about.origin.asked_by)) : "";
+    return [name, who === name ? "" : who, project, called].filter(Boolean).join("\n");
+  }
+
+  /** The agent's mark: Claude's or Codex's, another's in general. */
+  private agent(r: ResidentNow | undefined): string {
+    const agent = r?.about.host.agent;
+    const title = agent ? agentName(agent) : "";
+    return `<span class="front-agent" title="${escape(title)}">${glyph(agent === "claude" || agent === "codex" ? agent : "agents", 16)}</span>`;
+  }
+
+  /** The machine's mark, as the sidebar draws it, named on hover. */
+  private device(machine: string): string {
+    const node = this.world?.nodes.find((one) => one.name === machine);
+    const form = node && "Ok" in node.facts ? (node.facts.Ok.form ?? "desktop") : "desktop";
+    return `<span class="front-device" title="${escape(machine)}">${glyph(form, 16)}</span>`;
+  }
+
+  /** A moment, as short as it can be said from now. */
+  private when(at: Date): string {
+    const { words } = this.options;
+    if (at.toDateString() === this.now.toDateString()) return words.clock(at);
+    const before = new Date(this.now);
+    before.setDate(before.getDate() - 1);
+    return words.earlier(at, at.toDateString() === before.toDateString());
+  }
+
+  // What waits for the reader --------------------------------------------
+
+  private asks(asking: ResidentNow[]): string {
+    const { words } = this.options;
+    return `<section class="front-part front-asks"><h2 class="front-title"><span>${escape(words.waiting)}</span><span class="front-count">${asking.length}</span></h2><ul class="front-cards">${asking.map((r) => this.ask(r)).join("")}</ul></section>`;
+  }
+
+  private ask(r: ResidentNow): string {
+    const { words } = this.options;
+    const address = addressOf(r);
+    const name = this.name(r);
+    const asked = r.now?.asked;
+    const since = r.now?.waiting_since ?? asked?.at ?? r.now?.since ?? r.about.born_at;
+    const waitedFor = words.lasted(Math.max(0, this.now.getTime() - Date.parse(since)));
+    const what = asked
+      ? `<span class="front-ask${asked.what === "command" ? " code" : ""}"><span class="front-ask-glyph" aria-hidden="true">${glyph(ASK_GLYPHS[asked.what], 16)}</span><span class="spoken">${escape(words.asks[asked.what])}</span><span class="front-ask-text">${escape(asked.text)}</span></span>`
+      : `<span class="front-ask quiet"><span class="front-ask-glyph" aria-hidden="true">${glyph("ask", 16)}</span><span class="front-ask-text">${escape(words.waitsUnsaid)}</span></span>`;
+    const choices = answerButtons(asked);
+    const chosen = asked ? this.answered.get(asked.id) : undefined;
+    const answers = chosen
+      ? `<p class="front-answers given">${glyph("check", 16)}<span>${escape(words.answered(chosen))}</span></p>`
+      : choices.length
+        ? `<div class="front-answers">${choices.map((choice, index) => `<button class="front-answer" type="button" data-choice="${index}">${escape(choice)}</button>`).join("")}</div>`
         : "";
-    const trouble = r.now?.trouble
-      ? `<span class="someone-trouble">${escape(r.now.trouble.text)} · ${escape(words.ago(this.now.getTime() - Date.parse(r.now.trouble.at)))}</span>`
-      : "";
-    const mark = waiting ? `<span class="ask" aria-hidden="true"></span>` : `<span class="pulse" aria-hidden="true"></span>`;
-    return `<li><a class="someone${waiting ? " waiting" : ""}" href="${this.options.link({ machine: r.about.machine, resident: r.about.id })}">
-      <span class="rail">${mark}</span>
-      <span class="someone-body">
-        <span class="someone-line"><span class="someone-name">${escape(this.name(r))}</span>${r.town ? `<span class="tag">${escape(r.town)}</span>` : ""}<span class="someone-since">${escape(words.for(this.since(r.now?.since ?? r.about.born_at)))}</span></span>
-        ${origin}${doing}${trouble}
-      </span>
-      <span class="someone-go">${glyph("chevron", 16)}</span>
+    return `<li class="front-card" data-machine="${escape(address.machine)}" data-resident="${escape(address.resident)}">
+      <a class="front-card-link" href="${this.options.link(address)}">
+        <span class="front-card-head">${this.agent(r)}<span class="front-name" title="${escape(this.about(r, name))}">${escape(name)}</span>${this.device(r.about.machine)}<span class="front-for" title="${escape(this.when(new Date(since)))}">${escape(waitedFor)}</span></span>
+        ${what}
+      </a>${answers}
+    </li>`;
+  }
+
+  /** Answers the question of a card with the choice its button carries; the
+   *  card says so at once and keeps saying it until the question goes. */
+  private answer(button: HTMLButtonElement): void {
+    const card = button.closest<HTMLElement>(".front-card");
+    const machine = card?.dataset.machine;
+    const resident = card?.dataset.resident;
+    if (!machine || !resident) return;
+    const r = this.residents().find((one) => one.about.machine === machine && one.about.id === resident);
+    const asked = r?.now?.asked;
+    const choice = Number(button.dataset.choice);
+    const said = asked?.options?.[choice];
+    if (!asked || said === undefined) return;
+    this.answered.set(asked.id, said);
+    this.redraw();
+    this.options.answer({ machine, resident }, asked, choice).catch((error: unknown) => {
+      console.error("answering from the front page", error);
+      this.answered.delete(asked.id);
+      this.redraw();
+    });
+  }
+
+  private redraw(): void {
+    if (!this.world) return;
+    this.drawn = "";
+    this.update(this.world, this.now);
+  }
+
+  // What came back while the reader was away -----------------------------
+
+  /** Each conversation's last turn that ended since the reader last looked,
+   *  the latest first: none of one asked to help another, which answers to
+   *  it, nor of one that waits for the reader, which says so above. */
+  private came(asks: Set<string>): Came[] {
+    const away = this.world?.away;
+    const since = this.options.lastVisit?.getTime();
+    if (!away || since === undefined) return [];
+    const latest = new Map<string, Came>();
+    for (const event of away.happenings) {
+      if (event.kind !== "turn_ended") continue;
+      const at = Date.parse(event.at);
+      if (at < since) continue;
+      const key = keyOf(event.who);
+      const r = this.knownAt(event.who);
+      if (asks.has(key) || r?.about.origin.kind === "colleague" || r?.removed) continue;
+      const kept = latest.get(key);
+      if (kept && kept.at.getTime() >= at) continue;
+      latest.set(key, this.cameOf(event, key, r));
+    }
+    return [...latest.values()].sort((a, b) => b.at.getTime() - a.at.getTime());
+  }
+
+  private cameOf(event: Extract<Happening, { kind: "turn_ended" }>, key: string, r: ResidentNow | undefined): Came {
+    const failed = event.how !== "completed";
+    const said = failed ? this.options.words.failed(event.reason ?? event.how) : (event.said ?? r?.now?.last_said ?? "");
+    return { key, address: event.who, at: new Date(event.at), failed, said, r };
+  }
+
+  private away(came: Came[]): string {
+    const { words, lastVisit } = this.options;
+    const away = this.world?.away;
+    if (!lastVisit || !away) return "";
+    const missing = away.trouble
+      ? `<p class="front-missing wrong" title="${escape(away.trouble)}">${escape(words.awayTrouble(away.trouble))}</p>`
+      : away.unasked.length
+        ? `<p class="front-missing">${escape(words.unasked(away.unasked.map((u) => (u.offline ? words.unaskedOffline(u.machine) : words.unaskedWhy(u.machine, u.why ?? ""))).join(words.listSeparator)))}</p>`
+        : "";
+    const span = words.lasted(Math.max(0, this.now.getTime() - lastVisit.getTime()));
+    const list = came.length
+      ? `<ol class="front-results">${came.map((one) => this.result(one)).join("")}</ol>`
+      : `<p class="front-quiet">${escape(words.nothingAway)}</p>`;
+    // The line of the time away is drawn where something came back along it.
+    const line = came.length ? this.timeline(came, lastVisit) : "";
+    return `<section class="front-part front-away"><h2 class="front-title"><span>${escape(words.away)}</span><span class="front-count">${escape(span)}</span></h2>${line}${list}${missing}</section>`;
+  }
+
+  /** The time away as a line drawn against a rule, from the last look to
+   *  now, with a blot where each conversation last came back: red where it
+   *  ended in an error. */
+  private timeline(came: Came[], from: Date): string {
+    const { words } = this.options;
+    const start = from.getTime();
+    const span = Math.max(1, this.now.getTime() - start);
+    const random = seeded(`away:${start}`);
+    const line = ruled([2, 6], [998, 6], 1.6, random);
+    const marks = came
+      .map((one) => {
+        const left = Math.min(100, Math.max(0, ((one.at.getTime() - start) / span) * 100));
+        const name = this.nameOf(one.address);
+        const mark = blot([7, 7], 3.6, seeded(one.key));
+        return `<a class="front-mark${one.failed ? " failed" : ""}" data-came="${escape(one.key)}" href="${this.options.link(one.address)}" style="left:${left.toFixed(2)}%" title="${escape(`${name} · ${this.when(one.at)}`)}" aria-label="${escape(name)}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="${mark}" fill="currentColor"/></svg></a>`;
+      })
+      .join("");
+    return `<div class="front-timeline"><svg class="front-rule" viewBox="0 0 1000 12" preserveAspectRatio="none" aria-hidden="true"><path d="${line}" fill="currentColor"/></svg>${marks}<span class="front-from">${escape(this.when(from))}</span><span class="front-to">${escape(words.present)}</span></div>`;
+  }
+
+  private result(one: Came): string {
+    const name = this.nameOf(one.address);
+    return `<li class="front-result${one.failed ? " failed" : ""}" data-came="${escape(one.key)}"><a href="${this.options.link(one.address)}">
+      ${this.agent(one.r)}<span class="front-name" title="${escape(this.about(one.r, name))}">${escape(name)}</span><time class="front-at" datetime="${escape(one.at.toISOString())}">${escape(this.when(one.at))}</time>
+      ${one.said ? `<span class="front-said">${escape(one.said)}</span>` : ""}
     </a></li>`;
   }
 
-  private chronicle(away: Away): string {
+  // What is at work now ---------------------------------------------------
+
+  private working(busy: ResidentNow[], jobs: RunningJob[]): string {
     const { words } = this.options;
-    const since = this.options.lastVisit?.getTime() ?? 0;
-    const events = away.happenings
-      .filter((event) => Date.parse(event.at) >= since)
-      .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-    // What could not be asked is said under what was.
-    const missing = away.trouble
-      ? `<p class="away-missing wrong" title="${escape(away.trouble)}">${escape(words.awayTrouble(away.trouble))}</p>`
-      : away.unasked.length
-        ? `<p class="away-missing">${escape(words.unasked(away.unasked.map((u) => (u.offline ? words.unaskedOffline(u.machine) : words.unaskedWhy(u.machine, u.why ?? ""))).join(words.listSeparator)))}</p>`
-        : "";
-    if (!events.length) return `<p class="quiet">${escape(away.trouble ? "" : words.nothingAway)}</p>${missing}`;
-    let day = "";
-    const items: string[] = [];
-    for (const event of events) {
-      // Project memory is not wired in yet (walkthrough item 13).
-      if (event.kind === "journal") continue;
-      const at = new Date(event.at);
-      const thisDay = words.day(at);
-      if (thisDay !== day && (day || thisDay !== words.day(this.now))) items.push(`<li class="day">${escape(thisDay)}</li>`);
-      day = thisDay;
-      items.push(this.happening(event, at));
+    // One asked to help another hangs under it, where that one is at work.
+    const keys = new Set(busy.map((r) => keyOf(addressOf(r))));
+    const under = new Map<string, ResidentNow[]>();
+    const top: ResidentNow[] = [];
+    for (const r of busy) {
+      const asker = r.about.origin.kind === "colleague" ? keyOf(r.about.origin.asked_by) : null;
+      if (asker && keys.has(asker)) under.set(asker, [...(under.get(asker) ?? []), r]);
+      else top.push(r);
     }
-    return `<ol class="chronicle">${items.join("")}</ol>${missing}`;
+    const rows = top.length
+      ? `<ul class="front-rows">${top.map((r) => this.row(r, under.get(keyOf(addressOf(r))) ?? [])).join("")}</ul>`
+      : `<div class="front-quiet"><span>${escape(words.nobodyWorking)}</span><button class="front-begin" type="button">${glyph("plus", 14)}<span>${escape(words.begin)}</span></button></div>`;
+    const running = jobs.length
+      ? `<h3 class="front-subtitle"><span>${escape(words.jobs)}</span><span class="front-count">${jobs.length}</span></h3><ul class="front-jobs">${jobs.map((job) => this.job(job)).join("")}</ul>`
+      : "";
+    return `<section class="front-part front-now"><h2 class="front-title"><span>${escape(words.now)}</span><span class="front-count">${busy.length || ""}</span></h2>${rows}${running}</section>`;
   }
 
-  /** Who wrote a record: the reader, an agent, or a session by its
-   *  program. */
-  private writer(by: Writer): string {
-    switch (by.kind) {
-      case "user":
-        return this.options.words.you;
-      case "resident":
-        return this.nameOf(by.address);
-      case "session":
-        return by.agent;
-      case "page":
-        return this.options.words.aPage(by.page.page);
-    }
-  }
-
-  /** Who started a job: an agent, or a page. */
-  private ownerName(owner: JobOwner): string {
-    return "page" in owner ? this.options.words.aPage(owner.page.page) : this.nameOf(owner);
-  }
-
-  private happening(event: Happening, at: Date): string {
+  private row(r: ResidentNow, called: ResidentNow[]): string {
     const { words } = this.options;
-    const time = `<time datetime="${escape(event.at)}">${escape(words.clock(at))}</time>`;
-    const town = "town" in event && event.town ? `<span class="tag">${escape(event.town)}</span>` : "";
-    let mark: Parameters<typeof glyph>[0] = "colleague";
-    let line: string;
-    let detail = "";
-    let tone = "";
-    switch (event.kind) {
-      case "file_action":
-        line = `${this.nameOf(event.who)} ${event.hand} ${event.paths}`;
-        detail = `<span class="detail">${escape(event.result)}</span>`;
-        mark = "edit";
-        break;
-      case "turn_ended":
-        if (event.how === "completed") {
-          line = words.turnEnded(this.nameOf(event.who));
-          if (event.said) detail = `<q class="said">${escape(event.said)}</q>`;
-        } else {
-          line = words.turnFailed(this.nameOf(event.who), event.reason ?? this.options.ended(`turn ${event.how}`));
-          tone = " wrong";
-        }
-        mark = "thinking";
-        break;
-      case "job_ended": {
-        line = words.jobDone(event.job, event.machine);
-        const failed = !/^exited 0$/.test(event.how);
-        detail = `<span class="detail${failed ? " wrong" : ""}">${escape(this.options.ended(event.how))} · ${escape(words.startedBy(this.ownerName(event.owner)))}</span>`;
-        mark = "command";
-        break;
-      }
-      case "journal":
-        line = words.journalAdded(event.journal);
-        detail = `${event.first ? `<q class="said entry">${escape(event.first)}</q>` : ""}<span class="detail">${escape(this.writer(event.by))}</span>`;
-        mark = "read";
-        break;
-      case "arrived":
-        line = words.arrived(this.nameOf(event.who));
-        mark = "plus";
-        break;
-      case "moved":
-        line =
-          event.from && event.to
-            ? words.movedTo(this.nameOf(event.who), event.from, event.to)
-            : event.to
-              ? words.entered(this.nameOf(event.who), event.to)
-              : words.leftProject(this.nameOf(event.who), event.from ?? "");
-        mark = "colleague";
-        break;
-      case "project":
-        line = event.version === 1 ? words.projectOpened(event.name) : words.projectEdited(event.name, event.version);
-        detail = `<span class="detail">${escape(this.writer(event.by))}</span>`;
-        mark = "edit";
-        break;
-      case "uncertain":
-        line = words.uncertain(this.nameOf(event.who));
-        detail = `<span class="detail">${escape(event.why)}</span>`;
-        mark = "thinking";
-        tone = " caution";
-        break;
-      case "undelivered":
-        line = words.undelivered(this.nameOf(event.who), this.nameOf(event.to));
-        detail = `<span class="detail">${escape(event.why)}</span>`;
-        mark = "colleague";
-        tone = " caution";
-        break;
-      case "asked":
-        // What it was asked follows: it is named by who it is.
-        line = words.asked(this.nameOf(event.who), this.whoAt(event.colleague));
-        detail = `<span class="detail">${escape(event.label)}</span>`;
-        mark = "colleague";
-        break;
-      case "machine":
-        line = event.online ? words.machineCame(event.machine) : words.machineLeft(event.machine);
-        mark = "web";
-        tone = event.online ? "" : " caution";
-        break;
-    }
-    const href = "who" in event ? this.options.link(event.who) : null;
-    const body = `${time}<span class="rail">${glyph(mark, 18)}</span><div class="event-body"><span class="event-line">${escape(line)}${town}</span>${detail}</div>`;
-    return href
-      ? `<li class="event${tone}"><a class="event-link" href="${href}">${body}</a></li>`
-      : `<li class="event${tone}">${body}</li>`;
+    const name = this.name(r);
+    const trouble = r.now?.trouble;
+    const lasted = words.lasted(Math.max(0, this.now.getTime() - Date.parse(r.now!.since)));
+    const pulse = `<span class="front-pulse${trouble ? " troubled" : ""}"${trouble ? ` title="${escape(`${trouble.text} · ${words.ago(this.now.getTime() - Date.parse(trouble.at))}`)}"` : ""} aria-hidden="true"></span>`;
+    const rest = called.length ? `<ul class="front-rows front-called">${called.map((one) => this.row(one, [])).join("")}</ul>` : "";
+    return `<li><a class="front-row" href="${this.options.link(addressOf(r))}">
+      ${pulse}${this.agent(r)}<span class="front-name" title="${escape(this.about(r, name))}">${escape(name)}</span>${this.device(r.about.machine)}<span class="front-for">${escape(lasted)}</span>
+    </a>${rest}</li>`;
   }
 
   private job(job: RunningJob): string {
     const { words } = this.options;
-    const whose = accountTag(worksFor(this.world?.others, job.machine, job.job), words.forAccounts);
-    return `<li class="job"><a class="job-id" href="${escape(fileLink(job.machine, job.output, true))}">${escape(job.job)}</a><span class="job-where">${escape(job.machine)} · ${escape(this.since(job.started_at))}${whose}</span><code class="job-command">${escape(job.command)}</code><span class="detail">${escape(words.startedBy(this.ownerName(job.owner)))}</span></li>`;
+    const owner = ownerResident(job.owner);
+    const by = owner ? this.nameOf(owner) : words.aPage("page" in job.owner ? job.owner.page.page : "");
+    const whose = worksFor(this.world?.others, job.machine, job.job);
+    const lasted = words.lasted(Math.max(0, this.now.getTime() - Date.parse(job.started_at)));
+    const first = job.command.split("\n")[0] ?? "";
+    const about = [job.command, words.startedBy(by), whose ? words.forAccounts(whose) : ""].filter(Boolean).join("\n");
+    return `<li><a class="front-job" href="${escape(fileLink(job.machine, job.output, true))}" title="${escape(about)}">
+      <span class="front-job-glyph" aria-hidden="true">${glyph("command", 16)}</span><code class="front-command">${escape(first)}</code>${whose ? `<span class="front-whose">${glyph("person", 12)}<span>${escape(whose)}</span></span>` : ""}${this.device(job.machine)}<span class="front-for">${escape(lasted)}</span>
+    </a></li>`;
   }
+}
+
+/** How long a conversation has waited, as when it began: the oldest first. */
+function waited(r: ResidentNow): number {
+  return Date.parse(r.now?.waiting_since ?? r.now?.asked?.at ?? r.now?.since ?? r.about.born_at);
 }
 
 /** A small mark of whom something runs for, when that is other accounts

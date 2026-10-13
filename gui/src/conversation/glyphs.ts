@@ -18,11 +18,12 @@ type Frame =
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
- *  name; what is done to a turn; the places of the frame added since. None
- *  is a maker's mark: the agents are told apart by shapes of our own. */
+ *  name; what is done to a turn; the places of the frame added since; what an
+ *  agent asks the user. None is a maker's mark: the agents are told apart by
+ *  shapes of our own. */
 type Marks =
   | "claude" | "codex" | "desktop" | "laptop" | "server" | "features" | "agents" | "folder" | "fork" | "info" | "regenerate"
-  | "terminal" | "cross" | "fit";
+  | "terminal" | "cross" | "fit" | "ask";
 
 const paths: Record<Named, string> = {
   menu: '<path d="M4 7h12M4 13h8"/>',
@@ -36,6 +37,8 @@ const paths: Record<Named, string> = {
   folder: '<path d="M3.75 6.25a1 1 0 0 1 1-1h3.2l1.5 1.5h5.8a1 1 0 0 1 1 1v6.75a1 1 0 0 1-1 1H4.75a1 1 0 0 1-1-1z"/>',
   fork: '<circle cx="6" cy="5" r="1.6"/><circle cx="14" cy="5" r="1.6"/><circle cx="10" cy="15.2" r="1.6"/><path d="M6 6.6v.9a2.5 2.5 0 0 0 2.5 2.5h3a2.5 2.5 0 0 0 2.5-2.5v-.9M10 10v3.6"/>',
   info: '<circle cx="10" cy="10" r="6.25"/><path d="M10 9.25v4"/><circle cx="10" cy="6.9" r="0.6" fill="currentColor"/>',
+  // A speech balloon with a question in it: something asked of the user.
+  ask: '<path d="M5.75 4.25h8.5a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H9.75l-3.5 2.5v-2.5h-.5a1.5 1.5 0 0 1-1.5-1.5v-6a1.5 1.5 0 0 1 1.5-1.5z"/><path d="M8.6 7.35a1.5 1.5 0 0 1 2.9.45c0 1.05-1.5 1.25-1.5 2.15"/><circle cx="10" cy="11.55" r="0.55" fill="currentColor"/>',
   regenerate: '<path d="M15.25 10a5.25 5.25 0 1 1-1.54-3.71"/><path d="M14.25 3.75v2.75H11.5"/>',
   terminal: '<rect x="3.25" y="4.25" width="13.5" height="11.5" rx="1.75"/><path d="M6.25 8l2.25 2-2.25 2M10.25 12.5h3.5"/>',
   cross: '<path d="M6 6l8 8M14 6l-8 8"/>',

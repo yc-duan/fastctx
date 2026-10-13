@@ -89,8 +89,10 @@ export function foldedOf(nodes: readonly MapNode[], chosen: ReadonlyMap<string, 
 }
 
 /** A still drawing's names are never drawn smaller than this share of their
- *  size. */
+ *  size, nor larger than twice it to get there: past that the title strip of
+ *  a box no longer holds its name. */
 const LEGIBLE = 0.85;
+const MOST_GROWN = 2;
 
 /** Zoom levels: below the first the drawing is far, above the second near. */
 const LEVELS: [number, number] = [0.55, 1.2];
@@ -120,6 +122,13 @@ export class MachineMap {
   private marked = "";
   /** A still drawing's frame, as of its last layout. */
   private framed = "";
+  /** How many times their size a still drawing's names are drawn, as it
+   *  was laid for. */
+  private grow = 1;
+  /** Measures a still drawing's names for the room they take. */
+  private measuring: CanvasRenderingContext2D | null = null;
+  /** The faces are loading, and the drawing is laid again when they are in. */
+  private awaitingFaces = false;
   /** The boxes folded as of the last placing: a fold the person made keeps
    *  the drawing where it is. */
   private placedFolds: string | null = null;
@@ -240,23 +249,70 @@ export class MachineMap {
   }
 
   /** A still drawing laid with its columns as tall as let it be drawn
-   *  largest in its frame; ten to a column until the frame has a size. */
+   *  largest in its frame; ten to a column until the frame has a size. Its
+   *  names grow back to stay readable as it is drawn small, and take the
+   *  room they need: each way of laying it is laid again for the size its
+   *  names will be, a few times over, as the two settle. */
   private fill(scene: MachineMapScene): Placement {
     const width = this.element.clientWidth;
     const height = this.element.clientHeight;
     this.framed = `${width}x${height}`;
-    const lay = (rows: number) => this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, rows, vacant: scene.adds.length > 0 });
-    if (!width || !height) return lay(ROWS);
+    const room = this.nameRoom(scene);
+    const lay = (rows: number, grow: number) =>
+      this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, rows, vacant: scene.adds.length > 0, grow, ...(room === undefined ? {} : { room }) });
+    if (!width || !height) {
+      this.grow = 1;
+      return lay(ROWS, 1);
+    }
     // The canvas leaves a tenth of the shorter side round what it fits.
     const pad = Math.max(24, Math.min(76, Math.min(width, height) * 0.1));
-    let best: { placement: Placement; scale: number } | null = null;
+    const scaleOf = ({ bounds }: Placement) => Math.min((width - 2 * pad) / bounds.width, (height - 2 * pad) / bounds.height);
+    let best: { placement: Placement; scale: number; grow: number } | null = null;
     for (let rows = 1; rows <= ROWS; rows += 1) {
-      const placement = lay(rows);
-      const { bounds } = placement;
-      const scale = Math.min((width - 2 * pad) / bounds.width, (height - 2 * pad) / bounds.height);
-      if (!best || scale > best.scale + 1e-6) best = { placement, scale };
+      let grow = 1;
+      let placement = lay(rows, grow);
+      let scale = scaleOf(placement);
+      for (let round = 0; round < 4; round += 1) {
+        const next = Math.min(MOST_GROWN, Math.max(1, LEGIBLE / scale));
+        if (Math.abs(next - grow) < 0.02) break;
+        grow = next;
+        placement = lay(rows, grow);
+        scale = scaleOf(placement);
+      }
+      if (!best || scale > best.scale + 1e-6) best = { placement, scale, grow };
     }
+    this.grow = best!.grow;
     return best!.placement;
+  }
+
+  /** How wide the widest of the machines' names is, or the line under
+   *  one, at their size and with a little air: the room a name takes beside
+   *  its ring in a still drawing, which lays it no wider than its own names
+   *  need. */
+  private nameRoom(scene: MachineMapScene): number | undefined {
+    this.measuring ??= document.createElement("canvas").getContext("2d");
+    const context = this.measuring;
+    if (!context || !scene.nodes.length) return undefined;
+    const family = getComputedStyle(document.documentElement).getPropertyValue("--font-reading").trim() || "serif";
+    let widest = 0;
+    for (const node of scene.nodes) {
+      context.font = `13px ${family}`;
+      widest = Math.max(widest, context.measureText(node.name).width);
+      if (node.sub) {
+        context.font = `10.5px ${family}`;
+        widest = Math.max(widest, context.measureText(node.sub).width);
+      }
+    }
+    // A face not yet loaded measures as another: laid again once the faces
+    // are in, and a little over meanwhile.
+    if (document.fonts.status !== "loaded" && !this.awaitingFaces) {
+      this.awaitingFaces = true;
+      void document.fonts.ready.then(() => {
+        this.awaitingFaces = false;
+        if (this.scene) this.update(this.scene);
+      });
+    }
+    return Math.ceil(widest * 1.15) + 16;
   }
 
   /** A phone's screen, or a page as narrow: under 600 pixels across. */
@@ -271,8 +327,9 @@ export class MachineMap {
     // frame changes shape.
     if (this.options.still) {
       if (this.scene && `${this.element.clientWidth}x${this.element.clientHeight}` !== this.framed) this.update(this.scene);
-      // Drawn small, its names grow back to stay readable.
-      this.element.style.setProperty("--name-grow", Math.max(1, LEGIBLE / frame.view.scale).toFixed(3));
+      // Drawn small, its names grow back to stay readable, as large as it
+      // was laid for.
+      this.element.style.setProperty("--name-grow", Math.min(this.grow, Math.max(1, LEGIBLE / frame.view.scale)).toFixed(3));
     } else if (this.scene && this.isNarrow() !== this.narrow) this.update(this.scene);
     // The graph paper moves with the drawing, a line every 32 of its units.
     this.element.style.setProperty("--paper-step", `${(32 * frame.view.scale).toFixed(2)}px`);
@@ -336,9 +393,13 @@ export class MachineMap {
     const { scene, placement } = this;
     if (!scene || !placement) return;
     const { words } = this.options;
-    const near = this.level >= 1;
+    // A still drawing is a picture of what is afoot: its marks are drawn
+    // however small it is, as large as its names.
+    const near = this.level >= 1 || !!this.options.still;
+    const marks = this.options.still ? Math.min(1.6, this.grow) : 1;
     const key = JSON.stringify([
       near,
+      marks,
       scene.hubs,
       [...scene.hubLabels],
       scene.adds,
@@ -440,8 +501,8 @@ export class MachineMap {
       // ring, clear of its name on its right: one dot each, no names.
       for (let place = 0; place < node.busy; place++) {
         const at = -1.15 + place * 0.36;
-        const spot: Point = [x + Math.cos(at) * (RING + 13), y + Math.sin(at) * (RING + 13)];
-        add(blot(spot, 4, seeded(`map-agent:${node.key}:${place}`)), around(spot, 7), "marker", clay);
+        const spot: Point = [x + Math.cos(at) * (RING + 9 + 4 * marks), y + Math.sin(at) * (RING + 9 + 4 * marks)];
+        add(blot(spot, 4 * marks, seeded(`map-agent:${node.key}:${place}`)), around(spot, 3 + 4 * marks), "marker", clay);
       }
     }
     void this.pens.update(strokes).catch((error: unknown) => console.warn("the machines drawing could not be inked", error));
@@ -508,7 +569,7 @@ export class MachineMap {
   private mark(): void {
     const { scene, placement } = this;
     if (!scene || !placement) return;
-    const near = this.level >= 1;
+    const near = this.level >= 1 || !!this.options.still;
     const lit = scene.lit ?? null;
     const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.busy > 0]), [...placement.machines], lit && [...lit]]);
     if (key === this.marked) return;

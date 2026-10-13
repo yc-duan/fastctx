@@ -1,23 +1,38 @@
 // What the World's front page says, in the user's words (`world-gui.md`,
 // 用词): agents by who they are and where, projects and machines by name,
 // times as people say them. Nothing here is a judgment; every line says a
-// fact the World holds.
+// fact the World holds. A project's page says some of the same.
+
+import type { Asked } from "../world/world";
 
 export interface HomeWords {
   world: string;
   /** An open page, as who started or wrote something. */
   aPage(name: string): string;
-  /** The day, as a dateline: 十月四日 · 星期六. */
-  dateline(at: Date): string;
-  lastHere(ago: string): string;
-  firstTime: string;
-  machinesOnline(online: number, all: number): string;
-  agentsWorking(n: number): string;
+  /** Conversations waiting for the reader. */
   waiting: string;
+  /** What an agent asks, said whole to a screen reader. */
+  asks: Record<Asked["what"], string>;
+  /** A conversation the host says waits on the reader, saying nothing more. */
+  waitsUnsaid: string;
+  /** What a conversation that waits on the reader does, as a project's page
+   *  says it. */
   waitingFor: string;
+  /** An answer given here, before its conversation takes it. */
+  answered(choice: string): string;
+  /** Conversations at work, and the commands running. */
   now: string;
+  jobs: string;
   nobodyWorking: string;
-  idle(names: string): string;
+  /** Begins a conversation, where nobody is at work. */
+  begin: string;
+  /** What came back while the reader was away. */
+  away: string;
+  nothingAway: string;
+  /** The end of the line of the time away. */
+  present: string;
+  /** A turn that ended in an error, and why. */
+  failed(reason: string): string;
   /** Between the names in a short list. */
   listSeparator: string;
   /** The World could not be asked, and why. */
@@ -28,13 +43,6 @@ export interface HomeWords {
   renewThere: string;
   /** The way to set this computer up, beside the World it could not ask. */
   setUp: string;
-  /** Begins a conversation, where nobody is at work. */
-  begin: string;
-  away: string;
-  nothingAway: string;
-  projects: string;
-  machines: string;
-  unattended: string;
   /** "Claude · laptop": an agent by its program and machine. */
   someone(agent: string, machine: string): string;
   colleagueOf(asker: string): string;
@@ -43,38 +51,16 @@ export interface HomeWords {
   lasted(ms: number): string;
   clock(at: Date): string;
   day(at: Date): string;
-  online: string;
-  offlineSince(ago: string): string;
-  unknownLink: string;
-  here(n: number): string;
-  journals(n: number): string;
-  jobsRunning(n: number): string;
-  residents(n: number): string;
-  turnEnded(who: string): string;
-  turnFailed(who: string, reason: string): string;
-  jobDone(job: string, machine: string): string;
-  journalAdded(journal: string): string;
-  asked(who: string, colleague: string): string;
-  machineLeft(machine: string): string;
-  machineCame(machine: string): string;
-  arrived(who: string): string;
-  entered(who: string, project: string): string;
-  leftProject(who: string, project: string): string;
-  movedTo(who: string, from: string, to: string): string;
-  projectOpened(name: string): string;
-  projectEdited(name: string, version: number): string;
-  uncertain(who: string): string;
-  undelivered(colleague: string, to: string): string;
+  /** A moment the day before, or earlier, said short: 昨天 22:50, 10月1日 22:50. */
+  earlier(at: Date, yesterday: boolean): string;
   you: string;
   unasked(list: string): string;
   unaskedOffline(machine: string): string;
   unaskedWhy(machine: string, why: string): string;
   awayTrouble(why: string): string;
   startedBy(who: string): string;
-  ownerLeft(ago: string): string;
   /** Said of a job or agent that works for other accounts than the reader's. */
   forAccounts(accounts: string): string;
-  open: string;
 }
 
 const zhWeek = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
@@ -112,27 +98,24 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export const zhHome: HomeWords = {
   world: "世界",
   aPage: (name) => `页面「${name}」`,
-  dateline: (at) => `${zhNumber(at.getMonth() + 1)}月${zhNumber(at.getDate())}日 · ${zhWeek[at.getDay()]}`,
-  lastHere: (ago) => `上次访问 ${ago}`,
-  firstTime: "首次访问",
-  machinesOnline: (online, all) => (online === all ? `${all} 台机器在线` : `${online}/${all} 台机器在线`),
-  agentsWorking: (n) => (n ? `${n} 个智能体工作中` : "无智能体工作"),
   waiting: "等待回复",
+  asks: { answer: "问你", command: "想运行命令", change: "想改文件", tool: "想用工具", plan: "等你批准计划", form: "请你填写", other: "等你回复" },
+  waitsUnsaid: "等你回复",
   waitingFor: "等待回复",
+  answered: (choice) => `已回答：${choice}`,
   now: "工作中",
+  jobs: "后台命令",
   nobodyWorking: "暂无工作中的智能体",
-  idle: (names) => `空闲：${names}`,
+  begin: "新对话",
+  away: "离开期间",
+  nothingAway: "没有新动态",
+  present: "现在",
+  failed: (reason) => `出错：${reason}`,
   listSeparator: "、",
   unreachable: () => "无法连接本机服务",
   oldWorld: (node, client) => `本机服务版本 ${node} 与界面 ${client} 不兼容`,
   renewThere: "前往设置更新",
   setUp: "设置这台电脑",
-  begin: "新对话",
-  away: "离开期间",
-  nothingAway: "离开期间没有新动态",
-  projects: "项目",
-  machines: "机器",
-  unattended: "无人值守的任务",
   someone: (agent, machine) => `${agent} · ${machine}`,
   colleagueOf: (asker) => `${asker} 调用的模型`,
   for: (duration) => duration,
@@ -140,37 +123,14 @@ export const zhHome: HomeWords = {
   lasted: zhSpan,
   clock: (at) => `${pad(at.getHours())}:${pad(at.getMinutes())}`,
   day: (at) => `${zhNumber(at.getMonth() + 1)}月${zhNumber(at.getDate())}日 · ${zhWeek[at.getDay()]}`,
-  online: "在线",
-  offlineSince: (ago) => `${ago}离线`,
-  unknownLink: "状态未知",
-  here: (n) => `${n} 位在线`,
-  journals: (n) => `${n} 份手记`,
-  jobsRunning: (n) => `${n} 条后台命令在运行`,
-  residents: (n) => `${n} 个智能体`,
-  turnEnded: (who) => `${who} 回复完成`,
-  turnFailed: (who, reason) => `${who} 出错：${reason}`,
-  jobDone: (job, machine) => `${job} 在 ${machine} 上完成`,
-  journalAdded: (journal) => `手记「${journal}」新增一条`,
-  asked: (who, colleague) => `${who} 调用了 ${colleague}`,
-  machineLeft: (machine) => `${machine} 离线`,
-  machineCame: (machine) => `${machine} 上线`,
-  arrived: (who) => `${who} 加入`,
-  entered: (who, project) => `${who} 进入项目 ${project}`,
-  leftProject: (who, project) => `${who} 离开项目 ${project}`,
-  movedTo: (who, from, to) => `${who} 从 ${from} 移到 ${to}`,
-  projectOpened: (name) => `新建项目「${name}」`,
-  projectEdited: (name, version) => `「${name}」立项更新至第 ${version} 版`,
-  uncertain: (who) => `发给 ${who} 的消息状态未知`,
-  undelivered: (colleague, to) => `${colleague} 的回复未送达 ${to}`,
+  earlier: (at, yesterday) => `${yesterday ? "昨天" : `${at.getMonth() + 1}月${at.getDate()}日`} ${pad(at.getHours())}:${pad(at.getMinutes())}`,
   you: "你",
   unasked: (list) => `未获取：${list}`,
   unaskedOffline: (machine) => `${machine}（离线）`,
   unaskedWhy: (machine, why) => `${machine}（${why}）`,
   awayTrouble: () => "无法获取离开期间的动态",
   startedBy: (who) => `由 ${who} 启动`,
-  ownerLeft: (ago) => `启动者 ${ago}离开`,
   forAccounts: (accounts) => `属于 ${accounts}`,
-  open: "打开",
 };
 
 const enWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -179,27 +139,32 @@ const enMonths = ["January", "February", "March", "April", "May", "June", "July"
 export const enHome: HomeWords = {
   world: "Home",
   aPage: (name) => `the page “${name}”`,
-  dateline: (at) => `${enWeek[at.getDay()]}, ${enMonths[at.getMonth()]} ${at.getDate()}`,
-  lastHere: (ago) => `Last visit ${ago}`,
-  firstTime: "First visit",
-  machinesOnline: (online, all) => (online === all ? `all ${all} machines online` : `${online} of ${all} machines online`),
-  agentsWorking: (n) => (n ? `${n} agent${n === 1 ? "" : "s"} working` : "no agent working"),
-  waiting: "Waiting for reply",
+  waiting: "Waiting for you",
+  asks: {
+    answer: "asks you",
+    command: "wants to run a command",
+    change: "wants to change files",
+    tool: "wants to use a tool",
+    plan: "waits for its plan's approval",
+    form: "asks you to fill in a form",
+    other: "waits for you",
+  },
+  waitsUnsaid: "Waiting for your reply",
   waitingFor: "Waiting for your reply",
+  answered: (choice) => `Answered: ${choice}`,
   now: "Working",
+  jobs: "Background commands",
   nobodyWorking: "No agents working",
-  idle: (names) => `Idle: ${names}`,
+  begin: "New conversation",
+  away: "While you were away",
+  nothingAway: "Nothing new",
+  present: "now",
+  failed: (reason) => `Error: ${reason}`,
   listSeparator: ", ",
   unreachable: () => "Can't connect to the local service",
   oldWorld: (node, client) => `Local service ${node} isn't compatible with this app (${client})`,
   renewThere: "Update in Settings",
   setUp: "Set up this computer",
-  begin: "New conversation",
-  away: "While you were away",
-  nothingAway: "Nothing new while you were away",
-  projects: "Projects",
-  machines: "Machines",
-  unattended: "Unattended tasks",
   someone: (agent, machine) => `${agent} · ${machine}`,
   colleagueOf: (asker) => `called by ${asker}`,
   for: (duration) => duration,
@@ -207,35 +172,12 @@ export const enHome: HomeWords = {
   lasted: enSpan,
   clock: (at) => `${pad(at.getHours())}:${pad(at.getMinutes())}`,
   day: (at) => `${enWeek[at.getDay()]}, ${enMonths[at.getMonth()]} ${at.getDate()}`,
-  online: "online",
-  offlineSince: (ago) => `offline since ${ago}`,
-  unknownLink: "status unknown",
-  here: (n) => `${n} here`,
-  journals: (n) => `${n} journal${n === 1 ? "" : "s"}`,
-  jobsRunning: (n) => `${n} job${n === 1 ? "" : "s"} running`,
-  residents: (n) => `${n} agent${n === 1 ? "" : "s"}`,
-  turnEnded: (who) => `${who} replied`,
-  turnFailed: (who, reason) => `${who} hit an error: ${reason}`,
-  jobDone: (job, machine) => `${job} ended on ${machine}`,
-  journalAdded: (journal) => `A new entry in the journal “${journal}”`,
-  asked: (who, colleague) => `${who} called ${colleague}`,
-  machineLeft: (machine) => `${machine} went offline`,
-  machineCame: (machine) => `${machine} came back`,
-  arrived: (who) => `${who} arrived`,
-  entered: (who, project) => `${who} entered ${project}`,
-  leftProject: (who, project) => `${who} left ${project}`,
-  movedTo: (who, from, to) => `${who} moved from ${from} to ${to}`,
-  projectOpened: (name) => `Opened the project “${name}”`,
-  projectEdited: (name, version) => `“${name}” updated to version ${version}`,
-  uncertain: (who) => `Message to ${who}: delivery unknown`,
-  undelivered: (colleague, to) => `${colleague}'s answer did not reach ${to}`,
+  earlier: (at, yesterday) => `${yesterday ? "yesterday" : `${enMonths[at.getMonth()].slice(0, 3)} ${at.getDate()}`} ${pad(at.getHours())}:${pad(at.getMinutes())}`,
   you: "You",
   unasked: (list) => `Not asked: ${list}`,
   unaskedOffline: (machine) => `${machine} (offline)`,
   unaskedWhy: (machine, why) => `${machine} (${why})`,
   awayTrouble: () => "Couldn't load activity while you were away",
   startedBy: (who) => `started by ${who}`,
-  ownerLeft: (ago) => `starter left ${ago}`,
   forAccounts: (accounts) => `belongs to ${accounts}`,
-  open: "Open",
 };
