@@ -205,6 +205,16 @@ impl std::fmt::Display for SendError {
     }
 }
 
+/// A thread Codex spawned as an agent of another thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Spawned {
+    /// The thread whose agent it is.
+    pub parent: String,
+    pub nickname: Option<String>,
+    pub role: Option<String>,
+    pub model: Option<String>,
+}
+
 /// What the host tells the node.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum HostEvent {
@@ -667,6 +677,23 @@ impl CodexHost {
         Ok(answer["thread"]["path"].as_str().map(PathBuf::from))
     }
 
+    /// Whose agent the thread is, where Codex spawned it for another thread
+    /// (`multi_agent`): that thread, and the nickname and role Codex gave
+    /// it. None for a thread no other spawned.
+    pub async fn spawned_by(self: &Arc<Self>, thread: &str) -> Result<Option<Spawned>, String> {
+        let answer =
+            self.server().await?.request("thread/read", json!({"threadId": thread, "includeTurns": false})).await?;
+        let found = &answer["thread"];
+        let text =
+            |key: &str| found.get(key).and_then(Value::as_str).map(str::to_string).filter(|text| !text.is_empty());
+        Ok(text("parentThreadId").map(|parent| Spawned {
+            parent,
+            nickname: text("agentNickname"),
+            role: text("agentRole"),
+            model: text("model"),
+        }))
+    }
+
     /// Wait until the node has applied every event sent before this barrier.
     pub async fn flush_events(&self, thread: &str) -> Result<(), String> {
         let (done, applied) = oneshot::channel();
@@ -1024,6 +1051,8 @@ impl CodexHost {
                         entry.submissions.observe(&turn, item);
                     }
                 }
+                // What it tells of Codex's own agents, as its record will.
+                let facts = if completed { items::agent_facts(item) } else { Vec::new() };
                 let mut item = match items::read(item, completed) {
                     items::Read::Words { text, message } => {
                         if completed {
@@ -1060,11 +1089,14 @@ impl CodexHost {
                         self.lock().threads.entry(thread.clone()).or_default().last_message =
                             Some((turn.clone(), text.clone()));
                     }
-                    Happened::Finished { turn, item }
+                    Happened::Finished { turn: turn.clone(), item }
                 } else {
-                    Happened::Began { turn, item }
+                    Happened::Began { turn: turn.clone(), item }
                 };
                 self.emit(&thread, at, happened);
+                for change in facts {
+                    self.emit(&thread, at, Happened::Changed { turn: Some(turn.clone()), change });
+                }
             }
             "item/agentMessage/delta" | "item/plan/delta" => {
                 let (Some(turn), Some(item), Some(delta)) = (turn, text("/itemId"), text("/delta")) else { return };

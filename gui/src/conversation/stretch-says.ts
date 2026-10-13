@@ -2,7 +2,8 @@
 // it alike: while it runs, the step it is on and its clock; once done, what
 // it did, the lines it changed and how long it took. A stretch that is only
 // thinking says how long it thought and the tokens it took, and opens only
-// where there are words.
+// where there are words. One of the host's own agents a call of it started
+// still works on after the call: the stretch runs while the agent does.
 
 import type { Words } from "../words";
 import { counts } from "./diff";
@@ -37,12 +38,13 @@ export function stretchSays(
   words: Words,
   attachment: (path: string) => string | null,
   tokens: (run: readonly ProseEntry[]) => number | null,
+  agents: StretchAgents = { of: () => null, named: () => null },
 ): StretchSaid {
   const tools = group.members.filter((member): member is ToolEntry => member.kind === "tool");
   const thinking = group.members.filter(isThinking);
   const steps = runsOf(group.members).length;
   const writing = thinking.find((member) => member.writing);
-  const runningTool = tools.find((tool) => tool.ended === null);
+  const runningTool = tools.find((tool) => tool.ended === null) ?? (group.agents ? tools.find((tool) => agents.of(tool)?.going) : undefined);
   const running = !!runningTool || !!writing;
   const only = thoughtOnly(group);
   const bare = only && !thinking.some((member) => member.text.trim());
@@ -52,7 +54,8 @@ export function stretchSays(
   let removed = 0;
   if (runningTool) {
     const line = headline(runningTool.tool, null, words, attachment);
-    title = [line.action, line.object].filter(Boolean).join(" ");
+    const object = group.agents && runningTool.tool.does.as === "agent" && runningTool.tool.does.act !== "start" ? (agents.named(runningTool) ?? line.object) : line.object;
+    title = [line.action, object].filter(Boolean).join(" ");
   } else if (writing) {
     const last = sections(writing.text).at(-1);
     title = last ? words.thinkingAbout(last) : words.thinking;
@@ -83,7 +86,12 @@ export function stretchSays(
     const start = member.kind === "tool" ? member.began : isThinking(member) ? (member.began ?? null) : null;
     if (start !== null && (began === null || start < began)) began = start;
   }
-  for (const tool of tools) if (tool.ended && (last === null || tool.ended.at > last)) last = tool.ended.at;
+  for (const tool of tools) {
+    if (!tool.ended) continue;
+    const after = group.agents ? (agents.of(tool)?.ended ?? null) : null;
+    const end = after !== null && after > tool.ended.at ? after : tool.ended.at;
+    if (last === null || end > last) last = end;
+  }
   const ended = !running && tools.length && tools.every((tool) => tool.ended) ? last : null;
   const time = running
     ? began === null ? "" : clockSays(steps, began, words)
@@ -91,6 +99,19 @@ export function stretchSays(
       ? figures
       : [steps < 2 ? "" : words.steps(steps), began !== null && ended !== null ? words.took(ended - began) : ""].filter(Boolean).join(" · ");
   return { title, added, removed, steps, running, only, bare, figures, began, ended, time };
+}
+
+/** How an agent one of a stretch's calls started stands. */
+export interface StretchAgent {
+  going: boolean;
+  ended: number | null;
+}
+
+/** The host's own agents a stretch's calls start or name: the one a call
+ *  started, and the agents a call names, as its row says them. */
+export interface StretchAgents {
+  of(tool: ToolEntry): StretchAgent | null;
+  named(tool: ToolEntry): string | null;
 }
 
 /** A running stretch's clock: its steps when more than one, and how long. */

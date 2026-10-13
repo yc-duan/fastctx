@@ -14,7 +14,7 @@ import type { Attachment, UploadTarget } from "./attachments";
 import type { ConnectionState } from "./device";
 import type { Focus } from "./focus";
 import type { BytesRead, TextRead } from "../app/reader";
-import type { Address, MachineName, SessionEvent } from "./events";
+import type { Address, AgentActivity, MachineName, SessionEvent } from "./events";
 import type { Cut, Edge, FindDoc, Found, PartRead, Window } from "../conversation/conversation";
 import type { AccountChange, AccountsReply, HubAccount } from "./accounts";
 import type { HubMoveReply, HubMoveRequest } from "./hub-move";
@@ -595,6 +595,12 @@ export function offers(who: Address): Promise<Offers> {
 /** The host's original record of one item; null when it no longer exists. */
 export function itemDetail(address: Address, turn: string | null, item: string): Promise<unknown | null> {
   return invoke("item_detail", { address, turn, item });
+}
+
+/** One of the host's own agents' own record, as its host keeps it, read
+ *  from the machine the conversation that started it lives on. */
+export function agentActivity(address: Address, agent: string): Promise<AgentActivity> {
+  return invoke("agent_activity", { address, agent });
 }
 
 /** Whether this interface runs in the Android shell, which reads QR codes

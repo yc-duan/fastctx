@@ -299,10 +299,13 @@
   }
 }
 
-/* A notice: what the World told the session, as a quiet line on the left,
-   small and leaning, a hand's mark before it; what it holds folded under
-   it in the same quiet voice, under the words rather than the mark. */
-.block-heard.from-world {
+/* A notice: what the World told the session, or how one of the host's
+   own agents that went on in the background ended, as a quiet line on the
+   left, small and leaning, a hand's mark before it; what it holds folded
+   under it in the same quiet voice, under the words rather than the
+   mark. */
+.block-heard.from-world,
+.block-agent-told {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -718,16 +721,6 @@
   column-gap: var(--space-3);
   row-gap: 4px;
   color: var(--text);
-}
-
-/* Claude Code's own subagent, followed under the tool that started it. */
-.row-sub {
-  grid-column: 2 / -1;
-  grid-row: 2;
-  margin: -2px 0 2px;
-  font-size: var(--size-small);
-  font-style: italic;
-  color: var(--text-3);
 }
 
 /* A stretch's line under way: the step in hand fades in where the last was. */

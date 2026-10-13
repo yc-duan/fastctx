@@ -1,9 +1,9 @@
 import type { Words } from "../words";
 import type { Tool } from "../world/events";
-import { isThinking, runsOf, type Block, type Entry } from "./model";
+import { isThinking, runsOf, startsAgent, type Block, type Entry } from "./model";
 import { numbered, parse } from "./diff";
 import { decodeRow, memoryDiff } from "./diff-lines";
-import { stretchSays, thoughtOnly, thoughtText, type ProseEntry } from "./stretch-says";
+import { stretchSays, thoughtOnly, thoughtText, type ProseEntry, type StretchAgents } from "./stretch-says";
 import { plain, proseBlocks, render } from "./prose";
 import { shownOutput } from "./run-output";
 import { htmlText } from "./find-text";
@@ -51,6 +51,8 @@ export interface FindRendering {
   rows(run: Entry[]): Row[];
   /** The tokens a run of thinking took, where the host said. */
   tokens(run: readonly ProseEntry[]): number | null;
+  /** The host's own agents its calls start or name. */
+  agents: StretchAgents;
   notice(entry: Extract<Entry, { kind: "heard" }>): boolean;
   /** Retained write changes are read through the view's existing source. */
   write(key: string, signal: AbortSignal): Promise<string>;
@@ -98,9 +100,11 @@ export class FindContent {
           yield part("brief", stamp, { row: block.key, selector: ".told-plain" }, () => htmlText(plain(block.text)));
         }
       }
+      const handed = block.kind === "agent-told" ? (block.end.answer ?? block.end.reason) : null;
+      if (handed) yield part("answer", stamp, { row: block.key, selector: ".notice-answer" }, () => htmlText(render(handed)));
       return;
     }
-    const said = stretchSays(block, words, this.rendering.attachment, this.rendering.tokens);
+    const said = stretchSays(block, words, this.rendering.attachment, this.rendering.tokens, this.rendering.agents);
     yield part("heading", `${stamp}|${block.members.length}|${said.time}`, { selector: ".group-head" }, () =>
       `${said.title}${said.added || said.removed ? `\n+${said.added} −${said.removed}` : ""}${said.time ? `\n${said.time}` : ""}`);
     // A stretch that is only thinking holds its words where its rows would be.
@@ -120,7 +124,9 @@ export class FindContent {
         } else if (isThinking(member)) {
           const thoughts = run as ProseEntry[];
           yield part(`${row.key}/thinking`, rowStamp, { row: row.key, selector: ".thinking-text" }, () => this.prose(thoughtText(thoughts), thoughts.some((entry) => entry.writing)));
-        } else if (member.kind === "tool") {
+        } else if (member.kind === "tool" && !startsAgent(member.tool)) {
+          // What an agent did is its own conversation, read as its box
+          // opens: its row's heading is what is found of it.
           if (member.tool.does.as === "edit") {
             let index = 0;
             for (const change of member.tool.does.changes) {

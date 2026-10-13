@@ -184,7 +184,7 @@
 
   /* A sheet risen from the bottom lays a shade over the rest, as every
      sheet on a phone does: a tap on the shade only puts the sheet away. */
-  .composer-dock:has(.model-panel:not([hidden]), .jobs-pop:not([hidden]))::after {
+  .composer-dock:has(.model-panel:not([hidden]), .jobs-pop:not([hidden]), .agents-pop:not([hidden]))::after {
     content: "";
     position: fixed;
     inset: 0;
@@ -229,6 +229,19 @@
 .composer-jobs .glyph {
   color: var(--accent);
   animation: ink-breathe 2.6s ease-in-out infinite;
+}
+
+/* A mark for work under way breathes, slowly. */
+@keyframes ink-breathe {
+  0%,
+  100% {
+    opacity: 0.95;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.78);
+  }
 }
 
 .jobs-pop {

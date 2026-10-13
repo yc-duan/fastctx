@@ -21,6 +21,7 @@ pub mod control;
 pub mod exchange;
 pub mod models;
 pub mod startup;
+pub mod subagents;
 pub mod tail;
 pub mod thoughts;
 pub mod titles;

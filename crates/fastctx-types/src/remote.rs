@@ -350,6 +350,12 @@ pub enum RemoteCall {
         turn: Option<String>,
         item: String,
     },
+    /// What one of the host's own agents in a resident's conversation there
+    /// did (`Call::AgentActivity`).
+    AgentActivity {
+        resident: ResidentId,
+        agent: String,
+    },
     /// What that machine is like, for `fastctx nodes`.
     Facts,
     /// That machine's network addresses, as a place for the hub
@@ -441,6 +447,7 @@ impl RemoteCall {
             | RemoteCall::Control { .. }
             | RemoteCall::Offers { .. }
             | RemoteCall::ItemDetail { .. }
+            | RemoteCall::AgentActivity { .. }
             | RemoteCall::Upload { .. } => Purpose::Agents,
             RemoteCall::Agents
             | RemoteCall::AgentLogins
@@ -526,6 +533,9 @@ pub enum RemoteReply {
     Offers(Box<Offers>),
     ItemDetail {
         detail: Option<serde_json::Value>,
+    },
+    AgentActivity {
+        activity: Box<crate::session::AgentActivity>,
     },
     /// A watch ended: the caller left, or the session's machine stopped it.
     Watched,

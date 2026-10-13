@@ -19,6 +19,8 @@ export class LocalTranscript implements PartSource {
   private tools: [number, string][] = [];
   private seenTools = new Set<string>();
   private facts = new Map<string, number[]>();
+  /** The call that started each of the host's own agents. */
+  private agentCalls = new Map<string, string>();
   private titled: number | null = null;
   private context: number | null = null;
   private answered: number | null = null;
@@ -63,22 +65,30 @@ export class LocalTranscript implements PartSource {
     const starts = event.event === "turn_started" || (event.event === "heard" && !this.previousStarted);
     if (starts && fresh && index > this.units[this.units.length - 1]!) this.units.push(index);
     this.previousStarted = event.event === "turn_started";
-    if ((event.event === "began" || event.event === "updated" || event.event === "finished") && event.item.kind === "tool" && !this.seenTools.has(event.item.id)) {
+    if ((event.event === "began" || event.event === "updated" || event.event === "finished") && (event.item.kind === "tool" || event.item.kind === "agent_activity") && !this.seenTools.has(event.item.id)) {
       this.seenTools.add(event.item.id);
       this.tools.push([index, event.item.id]);
     }
     if (event.event === "changed") {
       const change = event.change;
-      if (change.kind === "run_facts_updated") {
-        const told = this.facts.get(change.update.call_id) ?? [];
-        told.push(index);
-        this.facts.set(change.update.call_id, told);
+      if (change.kind === "run_facts_updated") this.fact(change.update.call_id, index);
+      if (change.kind === "agent_started" && change.agent.call) this.agentCalls.set(change.agent.id, change.agent.call);
+      if (change.kind === "agent_started" || change.kind === "agent_event" || change.kind === "agent_ended") {
+        const call = this.agentCalls.get(change.kind === "agent_started" ? change.agent.id : change.agent_id);
+        if (call) this.fact(call, index);
       }
       if ((change.kind === "model_response" && change.usage) || change.kind === "message_usage") this.answered = index;
       if (change.kind === "agents") this.agents = index;
     }
     if (event.event === "titled") this.titled = index;
     if (event.event === "context") this.context = index;
+  }
+
+  /** A fact told of a call, served with the part holding the call. */
+  private fact(call: string, index: number): void {
+    const told = this.facts.get(call) ?? [];
+    told.push(index);
+    this.facts.set(call, told);
   }
 
   private latest(events: number, bytes: number): number {

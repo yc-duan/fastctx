@@ -589,10 +589,18 @@ async function completeTurn($, context, e, next) {
   await completeControlTurn($, e)
   if (e.agentId !== undefined) {
     const reported = agentReports(reports($, context), e.agentId)
+    const how = e.isAborted ? 'interrupted' : e.reason === 'error' || e.reason === 'refusal' ? 'failed' : 'completed'
     await agentPresentation(context, e.agentId).end(reported, e.turnId)
     await reported.event('session', { happened: { event: 'turn_ended', turn: e.turnId,
-      end: { how: e.isAborted ? 'interrupted' : e.reason === 'error' || e.reason === 'refusal' ? 'failed' : 'completed',
-        reason: e.reason, duration_ms: e.durationMs, last_message: e.answer, error: null } } })
+      end: { how, reason: e.reason, duration_ms: e.durationMs, last_message: e.answer, error: null } } })
+    // Its tokens as Claude Code counts an agent's in its Agent call's answer:
+    // the last request's input, cached and fresh, and its output.
+    const usage = e.usage
+    const tokens = usage == null ? null : ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens']
+      .reduce((sum, key) => sum + (typeof usage[key] === 'number' ? usage[key] : 0), 0)
+    await event($, context, 'session', { happened: { event: 'changed', turn: null, change: { kind: 'agent_ended', agent_id: e.agentId,
+      end: { how, reason: how === 'completed' ? null : e.reason, duration_ms: e.durationMs ?? null, tokens, tools: null,
+        answer: e.answer ?? null, task: null, told: false } } } })
     await observeAgents($, context)
     return next(e)
   }
@@ -870,6 +878,26 @@ export function register(on) {
     }
     return result
   }).catch(($, e, next) => continueWithoutWorld($, 'command.describe', e, next))
+  // Which call started which agent is known only as it starts: the agent's
+  // own events carry its id, its Agent call's answer comes when it ends.
+  // The agent has started once `next` answers: telling of it never fails
+  // the spawn, nor runs it again.
+  on('agent.spawn', async ($, e, next) => {
+    if (await removed($)) return next(e)
+    const result = await next(e)
+    if (result.agentId === undefined) return result
+    try {
+      const context = await session($, registry, await $.session.id())
+      context.shown.spawned(result.agentId)
+      await event($, context, 'session', { happened: { event: 'changed', turn: null, change: { kind: 'agent_started', agent: {
+        id: result.agentId, call: e.tool_use_id || null, parent: e.parentAgentId ?? null, kind: e.subagentType || null,
+        name: e.name ?? null, task: e.description || null, prompt: e.prompt || null, model: result.model || null,
+        background: e.background === true, live: true } } } })
+    } catch (error) {
+      worldFailure($, 'agent.spawn', error)
+    }
+    return result
+  }).catch(($, e, next) => continueWithoutWorld($, 'agent.spawn', e, next))
   on('classic.SubagentStart', async ($, e, next) => {
     if (await removed($)) return next(e)
     await observeAgents($, await session($, registry, await $.session.id()))

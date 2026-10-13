@@ -20,6 +20,7 @@ use crate::Node;
 pub mod control;
 mod directories;
 pub mod hosts;
+pub mod spawned;
 pub mod watch;
 
 /// Makes the World's own Codex threads known to the host again. Idle
@@ -252,7 +253,19 @@ fn save(node: &Node, thread: &str, events: &[HostEvent]) -> std::io::Result<()> 
     )
 }
 
+/// A thread nobody claims may be an agent Codex spawned for a resident's
+/// thread, whose reports go to that resident (`spawned`).
 fn enqueue(node: &Arc<Node>, thread: String, event: HostEvent) -> std::io::Result<()> {
+    if node.residents.resident_of_thread(&thread).is_some() {
+        return plain(node, thread, event);
+    }
+    match spawned::took(node, &thread, event, plain) {
+        None => Ok(()),
+        Some(event) => plain(node, thread, event),
+    }
+}
+
+fn plain(node: &Arc<Node>, thread: String, event: HostEvent) -> std::io::Result<()> {
     {
         let mut state = node.unclaimed.state.lock().expect("never poisoned");
         let claimed = node.residents.resident_of_thread(&thread).is_some();

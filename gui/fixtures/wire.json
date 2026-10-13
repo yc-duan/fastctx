@@ -5311,7 +5311,10 @@
           "server": "tools",
           "machine": "desktop",
           "does": {
-            "as": "call"
+            "as": "agent",
+            "act": "start",
+            "kind": "Explore",
+            "task": "Find callers"
           },
           "input": {
             "args": [
@@ -5386,7 +5389,10 @@
           "server": "tools",
           "machine": "desktop",
           "does": {
-            "as": "call"
+            "as": "agent",
+            "act": "start",
+            "kind": "Explore",
+            "task": "Find callers"
           },
           "input": {
             "args": [
@@ -5458,6 +5464,1461 @@
           "id": "tool-8",
           "kind": "tool",
           "name": "tool-8",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "start",
+            "kind": "Explore",
+            "task": "Find callers"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "failed",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-9",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-9",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "wait",
+            "agents": [
+              "thread-1",
+              "thread-2"
+            ],
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "declined",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-9",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-9",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "wait",
+            "agents": [
+              "thread-1",
+              "thread-2"
+            ],
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "declined",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-9",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-9",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "wait",
+            "agents": [
+              "thread-1",
+              "thread-2"
+            ],
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "declined",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-10",
+          "kind": "tool",
+          "name": "tool-10",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "message",
+            "agents": [
+              "thread-1"
+            ],
+            "kind": null,
+            "task": "go on"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "cut",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-10",
+          "kind": "tool",
+          "name": "tool-10",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "message",
+            "agents": [
+              "thread-1"
+            ],
+            "kind": null,
+            "task": "go on"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "cut",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-10",
+          "kind": "tool",
+          "name": "tool-10",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "message",
+            "agents": [
+              "thread-1"
+            ],
+            "kind": null,
+            "task": "go on"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "cut",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-11",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-11",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "resume",
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "unknown",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-11",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-11",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "resume",
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "unknown",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-11",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-11",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "resume",
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "unknown",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-12",
+          "kind": "tool",
+          "name": "tool-12",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "stop",
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "running",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-12",
+          "kind": "tool",
+          "name": "tool-12",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "stop",
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "running",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-12",
+          "kind": "tool",
+          "name": "tool-12",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "stop",
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "running",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-13",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-13",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "list",
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "done",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-13",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-13",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "list",
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "done",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-13",
+          "started_at": "2026-10-04T12:06:07.12Z",
+          "detail": {
+            "source": "host"
+          },
+          "kind": "tool",
+          "name": "tool-13",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "agent",
+            "act": "list",
+            "kind": null,
+            "task": null
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "done",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "began",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-14",
+          "kind": "tool",
+          "name": "tool-14",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "call"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "failed",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "updated",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-14",
+          "kind": "tool",
+          "name": "tool-14",
+          "server": "tools",
+          "machine": "desktop",
+          "does": {
+            "as": "call"
+          },
+          "input": {
+            "args": [
+              null,
+              false,
+              1,
+              "text",
+              {}
+            ]
+          },
+          "output": [
+            {
+              "type": "text",
+              "text": "output"
+            },
+            {
+              "type": "image",
+              "mime": "image/png",
+              "base64": "aW1hZ2U="
+            },
+            {
+              "type": "image_url",
+              "url": "https://example.test/image.png"
+            },
+            {
+              "type": "image_ref",
+              "mime": "image/png",
+              "content": {
+                "size": 5,
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+              },
+              "source": {
+                "owner": {
+                  "machine": "desktop",
+                  "resident": "codex-ab12"
+                },
+                "tool_image": {
+                  "turn": "turn-1",
+                  "item": "tool-1",
+                  "image": 0
+                }
+              }
+            },
+            {
+              "type": "audio_url",
+              "url": "https://example.test/audio.wav"
+            },
+            {
+              "type": "other",
+              "block": {
+                "type": "resource_link",
+                "uri": "file:///example.txt"
+              }
+            },
+            {
+              "type": "other",
+              "block": null
+            }
+          ],
+          "status": "failed",
+          "duration_ms": 42
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "tool-14",
+          "kind": "tool",
+          "name": "tool-14",
           "server": "tools",
           "machine": "desktop",
           "does": {
@@ -6102,6 +7563,83 @@
           "event": "started",
           "data": {
             "sessionId": "voice-1"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "agent_started",
+          "agent": {
+            "id": "agent-1",
+            "background": false,
+            "live": false
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "agent_started",
+          "agent": {
+            "id": "agent-2",
+            "call": "toolu-1",
+            "parent": "agent-1",
+            "kind": "Explore",
+            "name": "scout",
+            "task": "Find the callers",
+            "prompt": "Find every caller of fold().",
+            "model": "claude-haiku-5-5",
+            "background": true,
+            "live": true
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "agent_event",
+          "agent_id": "agent-2",
+          "happened": {
+            "event": "turn_started",
+            "turn": "agent-turn"
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": "turn-1",
+        "change": {
+          "kind": "agent_ended",
+          "agent_id": "agent-2",
+          "end": {
+            "how": "completed",
+            "duration_ms": 61000,
+            "tokens": 41200,
+            "tools": 23,
+            "answer": "Three callers.",
+            "task": "Find the callers",
+            "told": true
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "changed",
+        "turn": null,
+        "change": {
+          "kind": "agent_ended",
+          "agent_id": "agent-1",
+          "end": {
+            "how": "failed",
+            "reason": "errored"
           }
         }
       },
@@ -6884,6 +8422,73 @@
           "event": "started",
           "data": {
             "sessionId": "voice-1"
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "agent_started",
+          "agent": {
+            "id": "agent-1",
+            "background": false,
+            "live": false
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "agent_started",
+          "agent": {
+            "id": "agent-2",
+            "call": "toolu-1",
+            "parent": "agent-1",
+            "kind": "Explore",
+            "name": "scout",
+            "task": "Find the callers",
+            "prompt": "Find every caller of fold().",
+            "model": "claude-haiku-5-5",
+            "background": true,
+            "live": true
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "agent_event",
+          "agent_id": "agent-2",
+          "happened": {
+            "event": "turn_started",
+            "turn": "agent-turn"
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "agent_ended",
+          "agent_id": "agent-2",
+          "end": {
+            "how": "completed",
+            "duration_ms": 61000,
+            "tokens": 41200,
+            "tools": 23,
+            "answer": "Three callers.",
+            "task": "Find the callers",
+            "told": true
+          }
+        },
+        "health": null
+      },
+      {
+        "change": {
+          "kind": "agent_ended",
+          "agent_id": "agent-1",
+          "end": {
+            "how": "failed",
+            "reason": "errored"
           }
         },
         "health": null

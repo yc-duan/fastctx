@@ -68,6 +68,7 @@ const paths: Record<Named, string> = {
   history: '<path d="M4.7 10a5.3 5.3 0 1 0 1.5-3.7"/><path d="M4.4 4.3v2.5h2.5"/><path d="M10 7.3V10l1.9 1.3"/>',
   tasks: '<path d="M4.5 6l1.2 1.2L8 5"/><path d="M10.5 6.2h5"/><path d="M4.5 12l1.2 1.2L8 11"/><path d="M10.5 12.2h5"/>',
   tool: '<path d="M12.4 4.2a3.4 3.4 0 0 0-4 4.4l-4.2 4.2 2.9 2.9 4.2-4.2a3.4 3.4 0 0 0 4.4-4l-2 2-1.9-.5-.5-1.9z"/>',
+  delegate: '<path d="M5.5 3.75v12.5"/><path d="M5.5 7.75c0 3.4 1.9 5.1 5.4 5.1"/><circle cx="13.6" cy="12.85" r="2.35"/>',
   // Two small four-pointed stars, filled: thinking, in the line's colour.
   thinking: '<path d="M8 5.2Q8.7 10.8 14.3 11.5 8.7 12.2 8 17.8 7.3 12.2 1.7 11.5 7.3 10.8 8 5.2z" fill="currentColor" stroke="none"/><path d="M14.9 1.9Q15.25 4.4 17.75 4.75 15.25 5.1 14.9 7.6 14.55 5.1 12.05 4.75 14.55 4.4 14.9 1.9z" fill="currentColor" stroke="none"/>',
   chevron: '<path d="M7.5 8.5l2.5 2.5 2.5-2.5"/>',

@@ -411,6 +411,14 @@ pub enum Call {
         turn: Option<String>,
         item: String,
     },
+    /// What one of the host's own agents in a resident's conversation did,
+    /// as its host keeps it, asked for when the user opens it: the agent's
+    /// own record, which a conversation's history leaves out.
+    AgentActivity {
+        resident: ResidentId,
+        machine: Option<MachineName>,
+        agent: String,
+    },
     /// How to open a resident of this machine in its host's own interface,
     /// for the user (`fastctx attach`).
     Attach {
@@ -620,6 +628,10 @@ pub enum Reply {
     ItemDetail {
         resident: Address,
         detail: Option<serde_json::Value>,
+    },
+    AgentActivity {
+        resident: Address,
+        activity: Box<crate::session::AgentActivity>,
     },
     /// The command that opens the resident in its host's own interface,
     /// run in the user's terminal.

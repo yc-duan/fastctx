@@ -151,6 +151,8 @@ impl Happened {
                         | SessionChange::ComposerFailed { .. }
                         | SessionChange::CommandsChanged
                         | SessionChange::AgentEvent { .. }
+                        | SessionChange::AgentStarted { .. }
+                        | SessionChange::AgentEnded { .. }
                         | SessionChange::Agents { .. },
                     ..
                 }
@@ -159,6 +161,20 @@ impl Happened {
                 | Happened::RealtimeGrew { .. }
                 | Happened::Realtime { complete: false, .. }
         )
+    }
+
+    /// Whether a history read from the host's record keeps it: what a
+    /// session's record keeps, and what the host's record tells of the
+    /// agents the conversation started, which the World does not keep as
+    /// the host's record holds it: their starts as read there, not as they
+    /// were seen, and their ends.
+    pub fn in_history(&self) -> bool {
+        self.kept()
+            || matches!(
+                self,
+                Happened::Changed { change: SessionChange::AgentStarted { agent }, .. } if !agent.live
+            )
+            || matches!(self, Happened::Changed { change: SessionChange::AgentEnded { .. }, .. })
     }
 }
 
@@ -321,11 +337,36 @@ pub enum Does {
     Search { query: String },
     /// Looks at an image, or makes one.
     Image { path: Option<String> },
-    /// Asks a colleague in, or tells one something: the World's colleagues,
-    /// or the host's own agents.
+    /// Asks one of the World's colleagues in, or tells one something.
     Colleague { to: Option<String>, task: Option<String> },
+    /// Starts one of the host's own agents, speaks to some, waits for some
+    /// or stops them: Claude Code's Agent tool, Codex's agent tools. `agents`
+    /// are the host's ids of those it concerns, as far as the call tells
+    /// them; which call started an agent is told by the agent itself
+    /// (`SessionChange::AgentStarted`).
+    Agent {
+        act: AgentAct,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        agents: Vec<String>,
+        /// The kind of agent it starts, as the host names it.
+        kind: Option<String>,
+        /// The few words of what it is asked, or the words it is sent.
+        task: Option<String>,
+    },
     /// Anything else: its name, input and output say what it did.
     Call,
+}
+
+/// What a call does with the host's own agents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentAct {
+    Start,
+    Message,
+    Resume,
+    Wait,
+    Stop,
+    List,
 }
 
 /// One file a tool changed.

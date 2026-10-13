@@ -27,7 +27,14 @@ export type Act =
   | "message"
   | "fetch"
   | "websearch"
-  | "tasks";
+  | "tasks"
+  /** The host's own agents: starting one, waiting for some, stopping one,
+   *  bringing one back, listing them. */
+  | "delegate"
+  | "wait"
+  | "stop"
+  | "resume"
+  | "list";
 
 export interface Tally {
   read: number;
@@ -35,9 +42,46 @@ export interface Tally {
   ran: number;
   searched: number;
   asked: number;
+  /** The host's own agents it started. */
+  delegated: number;
+  /** What it said to its agents, waited on them for, stopped or resumed. */
+  coordinated: number;
   other: number;
   failed: number;
   thinking: number;
+}
+
+/** The host's own agents, as a conversation shows them (`agents.ts`). */
+export interface AgentWords {
+  /** The panel of them, and its mark beside the input. */
+  title: string;
+  /** How many still work, beside the title and on the mark. */
+  running(n: number): string;
+  /** How one stands where its row does not say it by its mark. */
+  failed: string;
+  stopped: string;
+  waiting: string;
+  /** What it was asked, at the head of what it did; opened in full. */
+  asked: string;
+  more: string;
+  less: string;
+  /** Its own record, read from its conversation's machine. */
+  reading: string;
+  unreadable: string;
+  /** It has done nothing yet. */
+  nothing: string;
+  /** Its end, as the conversation was told of it. */
+  done(task: string | null): string;
+  failedTold(task: string | null): string;
+  stoppedTold(task: string | null): string;
+  /** What it used, at the foot of what it did. */
+  tools(n: number): string;
+  /** Each of them in the panel: goes to it in the conversation. */
+  goTo: string;
+  /** The panel's clock ends now while one of them works. */
+  now: string;
+  /** A call that names agents the conversation does not hold. */
+  unknownAgents(n: number): string;
 }
 
 export interface Words {
@@ -178,8 +222,8 @@ export interface Words {
   pictures: PictureWords;
   /** The way into a colleague's own conversation. */
   openColleague: string;
-  /** Under Claude Code's agent tool: its subagent's kind, steps taken, the one it takes now. */
-  subagent(kind: string, steps: number, doing: string | null): string;
+  /** The host's own agents. */
+  agents: AgentWords;
   /** What it started that still runs. */
   stillRunning: string;
   /** Before a job is stopped by the user, and when it could not be. */
@@ -232,6 +276,11 @@ const zhActs: Record<Act, [string, string, string]> = {
   fetch: ["获取", "获取中", "获取失败"],
   websearch: ["网页搜索", "搜索中", "搜索失败"],
   tasks: ["待办", "更新中", "更新失败"],
+  delegate: ["委派", "委派中", "委派失败"],
+  wait: ["等待", "等待中", "等待失败"],
+  stop: ["停止", "停止中", "停止失败"],
+  resume: ["唤回", "唤回中", "唤回失败"],
+  list: ["查看", "查看中", "查看失败"],
 };
 
 const enActs: Record<Act, [string, string, string]> = {
@@ -249,6 +298,11 @@ const enActs: Record<Act, [string, string, string]> = {
   fetch: ["Fetched", "Fetching", "Fetch Failed"],
   websearch: ["Searched the web", "Searching the web", "Web search Failed"],
   tasks: ["Tasks", "Updating tasks", "Tasks Failed"],
+  delegate: ["Delegated", "Delegating", "Delegation Failed"],
+  wait: ["Waited", "Waiting", "Wait Failed"],
+  stop: ["Stopped", "Stopping", "Stop Failed"],
+  resume: ["Resumed", "Resuming", "Resume Failed"],
+  list: ["Listed", "Listing", "List Failed"],
 };
 
 const index = (tense: Tense) => (tense === "done" ? 0 : tense === "running" ? 1 : 2);
@@ -285,6 +339,8 @@ export const zh: Words = {
     if (t.ran) parts.push(`运行 ${t.ran} 条命令`);
     if (t.searched) parts.push(`搜索 ${t.searched} 次`);
     if (t.asked) parts.push(`调用模型 ${t.asked} 次`);
+    if (t.delegated) parts.push(`委派 ${t.delegated} 个子代理`);
+    if (t.coordinated) parts.push(`调度子代理 ${t.coordinated} 次`);
     if (t.other) parts.push(`调用 ${t.other} 个工具`);
     let heading = parts.join(" · ");
     if (!heading) heading = t.thinking ? "Thought" : "活动";
@@ -429,7 +485,26 @@ export const zh: Words = {
     counter: (at, of) => `${at} / ${of}`,
   },
   openColleague: "查看",
-  subagent: (kind, steps, doing) => [`子代理${kind ? ` ${kind}` : ""}`, `${steps} 步`, doing].filter(Boolean).join(" · "),
+  agents: {
+    title: "子代理",
+    running: (n) => `${n} 个在工作`,
+    failed: "失败",
+    stopped: "已停止",
+    waiting: "在等",
+    asked: "任务",
+    more: "展开",
+    less: "收起",
+    reading: "正在读取…",
+    unreadable: "读不到它的记录",
+    nothing: "还没开始",
+    done: (task) => (task ? `子代理已完成 · ${task}` : "子代理已完成"),
+    failedTold: (task) => (task ? `子代理失败 · ${task}` : "子代理失败"),
+    stoppedTold: (task) => (task ? `子代理已停止 · ${task}` : "子代理已停止"),
+    tools: (n) => `${n} 次工具调用`,
+    goTo: "转到它",
+    now: "现在",
+    unknownAgents: (n) => `${n} 个子代理`,
+  },
   stillRunning: "运行中的命令",
   stopJobAsk: "停下这条命令？会告诉智能体是你停的。",
   notStopped: "没能停下",
@@ -504,6 +579,8 @@ export const en: Words = {
     if (t.ran) parts.push(`ran ${plural(t.ran, "command", "commands")}`);
     if (t.searched) parts.push(t.searched === 1 ? "searched once" : `searched ${t.searched} times`);
     if (t.asked) parts.push(`called ${plural(t.asked, "model", "models")}`);
+    if (t.delegated) parts.push(`delegated ${plural(t.delegated, "agent", "agents")}`);
+    if (t.coordinated) parts.push(t.coordinated === 1 ? "coordinated agents once" : `coordinated agents ${t.coordinated} times`);
     if (t.other) parts.push(plural(t.other, "tool call", "tool calls"));
     let heading = parts.join(", ");
     if (!heading) heading = t.thinking ? "Thought" : "Activity";
@@ -649,7 +726,26 @@ export const en: Words = {
     counter: (at, of) => `${at} / ${of}`,
   },
   openColleague: "Open",
-  subagent: (kind, steps, doing) => [`Subagent${kind ? ` ${kind}` : ""}`, `${steps} ${steps === 1 ? "step" : "steps"}`, doing].filter(Boolean).join(" · "),
+  agents: {
+    title: "Agents",
+    running: (n) => `${n} working`,
+    failed: "failed",
+    stopped: "stopped",
+    waiting: "waiting",
+    asked: "Task",
+    more: "Show all",
+    less: "Show less",
+    reading: "Reading…",
+    unreadable: "Its record can't be read",
+    nothing: "Not started yet",
+    done: (task) => (task ? `Agent finished · ${task}` : "Agent finished"),
+    failedTold: (task) => (task ? `Agent failed · ${task}` : "Agent failed"),
+    stoppedTold: (task) => (task ? `Agent stopped · ${task}` : "Agent stopped"),
+    tools: (n) => (n === 1 ? "1 tool call" : `${n} tool calls`),
+    goTo: "Go to it",
+    now: "now",
+    unknownAgents: (n) => (n === 1 ? "1 agent" : `${n} agents`),
+  },
   stillRunning: "Running commands",
   stopJobAsk: "Stop this command? The agent will be told you stopped it.",
   notStopped: "Couldn't stop it",

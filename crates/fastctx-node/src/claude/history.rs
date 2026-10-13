@@ -72,6 +72,18 @@ pub fn stamp(node: &Node, resident: &ResidentId, digest: &mut impl FnMut(&[u8]))
     }
 }
 
+/// The record Claude Code keeps of the agent `agent` one of the resident's
+/// sessions started (`claude::subagents`): none where no session of the
+/// resident's has one by that id.
+pub(crate) fn agent_record(node: &Node, resident: &ResidentId, agent: &str) -> Option<PathBuf> {
+    let root = exchange::sessions(node.world.path());
+    let (sessions, _) = sessions(node, resident);
+    sessions.into_iter().rev().find_map(|session| {
+        let path = exchange::transcript(&root.join(&session.id)).ok().flatten()?;
+        claude::subagents::record(&path, agent).filter(|record| record.is_file())
+    })
+}
+
 /// CLI forking reads the saved conversation. Wait for the last message
 /// already observed by the mod before asking the CLI to copy that file.
 pub(super) async fn wait_stored(node: &Arc<Node>, session: &str) -> Result<(), String> {

@@ -13,6 +13,7 @@ pub mod activity;
 mod admission;
 mod admitted;
 mod again;
+mod agent_activity;
 mod agents;
 mod around;
 mod asked;
@@ -143,6 +144,9 @@ pub(crate) struct Node {
     /// changes of them under way (`logins`).
     logins: logins::Logins,
     unclaimed: codex::Unclaimed,
+    /// Threads Codex spawned as agents of residents' threads
+    /// (`codex::spawned`).
+    codex_agents: codex::spawned::Agents,
     /// Claude sessions, as the World's plugin reports them.
     claude: claude::Claude,
     desk: desk::Desk,
@@ -435,6 +439,7 @@ pub async fn run_prepared(
         codex,
         logins: logins::Logins::default(),
         unclaimed: codex::Unclaimed::default(),
+        codex_agents: Default::default(),
         claude,
         desk: desk::Desk::default(),
         watchers: watch::Watchers::default(),

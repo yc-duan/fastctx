@@ -92,6 +92,7 @@ pub(super) async fn read(
                         at = millis(timing.get("completedAtMs"));
                     }
                     let ordinal = submissions.observe(turn, item);
+                    let facts = items::agent_facts(item);
                     if let Some(mut happened) = completed(turn, item, &mut messages) {
                         if let Happened::Heard { message: Some(message), .. } = &mut happened {
                             super::user_images::decorate(message, owner, turn, ordinal, false);
@@ -109,6 +110,10 @@ pub(super) async fn read(
                         }
                         events.push(SessionEvent { at, happened });
                     }
+                    events.extend(facts.into_iter().map(|change| SessionEvent {
+                        at,
+                        happened: Happened::Changed { turn: Some(turn.into()), change },
+                    }));
                 }
                 Some("realtime") => events.push(SessionEvent {
                     at,
@@ -266,11 +271,14 @@ pub(super) fn project(
                         },
                     )
                 }
-                items::Read::Item(item) => {
-                    if let What::Message { text } = &item.what {
+                items::Read::Item(found) => {
+                    if let What::Message { text } = &found.what {
                         last_message = Some(text.clone());
                     }
-                    push(started, Happened::Finished { turn, item });
+                    push(started, Happened::Finished { turn: turn.clone(), item: found });
+                    for change in items::agent_facts(item) {
+                        push(started, Happened::Changed { turn: Some(turn.clone()), change });
+                    }
                 }
             }
         }

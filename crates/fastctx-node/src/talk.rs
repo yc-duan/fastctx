@@ -423,7 +423,7 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>, agent
             .unwrap_or(history.len());
         history.insert(index, event);
     }
-    history.retain(|event| event.happened.kept());
+    history.retain(|event| event.happened.in_history());
     // Preserve the host's canonical timeline, including interleaved voice
     // items and steering input. Local facts were inserted at their source time.
     history

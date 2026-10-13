@@ -688,6 +688,9 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|detail| RemoteReply::ItemDetail { detail })
                 }
+                RemoteCall::AgentActivity { resident, agent } => crate::agent_activity::here(&node, &resident, &agent)
+                    .await
+                    .map(|activity| RemoteReply::AgentActivity { activity: Box::new(activity) }),
                 RemoteCall::Offers { resident } => crate::control::offers_here(&node, &resident)
                     .await
                     .map(|offers| RemoteReply::Offers(Box::new(offers))),

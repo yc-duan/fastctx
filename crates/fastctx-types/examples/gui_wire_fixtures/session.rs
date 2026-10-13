@@ -106,6 +106,51 @@ fn changes() -> Vec<SessionChange> {
         SessionChange::Resolved { id: json!("request-1"), resolution: json!(true) },
         SessionChange::Resolved { id: Value::Null, resolution: Value::Null },
         SessionChange::Voice { event: "started".into(), data: json!({"sessionId": "voice-1"}) },
+        SessionChange::AgentStarted { agent: Box::new(HostAgentStart { id: "agent-1".into(), ..Default::default() }) },
+        SessionChange::AgentStarted {
+            agent: Box::new(HostAgentStart {
+                id: "agent-2".into(),
+                call: Some("toolu-1".into()),
+                parent: Some("agent-1".into()),
+                kind: Some("Explore".into()),
+                name: Some("scout".into()),
+                task: Some("Find the callers".into()),
+                prompt: Some("Find every caller of fold().".into()),
+                model: Some("claude-haiku-5-5".into()),
+                background: true,
+                live: true,
+            }),
+        },
+        SessionChange::AgentEvent {
+            agent_id: "agent-2".into(),
+            happened: Box::new(Happened::TurnStarted { turn: "agent-turn".into() }),
+        },
+        SessionChange::AgentEnded {
+            agent_id: "agent-2".into(),
+            end: HostAgentEnd {
+                how: TurnHow::Completed,
+                reason: None,
+                duration_ms: Some(61_000),
+                tokens: Some(41_200),
+                tools: Some(23),
+                answer: Some("Three callers.".into()),
+                task: Some("Find the callers".into()),
+                told: true,
+            },
+        },
+        SessionChange::AgentEnded {
+            agent_id: "agent-1".into(),
+            end: HostAgentEnd {
+                how: TurnHow::Failed,
+                reason: Some("errored".into()),
+                duration_ms: None,
+                tokens: None,
+                tools: None,
+                answer: None,
+                task: None,
+                told: false,
+            },
+        },
     ]
 }
 
@@ -134,6 +179,17 @@ fn tools() -> Vec<Tool> {
         Does::Image { path: Some("diagram.png".into()) },
         Does::Colleague { to: None, task: None },
         Does::Colleague { to: Some("codex-ab12".into()), task: Some("inspect".into()) },
+        Does::Agent {
+            act: AgentAct::Start,
+            agents: vec![],
+            kind: Some("Explore".into()),
+            task: Some("Find callers".into()),
+        },
+        Does::Agent { act: AgentAct::Wait, agents: vec!["thread-1".into(), "thread-2".into()], kind: None, task: None },
+        Does::Agent { act: AgentAct::Message, agents: vec!["thread-1".into()], kind: None, task: Some("go on".into()) },
+        Does::Agent { act: AgentAct::Resume, agents: vec![], kind: None, task: None },
+        Does::Agent { act: AgentAct::Stop, agents: vec![], kind: None, task: None },
+        Does::Agent { act: AgentAct::List, agents: vec![], kind: None, task: None },
         Does::Call,
     ];
     let statuses = [

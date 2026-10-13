@@ -1064,6 +1064,7 @@ pub fn run() {
             kept::kept_clear,
             kept::kept_forget,
             item_details::item_detail,
+            item_details::agent_activity,
             composer::composer_read,
             composer::composer_watch,
             composer::composer_update,

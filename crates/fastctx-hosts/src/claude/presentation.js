@@ -17,13 +17,17 @@ export function presentation(reserve, currentTurn) {
   const tools = new Map()
   const requests = new Map()
   const rows = new Set()
+  // The agents this conversation started: the notice Claude Code writes the
+  // model when one of them ends is shown as that end, as the session's
+  // record is read (`subagents.rs`), not as words the user said.
+  const agents = new Set()
   let latestStep = null
   let agentTurn = null
   const steps = taskSteps()
   const emit = (reports, happened) => reports.event('session', { happened })
   const item = (id, kind, fields = {}) => ({ id, kind, started_at: reserve().at, ...fields })
   const shownOf = ({ ended, stored, ...shown }) => shown
-  const checkpoint = (reports) => reports.save({ tools: [...tools.entries()], requests: [...requests.entries()], tasks: steps.snapshot() })
+  const checkpoint = (reports) => reports.save({ tools: [...tools.entries()], requests: [...requests.entries()], tasks: steps.snapshot(), agents: [...agents] })
 
   async function completeTool(reports, call, stored) {
     const result = call.result
@@ -50,6 +54,11 @@ export function presentation(reserve, currentTurn) {
       for (const [id, call] of state.tools) tools.set(id, call)
       for (const [id, request] of state.requests) requests.set(id, request)
       steps.restore(state.tasks)
+      for (const id of state.agents ?? []) agents.add(id)
+    },
+    /** One of the host's own agents started in this conversation. */
+    spawned(id) {
+      agents.add(id)
     },
     async *step(reports, e, next) {
       const stream = next(e)
@@ -136,7 +145,12 @@ export function presentation(reserve, currentTurn) {
       // Only the conversation's own messages are certain to reach the file;
       // the node waits for the last of them when it reads that file.
       if (result.message.type === 'user' || result.message.type === 'assistant') reports.stored(result.uuid)
-      if (e.agentId === undefined && e.door === 'prompt' && result.message.type === 'user'
+      const told = e.agentId === undefined && e.origin?.kind === 'task-notification'
+        ? notified(result.message.content.filter(block => block.type === 'text').map(block => block.text).join('\n'))
+        : null
+      if (told !== null && agents.has(told.agent)) {
+        await emit(reports, { event: 'changed', turn: turn ?? null, change: { kind: 'agent_ended', agent_id: told.agent, end: told.end } })
+      } else if (e.agentId === undefined && e.door === 'prompt' && result.message.type === 'user'
         && !result.message.content.some(block => block.type === 'tool_result')) {
         const text = result.message.content.filter(block => block.type === 'text').map(block => block.text).join('\n')
         if (!['<local-command-caveat>', '<local-command-stdout>', '<local-command-stderr>', '<command-name>',
@@ -272,6 +286,47 @@ export function presentation(reserve, currentTurn) {
       }
       requests.clear()
       await checkpoint(reports)
+    },
+  }
+}
+
+// How a task that went on in the background ended, in the words Claude Code
+// writes the model when it does (`<task-notification>`), read as
+// `subagents.rs` reads them: its figures under `<usage>`. Null for anything
+// else.
+function notified(text) {
+  const body = text.trim()
+  if (!body.startsWith('<task-notification>')) return null
+  const tag = (name, within = body) => {
+    const open = within.indexOf('<' + name + '>')
+    if (open < 0) return null
+    const start = open + name.length + 2
+    const close = within.indexOf('</' + name + '>', start)
+    return close < 0 ? null : within.slice(start, close).trim()
+  }
+  const number = (usage, name) => {
+    const open = usage.indexOf('<' + name + '>')
+    if (open < 0) return null
+    const value = Number(usage.slice(open + name.length + 2).split('<')[0].trim())
+    return Number.isSafeInteger(value) && value >= 0 ? value : null
+  }
+  const agent = tag('task-id')
+  if (!agent) return null
+  const usage = tag('usage') ?? ''
+  const status = tag('status')
+  const how = status === 'completed' ? 'completed' : status === 'failed' ? 'failed'
+    : status === 'stopped' || status === 'killed' ? 'interrupted' : status ?? ''
+  return {
+    agent,
+    end: {
+      how,
+      reason: how === 'failed' ? tag('summary') : null,
+      duration_ms: number(usage, 'duration_ms'),
+      tokens: number(usage, 'subagent_tokens') ?? number(usage, 'total_tokens'),
+      tools: number(usage, 'tool_uses'),
+      answer: tag('result') || null,
+      task: null,
+      told: true,
     },
   }
 }

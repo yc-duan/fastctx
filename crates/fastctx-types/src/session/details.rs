@@ -102,12 +102,24 @@ pub enum SessionChange {
     },
     /// Command descriptions changed; refresh the session's offered catalog.
     CommandsChanged,
+    /// The host's own agents as it lists them now, with how each stands.
     Agents {
         agents: Vec<super::HostAgent>,
     },
+    /// One of the host's own agents started, or more is known of it.
+    AgentStarted {
+        agent: Box<super::HostAgentStart>,
+    },
+    /// What one of the host's own agents did, in its own loop: one event of
+    /// its own conversation.
     AgentEvent {
         agent_id: String,
         happened: Box<super::Happened>,
+    },
+    /// One of the host's own agents ended its latest run.
+    AgentEnded {
+        agent_id: String,
+        end: super::HostAgentEnd,
     },
     /// Current input state, outside the host transcript and replaced as a whole.
     Composer {

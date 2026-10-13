@@ -16,6 +16,7 @@ import type { AskState } from "./ask-state";
 import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
 import { Fold, type Block, type Entry, type Gap, type SendState, type ShownAttachment } from "./model";
+import type { AgentRun } from "./agents";
 
 /** The part a page opens on, in place of all it held. */
 export interface Window {
@@ -139,8 +140,11 @@ export class Conversation {
   get stale(): boolean {
     return this.live.stale;
   }
+  /** Moves whenever one of the host's own agents does, in any part. */
   get agentStamp(): number {
-    return this.live.agentStamp;
+    let stamp = 0;
+    for (const part of this.parts) stamp += part.fold.agentStamp;
+    return stamp;
   }
   /** Whether its thinking's words are kept (`Fold.thoughtWords`). */
   get thoughtWords(): boolean {
@@ -205,12 +209,26 @@ export class Conversation {
   }
 
   /** Facts a run's job told about a run an earlier part holds go to it as
-   *  well: a job goes on after its turn. */
+   *  well: a job goes on after its turn. So does what one of the host's own
+   *  agents did, to the part holding the call that started it: an agent
+   *  goes on in the background for as long as it likes. */
   private route(event: SessionEvent): void {
-    if (event.event !== "changed" || event.change.kind !== "run_facts_updated") return;
-    const call = event.change.update.call_id;
-    if (this.live.holdsCall(call)) return;
-    for (const part of this.parts) if (part.fold.holdsCall(call)) part.fold.late(event);
+    if (event.event !== "changed") return;
+    const change = event.change;
+    if (change.kind === "run_facts_updated") {
+      const call = change.update.call_id;
+      if (this.live.holdsCall(call)) return;
+      for (const part of this.parts) if (part.fold.holdsCall(call)) part.fold.late(event);
+      return;
+    }
+    const agent =
+      change.kind === "agent_started" ? change.agent.id : change.kind === "agent_event" || change.kind === "agent_ended" ? change.agent_id : null;
+    if (agent === null) return;
+    const call = change.kind === "agent_started" ? change.agent.call : undefined;
+    for (const part of this.parts) {
+      if (part.fold === this.live) continue;
+      if (part.fold.agents.get(agent) || (call && part.fold.holdsCall(call))) part.fold.late(event);
+    }
   }
 
   /** What came before arrived: everything held moves along. */
@@ -430,8 +448,51 @@ export class Conversation {
     return found && found.generation === this.generation ? found : null;
   }
 
-  agentOf(entry: ToolEntry): ReturnType<Fold["agentOf"]> {
+  /** The agent a call started (`Fold.agentOf`), in the part holding it. */
+  agentOf(entry: ToolEntry): AgentRun | null {
+    for (const part of this.parts) {
+      if (!part.fold.holdsCall(entry.item)) continue;
+      const found = part.fold.agentOf(entry);
+      if (found) return found;
+    }
     return this.live.agentOf(entry);
+  }
+
+  /** The agents a call names (`Fold.agentsNamed`). */
+  agentsNamed(entry: ToolEntry): AgentRun[] {
+    for (const part of this.parts) if (part.fold.holdsCall(entry.item)) return part.fold.agentsNamed(entry);
+    return [];
+  }
+
+  /** One of the host's own agents, by its id, in whichever part knows it. */
+  agent(id: string): AgentRun | null {
+    for (let at = this.parts.length - 1; at >= 0; at -= 1) {
+      const found = this.parts[at]!.fold.agents.get(id);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /** The host's own agents of every part held, each once, in the order
+   *  they began. */
+  agents(): AgentRun[] {
+    const found = new Map<string, AgentRun>();
+    for (const part of this.parts) for (const run of part.fold.agents.all()) if (!found.has(run.id)) found.set(run.id, run);
+    return [...found.values()].sort((a, b) => (a.began ?? 0) - (b.began ?? 0));
+  }
+
+  /** The entry of a call, in whichever part holds it. */
+  call(call: string): ToolEntry | null {
+    for (const part of this.parts) {
+      const found = part.fold.call(call);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /** What was seen live broke off: no agent seen so far is whole. */
+  broke(): void {
+    for (const part of this.parts) part.fold.agents.broke();
   }
 
   lastMessageOf(turn: string): string | null {

@@ -238,7 +238,7 @@ test('World failures preserve native operations before and after initialization'
   const files = new Map<string, string>()
   let sessionId = 'unavailable-at-start'
   let unavailable = true
-  let tools = 0, compactions = 0, modelRequests = 0
+  let tools = 0, compactions = 0, modelRequests = 0, spawns = 0
   const classics: string[] = []
   on('mcp.connect', () => ({ value: { isConnected: false, reason: 'disabled', message: 'fixture' } }))
   on('session.id', () => ({ value: sessionId }))
@@ -280,6 +280,7 @@ test('World failures preserve native operations before and after initialization'
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('tool.call', () => { tools++; return { result: { native: true } } })
+  on('agent.spawn', () => { spawns++; return { model: 'native-model', agentId: 'native-agent' } })
   on('turn.step', async function* (_, e) {
     modelRequests++
     yield { kind: 'text', index: 0, text: 'native response' }
@@ -305,6 +306,8 @@ test('World failures preserve native operations before and after initialization'
     await $.turn.start({ turnId: sessionId, text: 'native prompt' })
     expect((await $.tool.call({ tool: 'Read', path: '/fixture/file' })).result).toEqual({ native: true })
     expect((await $.tool.check({ tool: 'Read', tool_use_id: sessionId, input: { path: '/fixture/file' } })).decision).toBe('ask')
+    expect(await $.agent.spawn({ prompt: 'native task', description: 'native', subagentType: 'Explore' }))
+      .toEqual({ model: 'native-model', agentId: 'native-agent' })
     const appended = await $.session.append({ door: 'prompt', origin: { kind: 'composer' }, uuid: 'native-' + sessionId,
       message: { type: 'user', role: 'user', content: [{ type: 'text', text: sessionId }] } })
     expect(appended.deny).toBe(undefined)
@@ -335,6 +338,7 @@ test('World failures preserve native operations before and after initialization'
     await $.session.end({ sessionId, reason: 'prompt_input_exit', resume: { id: sessionId } })
   }
   expect(tools).toBe(2)
+  expect(spawns).toBe(2)
   expect(compactions).toBe(2)
   expect(modelRequests).toBe(2)
   expect(stored.appended().length).toBe(2)

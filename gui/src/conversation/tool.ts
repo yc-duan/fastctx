@@ -11,7 +11,7 @@ import type { Use } from "./model";
 import { counts } from "./diff";
 import { writeNote } from "./run-output";
 
-export type Glyph = "read" | "edit" | "command" | "search" | "image" | "colleague" | "web" | "tasks" | "tool";
+export type Glyph = "read" | "edit" | "command" | "search" | "image" | "colleague" | "delegate" | "web" | "tasks" | "tool";
 
 export interface Headline {
   glyph: Glyph;
@@ -132,12 +132,22 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
         title: tool.does.path,
       };
     case "colleague":
+      // What an older node told of the host's own agents as colleagues.
+      if (tool.name === "Agent" || tool.name === "Task" || tool.name === "spawnAgent") {
+        return { glyph: "delegate", action: say("delegate"), object: tool.does.task, ...plain };
+      }
       return {
         glyph: "colleague",
         action: say(tool.name === "ask_colleague" ? "ask" : "message"),
         object: tool.does.task ?? tool.does.to,
         ...plain,
       };
+    case "agent": {
+      // Which agents it names is said by the row, which knows them.
+      const act: Act = { start: "delegate", message: "message", resume: "resume", wait: "wait", stop: "stop", list: "list" }[tool.does.act] as Act;
+      const task = tool.does.task ? firstLine(tool.does.task) : null;
+      return { glyph: "delegate", action: say(act), object: tool.does.act === "start" ? (task ?? tool.does.kind) : task, ...plain, title: tool.does.task };
+    }
     case "call":
       return call(tool, steady ? "done" : tense, say, words);
   }
@@ -221,7 +231,7 @@ export function groupHeading(
 ): string {
   const running = tools.find((entry) => entry.ended === null);
   if (running) return headline(running.tool, null, words).action;
-  const tally: Tally = { read: 0, edited: 0, ran: 0, searched: 0, asked: 0, other: 0, failed: 0, thinking };
+  const tally: Tally = { read: 0, edited: 0, ran: 0, searched: 0, asked: 0, delegated: 0, coordinated: 0, other: 0, failed: 0, thinking };
   for (const { tool, ended } of tools) {
     if (ended && (ended.use === "failed" || ended.use === "declined")) tally.failed += 1;
     switch (tool.does.as) {
@@ -242,7 +252,12 @@ export function groupHeading(
         tally.searched += 1;
         break;
       case "colleague":
-        tally.asked += 1;
+        if (tool.name === "Agent" || tool.name === "Task" || tool.name === "spawnAgent") tally.delegated += 1;
+        else tally.asked += 1;
+        break;
+      case "agent":
+        if (tool.does.act === "start") tally.delegated += 1;
+        else tally.coordinated += 1;
         break;
       default:
         if (tool.name === "Read") tally.read += 1;

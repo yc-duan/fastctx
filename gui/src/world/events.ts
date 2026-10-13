@@ -37,7 +37,12 @@ export type Does =
   | { as: "search"; query: string }
   | { as: "image"; path: string | null }
   | { as: "colleague"; to: string | null; task: string | null }
+  /** The host's own agents: starting one, speaking to some, waiting for
+   *  some, stopping them. `agents` are the ones it names, where it does. */
+  | { as: "agent"; act: AgentAct; agents?: string[]; kind: string | null; task: string | null }
   | { as: "call" };
+
+export type AgentAct = "start" | "message" | "resume" | "wait" | "stop" | "list";
 
 /** Bytes named by their content: how many, and their SHA-256. */
 export interface Fingerprint {
@@ -178,9 +183,13 @@ export type SessionChange =
   | { kind: "message_usage"; items: string[]; response: string | null; model: string; api_error: boolean; usage: JsonValue }
   /** The commands it offers changed: ask for them again. */
   | { kind: "commands_changed" }
-  /** Claude Code's own subagents, and what one of them did. */
+  /** The host's own agents: as it lists them now (Claude Code), one that
+   *  started or more of what is known of it, what one did in its own loop,
+   *  and how one's latest run ended. */
   | { kind: "agents"; agents: HostAgent[] }
-  | { kind: "agent_event"; agent_id: string; happened: JsonValue }
+  | { kind: "agent_started"; agent: HostAgentStart }
+  | { kind: "agent_event"; agent_id: string; happened: Happened }
+  | { kind: "agent_ended"; agent_id: string; end: HostAgentEnd }
   /** Turns removed from the session's history, as a rewind did. */
   | { kind: "history_cut"; removed_turns: string[] };
 
@@ -204,6 +213,44 @@ export interface HostAgent {
   spawnedBy?: string;
   name?: string;
   [other: string]: JsonValue | undefined;
+}
+
+/** One of the host's own agents in a conversation, as one telling has it
+ *  (`fastctx_types::session::HostAgentStart`): each adds what it knows. */
+export interface HostAgentStart {
+  id: string;
+  /** The tool call that started it, in the loop that did. */
+  call?: string;
+  /** The agent whose loop started it; none for the conversation's own. */
+  parent?: string;
+  kind?: string;
+  name?: string;
+  task?: string;
+  prompt?: string;
+  model?: string;
+  background: boolean;
+  /** Told as it started: what it does comes as it happens. */
+  live: boolean;
+}
+
+export interface HostAgentEnd {
+  how: TurnHow;
+  reason?: string;
+  duration_ms?: number;
+  tokens?: number;
+  tools?: number;
+  answer?: string;
+  /** The few words of its task, for a notice read apart from its start. */
+  task?: string;
+  /** The conversation was told of it here, by the host's own notice. */
+  told?: boolean;
+}
+
+/** What one of the host's own agents did, as its host keeps it. */
+export interface AgentActivity {
+  agent?: HostAgentStart;
+  events: SessionEvent[];
+  unavailable?: string;
 }
 
 /** What the World tells a resident, as facts (`fastctx_types::residents::Notice`):

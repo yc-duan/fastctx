@@ -14,6 +14,7 @@ import "./design/highlight.css";
 import "./conversation/conversation.css";
 import "./conversation/turns.css";
 import "./conversation/model-panel.css";
+import "./conversation/agents.css";
 import "./longview/longview.css";
 import "./app/shell.css";
 import "./app/sheet.css";
@@ -122,6 +123,7 @@ import { specimenJournal, specimenMap } from "./specimen/project";
 import { markdownOf } from "./conversation/export";
 import { specimens, type Specimen } from "./specimen/sessions";
 import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
+import { specimenAgentRecord } from "./specimen/agents";
 import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
 import { specimenHubMove } from "./specimen/hub-move";
 import { specimenRemote } from "./specimen/remote";
@@ -208,6 +210,7 @@ import {
   accountChange,
   serverCommand,
   machineLog,
+  agentActivity,
 } from "./world/bridge";
 import { en, zh } from "./words";
 import { updating } from "./world/updater";
@@ -1022,6 +1025,7 @@ function specimenTalk(address: Address): KeepablePage {
     stopJob: async () => {},
     jobOutput: async (job) => specimenOutput(job.command),
     lines: async (_machine, path) => specimenLines(path),
+    agentRecord: (agent) => specimenAgentRecord(agent),
   });
   // What it started that still runs, as the specimen World lists it.
   const runningJobs = effect(() => {
@@ -1250,6 +1254,7 @@ function liveTalk(address: Address): KeepablePage {
     stopJob: (job, machine) => stopJob(job, machine),
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
     lines: (machine, path, decoding) => RemoteLines.open(machine, path, decoding),
+    agentRecord: (agent) => agentActivity(address, agent),
   });
   let left = false;
   // What it started that still runs, as the World last answered.
@@ -1281,7 +1286,12 @@ function liveTalk(address: Address): KeepablePage {
       if (!conversation.happened(at, event) || conversation.stale) reading.again();
       page.update();
     },
-    interrupted: (why, since) => page.broken(why, since),
+    interrupted: (why, since) => {
+      // What the host's own agents did while it was broken is not told
+      // again: each is read from its own record from here.
+      conversation.broke();
+      page.broken(why, since);
+    },
     resumed: () => page.resumed(),
     ended: (why) => {
       page.lost(why);

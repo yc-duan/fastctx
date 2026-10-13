@@ -735,7 +735,7 @@
   display: none;
 }
 
-/* A subagent's line under the row, then what the row holds. */
+/* Under a row, the step its agent takes now, then what the row holds. */
 .row > .fold,
 .row > .fold-box {
   grid-column: 2 / -1;

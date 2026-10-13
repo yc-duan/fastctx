@@ -6,7 +6,10 @@
 //! change with its diff. An item of a type not known here is passed on by
 //! its type, with nothing said of it (`world.md`, 接入宿主只靠它们写明的接口).
 
-use fastctx_types::session::{Change, ChangeHow, Content, Does, Item, Tool, ToolStatus, UserMessage, What};
+use fastctx_types::session::{
+    AgentAct, Change, ChangeHow, Content, Does, HostAgentEnd, HostAgentStart, Item, SessionChange, Tool, ToolStatus,
+    TurnHow, UserMessage, What,
+};
 use serde_json::Value;
 
 use crate::world_tools;
@@ -189,19 +192,29 @@ pub fn read(item: &Value, completed: bool) -> Read {
             }
             used.done()
         }
+        // Codex's own agents (`multi_agent`): each is a thread of its own,
+        // named here by its id (Codex 0.162's `CollabAgentTool`).
         "collabAgentToolCall" => {
-            if text(item, "tool").as_deref() == Some("wait") {
-                return unshown(item);
-            }
-            let to = item.pointer("/receiverThreadIds/0").and_then(Value::as_str).map(str::to_string);
-            tool(
+            let name = text(item, "tool").unwrap_or_default();
+            let act = match name.as_str() {
+                "spawnAgent" => AgentAct::Start,
+                "resumeAgent" => AgentAct::Resume,
+                "wait" => AgentAct::Wait,
+                "closeAgent" | "interruptAgent" => AgentAct::Stop,
+                "listAgents" => AgentAct::List,
+                _ => AgentAct::Message,
+            };
+            let mut used = tool(
                 item,
-                &text(item, "tool").unwrap_or_default(),
+                &name,
                 None,
-                Does::Colleague { to, task: text(item, "prompt") },
+                Does::Agent { act, agents: strings(item, "receiverThreadIds"), kind: None, task: text(item, "prompt") },
             )
-            .input(serde_json::json!({ "prompt": item.get("prompt"), "model": item.get("model") }))
-            .done()
+            .input(serde_json::json!({ "prompt": item.get("prompt"), "model": item.get("model") }));
+            if text(item, "status").as_deref() == Some("interrupted") {
+                used.tool.status = ToolStatus::Cut;
+            }
+            used.done()
         }
         "webSearch" => tool(item, "web_search", None, Does::Search { query: text(item, "query").unwrap_or_default() })
             .input(item.get("action").cloned().unwrap_or(Value::Null))
@@ -249,6 +262,97 @@ pub fn read(item: &Value, completed: bool) -> Read {
         tool.status = ToolStatus::Running;
     }
     Read::Item(Item { id, what, detail: Some(item.clone()), started_at: None })
+}
+
+/// What a finished item tells of Codex's own agents: which call started
+/// which, and how one's run ended where the call says. A wait's answer
+/// names each agent it waited for and how that one stands; a spawn's names
+/// the agent it started (`multi_agent`, Codex 0.162); `subAgentActivity`
+/// does both (`multi_agent_v2`).
+pub fn agent_facts(item: &Value) -> Vec<SessionChange> {
+    let mut facts = Vec::new();
+    let id = text(item, "id").unwrap_or_default();
+    let started = |agent: String, task: Option<String>, prompt: Option<String>, model: Option<String>| {
+        SessionChange::AgentStarted {
+            agent: Box::new(HostAgentStart {
+                id: agent,
+                call: Some(id.clone()),
+                task,
+                prompt,
+                model: model.filter(|model| !model.is_empty()),
+                background: true,
+                ..Default::default()
+            }),
+        }
+    };
+    let ended = |agent: String, how: TurnHow, words: Option<String>| {
+        let failed = matches!(how, TurnHow::Failed);
+        SessionChange::AgentEnded {
+            agent_id: agent,
+            end: HostAgentEnd {
+                reason: if failed { words.clone() } else { None },
+                answer: if failed { None } else { words },
+                how,
+                duration_ms: None,
+                tokens: None,
+                tools: None,
+                task: None,
+                told: false,
+            },
+        }
+    };
+    match text(item, "type").as_deref() {
+        Some("collabAgentToolCall") => {
+            let tool = text(item, "tool").unwrap_or_default();
+            if tool == "spawnAgent" {
+                for agent in strings(item, "receiverThreadIds") {
+                    let prompt = text(item, "prompt");
+                    let task = prompt.as_deref().map(first_line);
+                    facts.push(started(agent, task, prompt, text(item, "model")));
+                }
+            }
+            if tool == "wait" {
+                let states = item.get("agentsStates").and_then(Value::as_object);
+                for (agent, state) in states.into_iter().flatten() {
+                    let words = text(state, "message").filter(|words| !words.is_empty());
+                    let how = match text(state, "status").as_deref() {
+                        Some("completed") => TurnHow::Completed,
+                        Some("errored") => TurnHow::Failed,
+                        Some("interrupted" | "shutdown") => TurnHow::Interrupted,
+                        _ => continue,
+                    };
+                    facts.push(ended(agent.clone(), how, words));
+                }
+            }
+        }
+        Some("subAgentActivity") => {
+            let agent = text(item, "agentThreadId").unwrap_or_default();
+            if !agent.is_empty() {
+                match text(item, "kind").as_deref() {
+                    // Its path names it under the agents that spawned it,
+                    // `/root/<task>`: the task is its last part.
+                    Some("started") => {
+                        facts.push(started(agent, text(item, "agentPath").map(|path| task_of(&path)), None, None))
+                    }
+                    Some("completed") => facts.push(ended(agent, TurnHow::Completed, None)),
+                    Some("interrupted") => facts.push(ended(agent, TurnHow::Interrupted, None)),
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    facts
+}
+
+/// The task an agent's path names, `/root/<spawner>/<task>`: its last part.
+fn task_of(path: &str) -> String {
+    path.rsplit('/').find(|part| !part.is_empty()).unwrap_or(path).to_string()
+}
+
+/// The first line of a prompt, as the few words of a task.
+fn first_line(prompt: &str) -> String {
+    prompt.trim().lines().next().unwrap_or_default().trim().to_string()
 }
 
 /// A tool item being read.

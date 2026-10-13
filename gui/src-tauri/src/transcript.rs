@@ -10,9 +10,11 @@
 //! the words it delivers, the request it answers) is first named on the same
 //! side of the cut, so a page folds each part on its own and two parts never
 //! hold the same thing. A late event that names something before a cut
-//! takes the cut away. Facts a run tells after its turn are the one
-//! exception, as a job goes on for as long as it likes: they are named by
-//! the run, and a part brings along those told after it.
+//! takes the cut away. Facts a run tells after its turn are one exception,
+//! as a job goes on for as long as it likes: they are named by the run, and
+//! a part brings along those told after it. What the host's own agents do
+//! is the other, as one goes on in the background: it is named by the call
+//! that started the agent, and comes along with that call's part.
 //!
 //! Finding words reaches the whole conversation: the page hands the shell
 //! the displayed text of parts it does not hold, once, and the shell counts
@@ -160,8 +162,11 @@ pub(crate) struct Transcript {
     /// Each tool by its item, at its first event, in order.
     tools: Vec<(usize, String)>,
     seen_tools: std::collections::HashSet<String>,
-    /// The run facts told, by the call they tell of.
+    /// The run facts told, and what the host's own agents did, by the call
+    /// they tell of: the run's, the one that started the agent.
     facts: HashMap<String, Vec<usize>>,
+    /// The call that started each of the host's own agents, by the agent.
+    agent_calls: HashMap<String, String>,
     titled: Option<usize>,
     context: Option<usize>,
     answered: Option<usize>,
@@ -318,12 +323,29 @@ impl Transcript {
         self.previous_started = matches!(event.happened, Happened::TurnStarted { .. });
         match &event.happened {
             Happened::Began { item, .. } | Happened::Updated { item, .. } | Happened::Finished { item, .. }
-                if matches!(item.what, What::Tool(_)) && self.seen_tools.insert(item.id.clone()) =>
+                if matches!(item.what, What::Tool(_) | What::AgentActivity { .. })
+                    && self.seen_tools.insert(item.id.clone()) =>
             {
                 self.tools.push((index, item.id.clone()));
             }
             Happened::Changed { change: SessionChange::RunFactsUpdated { update, .. }, .. } => {
                 self.facts.entry(update.call_id.clone()).or_default().push(index);
+            }
+            Happened::Changed { change: SessionChange::AgentStarted { agent }, .. } => {
+                if let Some(call) = &agent.call {
+                    self.agent_calls.insert(agent.id.clone(), call.clone());
+                }
+                if let Some(call) = self.agent_calls.get(&agent.id) {
+                    self.facts.entry(call.clone()).or_default().push(index);
+                }
+            }
+            Happened::Changed {
+                change: SessionChange::AgentEvent { agent_id, .. } | SessionChange::AgentEnded { agent_id, .. },
+                ..
+            } => {
+                if let Some(call) = self.agent_calls.get(agent_id) {
+                    self.facts.entry(call.clone()).or_default().push(index);
+                }
             }
             Happened::Titled { .. } => self.titled = Some(index),
             Happened::Context { .. } => self.context = Some(index),
@@ -429,7 +451,8 @@ impl Transcript {
         (self.before(own, floor, 2), self.after(own, ceiling, 2))
     }
 
-    /// Facts told after `end` by the runs that began in `start..end`.
+    /// Facts told after `end` by the runs that began in `start..end`, and
+    /// what the agents its calls started did after it.
     fn late(&self, start: usize, end: usize) -> Vec<Box<RawValue>> {
         let first = self.tools.partition_point(|(at, _)| *at < start);
         let mut late: Vec<usize> = self.tools[first..]

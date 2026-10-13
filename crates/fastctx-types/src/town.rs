@@ -293,6 +293,9 @@ impl CurrentTool {
             Does::Search { query } => line(query),
             Does::Image { path } => path.clone().unwrap_or_default(),
             Does::Colleague { to, task } => task.as_ref().or(to.as_ref()).map(|text| line(text)).unwrap_or_default(),
+            Does::Agent { task, kind, agents, .. } => {
+                task.as_ref().or(kind.as_ref()).or(agents.first()).map(|text| line(text)).unwrap_or_default()
+            }
             Does::Call => ["cmd", "command", "script", "file_path", "path", "query", "url", "description"]
                 .into_iter()
                 .find_map(|key| {

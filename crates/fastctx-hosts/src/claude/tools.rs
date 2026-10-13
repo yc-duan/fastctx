@@ -4,7 +4,7 @@
 //! as they do from any host (`world_tools`); Claude Code's own that do the
 //! same things as Codex's show the same way.
 
-use fastctx_types::session::{Change, ChangeHow, Content, Does, Tool, ToolStatus};
+use fastctx_types::session::{AgentAct, Change, ChangeHow, Content, Does, Tool, ToolStatus};
 use serde_json::Value;
 
 use crate::world_tools;
@@ -58,7 +58,20 @@ fn own(name: &str, input: &Value) -> Does {
             }
         }
         "WebSearch" => Does::Search { query: text("query").unwrap_or_default() },
-        "Agent" | "Task" => Does::Colleague { to: text("subagent_type"), task: text("description") },
+        // Which agent it started is in its answer, or told as it starts.
+        "Agent" | "Task" => Does::Agent {
+            act: AgentAct::Start,
+            agents: Vec::new(),
+            kind: text("subagent_type"),
+            task: text("description"),
+        },
+        // To an agent by its id or its name, as Claude Code's ListAgents has it.
+        "SendMessage" => Does::Agent {
+            act: AgentAct::Message,
+            agents: text("to").into_iter().collect(),
+            kind: None,
+            task: text("message").or_else(|| text("text")),
+        },
         _ => Does::Call,
     }
 }

@@ -1,0 +1,408 @@
+/* The host's own agents in a conversation: the row of the call that
+   started one, its box of what it did, and the picture of them all above
+   the input. */
+
+/* A call that started an agent: its kind as a small chip before what it
+   was asked, how it stands after; under it, while it works, the step it
+   takes now, faded in where the last was. */
+.row-agent .agent-object {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.agent-kind,
+.lane-kind {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  font-size: var(--size-small);
+  line-height: 1.55;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.agent-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* On a phone what it was asked has the room: its kind is in its box, and
+   only a name it is called by stays before it. */
+@media (max-width: 760px) {
+  .row-agent .agent-kind:not(.named) {
+    display: none;
+  }
+}
+
+.agent-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-meta.wrong {
+  color: var(--wrong);
+}
+
+.row-agent > .agent-now {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: -6px 0 4px;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.agent-now-mark {
+  flex: none;
+  display: inline-grid;
+}
+
+.agent-now-said {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-now.fresh .agent-now-said {
+  animation: title-fade 0.24s ease both;
+}
+
+/* What an agent did, opened under its row: its own conversation, drawn as
+   the page draws one, a size down, sunk into the page in a box of its own
+   that scrolls and follows its end while it works. A box inside a box
+   stands on the page's own ground again, so each is told from the one
+   around it. */
+.agent-box {
+  --body-size-in: calc(var(--body-size) - 1px);
+  --size-small: calc(var(--body-size) - 3px);
+  --size-ui: calc(var(--body-size) - 2px);
+  --size-code: calc((var(--body-size) - 1px) * 0.88);
+  margin: var(--space-1) 0 var(--space-2);
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+  font-size: var(--body-size-in);
+}
+
+.agent-box .agent-box {
+  background: var(--bg);
+}
+
+.agent-box .agent-box .agent-box {
+  background: var(--bg-sunken);
+}
+
+.agent-scroll {
+  max-height: min(56dvh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.agent-box .transcript {
+  max-width: none;
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-3);
+}
+
+.agent-box .block {
+  padding-top: var(--space-3);
+}
+
+.agent-box .block.turn-start {
+  padding-top: var(--space-5);
+}
+
+.agent-box .block.first {
+  padding-top: 0;
+}
+
+/* What it was asked heads it, quiet, its first lines until opened. */
+.agent-asked {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  font-size: var(--size-small);
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.agent-asked-text {
+  overflow-wrap: anywhere;
+}
+
+.agent-asked-text > p {
+  margin: 0;
+}
+
+.agent-asked-text > p + p {
+  margin-top: var(--space-2);
+}
+
+.agent-asked:not(.open) .agent-asked-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+.agent-asked-more {
+  margin-top: 2px;
+  padding: 2px 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  transition: color var(--hover) ease;
+}
+
+.agent-asked-more:hover {
+  color: var(--text);
+}
+
+.agent-note,
+.agent-foot {
+  margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.agent-foot {
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-foot.wrong {
+  color: var(--wrong);
+}
+
+.agent-scroll:not(:has(.block)) + .agent-note {
+  padding-top: var(--space-3);
+}
+
+/* Pressed in the picture of them all: the row is found with a wash that
+   fades. */
+.row.row-found > .row-line {
+  animation: row-found 1.6s ease both;
+}
+
+@keyframes row-found {
+  from {
+    background: var(--accent-wash);
+  }
+}
+
+/* The picture of them all: a mark in the input's row with how many still
+   work, and a panel above it of a lane for each. */
+.composer-agents {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.composer-agents:hover,
+.composer-agents[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.composer-agents.going .glyph {
+  color: var(--accent);
+  animation: ink-breathe 2.6s ease-in-out infinite;
+}
+
+.agents-pop {
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: calc(100% + var(--space-2));
+  z-index: 6;
+  max-width: 560px;
+  max-height: min(60dvh, 460px);
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  animation: panel-rise var(--fold) var(--fold-easing) both;
+}
+
+.agents-title {
+  margin: 0 var(--space-1) var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+/* Agents that worked at the same time, on a clock of their own; the next
+   group stands apart under it. */
+.agents-group + .agents-group {
+  margin-top: var(--space-4);
+}
+
+.agents-lanes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lane-what {
+  display: block;
+  width: 100%;
+  padding: 6px 0 2px;
+  border-radius: var(--radius-s);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--hover) ease;
+}
+
+.lane-what:hover {
+  background: var(--hairline);
+}
+
+.lane-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--depth, 0) * 14px);
+  font-size: var(--size-small);
+}
+
+.lane-task {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.lane-what:hover .lane-task {
+  color: var(--text);
+}
+
+.lane-meta {
+  flex: none;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.state-failed .lane-meta {
+  color: var(--wrong);
+}
+
+.lane-drawing {
+  display: block;
+  overflow: visible;
+}
+
+.lane-ink {
+  mix-blend-mode: var(--pen-blend);
+}
+
+.lane-stroke,
+.lane-ticks path,
+.lane-mark path {
+  fill: var(--pen-graphite);
+}
+
+.state-running .lane-stroke,
+.state-waiting .lane-stroke {
+  fill: var(--pen-clay);
+}
+
+.state-waiting .lane-stroke {
+  opacity: 0.55;
+}
+
+.state-stopped .lane-stroke,
+.state-stopped .lane-mark path {
+  opacity: 0.6;
+}
+
+.lane-ticks path.failed,
+.state-failed .lane-mark path {
+  fill: var(--wrong);
+}
+
+.lane-head {
+  fill: var(--pen-clay);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: lane-breathe 1.6s ease-in-out infinite;
+}
+
+.state-waiting .lane-head {
+  animation: none;
+  opacity: 0.6;
+}
+
+@keyframes lane-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.7);
+    opacity: 0.55;
+  }
+}
+
+.agents-axis {
+  display: flex;
+  justify-content: space-between;
+  margin: 2px var(--space-2) 0;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-pop.popover-leaving {
+  animation: panel-settle var(--fold) var(--fold-easing) both;
+}
+
+@media (max-width: 760px) {
+  .agents-pop {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-width: none;
+    max-height: 70dvh;
+    padding-bottom: calc(var(--space-4) + var(--safe-bottom));
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+    animation-name: sheet-rise;
+  }
+
+  .agents-pop.popover-leaving {
+    animation-name: sheet-sink;
+  }
+
+  .lane-what {
+    padding: 8px 0 4px;
+  }
+}
+
+:root[data-reduced] .composer-agents .glyph,
+:root[data-reduced] .agents-pop,
+:root[data-reduced] .lane-head,
+:root[data-reduced] .row.row-found > .row-line,
+:root[data-reduced] .agent-now.fresh .agent-now-said {
+  animation: none;
+}

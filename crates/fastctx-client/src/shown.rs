@@ -36,6 +36,12 @@ pub fn tool_detail(tool: &Tool) -> String {
             (Some(one), None) | (None, Some(one)) => one.clone(),
             (None, None) => String::new(),
         },
+        Does::Agent { kind, task, agents, .. } => match (kind, task) {
+            (Some(kind), Some(task)) => format!("{kind} · {}", first_line(task)),
+            (Some(one), None) => one.clone(),
+            (None, Some(task)) => first_line(task),
+            (None, None) => agents.join(", "),
+        },
         Does::Call => ["file_path", "path", "query", "url", "command", "description", "pattern", "code", "prompt"]
             .iter()
             .find_map(|key| tool.input.get(key).and_then(|value| value.as_str()))

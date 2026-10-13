@@ -1,11 +1,13 @@
 // A conversation as Markdown, to keep or hand on: who said what in the
 // order it was said, what the agent did as one line each, its plans and
-// steps. Thinking is left out; tool output is left to the conversation. All
+// steps, and what its own agents that went on in the background handed
+// back. Thinking is left out; tool output is left to the conversation. All
 // of it, however long: what the page does not hold is read a part at a
 // time and let go once written.
 
 import type { Words } from "../words";
 import type { Conversation } from "./conversation";
+import { toldSaid } from "./agents";
 import { headline } from "./tool";
 
 export interface ExportNames {
@@ -63,6 +65,13 @@ export async function markdownOf(conversation: Conversation, words: Words, names
         turnTo(names.agent);
         out.push(`> ${names.waiting} · ${entry.request}`);
         break;
+      case "agent-told": {
+        flush();
+        const said = toldSaid(entry.end, entry.end.task ?? conversation.agent(entry.agent)?.label() ?? null, words);
+        const handed = entry.end.answer ?? entry.end.reason;
+        out.push([`> ${said}`, ...(handed ? [">", ...handed.split("\n").map((row) => `> ${row}`.trimEnd())] : [])].join("\n"));
+        break;
+      }
       default:
         break;
     }

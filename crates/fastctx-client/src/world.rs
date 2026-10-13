@@ -553,6 +553,20 @@ impl World {
         }
     }
 
+    /// What one of the host's own agents in a resident's conversation did,
+    /// read from its own record on the resident's machine.
+    pub async fn agent_activity(
+        &self,
+        address: Address,
+        agent: String,
+    ) -> Result<fastctx_types::session::AgentActivity, Error> {
+        let call = Call::AgentActivity { resident: address.resident, machine: Some(address.machine), agent };
+        match self.ask(call).await? {
+            Reply::AgentActivity { activity, .. } => Ok(*activity),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Watches a resident on any machine: its history, then each event as
     /// it happens.
     pub async fn watch(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<Watching, Error> {

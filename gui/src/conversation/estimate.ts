@@ -37,6 +37,8 @@ export function estimate(block: Block, line: number, chars: number, acts: number
       return prose(block.text, Math.floor(chars * 0.78)) + 20 + (block.attached?.length ? 120 : 0) + acts;
     case "prose":
       return prose(block.text, chars) + acts;
+    case "agent-told":
+      return 24;
     case "ended":
       return block.end.how === "completed" ? 0 : line;
     case "steps":

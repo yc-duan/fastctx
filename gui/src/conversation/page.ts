@@ -25,6 +25,8 @@ import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from ".
 import type { Details } from "./details";
 import { FileLinks } from "./file-links";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
+import { AgentsPanel } from "./agents-panel";
+import type { AgentActivity } from "../world/events";
 import { Pictures, type PictureSeams } from "./pictures";
 import { glyph } from "./glyphs";
 import type { Conversation, Held } from "./conversation";
@@ -153,6 +155,9 @@ export interface PageOptions {
   /** Lines of a file or a job's output on the machine holding them: what a
    *  write changed, a command's whole output. */
   lines?: ((machine: string, path: string, decoding: Decoding) => Promise<OutputLines>) | undefined;
+  /** One of the host's own agents' own record, read from the
+   *  conversation's machine as its box opens. */
+  agentRecord?: ((agent: string) => Promise<AgentActivity>) | undefined;
 }
 
 export class ConversationPage {
@@ -209,12 +214,12 @@ export class ConversationPage {
         <p class="composer-gone" hidden></p>
         <div class="composer-queue"></div>
         <form class="composer">
-          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div></div>
+          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div><div class="agents-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
-            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-agents" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <button class="composer-context" type="button" hidden></button>
             <button class="composer-action" type="submit" aria-label="${escape(words.send)}"></button>
@@ -353,6 +358,15 @@ export class ConversationPage {
       },
       turnAct: controls && ((act, turn, words, kept) => this.turnAct(act, turn, words, kept)),
       lines: options.lines,
+      agentRecord: options.agentRecord,
+    });
+    // The host's own agents as one picture (`agents-panel.ts`): a lane
+    // pressed opens the row of the call that started it.
+    this.agents = new AgentsPanel(this.element.querySelector<HTMLButtonElement>(".composer-agents")!, this.element.querySelector<HTMLElement>(".agents-pop")!, {
+      words,
+      show: (run) => {
+        if (this.view.openAgent(run.id)) this.following = false;
+      },
     });
     if (options.opening) {
       new FileLinks(main, {
@@ -535,6 +549,7 @@ export class ConversationPage {
     const follow = this.following;
     this.view.update(this.read);
     this.read = false;
+    this.drawAgents();
     this.drawTurnActs();
     this.finder.refresh();
     this.drawState();
@@ -542,6 +557,19 @@ export class ConversationPage {
     if (follow) this.scroller.scrollTop = this.scroller.scrollHeight;
     this.drawLatest();
     this.bound();
+  }
+
+  private agents: AgentsPanel;
+  private agentsSeen = "";
+
+  /** The host's own agents, as the conversation now knows them, to their
+   *  picture whenever one of them moved or the parts held changed. */
+  private drawAgents(): void {
+    const conversation = this.options.conversation;
+    const seen = `${conversation.agentStamp}|${conversation.bounds().join(";")}`;
+    if (seen === this.agentsSeen) return;
+    this.agentsSeen = seen;
+    this.agents.update(conversation.agents());
   }
 
   /** Where the reader was, kept while the page is out of view: following
@@ -606,6 +634,7 @@ export class ConversationPage {
     clearTimeout(this.looking);
     cancelAnimationFrame(this.frame);
     this.view.destroy();
+    this.agents.destroy();
     this.finder.destroy();
     this.looking = -1;
     this.left = true;

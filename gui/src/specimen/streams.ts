@@ -3,10 +3,12 @@
 // model's fastest tier, a conversation still starting and one that could
 // not start. `?s=stream` opens one; the address picks its shape:
 // `turns`, `tools` (calls per turn), `rate` (events a second, live),
-// `start` (`starting` or `failed`).
+// `start` (`starting` or `failed`; `think` for thinking, `agents` for the
+// host's own agents, `&host=codex` for Codex's).
 
 import type { Content, Item, SessionEvent, Speaker, Tool } from "../world/events";
 import type { Specimen } from "./sessions";
+import { agentsSpecimen } from "./agents";
 
 /** A specimen that plays on after its history, with its own pace. */
 export interface Stream extends Specimen {
@@ -133,6 +135,7 @@ function pieces(said: string): string[] {
 export const FIRST = "帮我看看 lab 上 ctrl 的测试为什么一直挂在 step_response。";
 
 export function streamSpecimen(params: URLSearchParams): Stream {
+  if (params.get("start") === "agents") return agentsSpecimen(params.get("host") === "codex" ? "codex" : "claude");
   const turns = Number(params.get("turns") ?? 0);
   const perTurn = Number(params.get("tools") ?? 40);
   const rate = Number(params.get("rate") ?? 0);

@@ -169,11 +169,11 @@ const bundled = await build({
   logLevel: "silent",
 });
 const outputText = bundled.outputFiles[0].text;
-const { changeHealth, Conversation } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { changeHealth, Fold } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 for (const { change, health } of fixture.session.health_cases) {
   assert.deepEqual(changeHealth(change), health, `SessionChange::health() differs for ${JSON.stringify(change)}`);
 }
-const conversation = new Conversation();
+const conversation = new Fold();
 conversation.history(fixture.session.events);
 assert.equal(conversation.title, "Wire contract");
 assert(conversation.entries.some((entry) => entry.kind === "tool"));
@@ -182,7 +182,7 @@ assert.equal(conversation.moving(), false);
 
 // Claude's requests become cards, and the cards answer in the shape its
 // hooks take: allowing once, the questions chosen, a form filled in.
-const asking = new Conversation();
+const asking = new Fold();
 asking.history(fixture.claude.events.filter((event) => event.change?.kind !== "resolved"));
 const asks = asking.entries.filter((entry) => entry.kind === "ask");
 assert.equal(asks.length, 3, "each Claude request is a card");

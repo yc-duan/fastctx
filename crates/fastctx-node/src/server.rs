@@ -913,6 +913,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|(resident, detail)| Reply::ItemDetail { resident, detail })
         }
+        Call::AgentActivity { resident, machine, agent } => crate::agent_activity::read(node, resident, machine, agent)
+            .await
+            .map(|(resident, activity)| Reply::AgentActivity { resident, activity: Box::new(activity) }),
         Call::Offers { resident, machine } => crate::control::offers(node, resident, machine)
             .await
             .map(|(resident, offers)| Reply::Offers { resident, offers: Box::new(offers) }),

@@ -15,13 +15,14 @@
 // item without an id) is named by its place in its fold, under the fold's
 // scope, so two folds never name two things alike.
 
-import type { Health, MachineName, Notice, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
+import type { Health, HostAgentEnd, MachineName, Notice, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
 import type { Attachment, AttachmentSource } from "../world/attachments";
 import type { JsonValue } from "../world/wire";
 import type { JobFacts, RunFacts } from "../world/run-facts";
 import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
 import { readReply, type AsyncQuestion } from "./async-ask";
+import { Agents, type AgentRun } from "./agents";
 
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
@@ -110,6 +111,10 @@ export type Entry = {
    *  `request_user_input_async`): answered whenever the user likes, or not
    *  at all. `answers` holds what was answered, by question. */
   | { kind: "question"; key: string; item: string; turn: string; questions: AsyncQuestion[]; answers: (string | null)[]; version: number }
+  /** One of the host's own agents that went on in the background ended,
+   *  and the conversation was told of it here: by the host's notice, or,
+   *  in Codex, by an item of the turn. */
+  | { kind: "agent-told"; key: string; agent: string; end: HostAgentEnd; item?: string; turn?: string }
 );
 
 /** One stretch of what a turn did between things it said: tools and
@@ -121,8 +126,8 @@ export interface Activity {
   turn: string;
   members: Entry[];
   stamp: number;
-  /** One of its tools started Claude Code's own subagent, which moves on
-   *  its own (`Fold.agentStamp`). */
+  /** One of its tools started or names one of the host's own agents,
+   *  which move on their own (`agentStamp`). */
   agents: boolean;
 }
 
@@ -172,10 +177,12 @@ export class Fold {
   /** The model the host last answered with, where it says (Claude's
    *  answers do): what the conversation shows, not the one chosen. */
   answeredBy: string | null = null;
-  /** Claude Code's own subagents: who, how many steps each has taken, the
-   *  one it takes now; `agentStamp` moves whenever one of them does. */
-  readonly agents = new Map<string, { kind: string; description: string; status: string; steps: number; doing: string | null }>();
-  agentStamp = 0;
+  /** The host's own agents its calls started (`agents.ts`). */
+  readonly agents = new Agents();
+  /** Moves whenever one of the agents does. */
+  get agentStamp(): number {
+    return this.agents.stamp;
+  }
   /** Attachments by where the World keeps them, with the names they came
    *  with: the World stores each under a name of its own. */
   private attachments = new Map<string, string>();
@@ -290,6 +297,7 @@ export class Fold {
     this.running.clear();
     this.began.clear();
     this.thoughtTokens.clear();
+    this.agents.clear();
     this.codexTotal = 0;
     this.codexResponses = 0;
     this.folded = 0;
@@ -351,8 +359,16 @@ export class Fold {
    *  facts a run's job tells as it goes on: read in place, the part still
    *  ending where it did. */
   late(event: SessionEvent): void {
-    this.read(event);
+    this.lateReading = true;
+    try {
+      this.read(event);
+    } finally {
+      this.lateReading = false;
+    }
   }
+  /** What is read comes after this fold's part: it changes what is there,
+   *  and adds nothing in its place. */
+  private lateReading = false;
 
   private read(event: SessionEvent): void {
     const at = Date.parse(event.at);
@@ -574,26 +590,30 @@ export class Fold {
           this.codexThought(event.turn, change.usage);
           return;
         }
+        // The host's own agents move on their own: their rows follow them
+        // (`agentStamp`), and what the conversation holds does not change.
         if (change.kind === "agents") {
-          for (const agent of change.agents) {
-            const known = this.agents.get(agent.id);
-            this.agents.set(agent.id, { kind: agent.type, description: agent.description, status: agent.status, steps: known?.steps ?? 0, doing: known?.doing ?? null });
-          }
-          this.agentStamp += 1;
-          this.clock += 1;
+          this.agents.listed(change.agents, at);
+          return;
+        }
+        if (change.kind === "agent_started") {
+          // A start told late, as the host's record has it, began with
+          // the call that started it.
+          const call = change.agent.call ? this.byCall.get(change.agent.call) : undefined;
+          this.toAncestors(this.agents.started(change.agent, call?.began ?? at), event);
           return;
         }
         if (change.kind === "agent_event") {
-          const known = this.agents.get(change.agent_id) ?? { kind: "", description: "", status: "running", steps: 0, doing: null };
-          const happened = change.happened !== null && typeof change.happened === "object" && !Array.isArray(change.happened) ? change.happened : {};
-          const item = happened.item !== null && typeof happened.item === "object" && !Array.isArray(happened.item) ? happened.item : {};
-          const named = item.kind === "tool" && typeof item.name === "string" ? item.name : null;
-          if (happened.event === "began" && named) known.doing = named;
-          if (happened.event === "finished" && item.kind === "tool") known.steps += 1;
-          if (happened.event === "turn_ended") known.doing = null;
-          this.agents.set(change.agent_id, known);
-          this.agentStamp += 1;
-          this.clock += 1;
+          this.toAncestors(this.agents.event(change.agent_id, { at: event.at, ...change.happened } as SessionEvent), event);
+          return;
+        }
+        if (change.kind === "agent_ended") {
+          this.toAncestors(this.agents.ended(change.agent_id, change.end, at), event);
+          // Where the conversation was told of it, a line says so.
+          const key = `t:${change.agent_id}:${event.at}`;
+          if (change.end.told && !this.lateReading && !this.byKey.has(key)) {
+            this.add({ kind: "agent-told", key, stamp: 0, at: 0, agent: change.agent_id, end: change.end });
+          }
           return;
         }
         if (change.kind === "commands_changed") {
@@ -601,7 +621,10 @@ export class Fold {
           return;
         }
         if (change.kind === "run_facts_updated") {
-          this.runFacts(change.update);
+          // A run one of the agents made is told to that agent.
+          const agent = this.byCall.has(change.update.call_id) ? undefined : this.agents.ofTool(change.update.call_id);
+          if (agent) this.toAncestors(this.agents.event(agent.id, event), event);
+          else this.runFacts(change.update);
           return;
         }
         const health = changeHealth(change);
@@ -683,7 +706,14 @@ export class Fold {
         };
         break;
       case "agent_activity":
-        fresh = { kind: "activity", key, stamp: 0, at: 0, item: id, turn, text: `${native.path}: ${native.activity}` };
+        // Codex's second way of running agents tells of them as items of the
+        // turn: one started is drawn as any agent started is, one that
+        // ended as the conversation being told so.
+        if (native.activity === "started") {
+          fresh = { kind: "tool", key, stamp: 0, at: 0, item: id, turn, tool: startedTool(native.agent, native.path), began: startedAt, ended: { at, use: "done" } };
+        } else if (native.activity === "completed" || native.activity === "interrupted") {
+          fresh = { kind: "agent-told", key, stamp: 0, at: 0, item: id, turn, agent: native.agent, end: { how: native.activity, task: taskOf(native.path), told: true } };
+        } else fresh = { kind: "activity", key, stamp: 0, at: 0, item: id, turn, text: `${native.path}: ${native.activity}` };
         break;
       case "tool": {
         const { kind: _kind, id: _id, started_at: _started, detail: _detail, ...tool } = native;
@@ -868,6 +898,11 @@ export class Fold {
     return this.byCall.has(call);
   }
 
+  /** The entry of a call, by the host's item. */
+  call(call: string): ToolEntry | undefined {
+    return this.byCall.get(call);
+  }
+
   /** Lets go of what the events before `before` made: whole turns, the
    *  fold's part now beginning there. Words still being sent and requests
    *  still waiting stay. */
@@ -933,14 +968,33 @@ export class Fold {
     return changed;
   }
 
-  /** The subagent a tool started, where it is Claude Code's own agent tool:
-   *  known by the description it was given. */
-  agentOf(entry: Extract<Entry, { kind: "tool" }>): { kind: string; status: string; steps: number; doing: string | null } | null {
-    if (entry.tool.name !== "Agent" && entry.tool.name !== "Task") return null;
-    const input = entry.tool.input;
-    const description = input !== null && typeof input === "object" && !Array.isArray(input) && typeof input.description === "string" ? input.description : null;
-    if (!description) return null;
-    return [...this.agents.values()].find((agent) => agent.description === description) ?? null;
+  /** What is told of an agent another agent started is also what that one
+   *  would be told in its own conversation, and the one that started it,
+   *  and so on up: each agent's box shows the agents it started as the
+   *  conversation shows its own. One not drawn from what came live reads
+   *  them in its record. */
+  private toAncestors(run: AgentRun, event: SessionEvent): void {
+    const seen = new Set([run.id]);
+    for (let parent = run.parent ? this.agents.get(run.parent) : undefined; parent && !seen.has(parent.id); parent = parent.parent ? this.agents.get(parent.parent) : undefined) {
+      seen.add(parent.id);
+      if (parent.whole) this.agents.event(parent.id, event);
+    }
+  }
+
+  /** The agent a call started, where it is one that starts the host's own
+   *  agents and the agent is known here. */
+  agentOf(entry: Extract<Entry, { kind: "tool" }>): AgentRun | null {
+    if (!startsAgent(entry.tool)) return null;
+    const started = this.agents.ofCall(entry.item)[0];
+    if (started) return started;
+    const named = entry.tool.does.as === "agent" ? entry.tool.does.agents?.[0] : undefined;
+    return named ? (this.agents.get(named) ?? null) : null;
+  }
+
+  /** The agents a call names: those it waits for, speaks to or stops. */
+  agentsNamed(entry: Extract<Entry, { kind: "tool" }>): AgentRun[] {
+    if (entry.tool.does.as !== "agent") return [];
+    return (entry.tool.does.agents ?? []).flatMap((name) => this.agents.named(name) ?? []);
   }
 
   /** The conversation could not begin: why, as it was given, under the
@@ -1053,6 +1107,7 @@ export class Fold {
         case "activity":
         case "question":
         case "uncertain":
+        case "agent-told":
           heardFrom = true;
           break;
         case "health":
@@ -1104,7 +1159,7 @@ export class Fold {
         }
         group.members.push(entry);
         if (entry.stamp > group.stamp) group.stamp = entry.stamp;
-        if (entry.kind === "tool" && (entry.tool.name === "Agent" || entry.tool.name === "Task")) group.agents = true;
+        if (entry.kind === "tool" && (entry.tool.does.as === "agent" || startsAgent(entry.tool))) group.agents = true;
       } else {
         // Only words said, the model's or a person's, begin a new stretch
         // (walkthrough item 33); a note, a notice or a request in between
@@ -1181,6 +1236,33 @@ function property(value: JsonValue, key: string): JsonValue | undefined {
 function replyOf(text: string): { reply?: { item: string; answers: string[] } } {
   const reply = readReply(text);
   return reply ? { reply: { item: reply.item, answers: reply.answers.map((one) => one.answer) } } : {};
+}
+
+/** The call an agent Codex tells of by an item started with: it names the
+ *  agent, and the task its path names. */
+function startedTool(agent: string, path: string): Tool {
+  return {
+    name: "spawn_agent",
+    server: null,
+    machine: null,
+    input: null,
+    output: [],
+    status: "done",
+    duration_ms: null,
+    does: { as: "agent", act: "start", agents: [agent], kind: null, task: taskOf(path) },
+  };
+}
+
+/** The task an agent's path names, `/root/<spawner>/<task>`: its last part. */
+function taskOf(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path;
+}
+
+/** Whether a call starts one of the host's own agents: Claude Code's
+ *  Agent tool, Codex's spawn, as an older node told them too. */
+export function startsAgent(tool: Tool): boolean {
+  if (tool.does.as === "agent") return tool.does.act === "start";
+  return tool.does.as === "colleague" && (tool.name === "Agent" || tool.name === "Task" || tool.name === "spawnAgent");
 }
 
 /** Whether an entry is the agent's thinking. */

@@ -7,12 +7,14 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
-use fastctx_types::session::{Happened, Item, SessionChange, SessionEvent, ToolStatus, UserMessage, What};
+use fastctx_types::session::{
+    Does, Happened, HostAgentStart, Item, SessionChange, SessionEvent, ToolStatus, UserMessage, What,
+};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{content, tools};
+use super::{content, subagents, tools};
 
 /// What the host still stores, with unreadable records reported separately.
 #[derive(Debug)]
@@ -31,6 +33,11 @@ pub struct Transcript {
     /// Every record's UUID the file holds, shown or not: whether a record
     /// the session is known to have kept has reached the file yet.
     pub uuids: HashSet<String>,
+    /// The agents the session started, as the files beside its record tell
+    /// them.
+    beside: subagents::Beside,
+    /// The agents its Agent calls started, by their ids.
+    agents: HashMap<String, HostAgentStart>,
 }
 
 impl Transcript {
@@ -101,7 +108,9 @@ impl Pair {
     }
 }
 
-/// Reads the supplied file only; never discovers sibling or subagent files.
+/// Reads the session's own record, and of what is beside it only what tells
+/// of the agents it started (`subagents`): never their records, which are
+/// read one at a time as the user opens one (`read_agent`).
 ///
 /// JSONL records are read one line at a time, including a complete final JSON
 /// value without a newline. An incomplete tail is left for a subsequent read. Duplicate
@@ -114,6 +123,17 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
 }
 
 pub fn read_with_cuts(path: &Path, cuts: &[HistoryCut]) -> io::Result<Transcript> {
+    read_rows(path, cuts, None)
+}
+
+/// Reads the record of one agent the session started (`subagents::record`):
+/// the agent's own rows, as a conversation of its own whose first words are
+/// what it was asked.
+pub fn read_agent(path: &Path, agent: &str) -> io::Result<Transcript> {
+    read_rows(path, &[], Some(agent))
+}
+
+fn read_rows(path: &Path, cuts: &[HistoryCut], agent: Option<&str>) -> io::Result<Transcript> {
     let file = File::open(path)?;
     let before = file.metadata()?;
     let mut reader = BufReader::new(file);
@@ -132,6 +152,8 @@ pub fn read_with_cuts(path: &Path, cuts: &[HistoryCut]) -> io::Result<Transcript
         events: Vec::new(),
         problems: Vec::new(),
         uuids: HashSet::new(),
+        beside: if agent.is_none() { subagents::beside(path) } else { subagents::Beside::default() },
+        agents: HashMap::new(),
     };
     let mut titles = super::titles::Titles::default();
     let mut line = Vec::new();
@@ -174,7 +196,11 @@ pub fn read_with_cuts(path: &Path, cuts: &[HistoryCut]) -> io::Result<Transcript
             transcript.problem(&row, "agentId is not a string or null");
             continue;
         }
-        if row.value["isSidechain"] == true || row.value.get("agentId").is_some_and(|id| !id.is_null()) {
+        let own = match agent {
+            None => row.value["isSidechain"] != true && row.value.get("agentId").is_none_or(Value::is_null),
+            Some(agent) => row.value.get("agentId").and_then(Value::as_str) == Some(agent),
+        };
+        if !own {
             continue;
         }
         if row.kind() == Some("progress")
@@ -435,6 +461,9 @@ pub fn read_with_cuts(path: &Path, cuts: &[HistoryCut]) -> io::Result<Transcript
                     && !row.blocks().is_some_and(|blocks| blocks.iter().any(|block| block["type"] == "tool_result"))
                 {
                     transcript.hidden(row, at);
+                    continue;
+                }
+                if prompt && transcript.agent_told(row, at) {
                     continue;
                 }
                 if prompt {
@@ -729,6 +758,7 @@ impl Transcript {
     }
 
     fn tool(&mut self, row: &Row, at: Timestamp, request: &Value, result: Option<(&Row, usize, Timestamp)>) {
+        let answer = result.and_then(|(result_row, ..)| result_row.value.get("toolUseResult"));
         let (ended, output, status, stored) = match result {
             Some((result_row, index, ended)) => {
                 let block = &result_row.blocks().expect("indexed blocks")[index];
@@ -742,20 +772,61 @@ impl Transcript {
             }
             None => (at, Vec::new(), ToolStatus::Unknown, Value::Null),
         };
-        let tool = tools::tool(
-            request["name"].as_str().expect("validated name"),
-            request["input"].clone(),
-            output,
-            status,
-            None,
-        );
+        let name = request["name"].as_str().expect("validated name");
+        let call = request["id"].as_str().expect("indexed tool id").to_string();
+        let mut tool = tools::tool(name, request["input"].clone(), output, status, None);
+        // An Agent call tells of the agent it started; what the agent did is
+        // in its own record (`read_agent`).
+        let agent = matches!(name, "Agent" | "Task")
+            .then(|| subagents::of_call(&call, &request["input"], answer, status == ToolStatus::Failed, &self.beside))
+            .flatten();
+        if let (Some((start, _)), Does::Agent { agents, .. }) = (&agent, &mut tool.does) {
+            *agents = vec![start.id.clone()];
+        }
         self.finish(
             ended,
-            request["id"].as_str().expect("indexed tool id").to_string(),
+            call,
             at,
             What::Tool(Box::new(tool)),
             json!({ "requested": request, "stored": stored, "uuid": row.value.get("uuid") }),
         );
+        if let Some((start, end)) = agent {
+            let id = start.id.clone();
+            self.agents.insert(id.clone(), start.clone());
+            self.changed(ended, SessionChange::AgentStarted { agent: Box::new(start) });
+            if let Some(end) = end {
+                self.changed(ended, SessionChange::AgentEnded { agent_id: id, end });
+            }
+        }
+    }
+
+    fn changed(&mut self, at: Timestamp, change: SessionChange) {
+        self.events.push(SessionEvent { at, happened: Happened::Changed { turn: None, change } });
+    }
+
+    /// A row Claude Code wrote to tell the session that one of its agents
+    /// that went on in the background ended: the agent's end, told here.
+    fn agent_told(&mut self, row: &Row, at: Timestamp) -> bool {
+        if row.value.pointer("/origin/kind").and_then(Value::as_str) != Some("task-notification") {
+            return false;
+        }
+        let text = match &row.value["message"]["content"] {
+            Value::String(text) => text.clone(),
+            Value::Array(blocks) => {
+                blocks.iter().filter_map(|block| block.get("text").and_then(Value::as_str)).collect()
+            }
+            _ => return false,
+        };
+        let Some(mut notified) = subagents::notified(&text) else { return false };
+        let known = self.agents.get(&notified.task).map(|start| start.task.clone());
+        let beside = self.beside.ids().any(|id| id == notified.task);
+        if known.is_none() && !beside {
+            return false;
+        }
+        notified.end.task = known.flatten();
+        self.changed(at, SessionChange::AgentEnded { agent_id: notified.task, end: notified.end });
+        self.hidden(row, at);
+        true
     }
 }
 
