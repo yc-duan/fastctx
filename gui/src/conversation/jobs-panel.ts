@@ -28,6 +28,8 @@ export interface JobsWords {
   output(command: string): string;
   loading: string;
   failed(why: string): string;
+  /** The way to the output broke; it comes back once it is open. */
+  interrupted: string;
   ended: string;
   lasted(ms: number): string;
 }
@@ -205,6 +207,7 @@ export class JobsPanel {
         follow: true,
         loading: words.loading,
         failed: (error) => words.failed(error instanceof Error ? error.message : String(error)),
+        interrupted: words.interrupted,
       });
       element.textContent = "";
       element.append(open.viewport.element);

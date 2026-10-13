@@ -6,17 +6,21 @@ export interface ViewerWords {
   close: string; search: string; next: string; previous: string;
   line: string; go: string; searching: string; notFound: string;
   failed: string | ((error: unknown) => string); invalidLine: string;
+  /** The way to the lines broke; they come back once it is open. */
+  interrupted: string;
 }
 
 export const englishViewer: ViewerWords = {
   close: "Close", search: "Search", next: "Next", previous: "Previous",
   line: "Line", go: "Go", searching: "Searching…", notFound: "No match",
   failed: "Unable to read content", invalidLine: "Line is outside the content",
+  interrupted: "Disconnected, reconnecting…",
 };
 export const chineseViewer: ViewerWords = {
   close: "关闭", search: "搜索", next: "下一个", previous: "上一个",
   line: "行号", go: "跳转", searching: "搜索中…", notFound: "无匹配",
   failed: "读取失败", invalidLine: "行号超出内容范围",
+  interrupted: "连接中断，正在重连…",
 };
 
 /** Modal viewer. Optional sources distinguish model-visible text from a full
@@ -123,7 +127,7 @@ export class TextViewer {
     this.match = null;
     this.message.textContent = "";
     const { source, paint } = this.sources[this.selection];
-    this.viewport = new LineViewport(source, { label: this.title, failed: this.words.failed, ...(paint ? { paint } : {}) });
+    this.viewport = new LineViewport(source, { label: this.title, failed: this.words.failed, interrupted: this.words.interrupted, ...(paint ? { paint } : {}) });
     this.body.replaceChildren(this.viewport.element);
     const count = (): void => { this.count.textContent = `${source.extent.length.toLocaleString()}${source.extent.complete ? "" : "+"}`; };
     count();

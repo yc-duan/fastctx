@@ -1,4 +1,4 @@
-import type { LineMatch, LineSource } from "./source";
+import type { LineInterruption, LineMatch, LineSource } from "./source";
 import { chainTouch } from "./touch";
 
 /** Draws one row from its line, for lines that carry more than their text
@@ -15,6 +15,8 @@ export interface LineViewportOptions {
   follow?: boolean;
   loading?: string;
   failed?: string | ((error: unknown) => string);
+  /** Said while the way to the lines is broken, why on hover. */
+  interrupted?: string;
   paint?: LinePaint;
 }
 
@@ -44,6 +46,10 @@ export class LineViewport {
   private pending: Promise<void> = Promise.resolve();
   private requestRange: [number, number] | null = null;
   private unchain: () => void;
+  /** What the status says of the reads, and why, under a broken way. */
+  private said = { text: "", why: "" };
+  private broken: LineInterruption | null = null;
+  private unhear: () => void;
 
   constructor(readonly source: LineSource, private options: LineViewportOptions) {
     this.element.className = "lv-viewport";
@@ -66,6 +72,24 @@ export class LineViewport {
     });
     this.observer = new ResizeObserver(() => this.resize());
     this.observer.observe(this.element);
+    this.unhear =
+      source.interruptions?.((broken) => {
+        this.broken = broken;
+        this.tell();
+      }) ?? (() => {});
+  }
+
+  /** Says `text` in the status, why on hover, unless the way is broken. */
+  private say(text: string, why = ""): void {
+    this.said = { text, why };
+    this.tell();
+  }
+
+  private tell(): void {
+    const { text, why } = this.broken ? { text: this.options.interrupted ?? "Disconnected, reconnecting…", why: this.broken.why } : this.said;
+    this.status.textContent = text;
+    if (why) this.status.title = why;
+    else this.status.removeAttribute("title");
   }
 
   get length(): number {
@@ -152,13 +176,13 @@ export class LineViewport {
     if (this.requestRange) return;
     const missing: number[] = [];
     for (let index = first; index < end; index++) if (!this.cache.has(index)) missing.push(index);
-    if (!missing.length) { this.status.textContent = ""; return; }
+    if (!missing.length) { this.say(""); return; }
     const start = missing[0];
     const count = missing[missing.length - 1] + 1 - start;
     const request = new AbortController();
     this.request = request;
     this.requestRange = [start, start + count];
-    this.status.textContent = this.options.loading ?? "Loading…";
+    this.say(this.options.loading ?? "Loading…");
     this.element.setAttribute("aria-busy", "true");
     let succeeded = false;
     this.pending = this.source.read(start, count, request.signal).then((lines) => {
@@ -169,14 +193,13 @@ export class LineViewport {
         const index = start + offset;
         if (index >= this.first && index < this.end) this.cache.set(index, lines[offset]);
       }
-      this.status.textContent = "";
+      this.say("");
       this.draw();
       succeeded = true;
     }).catch((error: unknown) => {
       if (request.signal.aborted) return;
-      this.status.textContent = typeof this.options.failed === "function" ? this.options.failed(error)
-        : (this.options.failed ?? "Unable to read content");
-      this.status.title = String(error);
+      this.say(typeof this.options.failed === "function" ? this.options.failed(error)
+        : (this.options.failed ?? "Unable to read content"), String(error));
       throw error;
     }).finally(() => {
       if (this.request === request) {
@@ -263,6 +286,7 @@ export class LineViewport {
     this.unchain();
     this.request?.abort();
     this.unsubscribe();
+    this.unhear();
     this.observer.disconnect();
     this.element.removeEventListener("scroll", this.scroll);
     this.element.removeEventListener("wheel", this.wheel);

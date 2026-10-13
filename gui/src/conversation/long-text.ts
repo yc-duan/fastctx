@@ -104,6 +104,7 @@ export class LongText {
       label,
       limit: PREVIEW,
       failed: viewerWords.failed,
+      interrupted: viewerWords.interrupted,
       ...(given.paint ? { paint: given.paint } : {}),
     });
     this.box.append(this.viewport.element, corner);

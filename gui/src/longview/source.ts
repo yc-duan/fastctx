@@ -18,6 +18,13 @@ export interface LineMatch {
   end: number;
 }
 
+/** Why the way to a source's lines is broken, and since when (milliseconds
+ *  since the epoch), while it is. */
+export interface LineInterruption {
+  why: string;
+  since: number;
+}
+
 export interface LineCursor {
   line: number;
   /** Inclusive UTF-16 start; omitted means the directional end of the line. */
@@ -33,6 +40,9 @@ export interface LineSource {
   read(start: number, count: number, signal: AbortSignal): Promise<readonly string[]>;
   find(query: string, from: LineCursor, direction: 1 | -1, signal: AbortSignal): Promise<LineMatch | null>;
   subscribe(changed: (change: LineChange) => void): () => void;
+  /** Hears the way to the lines break, and come back (null), for a source
+   *  read from elsewhere; reads wait meanwhile rather than fail. */
+  interruptions?(heard: (interrupted: LineInterruption | null) => void): () => void;
 }
 
 /** In-memory adapter. The caller already owns the text; the view only retains

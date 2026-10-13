@@ -1513,6 +1513,7 @@ export class ConversationPage {
         output: words.jobOutput,
         loading: words.jobOutputLoading,
         failed: words.jobOutputFailed,
+        interrupted: words.watchInterrupted(null),
         ended: words.jobOver,
         lasted: (ms) => lasted(ms, words),
       },

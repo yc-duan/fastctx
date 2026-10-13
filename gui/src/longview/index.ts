@@ -1,7 +1,7 @@
 export { AnchorLayout, AnchoredHeight } from "./anchor";
 export type { FoldFrame, FoldMotion } from "./anchor";
 export { MemoryLines } from "./source";
-export type { LineSource, LineExtent, LineChange, LineMatch, LineCursor } from "./source";
+export type { LineSource, LineExtent, LineChange, LineMatch, LineCursor, LineInterruption } from "./source";
 export { LineViewport } from "./viewport";
 export type { LineViewportOptions, LinePaint } from "./viewport";
 export { TextFold } from "./fold";

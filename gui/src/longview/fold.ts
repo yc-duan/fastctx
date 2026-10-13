@@ -109,7 +109,11 @@ export class TextFold {
     if (open) {
       this.content.hidden = false;
       if (!this.viewport) {
-        this.viewport = new LineViewport(this.options.source, { label: this.options.heading, limit: this.previewLines });
+        this.viewport = new LineViewport(this.options.source, {
+          label: this.options.heading,
+          limit: this.previewLines,
+          ...(this.options.viewerWords ? { interrupted: this.options.viewerWords.interrupted } : {}),
+        });
         this.content.append(this.viewport.element);
       }
       this.full = false;
