@@ -46,7 +46,8 @@ import type { Attachment, UploadTarget } from "../world/attachments";
 import type { WorldNow } from "../world/bridge";
 import type { Offers } from "../world/control";
 import type { Address } from "../world/events";
-import { accountOf, homeChoice, homeLabel, homesOf, installed, listed, loggedOut, windowsShort, type HomeWords } from "./agent-homes";
+import { accountOf, homeChoice, homeLabel, homesOf, installed, listed, loggedOut, type HomeWords } from "./agent-homes";
+import { agentPicker, type PickerMachine, type PickerRow } from "./agent-picker";
 import type { ConsentHome } from "./claude-consent";
 import {
   assistantsOf,
@@ -633,23 +634,6 @@ export class NewTalk {
     return facts?.models.kind === "known" ? facts.models.value : [];
   }
 
-  /** How much of its usage a login has spent, window by window, as
-   *  Claude Code's own status line writes it: "5h 42% · 7d 18%"; and that
-   *  it goes on with credits once a window is spent. Nothing where none
-   *  was read. */
-  private spent(facts: AgentFacts | null): { html: string; said: string } | null {
-    const { words } = this.options;
-    if (facts?.limits?.kind !== "known") return null;
-    const windows = windowsShort(facts.limits);
-    if (!windows.length) return null;
-    const credits = windows.some((window) => window.level === "spent") && !!facts.limits.value.credits;
-    const said = [...windows.map((window) => `${window.label} ${window.percent}`), credits ? words.onCredits : ""].filter(Boolean).join(" · ");
-    const html = `<span class="login-limits">${windows
-      .map((window) => `<span class="limit-short${window.level ? ` ${window.level}` : ""}">${escape(`${window.label} ${window.percent}`)}</span>`)
-      .join("")}${credits ? `<span class="limit-short credits">${escape(words.onCredits)}</span>` : ""}</span>`;
-    return { html, said };
-  }
-
   /** Who is logged in to a login, where that tells it apart: the machine
    *  has several of its agent's logins, or it assists. */
   private who(option: Option, line: Line): string | null {
@@ -659,56 +643,59 @@ export class NewTalk {
     return several || option.assistant ? (accountOf(facts).email ?? homeLabel(facts, this.options.homeWords)) : null;
   }
 
-  /** One login as a choice: the program; who is logged in where that tells
-   *  it apart; how much of each window is spent; or why it cannot begin.
-   *  Said whole to a screen reader. */
-  private optionChoice(option: Option, line: Line): string {
+  /** One login as a row of the picker: who is logged in; why it cannot
+   *  begin, or that Claude still needs the user's consent there. */
+  private row(option: Option, line: Line): PickerRow {
     const { words } = this.options;
     const asked = this.asked.get(option.machine);
     const facts = this.factsOf(option);
-    const name = programName(option.agent);
-    let note = "";
-    let who: string | null = null;
-    let spent: ReturnType<NewTalk["spent"]> = null;
-    let consent: string | null = null;
+    let note: string | null = null;
     if (line.online === false) note = words.offline;
     else if (!asked || asked.state === "asking" || (this.askingAll && !facts && asked.state !== "known")) note = words.asking;
     else if (asked.state === "offline") note = words.offline;
     else if (asked.state === "unknown") note = words.unsure;
     else if (!facts) note = option.assistant ? words.assistantGone : words.notInstalled;
     else if (loggedOut(facts)) note = words.loggedOut;
-    else {
-      who = this.who(option, line);
-      spent = this.spent(facts);
-      consent = facts.unattended?.kind === "known" && !facts.unattended.value ? words.needsConsent : null;
-    }
-    const said = [name, who, spent?.said, consent, note].filter(Boolean).join(" · ");
-    const startable = this.startable(option, line);
-    const chosen = option.key === this.pick;
-    return `<button type="button" class="choice login-choice${chosen ? " chosen" : ""}" role="radio" aria-checked="${chosen}" aria-label="${escape(said)}" title="${escape(said)}" data-choice="pick" data-value="${escape(option.key)}"${startable ? "" : " disabled"}>${glyph(markOf(option.agent), 14)}<span class="login-agent">${escape(name)}</span>${who ? `<span class="login-who">${escape(who)}</span>` : ""}${spent ? spent.html : ""}${consent ? `<span class="choice-note caution">${escape(consent)}</span>` : ""}${note ? `<span class="choice-note">${escape(note)}</span>` : ""}</button>`;
+    const caution = !note && facts?.unattended?.kind === "known" && !facts.unattended.value ? words.needsConsent : null;
+    return {
+      key: option.key,
+      agent: option.agent,
+      facts,
+      who: facts ? (accountOf(facts).email ?? homeLabel(facts, this.options.homeWords)) : null,
+      note,
+      caution,
+      startable: this.startable(option, line),
+      chosen: option.key === this.pick,
+    };
   }
 
-  /** The agents the user may begin with, grouped as they hold them, a line
-   *  a machine. */
+  /** The agents the user may begin with: the machines as the user holds
+   *  them, a row a login, in one table (`./agent-picker`). */
   private picker(lines: Line[]): string {
     const { words } = this.options;
-    const groups: { hold: Hold; title: string; lines: Line[] }[] = [
-      { hold: "mine", title: words.mine, lines: lines.filter((line) => line.hold === "mine") },
-      { hold: "others", title: words.others(lines.every((line) => line.hold !== "others" || line.shared)), lines: lines.filter((line) => line.hold === "others") },
-      { hold: "assist", title: words.assisting, lines: lines.filter((line) => line.hold === "assist") },
-    ];
-    const machineLine = (line: Line) => {
-      const notes = [line.here ? words.here : "", line.owner && line.hold !== "mine" ? words.ownedBy(line.owner) : "", line.online === false ? words.offline : ""].filter(Boolean);
-      const state = line.online === false ? "offline" : "online";
-      const options = line.online === false ? "" : line.options.map((option) => this.optionChoice(option, line)).join("");
-      const none = line.online !== false && !line.options.length ? `<span class="choice-none quiet">${escape(words.noAgents)}</span>` : "";
-      return `<div class="picker-line ${state}"><span class="picker-machine"><span class="dot" aria-hidden="true"></span><span class="picker-name">${escape(line.written)}</span>${notes.map((note) => `<span class="picker-note">${escape(note)}</span>`).join("")}</span><div class="choice-options">${options}${none}</div></div>`;
-    };
-    const body = groups
-      .filter((group) => group.lines.length)
-      .map((group) => `<section class="picker-group picker-${group.hold}"><h3 class="picker-title">${escape(group.title)}</h3>${group.lines.map(machineLine).join("")}</section>`)
-      .join("");
-    return `<div class="agent-picker" role="radiogroup" aria-label="${escape(words.agent)}"><div class="picker-groups">${body || `<span class="choice-none">${escape(words.noMachine)}</span>`}</div></div>`;
+    const now = new Date();
+    const machines: PickerMachine[] = lines.map((line) => {
+      const assistant = line.options.find((option) => option.assistant)?.assistant ?? null;
+      const notes =
+        line.hold === "assist"
+          ? [words.assistFrom(line.owner ?? ""), assistant?.until ? words.assistUntil(new Date(assistant.until), now) : ""]
+          : [line.here ? words.here : "", line.owner && line.hold !== "mine" ? words.ownedBy(line.owner) : ""];
+      return {
+        hold: line.hold === "others" ? (line.shared ? "shared" : "others") : line.hold,
+        written: line.written,
+        online: line.online,
+        notes: [...notes, line.online === false ? words.offline : ""].filter(Boolean),
+        rows: line.options.map((option) => this.row(option, line)),
+      };
+    });
+    return agentPicker(machines, {
+      holds: { mine: words.mine, shared: words.others(true), others: words.others(false), assist: words.assisting },
+      agent: words.agent,
+      noAgents: words.noAgents,
+      noMachine: words.noMachine,
+      token: words.token,
+      onCredits: words.onCredits,
+    });
   }
 
   /** A short list to choose one from, the chosen one marked. */
@@ -721,8 +708,7 @@ export class NewTalk {
       .join("")}</div>`;
   }
 
-  /** A few answers as pills, as the logins above them are: the chosen one
-   *  washed in clay. */
+  /** A few answers as pills, the chosen one washed in clay. */
   private pills(kind: "account", label: string, choices: Choice[], chosen: string): string {
     return `<div class="choice-options" role="radiogroup" aria-label="${escape(label)}">${choices
       .map((choice) => {

@@ -181,20 +181,6 @@
   width: min(320px, calc(100% - var(--space-6)));
 }
 
-.talk-pop .picker-line {
-  grid-template-columns: 8em minmax(0, 1fr);
-}
-
-.talk-pop .login-choice > .glyph {
-  flex: none;
-  align-self: center;
-  color: var(--text-3);
-}
-
-.talk-pop .login-choice.chosen > .glyph {
-  color: var(--accent);
-}
-
 /* The picker's own space below it is the room between it and these. */
 .pop-section {
   margin-top: var(--space-1);
@@ -255,11 +241,6 @@
     animation-name: sheet-rise;
   }
 
-  .talk-pop .picker-line {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 4px;
-  }
-
   .pop-row,
   .talk-pop .choice {
     min-height: 44px;
@@ -311,4 +292,284 @@
 
 .new-talk-page.begun .new-talk-dock::before {
   display: block;
+}
+
+/* Which agent: every login in one table (`agent-picker.ts`). The groups and
+   the machines run across it; each login is a row on the table's own
+   columns, so the agents, who is logged in, the plans and the bars line up
+   all the way down, whatever machine they are on. */
+.agent-picker {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr) max-content max-content max-content;
+  column-gap: var(--space-3);
+  padding: var(--space-1) 0 var(--space-2);
+}
+
+.agent-group {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 var(--space-1);
+  font-family: var(--font-reading);
+  font-weight: 400;
+  font-size: var(--size-small);
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+}
+
+.agent-group:first-child {
+  margin-top: 0;
+}
+
+.agent-group::after {
+  content: "";
+  flex: 1;
+  height: 8px;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+}
+
+.agent-machine {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-2) 2px;
+  font-size: var(--size-ui);
+  color: var(--text-strong);
+}
+
+.agent-machine-dot {
+  flex: none;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-3);
+}
+
+.agent-machine.online .agent-machine-dot {
+  background: var(--alive);
+}
+
+.agent-machine.offline .agent-machine-dot {
+  background: none;
+  box-shadow: inset 0 0 0 1.2px var(--text-3);
+}
+
+.agent-machine.offline .agent-machine-name {
+  color: var(--text-3);
+}
+
+.agent-machine-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-machine-note {
+  flex: none;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.agent-machine-note + .agent-machine-note::before {
+  content: "·";
+  margin-right: var(--space-2);
+}
+
+/* A login: set in under its machine's name, past the dot. */
+.agent-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 var(--space-3) 0 calc(var(--space-2) + 15px);
+  border-radius: var(--radius-m);
+  text-align: left;
+  color: var(--text-2);
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.agent-row:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--fill);
+}
+
+.agent-row.chosen,
+.agent-row.chosen:hover:not(:disabled) {
+  color: var(--text-strong);
+  background: var(--accent-wash);
+}
+
+.agent-row:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.agent-row-mark {
+  display: inline-flex;
+  color: var(--text-3);
+}
+
+.agent-row.chosen .agent-row-mark {
+  color: var(--accent);
+}
+
+.agent-row-agent {
+  font-size: var(--size-ui);
+  white-space: nowrap;
+}
+
+.agent-row-who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+}
+
+.agent-row-plan .tag {
+  font-size: 12px;
+}
+
+/* Each window a short bar and how much of it is spent; past nine tenths in
+   the caution colour, spent in the warning colour. */
+.agent-row-limits {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agent-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-limit-track {
+  position: relative;
+  width: 32px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.agent-limit-track > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--pen-clay);
+}
+
+.agent-limit-used {
+  min-width: 2.6em;
+  text-align: right;
+  color: var(--text-2);
+}
+
+.agent-limit.high .agent-limit-track > i {
+  background: var(--caution);
+}
+
+.agent-limit.high .agent-limit-used {
+  color: var(--caution);
+}
+
+.agent-limit.spent .agent-limit-track > i {
+  background: var(--wrong);
+}
+
+.agent-limit.spent .agent-limit-used {
+  color: var(--wrong);
+}
+
+
+.agent-row-note {
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.agent-row-note.caution {
+  color: var(--caution);
+}
+
+.agent-row-note.credits {
+  color: var(--accent);
+}
+
+.agent-none {
+  grid-column: 1 / -1;
+  margin: 2px 0 var(--space-1) calc(var(--space-2) + 15px);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+/* On a phone a login takes two lines: the agent, who is logged in and the
+   plan; under them the windows, and any note at the end. */
+@media (max-width: 760px) {
+  .agent-picker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-row {
+    grid-template-columns: 18px max-content minmax(0, 1fr) auto;
+    grid-template-areas:
+      "mark agent who plan"
+      ". limits limits note";
+    column-gap: var(--space-2);
+    row-gap: 4px;
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+    padding-left: var(--space-3);
+    min-height: 52px;
+  }
+
+  .agent-row-mark {
+    grid-area: mark;
+  }
+
+  .agent-row-agent {
+    grid-area: agent;
+  }
+
+  .agent-row-plan {
+    grid-area: plan;
+  }
+
+  .agent-row-note {
+    grid-area: note;
+  }
+
+  .agent-row-who {
+    grid-area: who;
+  }
+
+  .agent-row-limits {
+    grid-area: limits;
+  }
+
+
+  .agent-none {
+    margin-left: var(--space-3);
+  }
+}
+
+/* Which of the user's own logins opens it, where several may: under the
+   table, spaced as its groups are. */
+.agent-picker + .pop-section {
+  margin-top: var(--space-2);
 }

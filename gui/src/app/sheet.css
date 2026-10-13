@@ -130,22 +130,7 @@
   margin-top: var(--space-4);
 }
 
-/* Which agent, among a new conversation's choices: the logins grouped
-   as the user holds them, a small head
-   ruled across for each group, then a line a machine: its name with a dot,
-   and its logins as pills, each the program, who is logged in where that
-   tells them apart, and how much of each usage window is spent. */
-.agent-picker {
-  padding: var(--space-1) 0 var(--space-3);
-}
-
-.picker-groups {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
+/* A small head over a group of choices, ruled across. */
 .picker-title {
   display: flex;
   align-items: center;
@@ -165,105 +150,6 @@
   background: var(--pen-rule);
   -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
   mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
-}
-
-.picker-assist .picker-title {
-  color: var(--text-2);
-}
-
-.picker-line {
-  display: grid;
-  grid-template-columns: 9em minmax(0, 1fr);
-  column-gap: var(--space-3);
-  align-items: baseline;
-  padding: 3px 0;
-}
-
-.picker-machine {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  font-size: var(--size-ui);
-  color: var(--text);
-}
-
-.picker-machine .dot {
-  flex: none;
-  align-self: center;
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  background: var(--text-2);
-}
-
-.picker-line.offline .dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.2px var(--text-3);
-}
-
-.picker-assist .picker-machine .dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.6px var(--accent);
-}
-
-.picker-line.offline .picker-name {
-  color: var(--text-3);
-}
-
-.picker-note {
-  font-size: var(--size-small);
-  color: var(--text-3);
-  white-space: nowrap;
-}
-
-.login-choice {
-  max-width: 100%;
-  align-items: center;
-}
-
-.login-agent {
-  flex: none;
-}
-
-.login-who {
-  min-width: 0;
-  max-width: 14em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--size-small);
-  color: var(--text-2);
-}
-
-.login-choice .choice-note {
-  white-space: nowrap;
-}
-
-/* How much of a login's usage is spent, window by window, as Claude
-   Code's status line writes it: "5h 42% · 7d 18%", a window past nine
-   tenths in the caution colour and a spent one in the warning colour. */
-.login-limits {
-  display: inline-flex;
-  gap: 0;
-  font-size: var(--size-small);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-3);
-  white-space: nowrap;
-}
-
-.limit-short + .limit-short::before {
-  content: "·";
-  margin: 0 5px;
-  color: var(--text-3);
-}
-
-.limit-short.high {
-  color: var(--caution);
-}
-
-.limit-short.spent {
-  color: var(--wrong);
 }
 
 .choice-note.caution {
@@ -324,11 +210,6 @@
   .choice-row {
     grid-template-columns: minmax(0, 1fr);
     row-gap: var(--space-2);
-  }
-
-  .picker-line {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 4px;
   }
 }
 

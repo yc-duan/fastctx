@@ -144,10 +144,10 @@ export interface NewTalkWords {
    *  chosen. */
   agent: string;
   /** The agents' groups: on the user's own machines, on machines of
-   *  others they may work on (all shared with them, or not), assisting
+   *  others shared with them or that an administrator may use, assisting
    *  them. */
   mine: string;
-  others(allShared: boolean): string;
+  others(shared: boolean): string;
   assisting: string;
   ownedBy(owner: string): string;
   noAgents: string;
@@ -155,6 +155,8 @@ export interface NewTalkWords {
   assistantGone: string;
   /** A login whose usage window is spent goes on with credits. */
   onCredits: string;
+  /** A Claude login with a long-lived token, which names no plan. */
+  token: string;
   /** Which account it works for. */
   account: string;
   /** What an assisting agent works on: the hover of its mark. */
@@ -202,12 +204,13 @@ export const zhNewTalk: NewTalkWords = {
   title: "新对话",
   agent: "智能体",
   mine: "我的机器",
-  others: (allShared) => (allShared ? "共享给我的" : "其他机器"),
+  others: (shared) => (shared ? "共享给我的" : "其他成员的"),
   assisting: "协助我的",
   ownedBy: (owner) => `${owner} 的`,
   noAgents: "没有可用的智能体",
   assistantGone: "该登录已不可用",
   onCredits: "使用 credits",
+  token: "长期令牌",
   account: "账号",
   assistantWorks: (owner) => `来自 ${owner}，在你的机器上工作，不接触 ${owner} 的电脑`,
   assistFrom: (owner) => `来自 ${owner}`,
@@ -241,12 +244,13 @@ export const enNewTalk: NewTalkWords = {
   title: "New conversation",
   agent: "Agent",
   mine: "My machines",
-  others: (allShared) => (allShared ? "Shared with me" : "Other machines"),
+  others: (shared) => (shared ? "Shared with me" : "Other members'"),
   assisting: "Assisting me",
   ownedBy: (owner) => `${owner}'s`,
   noAgents: "No agents available",
   assistantGone: "Login unavailable",
   onCredits: "on credits",
+  token: "Token",
   account: "Account",
   assistantWorks: (owner) => `From ${owner}; works on your machines, never on ${owner}'s computer`,
   assistFrom: (owner) => `from ${owner}`,

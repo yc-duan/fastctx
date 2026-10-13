@@ -476,7 +476,13 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
         credits: { balance: "52230.1460550000", unlimited: false },
       },
     },
-    integration: { kind: "known", value: "out" },
+    integration: { kind: "known", value: "in" },
+  };
+  const trial: AgentFacts = {
+    ...codex,
+    home: { dir: `${home}/.codex-trial`, found: "added" },
+    account: { kind: "known", value: { email: "dev.trial@example.com", plan: "pro" } },
+    limits: { kind: "known", value: { observed_at: ago(40), windows: [window("codex", 300, 96, 260), window("codex", 10080, 655, 5 * 1440)] } },
   };
   const claude: AgentFacts = {
     agent: "claude",
@@ -522,10 +528,18 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
     integration: { kind: "known", value: "out" },
     unattended: { kind: "known", value: false },
   };
+  const token: AgentFacts = {
+    ...claude,
+    home: { dir: `${home}/.claude-token`, found: "added" },
+    account: { kind: "known", value: {} },
+    login: { kind: "known", value: { kind: "logged_in", method: "oauth_token" } },
+    limits: { kind: "known", value: { observed_at: ago(8), windows: [window("five_hour", 300, 935, 64), window("seven_day", 10080, 772, 2 * 1440)] } },
+    unattended: { kind: "known", value: false },
+  };
   // A machine of another answers only with the logins assisting the asker.
   const asks: AgentFacts = { ...claude, unattended: { kind: "known", value: false } };
   const agents =
-    machine === "desktop" ? [codex, claude, work, personal] : machine === "render" ? [claude] : machine === "server" ? [codex, asks] : [codex, claude];
+    machine === "desktop" ? [codex, claude, work, trial, token, personal] : machine === "render" ? [claude] : machine === "server" ? [codex, asks] : [codex, claude];
   return {
     machine,
     machines: [{ kind: "answered", reply: { machine, checked_at: at.toISOString(), elapsed_ms: 180, agents } }],
