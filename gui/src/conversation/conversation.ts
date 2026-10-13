@@ -13,6 +13,7 @@
 // turn under way, words being sent, requests waiting) is in the latest.
 
 import type { AskState } from "./ask-state";
+import { inOrder, type ModelRequest } from "./requests";
 import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
 import { Fold, type Block, type Entry, type Gap, type SendState, type ShownAttachment } from "./model";
@@ -137,6 +138,14 @@ export class Conversation {
   get answeredBy(): string | null {
     return this.live.answeredBy;
   }
+  /** Every model request of the parts held, in order; put together again
+   *  only when a part's requests change or parts come and go. */
+  get requests(): ModelRequest[] {
+    const key = this.parts.map((part) => `${part.start}:${part.fold.requests.version}`).join(",");
+    if (this.requestsHeld?.key !== key) this.requestsHeld = { key, list: inOrder(this.parts.map((part) => part.fold.requests)) };
+    return this.requestsHeld.list;
+  }
+  private requestsHeld: { key: string; list: ModelRequest[] } | null = null;
   get stale(): boolean {
     return this.live.stale;
   }

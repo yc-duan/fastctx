@@ -23,6 +23,7 @@ import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
 import { readReply, type AsyncQuestion } from "./async-ask";
 import { Agents, type AgentRun } from "./agents";
+import { Requests } from "./requests";
 
 export type Use = "done" | "failed" | "declined" | "cut" | "unknown";
 
@@ -179,6 +180,8 @@ export class Fold {
   answeredBy: string | null = null;
   /** The host's own agents its calls started (`agents.ts`). */
   readonly agents = new Agents();
+  /** Each model request and what it cost, as the host recorded it. */
+  readonly requests = new Requests();
   /** Moves whenever one of the agents does. */
   get agentStamp(): number {
     return this.agents.stamp;
@@ -583,10 +586,12 @@ export class Fold {
         }
         if (change.kind === "message_usage") {
           if (change.model) this.answeredBy = change.model;
+          this.requests.claude(at, change.response, change.usage);
           this.claudeThought(event.turn, change.items, change.response, change.usage);
           return;
         }
         if (change.kind === "usage") {
+          this.requests.codex(at, change.usage);
           this.codexThought(event.turn, change.usage);
           return;
         }

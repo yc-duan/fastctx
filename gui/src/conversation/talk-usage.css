@@ -1,0 +1,326 @@
+/* A conversation's measure in the input's row (`usage-badge.ts`) and what
+   opens from it (`usage-pop.ts`, `hit-chart.ts`). */
+
+/* The badge: a line icon and a figure for each of what it measures, set
+   apart, quiet until one asks for care. */
+.composer-context {
+  gap: var(--space-3);
+}
+
+.talk-gauge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.talk-gauge[hidden],
+.talk-gauge-bare[hidden] {
+  display: none;
+}
+
+.talk-gauge > .glyph {
+  flex: none;
+  opacity: 0.85;
+}
+
+.talk-gauge-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.talk-gauge.caution {
+  color: var(--caution);
+}
+
+.talk-gauge.cold {
+  opacity: 0.6;
+}
+
+/* The sweep that writes a changed figure again: the caret ahead in the
+   accent, the marks behind it faint until they settle. */
+.talk-gauge-caret {
+  color: var(--accent);
+}
+
+.talk-gauge-noise {
+  opacity: 0.55;
+}
+
+/* The pop-up: wider than the other menus, for the chart. */
+.usage-pop {
+  width: min(480px, 100%);
+  max-height: min(78dvh, 660px);
+  padding: var(--space-4);
+}
+
+.talk-usage-figures {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  column-gap: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.talk-usage-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.talk-usage-big {
+  font-family: var(--font-reading);
+  font-size: 22px;
+  line-height: 1.2;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.talk-usage-figure.cold .talk-usage-big {
+  color: var(--text-3);
+}
+
+.talk-usage-label {
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The chart of how the cache served each request. */
+.talk-chart {
+  position: relative;
+  margin: 0 calc(-1 * var(--space-1));
+}
+
+.talk-chart svg {
+  display: block;
+  overflow: visible;
+}
+
+.talk-chart-rule {
+  fill: var(--pen-rule);
+}
+
+.talk-chart-area {
+  fill: color-mix(in srgb, var(--pen-clay) 6%, transparent);
+}
+
+.talk-chart-ink {
+  fill: var(--pen-clay);
+}
+
+.talk-chart-mean {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.75;
+}
+
+.talk-chart-low {
+  fill: var(--caution);
+}
+
+.talk-chart-latest {
+  fill: var(--pen-clay);
+}
+
+.talk-chart-axis {
+  fill: var(--text-3);
+  font-family: var(--font-reading);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.talk-chart-axis.mean {
+  fill: var(--accent);
+}
+
+.talk-chart-hair {
+  stroke: var(--text-3);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
+.talk-chart-readout {
+  position: absolute;
+  top: -6px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-s);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--size-small);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* The whole conversation small, the stretch shown held in a wash. */
+.talk-chart-brush {
+  margin-top: var(--space-2);
+  border-radius: var(--radius-s);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.talk-chart-brush:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.talk-chart-overview {
+  fill: var(--pen-graphite);
+  opacity: 0.7;
+}
+
+.talk-chart-window {
+  fill: color-mix(in srgb, var(--pen-clay) 14%, transparent);
+}
+
+.talk-chart-window.whole {
+  fill: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.talk-chart-shade {
+  fill: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
+}
+
+.talk-chart-edge {
+  fill: var(--pen-clay);
+}
+
+/* What the stretch's prompts and answers were made of. */
+.talk-usage-spend {
+  display: grid;
+  row-gap: 6px;
+  padding: var(--space-3) 0;
+}
+
+.talk-usage-stretch {
+  font-size: var(--size-small);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.talk-usage-mix {
+  display: flex;
+  height: 6px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  background: var(--hairline);
+}
+
+.talk-usage-mix > span {
+  flex: none;
+}
+
+/* The same inks as the account's usage page names them with. */
+.talk-usage-mix .read,
+.talk-usage-key .read {
+  background: var(--pen-graphite);
+}
+
+.talk-usage-mix .write,
+.talk-usage-key .write {
+  background: var(--pen-sky);
+}
+
+.talk-usage-mix .fresh,
+.talk-usage-key .fresh {
+  background: var(--pen-sage);
+}
+
+.talk-usage-mix .output,
+.talk-usage-key .output {
+  background: var(--pen-clay);
+}
+
+.talk-usage-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-4);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.talk-usage-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.talk-usage-key > i {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.talk-usage-key > b {
+  font-weight: 400;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-pop > .usage-row:first-of-type,
+.talk-usage-spend + .usage-row {
+  border-top: 1px solid var(--divider);
+}
+
+/* The account's limits, one line each: its window, a bar, how much and when
+   it resets. */
+.talk-usage-limits {
+  row-gap: 6px;
+}
+
+.talk-usage-asof {
+  margin-left: var(--space-2);
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.talk-usage-limit {
+  display: grid;
+  grid-template-columns: 3.6em 72px minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
+}
+
+.talk-usage-limit-name {
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+/* The dial that stands for the figures where they have no room. */
+.talk-gauge-dial {
+  display: none;
+}
+
+.talk-gauge-dial.caution {
+  color: var(--caution);
+}
+
+.talk-gauge-dial.cold {
+  opacity: 0.5;
+}
+
+/* On a phone the model's name keeps its room: the dial alone, as small as
+   the context's ring always was, the figures a press away. */
+@media (max-width: 480px) {
+  .talk-gauge {
+    display: none;
+  }
+
+  .talk-gauge-dial:not(:empty) {
+    display: inline-flex;
+  }
+
+  .talk-usage-label-more {
+    display: none;
+  }
+
+  .talk-usage-limit {
+    grid-template-columns: 3.6em 48px minmax(0, 1fr);
+  }
+}

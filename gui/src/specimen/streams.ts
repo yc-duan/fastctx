@@ -321,7 +321,7 @@ function thinking(): Stream {
         at: clock.next(0),
         event: "changed",
         turn,
-        change: { kind: "message_usage", items: [item], response: `msg_${item}`, model: "claude-opus-5-5", api_error: false, usage: { output_tokens: tokens + 120, output_tokens_details: { thinking_tokens: tokens } } },
+        change: { kind: "message_usage", items: [item], response: `msg_${item}`, model: "claude-opus-5-5", api_error: false, usage: { input_tokens: 6, cache_read_input_tokens: 38_000 + serial * 1_350, cache_creation_input_tokens: 900 + serial * 35, cache_creation: { ephemeral_1h_input_tokens: 900 + serial * 35, ephemeral_5m_input_tokens: 0 }, output_tokens: tokens + 120, output_tokens_details: { thinking_tokens: tokens } } },
       });
     }
   };

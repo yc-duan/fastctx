@@ -274,7 +274,7 @@
    name has the room. */
 @media (max-width: 480px) {
   .composer-chip > .chip-effort,
-  .composer-context > span {
+  .composer-context > .context-share {
     display: none;
   }
 }
@@ -845,9 +845,6 @@ button.composer-context[hidden] {
 
 .usage-pop {
   left: auto;
-  width: min(360px, 100%);
-  max-height: min(64dvh, 520px);
-  padding: var(--space-3) var(--space-4);
 }
 
 .usage-title {

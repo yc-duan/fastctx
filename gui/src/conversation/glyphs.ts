@@ -10,11 +10,14 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  what can be done to a conversation (sleep, wake, move to a project,
  *  archive and restore, delete), a page and its versions; an account, its
  *  password, a phone, logging out, trust and a relay; locking a person out
- *  and letting them in, signing up; saving a copy, and a file's path. */
+ *  and letting them in, signing up; a conversation's context, the
+ *  provider's cache and how long it stays; saving a copy, and a file's
+ *  path. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
   | "archive" | "unarchive" | "trash" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone"
   | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link"
+  | "context" | "cache" | "clock"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -93,6 +96,11 @@ const paths: Record<Named, string> = {
   lock: '<rect x="5" y="9" width="10" height="7.25" rx="1.5"/><path d="M7.25 9V6.75a2.75 2.75 0 0 1 5.5 0V9"/>',
   unlock: '<rect x="5" y="9" width="10" height="7.25" rx="1.5"/><path d="M7.25 9V6.75a2.75 2.75 0 0 1 5.3-1.05"/>',
   signup: '<circle cx="8.5" cy="7.25" r="2.75"/><path d="M3.25 16c.7-3 2.6-4.5 5.25-4.5 1.25 0 2.3.33 3.2 1"/><path d="M15 11.25v5M12.5 13.75h5"/>',
+  // Three lines shortening down: how much the conversation holds.
+  context: '<path d="M4 6h12M4 10h9M4 14h5"/>',
+  // A cylinder: what the provider keeps of the prompt.
+  cache: '<ellipse cx="10" cy="5.6" rx="5.4" ry="2.1"/><path d="M4.6 5.6v8.8c0 1.16 2.42 2.1 5.4 2.1s5.4-.94 5.4-2.1V5.6"/><path d="M4.6 10c0 1.16 2.42 2.1 5.4 2.1s5.4-.94 5.4-2.1"/>',
+  clock: '<circle cx="10" cy="10" r="6.25"/><path d="M10 6.4V10l2.5 1.6"/>',
   relay: '<circle cx="4.5" cy="10" r="1.5"/><circle cx="15.5" cy="10" r="1.5"/><path d="M6 10h2.25M11.75 10H14"/><rect x="8.25" y="8" width="3.5" height="4" rx="0.75"/>',
   camera: '<path d="M3.75 7.5a1 1 0 0 1 1-1h2.1l1.2-1.75h3.9l1.2 1.75h2.1a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H4.75a1 1 0 0 1-1-1z"/><circle cx="10" cy="10.75" r="2.6"/>',
 };

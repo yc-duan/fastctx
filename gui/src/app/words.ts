@@ -1034,8 +1034,29 @@ export interface ComposerWords {
     none: string;
     /** A part of the context, by the name the host's /context gives it. */
     part(name: string): string;
-    lastCall: string;
-    last(input: number, cached: number, output: number, reasoning: number | null): string;
+    /** How much of the last request's prompt the provider's cache served. */
+    hit: string;
+    /** How long the provider keeps the cache the last request left, where
+     *  the host says, and once it is gone. */
+    warm: string;
+    cold: string;
+    left(ms: number): string;
+    ttl(ms: number): string;
+    contextTitle(used: number, window: number | null): string;
+    hitTitle(hit: string): string;
+    warmTitle(left: string, ttl: string): string;
+    coldTitle: string;
+    /** The requests of the stretch chosen on the chart, how long it ran, and
+     *  what its prompts and answers were made of. */
+    requests(n: number, span: string): string;
+    span(ms: number): string;
+    kinds: { fresh: string; write: string; read: string; output: string };
+    highest: string;
+    lowest: string;
+    mean: string;
+    latest: string;
+    readout(time: string, hit: string, context: string): string;
+    stretch: string;
   };
 }
 
@@ -1220,15 +1241,30 @@ export const zhComposer: ComposerWords = {
         Skills: "技能",
         Messages: "消息",
       })[name] ?? name,
-    lastCall: "上一次请求",
-    last: (input, cached, output, reasoning) =>
-      [
-        `输入 ${input.toLocaleString()}`,
-        input ? `缓存命中 ${Math.round((cached / input) * 100)}%` : "",
-        `输出 ${output.toLocaleString()}${reasoning ? `（推理 ${reasoning.toLocaleString()}）` : ""}`,
-      ]
-        .filter(Boolean)
-        .join(" · "),
+    hit: "缓存命中",
+    warm: "缓存还热",
+    cold: "已冷",
+    left: (ms) => (ms < 60_000 ? `${Math.max(1, Math.ceil(ms / 1000))} 秒` : ms < 3_600_000 ? `${Math.ceil(ms / 60_000)} 分` : `${Math.round(ms / 3_600_000)} 小时`),
+    ttl: (ms) => (ms >= 3_600_000 ? `${Math.round(ms / 3_600_000)} 小时缓存` : `${Math.round(ms / 60_000)} 分钟缓存`),
+    contextTitle: (used, window) => (window ? `上下文 ${used.toLocaleString()} / ${window.toLocaleString()} · ${Math.round((used / window) * 100)}%` : `上下文 ${used.toLocaleString()}`),
+    hitTitle: (hit) => `最近一次请求，缓存命中 ${hit}`,
+    warmTitle: (left, ttl) => `从最后一次回答算起，缓存还能留 ${left}（${ttl}）；过了这段时间，下一次请求要把整个上下文重新写进缓存`,
+    coldTitle: "缓存已经过期，下一次请求要把整个上下文重新写进缓存",
+    requests: (n, span) => `${n} 次请求 · ${span}`,
+    span: (ms) => {
+      const minutes = Math.round(ms / 60_000);
+      if (minutes < 1) return "不到一分钟";
+      if (minutes < 60) return `${minutes} 分钟`;
+      const hours = Math.floor(minutes / 60);
+      return minutes % 60 ? `${hours} 小时 ${minutes % 60} 分` : `${hours} 小时`;
+    },
+    kinds: { fresh: "新输入", write: "写缓存", read: "读缓存", output: "输出" },
+    highest: "最高",
+    lowest: "最低",
+    mean: "平均",
+    latest: "最近",
+    readout: (time, hit, context) => `${time} · 命中 ${hit} · 上下文 ${context}`,
+    stretch: "选一段",
   },
 };
 
@@ -1403,15 +1439,30 @@ export const enComposer: ComposerWords = {
     costWhy: "Reckoned at the API's list prices. A subscription login is not charged this; a request stopped with Esc is not counted, so it can only read low.",
     none: "No usage data",
     part: (name) => name,
-    lastCall: "Last request",
-    last: (input, cached, output, reasoning) =>
-      [
-        `${input.toLocaleString()} in`,
-        input ? `${Math.round((cached / input) * 100)}% cached` : "",
-        `${output.toLocaleString()} out${reasoning ? ` (${reasoning.toLocaleString()} reasoning)` : ""}`,
-      ]
-        .filter(Boolean)
-        .join(" · "),
+    hit: "Cache hit",
+    warm: "Cache warm",
+    cold: "Cold",
+    left: (ms) => (ms < 60_000 ? `${Math.max(1, Math.ceil(ms / 1000))}s` : ms < 3_600_000 ? `${Math.ceil(ms / 60_000)}m` : `${Math.round(ms / 3_600_000)}h`),
+    ttl: (ms) => (ms >= 3_600_000 ? `${Math.round(ms / 3_600_000)}h cache` : `${Math.round(ms / 60_000)}m cache`),
+    contextTitle: (used, window) => (window ? `Context ${used.toLocaleString()} / ${window.toLocaleString()} · ${Math.round((used / window) * 100)}%` : `Context ${used.toLocaleString()}`),
+    hitTitle: (hit) => `Last request: ${hit} of the prompt served from the cache`,
+    warmTitle: (left, ttl) => `The cache stays ${left} more from the last answer (${ttl}); after that the next request writes the whole context to it again`,
+    coldTitle: "The cache has expired: the next request writes the whole context to it again",
+    requests: (n, span) => `${n} requests · ${span}`,
+    span: (ms) => {
+      const minutes = Math.round(ms / 60_000);
+      if (minutes < 1) return "under a minute";
+      if (minutes < 60) return `${minutes} min`;
+      const hours = Math.floor(minutes / 60);
+      return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
+    },
+    kinds: { fresh: "fresh input", write: "cache write", read: "cache read", output: "output" },
+    highest: "highest",
+    lowest: "lowest",
+    mean: "mean",
+    latest: "latest",
+    readout: (time, hit, context) => `${time} · ${hit} hit · ${context} context`,
+    stretch: "Choose a stretch",
   },
 };
 

@@ -3,6 +3,7 @@
 // shows, from both hosts, in the shapes the node really produces.
 
 import type { Attachment } from "../world/attachments";
+import { requestEvents } from "./requests";
 import type { Content, Does, Item, Notice, SessionEvent, Speaker, Tool, TurnFacts, UserImage } from "../world/events";
 import { cut, hunk, leftOut, noted, printed, put, ran, same, wrote } from "./run-facts";
 
@@ -474,7 +475,7 @@ let i = (self.ki.widen() * self.integral).narrow();
     model: "Opus 5.5",
     town: "mark50",
     here: "desktop",
-    events: s.recent(),
+    events: [...s.recent(), ...requestEvents({ agent: "claude", count: 64, from: 14_200, to: 61_280, cold: [21], compact: 44, compacted: 0.55, turn: "t2" })],
   };
 }
 
@@ -667,7 +668,7 @@ function codex(): Specimen {
     model: "gpt-6.1-sol",
     town: "ingest",
     here: "desktop",
-    events: s.recent(),
+    events: [...s.recent(), ...requestEvents({ agent: "codex", count: 38, from: 22_000, to: 148_000, cold: [], compact: 99, compacted: 1, turn: "t1" })],
   };
 }
 

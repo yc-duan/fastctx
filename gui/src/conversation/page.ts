@@ -36,8 +36,9 @@ import { escape, render } from "./prose";
 import { shownOf, skillsHtml } from "./said";
 import { Finder } from "./find";
 import { FarFind } from "./find-far";
-import { usageDetail } from "./usage-detail";
-import { ConversationView } from "./view";
+import { UsageBadge, ring } from "./usage-badge";
+import { UsagePop } from "./usage-pop";
+import { ConversationView, modelName } from "./view";
 import { departureOf } from "./flight";
 import { detailOf } from "../app/problem";
 
@@ -174,6 +175,12 @@ export class ConversationPage {
   private view: ConversationView;
   private state: HTMLElement;
   private context: HTMLElement;
+  /** The conversation's measure in the input's row, and what opens from
+   *  it; where the host offers no controls, the context's share alone. */
+  private badge: UsageBadge | null = null;
+  private usagePop: UsagePop | null = null;
+  /** What the open pop-up was last drawn from. */
+  private usageDrawn = "";
   private input: HTMLTextAreaElement;
   private action: HTMLButtonElement;
   private scroller: HTMLElement;
@@ -323,6 +330,10 @@ export class ConversationPage {
     this.spoken.setAttribute("role", "status");
     this.element.append(this.spoken);
     this.context = this.element.querySelector<HTMLElement>(".composer-context")!;
+    if (options.controls) {
+      this.badge = new UsageBadge(this.context, options.controls.words.usage);
+      this.usagePop = new UsagePop(this.element.querySelector<HTMLElement>(".usage-pop")!, options.controls.words.usage);
+    }
     this.input = this.element.querySelector("textarea")!;
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
@@ -682,6 +693,7 @@ export class ConversationPage {
     clearTimeout(this.looking);
     cancelAnimationFrame(this.frame);
     this.view.destroy();
+    this.badge?.dispose();
     this.agents.destroy();
     this.finder.destroy();
     this.looking = -1;
@@ -1220,60 +1232,24 @@ export class ConversationPage {
       this.context.setAttribute("aria-expanded", "false");
       return;
     }
-    if (!this.fillUsage(pop)) return;
+    if (!this.fillUsage()) return;
     layerOpened({ isOpen: () => !pop.hidden && pop.isConnected, close: () => this.toggleUsage() });
     pop.hidden = false;
     this.context.setAttribute("aria-expanded", "true");
     // What the host pushed since the page last asked; nothing is read
     // afresh from the provider for this.
     void this.askOffers().then(() => {
-      if (!pop.hidden) this.fillUsage(pop);
+      if (!pop.hidden) this.fillUsage();
     });
   }
 
   /** Draws the usage pop-up from what the page holds. */
-  private fillUsage(pop: HTMLElement): boolean {
-    const words = this.options.controls?.words.usage;
-    if (!words) return false;
-    const usage = this.offered?.usage ?? null;
-    const context = this.options.conversation.context ?? usage?.context ?? null;
-    const detail = usageDetail(usage?.raw);
-    const rows: string[] = [];
-    if (context) {
-      const share = context.window ? Math.min(1, context.used / context.window) : null;
-      // Where the host breaks the context down, the bar is drawn in its
-      // parts, each a shade of the same ink, named beneath.
-      const window = context.window ?? 0;
-      const parts = window ? detail.parts : [];
-      const tone = (at: number) => Math.round(100 - (at * 75) / Math.max(1, parts.length - 1));
-      const bar = parts.length
-        ? `<span class="usage-bar usage-stack">${parts.map((part, at) => `<span style="width:${Math.min(100, (part.tokens / window) * 100).toFixed(2)}%;--tone:${tone(at)}%"></span>`).join("")}</span><span class="usage-parts">${parts.map((part, at) => `<span class="usage-part"><i style="--tone:${tone(at)}%"></i><span>${escape(words.part(part.name))}</span><span>${part.tokens.toLocaleString()}</span></span>`).join("")}</span>`
-        : share !== null
-          ? `<span class="usage-bar"><span style="width:${(share * 100).toFixed(1)}%"></span></span>`
-          : "";
-      rows.push(
-        `<div class="usage-row"><span class="usage-name">${escape(words.context)}</span><span class="usage-fact">${escape(words.contextUsed(context.used, context.window))}${share !== null ? ` · ${Math.round(share * 100)}%` : ""}</span>${bar}</div>`,
-      );
-    }
-    if (detail.last) {
-      const { input, cached, output, reasoning } = detail.last;
-      rows.push(`<div class="usage-row"><span class="usage-name">${escape(words.lastCall)}</span><span class="usage-fact">${escape(words.last(input, cached, output, reasoning))}</span></div>`);
-    }
-    if (usage?.limits.length && usage.limits_at) {
-      const minutes = Math.max(0, Math.floor((Date.now() - new Date(usage.limits_at).getTime()) / 60000));
-      rows.push(`<div class="usage-row"><span class="usage-name">${escape(words.limits)}</span><span class="usage-fact">${escape(words.asOf(minutes))}</span></div>`);
-    }
-    for (const limit of usage?.limits ?? []) {
-      const percent = limit.used_percent;
-      rows.push(
-        `<div class="usage-row"><span class="usage-name">${escape(words.window(limit.name))}</span><span class="usage-fact">${percent !== null ? escape(words.used(String(percent))) : ""}${limit.resets_at ? ` · ${escape(words.resets(new Date(limit.resets_at)))}` : ""}</span>${percent !== null ? `<span class="usage-bar"><span style="width:${Math.min(100, Number(percent))}%"></span></span>` : ""}</div>`,
-      );
-    }
-    if (usage?.cost_usd !== null && usage?.cost_usd !== undefined) {
-      rows.push(`<div class="usage-row" title="${escape(words.costWhy)}"><span class="usage-fact">${escape(words.cost(Number(usage.cost_usd)))}</span></div>`);
-    }
-    pop.innerHTML = `<div class="usage-title">${escape(words.title)}</div>${rows.join("") || `<div class="menu-empty">${escape(words.none)}</div>`}`;
-    return true;
+  private fillUsage(): boolean {
+    if (!this.usagePop) return false;
+    const { conversation } = this.options;
+    const requests = conversation.requests;
+    this.usageDrawn = `${requests.length}:${requests[requests.length - 1]?.at}:${conversation.context?.used}`;
+    return this.usagePop.fill({ context: conversation.context ?? this.offered?.usage?.context ?? null, usage: this.offered?.usage ?? null, requests });
   }
 
   /** Starting again from the user's words, or forking from a turn: said
@@ -1800,7 +1776,8 @@ export class ConversationPage {
       title ? `${someone.agent} · ${someone.machine}` : null,
       someone.assistFrom ? words.assistFrom(someone.assistFrom) : null,
       someone.project,
-      this.options.conversation.answeredBy ?? someone.model,
+      // The model that answered, by its name rather than its id.
+      this.options.conversation.answeredBy ? modelName(this.options.conversation.answeredBy) : someone.model,
     ].filter(Boolean) as string[];
     const mark = waiting ? `<span class="ask-mark" aria-hidden="true"></span>` : working ? `<span class="pulse" aria-hidden="true"></span>` : "";
     // Waiting for the user is said in the accent; the rest stays quiet.
@@ -1816,15 +1793,24 @@ export class ConversationPage {
     if (why) this.state.title = why;
     else this.state.removeAttribute("title");
     // How much of the context is used: the host's latest report, from the
-    // conversation's events, or from what it offers when it says.
+    // conversation's events, or from what it offers when it says; with it
+    // how the cache served the last request and how long it stays.
     const used = conversation.context ?? this.offered?.usage?.context ?? null;
-    if (used && used.window) {
+    if (this.badge) {
+      const requests = conversation.requests;
+      this.badge.draw(used, requests);
+      // Without anything to measure, the limits still have a way in.
+      this.context.hidden = !this.badge.shows && !this.offered?.usage?.limits.length;
+      // The pop-up open follows each new request.
+      const pop = this.element.querySelector<HTMLElement>(".usage-pop")!;
+      if (!pop.hidden && this.usageDrawn !== `${requests.length}:${requests[requests.length - 1]?.at}:${conversation.context?.used}`) this.fillUsage();
+    } else if (used && used.window) {
       const share = Math.min(1, used.used / used.window);
       const percent = Math.round(share * 100);
       const label = this.options.controls
         ? this.options.controls.words.context(percent, used.used, used.window)
         : words.context(percent);
-      this.context.innerHTML = `<svg class="context-ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7.4"/>${wedge(share)}</svg><span>${percent}%</span>`;
+      this.context.innerHTML = `${ring(share)}<span class="context-share">${percent}%</span>`;
       this.context.title = label;
       this.context.setAttribute("aria-label", label);
       this.context.classList.toggle("full", share >= 0.85);
@@ -1860,14 +1846,3 @@ function lasted(ms: number, words: Words): string {
   return minutes < 60 ? words.minutes(minutes) : words.hours(Math.floor(minutes / 60), minutes % 60);
 }
 
-/** The context used, as a filled wedge inside the ring from twelve o'clock
- *  round: a gauge read at a glance, never taken for something loading. */
-function wedge(share: number): string {
-  const r = 5;
-  if (share <= 0) return "";
-  if (share >= 0.999) return `<circle class="used" cx="9" cy="9" r="${r}"/>`;
-  const angle = share * 2 * Math.PI;
-  const x = (9 + r * Math.sin(angle)).toFixed(2);
-  const y = (9 - r * Math.cos(angle)).toFixed(2);
-  return `<path class="used" d="M9 9V${9 - r}A${r} ${r} 0 ${share > 0.5 ? 1 : 0} 1 ${x} ${y}Z"/>`;
-}
