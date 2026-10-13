@@ -44,6 +44,8 @@ pub struct ClaudePlan {
     pub plugin: &'static str,
     /// `env.MAX_MCP_OUTPUT_TOKENS` in the user's settings.
     pub max_mcp_output_tokens: u64,
+    /// `env.CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` in the user's settings.
+    pub max_mcp_description_length: u64,
 }
 
 impl ClaudePlan {
@@ -53,6 +55,7 @@ impl ClaudePlan {
             marketplace_name: claude::MARKETPLACE,
             plugin: claude::PLUGIN,
             max_mcp_output_tokens: claude::MAX_MCP_OUTPUT_TOKENS,
+            max_mcp_description_length: claude::MAX_MCP_DESCRIPTION_LENGTH,
         }
     }
 }

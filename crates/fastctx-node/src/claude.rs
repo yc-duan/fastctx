@@ -1401,7 +1401,8 @@ pub(crate) fn untrust(directory: &Path, home: Option<&Path>) -> Result<(), Strin
 
 /// Settings for a background session the World starts for the conversation
 /// `id`: the host's limit on a tool answer opened past the World's own
-/// (`world-view.md`, 一次给多少), the host's own shell, file and search tools
+/// (`world-view.md`, 一次给多少), its limit on a tool's description opened so
+/// the whole of `run` reaches the model, the host's own shell, file and search tools
 /// turned off, since the World's take their place, and the conversation,
 /// which its plugin reads back from them when it starts. The session runs
 /// without approvals (`background::settings_args`), so nothing else needs
@@ -1410,6 +1411,7 @@ fn settings_json(id: &ResidentId) -> String {
     let settings = serde_json::json!({
         "env": {
             "MAX_MCP_OUTPUT_TOKENS": fastctx_hosts::claude::MAX_MCP_OUTPUT_TOKENS.to_string(),
+            "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH": fastctx_hosts::claude::MAX_MCP_DESCRIPTION_LENGTH.to_string(),
             "FASTCTX_CONVERSATION": id.as_str(),
         },
         "permissions": {

@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::briefing;
 use crate::claude::plugins::{self, PluginApply, PluginCommand, PluginFailure, PluginHost, PluginReceipt};
-use crate::claude::settings::{self, SettingsReceipt};
+use crate::claude::settings::{self, Limit, SettingsReceipt};
 use crate::codex::{self, Approval, Ownership};
 use crate::plan::{ClaudePlan, CodexPlan};
 use crate::transaction::{Created, FileChange, FileError, Snapshot, Transaction};
@@ -186,6 +186,7 @@ pub fn status(places: &Places) -> Result<Status, Error> {
             present.claude,
             record.claude_md.is_some()
                 || record.settings.is_some()
+                || record.description.is_some()
                 || record.claude_tools.is_some()
                 || record.consent.is_some()
                 || plugin,
@@ -318,6 +319,10 @@ struct Record {
     codex: Option<codex::Receipt>,
     claude_md: Option<guidance::Receipt>,
     settings: Option<SettingsReceipt>,
+    /// The limit on a tool's description, raised so the whole of `run`
+    /// reaches the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<SettingsReceipt>,
     #[serde(default)]
     claude_tools: Option<crate::claude::tools::Receipt>,
     #[serde(default)]
@@ -356,6 +361,7 @@ impl Record {
         self.codex.is_none()
             && self.claude_md.is_none()
             && self.settings.is_none()
+            && self.description.is_none()
             && self.claude_tools.is_none()
             && self.consent.is_none()
     }
@@ -465,6 +471,8 @@ pub fn apply_reporting(
         fastctx_hosts::claude::write_plugin(&places.world).map_err(io("writing the World's plugin"))?;
         let plan = ClaudePlan::new(&places.world);
         settings::apply(initial_settings.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
+        settings::apply_limit(initial_settings.bytes(), Limit::description(&plan), record.description.as_ref())
+            .map_err(Error::Claude)?;
         let settings_path = text(initial_settings.path());
         crate::claude::tools::apply(
             File { path: &settings_path, bytes: initial_settings.bytes() },
@@ -501,10 +509,14 @@ pub fn apply_reporting(
             let settings_file = Snapshot::read(places.claude_home.join("settings.json"))?;
             let edit =
                 settings::apply(settings_file.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
-            settings_notice(&mut report, settings_file.path(), &edit);
+            settings_notice(&mut report, settings_file.path(), Limit::output(&plan).key, &edit);
+            let described =
+                settings::apply_limit(edit.bytes.as_deref(), Limit::description(&plan), record.description.as_ref())
+                    .map_err(Error::Claude)?;
+            settings_notice(&mut report, settings_file.path(), Limit::description(&plan).key, &described);
             let path = text(settings_file.path());
             let tools = crate::claude::tools::apply(
-                File { path: &path, bytes: edit.bytes.as_deref() },
+                File { path: &path, bytes: described.bytes.as_deref() },
                 record.claude_tools.as_ref(),
             )
             .map_err(Error::Claude)?;
@@ -512,7 +524,7 @@ pub fn apply_reporting(
             let (bytes, consent) = crate::claude::consent::grant(tools.bytes.as_deref(), record.consent.as_ref())
                 .map_err(Error::Claude)?;
             change(&mut changes, settings_file, bytes);
-            Ok::<_, Error>((edit, tools.receipt, consent))
+            Ok::<_, Error>((edit, tools.receipt, consent, described.receipt))
         })();
         let edit = match edit {
             Ok(edit) => edit,
@@ -521,6 +533,7 @@ pub fn apply_reporting(
         record.settings = edit.0.receipt;
         record.claude_tools = Some(edit.1);
         record.consent = edit.2;
+        record.description = edit.3;
         record.settings_created = settings_created;
         change(&mut changes, claude_md, Some(applied.bytes));
         record.claude_md = Some(applied.receipt);
@@ -673,9 +686,17 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
         }
         if let Some(receipt) = record.settings.take() {
             let edit = settings::unapply(settings_bytes.as_deref(), Some(&receipt)).map_err(Error::Claude)?;
-            settings_notice(&mut report, settings_file.path(), &edit);
+            settings_notice(&mut report, settings_file.path(), "MAX_MCP_OUTPUT_TOKENS", &edit);
             settings_bytes = edit.bytes;
             record.settings = edit.receipt;
+        }
+        if let Some(receipt) = record.description.take() {
+            let key = Limit::description(&ClaudePlan::new(&places.world)).key;
+            let edit =
+                settings::unapply_limit(settings_bytes.as_deref(), key, Some(&receipt)).map_err(Error::Claude)?;
+            settings_notice(&mut report, settings_file.path(), key, &edit);
+            settings_bytes = edit.bytes;
+            record.description = edit.receipt;
         }
         if let Some(receipt) = record.consent.take() {
             let (bytes, kept) =
@@ -749,15 +770,7 @@ struct Cli {
 
 impl Cli {
     fn new(claude: PathBuf, record: PathBuf, settings_path: PathBuf, settings_created: bool) -> Self {
-        Self {
-            claude,
-            record,
-            settings_path,
-            settings_created,
-            operation: None,
-            ran: Vec::new(),
-            progress: None,
-        }
+        Self { claude, record, settings_path, settings_created, operation: None, ran: Vec::new(), progress: None }
     }
 }
 
@@ -903,10 +916,10 @@ fn consent_kept(path: &Path) -> Notice {
     }
 }
 
-fn settings_notice(report: &mut Report, path: &Path, edit: &settings::SettingsEdit) {
+fn settings_notice(report: &mut Report, path: &Path, key: &str, edit: &settings::SettingsEdit) {
     if edit.outcome == settings::SettingsOutcome::UserChanged {
         report.notices.push(Notice {
-            location: format!("{}: env.MAX_MCP_OUTPUT_TOKENS", path.display()),
+            location: format!("{}: env.{key}", path.display()),
             reason: "changed since apply; left untouched".into(),
         });
     }

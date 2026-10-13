@@ -94,7 +94,11 @@ impl Records {
             if let Some(receipt) = &old.codex {
                 records.put(Host::Codex, parent(receipt.config_path())?, &old);
             }
-            if old.claude_md.is_some() || old.settings.is_some() || old.claude_tools.is_some() {
+            if old.claude_md.is_some()
+                || old.settings.is_some()
+                || old.description.is_some()
+                || old.claude_tools.is_some()
+            {
                 let home = old
                     .claude_md
                     .as_ref()
@@ -146,6 +150,7 @@ impl Records {
             codex: codex.and_then(|record| record.codex.clone()),
             claude_md: claude.and_then(|record| record.claude_md.clone()),
             settings: claude.and_then(|record| record.settings.clone()),
+            description: claude.and_then(|record| record.description.clone()),
             claude_tools: claude.and_then(|record| record.claude_tools.clone()),
             settings_created: claude.is_some_and(|record| record.settings_created),
             consent: claude.and_then(|record| record.consent.clone()),
@@ -179,6 +184,7 @@ impl Records {
             Host::Codex => {
                 receipt.claude_md = None;
                 receipt.settings = None;
+                receipt.description = None;
                 receipt.claude_tools = None;
                 receipt.settings_created = false;
                 receipt.consent = None;

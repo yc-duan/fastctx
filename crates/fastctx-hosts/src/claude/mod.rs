@@ -52,6 +52,13 @@ pub const WORLD_TOOLS: &str = "mcp__plugin_fastctx-world_fastctx__*";
 /// 200,000 tokens, which is where this limit stops mattering.
 pub const MAX_MCP_OUTPUT_TOKENS: u64 = 200_000;
 
+/// Claude Code's limit on an MCP tool's description, in characters, set to
+/// what it allows a tool loaded through its tool search. By default it keeps
+/// the first 4,096 characters of a tool always loaded, as `run` is, and `run`
+/// says more than that: Claude would lose how to edit files, reach other
+/// machines and combine the commands.
+pub const MAX_MCP_DESCRIPTION_LENGTH: u64 = 16_384;
+
 const MOD: &str = include_str!("world.js");
 
 /// How long the mod keeps an answer to whether fastctx is being removed, and

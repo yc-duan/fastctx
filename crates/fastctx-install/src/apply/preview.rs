@@ -106,12 +106,10 @@ fn claude(places: &Places, record: &Record, into: bool, preview: &mut ChangePrev
         preview.commands =
             planned.commands().iter().map(|command| format!("claude {}", command.args.join(" "))).collect();
         let edit = settings::apply(settings_file.bytes(), &plan, record.settings.as_ref()).map_err(Error::Claude)?;
-        if edit.outcome == settings::SettingsOutcome::UserChanged {
-            preview.kept.push(Kept {
-                location: format!("{}: env.MAX_MCP_OUTPUT_TOKENS", settings_file.path().display()),
-                reason: "changed since apply; left untouched".into(),
-            });
-        }
+        kept_limit(preview, settings_file.path(), Limit::output(&plan).key, &edit);
+        let edit = settings::apply_limit(edit.bytes.as_deref(), Limit::description(&plan), record.description.as_ref())
+            .map_err(Error::Claude)?;
+        kept_limit(preview, settings_file.path(), Limit::description(&plan).key, &edit);
         let tools = crate::claude::tools::apply(
             File { path: &settings_path, bytes: edit.bytes.as_deref() },
             record.claude_tools.as_ref(),
@@ -151,12 +149,13 @@ fn claude(places: &Places, record: &Record, into: bool, preview: &mut ChangePrev
     }
     if let Some(receipt) = &record.settings {
         let edit = settings::unapply(bytes.as_deref(), Some(receipt)).map_err(Error::Claude)?;
-        if edit.outcome == settings::SettingsOutcome::UserChanged {
-            preview.kept.push(Kept {
-                location: format!("{}: env.MAX_MCP_OUTPUT_TOKENS", settings_file.path().display()),
-                reason: "changed since apply; left untouched".into(),
-            });
-        }
+        kept_limit(preview, settings_file.path(), Limit::output(&plan).key, &edit);
+        bytes = edit.bytes;
+    }
+    if let Some(receipt) = &record.description {
+        let key = Limit::description(&plan).key;
+        let edit = settings::unapply_limit(bytes.as_deref(), key, Some(receipt)).map_err(Error::Claude)?;
+        kept_limit(preview, settings_file.path(), key, &edit);
         bytes = edit.bytes;
     }
     if let Some(receipt) = &record.consent {
@@ -207,6 +206,16 @@ fn file(
         items: changed,
     });
     Ok(())
+}
+
+/// A limit the user changed since the apply, which is left as they set it.
+fn kept_limit(preview: &mut ChangePreview, path: &Path, key: &str, edit: &settings::SettingsEdit) {
+    if edit.outcome == settings::SettingsOutcome::UserChanged {
+        preview.kept.push(Kept {
+            location: format!("{}: env.{key}", path.display()),
+            reason: "changed since apply; left untouched".into(),
+        });
+    }
 }
 
 fn kept(notice: Notice) -> Kept {

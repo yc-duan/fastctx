@@ -37,7 +37,7 @@ pub(super) fn claude_keys(path: &[String]) -> bool {
     let path: Vec<&str> = path.iter().map(String::as_str).collect();
     matches!(
         path.as_slice(),
-        ["env", "MAX_MCP_OUTPUT_TOKENS"]
+        ["env", "MAX_MCP_OUTPUT_TOKENS" | "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH"]
             | ["permissions", "deny"]
             | ["skipDangerousModePermissionPrompt"]
             | ["enabledPlugins", "fastctx-world@fastctx"]

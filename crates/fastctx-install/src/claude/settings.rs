@@ -1,6 +1,9 @@
-//! Only `env.MAX_MCP_OUTPUT_TOKENS` is managed here. Inputs must be read after
-//! the last plugin command. Returned bytes are published by the caller using
-//! compare-and-swap against those inputs; this module does no file I/O.
+//! The limits the World raises in Claude Code's `env` are managed here: a
+//! tool answer's (`MAX_MCP_OUTPUT_TOKENS`) and a tool description's
+//! (`CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH`), each with its own receipt.
+//! Inputs must be read after the last plugin command. Returned bytes are
+//! published by the caller using compare-and-swap against those inputs; this
+//! module does no file I/O.
 
 use jsonc_parser::ast::{Object, ObjectProp};
 use jsonc_parser::common::Ranged;
@@ -9,7 +12,24 @@ use serde::{Deserialize, Serialize};
 use super::jsonc::{Document, Insertion};
 use crate::plan::ClaudePlan;
 
-const KEY: &str = "MAX_MCP_OUTPUT_TOKENS";
+/// One limit in `env`: its name, and how high the World needs it.
+#[derive(Clone, Copy, Debug)]
+pub struct Limit {
+    pub key: &'static str,
+    pub wanted: u64,
+}
+
+impl Limit {
+    /// The limit on a tool's answer.
+    pub fn output(plan: &ClaudePlan) -> Self {
+        Self { key: "MAX_MCP_OUTPUT_TOKENS", wanted: plan.max_mcp_output_tokens }
+    }
+
+    /// The limit on a tool's description.
+    pub fn description(plan: &ClaudePlan) -> Self {
+        Self { key: "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH", wanted: plan.max_mcp_description_length }
+    }
+}
 
 /// The original value and only the scaffolding created by this edit. This
 /// never stores unrelated settings, which can contain secrets.
@@ -49,19 +69,29 @@ pub struct SettingsEdit {
     pub outcome: SettingsOutcome,
 }
 
-/// Raises the limit only when necessary. Reapplying preserves the original
-/// receipt. A later user edit is reported and never reclaimed or overwritten.
+/// Raises the limit on a tool's answer only when necessary. Reapplying
+/// preserves the original receipt. A later user edit is reported and never
+/// reclaimed or overwritten.
 pub fn apply(
     original: Option<&[u8]>,
     plan: &ClaudePlan,
     previous: Option<&SettingsReceipt>,
 ) -> Result<SettingsEdit, String> {
+    apply_limit(original, Limit::output(plan), previous)
+}
+
+/// Raises `limit` only when necessary, as `apply` does the answer's.
+pub fn apply_limit(
+    original: Option<&[u8]>,
+    limit: Limit,
+    previous: Option<&SettingsReceipt>,
+) -> Result<SettingsEdit, String> {
+    let key = limit.key;
     let document = Document::parse(original.unwrap_or_default())?;
-    let current = leaf(&document)?;
+    let current = leaf(&document, key)?;
     if let Some(previous) = previous
         && (!matches_written(&document, current, previous)
-            || previous.written.parse::<u64>().map_err(|_| "Invalid Claude settings receipt")?
-                >= plan.max_mcp_output_tokens)
+            || previous.written.parse::<u64>().map_err(|_| "Invalid Claude settings receipt")? >= limit.wanted)
     {
         return Ok(SettingsEdit {
             bytes: original.map(<[u8]>::to_vec),
@@ -74,7 +104,7 @@ pub fn apply(
         });
     }
     if let Some(current) = current
-        && super::limit::effective(&current.value)? >= plan.max_mcp_output_tokens as f64
+        && super::limit::effective(&current.value)? >= limit.wanted as f64
     {
         return Ok(SettingsEdit {
             bytes: original.map(<[u8]>::to_vec),
@@ -82,7 +112,7 @@ pub fn apply(
             outcome: SettingsOutcome::Sufficient,
         });
     }
-    let written = plan.max_mcp_output_tokens.to_string();
+    let written = limit.wanted.to_string();
     let raw = serde_json::to_string(&written).expect("a string serializes");
     let mut receipt = SettingsReceipt {
         before: current.map(|p| document.raw(&p.value).to_owned()),
@@ -99,10 +129,10 @@ pub fn apply(
         document.replace(range.start..range.end, &raw)?
     } else if let Some(root) = &document.root {
         let (parent, name, value) = match env(root)? {
-            Some(env) => (env, KEY, raw),
+            Some(env) => (env, key, raw),
             None => {
                 receipt.created_env = true;
-                (root, "env", format!("{{\"{KEY}\": {raw}}}"))
+                (root, "env", format!("{{\"{key}\": {raw}}}"))
             }
         };
         let (bytes, insertion) = document.insert(parent, name, &value)?;
@@ -115,7 +145,7 @@ pub fn apply(
             } else {
                 "\n"
             };
-        let text = format!("{prefix}{{\n  \"env\": {{\n    \"{KEY}\": {raw}\n  }}\n}}\n");
+        let text = format!("{prefix}{{\n  \"env\": {{\n    \"{key}\": {raw}\n  }}\n}}\n");
         receipt.created_env = true;
         receipt.document =
             Some(NewDocument { existed: original.is_some(), prefix: prefix.into(), suffix: "\n".into() });
@@ -124,15 +154,25 @@ pub fn apply(
     Ok(SettingsEdit { bytes: Some(bytes), receipt: Some(receipt), outcome: SettingsOutcome::Written })
 }
 
-/// Restores the old raw value only while the current JSON string is still
-/// ours. Later edits elsewhere, including Claude's own plugin settings, stay.
+/// Restores the old raw value of the answer's limit only while the current
+/// JSON string is still ours. Later edits elsewhere, including Claude's own
+/// plugin settings, stay.
 pub fn unapply(original: Option<&[u8]>, receipt: Option<&SettingsReceipt>) -> Result<SettingsEdit, String> {
+    unapply_limit(original, "MAX_MCP_OUTPUT_TOKENS", receipt)
+}
+
+/// Restores the limit named `key`, as `unapply` does the answer's.
+pub fn unapply_limit(
+    original: Option<&[u8]>,
+    key: &str,
+    receipt: Option<&SettingsReceipt>,
+) -> Result<SettingsEdit, String> {
     let unchanged = |outcome| SettingsEdit { bytes: original.map(<[u8]>::to_vec), receipt: None, outcome };
     let Some(receipt) = receipt else {
         return Ok(unchanged(SettingsOutcome::Unmanaged));
     };
     let document = Document::parse(original.unwrap_or_default())?;
-    let current = leaf(&document)?;
+    let current = leaf(&document, key)?;
     if !matches_written(&document, current, receipt) {
         return Ok(unchanged(SettingsOutcome::UserChanged));
     }
@@ -181,13 +221,13 @@ fn env<'a, 'b>(root: &'a Object<'b>) -> Result<Option<&'a Object<'b>>, String> {
         .transpose()
 }
 
-fn leaf<'a, 'b>(document: &'a Document<'b>) -> Result<Option<&'a ObjectProp<'b>>, String> {
+fn leaf<'a, 'b>(document: &'a Document<'b>, key: &str) -> Result<Option<&'a ObjectProp<'b>>, String> {
     Ok(document
         .root
         .as_ref()
         .and_then(|root| root.get("env"))
         .and_then(|p| p.value.as_object())
-        .and_then(|object| object.get(KEY)))
+        .and_then(|object| object.get(key)))
 }
 
 fn matches_written(document: &Document<'_>, current: Option<&ObjectProp<'_>>, receipt: &SettingsReceipt) -> bool {
