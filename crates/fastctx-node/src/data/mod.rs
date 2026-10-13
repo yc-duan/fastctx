@@ -3,7 +3,7 @@
 //! are answered here and never go to another machine: each machine manages
 //! only its own data.
 
-mod delete;
+pub(crate) mod delete;
 mod host;
 mod space;
 

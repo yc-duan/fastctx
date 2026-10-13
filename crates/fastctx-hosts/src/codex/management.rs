@@ -68,4 +68,13 @@ impl CodexHost {
         }
         self.flush_events(thread).await
     }
+
+    /// Takes an archived thread out of the archive (`thread/unarchive`);
+    /// it is loaded again when it is next spoken to.
+    pub async fn unarchive(self: &Arc<Self>, thread: &str) -> Result<(), String> {
+        let server = self.server().await?;
+        let _loading = self.loading.lock().await;
+        server.request("thread/unarchive", json!({"threadId":thread})).await?;
+        Ok(())
+    }
 }

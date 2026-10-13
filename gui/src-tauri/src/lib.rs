@@ -577,9 +577,9 @@ async fn machine_stats(
     shell.world().stats(machine(machine_name)?, after).await.map_err(|error| error.to_string())
 }
 
-/// Removes a resident from the World, lets it sleep, wakes it or moves it
-/// to another project, or points it at machines and folders, as the user;
-/// each stage is answered as it went.
+/// Archives a conversation or brings it back, lets it sleep, wakes it or
+/// moves it to another project, or points it at machines and folders, as
+/// the user; each stage is answered as it went.
 #[fastctx_gui_command::command]
 async fn manage(
     shell: tauri::State<'_, Shell>,
@@ -593,6 +593,18 @@ async fn manage(
         .await
         .map_err(|error| error.to_string())?;
     Ok(managed)
+}
+
+/// Deletes a conversation from every machine and device keeping something
+/// of it (`world-colleagues.md`, 用户在任何地方和居民说话).
+#[fastctx_gui_command::command]
+async fn forget_conversation(
+    shell: tauri::State<'_, Shell>,
+    resident_id: String,
+    machine_name: String,
+) -> Result<fastctx_types::management::Forgetting, String> {
+    let machine = machine(Some(machine_name))?.ok_or("a conversation's machine is named")?;
+    shell.world().forget_conversation(resident(resident_id)?, machine).await.map_err(|error| error.to_string())
 }
 
 /// What Claude Code on a machine records of the user's consent to running
@@ -1114,6 +1126,7 @@ pub fn run() {
             stop,
             stop_job,
             manage,
+            forget_conversation,
             claude_consent,
             find_files,
             folders,

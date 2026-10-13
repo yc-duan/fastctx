@@ -724,27 +724,9 @@ export interface DetailsWords {
   openedOwn: string;
   cannotLook(why: string): string;
   notFound: string;
-  manage: string;
-  move: string;
-  moveTo: string;
-  /** Beside the project it is in now. */
-  inHere: string;
-  leaveProject: string;
-  noOtherProject: string;
-  moved(project: string): string;
-  left: string;
-  remove: string;
-  removeTitle(who: string): string;
-  removeWhat: string;
-  removeGo: string;
-  /** Before what of a removal was not done. */
-  removedButNot: string;
   /** A stage of an act that was not done: where, how, and the World's
    *  own account of it. */
   unfinished(stage: string, outcome: "pending" | "unsupported" | "failed", detail: string): string;
-  cancel: string;
-  working: string;
-  failed(why: string): string;
 }
 
 export const zhDetails: DetailsWords = {
@@ -786,24 +768,8 @@ export const zhDetails: DetailsWords = {
   openedOwn: "已在新终端窗口中打开",
   cannotLook: () => "无法获取详情",
   notFound: "未找到该对话",
-  manage: "管理",
-  move: "移动到项目",
-  moveTo: "目标项目",
-  inHere: "当前",
-  leaveProject: "移出项目",
-  noOtherProject: "这台机器上没有其他项目",
-  moved: (project) => `已移到「${project}」`,
-  left: "已移出项目",
-  remove: "移除",
-  removeTitle: (who) => `移除 ${who}？`,
-  removeWhat: "移除后不再显示，记录归档保留，运行中的命令不受影响。",
-  removeGo: "移除",
-  removedButNot: "已移除，未完成：",
   unfinished: (stage, outcome) =>
     `${{ host: "宿主", records: "记录", tools: "工具", notification: "通知" }[stage] ?? stage}${{ pending: "等待中", unsupported: "不支持", failed: "失败" }[outcome]}`,
-  cancel: "关闭",
-  working: "处理中…",
-  failed: failure(zhProblems, "操作失败"),
 };
 
 export const enDetails: DetailsWords = {
@@ -845,24 +811,8 @@ export const enDetails: DetailsWords = {
   openedOwn: "Opened in a new terminal window",
   cannotLook: () => "Couldn't load details",
   notFound: "Conversation not found",
-  manage: "Manage",
-  move: "Move to project",
-  moveTo: "Project",
-  inHere: "current",
-  leaveProject: "Remove from project",
-  noOtherProject: "No other projects on this machine",
-  moved: (project) => `Moved to “${project}”`,
-  left: "Removed from project",
-  remove: "Remove",
-  removeTitle: (who) => `Remove ${who}?`,
-  removeWhat: "It will no longer be listed. Its records are archived; running jobs continue.",
-  removeGo: "Remove",
-  removedButNot: "Removed. Not finished: ",
   unfinished: (stage, outcome) =>
     `${{ host: "host", records: "records", tools: "tools", notification: "notification" }[stage] ?? stage} ${{ pending: "pending", unsupported: "unsupported", failed: "failed" }[outcome]}`,
-  cancel: "Close",
-  working: "Working…",
-  failed: failure(enProblems, "Couldn't complete"),
 };
 
 export interface ProjectFormWords {

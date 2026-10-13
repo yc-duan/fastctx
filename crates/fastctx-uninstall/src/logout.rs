@@ -60,6 +60,7 @@ async fn open(world: &WorldDir, directory: &Path) -> anyhow::Result<Option<dial:
         interfaces: Vec::new(),
         renames: false,
         afoot: false,
+        forgets: false,
         dialed: Some(connection.address),
         any_names: true,
     };

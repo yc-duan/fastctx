@@ -166,9 +166,19 @@ export class HomePage {
     return titleOf(r) ?? this.who(r);
   }
 
+  private knownAt(address: Address): ResidentNow | undefined {
+    return this.world?.known.find((r) => r.about.id === address.resident && r.about.machine === address.machine);
+  }
+
   private nameOf(address: Address): string {
-    const known = this.residents().find((r) => r.about.id === address.resident && r.about.machine === address.machine);
+    const known = this.knownAt(address);
     return known ? this.name(known) : `${address.resident} · ${address.machine}`;
+  }
+
+  /** Who is at an address and where, without what it is called. */
+  private whoAt(address: Address): string {
+    const known = this.knownAt(address);
+    return known ? this.who(known) : `${address.resident} · ${address.machine}`;
   }
 
   private since(at: string): string {
@@ -314,7 +324,8 @@ export class HomePage {
         tone = " caution";
         break;
       case "asked":
-        line = words.asked(this.nameOf(event.who), event.colleague.resident);
+        // What it was asked follows: it is named by who it is.
+        line = words.asked(this.nameOf(event.who), this.whoAt(event.colleague));
         detail = `<span class="detail">${escape(event.label)}</span>`;
         mark = "colleague";
         break;

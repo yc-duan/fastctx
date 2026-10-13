@@ -937,6 +937,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|(resident, managed)| Reply::Managed { resident, managed })
         }
+        Call::Forget { resident, machine } => {
+            users_voice(node, peer)?;
+            let address = fastctx_types::Address { machine: machine.clone(), resident: resident.clone() };
+            crate::forget::ask(node, resident, machine).await.map(|how| Reply::Forgetting { resident: address, how })
+        }
         Call::Control { resident, machine, control } => {
             users_voice(node, peer)?;
             crate::control::control(node, resident, machine, control)

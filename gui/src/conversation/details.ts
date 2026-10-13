@@ -2,36 +2,20 @@
 // conversation's head: who it is and where it lives, which login
 // of its agent it uses there, whom it works for, how it came, what it is
 // doing, the models it called, what it started that still runs, its latest
-// actions, and what can be done to it. The same facts as `fastctx w <id>`,
-// asked of the machine it lives on while the card is open. Which agents may
-// call which models is the model collaboration feature's, never a single
-// conversation's (`world-gui.md`, 功能).
+// actions. The same facts as `fastctx w <id>`, asked of the machine it
+// lives on while the card is open. Moving, renaming, archiving and deleting
+// it are its "⋯"'s (`app/talk-menu.ts`); which agents may call which models
+// is the model collaboration feature's, never a single conversation's
+// (`world-gui.md`, 功能).
 
 import { escape } from "./prose";
 import { glyph } from "./glyphs";
 import type { Address } from "../world/events";
 import type { ResidentDetail, ResidentNow } from "../world/world";
 import type { DetailsWords } from "../app/words";
-import { Confirm } from "../app/confirm";
 import { redrawKeepingFocus } from "../app/focus";
 import { fileLink } from "../app/places";
 import { agentName, titleOf } from "../world/names";
-
-/** What can be done to the agent beyond its conversation, as the user.
- *  Each rejects with what the World said when it was not done. */
-/** What an act did not fully do, said stage by stage; empty when all of
- *  it was done. */
-export type Unfinished = string[];
-
-export interface Manage {
-  /** Into a project, or out of any where null. */
-  move(town: string | null): Promise<Unfinished>;
-  remove(): Promise<Unfinished>;
-  /** The projects an agent on a machine can be in: those spanning it. */
-  towns(machine: string): { town: string; name: string }[];
-  /** It is no longer in the World: its conversation is left. */
-  removed(): void;
-}
 
 export interface DetailsOptions {
   words: DetailsWords;
@@ -48,8 +32,6 @@ export interface DetailsOptions {
   attach?: (() => Promise<void>) | undefined;
   /** The conversation as Markdown, for copying out. */
   markdown?: (() => Promise<string>) | undefined;
-  /** Managing it, where the World can. */
-  manage?: Manage | undefined;
   /** "hangzhou · ada" for each account it works for; empty for this
    *  computer's logins. */
   actingFor(resident: ResidentNow): string[];
@@ -69,21 +51,12 @@ export interface Login {
   disabled?: boolean | undefined;
 }
 
-type Managing = "move";
-
 export class Details {
   readonly element: HTMLElement;
   private readonly body: HTMLElement;
   /** Kept across redraws, so what is said is announced once. */
   private readonly spoken: HTMLElement;
   private note = "";
-  private manageNote = "";
-  /** What is being done to it now, so the card drawn again in the
-   *  meantime still says so. */
-  private managing: Managing | null = null;
-  /** Whether the projects to move it to are shown. */
-  private moving = false;
-  private confirm: Confirm | null = null;
   /** What each machine said of an agent's logins, by `machine/agent`,
    *  asked once while the card is about it. */
   private logins = new Map<string, Login[] | "asking">();
@@ -102,7 +75,7 @@ export class Details {
     this.element.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-act]");
       if (!button || button.disabled) return;
-      const { words, manage } = options;
+      const { words } = options;
       switch (button.dataset.act) {
         case "export":
           if (!options.markdown) return;
@@ -134,21 +107,6 @@ export class Details {
               this.say(this.note);
             });
           return;
-        case "move":
-          this.moving = !this.moving;
-          this.redraw();
-          return;
-        case "move-to": {
-          if (!manage || !this.shown) return;
-          const town = button.dataset.town || null;
-          const name = manage.towns(this.shown.detail.resident.about.machine).find((t) => t.town === town)?.name ?? town;
-          this.moving = false;
-          this.manageWith("move", () => manage.move(town), name ? words.moved(name) : words.left);
-          return;
-        }
-        case "remove":
-          if (manage && this.shown) this.askRemove(manage, this.shown.detail.resident);
-          return;
       }
     });
   }
@@ -160,61 +118,12 @@ export class Details {
     if (note) note.textContent = text;
   }
 
-  private manageWith(what: Managing, act: () => Promise<Unfinished>, done: string): void {
-    const { words } = this.options;
-    this.managing = what;
-    this.manageNote = "";
-    this.redraw();
-    act()
-      .then((unfinished) => {
-        this.manageNote = unfinished.length ? unfinished.join("；") : done;
-      })
-      .catch((error: unknown) => {
-        this.manageNote = words.failed(error instanceof Error ? error.message : String(error));
-      })
-      .finally(() => {
-        this.managing = null;
-        this.spoken.textContent = this.manageNote;
-        this.redraw();
-      });
-  }
-
-  /** Asks once more before it is removed: what removing means is said. */
-  private askRemove(manage: Manage, resident: ResidentNow): void {
-    const { words } = this.options;
-    const about = resident.about;
-    this.confirm ??= new Confirm({ close: words.cancel, working: words.working, failed: words.failed });
-    const who =
-      about.origin.kind === "colleague" ? about.origin.label : this.options.someone({ resident: about.id, machine: about.machine });
-    let unfinished: Unfinished = [];
-    this.confirm.ask({
-      title: words.removeTitle(who),
-      what: words.removeWhat,
-      go: words.removeGo,
-      act: async () => {
-        unfinished = await manage.remove();
-      },
-      // Removed from the World, but a step of it not done (a window the
-      // World cannot close): that is said here before the conversation is
-      // left behind.
-      done: () => {
-        if (!unfinished.length) manage.removed();
-        else {
-          this.manageNote = `${words.removedButNot}${unfinished.join("；")}`;
-          this.spoken.textContent = this.manageNote;
-          this.redraw();
-        }
-      },
-    });
-  }
-
   get open(): boolean {
     return !this.element.hidden;
   }
 
   set open(shown: boolean) {
     this.element.hidden = !shown;
-    if (!shown) this.moving = false;
   }
 
   /** The World could not say. */
@@ -336,44 +245,11 @@ export class Details {
         ${this.options.markdown ? `<button class="text-button" type="button" data-act="export">${glyph("copy", 14)}<span>${escape(words.exportMarkdown)}</span></button>` : ""}
         <span class="details-note">${escape(this.note)}</span>
       </div>
-      ${section(words.manage, this.manageBody(r), " details-manage")}
       ${section(words.task, task)}
       ${section(words.colleagues, asked)}
       ${section(words.running, running)}
       ${section(words.actions(detail.actions.length, detail.actions_total), actions)}
       <p class="details-records"><span>${escape(words.records)}</span><code>${escape(`${about.machine}:${detail.records}`)}</code></p>`;
-  }
-
-  /** Move to a project, remove: what the World can do to it for the user,
-   *  and the projects to move it to when asked. */
-  private manageBody(r: ResidentNow): string {
-    const { words, manage } = this.options;
-    if (!manage || r.removed) return "";
-    const doing = this.managing;
-    const button = (act: string, icon: Parameters<typeof glyph>[0], label: string, disabled: boolean, extra = "") =>
-      `<button class="text-button" type="button" data-act="${act}"${disabled ? " disabled" : ""}${extra}>${glyph(icon, 14)}<span>${escape(label)}</span></button>`;
-    const move = button(
-      "move",
-      "move",
-      doing === "move" ? words.working : words.move,
-      doing !== null,
-      ` aria-expanded="${this.moving}"`,
-    );
-    const remove = `<button class="text-button details-remove" type="button" data-act="remove"${doing !== null ? " disabled" : ""}>${glyph("archive", 14)}<span>${escape(words.remove)}</span></button>`;
-    let projects = "";
-    if (this.moving) {
-      const towns = manage.towns(r.about.machine);
-      const choices = towns.map(
-        (t) =>
-          `<button type="button" class="choice${t.town === r.town ? " chosen" : ""}" data-act="move-to" data-town="${escape(t.town)}"${t.town === r.town ? ` disabled aria-current="true"` : ""}>${escape(t.name)}${t.town === r.town ? `<span class="choice-note">${escape(words.inHere)}</span>` : ""}</button>`,
-      );
-      if (r.town) choices.push(`<button type="button" class="choice" data-act="move-to" data-town="">${escape(words.leaveProject)}</button>`);
-      const elsewhere = towns.some((t) => t.town !== r.town) || r.town;
-      projects = `<div class="details-move" role="group" aria-label="${escape(words.moveTo)}"><span class="details-faint">${escape(words.moveTo)}</span>${
-        elsewhere ? `<div class="choice-options">${choices.join("")}</div>` : `<span class="choice-none">${escape(words.noOtherProject)}</span>`
-      }</div>`;
-    }
-    return `<div class="details-acts">${move}${remove}</div>${projects}<p class="details-note details-manage-note">${escape(this.manageNote)}</p>`;
   }
 }
 

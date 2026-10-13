@@ -1,6 +1,6 @@
 // The hub's machine-layer history (`fastctx_types::machine_log`).
 import type { AccountName, MemberKind, PlanLabel, Relay } from "./accounts";
-import type { MachineName, Timestamp } from "./wire";
+import type { Address, MachineName, Timestamp } from "./wire";
 
 export interface MachineLogActor {
   account: AccountName | null;
@@ -36,7 +36,11 @@ export type MachineLogAction =
   | { change: "joined"; name: MachineName; kind: MemberKind; registered: boolean; via: "password" | "token" }
   | { change: "allow_acting"; machine: MachineName; agent: string; home: string | null }
   | { change: "acting_stopped"; machine: MachineName; account: AccountName }
-  | { change: "left"; name: MachineName; account: AccountName; kind: MemberKind; unregistered: boolean; reason: string };
+  | { change: "left"; name: MachineName; account: AccountName; kind: MemberKind; unregistered: boolean; reason: string }
+  /** A conversation the user deleted everywhere; then each member's part
+   *  done, or refused for now with why. Read by its account alone. */
+  | { change: "forget"; conversation: Address }
+  | { change: "forgotten"; conversation: Address; on: MachineName };
 
 export interface MachineLogRecord {
   id: number;

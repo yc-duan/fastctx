@@ -1,0 +1,501 @@
+/* A conversation's "⋯": the button a row shows at its end on hover, the
+   menu it opens (a sheet from below on a narrow screen), the field a row is
+   renamed in, the archived conversations at the sidebar's foot, and the
+   line that says what was just done. */
+
+/* The row: its link, and at its end on hover what can be done to it,
+   laid over the state's and the device's columns, which give way. */
+.talk-item {
+  position: relative;
+}
+
+.talk-quick {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--hover) ease;
+}
+
+.talk-item:hover .talk-quick,
+.talk-item:focus-within .talk-quick,
+.talk-item.menu-open .talk-quick {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.talk-item:hover .talk-device,
+.talk-item:focus-within .talk-device,
+.talk-item.menu-open .talk-device,
+.talk-item:hover .talk-state,
+.talk-item:focus-within .talk-state,
+.talk-item.menu-open .talk-state {
+  opacity: 0;
+}
+
+.talk-more,
+.talk-quick-act {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background-color var(--hover) ease, color var(--hover) ease;
+}
+
+.talk-more:hover,
+.talk-more:focus-visible,
+.talk-quick-act:hover,
+.talk-quick-act:focus-visible,
+.talk-item.menu-open .talk-more {
+  outline: 0;
+  color: var(--text-strong);
+  background: var(--fill-strong);
+}
+
+/* A row stays as under the pointer while the pointer is on what is at its
+   end, and while its menu is open. */
+.talk-item:hover > .talk-row:not(.deleting),
+.talk-item.menu-open > .talk-row {
+  background: var(--hairline);
+}
+
+.talk-item:hover > .talk-row:not(.current, .deleting),
+.talk-item.menu-open > .talk-row:not(.current) {
+  color: var(--text);
+}
+
+/* Touch screens press long instead; the buttons are not shown. */
+@media (hover: none) {
+  .talk-quick {
+    display: none;
+  }
+
+  .talk-item:focus-within .talk-device,
+  .talk-item:focus-within .talk-state {
+    opacity: 1;
+  }
+}
+
+.talk-device,
+.talk-state {
+  transition: opacity var(--hover) ease;
+}
+
+/* Being deleted: quieter, the state said in words where the mark was. */
+.talk-row.deleting {
+  pointer-events: none;
+}
+
+.talk-row.deleting .talk-name,
+.talk-row.deleting .talk-host,
+.talk-row.deleting .talk-device {
+  color: var(--text-3);
+}
+
+.talk-row.deleting .talk-name {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-3) 60%, transparent);
+}
+
+.talk-row.deleting .talk-state {
+  grid-column: 3 / 5;
+  justify-self: end;
+  font-size: var(--size-small);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.talk-row.deleting .talk-device {
+  display: none;
+}
+
+.talk-item:has(.deleting) .talk-quick {
+  display: none;
+}
+
+.talk-item:has(.deleting) .talk-state {
+  opacity: 1;
+}
+
+/* An archived conversation at the sidebar's foot: listed, quieter. */
+.talk-row.archived .talk-name,
+.talk-row.archived .talk-host {
+  color: var(--text-3);
+}
+
+.talk-item:hover > .talk-row.archived .talk-name,
+.talk-item.menu-open > .talk-row.archived .talk-name,
+.talk-row.archived.current .talk-name {
+  color: var(--text-2);
+}
+
+/* The archived group's head: a fold with its count, quiet as a group title. */
+.side-archived {
+  margin-top: var(--space-2);
+}
+
+.side-archived-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px var(--space-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--size-small);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--hover) ease;
+}
+
+.side-archived-head:hover,
+.side-archived-head:focus-visible {
+  outline: 0;
+  color: var(--text-2);
+}
+
+.side-archived-head .glyph {
+  transition: transform var(--fold) var(--fold-easing);
+}
+
+.side-archived.shut .side-archived-head .glyph:first-child {
+  transform: rotate(-90deg);
+}
+
+.side-archived-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The field a row's name becomes while it is renamed: a solid well in the
+   name's own place, the same type, nothing else moving. */
+.talk-rename {
+  min-width: 0;
+  width: 100%;
+  height: 24px;
+  margin: -2px 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--field);
+  color: var(--text-strong);
+  font: inherit;
+  outline: 0;
+}
+
+.talk-rename::selection {
+  background: var(--selection);
+}
+
+/* The menu: a slip of paper over the page. */
+.talk-menu {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 13em;
+  max-width: min(22em, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  padding: var(--space-1);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  animation: panel-rise var(--fold) var(--fold-easing) both;
+}
+
+.talk-menu[hidden],
+.talk-menu-shade[hidden] {
+  display: none;
+}
+
+.talk-menu-item,
+.talk-menu-back {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 var(--space-3) 0 10px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--size-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.talk-menu-item .glyph,
+.talk-menu-back .glyph {
+  display: block;
+  flex: none;
+  color: var(--text-3);
+}
+
+.talk-menu-label {
+  margin-right: var(--space-3);
+}
+
+.talk-menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.talk-menu-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  padding-left: 0;
+  color: var(--text-3);
+  transform: rotate(-90deg);
+}
+
+.talk-menu-more .glyph {
+  display: block;
+}
+
+.talk-menu-item:hover:not(:disabled),
+.talk-menu-item:focus-visible,
+.talk-menu-back:hover,
+.talk-menu-back:focus-visible {
+  outline: 0;
+  color: var(--text-strong);
+  background: var(--fill-strong);
+}
+
+.talk-menu-item:hover:not(:disabled) .glyph,
+.talk-menu-item:focus-visible .glyph {
+  color: currentColor;
+}
+
+/* Deleting is said in the colour of what cannot be undone once pointed at,
+   a quiet red wash under it. */
+.talk-menu-item.danger:hover,
+.talk-menu-item.danger:focus-visible {
+  color: var(--wrong);
+  background: color-mix(in srgb, var(--wrong) 14%, transparent);
+}
+
+.talk-menu-item:disabled {
+  color: var(--text-3);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.talk-menu-rule {
+  height: 1px;
+  margin: var(--space-1) 6px;
+  border: 0;
+  background: var(--divider);
+}
+
+.talk-menu-note {
+  margin: 0;
+  padding: 6px 10px 4px;
+  color: var(--text-3);
+  font-size: var(--size-small);
+}
+
+/* Moving: back to the acts, then each project, the one it is in ticked. */
+.talk-menu-back {
+  color: var(--text-3);
+  font-size: var(--size-small);
+}
+
+.talk-menu-check {
+  display: grid;
+  flex: none;
+  width: 16px;
+}
+
+.talk-menu-check .glyph,
+.talk-menu-item:hover .talk-menu-check .glyph {
+  color: var(--accent);
+}
+
+.talk-menu-town[aria-checked="true"] {
+  color: var(--text-strong);
+}
+
+/* On a narrow screen the menu rises from below, headed by its conversation,
+   over a shade a tap on which only puts it away. */
+.talk-menu.as-sheet {
+  inset: auto 0 0 0;
+  max-width: none;
+  max-height: 70dvh;
+  padding: var(--space-2) var(--space-3) calc(var(--space-4) + var(--safe-bottom));
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  animation: talk-menu-rise var(--fold) var(--fold-easing) both;
+}
+
+@keyframes talk-menu-rise {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+.talk-menu.as-sheet .talk-menu-item,
+.talk-menu.as-sheet .talk-menu-back {
+  min-height: 48px;
+  font-size: var(--body-size);
+}
+
+.talk-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 10px var(--space-1);
+  color: var(--text-strong);
+}
+
+.talk-menu-host {
+  display: grid;
+  flex: none;
+  color: var(--text-3);
+}
+
+.talk-menu-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.talk-menu-shade {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+  background: rgba(0, 0, 0, 0.36);
+  animation: talk-menu-shade-in var(--fold) ease both;
+}
+
+@keyframes talk-menu-shade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+:root[data-reduced] .talk-menu,
+:root[data-reduced] .talk-menu-shade {
+  animation: none;
+}
+
+/* What was just done to a conversation, for a moment at the foot of the
+   window, with the way back where there is one. */
+.talk-toast {
+  position: fixed;
+  left: var(--space-3);
+  bottom: calc(var(--space-3) + var(--safe-bottom));
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(420px, calc(100vw - 2 * var(--space-3)));
+  min-height: 40px;
+  padding: 6px 6px 6px var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-2);
+  font-size: var(--size-ui);
+}
+
+.talk-toast[hidden] {
+  display: none;
+}
+
+.talk-toast.talk-toast-in {
+  animation: panel-rise var(--fold) var(--fold-easing) both;
+}
+
+.talk-toast:not(:has(.talk-toast-undo)) {
+  padding-right: var(--space-3);
+}
+
+.talk-toast-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.talk-toast.wrong .talk-toast-text {
+  color: var(--wrong);
+}
+
+.talk-toast-undo {
+  flex: none;
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--fill);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--size-ui);
+  cursor: pointer;
+}
+
+.talk-toast-undo:hover,
+.talk-toast-undo:focus-visible {
+  outline: 0;
+  background: var(--fill-strong);
+}
+
+@media (max-width: 760px) {
+  .talk-toast {
+    left: var(--space-4);
+    right: var(--space-4);
+    max-width: none;
+    bottom: calc(var(--space-4) + var(--safe-bottom));
+  }
+}
+
+:root[data-reduced] .talk-toast.talk-toast-in {
+  animation: none;
+}
+
+/* The tags on the card asking before deleting: what goes. */
+.forget-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.forget-parts li {
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--wrong) 12%, transparent);
+  color: var(--text-2);
+  font-size: var(--size-small);
+}
+
+.forget-also {
+  margin: var(--space-3) 0 0;
+  color: var(--text-2);
+  font-size: var(--size-small);
+}

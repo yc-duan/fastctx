@@ -759,6 +759,36 @@ html.framed .page-head {
   font-size: var(--size-small);
 }
 
+/* At the foot of every conversation, the way on to the archived ones. */
+.talks-archived {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: var(--space-6);
+  min-height: 36px;
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  font-size: var(--size-ui);
+  text-decoration: none;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.talks-archived:hover,
+.talks-archived:focus-visible {
+  outline: 0;
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.talks-archived .count {
+  margin-left: auto;
+}
+
+.talks-archived .glyph:last-child {
+  transform: rotate(-90deg);
+}
+
 /* The network shown, at the top of the sidebar: its server's name, which
    opens every network this device is in. */
 .sidebar-head {

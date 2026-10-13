@@ -70,6 +70,10 @@ pub struct Book {
     /// administrator to hand to another account.
     #[serde(default)]
     pub archived: Vec<Project>,
+    /// Conversations being deleted from the members keeping something of
+    /// them (`crate::forget`).
+    #[serde(default)]
+    pub(crate) forgetting: crate::forget::Forgettings,
 }
 
 /// An enrollment token, by the public half of its key.
@@ -121,6 +125,10 @@ pub struct Letters {
     /// The member's last session said it takes a new name the hub gives it.
     #[serde(default)]
     pub renames: bool,
+    /// The member's last session said it deletes what it keeps of a
+    /// conversation when told, and reads the records of that.
+    #[serde(default)]
+    pub forgets: bool,
 }
 
 pub struct Store {
@@ -367,6 +375,7 @@ impl Store {
                 connected_at: None,
                 any_names: false,
                 renames: false,
+                forgets: false,
             };
             self.letters.insert(name.clone(), fresh);
         }
@@ -404,6 +413,40 @@ impl Store {
                     _ => {}
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Drops the letters waiting for the conversation at `conversation`,
+    /// being deleted; says how many. A part of a letter too large for one
+    /// message names nobody, and stays.
+    pub fn drop_letters_for(&mut self, conversation: &fastctx_types::Address) -> io::Result<usize> {
+        use fastctx_types::remote::Letter;
+        let mut dropped = 0;
+        for (_, path) in outbox_entries(&self.dir, &conversation.machine)? {
+            let message: Envelope = read(&path)?;
+            let Ok(body) = message.body::<fastctx_net::message::LetterBody>() else { continue };
+            let to = match &body.letter {
+                Letter::JobFacts { to, .. } | Letter::Notice { to, .. } | Letter::Speak { to, .. } => to,
+                Letter::Fragment { .. } | Letter::Left { .. } => continue,
+            };
+            if *to == conversation.resident {
+                match std::fs::remove_file(&path) {
+                    Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                    _ => dropped += 1,
+                }
+            }
+        }
+        Ok(dropped)
+    }
+
+    /// Forgets which machines were called to work for the conversation at
+    /// `conversation`, deleted.
+    pub fn forget_worked(&mut self, conversation: &fastctx_types::Address) -> io::Result<()> {
+        let before = self.worked.len();
+        self.worked.retain(|(_, worked)| worked != conversation);
+        if before != self.worked.len() {
+            publish(&self.dir.join("worked.json"), &json(&self.worked)?, Permissions::Private)?;
         }
         Ok(())
     }

@@ -14,12 +14,10 @@ use crate::{CallError, Client, Error, World};
 impl World {
     /// The World as it is now.
     pub async fn world_now(&self) -> Result<WorldNow, Error> {
-        let world = match self.ask(Call::WorldNow).await? {
-            Reply::WorldNow(world) => *world,
-            other => return Err(Error::Unexpected(format!("{other:?}"))),
-        };
-        self.forget_removed(&world.who).await?;
-        Ok(world)
+        match self.ask(Call::WorldNow).await? {
+            Reply::WorldNow(world) => Ok(*world),
+            other => Err(Error::Unexpected(format!("{other:?}"))),
+        }
     }
 
     /// Follows the World: the first `next` gives it as it is, each later
@@ -34,13 +32,12 @@ impl World {
                 Watching::Local { client, id }
             }
         };
-        Ok(WorldWatch { world: self.clone(), watching })
+        Ok(WorldWatch { watching })
     }
 }
 
 /// A watch of the World; dropping it ends the watch.
 pub struct WorldWatch {
-    world: World,
     watching: Watching,
 }
 
@@ -97,7 +94,6 @@ impl WorldWatch {
                 }
             },
         };
-        self.world.forget_removed(&now.who).await?;
         Ok(now)
     }
 }

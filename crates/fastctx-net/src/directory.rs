@@ -540,6 +540,11 @@ pub struct View {
     /// would end the session of a member that sent it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub afoot: bool,
+    /// Whether this hub has its members delete what they keep of a
+    /// conversation (`crate::wire::Question::Forget`). Earlier hubs omit
+    /// it, and would end the session of a member that asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forgets: bool,
     /// Where this member reaches the hub now, given by a hub that was moved
     /// to where it runs (`crate::moving`); a hub never moved gives none, and
     /// the member keeps the addresses it logged in with.
@@ -569,6 +574,7 @@ impl View {
             moving: false,
             renames: false,
             afoot: false,
+            forgets: false,
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),
             directory: Directory::default(),

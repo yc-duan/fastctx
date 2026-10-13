@@ -39,7 +39,8 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             | RemoteCall::Stop { .. }
             | RemoteCall::Control { .. }
             | RemoteCall::Manage {
-                action: Management::Remove
+                action: Management::Archive
+                    | Management::Restore
                     | Management::Sleep
                     | Management::Wake
                     | Management::Move { .. }

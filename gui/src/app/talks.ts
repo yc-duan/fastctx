@@ -1,28 +1,49 @@
-// Every conversation, or every one in a project: the list the sidebar opens
-// when it has no room for them all. One line each, as in the sidebar, the
-// most recent first; a search narrows it by name, agent or machine
-// (`world-gui.md`, 界面的结构).
+// Every conversation, or every one in a project, or every one archived: the
+// lists the sidebar opens when it has no room for them all. One line each, as
+// in the sidebar, the most recent first, with the same acts on each row; a
+// search narrows it by name, agent or machine (`world-gui.md`, 界面的结构).
 
+import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { agentName, titleOf } from "../world/names";
 import type { ResidentNow } from "../world/world";
 import { redrawKeepingFocus } from "./focus";
-import type { Place } from "./places";
+import { link, type Place } from "./places";
 import type { Page } from "./shell";
 import { effect } from "./signals";
-import type { Store } from "./store";
-import { conversationsOf, factsByMachine, talkRow } from "./talk-row";
+import { isUnreached, type Store } from "./store";
+import type { TalkActs } from "./talk-acts";
+import { TalkList } from "./talk-list";
+import type { TalkMenu } from "./talk-menu";
+import type { TalkMenuWords } from "./talk-menu-words";
+import { factsByMachine, talkRow, talksOf } from "./talk-row";
 import type { ShellWords } from "./words";
 
 export interface TalksWords {
   title: string;
+  archived: string;
   search: string;
   outside: string;
   none: string;
+  noneArchived: string;
 }
 
-export const zhTalks: TalksWords = { title: "全部对话", search: "搜索对话", outside: "不在项目里", none: "没有对话" };
-export const enTalks: TalksWords = { title: "All conversations", search: "Search conversations", outside: "In no project", none: "No conversations" };
+export const zhTalks: TalksWords = {
+  title: "全部对话",
+  archived: "已归档",
+  search: "搜索对话",
+  outside: "不在项目里",
+  none: "没有对话",
+  noneArchived: "没有归档的对话",
+};
+export const enTalks: TalksWords = {
+  title: "All conversations",
+  archived: "Archived",
+  search: "Search conversations",
+  outside: "In no project",
+  none: "No conversations",
+  noneArchived: "No archived conversations",
+};
 
 export interface TalksOptions {
   store: Store;
@@ -31,7 +52,12 @@ export interface TalksOptions {
   head(title: string, actions?: string): string;
   /** The project whose conversations are listed; all of them when null. */
   town: string | null;
+  /** The archived ones are listed instead. */
+  archived: boolean;
   place(): Place;
+  acts: TalkActs;
+  menu: TalkMenu;
+  menuWords: TalkMenuWords;
 }
 
 export class TalksPage implements Page {
@@ -39,13 +65,15 @@ export class TalksPage implements Page {
   readonly title: string;
   private readonly list: HTMLElement;
   private readonly stop: () => void;
+  /** The rows' menus, presses and renaming. */
+  private readonly talkList: TalkList;
   private query = "";
   private drawn = "";
 
   constructor(private readonly options: TalksOptions) {
     const { words } = options;
     const project = options.town ? (options.store.world.peek()?.towns.find((t) => t.town === options.town)?.record.name ?? options.town) : null;
-    this.title = project ?? words.title;
+    this.title = options.archived ? words.archived : (project ?? words.title);
     this.element = document.createElement("div");
     this.element.className = "talks-page";
     this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`)}
@@ -54,6 +82,16 @@ export class TalksPage implements Page {
         <div class="talks-list"></div>
       </div>`;
     this.list = this.element.querySelector<HTMLElement>(".talks-list")!;
+    this.talkList = new TalkList(this.list, {
+      acts: options.acts,
+      menu: options.menu,
+      menuWords: options.menuWords,
+      reachable: (r) => !isUnreached(r),
+      redraw: () => {
+        this.drawn = "";
+        this.draw();
+      },
+    });
     this.element.querySelector<HTMLInputElement>(".talks-search")!.addEventListener("input", (event) => {
       this.query = (event.target as HTMLInputElement).value.trim().toLowerCase();
       this.draw();
@@ -61,6 +99,7 @@ export class TalksPage implements Page {
     this.stop = effect(() => {
       options.store.world.get();
       options.store.clock.get();
+      options.acts.changed.get();
       this.draw();
     });
   }
@@ -76,15 +115,20 @@ export class TalksPage implements Page {
   }
 
   private draw(): void {
-    const { store, words, shell, town } = this.options;
+    // A name being typed is kept until it is done.
+    if (this.talkList.held) return;
+    const { store, words, shell, town, archived: archivedOnly, acts } = this.options;
     const world = store.world.peek();
     const now = store.clock.peek();
     const place = this.options.place();
     const facts = factsByMachine(world);
-    const talks = conversationsOf(world).filter((r) => (town === null || r.town === town) && this.matches(r));
+    const { listed, archived } = talksOf(world, acts);
+    const talks = (archivedOnly ? archived : listed).filter((r) => (town === null || r.town === town) && this.matches(r));
+    this.talkList.drawing(talks);
+    const row = (r: ResidentNow) => talkRow(r, place, now, facts, shell, this.talkList.rowActs(r));
     let html: string;
-    if (!talks.length) html = `<p class="talks-none">${escape(words.none)}</p>`;
-    else if (town !== null) html = `<ul class="talks">${talks.map((r) => talkRow(r, place, now, facts, shell)).join("")}</ul>`;
+    if (!talks.length) html = `<p class="talks-none">${escape(archivedOnly ? words.noneArchived : words.none)}</p>`;
+    else if (town !== null) html = `<ul class="talks">${talks.map(row).join("")}</ul>`;
     else {
       // A project's conversations together, the project most recently
       // stirred first; those in none last.
@@ -95,13 +139,17 @@ export class TalksPage implements Page {
       html = order
         .map((key) => {
           const name = key ? (known.find((t) => t.town === key)?.record.name ?? key) : words.outside;
-          return `<section class="talks-group"><h2 class="side-group-title">${escape(name)}</h2><ul class="talks">${groups
+          return `<section class="talks-group"><h2 class="side-group-title">${escape(name)}</h2><ul class="talks${archivedOnly ? " archived-talks" : ""}">${groups
             .get(key)!
-            .map((r) => talkRow(r, place, now, facts, shell))
+            .map(row)
             .join("")}</ul></section>`;
         })
         .join("");
     }
+    // Every conversation leads on to the archived ones, where there are any.
+    const shelved = archivedOnly || town !== null ? 0 : archived.length;
+    if (shelved)
+      html += `<a class="talks-archived" href="${link({ kind: "archived" })}">${glyph("archive", 16)}<span>${escape(words.archived)}</span><span class="count">${shelved}</span>${glyph("chevron", 14)}</a>`;
     if (html === this.drawn) return;
     this.drawn = html;
     redrawKeepingFocus(this.list, () => {

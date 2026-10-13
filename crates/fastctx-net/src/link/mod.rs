@@ -114,6 +114,11 @@ pub trait Node: Send + Sync + 'static {
     /// (`Link::afoot`), or the session on now has given its first telling
     /// of it (`Link::afoot_ready`).
     fn afoot_changed(&self) {}
+    /// Deletes what this member keeps of the conversation the hub has it
+    /// forget, and says how that went (`crate::wire::Down::Forget`). The hub
+    /// tells it again at the next session until it says it is done, so it
+    /// may come for what is gone already.
+    fn forget(&self, forgetting: crate::wire::Forgetting) -> BoxFuture<crate::wire::Forgot>;
     /// Lets other computers reach this machine at exactly the TCP `ports`
     /// through its own firewall, as far as the World does that, and says
     /// what it knows of that firewall: this machine takes direct connections
@@ -604,6 +609,58 @@ impl Link {
             self.inner.node.log(format!("asking the hub for the view after a change: {error}"));
         }
         Ok(told)
+    }
+
+    /// The account of this member's logins the conversation of `resident`
+    /// on `machine` works for, as the hub last told what is afoot there.
+    pub fn account_of(
+        &self,
+        machine: &MachineName,
+        resident: &fastctx_types::ResidentId,
+    ) -> Result<AccountName, String> {
+        use fastctx_types::access::Acting;
+        let view = self.view();
+        let mine = view.me().map(|me| me.logins.clone()).unwrap_or_default();
+        let afoot = self.afoot();
+        let told = afoot
+            .iter()
+            .find(|(name, _)| view.directory.same(name, machine))
+            .and_then(|(_, told)| told.seen.residents.get(resident))
+            .ok_or_else(|| format!("{resident} on {machine} is not one this member is told of"))?;
+        let theirs: Vec<AccountName> = match &told.about.acting {
+            // One opened on its machine works for every login there.
+            Acting::Here => {
+                view.member(machine).map(|member| member.logins.iter().cloned().collect()).unwrap_or_default()
+            }
+            Acting::Accounts { accounts } => accounts
+                .iter()
+                .filter(|account| account.hub == self.membership().id)
+                .map(|account| account.account.clone())
+                .collect(),
+        };
+        theirs
+            .into_iter()
+            .find(|account| mine.contains(account))
+            .ok_or_else(|| format!("this member is logged in to no account {resident} works for"))
+    }
+
+    /// Asks the hub to delete the conversation at `conversation`, which
+    /// works for `account`, from every member keeping something of it
+    /// (`Question::Forget`). `Ok(false)`: it could not be asked now, not
+    /// being connected, or the connection ended before the hub answered,
+    /// which leaves whether it took it unknown; asking again is safe, as the
+    /// hub takes one deletion of a conversation for an account once.
+    pub async fn forget(&self, account: &AccountName, conversation: &fastctx_types::Address) -> Result<bool, String> {
+        let Some(connection) = self.inner.connection() else { return Ok(false) };
+        if !self.view().forgets {
+            return Err("the hub runs an earlier Fastctx, which does not delete conversations; update it first".into());
+        }
+        let question = Question::Forget { account: account.clone(), conversation: conversation.clone() };
+        match self.inner.ask_on(connection, question).await? {
+            Some(Told::Done) => Ok(true),
+            Some(other) => Err(format!("the hub answered something other than taking the deletion: {other:?}")),
+            None => Ok(false),
+        }
     }
 }
 

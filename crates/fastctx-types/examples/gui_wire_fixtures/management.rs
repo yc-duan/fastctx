@@ -15,7 +15,8 @@ pub struct Fixtures {
 pub fn fixtures() -> Fixtures {
     let address: fastctx_types::Address = "codex-ab12@desktop".parse().unwrap();
     let actions = [
-        Management::Remove,
+        Management::Archive,
+        Management::Restore,
         Management::Sleep,
         Management::Wake,
         Management::Move { town: Some("project-0".parse().unwrap()) },
@@ -30,7 +31,7 @@ pub fn fixtures() -> Fixtures {
             },
         },
     ];
-    let calls = actions
+    let mut calls: Vec<Call> = actions
         .iter()
         .map(|action| Call::Manage {
             resident: address.resident.clone(),
@@ -38,6 +39,7 @@ pub fn fixtures() -> Fixtures {
             action: action.clone(),
         })
         .collect();
+    calls.push(Call::Forget { resident: address.resident.clone(), machine: address.machine.clone() });
     let remote_calls =
         actions.into_iter().map(|action| RemoteCall::Manage { resident: address.resident.clone(), action }).collect();
     let state = |outcome, activity, detail: &str| Managed {
@@ -79,6 +81,10 @@ pub fn fixtures() -> Fixtures {
         replies: results
             .iter()
             .map(|managed| Reply::Managed { resident: address.clone(), managed: managed.clone() })
+            .chain(
+                [Forgetting::Deleted, Forgetting::Asked, Forgetting::Queued]
+                    .map(|how| Reply::Forgetting { resident: address.clone(), how }),
+            )
             .collect(),
         remote_replies: results.into_iter().map(RemoteReply::Managed).collect(),
     }

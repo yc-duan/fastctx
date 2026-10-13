@@ -110,8 +110,9 @@ impl Connection {
                 #[cfg(not(target_os = "android"))]
                 let world = {
                     let open = if cfg!(mobile) { Device::open_managed } else { Device::open };
-                    let device = open(directory.join("device")).map_err(|error| error.to_string())?;
-                    World::from_device(device).keeping(kept(directory)?)
+                    let cache = kept(directory)?;
+                    let device = open(directory.join("device"), cache.clone()).map_err(|error| error.to_string())?;
+                    World::from_device(device).keeping(cache)
                 };
                 #[cfg(target_os = "android")]
                 let world = crate::android::world()?;

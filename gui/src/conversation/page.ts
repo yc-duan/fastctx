@@ -99,6 +99,14 @@ export interface PageOptions {
     /** Resolves with what was not done of it, in the user's words. */
     set(focus: Focus): Promise<string[]>;
   };
+  /** What the user does to the conversation, from the "⋯" in its head
+   *  (`app/talk-menu.ts`): opening that menu, and bringing it back when it
+   *  is archived. */
+  manage?: {
+    words: { more: string; archived: string; restore: string; deleted: string };
+    open(anchor: HTMLElement): void;
+    restore(): void;
+  };
   /** What the World knows of the agent, shown in a card opened from the
    *  head, and how to ask for it. */
   details?: {
@@ -211,7 +219,11 @@ export class ConversationPage {
       </div>`,
         `<button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
           options.details
-            ? `<button class="icon-button details-toggle" type="button" aria-expanded="false" aria-label="${escape(options.details.label)}" title="${escape(options.details.label)}">${glyph("more", 20)}</button>`
+            ? `<button class="icon-button details-toggle" type="button" aria-expanded="false" aria-label="${escape(options.details.label)}" title="${escape(options.details.label)}">${glyph("info", 18)}</button>`
+            : ""
+        }${
+          options.manage
+            ? `<button class="icon-button talk-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(options.manage.words.more)}">${glyph("more", 20)}</button>`
             : ""
         }`,
       )}
@@ -284,6 +296,14 @@ export class ConversationPage {
         this.rename();
       }
     });
+    if (options.manage) {
+      const { manage } = options;
+      const toggle = this.element.querySelector<HTMLButtonElement>(".talk-menu-toggle")!;
+      toggle.addEventListener("click", () => manage.open(toggle));
+      this.element.querySelector(".composer-gone")!.addEventListener("click", (event) => {
+        if ((event.target as HTMLElement).closest(".composer-restore")) manage.restore();
+      });
+    }
     if (options.details) {
       const { card } = options.details;
       this.element.append(card.element);
@@ -1026,6 +1046,11 @@ export class ConversationPage {
 
   private renaming = false;
 
+  /** Renames the conversation in its title, as from its "⋯". */
+  startRename(): void {
+    this.rename();
+  }
+
   /** Renames the conversation: its title becomes a field, Enter keeps the
    *  new name, Escape or leaving it keeps the old. */
   private rename(): void {
@@ -1548,19 +1573,27 @@ export class ConversationPage {
     this.jobs.update(jobs, now);
   }
 
-  private away: "removed" | null = null;
+  private away: "removed" | "deleted" | null = null;
 
-  /** Whether the World holds it asleep, or the user removed it, as the
-   *  World last listed it. Removed, it is kept to read: the composer
-   *  gives way to a line saying so, since words no longer reach it. */
-  presence(away: "removed" | null): void {
+  /** Whether the user archived it, or deleted it, as the World last listed
+   *  it. Archived, it is kept to read and can be brought back where the
+   *  composer was; deleted, what is shown is all that is left of it here. */
+  presence(away: "removed" | "deleted" | null): void {
     if (this.away === away) return;
     this.away = away;
-    const removed = away === "removed";
-    this.element.querySelector<HTMLElement>(".composer")!.hidden = removed;
+    this.element.querySelector<HTMLElement>(".composer")!.hidden = away !== null;
     const gone = this.element.querySelector<HTMLElement>(".composer-gone")!;
-    gone.hidden = !removed;
-    gone.textContent = removed ? this.options.words.removedNote : "";
+    gone.hidden = away === null;
+    const manage = this.options.manage;
+    gone.innerHTML =
+      away === "removed"
+        ? manage
+          ? `${glyph("archive", 16)}<span>${escape(manage.words.archived)}</span><button class="text-button composer-restore" type="button">${glyph("unarchive", 16)}<span>${escape(manage.words.restore)}</span></button>`
+          : escape(this.options.words.removedNote)
+        : away === "deleted"
+          ? `${glyph("trash", 16)}<span>${escape(manage?.words.deleted ?? this.options.words.removedNote)}</span>`
+          : "";
+    this.element.querySelector<HTMLElement>(".talk-menu-toggle")?.toggleAttribute("hidden", away === "deleted");
     this.drawState();
     this.drawFocus();
   }
@@ -1673,7 +1706,7 @@ export class ConversationPage {
     const strip = this.element.querySelector<HTMLElement>(".focus-strip");
     if (!words || !strip) return;
     const focus = this.options.someone.focus;
-    strip.hidden = !focus || this.away === "removed";
+    strip.hidden = !focus || this.away !== null;
     if (!focus) return;
     const chip = strip.querySelector<HTMLButtonElement>(".focus-chip")!;
     const summary = focusSummary(focus, words);
@@ -1742,13 +1775,16 @@ export class ConversationPage {
       this.name.removeAttribute("tabindex");
       this.name.removeAttribute("title");
     }
-    const waiting = !this.gone && conversation.waiting();
+    // Archived or deleted, it is not said to work or wait.
+    const waiting = !this.gone && this.away === null && conversation.waiting();
     // Working for the whole of a turn, not only while something shows.
-    const working = !this.gone && !waiting && conversation.busy();
+    const working = !this.gone && this.away === null && !waiting && conversation.busy();
     const now =
       this.gone ??
-      (this.away === "removed"
-        ? words.removed
+      (this.away !== null
+        ? this.away === "deleted"
+          ? (this.options.manage?.words.deleted ?? words.removed)
+          : words.removed
         : waiting
           ? words.waitingForYou
           : working

@@ -1009,6 +1009,19 @@ impl fastctx_net::link::Node for Handler {
         }
     }
 
+    fn forget(
+        &self,
+        forgetting: fastctx_net::wire::Forgetting,
+    ) -> fastctx_net::link::BoxFuture<fastctx_net::wire::Forgot> {
+        let (node, hub) = (self.node.upgrade(), self.hub.clone());
+        Box::pin(async move {
+            match node {
+                Some(node) => crate::forget::told(&node, &hub, forgetting).await,
+                None => fastctx_net::wire::Forgot::Failed { reason: "the node is stopping".to_string() },
+            }
+        })
+    }
+
     fn open_ports(&self, ports: &std::collections::BTreeSet<u16>) -> Result<fastctx_net::wire::Firewall, String> {
         crate::firewall::open(&self.hub, ports)
     }

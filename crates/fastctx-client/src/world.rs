@@ -211,10 +211,7 @@ impl World {
     /// caller in none; with `all`, also those who are not here.
     pub async fn who(&self, town: Option<TownName>, all: bool) -> Result<WorldWho, Error> {
         match self.ask(Call::Who { all, town, since: None }).await? {
-            Reply::Who(who) => {
-                self.forget_removed(&who).await?;
-                Ok(who)
-            }
+            Reply::Who(who) => Ok(who),
             other => Err(unexpected(other)),
         }
     }

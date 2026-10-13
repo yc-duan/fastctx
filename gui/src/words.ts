@@ -151,7 +151,7 @@ export interface Words {
    *  reason follows as it was given. */
   startFailed: string;
   idle: string;
-  /** The user removed it from the World: kept to read, not to speak to. */
+  /** The user archived it: kept to read, not to speak to. */
   removed: string;
   removedNote: string;
   waitingForYou: string;
@@ -400,8 +400,8 @@ export const zh: Words = {
   starting: "启动中",
   startFailed: "启动失败",
   idle: "空闲",
-  removed: "已移除",
-  removedNote: "已移除，对话仅供查看",
+  removed: "已归档",
+  removedNote: "已归档，对话仅供查看",
   waitingForYou: "等待回复",
   on: (machine) => machine,
   assistFrom: (owner) => `来自 ${owner}`,
@@ -645,8 +645,8 @@ export const en: Words = {
   starting: "Starting",
   startFailed: "Couldn't start",
   idle: "Idle",
-  removed: "Removed",
-  removedNote: "Removed; the conversation is read-only",
+  removed: "Archived",
+  removedNote: "Archived; the conversation is read-only",
   waitingForYou: "Waiting for your reply",
   on: (machine) => machine,
   assistFrom: (owner) => `from ${owner}`,

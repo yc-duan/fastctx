@@ -54,6 +54,7 @@ import { Tokens } from "./app/tokens";
 import { NewTalk } from "./app/new-talk";
 import { enModelPanel, zhModelPanel } from "./conversation/model-panel";
 import "./app/new-talk.css";
+import "./app/talk-menu.css";
 import "./app/focus-panel.css";
 import "./app/folder-walk.css";
 import { Palette, type PaletteItem } from "./app/palette";
@@ -71,7 +72,13 @@ import { specimenCache, specimenData } from "./specimen/data";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { effect, signal } from "./app/signals";
-import { addressOf, createStore, jobsOf, residentAt, residentsOf, sameAddress } from "./app/store";
+import { addressOf, createStore, isUnreached, jobsOf, residentAt, residentsOf, sameAddress, unreachedOf } from "./app/store";
+import { TalkActs } from "./app/talk-acts";
+import { TalkMenu } from "./app/talk-menu";
+import { enTalkMenu, zhTalkMenu } from "./app/talk-menu-words";
+import { TalkToast } from "./app/talk-toast";
+import type { Controlled } from "./world/control";
+import { escape as escapeText } from "./conversation/prose";
 import {
   enComposer,
   enConsent,
@@ -100,7 +107,7 @@ import { loginsOf, type AccountChange, type Login } from "./world/accounts";
 import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
-import { Details, type Manage } from "./conversation/details";
+import { Details } from "./conversation/details";
 import { ComposerSession } from "./conversation/composer";
 import { attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
 import { specimenComposer } from "./specimen/composer";
@@ -142,7 +149,7 @@ import { applyTheme, chooseTheme, currentTheme, themes } from "./theme";
 import { Confirm } from "./app/confirm";
 import { showPathNotice } from "./app/path-notice";
 import { PageScreen } from "./pages/view";
-import { manage as manageResident, type Management } from "./world/management";
+import { forgetConversation, manage as manageResident, type Forgetting, type Managed, type Management } from "./world/management";
 import { FileSearch } from "./world/file-search";
 import { configurePhone, onPhone, phoneSeam, routeActivations } from "./app/phone";
 import { renewalState, renewHere, renewGuardianHere, type VersionMismatch } from "./world/renewal";
@@ -268,7 +275,7 @@ let place: Place = { kind: "home" };
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
-  return ["feature", "data", "admin", "network", "journal", "page", "file", "login", "talks", "machine"].includes(at.kind);
+  return ["feature", "data", "admin", "network", "journal", "page", "file", "login", "talks", "archived", "machine"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -286,6 +293,8 @@ function parentOf(at: Place): Place {
     case "journal":
     case "page":
       return { kind: "project", town: at.town };
+    case "archived":
+      return { kind: "talks", town: null };
     default:
       return { kind: "home" };
   }
@@ -309,6 +318,8 @@ function placeName(at: Place): string {
       return shellWords.account;
     case "project":
       return at.town;
+    case "talks":
+      return at.town ?? (english ? enTalks : zhTalks).title;
     default:
       return "";
   }
@@ -568,11 +579,133 @@ const journalForm = new JournalForm({
   },
 });
 
+/** What the user does to conversations from their "⋯", and the line that
+ *  says what was just done (`app/talk-acts.ts`). */
+const talkMenuWords = english ? enTalkMenu : zhTalkMenu;
+const talkToast = new TalkToast({ undo: talkMenuWords.undo }, () => shell.footBox());
+const talkActs = new TalkActs({
+  words: talkMenuWords,
+  manage: (address, action) => (live ? manageResident(address, action) : specimenManaged(address, action)),
+  rename: (address, name) => (live ? control(address, { do: "rename", name }) : specimenRenamed(address, name)),
+  forget: (address) => (live ? forgetConversation(address) : specimenForgot(address)),
+  say: (text, options) => talkToast.say(text, options),
+  refresh: () => void store.refresh(),
+});
+const talkMenu = new TalkMenu({
+  words: talkMenuWords,
+  acts: talkActs,
+  towns: townsOn,
+  reachable: (r) => !isUnreached(r),
+  askDelete: (r, then) => askForget(r, then),
+});
+effect(() => {
+  const now = store.world.get();
+  talkActs.settle((address) => listedAt(now, address));
+});
+
+/** A conversation as the World lists it, archived or not, as its machine
+ *  last answered when it is away. */
+function listedAt(world: WorldNow | null, address: Address): ResidentNow | null {
+  return [...residentsOf(world, true), ...unreachedOf(world, true)].find((r) => r.about.id === address.resident && r.about.machine === address.machine) ?? null;
+}
+
+const forgetConfirm = new Confirm({ close: talkMenuWords.cancel, working: talkMenuWords.working, failed: talkMenuWords.failed });
+
+/** Asks before a conversation is deleted everywhere: what goes, and that it
+ *  is stopped first or deleted once its machine is back where so; `then`
+ *  once it is asked. */
+function askForget(r: ResidentNow, then?: () => void): void {
+  const words = talkMenuWords;
+  const shown = talkActs.view(r);
+  const agent = agentName(r.about.host.agent);
+  const name = titleOf(shown) ?? `${agent} · ${r.about.machine}`;
+  const working = !isUnreached(r) && (r.now?.activity === "busy" || !!r.now?.turn);
+  const also = [working ? words.deleteWorking : "", isUnreached(r) ? words.deleteAway(r.about.machine) : ""].filter(Boolean);
+  forgetConfirm.ask({
+    title: words.deleteTitle(name),
+    what: words.deleteWhat,
+    fields: `<ul class="forget-parts">${words.deleteParts(words.hostRecord(r.about.host.agent)).map((part) => `<li>${escapeText(part)}</li>`).join("")}</ul>${also.length ? `<p class="forget-also">${escapeText(also.join(" "))}</p>` : ""}`,
+    go: words.deleteGo,
+    act: async () => talkActs.delete(r),
+    done: () => then?.(),
+  });
+}
+
+/** A conversation page's "⋯": the conversation as the World lists it now,
+ *  renamed in the page's own title; deleted, the page is left for the front
+ *  page. */
+function talkManage(address: Address, page: () => ConversationPage) {
+  return {
+    words: { more: talkMenuWords.more, archived: talkMenuWords.archivedNote, restore: talkMenuWords.restore, deleted: talkMenuWords.deletedNote },
+    open: (anchor: HTMLElement) => {
+      const r = listedAt(store.world.peek(), address);
+      if (r) talkMenu.open(r, { anchor, rename: () => page().startRename(), deleted: () => replacePlace(link({ kind: "home" })) });
+    },
+    restore: () => {
+      const r = listedAt(store.world.peek(), address);
+      if (r) talkActs.restore(r);
+    },
+  };
+}
+
+/** Whether the conversation at `address` is archived or gone, as the World
+ *  and what the user did to it say; `listed` is whether it was ever listed
+ *  while its page was open, so a page opened before the World answered is
+ *  not taken for one deleted. */
+function presenceOf(world: WorldNow | null, address: Address, listed: { ever: boolean }): "removed" | "deleted" | null {
+  const r = listedAt(world, address);
+  if (!r) return listed.ever ? "deleted" : null;
+  listed.ever = true;
+  return talkActs.view(r).removed ? "removed" : null;
+}
+
+/** A specimen's conversations take what is done to them after a moment,
+ *  as a machine would, and are listed so. */
+function specimenActOn(address: Address, change: (r: ResidentNow) => ResidentNow | null): Promise<void> {
+  return new Promise((resolve) =>
+    setTimeout(() => {
+      for (const machine of specimen.world.who.machines) {
+        if (machine.kind !== "answered" || machine.reply.machine !== address.machine) continue;
+        machine.reply.residents = machine.reply.residents.flatMap((r) => {
+          if (r.about.id !== address.resident) return [r];
+          const changed = change(r);
+          return changed ? [changed] : [];
+        });
+      }
+      resolve();
+    }, 700),
+  );
+}
+
+async function specimenManaged(address: Address, action: Management): Promise<Managed> {
+  await specimenActOn(address, (r) => {
+    if (action.do === "remove") return { ...r, removed: new Date().toISOString() };
+    if (action.do === "restore") return { ...r, removed: null };
+    if (action.do === "move") return { ...r, town: action.town };
+    return r;
+  });
+  const now = residentAt(specimen.world, address);
+  return { removed: now?.removed ?? null, town: now?.town ?? null, activity: now?.now?.activity ?? null, steps: [], notification: null };
+}
+
+async function specimenRenamed(address: Address, name: string): Promise<Controlled> {
+  await specimenActOn(address, (r) => (r.now ? { ...r, now: { ...r.now, title: name } } : r));
+  return { kind: "done", said: null };
+}
+
+async function specimenForgot(address: Address): Promise<Forgetting> {
+  await specimenActOn(address, () => null);
+  return "asked";
+}
+
 const shell = new Shell({
   store,
   words: shellWords,
   newTalk: () => beginTalk(place.kind === "project" || place.kind === "new" ? place.town : null),
   newProject: (login) => projectForm.open(null, login),
+  acts: talkActs,
+  menu: talkMenu,
+  menuWords: talkMenuWords,
 });
 document.getElementById("app")!.append(shell.element);
 
@@ -598,7 +731,15 @@ const seen = {
 };
 
 function stateOf(world: WorldNow, away: Away | null): WorldState {
-  return { here: world.here, machines: world.who.machines, others: world.who.others ?? [], nodes: machinesOf(world), towns: world.towns, away };
+  return {
+    here: world.here,
+    machines: world.who.machines,
+    known: [...residentsOf(world, true), ...unreachedOf(world, true)],
+    others: world.who.others ?? [],
+    nodes: machinesOf(world),
+    towns: world.towns,
+    away,
+  };
 }
 
 /** The parts of the World's present whose change leaves something behind
@@ -678,10 +819,10 @@ function exported(conversation: Conversation, someone: Someone): () => Promise<s
     });
 }
 
-/** "Claude · laptop" for a resident the World answered with; its id
- *  where it did not. */
+/** "Claude · laptop" for a resident the World knows, archived or away; its
+ *  id where it does not. */
 function someoneAt(address: Address): string {
-  const known = residentsOf(store.world.peek()).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
+  const known = listedAt(store.world.peek(), address);
   return known ? shellWords.someone(agentName(known.about.host.agent), known.about.machine) : `${address.resident} · ${address.machine}`;
 }
 
@@ -702,7 +843,6 @@ function detailsOf(address: Address, look: () => Promise<ResidentDetail | null>,
           ? undefined
           : () => new Promise<void>((resolve) => setTimeout(resolve, 2400)),
       markdown,
-      manage: live ? liveManage(address) : specimenManage(),
       logins: loginsOn,
       assistFrom: (r) => {
         const assistant = assistantOf(store.world.peek(), r);
@@ -792,43 +932,6 @@ function townsOn(machine: string): { town: string; name: string }[] {
   return (store.world.peek()?.towns ?? [])
     .filter((town) => town.record.machines.includes(machine))
     .map((town) => ({ town: town.town, name: town.record.name }));
-}
-
-/** Managing an agent for the user: each act is the World's, and whatever
- *  stage of it was not done is said in the card. */
-function liveManage(address: Address): Manage {
-  const act = async (action: Management) => {
-    const managed = await manageResident(address, action);
-    void store.refresh();
-    return managed.steps
-      .filter((step): step is typeof step & { outcome: "pending" | "unsupported" | "failed" } => step.outcome !== "done")
-      .map((step) => detailsWords.unfinished(step.stage, step.outcome, step.detail));
-  };
-  return {
-    move: (town) => act({ do: "move", town }),
-    remove: () => act({ do: "remove" }),
-    towns: townsOn,
-    removed: () => {
-      replacePlace(link({ kind: "home" }));
-    },
-  };
-}
-
-/** A specimen's agent can be managed only to look at: each act says it is
- *  a specimen, after a moment. */
-function specimenManage(): Manage {
-  const refuse = () =>
-    new Promise<string[]>((_, reject) =>
-      setTimeout(() => reject(new Error(english ? "this is a specimen" : "这是样例，没有连着世界")), 700),
-    );
-  return {
-    move: refuse,
-    remove: refuse,
-    towns: townsOn,
-    removed: () => {
-      replacePlace(link({ kind: "home" }));
-    },
-  };
 }
 
 /** The machines page's drawing of `world`, as a picture on another page:
@@ -953,7 +1056,7 @@ function specimenTalk(address: Address): KeepablePage {
     };
   }
   const known = residentsOf(specimen.world).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
-  const page = new ConversationPage({
+  const page: ConversationPage = new ConversationPage({
     words,
     here: sample.here,
     someone: {
@@ -1014,6 +1117,7 @@ function specimenTalk(address: Address): KeepablePage {
         transport: specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : []),
       }),
     files: { words: composerWords.files, find: specimenFiles },
+    manage: talkManage(address, () => page),
     details: detailsOf(address, async () =>
       known
         ? {
@@ -1092,6 +1196,13 @@ function specimenTalk(address: Address): KeepablePage {
       else playLater(sample.later, sample.rate ?? 0, take);
     }
   }
+  // Archived or deleted from its "⋯", as a live page follows it.
+  const listedEver = { ever: false };
+  const following = effect(() => {
+    const now = store.world.get();
+    talkActs.changed.get();
+    if (!left) page.presence(presenceOf(now, address, listedEver));
+  });
   return {
     element: page.element,
     title: sample.title,
@@ -1100,6 +1211,7 @@ function specimenTalk(address: Address): KeepablePage {
     leave() {
       left = true;
       runningJobs();
+      following();
       page.leave();
     },
   };
@@ -1220,6 +1332,7 @@ function liveTalk(address: Address): KeepablePage {
         };
       })(),
     },
+    manage: talkManage(address, () => page),
     details: detailsOf(address, async () => {
       const [found] = await look([address.resident]);
       const there = found?.found.find(
@@ -1319,6 +1432,7 @@ function liveTalk(address: Address): KeepablePage {
   // reading the conversation again: named once listed, as one just started;
   // its project and model as they change; asleep or not.
   let shown = listed;
+  const listedEver = { ever: false };
   const named = !world
     ? effect(() => {
         if (!store.world.get()) return;
@@ -1330,10 +1444,11 @@ function liveTalk(address: Address): KeepablePage {
       })
     : effect(() => {
         const now = store.world.get();
+        talkActs.changed.get();
+        if (!left) page.presence(presenceOf(now, address, listedEver));
         const known = residentAt(now, address);
         const who = someoneOf(now, address);
         if (!known || !who || left) return;
-        page.presence(known.removed ? "removed" : null);
         if (shown && who.agent === shown.agent && who.project === shown.project && who.model === shown.model && JSON.stringify(who.focus) === JSON.stringify(shown.focus)) return;
         shown = who;
         page.identify(who);
@@ -1618,7 +1733,19 @@ function show(next: Place): void {
       });
       break;
     case "talks":
-      page = new TalksPage({ store, words: english ? enTalks : zhTalks, shell: shellWords, head, town: next.town, place: () => place });
+    case "archived":
+      page = new TalksPage({
+        store,
+        words: english ? enTalks : zhTalks,
+        shell: shellWords,
+        head,
+        town: next.kind === "talks" ? next.town : null,
+        archived: next.kind === "archived",
+        place: () => place,
+        acts: talkActs,
+        menu: talkMenu,
+        menuWords: talkMenuWords,
+      });
       break;
     case "features":
     case "feature":

@@ -19,7 +19,7 @@ use std::collections::{BTreeSet, HashMap};
 use fastctx_net::directory::Directory;
 use fastctx_net::wire::Down;
 use fastctx_types::town::{Afoot, AfootChange, AfootJob, AfootResident, AfootSeen};
-use fastctx_types::{AccountName, MachineName};
+use fastctx_types::{AccountName, MachineName, ResidentId};
 
 use crate::{Hub, Out};
 
@@ -57,6 +57,14 @@ pub(crate) fn settle(hub: &Hub) {
     tell(hub, None);
 }
 
+/// The accounts the conversation at `conversation` works for, as its
+/// machine last told: `None` when it told nothing of it.
+pub(crate) fn accounts_of(hub: &Hub, conversation: &fastctx_types::Address) -> Option<Vec<AccountName>> {
+    let afoots = hub.afoots();
+    let resident = afoots.told.get(&conversation.machine)?.residents.get(&conversation.resident)?;
+    Some(resident.accounts.clone())
+}
+
 /// Tells each member reading what is afoot what changed of `only`, or of
 /// every machine.
 fn tell(hub: &Hub, only: Option<&MachineName>) {
@@ -68,7 +76,10 @@ fn tell(hub: &Hub, only: Option<&MachineName>) {
         .filter(|(_, session)| session.afoot)
         .map(|(name, session)| (name.clone(), session.generation, session.out.clone()))
         .collect();
-    let directory = hub.store().book.directory.clone();
+    let (directory, hidden) = {
+        let store = hub.store();
+        (store.book.directory.clone(), crate::forget::hidden(&store))
+    };
     let mut afoots = hub.afoots();
     let Afoots { told, shown } = &mut *afoots;
     // A machine's last stays while it is on the hub under that name.
@@ -89,7 +100,8 @@ fn tell(hub: &Hub, only: Option<&MachineName>) {
             if *machine == reader {
                 continue;
             }
-            let now = sees(&directory, &logins, machine).then(|| seen(&directory, &logins, machine, &told[machine]));
+            let now = sees(&directory, &logins, machine)
+                .then(|| seen(&directory, &logins, machine, &told[machine], hidden.get(machine)));
             let (change, busy) = match (shown.machines.get(machine), &now) {
                 (None, None) => continue,
                 (None, Some(now)) => (now.afoot.whole(), now.busy),
@@ -134,19 +146,29 @@ fn sees(directory: &Directory, logins: &BTreeSet<AccountName>, machine: &Machine
     })
 }
 
-/// What a member logged in to `logins` may see of what is afoot on `machine`.
-fn seen(directory: &Directory, logins: &BTreeSet<AccountName>, machine: &MachineName, afoot: &Afoot) -> Seen {
+/// What a member logged in to `logins` may see of what is afoot on `machine`;
+/// of the conversations being deleted there (`hidden`), nothing.
+fn seen(
+    directory: &Directory,
+    logins: &BTreeSet<AccountName>,
+    machine: &MachineName,
+    afoot: &Afoot,
+    hidden: Option<&BTreeSet<ResidentId>>,
+) -> Seen {
     let theirs = |accounts: &[AccountName]| accounts.iter().any(|account| logins.contains(account));
+    let shown = |id: &ResidentId| hidden.is_none_or(|hidden| !hidden.contains(id));
     let owner =
         directory.member(machine).and_then(|member| member.home.as_ref()).is_some_and(|home| logins.contains(home));
     let mut seen = Seen::default();
     for (id, resident) in &afoot.residents {
-        if theirs(&resident.accounts) {
+        if theirs(&resident.accounts) && shown(id) {
             seen.afoot.residents.insert(id.clone(), resident.resident.clone());
         }
     }
     for (id, job) in &afoot.jobs {
-        if theirs(&job.accounts) {
+        let of_hidden =
+            job.job.owner.resident().is_some_and(|owner| owner.machine == *machine && !shown(&owner.resident));
+        if theirs(&job.accounts) && !of_hidden {
             seen.afoot.jobs.insert(id.clone(), job.job.clone());
         }
     }
@@ -155,7 +177,9 @@ fn seen(directory: &Directory, logins: &BTreeSet<AccountName>, machine: &Machine
     seen.busy = owner.then(|| {
         let counted = afoot
             .residents
-            .values()
+            .iter()
+            .filter(|(id, _)| shown(id))
+            .map(|(_, resident)| resident)
             .filter(|resident| resident.resident.in_progress())
             .filter(|resident| resident.accounts.iter().any(|account| directory.rights(account, machine).hands))
             .count();

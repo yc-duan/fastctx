@@ -42,6 +42,7 @@ mod file_read;
 mod file_search;
 mod firewall;
 mod focus;
+mod forget;
 mod gates;
 mod gather;
 pub mod handoff;
@@ -173,6 +174,8 @@ pub(crate) struct Node {
     shown: tokio::sync::watch::Sender<u64>,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
+    /// Deletions of conversations still to be asked of hubs (`forget`).
+    forget_asks: forget::Asks,
     /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: tokio::sync::Mutex<()>,
     /// Held while a town's record or journals are written from here, from
@@ -511,6 +514,7 @@ pub async fn run_prepared(
         views: tokio::sync::watch::channel(0).0,
         shown: tokio::sync::watch::channel(0).0,
         facts: facts::Facts::default(),
+        forget_asks: forget::Asks::default(),
         syncing: tokio::sync::Mutex::new(()),
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),
@@ -581,6 +585,7 @@ pub async fn run_prepared(
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
     afoot::start(&node);
+    forget::start(&node);
     let jobs_node = node.clone();
     tokio::spawn(async move {
         let mut again = again::Again::default();

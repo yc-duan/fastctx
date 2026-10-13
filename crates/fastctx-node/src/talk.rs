@@ -808,6 +808,21 @@ pub async fn stop_here(node: &Arc<Node>, resident: &ResidentId) -> Result<bool, 
     }
 }
 
+/// Stops the turn the resident `id` of this machine runs, if it runs one,
+/// and waits for that turn to end as turns end, from its host.
+pub async fn stop_and_wait(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let mut changes = node.residents.changes();
+    let running = |node: &Node| node.residents.now(id).is_some_and(|now| now.turn.is_some());
+    if !running(node) {
+        return Ok(());
+    }
+    stop_here(node, id).await?;
+    while running(node) {
+        changes.changed().await.map_err(|_| Failure::new("the node is stopping"))?;
+    }
+    Ok(())
+}
+
 /// Which machine the resident `id` lives on: this one when it lives here,
 /// otherwise whichever says it does.
 async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<MachineName, Failure> {

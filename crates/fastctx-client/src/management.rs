@@ -1,7 +1,9 @@
 //! The user's management actions, identical for local and device clients.
+//! An archived conversation keeps everything, the copy this device kept of
+//! it included; a deleted one is forgotten on each machine and device as
+//! its hub tells it (`fastctx_net::wire::Down::Forget`).
 
-use fastctx_types::management::{Managed, Management};
-use fastctx_types::town::{MachineWho, WorldWho};
+use fastctx_types::management::{Forgetting, Managed, Management};
 use fastctx_types::{Address, Call, MachineName, Reply, ResidentId, TownName};
 
 use crate::{Error, World};
@@ -14,22 +16,37 @@ impl World {
         action: Management,
     ) -> Result<(Address, Managed), Error> {
         match self.ask(Call::Manage { resident, machine, action }).await? {
-            Reply::Managed { resident, managed } => {
-                if managed.removed.is_some() {
-                    self.forget(vec![resident.clone()]).await?;
-                }
-                Ok((resident, managed))
-            }
+            Reply::Managed { resident, managed } => Ok((resident, managed)),
             reply => Err(Error::Unexpected(format!("{reply:?}"))),
         }
     }
 
-    pub async fn remove(
+    /// Takes the conversation out of the list into the archived ones; its
+    /// turn, if it runs one, is stopped first.
+    pub async fn archive(
         &self,
         resident: ResidentId,
         machine: Option<MachineName>,
     ) -> Result<(Address, Managed), Error> {
-        self.manage(resident, machine, Management::Remove).await
+        self.manage(resident, machine, Management::Archive).await
+    }
+
+    /// Brings an archived conversation back where it was.
+    pub async fn restore(
+        &self,
+        resident: ResidentId,
+        machine: Option<MachineName>,
+    ) -> Result<(Address, Managed), Error> {
+        self.manage(resident, machine, Management::Restore).await
+    }
+
+    /// Deletes the conversation from every machine and device keeping
+    /// something of it.
+    pub async fn forget_conversation(&self, resident: ResidentId, machine: MachineName) -> Result<Forgetting, Error> {
+        match self.ask(Call::Forget { resident, machine }).await? {
+            Reply::Forgetting { how, .. } => Ok(how),
+            reply => Err(Error::Unexpected(format!("{reply:?}"))),
+        }
     }
 
     pub async fn sleep(&self, resident: ResidentId, machine: Option<MachineName>) -> Result<(Address, Managed), Error> {
@@ -47,41 +64,5 @@ impl World {
         town: Option<TownName>,
     ) -> Result<(Address, Managed), Error> {
         self.manage(resident, machine, Management::Move { town }).await
-    }
-
-    /// Lets go of what this device keeps of the conversations `who` lists
-    /// as removed, whichever device removed them. Machines that did not
-    /// answer say nothing either way.
-    pub(crate) async fn forget_removed(&self, who: &WorldWho) -> Result<(), Error> {
-        let removed: Vec<Address> = who
-            .machines
-            .iter()
-            .filter_map(|machine| match machine {
-                MachineWho::Answered { reply } => Some(reply),
-                MachineWho::Offline { .. } | MachineWho::NoAnswer { .. } => None,
-            })
-            .flat_map(|reply| {
-                reply
-                    .residents
-                    .iter()
-                    .filter(|resident| resident.removed.is_some())
-                    .map(|resident| Address { machine: reply.machine.clone(), resident: resident.about.id.clone() })
-            })
-            .collect();
-        self.forget(removed).await
-    }
-
-    /// A conversation removed or deleted is not kept here either
-    /// (`world-gui.md`, 对话).
-    async fn forget(&self, addresses: Vec<Address>) -> Result<(), Error> {
-        let Some(cache) = self.cache().cloned() else { return Ok(()) };
-        if addresses.is_empty() {
-            return Ok(());
-        }
-        tokio::task::spawn_blocking(move || addresses.iter().try_for_each(|address| cache.forget(address)))
-            .await
-            .map_err(std::io::Error::other)
-            .and_then(|forgot| forgot)
-            .map_err(Error::Kept)
     }
 }

@@ -28,6 +28,8 @@ export type Place =
   /** Every conversation, or every one in a project: the ones the sidebar
    *  has no room for among them. */
   | { kind: "talks"; town: string | null }
+  /** Every conversation the user archived, to look back at or restore. */
+  | { kind: "archived" }
   | { kind: "settings" }
   /** What World keeps on this computer, and deleting it. */
   | { kind: "data" }
@@ -72,6 +74,8 @@ export function link(place: Place): string {
       return `#/feature/${place.feature}`;
     case "talks":
       return place.town === null ? "#/talks" : `#/talks/${part(place.town)}`;
+    case "archived":
+      return "#/archived";
     case "settings":
       return "#/settings";
     case "data":
@@ -127,6 +131,8 @@ export function placeOf(hash: string): Place {
       return { kind: "features" };
     case "talks":
       return { kind: "talks", town: parts[1] || null };
+    case "archived":
+      return { kind: "archived" };
     case "settings":
       return { kind: "settings" };
     case "data":

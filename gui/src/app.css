@@ -148,16 +148,34 @@
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
 }
 
-/* Removed from the World: a quiet line where the composer was. */
+/* Archived or deleted: a quiet slip where the composer was, saying so, and
+   the way back for one archived. */
 .composer-gone {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   max-width: var(--column);
+  min-height: 52px;
   margin: 0 auto;
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--hairline);
-  font-size: var(--size-small);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+  font-size: var(--size-ui);
   line-height: var(--leading-ui);
+  color: var(--text-2);
+}
+
+.composer-gone[hidden] {
+  display: none;
+}
+
+.composer-gone > .glyph {
+  flex: none;
   color: var(--text-3);
-  text-align: center;
+}
+
+.composer-gone .composer-restore {
+  margin-left: auto;
 }
 
 .composer textarea {
@@ -468,30 +486,6 @@
 .details-note {
   font-size: var(--size-small);
   color: var(--text-3);
-}
-
-/* Managing it: a row of quiet actions, the projects to move it to under
-   them when asked, and what the World answered. */
-.details-manage .details-acts {
-  margin-top: 0;
-}
-
-.details-remove:hover:not(:disabled) {
-  color: var(--wrong);
-}
-
-.details-move {
-  display: grid;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-
-.details-manage-note {
-  margin: var(--space-2) 0 0;
-}
-
-.details-manage-note:empty {
-  display: none;
 }
 
 .details-section {

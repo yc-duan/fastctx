@@ -38,6 +38,9 @@ use store::Store;
 /// membership and starts reconnecting; cloning the World shares its links.
 pub struct Device {
     store: Arc<Store>,
+    /// What it keeps of the conversations it showed, which it forgets of
+    /// one deleted (`fastctx_net::wire::Down::Forget`).
+    cache: Arc<crate::cache::Cache>,
     sessions: RwLock<BTreeMap<HubId, Arc<Session>>>,
     lifecycle: tokio::sync::Mutex<()>,
     managed: bool,
@@ -69,24 +72,30 @@ impl Device {
             session.link.stop();
         }
     }
-    /// Opens an identity and uses the platform's network/resume notifications.
-    /// Must run inside a Tokio runtime.
-    pub fn open(directory: PathBuf) -> io::Result<Arc<Self>> {
-        Self::open_with_notifications(directory, false)
+    /// Opens an identity and uses the platform's network/resume notifications;
+    /// `cache` is what it keeps of the conversations it shows. Must run
+    /// inside a Tokio runtime.
+    pub fn open(directory: PathBuf, cache: Arc<crate::cache::Cache>) -> io::Result<Arc<Self>> {
+        Self::open_with_notifications(directory, cache, false)
     }
 
     /// Opens an identity whose application delivers network/resume callbacks
     /// through [`Device::reconnect`], as on Android. Heartbeats and retries
     /// remain active even without callbacks.
-    pub fn open_managed(directory: PathBuf) -> io::Result<Arc<Self>> {
-        Self::open_with_notifications(directory, true)
+    pub fn open_managed(directory: PathBuf, cache: Arc<crate::cache::Cache>) -> io::Result<Arc<Self>> {
+        Self::open_with_notifications(directory, cache, true)
     }
 
-    fn open_with_notifications(directory: PathBuf, managed: bool) -> io::Result<Arc<Self>> {
+    fn open_with_notifications(
+        directory: PathBuf,
+        cache: Arc<crate::cache::Cache>,
+        managed: bool,
+    ) -> io::Result<Arc<Self>> {
         let store = Arc::new(Store::open(directory)?);
         let memberships = store.memberships()?;
         let device = Arc::new(Self {
             store,
+            cache,
             sessions: RwLock::new(BTreeMap::new()),
             lifecycle: tokio::sync::Mutex::new(()),
             managed,
@@ -236,6 +245,7 @@ impl Device {
         let arrivals = self.store.arrivals(&id);
         let handler = Arc::new(Handler {
             _store: self.store.clone(),
+            cache: self.cache.clone(),
             link: std::sync::OnceLock::new(),
             arrivals,
             ways: self.ways.clone(),
@@ -335,6 +345,8 @@ struct Handler {
     // finishing disk writes. The link's handler lives with its last task,
     // so the identity remains locked until all its network work has ended.
     _store: Arc<Store>,
+    /// The device's (`Device::cache`).
+    cache: Arc<crate::cache::Cache>,
     /// The link it handles for, set once it is made.
     link: std::sync::OnceLock<std::sync::Weak<Link>>,
     /// Where who came into this device's accounts there is kept.
@@ -407,6 +419,38 @@ impl fastctx_net::link::Node for Handler {
 
     fn afoot_changed(&self) {
         changed(&self.shown);
+    }
+
+    /// A device keeps nothing of a conversation but the copy it showed,
+    /// under any name its machine had.
+    fn forget(&self, forgetting: fastctx_net::wire::Forgetting) -> BoxFuture<fastctx_net::wire::Forgot> {
+        let conversation = forgetting.conversation;
+        let mut machines = vec![conversation.machine.clone()];
+        if let Some(link) = self.link.get().and_then(std::sync::Weak::upgrade)
+            && let Some(member) = link.view().member(&conversation.machine)
+        {
+            machines.push(member.name.clone());
+            machines.extend(member.was.iter().cloned());
+        }
+        machines.sort();
+        machines.dedup();
+        let cache = self.cache.clone();
+        Box::pin(async move {
+            let resident = conversation.resident;
+            let forgot = tokio::task::spawn_blocking(move || {
+                machines.into_iter().try_for_each(|machine| {
+                    cache.forget(&fastctx_types::Address { machine, resident: resident.clone() })
+                })
+            })
+            .await;
+            match forgot {
+                Ok(Ok(())) => fastctx_net::wire::Forgot::Done,
+                Ok(Err(error)) => fastctx_net::wire::Forgot::Failed {
+                    reason: format!("forgetting the copy this device kept of it: {error}"),
+                },
+                Err(error) => fastctx_net::wire::Forgot::Failed { reason: error.to_string() },
+            }
+        })
     }
 
     fn log(&self, line: String) {

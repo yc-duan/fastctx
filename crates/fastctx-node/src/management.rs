@@ -1,5 +1,7 @@
 //! User management follows the resident's machine. Host effects and World
 //! membership are reported separately so partial completion stays visible.
+//! Archiving keeps everything of a conversation and takes it out of the
+//! list; deleting it is `crate::forget`'s.
 
 use crate::{Node, speech};
 use fastctx_types::access::{Acting, Purpose};
@@ -46,9 +48,20 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             return Err(Failure::new("this resident is busy or starting a turn and cannot sleep"));
         }
     }
+    // A turn it runs is stopped before it is archived, outside the gate:
+    // what ends a turn may wait on it, as a tool call it answers does.
+    if matches!(action, Management::Archive) && node.residents.removed(id).is_none() {
+        crate::talk::stop_and_wait(node, id).await?;
+    }
     let _exclusive = gate.write().await;
-    if !matches!(action, Management::Remove) {
+    if !matches!(action, Management::Archive | Management::Restore) {
         node.residents.active(id)?;
+    }
+    if matches!(action, Management::Archive)
+        && node.residents.removed(id).is_none()
+        && node.residents.now(id).is_some_and(|now| now.turn.is_some())
+    {
+        return Err(Failure::new("it began a turn again as it was being archived; nothing was changed"));
     }
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new("unknown resident"))?;
     if matches!(action, Management::Wake) {
@@ -70,7 +83,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
         notification: None,
     };
     match action {
-        Management::Remove => {
+        Management::Archive => {
             let host = match (about.host.agent.as_str(), &about.session, about.world_started) {
                 ("codex", Some(thread), _) => {
                     crate::codex::claim(node, thread, id).await;
@@ -132,6 +145,34 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 }
                 crate::colleagues::left(node, id.clone());
             }
+        }
+        Management::Restore => {
+            if result.removed.is_none() {
+                step(&mut result, "records", Outcome::Done, "It is not archived.".into());
+                return Ok(result);
+            }
+            let host = match (about.host.agent.as_str(), &about.session) {
+                ("codex", Some(thread)) => match node.codex.of(&about) {
+                    Ok(codex) => codex.unarchive(thread).await.map_err(Failure::new),
+                    Err(failure) => Err(failure),
+                },
+                // Claude Code's background session, stopped when it was
+                // archived, is started again when it is next spoken to.
+                _ => Ok(()),
+            };
+            completed(&mut result, "host", host, "The host's record of it is out of its archive.");
+            match node.residents.restore(&node.world, id) {
+                Ok(()) => step(
+                    &mut result,
+                    "records",
+                    Outcome::Done,
+                    "It is listed again where it was, and can be spoken to.".into(),
+                ),
+                Err(error) => {
+                    step(&mut result, "records", Outcome::Failed, format!("Recording that it is back: {error}"))
+                }
+            }
+            result.removed = node.residents.removed(id);
         }
         Management::Sleep | Management::Wake => {
             let sleeping = matches!(action, Management::Sleep);

@@ -18740,6 +18740,14 @@
         "resident": "codex-ab12",
         "machine": "desktop",
         "action": {
+          "do": "restore"
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "machine": "desktop",
+        "action": {
           "do": "sleep"
         }
       },
@@ -18797,6 +18805,11 @@
             ]
           }
         }
+      },
+      {
+        "call": "forget",
+        "resident": "codex-ab12",
+        "machine": "desktop"
       }
     ],
     "remote_calls": [
@@ -18805,6 +18818,13 @@
         "resident": "codex-ab12",
         "action": {
           "do": "remove"
+        }
+      },
+      {
+        "call": "manage",
+        "resident": "codex-ab12",
+        "action": {
+          "do": "restore"
         }
       },
       {
@@ -18993,6 +19013,30 @@
             "id": "project-0123"
           }
         }
+      },
+      {
+        "reply": "forgetting",
+        "resident": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "how": "deleted"
+      },
+      {
+        "reply": "forgetting",
+        "resident": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "how": "asked"
+      },
+      {
+        "reply": "forgetting",
+        "resident": {
+          "machine": "desktop",
+          "resident": "codex-ab12"
+        },
+        "how": "queued"
       }
     ],
     "remote_replies": [

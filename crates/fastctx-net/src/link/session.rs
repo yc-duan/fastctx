@@ -195,6 +195,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             any_names: true,
             renames: true,
             afoot: true,
+            forgets: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
@@ -438,6 +439,15 @@ async fn connected(
             }
             Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
             Down::Afoot { machine, busy, change } => inner.heard_afoot(machine, busy, *change),
+            Down::Forget { forgetting } => {
+                let (inner, up) = (inner.clone(), up.clone());
+                tokio::spawn(async move {
+                    let id = forgetting.id;
+                    let outcome = inner.node.forget(forgetting).await;
+                    // A session ended meanwhile: the hub tells it again.
+                    let _ = up.send(Up::Forgot { id, outcome });
+                });
+            }
             Down::Refused { reason } => break refused(reason),
             Down::Welcome { .. }
             | Down::LoginResponse { .. }

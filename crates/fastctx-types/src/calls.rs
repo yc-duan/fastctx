@@ -412,6 +412,13 @@ pub enum Call {
         machine: Option<MachineName>,
         action: Management,
     },
+    /// Deletes this resident's conversation from every machine and device
+    /// keeping something of it, the one it lives on first, as the user
+    /// (`world-colleagues.md`, 用户在任何地方和居民说话).
+    Forget {
+        resident: ResidentId,
+        machine: MachineName,
+    },
     /// What a resident's conversation on any machine offers now: the
     /// controls it takes, its commands and models, its usage.
     Offers {
@@ -634,6 +641,10 @@ pub enum Reply {
     Managed {
         resident: Address,
         managed: Managed,
+    },
+    Forgetting {
+        resident: Address,
+        how: crate::management::Forgetting,
     },
     Data(crate::data::DataReply),
     ClaudeSessionDirectory {

@@ -69,6 +69,20 @@ impl Residents {
         Ok(crate::world::native(directory.path()))
     }
 
+    /// Brings back a resident the user archived: it is listed again, its
+    /// session may use World tools and be woken again.
+    pub fn restore(&self, world: &WorldDir, id: &ResidentId) -> io::Result<()> {
+        let mut state = self.lock();
+        let _transaction = crate::resident_storage::lock();
+        let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown resident"))?;
+        match std::fs::remove_file(world.conversation(id).removed()) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        live.removed = None;
+        Ok(())
+    }
+
     /// Forgets a resident whose conversation was deleted from this machine:
     /// it is no longer on record, and a session that comes back as it is a
     /// new one.

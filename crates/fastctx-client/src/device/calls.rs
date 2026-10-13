@@ -71,6 +71,11 @@ impl Device {
                 let version = session.link.collab_write(&account, collab).await.map_err(failed)?;
                 return Ok((Reply::CollabWritten { version }, here()));
             }
+            Call::Forget { resident, machine } => {
+                let how = self.forget_conversation(&resident, &machine).await?;
+                let address = Address { machine: machine.clone(), resident };
+                return Ok((Reply::Forgetting { resident: address, how }, machine));
+            }
             Call::WorldNow => return Ok((Reply::WorldNow(Box::new(self.world_now().await?)), here())),
             Call::Features => return Ok((Reply::Features(self.features()?), here())),
             Call::SetFeature { feature, on } => return Ok((Reply::Features(self.set_feature(feature, on)?), here())),
@@ -283,6 +288,27 @@ impl Device {
 
     /// The machine the resident `resident` lives on: `machine` when given,
     /// otherwise the one machine whose answer says so.
+    /// Asks the hub of the machine the conversation of `resident` lives on
+    /// to delete it everywhere. A device keeps nothing to ask later: not
+    /// connected, it says so.
+    async fn forget_conversation(
+        &self,
+        resident: &ResidentId,
+        machine: &MachineName,
+    ) -> Result<fastctx_types::management::Forgetting, Error> {
+        let session = self
+            .sessions()
+            .into_iter()
+            .find(|session| session.link.view().member(machine).is_some())
+            .ok_or_else(|| failed(format!("no hub this device is on has a machine named {machine}")))?;
+        let account = session.link.account_of(machine, resident).map_err(failed)?;
+        let conversation = Address { machine: machine.clone(), resident: resident.clone() };
+        match session.link.forget(&account, &conversation).await.map_err(failed)? {
+            true => Ok(fastctx_types::management::Forgetting::Asked),
+            false => Err(failed("not connected to the hub now; nothing was deleted, try again once connected")),
+        }
+    }
+
     pub(super) async fn find(&self, resident: &ResidentId, machine: Option<MachineName>) -> Result<MachineName, Error> {
         if let Some(machine) = machine {
             return Ok(machine);

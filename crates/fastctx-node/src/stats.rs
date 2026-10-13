@@ -154,7 +154,7 @@ pub(crate) async fn here(node: &Arc<Node>, after: Option<Timestamp>) -> Result<M
         .into_iter()
         .filter_map(|card| {
             let addresses = addresses.get(&card.index).cloned().unwrap_or_default();
-            if !card.hardware && !(card.up && !addresses.is_empty()) {
+            if !card.hardware && (!card.up || addresses.is_empty()) {
                 return None;
             }
             Some(Card {

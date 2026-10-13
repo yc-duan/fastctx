@@ -167,6 +167,27 @@ pub enum Action {
         unregistered: bool,
         reason: String,
     },
+    /// The user asked that a conversation be deleted from every machine and
+    /// device keeping something of it.
+    Forget {
+        conversation: crate::Address,
+    },
+    /// What `on` kept of a conversation being deleted is gone; refused, it
+    /// could not be deleted there yet, and is asked again when `on` comes
+    /// back.
+    Forgotten {
+        conversation: crate::Address,
+        on: MachineName,
+    },
+}
+
+impl Action {
+    /// Whether the record is of a conversation: read only by the account
+    /// it worked for, never by another, the super administrator included
+    /// (`world-gui.md`, 界面的结构).
+    pub fn of_conversation(&self) -> bool {
+        matches!(self, Self::Forget { .. } | Self::Forgotten { .. })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -81,7 +81,9 @@ export class ProjectPage {
 
   update(map: MapView, who: WorldWho, now: Date): void {
     const { words } = this.options;
-    const residents = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => !r.removed);
+    // Archived ones are still named where something of theirs runs on.
+    const known = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : []));
+    const residents = known.filter((r) => !r.removed);
     // Every conversation of the project, while it exists (walkthrough items 20, 22).
     const here = residents;
     const jobs = who.machines.flatMap((machine) => (machine.kind === "answered" ? machine.reply.jobs : []));
@@ -104,7 +106,7 @@ export class ProjectPage {
           : `<p class="quiet">${escape(words.nobodyHere)}</p>`) +
           (jobs.length
             ? `<h3 class="project-subtitle">${escape(words.running)}</h3><ul class="jobs">${jobs
-                .map((job) => this.job(job, residents, now))
+                .map((job) => this.job(job, known, now))
                 .join("")}</ul>`
             : ""),
       ],
@@ -206,7 +208,7 @@ export class ProjectPage {
 
   /** Something still running in the town: where, for how long, what, and
    *  who started it, said when they have gone. */
-  private job(job: RunningJob, residents: ResidentNow[], now: Date): string {
+  private job(job: RunningJob, known: ResidentNow[], now: Date): string {
     const { words, home } = this.options;
     const address = ownerResident(job.owner);
     if (!address) {
@@ -214,9 +216,9 @@ export class ProjectPage {
       // leave.
       return this.jobLine(job, now, home.startedBy(home.aPage("page" in job.owner ? job.owner.page.page : "")));
     }
-    const owner = residents.find((r) => r.about.id === address.resident && r.about.machine === address.machine);
+    const owner = known.find((r) => r.about.id === address.resident && r.about.machine === address.machine);
     const name = owner ? home.someone(agentName(owner.about.host.agent), owner.about.machine) : `${address.resident} · ${address.machine}`;
-    const by = owner?.here ? home.startedBy(name) : `${home.startedBy(name)} · ${words.ownerLeft}`;
+    const by = owner?.here && !owner.removed ? home.startedBy(name) : `${home.startedBy(name)} · ${words.ownerLeft}`;
     return this.jobLine(job, now, by);
   }
 

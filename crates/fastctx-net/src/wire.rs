@@ -96,6 +96,9 @@ pub enum Up {
     /// session (`world-network.md`, 近况); sent only to a hub whose view
     /// says it takes it.
     Afoot { change: Box<fastctx_types::town::AfootChange<AfootResident, AfootJob>> },
+    /// What this member did with the deletion the hub numbered `id`
+    /// (`Down::Forget`).
+    Forgot { id: u64, outcome: Forgot },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -138,6 +141,11 @@ pub enum Intent {
         /// and would end the session on a frame they cannot read.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         afoot: bool,
+        /// The member deletes what it keeps of a conversation when told
+        /// (`Down::Forget`). Earlier releases do not say so, and would end
+        /// the session on a frame they cannot read.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        forgets: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -307,6 +315,38 @@ pub enum Down {
         busy: Option<u32>,
         change: Box<fastctx_types::town::AfootChange<ResidentNow, RunningJob>>,
     },
+    /// Delete what this member keeps of a conversation, and say how that
+    /// went (`Up::Forgot`). Sent only to a member whose session says it
+    /// forgets: now, and at each session it opens until it says it is done.
+    Forget {
+        forgetting: Forgetting,
+    },
+}
+
+/// A conversation the hub has its members delete what they keep of
+/// (`world-colleagues.md`, 用户在任何地方和居民说话).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Forgetting {
+    /// The hub's number of the deletion, which what a member says of it
+    /// names.
+    pub id: u64,
+    pub conversation: fastctx_types::Address,
+    /// The account it is deleted for: one it worked for.
+    pub account: AccountName,
+}
+
+/// What a member did with a deletion (`Down::Forget`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Forgot {
+    /// Nothing of the conversation is kept here any more.
+    Done,
+    /// The machine it lives on says it does not work for that account:
+    /// nothing of it is deleted anywhere.
+    Refused { reason: String },
+    /// It could not be deleted here now; the hub asks again when this member
+    /// next connects.
+    Failed { reason: String },
 }
 
 /// Why the hub refuses or ends a connection.
@@ -400,6 +440,13 @@ pub enum Question {
     /// ports of `at` now, or could not; with what it knows of its own
     /// firewall.
     Listening { at: Vec<std::net::SocketAddr>, outcome: Result<Firewall, String> },
+    /// Delete the conversation at `conversation`, which works for
+    /// `account`, logged in on the asking member, from every member keeping
+    /// something of it: the machine it lives on first, unless that is the
+    /// asking member, which deleted what it kept before it asked. Answered
+    /// `Told::Done` once the hub holds it. Asked only of a hub whose view
+    /// says it forgets.
+    Forget { account: AccountName, conversation: fastctx_types::Address },
 }
 
 /// What a machine knows of its own firewall when it starts taking direct

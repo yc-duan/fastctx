@@ -1,6 +1,6 @@
-// What the user does to an agent (`fastctx_types::management`): remove it
-// from the World, let it sleep, wake it, move it to another project, point
-// it at machines and folders. The
+// What the user does to a conversation (`fastctx_types::management`):
+// archive it or bring it back, let it sleep, wake it, move it to another
+// project, point it at machines and folders, and delete it everywhere. The
 // World answers with each stage as it went, so what was done and what was
 // not stays in view when only part of it could be.
 
@@ -11,7 +11,9 @@ import type { Activity } from "./world";
 import type { Focus } from "./focus";
 
 export type Management =
+  /** Archives it: written as removing was, which nodes of every version read. */
   | { do: "remove" }
+  | { do: "restore" }
   | { do: "sleep" }
   | { do: "wake" }
   | { do: "move"; town: TownName | null }
@@ -39,4 +41,14 @@ export interface Managed {
 
 export function manage(who: Address, action: Management): Promise<Managed> {
   return invoke<Managed>("manage", { residentId: who.resident, machineName: who.machine, action });
+}
+
+/** How deleting a conversation everywhere went, as far as this device can
+ *  say: deleted here, in no network; taken by its hub, which has each
+ *  machine and device delete what it keeps; or kept to ask the hub once
+ *  this computer reaches it. */
+export type Forgetting = "deleted" | "asked" | "queued";
+
+export function forgetConversation(who: Address): Promise<Forgetting> {
+  return invoke<Forgetting>("forget_conversation", { residentId: who.resident, machineName: who.machine });
 }

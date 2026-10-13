@@ -61,7 +61,14 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
     remember(shown.world);
     read(shown.world);
     clock.set(shown.now);
-    return { live, world, whole, showNetwork, trouble, clock, unanswered, refresh: async () => {} };
+    // A specimen changed by what is done to it is read again, as a copy so
+    // that it reads as new.
+    const again = async () => {
+      const changed = structuredClone(specimen().world);
+      remember(changed);
+      read(changed);
+    };
+    return { live, world, whole, showNetwork, trouble, clock, unanswered, refresh: again };
   }
 
   recall();
@@ -150,14 +157,20 @@ function keep(): void {
 }
 
 /** The residents of machines that did not answer this time, as they last
- *  answered: listed, marked as out of reach, never taken for live. */
-export function unreachedOf(world: WorldNow | null): ResidentNow[] {
+ *  answered: listed, marked as out of reach, never taken for live; those
+ *  archived too when `archived`. */
+export function unreachedOf(world: WorldNow | null, archived = false): ResidentNow[] {
   return (world?.who.machines ?? []).flatMap((machine) => {
     if (machine.kind === "answered") return [];
-    const residents = (lastAnswered.get(machine.machine) ?? []).filter((r) => !r.removed);
+    const residents = (lastAnswered.get(machine.machine) ?? []).filter((r) => archived || !r.removed);
     for (const r of residents) unreached.add(r);
     return residents;
   });
+}
+
+/** A copy of `original` shown in its place is out of reach as it is. */
+export function sameReach(copy: ResidentNow, original: ResidentNow): void {
+  if (unreached.has(original)) unreached.add(copy);
 }
 
 /** Whether a resident is one its machine did not answer for this time. */
@@ -166,9 +179,10 @@ export function isUnreached(r: ResidentNow): boolean {
 }
 
 /** Every resident each machine answered with that is still in the World;
- *  one the user removed is answered with too, and left out here. */
-export function residentsOf(world: WorldNow | null): ResidentNow[] {
-  return (world?.who.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => !r.removed);
+ *  one the user archived is answered with too, and left out here unless
+ *  `archived`. */
+export function residentsOf(world: WorldNow | null, archived = false): ResidentNow[] {
+  return (world?.who.machines ?? []).flatMap((machine) => (machine.kind === "answered" ? machine.reply.residents : [])).filter((r) => archived || !r.removed);
 }
 
 /** One resident as its machine answered for it, removed or not. */

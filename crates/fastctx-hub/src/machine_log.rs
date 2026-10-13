@@ -174,7 +174,7 @@ impl History {
             Action::Settings { .. } => {
                 accounts.extend(directory.accounts.iter().map(|account| account.name.clone()));
             }
-            Action::Collab { .. } => {}
+            Action::Collab { .. } | Action::Forget { .. } | Action::Forgotten { .. } => {}
         }
         let mut members = BTreeSet::new();
         for name in names {
@@ -206,7 +206,11 @@ impl History {
                 );
             }
         }
-        if let Some(member) = actor.member.as_ref().and_then(|name| directory.member(name)) {
+        // A conversation's record is its account's alone: the member that
+        // asked or did it reads it by that account.
+        if let Some(member) = actor.member.as_ref().and_then(|name| directory.member(name))
+            && !action.of_conversation()
+        {
             members.insert(member.key);
             accounts.extend(member.home.iter().cloned());
         }
@@ -226,16 +230,19 @@ impl History {
         Ok(())
     }
 
-    /// The records `me` reads for `account`, newest first. Renames are left
-    /// out for a member whose release does not read them (`renames`): it
-    /// could read nothing of a page with one.
+    /// The records `me` reads for `account`, newest first. Renames, and the
+    /// records of conversations deleted, are left out for a member whose
+    /// release does not read them (`reads`, renames and deletions): it
+    /// could read nothing of a page with one. The super administrator reads
+    /// every record but those of conversations, which only their account
+    /// reads.
     pub(crate) fn read(
         &self,
         directory: &Directory,
         me: &MachineName,
         account: &AccountName,
         before: Option<u64>,
-        renames: bool,
+        (renames, forgets): (bool, bool),
     ) -> Result<Page, String> {
         if !directory.may_act_for(account, me) {
             return Err(format!("{me} may not read the machine log of the account {account}"));
@@ -255,10 +262,12 @@ impl History {
             .iter()
             .rev()
             .filter(|kept| {
+                let private = kept.record.action.of_conversation();
                 before.is_none_or(|before| kept.record.id < before)
                     && (renames || !matches!(kept.record.action, Action::Rename { .. }))
+                    && (forgets || !private)
                     && kept.record.at.checked_add(RETENTION).expect("timestamp in range") > now
-                    && (whole
+                    && ((whole && !private)
                         || kept.accounts.get(account).copied().is_some_and(|kept| Some(kept) == opened)
                         || kept.members.contains(&member.key))
             })

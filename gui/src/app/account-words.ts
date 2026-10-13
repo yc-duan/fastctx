@@ -769,6 +769,10 @@ export const zhMachines: MachinesWords = {
         return `${a.machine} 上的 ${agentName(a.agent)} 获准访问`;
       case "acting_stopped":
         return `${a.machine} 不再能替 ${a.account} 访问`;
+      case "forget":
+        return `删除对话 ${a.conversation.resident} · ${a.conversation.machine}`;
+      case "forgotten":
+        return `${a.on} 上删除 ${a.conversation.resident}`;
       default:
         return null;
     }
@@ -998,6 +1002,10 @@ export const enMachines: MachinesWords = {
         return `${agentName(a.agent)} on ${a.machine} was allowed access`;
       case "acting_stopped":
         return `${a.machine} no longer acts for ${a.account}`;
+      case "forget":
+        return `Deleted conversation ${a.conversation.resident} · ${a.conversation.machine}`;
+      case "forgotten":
+        return `${a.conversation.resident} deleted on ${a.on}`;
       default:
         return null;
     }

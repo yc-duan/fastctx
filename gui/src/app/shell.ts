@@ -11,6 +11,9 @@ import { escape } from "../conversation/prose";
 import type { Place } from "./places";
 import { Sidebar } from "./sidebar";
 import type { Store } from "./store";
+import type { TalkActs } from "./talk-acts";
+import type { TalkMenu } from "./talk-menu";
+import type { TalkMenuWords } from "./talk-menu-words";
 import type { ShellWords } from "./words";
 
 export interface Page {
@@ -26,6 +29,10 @@ export interface ShellOptions {
   newTalk(): void;
   /** A new project, in `login`'s account where the sidebar names one. */
   newProject(login: Login | null): void;
+  /** What the user does to conversations, and their "⋯". */
+  acts: TalkActs;
+  menu: TalkMenu;
+  menuWords: TalkMenuWords;
 }
 
 const narrow = matchMedia("(max-width: 760px)");
@@ -40,6 +47,9 @@ function keptFolded(): boolean {
 
 export class Shell {
   readonly element: HTMLElement;
+  /** Where the sidebar's foot is on the screen, while the sidebar shows:
+   *  what passes rests above it rather than over the accounts. */
+  readonly footBox = (): DOMRect | null => this.sidebar.footBox();
   private readonly main: HTMLElement;
   private readonly sidebar: Sidebar;
   private page: Page | null = null;
@@ -71,6 +81,9 @@ export class Shell {
         options.newProject(login);
       },
       fold: () => this.fold(true),
+      acts: options.acts,
+      menu: options.menu,
+      menuWords: options.menuWords,
     });
     this.element.querySelector(".sidebar-frame")!.append(this.sidebar.element);
     this.element.querySelector(".scrim")!.addEventListener("click", () => this.closeDrawer());

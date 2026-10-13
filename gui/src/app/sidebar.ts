@@ -6,11 +6,13 @@
 // machines and the features, each a line with its mark. With the workbench on,
 // the front page and a new conversation come first, and below are each
 // project, open to its conversations, and the conversations in no project,
-// most recent first; a conversation is listed as long as it is not removed,
-// whether its agent's process runs or not. Logged in to more than one
-// account of the network, the projects and conversations come account by
-// account, each only what that account may use. The account and the
-// settings are at its foot.
+// most recent first; a conversation is listed as long as it is not archived,
+// whether its agent's process runs or not, and the archived ones are folded
+// away at the end. Each conversation's "⋯" (a long press on a touch screen)
+// moves, renames, archives or deletes it (`talk-menu.ts`). Logged in to more
+// than one account of the network, the projects and conversations come
+// account by account, each only what that account may use. The account and
+// the settings are at its foot.
 
 import { glyph } from "../conversation/glyphs";
 import { Popover } from "../conversation/popover";
@@ -26,7 +28,12 @@ import { link } from "./places";
 import { groupsOf, isComputer, loginLabel, machinesOf, residentIn } from "./reach";
 import { effect } from "./signals";
 import type { Store } from "./store";
-import { conversationsOf, factsByMachine, talkRow } from "./talk-row";
+import type { TalkActs } from "./talk-acts";
+import type { TalkMenu } from "./talk-menu";
+import type { TalkMenuWords } from "./talk-menu-words";
+import { isUnreached } from "./store";
+import { TalkList } from "./talk-list";
+import { factsByMachine, talkRow, talksOf } from "./talk-row";
 import type { ShellWords } from "./words";
 
 export interface SidebarOptions {
@@ -39,6 +46,9 @@ export interface SidebarOptions {
    *  asked from. */
   newProject(login: Login | null): void;
   fold(): void;
+  acts: TalkActs;
+  menu: TalkMenu;
+  menuWords: TalkMenuWords;
 }
 
 /** An answer usually comes within a second and is asked for every two;
@@ -78,6 +88,8 @@ export class Sidebar {
   private readonly networks: HTMLElement;
   private readonly popover: Popover;
   private drawn = "";
+  /** The conversations' menus, presses and renaming. */
+  private readonly talkList: TalkList;
 
   constructor(private readonly options: SidebarOptions) {
     const { words } = options;
@@ -117,6 +129,16 @@ export class Sidebar {
     });
     this.element.querySelector(".new-talk")!.addEventListener("click", () => options.newTalk());
     this.element.querySelector(".sidebar-fold")!.addEventListener("click", () => options.fold());
+    this.talkList = new TalkList(this.list, {
+      acts: options.acts,
+      menu: options.menu,
+      menuWords: options.menuWords,
+      reachable: (r) => !isUnreached(r),
+      redraw: () => {
+        this.drawn = "";
+        this.draw();
+      },
+    });
     this.list.addEventListener("click", (event) => {
       const add = (event.target as HTMLElement).closest<HTMLElement>("[data-new-project]");
       if (add) {
@@ -136,6 +158,7 @@ export class Sidebar {
     });
     effect(() => {
       options.store.world.get();
+      options.acts.changed.get();
       deviceFeatures.conversations.get();
       options.store.trouble.get();
       options.store.clock.get();
@@ -147,6 +170,8 @@ export class Sidebar {
   /** Draws again, as when the place shown changed. */
   draw(): void {
     const { store, words } = this.options;
+    // A name being typed is kept until it is done.
+    if (this.talkList.held) return;
     const world = store.world.peek();
     const place = this.options.place();
     const now = store.clock.peek();
@@ -159,7 +184,8 @@ export class Sidebar {
     begin?.classList.toggle("current", beginning);
     if (beginning) begin?.setAttribute("aria-current", "page");
     else begin?.removeAttribute("aria-current");
-    const talks = conversationsOf(world);
+    const { listed: talks, archived } = talksOf(world, this.options.acts);
+    this.talkList.drawing([...talks, ...archived]);
     const facts = factsByMachine(world);
     const waiting = talks.filter((r) => r.now?.waiting_for_user).length;
 
@@ -202,6 +228,7 @@ export class Sidebar {
       const towns = groups[0]?.towns ?? (world?.towns ?? []).map((town) => town.town);
       body = this.projects(towns, talks, place, now, facts, null) + this.loose(talks, place, now, facts);
     }
+    if (talking) body += this.archived(archived, place, now, facts);
 
     this.drawFoot(world, place);
     const html = places + body;
@@ -249,6 +276,12 @@ export class Sidebar {
         ${computer ? `<a class="network-way" href="${link({ kind: "login", way: "new" })}" role="menuitem">${glyph("plus", 16)}<span>${escape(words.newNetwork)}</span></a>` : ""}
         <a class="network-way" href="${link({ kind: "login", way: "join" })}" role="menuitem">${glyph("link", 16)}<span>${escape(words.joinNetwork)}</span></a>
       </div>`;
+  }
+
+  /** Where the foot is on the screen, while the sidebar shows whole. */
+  footBox(): DOMRect | null {
+    const box = this.foot.getBoundingClientRect();
+    return box.width > 0 && box.left >= 0 && box.right <= innerWidth ? box : null;
   }
 
   /** The foot: the accounts, marked when someone came into one, and the
@@ -313,15 +346,34 @@ export class Sidebar {
     const shown = talks.filter((r, i) => i < SHOWN || r.now?.waiting_for_user || (place.kind === "talk" && place.address.resident === r.about.id && place.address.machine === r.about.machine));
     const rest = talks.length - shown.length;
     const all = place.kind === "talks" && place.town === town;
-    return `<ul class="${kind}">${shown.map((r) => talkRow(r, place, now, facts, words)).join("")}${
+    return `<ul class="${kind}">${shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r))).join("")}${
       rest > 0
         ? `<li><a class="talk-all${all ? " current" : ""}" href="${link({ kind: "talks", town })}"><span class="talk-host"></span><span class="talk-name">${escape(words.all)}</span><span class="count">${talks.length}</span></a></li>`
         : ""
     }</ul>`;
   }
+
+  /** The archived conversations, folded away at the end: the most recent,
+   *  and a way to all of them. */
+  private archived(archived: ResidentNow[], place: Place, now: Date, facts: Map<string, MachineFacts>): string {
+    if (!archived.length) return "";
+    const { words, menuWords } = this.options;
+    const open = folded.has("archived-open");
+    const shown = archived.slice(0, SHOWN);
+    const rows = shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r))).join("");
+    const all =
+      archived.length > shown.length
+        ? `<li><a class="talk-all${place.kind === "archived" ? " current" : ""}" href="${link({ kind: "archived" })}"><span class="talk-host"></span><span class="talk-name">${escape(words.all)}</span><span class="count">${archived.length}</span></a></li>`
+        : "";
+    return `<section class="side-archived${open ? "" : " shut"}">
+      <button class="side-archived-head" type="button" data-fold="archived-open" aria-expanded="${open}">${glyph("chevron", 14)}<span>${escape(menuWords.archivedGroup)}</span><span class="side-archived-count">${archived.length}</span></button>
+      ${open ? `<ul class="talks archived-talks">${rows}${all}</ul>` : ""}
+    </section>`;
+  }
 }
 
 /** The World's mark: machines as rings round the knot where they meet. */
+
 function mark(): string {
   return `<svg class="wordmark-mark" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="11" cy="11" r="2"/><circle cx="4.5" cy="6" r="2.6"/><circle cx="17.5" cy="6.5" r="2.6"/><circle cx="11" cy="18" r="2.6"/><path d="M6.6 7.4L9.3 9.7M15.4 7.8l-2.7 1.9M11 13.1v2.3"/></g></svg>`;
 }

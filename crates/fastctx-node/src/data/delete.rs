@@ -24,9 +24,21 @@ use fastctx_types::residents::{About, Activity};
 use super::space::Measured;
 use crate::Node;
 
-enum Stop {
+/// Why a conversation was not deleted.
+pub(crate) enum Stop {
+    /// Nothing of it is kept here.
+    Nothing(String),
+    /// Not now, and why: it is working, open, or being read.
     Refused(String),
     Failed(String),
+}
+
+impl Stop {
+    pub(crate) fn why(self) -> String {
+        match self {
+            Self::Nothing(why) | Self::Refused(why) | Self::Failed(why) => why,
+        }
+    }
 }
 
 pub(super) async fn delete(node: &Arc<Node>, names: Vec<String>) -> Vec<Deletion> {
@@ -34,7 +46,7 @@ pub(super) async fn delete(node: &Arc<Node>, names: Vec<String>) -> Vec<Deletion
     for name in names {
         let outcome = match delete_one(node, &name).await {
             Ok(bytes) => DeletionOutcome::Deleted { bytes },
-            Err(Stop::Refused(why)) => DeletionOutcome::Refused { why },
+            Err(Stop::Nothing(why) | Stop::Refused(why)) => DeletionOutcome::Refused { why },
             Err(Stop::Failed(why)) => DeletionOutcome::Failed { why },
         };
         if let DeletionOutcome::Deleted { bytes } = &outcome {
@@ -45,7 +57,9 @@ pub(super) async fn delete(node: &Arc<Node>, names: Vec<String>) -> Vec<Deletion
     deletions
 }
 
-async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
+/// Deletes everything of the conversation kept here under the name `name`,
+/// as the listing gives it; says how many bytes went.
+pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     let _operation = node.data_operations.write().await;
     let kind = Kind::of(name).ok_or_else(|| Stop::Refused(format!("{name} is not the name of a conversation")))?;
     let measured = measure(node, name).await?;
@@ -157,7 +171,7 @@ async fn measure(node: &Arc<Node>, name: &str) -> Result<Measured, Stop> {
         .map_err(|error| Stop::Failed(error.to_string()))?
         .map_err(|error| Stop::Failed(format!("finding what it keeps here: {error}")))?
         .remove(&wanted)
-        .ok_or_else(|| Stop::Refused(format!("nothing of {name} is kept on this machine")))
+        .ok_or_else(|| Stop::Nothing(format!("nothing of {name} is kept on this machine")))
 }
 
 /// Deletes the record the conversation's agent program keeps of it.

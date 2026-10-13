@@ -33,7 +33,7 @@ import type { ChangePreview, LoginChange, MachineLogins, WorldLogins } from "../
 import type { Control, Controlled, Offers } from "../src/world/control";
 import type { FileReadPart, FileReadResult } from "../src/world/file-read";
 import type { Attachment } from "../src/world/attachments";
-import type { Managed } from "../src/world/management";
+import type { Forgetting, Managed } from "../src/world/management";
 import type { FileSearchReply, FileSearchRequest } from "../src/world/file-search";
 import type { Folders } from "../src/world/focus";
 import type { PageView, PageSummary, PageVersion, PageConsent, PageResult } from "../src/world/pages";
@@ -103,7 +103,7 @@ export const fixture = ${json.trimEnd()} satisfies {
   // Claude's requests as they come, and the answers its hooks take.
   claude: { events: SessionEvent[]; answers: Control[]; unavailable: Offers; idle: Offers };
   // What the user's management of an agent answers, stage by stage.
-  management: { calls: unknown; remote_calls: unknown; replies: { reply: "managed"; resident: Address; managed: Managed }[]; remote_replies: unknown };
+  management: { calls: unknown; remote_calls: unknown; replies: ({ reply: "managed"; resident: Address; managed: Managed } | { reply: "forgetting"; resident: Address; how: Forgetting })[]; remote_replies: unknown };
   // What a page's calls answer, and the page as a speaker, a writer and
   // a job's owner.
   pages: {

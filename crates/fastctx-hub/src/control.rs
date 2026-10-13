@@ -40,6 +40,8 @@ pub(crate) struct Said {
     pub renames: bool,
     /// Whether it reads what is afoot on other machines.
     pub afoot: bool,
+    /// Whether it deletes what it keeps of a conversation when told.
+    pub forgets: bool,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -105,6 +107,7 @@ pub(crate) async fn session(
         let _ = out.send(Out::End(Refusal::ShuttingDown));
     }
     crate::moving::follow::came(&hub, &name, dialed);
+    crate::forget::opened(&hub, &name);
     match &through {
         Some(through) => hub.log.line(format_args!("{name} connected through {through}, from {peer}")),
         None => hub.log.line(format_args!("{name} connected from {peer}")),
@@ -193,6 +196,7 @@ fn open(
     let entry = store.letters_of(name).map_err(|error| storage_failure(hub, "making letter records", &error))?;
     entry.any_names = said.any_names;
     entry.renames = said.renames;
+    entry.forgets = said.forgets;
     if too_old {
         // A member back on a release from before names of any language,
         // which would fail on the first name it cannot read: it is told why
@@ -240,6 +244,7 @@ fn open(
         interfaces: said.interfaces,
         paths: None,
         afoot: said.afoot,
+        forgets: said.forgets,
     };
     let replaced = hub.sessions().insert(name.clone(), session);
     drop(store);
@@ -365,6 +370,7 @@ fn handle(
         Up::Call { id, message } => reply(Down::Status { id, status: call(hub, name, generation, id, message) }),
         Up::Answer { call, message } => answer(hub, name, generation, call, message),
         Up::Afoot { change } => crate::afoot::heard(hub, name, *change),
+        Up::Forgot { id, outcome } => crate::forget::forgot(hub, name, id, outcome),
         Up::Cancel { id } => {
             hub.calls
                 .lock()
@@ -690,11 +696,11 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
     match question {
         Question::MachineLog { account, before } => {
             let store = hub.store();
-            let renames = store.letters.get(name).is_some_and(|letters| letters.renames);
+            let reads = store.letters.get(name).map_or((false, false), |letters| (letters.renames, letters.forgets));
             store
                 .book
                 .machine_log
-                .read(&store.book.directory, name, &account, before, renames)
+                .read(&store.book.directory, name, &account, before, reads)
                 .map(|page| Told::MachineLog { page })
         }
         Question::KernelRelease { .. } => Err("release reads are dispatched asynchronously".into()),
@@ -767,5 +773,6 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
             Ok(Told::Done)
         }
         Question::Listening { at, outcome } => hub.listening(name, &at, outcome),
+        Question::Forget { account, conversation } => crate::forget::ask(hub, name, account, conversation),
     }
 }

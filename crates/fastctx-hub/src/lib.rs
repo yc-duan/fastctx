@@ -28,6 +28,7 @@ mod assists;
 mod control;
 mod data;
 mod direct;
+mod forget;
 mod ledger;
 mod log;
 mod login;
@@ -228,6 +229,8 @@ pub(crate) struct Session {
     paths: Option<fastctx_net::directory::Paths>,
     /// Whether it reads what is afoot on other machines.
     afoot: bool,
+    /// Whether it deletes what it keeps of a conversation when told.
+    forgets: bool,
 }
 
 pub(crate) enum Out {
@@ -331,6 +334,7 @@ impl Hub {
         control::cut_calls(self);
         data::cut_streams(self);
         moving::follow::settle(self);
+        forget::prune(self);
         afoot::settle(self);
     }
 }
@@ -549,9 +553,21 @@ async fn intended(
     match (path.as_str(), intent) {
         (
             wire::CONTROL_PATH,
-            Intent::Session { key, proof, letters, through, direct, interfaces, any_names, dialed, renames, afoot },
+            Intent::Session {
+                key,
+                proof,
+                letters,
+                through,
+                direct,
+                interfaces,
+                any_names,
+                dialed,
+                renames,
+                afoot,
+                forgets,
+            },
         ) => {
-            let said = control::Said { through, direct, interfaces, any_names, dialed, renames, afoot };
+            let said = control::Said { through, direct, interfaces, any_names, dialed, renames, afoot, forgets };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
         (wire::CONTROL_PATH, Intent::Login { account, request }) => {

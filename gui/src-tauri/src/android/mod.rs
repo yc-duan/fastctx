@@ -31,8 +31,11 @@ fn start(directory: PathBuf, bridge: Arc<bridge::Bridge>) -> Result<(), String> 
     let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;
     let world = {
         let _entered = runtime.enter();
-        World::from_device(Device::open_managed(directory.join("device")).map_err(|error| error.to_string())?)
-            .keeping(crate::connection::kept(&directory)?)
+        let cache = crate::connection::kept(&directory)?;
+        World::from_device(
+            Device::open_managed(directory.join("device"), cache.clone()).map_err(|error| error.to_string())?,
+        )
+        .keeping(cache)
     };
     WORLD.set(world.clone()).map_err(|_| "Fastctx's Android runtime was already started")?;
     tauri::async_runtime::set(runtime.handle().clone());
