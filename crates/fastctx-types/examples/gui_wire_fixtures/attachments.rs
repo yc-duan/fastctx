@@ -1,6 +1,7 @@
 use fastctx_types::attachments::{
     Attachment, AttachmentFile, AttachmentFileSource, AttachmentSource, HostImage, UploadFile, UploadTarget,
 };
+use fastctx_types::file_read::FileRange;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::session::{Happened, SessionEvent, Speaker, attachments::AttachedMessage};
@@ -46,9 +47,14 @@ pub fn fixtures() -> Fixtures {
     let target = UploadTarget::Resident { resident: owner.resident.clone() };
     Fixtures {
         calls: vec![
-            Call::ReadAttachment { attachment: attachment.clone().into() },
+            Call::ReadAttachment { attachment: attachment.clone().into(), range: FileRange::All },
+            Call::ReadAttachment {
+                attachment: attachment.clone().into(),
+                range: FileRange::Range { offset: 1_048_576, bytes: 1024 },
+            },
             Call::AttachmentThumbnail { attachment: attachment.clone().into(), max: 96 },
             Call::ReadAttachment {
+                range: FileRange::All,
                 attachment: AttachmentSource::HostImage {
                     owner: owner.clone(),
                     host_image: HostImage::Codex { turn: "turn-1".into(), message: 0, image: 1 },
@@ -129,12 +135,18 @@ pub fn fixtures() -> Fixtures {
                             media_type: "image/jpeg".into(),
                             source: AttachmentFileSource::HostRecord,
                         }),
+                        version: None,
                     },
                 },
             }),
         ],
         remote_calls: vec![
-            RemoteCall::ReadAttachment { attachment: attachment.clone().into(), read: 17 },
+            RemoteCall::ReadAttachment { attachment: attachment.clone().into(), read: 17, range: FileRange::All },
+            RemoteCall::ReadAttachment {
+                attachment: attachment.clone().into(),
+                read: 18,
+                range: FileRange::Range { offset: 2048, bytes: 4096 },
+            },
             RemoteCall::AttachmentThumbnail {
                 attachment: AttachmentSource::HostImage {
                     owner: owner.clone(),

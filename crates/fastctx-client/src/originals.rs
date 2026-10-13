@@ -9,14 +9,17 @@ use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
 
 use crate::cache::pictures;
+use crate::file_read::Read;
 use crate::{Error, World};
 
 impl World {
     /// The original of `attachment` on this device: where it is kept and
-    /// what it is. `None` when this World keeps nothing it views.
+    /// what it is. `None` when this World keeps nothing it views. When it
+    /// is read now, `told` is given how the read goes.
     pub async fn kept_original(
         &self,
         attachment: AttachmentSource,
+        told: impl FnOnce(tokio::sync::watch::Receiver<crate::file_read::Progress>),
     ) -> Result<Option<(PathBuf, AttachmentFile)>, Error> {
         let Some(cache) = self.cache().cloned() else { return Ok(None) };
         let (root, key) = (cache.root().to_path_buf(), cache.picture_key(&attachment));
@@ -34,37 +37,49 @@ impl World {
         if let Some(found) = found {
             return Ok(Some(found));
         }
-        let mut reading = self.read_attachment(attachment.clone()).await?;
-        let file = reading
-            .info()
-            .attachment
-            .clone()
-            .ok_or_else(|| Error::Unexpected("the node supplied no attachment metadata".into()))?;
+        let mut reading = self.read_attachment(attachment.clone());
+        told(reading.progress());
         let random = fastctx_net::sign::random::<8>().map_err(Error::Kept)?;
         let incoming = root.join(".incoming").join(format!("original-{:016x}", u64::from_le_bytes(random)));
-        let Some(path) = pictures::place(&incoming, &file.name) else {
-            return Err(Error::Kept(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("the name {:?} cannot name a file on this device", file.name),
-            )));
-        };
-        let folder = path.parent().expect("an original has a folder").to_path_buf();
-        let making = folder.clone();
+        let making = incoming.clone();
         blocking(move || fastctx_platform::ensure_private_dir(&making)).await?;
         let pending = Pending(incoming.clone());
+        // The file being written, named as the read opened it. A read that
+        // starts over may open another picture (its original went away
+        // meanwhile): what was written goes, and its name with it.
+        let mut kept: Option<(PathBuf, AttachmentFile, tokio::fs::File)> = None;
         let mut digest = Sha256::new();
-        let written = async {
-            let mut out = tokio::fs::File::create(&path).await?;
-            while let Some(piece) = reading.next().await.map_err(std::io::Error::other)? {
-                digest.update(&piece);
-                out.write_all(&piece).await?;
+        while let Some(read) = reading.next().await? {
+            match read {
+                Read::Opened(info) => {
+                    let file = info
+                        .attachment
+                        .ok_or_else(|| Error::Unexpected("the node supplied no attachment metadata".into()))?;
+                    let Some(path) = pictures::place(&incoming, &file.name) else {
+                        return Err(Error::Kept(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            format!("the name {:?} cannot name a file on this device", file.name),
+                        )));
+                    };
+                    if let Some((before, _, out)) = kept.take() {
+                        drop(out);
+                        tokio::fs::remove_file(&before).await.map_err(Error::Kept)?;
+                    }
+                    let out = tokio::fs::File::create(&path).await.map_err(Error::Kept)?;
+                    digest = Sha256::new();
+                    kept = Some((path, file, out));
+                }
+                Read::Bytes(piece) => {
+                    let (_, _, out) = kept.as_mut().expect("a read hands out bytes only once it opened");
+                    digest.update(&piece);
+                    out.write_all(&piece).await.map_err(Error::Kept)?;
+                }
             }
-            out.sync_all().await
         }
-        .await;
-        if let Err(error) = written {
-            return Err(Error::Kept(error));
-        }
+        let (path, file, out) = kept.expect("a read that ended well opened");
+        out.sync_all().await.map_err(Error::Kept)?;
+        drop(out);
+        let folder = incoming.clone();
         let sha256 = format!("{:x}", digest.finalize());
         // Bytes named by a digest that are not those bytes, such as a host's
         // own copy of a picture whose original is gone, are kept by their

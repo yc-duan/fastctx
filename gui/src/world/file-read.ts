@@ -19,6 +19,9 @@ export interface FileReadInfo {
   file: FileMetadata;
   offset: number;
   length: number;
+  /** Which bytes these are; a read that broke off goes on from where it
+   *  was while it stays the same. Absent from older nodes. */
+  version?: string;
 }
 
 export interface FileReadComplete {

@@ -1148,8 +1148,8 @@ function liveTalk(address: Address): KeepablePage {
     // A file elsewhere is brought to this device first; one here opens
     // where it is.
     opening: {
-      open: async (machine, path) => openLocal(await fetchFile(machine, path)),
-      openAttachment: async (attachment) => openLocal((await fetchAttachment(attachment)).path),
+      open: async (machine, path, held) => openLocal(await fetchFile(machine, path, held)),
+      openAttachment: async (attachment, held) => openLocal((await fetchAttachment(attachment, held)).path),
       reveal: onComputer() ? reveal : undefined,
     },
     pictures: {
@@ -1157,13 +1157,13 @@ function liveTalk(address: Address): KeepablePage {
       attachmentThumbnail: async (attachment, max) => thumbnailUrl(await attachmentThumbnail(attachment, max)),
       // A file the user sent is asked for as large as it is known to be,
       // which a gone original's host record answers too.
-      original: async (picture, max) => {
+      original: async (picture, max, held) => {
         if (picture.attachment) return blobOf(await attachmentThumbnail(picture.attachment, max));
-        const read = await readBytes(picture.machine, picture.path!);
+        const read = await readBytes(picture.machine, picture.path!, held);
         return new Blob([Uint8Array.from(atob(read.base64), (char) => char.charCodeAt(0))]);
       },
-      save: async (picture) =>
-        savedOf(await saveAs(picture.attachment ? (await fetchAttachment(picture.attachment)).path : await fetchFile(picture.machine, picture.path!), picture.name)),
+      save: async (picture, held) =>
+        savedOf(await saveAs(picture.attachment ? (await fetchAttachment(picture.attachment, held)).path : await fetchFile(picture.machine, picture.path!, held), picture.name)),
       reveal: onComputer() ? reveal : undefined,
     },
     files: {
@@ -1433,12 +1433,13 @@ function pageScreen(town: string, name: string, version: number | null): Page {
           restore: (base, version) => restorePage(town, name, base, version),
         }
       : specimenPageWorld(name),
-    tools: (view) => {
+    tools: (view, reads) => {
       const tools = toolsFor({
         town,
         store,
         open: (address) => (location.hash = talkLink(address)),
         act: (action) => pageAct(town, name, view.publication.version, action),
+        reads,
       });
       return live ? tools : specimenPageTools(view, tools);
     },
@@ -1666,8 +1667,8 @@ function show(next: Place): void {
         path: next.path,
         tail: next.tail,
         head,
-        read: (machine, path, range) => (live ? readText(machine, path, range) : specimenRead(machine, path, range)),
-        readBytes: (machine, path) => (live ? readBytes(machine, path) : notLive()),
+        read: (machine, path, range, held) => (live ? readText(machine, path, range, held) : specimenRead(machine, path, range)),
+        readBytes: (machine, path, held) => (live ? readBytes(machine, path, held) : notLive()),
         ago: (at) => homeWords.ago(Date.now() - at.getTime()),
       });
       break;

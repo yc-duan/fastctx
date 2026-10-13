@@ -25,13 +25,17 @@ pub(crate) async fn serve_attachment(
     node: &Arc<Node>,
     link: &Arc<fastctx_net::link::Link>,
     attachment: fastctx_types::attachments::AttachmentSource,
+    range: FileRange,
     read: u64,
     stream: Stream,
 ) -> Result<RemoteReply, Failure> {
-    let mut parts = super::start_attachment(node.clone(), attachment);
+    let mut parts = super::start_attachment(node.clone(), attachment, range);
     send(link, &mut parts, read, stream).await
 }
 
+/// Sends the read's pieces down the caller's data connection. A connection
+/// that ends on the way is a read that broke off, not an answer about the
+/// file: the caller goes on from what came (`world-network.md`, 断开不是结束).
 async fn send(
     link: &Arc<fastctx_net::link::Link>,
     parts: &mut super::Receiver,
@@ -42,7 +46,7 @@ async fn send(
     loop {
         let part = tokio::select! {
             part = parts.recv() => part,
-            () = stream.closed() => return Err(Failure::new("the file read's caller disconnected")),
+            () = stream.closed() => return Err(Failure::unanswered("the file read's caller disconnected")),
         };
         let Some(part) = part else { break };
         let (content, bytes, ended) = match part? {
@@ -54,12 +58,12 @@ async fn send(
             Part::Finished(result) => (Content::Finished { result: result.clone() }, None, Some(result)),
         };
         let signed = link.sign(Domain::FileRead, &Piece { read, n, part: content });
-        stream.say(&signed).await.map_err(Failure::new)?;
+        stream.say(&signed).await.map_err(Failure::unanswered)?;
         if let Some(bytes) = bytes {
-            stream.send(&bytes).await.map_err(Failure::new)?;
+            stream.send(&bytes).await.map_err(Failure::unanswered)?;
         }
         if let Some(result) = ended {
-            stream.finish().await.map_err(Failure::new)?;
+            stream.finish().await.map_err(Failure::unanswered)?;
             return Ok(RemoteReply::FileRead { result });
         }
         n += 1;

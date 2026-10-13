@@ -2,12 +2,15 @@
 // project, the output of a job, a journal's attachment kept where it was
 // written. Markdown is read as prose; an image or a PDF as itself; anything
 // else as its own text, the end of it where it is long and still growing.
-// Bytes that are not UTF-8 are said to be so, never decoded by guess.
+// Bytes that are not UTF-8 are said to be so, never decoded by guess. While
+// a large file comes, its facts say how much has; while the way to it is
+// broken, that it is, the read going on where it broke once it is back.
 
 import { drawDiagrams } from "../conversation/diagrams";
 import { glyph } from "../conversation/glyphs";
 import { escape, render } from "../conversation/prose";
 import type { FileRange, FileReadInfo } from "../world/file-read";
+import { HeldRead, shareOf, type ReadProgress } from "../world/reads";
 import type { PdfView, PdfViewState } from "../pdf";
 import type { Page } from "./shell";
 
@@ -37,6 +40,14 @@ const images: Record<string, string> = {
 export interface ReaderWords {
   reread: string;
   reading: string;
+  /** How much of a file that takes a while has come: "读取中… 45%". */
+  readingShare(percent: number): string;
+  /** The way to the file broke; the read goes on once it is back. */
+  interrupted: string;
+  /** On hover over that: for how long, and why. */
+  brokenFor(took: string, why: string): string;
+  /** A length of time: "1 分 12 秒". */
+  took(ms: number): string;
   /** Only the end is shown: how much, of how much. */
   tail(shown: string, size: string): string;
   notText(size: string): string;
@@ -60,8 +71,8 @@ export interface ReaderOptions {
   /** The end of the file, for what keeps growing; the whole otherwise. */
   tail: boolean;
   head(title: string, actions?: string): string;
-  read(machine: string, path: string, range: FileRange): Promise<TextRead>;
-  readBytes(machine: string, path: string): Promise<BytesRead>;
+  read(machine: string, path: string, range: FileRange, held: HeldRead): Promise<TextRead>;
+  readBytes(machine: string, path: string, held: HeldRead): Promise<BytesRead>;
   /** Says how long ago a moment was. */
   ago(at: Date): string;
 }
@@ -77,6 +88,10 @@ export class ReaderPage implements Page {
   private body: HTMLElement;
   private asked = 0;
   private pdf: PdfView | null = null;
+  /** The read under way, let go of when another starts or the page goes. */
+  private held: HeldRead | null = null;
+  /** Since when, and why, the read is broken off, while it is. */
+  private broken: { why: string; since: number } | null = null;
 
   constructor(private readonly options: ReaderOptions) {
     const { words, path } = options;
@@ -91,12 +106,53 @@ export class ReaderPage implements Page {
     this.facts = this.element.querySelector<HTMLElement>(".reader-facts")!;
     this.body = this.element.querySelector<HTMLElement>(".reader-body")!;
     this.element.querySelector(".reread")!.addEventListener("click", () => void this.read());
+    // How long it has been broken is as of when the pointer comes to it.
+    this.facts.addEventListener("pointerover", () => this.sayBroken());
     void this.read();
   }
 
   leave(): void {
     this.asked += 1;
+    this.letGo();
     this.closePdf();
+  }
+
+  private letGo(): void {
+    this.held?.release();
+    this.held = null;
+    this.broken = null;
+  }
+
+  /** A new read, held until it ends, another starts or the page goes. */
+  private hold(asked: number): HeldRead {
+    this.letGo();
+    this.held = new HeldRead((progress) => {
+      if (asked === this.asked) this.drawProgress(progress);
+    });
+    return this.held;
+  }
+
+  /** How the read goes, where its facts will be. */
+  private drawProgress(progress: ReadProgress): void {
+    const { words } = this.options;
+    const fact = this.facts.lastElementChild as HTMLElement | null;
+    if (!fact) return;
+    this.broken = progress.interrupted;
+    if (progress.interrupted) {
+      fact.textContent = words.interrupted;
+      this.sayBroken();
+      return;
+    }
+    fact.removeAttribute("title");
+    const share = shareOf(progress);
+    fact.textContent = share === null ? words.reading : words.readingShare(share);
+  }
+
+  private sayBroken(): void {
+    const fact = this.facts.lastElementChild as HTMLElement | null;
+    if (!fact || !this.broken) return;
+    const { words } = this.options;
+    fact.title = words.brokenFor(words.took(Date.now() - this.broken.since), this.broken.why);
   }
 
   private closePdf(): void {
@@ -110,34 +166,41 @@ export class ReaderPage implements Page {
     const asked = ++this.asked;
     this.facts.innerHTML = `<span class="fact">${escape(machine)}</span><span class="sep">·</span><span class="fact reader-path">${escape(path)}</span><span class="sep">·</span><span class="fact">${escape(words.reading)}</span>`;
     const ending = /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase() ?? "";
-    if (ending === "pdf") return this.readPdf(asked);
+    const held = this.hold(asked);
+    if (ending === "pdf") return this.readPdf(asked, held);
     const image = images[ending];
     let read: TextRead | (BytesRead & { image: string });
     try {
       read = image
-        ? { ...(await this.options.readBytes(machine, path)), image }
-        : await this.options.read(machine, path, tail ? { kind: "tail", bytes: TAIL_BYTES } : { kind: "all" });
+        ? { ...(await this.options.readBytes(machine, path, held)), image }
+        : await this.options.read(machine, path, tail ? { kind: "tail", bytes: TAIL_BYTES } : { kind: "all" }, held);
     } catch (error) {
       if (asked !== this.asked) return;
+      this.held = null;
+      this.broken = null;
       this.facts.lastElementChild!.textContent = words.failed(String(error));
       (this.facts.lastElementChild as HTMLElement).title = String(error);
       this.facts.lastElementChild!.classList.add("caution");
       return;
     }
     if (asked !== this.asked) return;
+    this.held = null;
+    this.broken = null;
     this.closePdf();
     this.draw(read);
   }
 
   /** A PDF, page by page in its own viewer, which is loaded only when one is
    *  read; its bytes come whole in one read, with their facts. */
-  private async readPdf(asked: number): Promise<void> {
+  private async readPdf(asked: number, held: HeldRead): Promise<void> {
     const { words, machine, path } = this.options;
     let read = false;
     try {
       const { PdfView, readPdf } = await import("../pdf");
-      const bytes = await readPdf(machine, path);
+      const bytes = await readPdf(machine, path, held);
       if (asked !== this.asked) return;
+      this.held = null;
+      this.broken = null;
       this.closePdf();
       this.drawFacts(bytes.info);
       read = true;
@@ -168,6 +231,8 @@ export class ReaderPage implements Page {
       view.element.focus({ preventScroll: true });
     } catch (error) {
       if (asked !== this.asked) return;
+      this.held = null;
+      this.broken = null;
       const code = (error as { code?: string }).code;
       if (code === "closed") return;
       this.closePdf();

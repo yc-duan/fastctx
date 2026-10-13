@@ -10,6 +10,7 @@ import type { ChangePreview, FolderChange, LoginChange, MachineLogins, WorldLogi
 import type { Control, Controlled, Offers } from "./control";
 import type { WorldSince } from "./since";
 import type { FileRange } from "./file-read";
+import type { HeldRead } from "./reads";
 import type { Attachment, UploadTarget } from "./attachments";
 import type { ConnectionState } from "./device";
 import type { Focus } from "./focus";
@@ -266,14 +267,15 @@ export function journal(town: string, name: string, before: string | null): Prom
   return invoke("journal", { town, journal: name, before });
 }
 
-/** A text file on a machine, or a piece of it, read for the user. */
-export function readText(machine: MachineName, path: string, range: FileRange): Promise<TextRead> {
-  return invoke("read_text", { machineName: machine, path, range });
+/** A text file on a machine, or a piece of it, read for the user; `held`
+ *  lets go of it and hears how it goes. */
+export function readText(machine: MachineName, path: string, range: FileRange, held?: HeldRead): Promise<TextRead> {
+  return invoke("read_text", { machineName: machine, path, range, ...held?.args });
 }
 
 /** A file on a machine, whole, as bytes for the page to show as it is. */
-export function readBytes(machine: MachineName, path: string): Promise<BytesRead> {
-  return invoke("read_bytes", { machineName: machine, path });
+export function readBytes(machine: MachineName, path: string, held?: HeldRead): Promise<BytesRead> {
+  return invoke("read_bytes", { machineName: machine, path, ...held?.args });
 }
 
 /** How the shell reaches the World now: its own node, or as a device. */

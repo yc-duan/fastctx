@@ -2,6 +2,9 @@
 
 use fastctx_types::attachments::{AttachmentFile, AttachmentSource};
 use serde::Serialize;
+use tauri::ipc::Channel;
+
+use crate::held_reads::{ReadProgress, tell};
 
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -38,13 +41,28 @@ pub async fn fetch(
     world: &fastctx_client::World,
     attachment: AttachmentSource,
     cache: &std::path::Path,
+    progress: Option<Channel<ReadProgress>>,
 ) -> Result<Fetched, Failure> {
-    let reading = world.read_attachment(attachment).await.map_err(Failure::from)?;
+    let mut reading = world.read_attachment(attachment);
+    tell(reading.progress(), progress);
+    let path = crate::local_files::store(
+        &mut reading,
+        |info| {
+            info.attachment
+                .as_ref()
+                .map(|file| file.name.clone())
+                .ok_or_else(|| "the node supplied no attachment metadata".into())
+        },
+        cache,
+    )
+    .await
+    .map_err(|stored| match stored {
+        crate::local_files::Stored::Read(error) => Failure::from(error),
+        crate::local_files::Stored::Kept(message) => Failure::failed(message),
+    })?;
     let file = reading
         .info()
-        .attachment
-        .clone()
+        .and_then(|info| info.attachment.clone())
         .ok_or_else(|| Failure::failed("the node supplied no attachment metadata".into()))?;
-    let path = crate::local_files::store(reading, file.name.clone(), cache).await.map_err(Failure::failed)?;
     Ok(Fetched { path, file })
 }

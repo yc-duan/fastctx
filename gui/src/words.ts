@@ -469,6 +469,8 @@ export const zh: Words = {
     on: (machine, path) => `${machine} 上的 ${path}`,
     openFailed: (why) => `打不开这个文件：${why}`,
     gone: "原件已不在",
+    fetching: (name, share) => (share === null ? `正在取 ${name}` : `正在取 ${name} · ${share}%`),
+    fetchInterrupted: (name) => `连接中断，正在重连… · ${name}`,
   },
   pictures: {
     close: "关闭",
@@ -483,6 +485,8 @@ export const zh: Words = {
     gone: "原件已不在",
     failed: (why) => `没能取到：${why}`,
     counter: (at, of) => `${at} / ${of}`,
+    fetching: (share) => (share === null ? "正在取…" : `正在取… ${share}%`),
+    interrupted: "连接中断，正在重连…",
   },
   openColleague: "查看",
   agents: {
@@ -710,6 +714,8 @@ export const en: Words = {
     on: (machine, path) => `${path} on ${machine}`,
     openFailed: (why) => `Couldn't open the file: ${why}`,
     gone: "The original is gone",
+    fetching: (name, share) => (share === null ? `Fetching ${name}` : `Fetching ${name} · ${share}%`),
+    fetchInterrupted: (name) => `Disconnected, reconnecting… · ${name}`,
   },
   pictures: {
     close: "Close",
@@ -724,6 +730,8 @@ export const en: Words = {
     gone: "The original is gone",
     failed: (why) => `Couldn't get it: ${why}`,
     counter: (at, of) => `${at} / ${of}`,
+    fetching: (share) => (share === null ? "Fetching…" : `Fetching… ${share}%`),
+    interrupted: "Disconnected, reconnecting…",
   },
   openColleague: "Open",
   agents: {

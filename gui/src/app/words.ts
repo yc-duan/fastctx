@@ -10,6 +10,7 @@ import type { ReaderWords } from "./reader";
 import { sizeOf, type AttachWords } from "../conversation/attach";
 import { enProblems, failure, zhProblems } from "./problem";
 import { enMoment, zhMoment } from "./when-words";
+import { en as conversationEn, zh as conversationZh } from "../words";
 
 export interface ShellWords {
   app: string;
@@ -639,6 +640,10 @@ export const readerWords: ReaderWordsSet = {
   zh: {
     reread: "刷新",
     reading: "读取中…",
+    readingShare: (percent) => `读取中… ${percent}%`,
+    interrupted: conversationZh.watchInterrupted(null),
+    brokenFor: (took, why) => conversationZh.brokenFor(took, why),
+    took: (ms) => conversationZh.took(ms),
     tail: (shown, size) => `显示最后 ${shown}，共 ${size}`,
     notText: (size) => `非 UTF-8 文本（${size}）`,
     page: (page, count) => `${page} / ${count}`,
@@ -654,6 +659,10 @@ export const readerWords: ReaderWordsSet = {
   en: {
     reread: "Refresh",
     reading: "Reading…",
+    readingShare: (percent) => `Reading… ${percent}%`,
+    interrupted: conversationEn.watchInterrupted(null),
+    brokenFor: (took, why) => conversationEn.brokenFor(took, why),
+    took: (ms) => conversationEn.took(ms),
     tail: (shown, size) => `Last ${shown} of ${size}`,
     notText: (size) => `Not UTF-8 text (${size})`,
     page: (page, count) => `${page} / ${count}`,

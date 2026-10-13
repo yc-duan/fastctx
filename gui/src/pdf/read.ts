@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { FileReadInfo } from "../world/file-read";
+import type { HeldRead } from "../world/reads";
 
 export interface PdfRead {
   info: FileReadInfo;
@@ -9,8 +10,8 @@ export interface PdfRead {
 
 /** Reads once through the World, with the metadata and bytes from the same
  * stream. The existing base64 readBytes remains suitable for image data URLs. */
-export async function readPdf(machine: string, path: string): Promise<PdfRead> {
-  const response = await invoke<ArrayBuffer>("read_binary", { machineName: machine, path });
+export async function readPdf(machine: string, path: string, held?: HeldRead): Promise<PdfRead> {
+  const response = await invoke<ArrayBuffer>("read_binary", { machineName: machine, path, ...held?.args });
   if (!(response instanceof ArrayBuffer) || response.byteLength < 4) throw new Error("Invalid binary file response");
   const length = new DataView(response).getUint32(0, true);
   const start = 4 + length;

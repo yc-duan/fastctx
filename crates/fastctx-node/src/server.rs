@@ -329,12 +329,13 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             let acting = fastctx_types::access::Acting::Here;
             return crate::file_read::serve_local(node, acting, machine, request, id, &mut reader, &mut writer).await;
         }
-        if let Call::ReadAttachment { attachment } = call {
+        if let Call::ReadAttachment { attachment, range } = call {
             if let Err(failure) = users_voice(node, &hello.peer) {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
                 return writer.drain().await;
             }
-            return crate::file_read::serve_attachment_local(node, attachment, id, &mut reader, &mut writer).await;
+            return crate::file_read::serve_attachment_local(node, attachment, range, id, &mut reader, &mut writer)
+                .await;
         }
         let only_notes = matches!(call, Call::ReadLineNotes { .. });
         if let Call::ReadLines { machine, request } | Call::ReadLineNotes { machine, request } = call {

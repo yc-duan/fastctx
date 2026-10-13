@@ -151,6 +151,8 @@ pub enum RemoteCall {
     ReadAttachment {
         attachment: crate::attachments::AttachmentSource,
         read: u64,
+        #[serde(default, skip_serializing_if = "crate::file_read::FileRange::is_all")]
+        range: crate::file_read::FileRange,
     },
     Lines {
         request: crate::lines::Request,

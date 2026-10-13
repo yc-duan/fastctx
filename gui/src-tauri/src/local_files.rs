@@ -1,12 +1,22 @@
 //! Files fetched for external applications remain in this device's cache.
 
-use fastctx_client::World;
+use fastctx_client::file_read::Read;
+use fastctx_client::{Reading, World};
 use fastctx_types::MachineName;
-use fastctx_types::file_read::{FileRange, ReadFileRequest};
-use std::path::Path;
+use fastctx_types::file_read::{FileRange, FileReadInfo, ReadFileRequest};
+use std::path::{Path, PathBuf};
+use tauri::ipc::Channel;
 use tokio::io::AsyncWriteExt as _;
 
-pub async fn fetch(world: &World, machine: Option<MachineName>, path: String, cache: &Path) -> Result<String, String> {
+use crate::held_reads::{ReadProgress, tell};
+
+pub async fn fetch(
+    world: &World,
+    machine: Option<MachineName>,
+    path: String,
+    cache: &Path,
+    progress: Option<Channel<ReadProgress>>,
+) -> Result<String, String> {
     let name = path
         .rsplit(['/', '\\'])
         .next()
@@ -27,12 +37,15 @@ pub async fn fetch(world: &World, machine: Option<MachineName>, path: String, ca
         }
         None => None,
     };
-    let reading = world
-        .read_file(machine, ReadFileRequest { path, range: FileRange::All })
-        .await
-        .map_err(|error| error.to_string())?;
-    let Some((root, generation)) = keeping else { return store(reading, name, cache).await };
-    let staged = std::path::PathBuf::from(store(reading, name, &root.join(".incoming")).await?);
+    let mut reading = world.read_file(machine, ReadFileRequest { path, range: FileRange::All });
+    tell(reading.progress(), progress);
+    let named = |_: &FileReadInfo| Ok(name.clone());
+    let Some((root, generation)) = keeping else {
+        return store(&mut reading, named, cache).await.map_err(|stored| stored.to_string());
+    };
+    let staged = std::path::PathBuf::from(
+        store(&mut reading, named, &root.join(".incoming")).await.map_err(|stored| stored.to_string())?,
+    );
     let folder = staged.parent().expect("a fetched file has its own folder").to_path_buf();
     let pending = Pending(folder.clone());
     tauri::async_runtime::spawn_blocking(move || {
@@ -67,26 +80,71 @@ impl Drop for Pending {
     }
 }
 
-pub(crate) async fn store(mut reading: fastctx_client::Reading, name: String, cache: &Path) -> Result<String, String> {
-    tokio::fs::create_dir_all(cache).await.map_err(|error| error.to_string())?;
-    let directory =
-        tempfile::Builder::new().prefix("world-file-").tempdir_in(cache).map_err(|error| error.to_string())?;
-    let local = directory.path().join(name);
-    if local.parent() != Some(directory.path())
-        || cfg!(windows) && local.file_name().is_some_and(|name| name.to_string_lossy().contains(':'))
-    {
-        return Err("the original filename cannot be used as a cache filename on this device".into());
+/// Why a file was not stored: its read failed, or this device could not
+/// keep it.
+pub(crate) enum Stored {
+    Read(fastctx_client::Error),
+    Kept(String),
+}
+
+impl std::fmt::Display for Stored {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read(error) => error.fmt(f),
+            Self::Kept(message) => f.write_str(message),
+        }
     }
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&local)
-        .await
-        .map_err(|error| error.to_string())?;
-    while let Some(bytes) = reading.next().await.map_err(|error| error.to_string())? {
-        file.write_all(&bytes).await.map_err(|error| error.to_string())?;
+}
+
+impl From<fastctx_client::Error> for Stored {
+    fn from(error: fastctx_client::Error) -> Self {
+        Self::Read(error)
     }
-    file.flush().await.map_err(|error| error.to_string())?;
+}
+
+impl From<std::io::Error> for Stored {
+    fn from(error: std::io::Error) -> Self {
+        Self::Kept(error.to_string())
+    }
+}
+
+/// Writes what `reading` hands over into a private folder of its own under
+/// `cache`, named as `name_of` says of the file it opened, and says where.
+/// A read that starts over writes the file anew, under the name it now has.
+pub(crate) async fn store(
+    reading: &mut Reading,
+    name_of: impl Fn(&FileReadInfo) -> Result<String, String>,
+    cache: &Path,
+) -> Result<String, Stored> {
+    tokio::fs::create_dir_all(cache).await?;
+    let directory = tempfile::Builder::new().prefix("world-file-").tempdir_in(cache)?;
+    let mut writing: Option<(PathBuf, tokio::fs::File)> = None;
+    while let Some(read) = reading.next().await? {
+        match read {
+            Read::Opened(info) => {
+                let local = directory.path().join(name_of(&info).map_err(Stored::Kept)?);
+                if local.parent() != Some(directory.path())
+                    || cfg!(windows) && local.file_name().is_some_and(|name| name.to_string_lossy().contains(':'))
+                {
+                    return Err(Stored::Kept(
+                        "the original filename cannot be used as a cache filename on this device".into(),
+                    ));
+                }
+                if let Some((before, file)) = writing.take() {
+                    drop(file);
+                    tokio::fs::remove_file(&before).await?;
+                }
+                let file = tokio::fs::OpenOptions::new().write(true).create_new(true).open(&local).await?;
+                writing = Some((local, file));
+            }
+            Read::Bytes(bytes) => {
+                let (_, file) = writing.as_mut().expect("a read hands out bytes only once it opened");
+                file.write_all(&bytes).await?;
+            }
+        }
+    }
+    let (local, mut file) = writing.expect("a read that ended well opened");
+    file.flush().await?;
     drop(file);
     // The external app may read after this command returns. Failed transfers
     // instead drop the private directory, including their provisional bytes.

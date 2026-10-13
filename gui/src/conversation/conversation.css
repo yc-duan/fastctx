@@ -1794,6 +1794,15 @@ a.bubble-file:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* How a picture being saved comes; its hover says why its way broke. */
+.pv-note {
+  flex: none;
+  color: rgba(236, 232, 224, 0.6);
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+}
+
 .pv-acts {
   display: flex;
   gap: 2px;

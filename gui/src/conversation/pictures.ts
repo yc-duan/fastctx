@@ -4,13 +4,17 @@
 // zoomed with Ctrl and the wheel or two fingers, and the conversation's
 // other pictures are a key or a swipe away. A picture is named by what its
 // element carries: a file the user sent (`data-attachment`), a file on a
-// machine (`data-path`), or bytes already in the page (`src`).
+// machine (`data-path`), or bytes already in the page (`src`). A whole
+// picture read for a closer look is let go of when the viewer moves on; one
+// read to be saved goes on through breaks while the page is open, its bar
+// saying how it comes.
 
 import { layerOpened } from "../app/back";
 import { CanvasCamera } from "../map-canvas";
 import { darkUnderBars, safeBottom, safeTop } from "../system-bars";
 import type { MachineName } from "../world/events";
 import type { AttachmentSource } from "../world/files";
+import { HeldReads, LetGo, shareOf, type HeldRead, type ReadProgress } from "../world/reads";
 import { glyph } from "./glyphs";
 import { escape, naturalPath } from "./prose";
 
@@ -29,6 +33,10 @@ export interface PictureWords {
   failed(why: string): string;
   /** Which of how many, over the picture. */
   counter(at: number, of: number): string;
+  /** A picture being saved that takes a while to come. */
+  fetching(share: number | null): string;
+  /** Its way broke; it comes on once the way is back. */
+  interrupted: string;
 }
 
 /** A picture as the seams are asked for it: a file the user sent (as the
@@ -49,11 +57,12 @@ export interface PictureSeams {
    *  is nowhere to be had. */
   attachmentThumbnail(attachment: AttachmentSource, max: number): Promise<string>;
   /** The whole picture, `max` pixels being what it is known to hold, for
-   *  looking closer than a screen's worth. */
-  original(picture: PictureSource, max: number): Promise<Blob>;
-  /** Saves a copy where the user picks on this device; false when they
-   *  changed their mind. Absent where this device has no way to. */
-  save?: ((picture: PictureSource) => Promise<boolean>) | undefined;
+   *  looking closer than a screen's worth, as the read `held`. */
+  original(picture: PictureSource, max: number, held: HeldRead): Promise<Blob>;
+  /** Saves a copy where the user picks on this device, brought here as
+   *  the read `held`; false when they changed their mind. Absent where
+   *  this device has no way to. */
+  save?: ((picture: PictureSource, held: HeldRead) => Promise<boolean>) | undefined;
   /** Shows a file on this computer in its folder; absent on a phone. */
   reveal?: ((path: string) => Promise<void>) | undefined;
 }
@@ -67,6 +76,9 @@ export interface PicturesOptions {
   seams: PictureSeams;
   /** A line beside the composer. */
   say(text: string): void;
+  /** For how long the way to a picture has been broken, since `since`
+   *  (milliseconds since the epoch), and why. */
+  broken(since: number, why: string): string;
 }
 
 /** One picture as the viewer knows it. */
@@ -91,6 +103,8 @@ export class Pictures {
   private readonly made = new Map<string, Promise<string>>();
   private readonly watching: IntersectionObserver;
   private viewer: PictureViewer | null = null;
+  /** Pictures being saved, which outlive the viewer they were saved from. */
+  readonly saves = new HeldReads();
 
   constructor(
     private readonly root: HTMLElement,
@@ -166,6 +180,12 @@ export class Pictures {
     }
   }
 
+  /** The page went: what is still coming is not wanted. */
+  release(): void {
+    this.viewer?.close();
+    this.saves.release();
+  }
+
   private open(image: HTMLImageElement): void {
     const all = [...this.root.querySelectorAll<HTMLImageElement>("img[data-picture][src]")];
     this.viewer?.close();
@@ -195,6 +215,11 @@ class PictureViewer {
    *  the user moved on is let go. */
   private shown = 0;
   private original: string | null = null;
+  /** The whole picture read for a closer look, let go of with the picture. */
+  private readonly looks = new HeldReads();
+  /** How the save under way comes, said in the bar. */
+  private readonly note: HTMLElement;
+  private broken: { since: number; why: string } | null = null;
   private readonly pointers = new Map<number, [number, number]>();
   private swipe: { start: [number, number]; fitted: boolean } | null = null;
   private readonly resize: ResizeObserver;
@@ -218,7 +243,7 @@ class PictureViewer {
     const button = (act: string, icon: Parameters<typeof glyph>[0], label: string) =>
       `<button class="icon-button pv-act" type="button" data-pv="${act}" aria-label="${escape(label)}" title="${escape(label)}">${glyph(icon, 18)}</button>`;
     this.element.innerHTML = `<div class="pv-stage"><img class="pv-image" alt="" draggable="false"></div>
-      <div class="pv-bar"><span class="pv-name"></span><span class="pv-counter"></span><span class="pv-acts">${
+      <div class="pv-bar"><span class="pv-name"></span><span class="pv-counter"></span><span class="pv-note" aria-live="polite" hidden></span><span class="pv-acts">${
         typeof ClipboardItem === "undefined" ? "" : button("copy-image", "copy", words.copyImage)
       }${options.seams.save ? button("save", "save", words.saveAs) : ""}${button("copy-path", "link", words.copyPath)}${
         options.seams.reveal ? button("reveal", "folder", words.reveal) : ""
@@ -227,6 +252,11 @@ class PictureViewer {
       <button class="pv-side pv-next" type="button" data-pv="next" aria-label="${escape(words.next)}" title="${escape(words.next)}">${glyph("back", 22)}</button>`;
     this.stage = this.element.querySelector(".pv-stage")!;
     this.image = this.element.querySelector(".pv-image")!;
+    this.note = this.element.querySelector(".pv-note")!;
+    // How long it has been broken is as of when the pointer comes to it.
+    this.note.addEventListener("pointerover", () => {
+      if (this.broken) this.note.title = this.options.broken(this.broken.since, this.broken.why);
+    });
     document.body.append(this.element);
     this.element.addEventListener("click", (event) => {
       const act = (event.target as Element).closest<HTMLElement>("[data-pv]")?.dataset.pv;
@@ -272,6 +302,7 @@ class PictureViewer {
   }
 
   close(): void {
+    this.looks.release();
     document.removeEventListener("keydown", this.keys, true);
     this.resize.disconnect();
     this.undarken();
@@ -296,6 +327,7 @@ class PictureViewer {
   private show(): void {
     const picture = this.picture;
     const shown = ++this.shown;
+    this.looks.release();
     if (this.original) URL.revokeObjectURL(this.original);
     this.original = null;
     this.camera = null;
@@ -372,7 +404,7 @@ class PictureViewer {
     if ((this.camera.view.scale * this.size[0] * devicePixelRatio) / natural <= 1.05) return;
     const shown = this.shown;
     this.original = "asked";
-    this.options.seams.original(picture, natural).then(
+    this.looks.hold((held) => this.options.seams.original(picture, natural, held)).then(
       (blob) => {
         if (shown !== this.shown) return;
         this.original = URL.createObjectURL(blob);
@@ -463,14 +495,32 @@ class PictureViewer {
         say(words.copied);
       } else if (act === "reveal" && picture.path && seams.reveal) await seams.reveal(picture.path);
       else if (act === "save" && (picture.path || picture.attachment) && seams.save) {
-        if (await seams.save(picture)) say(words.saved);
+        const save = seams.save;
+        try {
+          if (await this.maker.saves.hold((held) => save(picture, held), (progress) => this.tell(progress))) say(words.saved);
+        } finally {
+          this.tell(null);
+        }
       } else if (act === "copy-image") {
         await navigator.clipboard.write([new ClipboardItem({ "image/png": pngOf(this.image) })]);
         say(words.copied);
       }
     } catch (error) {
+      if (error instanceof LetGo) return;
       say(words.failed(error instanceof Error ? error.message : String(error)));
     }
+  }
+
+  /** How a picture being saved comes, in the bar: once it is large enough
+   *  to take a while, or its way broke. */
+  private tell(progress: ReadProgress | null): void {
+    const { words } = this.options;
+    this.broken = progress?.interrupted ?? null;
+    const share = shareOf(progress);
+    const text = this.broken ? words.interrupted : share === null ? "" : words.fetching(share);
+    this.note.textContent = text;
+    this.note.hidden = !text;
+    if (!this.broken) this.note.removeAttribute("title");
   }
 }
 

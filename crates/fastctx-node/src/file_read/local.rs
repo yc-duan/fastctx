@@ -11,14 +11,19 @@ use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 use super::{Part, Sender};
 
 pub async fn read(machine: MachineName, request: ReadFileRequest, sender: &Sender) -> FileReadResult {
-    read_attachment(machine, request, None, None, sender).await
+    read_attachment(machine, request, None, None, None, sender).await
 }
 
+/// Reads `request` as `read` does, for a file the user sent: `expected`
+/// is the file as it was found, and `version` names its bytes where the
+/// file is made anew for each read (a picture decoded from a host's
+/// record), whose own identity would differ every time.
 pub async fn read_attachment(
     machine: MachineName,
     mut request: ReadFileRequest,
     attachment: Option<fastctx_types::attachments::AttachmentFile>,
     expected: Option<Snapshot>,
+    version: Option<String>,
     sender: &Sender,
 ) -> FileReadResult {
     request.path = fastctx_platform::local_path(&request.path)
@@ -58,7 +63,8 @@ pub async fn read_attachment(
             (offset, bytes.min(before.size - offset))
         }
     };
-    let info = FileReadInfo { machine, path: request.path.clone(), file: initial, offset, length, attachment };
+    let version = Some(version.unwrap_or_else(|| identity_version(&before)));
+    let info = FileReadInfo { machine, path: request.path.clone(), file: initial, offset, length, attachment, version };
     let mut file = tokio::fs::File::from_std(file);
     file.seek(io::SeekFrom::Start(offset)).await.map_err(|e| io_error(e, 0))?;
     sender.send(Ok(Part::Opened(info))).await.map_err(|e| error(FileReadErrorKind::Io, e.to_string(), 0))?;
@@ -103,6 +109,15 @@ pub async fn read_attachment(
     })
     .await
     .map_err(|e| error(FileReadErrorKind::Io, e.to_string(), bytes))?
+}
+
+/// The version of an opened file's bytes: its identity, size and change
+/// times as the final check compares them, hashed, so the word says nothing
+/// of the filesystem's numbers.
+fn identity_version(snapshot: &Snapshot) -> String {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(snapshot.fingerprint().as_bytes());
+    digest[..16].iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn metadata(snapshot: &Snapshot) -> io::Result<FileMetadata> {

@@ -16,6 +16,7 @@ import { mountFrame } from "./frame";
 import { PageHost, type HostContext } from "./host";
 import type { PageWords } from "./words";
 import { agentName } from "../world/names";
+import { HeldReads } from "../world/reads";
 
 export interface PageWorld {
   read(version: number | null): Promise<PageView>;
@@ -38,8 +39,9 @@ export interface PageScreenOptions {
   /** "Codex · lab", for the resident at an address. */
   someone(address: Address): string;
   world: PageWorld;
-  /** The tools an open version calls, carried out for it. */
-  tools(view: PageView): (tool: string, args: Record<string, unknown>) => Promise<unknown>;
+  /** The tools an open version calls, carried out for it; the files they
+   *  read are held by `reads`. */
+  tools(view: PageView, reads: HeldReads): (tool: string, args: Record<string, unknown>) => Promise<unknown>;
   context(): HostContext;
   /** The interface's version, told to the page. */
   version_: string;
@@ -57,6 +59,8 @@ export class PageScreen {
   private readonly notice: HTMLElement;
   private readonly stage: HTMLElement;
   private readonly sheet = new Sheet("form-sheet page-sheet");
+  /** The files the open version's tools read, let go of when it goes. */
+  private readonly reads = new HeldReads();
   private view: PageView | null = null;
   private host: PageHost | null = null;
   private asked = false;
@@ -100,6 +104,7 @@ export class PageScreen {
   leave(): void {
     this.left = true;
     this.host?.close();
+    this.reads.release();
     this.sheet.close();
   }
 
@@ -147,6 +152,7 @@ export class PageScreen {
 
   private mount(view: PageView): void {
     this.host?.close();
+    this.reads.release();
     this.host = null;
     this.stage.replaceChildren();
     if (view.html === null) return;
@@ -157,7 +163,7 @@ export class PageScreen {
       frame,
       version: this.options.version_,
       context: this.options.context,
-      call: this.options.tools(view),
+      call: this.options.tools(view, this.reads),
       left: (error) => {
         // A page that navigates its own frame away is closed, and said so.
         this.host = null;

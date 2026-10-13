@@ -26,11 +26,12 @@ pub(crate) async fn serve(
 pub(crate) async fn serve_attachment(
     node: &Arc<Node>,
     attachment: fastctx_types::attachments::AttachmentSource,
+    range: fastctx_types::file_read::FileRange,
     id: u64,
     reader: &mut FrameReader,
     writer: &mut FrameWriter,
 ) -> std::io::Result<()> {
-    let mut parts = super::start_attachment(node.clone(), attachment);
+    let mut parts = super::start_attachment(node.clone(), attachment, range);
     send(&mut parts, id, reader, writer).await
 }
 

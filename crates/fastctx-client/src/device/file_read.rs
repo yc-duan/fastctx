@@ -3,7 +3,7 @@
 
 use fastctx_net::file_read::Part;
 use fastctx_types::MachineName;
-use fastctx_types::file_read::ReadFileRequest;
+use fastctx_types::file_read::{FileRange, ReadFileRequest};
 use fastctx_types::ipc::Failure;
 use tokio::sync::mpsc;
 
@@ -19,6 +19,7 @@ impl Device {
     pub(crate) async fn read_attachment(
         &self,
         attachment: fastctx_types::attachments::AttachmentSource,
+        range: FileRange,
     ) -> Result<Reading, Error> {
         let machine = attachment.owner().machine.clone();
         let session = self.reaching(&machine)?;
@@ -43,6 +44,7 @@ impl Device {
                         machine.clone(),
                         account,
                         attachment.clone(),
+                        range.clone(),
                         &sender,
                     )
                     .await

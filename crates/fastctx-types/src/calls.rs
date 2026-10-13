@@ -157,8 +157,12 @@ pub enum Call {
         attachment: crate::attachments::AttachmentSource,
         max: u32,
     },
+    /// Reads a file the user sent, or a picture a session showed, as
+    /// `ReadFile` does; `range` lets a read that broke off go on.
     ReadAttachment {
         attachment: crate::attachments::AttachmentSource,
+        #[serde(default, skip_serializing_if = "crate::file_read::FileRange::is_all")]
+        range: crate::file_read::FileRange,
     },
     Lines {
         machine: Option<MachineName>,

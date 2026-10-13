@@ -636,9 +636,9 @@ impl fastctx_net::link::Node for Handler {
                     let stream = stream.ok_or_else(|| Failure::new("a file read requires a data connection"))?;
                     crate::file_read::serve(&node, &link, request, read, stream).await
                 }
-                RemoteCall::ReadAttachment { attachment, read } => {
+                RemoteCall::ReadAttachment { attachment, read, range } => {
                     let stream = stream.ok_or_else(|| Failure::new("an attachment read requires a data connection"))?;
-                    crate::file_read::serve_attachment(&node, &link, attachment, read, stream).await
+                    crate::file_read::serve_attachment(&node, &link, attachment, range, read, stream).await
                 }
                 RemoteCall::Thumbnail { request } => {
                     crate::thumbnail::call(&node, None, request).await.map(RemoteReply::Thumbnail)

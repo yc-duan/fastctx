@@ -28,6 +28,7 @@ import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { AgentsPanel } from "./agents-panel";
 import type { AgentActivity } from "../world/events";
 import { Pictures, type PictureSeams } from "./pictures";
+import type { HeldRead } from "../world/reads";
 import { glyph } from "./glyphs";
 import type { Conversation, Held } from "./conversation";
 import type { Gap } from "./model";
@@ -83,8 +84,8 @@ export interface PageOptions {
   /** Opening the files an agent's links name, where the World can bring
    *  them here; showing one in its folder, where this is a computer. */
   opening?: {
-    open(machine: string, path: string): Promise<void>;
-    openAttachment?: ((attachment: AttachmentSource) => Promise<void>) | undefined;
+    open(machine: string, path: string, held: HeldRead): Promise<void>;
+    openAttachment?: ((attachment: AttachmentSource, held: HeldRead) => Promise<void>) | undefined;
     reveal?: ((path: string) => Promise<void>) | undefined;
   };
   /** The conversation's pictures, from the machines holding them. */
@@ -182,6 +183,12 @@ export class ConversationPage {
   /** The latest `@` question; an answer to an earlier one is not shown. */
   private mentionAsked = 0;
   private note: HTMLElement;
+  /** What the note says on hover, worked out when the pointer comes to it,
+   *  for a line that says how long something has been so. */
+  private noteDetail: (() => string) | null = null;
+  /** The links to files and the pictures, whose reads go with the page. */
+  private fileLinks: FileLinks | null = null;
+  private pictures: Pictures | null = null;
   private chip: HTMLButtonElement;
   private finder: Finder;
   private far: FarFind;
@@ -299,6 +306,9 @@ export class ConversationPage {
     this.input = this.element.querySelector("textarea")!;
     this.action = this.element.querySelector<HTMLButtonElement>(".composer-action")!;
     this.note = this.element.querySelector<HTMLElement>(".composer-note")!;
+    this.note.addEventListener("pointerover", () => {
+      if (this.noteDetail) this.note.title = this.noteDetail();
+    });
     this.queue = new SendQueue(options.draftKey ?? "", words.queue, {
       now: (item) => this.sendQueued(item, true),
       changed: () => this.drawAction(),
@@ -368,8 +378,10 @@ export class ConversationPage {
         if (this.view.openAgent(run.id)) this.following = false;
       },
     });
+    // For how long a way has been broken, and why, as the note says it.
+    const broken = (since: number, why: string) => words.brokenFor(words.took(Date.now() - since), why);
     if (options.opening) {
-      new FileLinks(main, {
+      this.fileLinks = new FileLinks(main, {
         words: words.files,
         here: options.here,
         machine: someone.machine,
@@ -377,10 +389,25 @@ export class ConversationPage {
         openAttachment: options.opening.openAttachment,
         reveal: options.opening.reveal,
         say: (text) => this.say(text),
+        note: (text, detail) => {
+          this.say(text, detail?.() ?? "");
+          this.noteDetail = detail;
+        },
+        unsay: (text) => {
+          if (this.note.textContent === text) this.say("");
+        },
+        broken,
       });
     }
     if (options.pictures) {
-      new Pictures(main, { words: words.pictures, here: options.here, machine: someone.machine, seams: options.pictures, say: (text) => this.say(text) });
+      this.pictures = new Pictures(main, {
+        words: words.pictures,
+        here: options.here,
+        machine: someone.machine,
+        seams: options.pictures,
+        say: (text) => this.say(text),
+        broken,
+      });
     }
 
     // What was read of the conversation from the shell is drawn as it comes.
@@ -641,6 +668,8 @@ export class ConversationPage {
     document.removeEventListener("keydown", this.findKey);
     this.stopDrops?.();
     this.unbindShared?.();
+    this.fileLinks?.release();
+    this.pictures?.release();
     void this.session?.close();
   }
 
@@ -929,6 +958,7 @@ export class ConversationPage {
   private say(text: string, detail = "", refused = false): void {
     this.note.textContent = text;
     this.note.title = detail;
+    this.noteDetail = null;
     this.note.classList.toggle("refused", refused);
   }
 

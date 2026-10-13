@@ -13,6 +13,7 @@ import type { Address } from "../world/events";
 import type { PageInvocation, PageResult, RunReply } from "../world/pages";
 import type { JobRecord, ResidentNow, Writer } from "../world/world";
 import { agentName, titleOf } from "../world/names";
+import type { HeldReads } from "../world/reads";
 
 export interface ToolsOptions {
   town: string;
@@ -21,6 +22,8 @@ export interface ToolsOptions {
   open(address: Address): void;
   /** Asks the core to do one of the page's acts. */
   act(action: PageInvocation): Promise<PageResult>;
+  /** The files the page reads, let go of when it closes. */
+  reads: HeldReads;
 }
 
 type Answer<K extends keyof Tools> = Tools[K]["answer"];
@@ -146,7 +149,9 @@ export function toolsFor(options: ToolsOptions): (tool: string, args: Record<str
 
     async "file.read"(args) {
       const tail = typeof args.tail === "number" && args.tail > 0 ? args.tail : null;
-      const read = await readText(text(args.machine, "machine"), text(args.path, "path"), tail ? { kind: "tail", bytes: tail } : { kind: "all" });
+      const machine = text(args.machine, "machine");
+      const path = text(args.path, "path");
+      const read = await options.reads.hold((held) => readText(machine, path, tail ? { kind: "tail", bytes: tail } : { kind: "all" }, held));
       return { text: read.text, size: read.info.file.size, modified: read.info.file.modified, offset: read.info.offset };
     },
 
@@ -158,7 +163,7 @@ export function toolsFor(options: ToolsOptions): (tool: string, args: Record<str
       if (!record) {
         throw new Error(looked?.unasked.includes(machine) ? `${machine} could not be asked about job ${id}` : `there is no job ${id} on ${machine}`);
       }
-      const output = await readText(machine, record.output, { kind: "tail", bytes: 16 * 1024 });
+      const output = await options.reads.hold((held) => readText(machine, record.output, { kind: "tail", bytes: 16 * 1024 }, held));
       const status = record.exit?.status;
       return {
         job: id,

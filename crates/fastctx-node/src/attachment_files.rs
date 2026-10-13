@@ -4,6 +4,7 @@ use fastctx_types::attachments::{AttachmentFile, AttachmentFileSource, Attachmen
 use fastctx_types::ipc::{Failure, FailureCode};
 use fastctx_types::session::attachments::AttachedMessage;
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use std::io::{self, BufReader, Read as _};
 use std::path::PathBuf;
 use std::sync::{Arc, atomic::AtomicBool};
@@ -17,6 +18,9 @@ pub(crate) struct File {
     pub path: PathBuf,
     pub snapshot: fastctx_platform::file_read::Snapshot,
     pub description: AttachmentFile,
+    /// The SHA-256 of a picture decoded anew for this read, which names
+    /// its bytes where the file it was written to cannot (`FileReadInfo`).
+    pub version: Option<String>,
     _temporary: Option<tempfile::TempDir>,
 }
 
@@ -48,6 +52,7 @@ pub(crate) async fn resolve(
                         media_type: attachment_media(&source),
                         source: AttachmentFileSource::Original,
                     },
+                    version: None,
                     _temporary: None,
                 });
             }
@@ -359,7 +364,9 @@ fn recorded(
             continue;
         }
         let mut output = tempfile::NamedTempFile::new_in(scope.path())?;
-        let decoded_mime = record.decode(&encoded, data_url, output.as_file_mut(), cancel)?;
+        let mut hashed = Hashed { file: output.as_file_mut(), sha256: Sha256::new() };
+        let decoded_mime = record.decode(&encoded, data_url, &mut hashed, cancel)?;
+        let version = format!("{:x}", hashed.sha256.finalize());
         let mime = if data_url { decoded_mime } else { media };
         let extension = match mime.as_str() {
             "image/png" => "png",
@@ -384,10 +391,35 @@ fn recorded(
             decoded,
             snapshot,
             AttachmentFile { name, media_type: mime, source: AttachmentFileSource::HostRecord },
+            version,
         ));
     }
     record_read::check(path, check, &before, input.into_inner().digest(), cancel)?;
-    Ok(selected.map(|(path, snapshot, description)| File { path, snapshot, description, _temporary: Some(scope) }))
+    Ok(selected.map(|(path, snapshot, description, version)| File {
+        path,
+        snapshot,
+        description,
+        version: Some(version),
+        _temporary: Some(scope),
+    }))
+}
+
+/// A picture written into its file and its digest at once.
+struct Hashed<'a> {
+    file: &'a mut std::fs::File,
+    sha256: Sha256,
+}
+
+impl io::Write for Hashed<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let written = self.file.write(bytes)?;
+        self.sha256.update(&bytes[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
 }
 
 fn claude_image<'a>(blocks: &'a [Value], row: &Value, source: &AttachmentSource) -> Option<(&'a Value, bool, String)> {
@@ -448,6 +480,7 @@ fn local_image(path: PathBuf, cancel: &AtomicBool) -> io::Result<File> {
             media_type: format.to_mime_type().into(),
             source: AttachmentFileSource::Original,
         },
+        version: None,
         _temporary: None,
     })
 }
@@ -484,6 +517,7 @@ fn decoded(temporary: &std::path::Path, mime: &str, base64: &str) -> io::Result<
             media_type: mime.into(),
             source: AttachmentFileSource::HostRecord,
         },
+        version: Some(format!("{:x}", Sha256::digest(&bytes))),
         _temporary: Some(scope),
     })
 }

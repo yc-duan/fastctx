@@ -62,6 +62,7 @@ mod binary_reading;
 #[cfg(windows)]
 mod desktop_presence;
 mod folder_picker;
+mod held_reads;
 #[cfg(windows)]
 mod installer_lines;
 mod line_reading;
@@ -86,6 +87,8 @@ struct Shell {
     next: AtomicU64,
     page: AtomicU64,
     line_requests: line_reading::Requests,
+    /// The file reads the page holds (`held_reads`).
+    held_reads: held_reads::HeldReads,
 }
 
 impl Shell {
@@ -98,6 +101,7 @@ impl Shell {
         self.world().close_file_searches();
         self.world().close_line_sources();
         self.line_requests.cancel_all();
+        self.held_reads.release_all();
         for (_, watch) in self.watches.lock().expect("watch table").drain() {
             watch.abort();
         }
@@ -661,15 +665,23 @@ async fn offers(
     Ok(offers)
 }
 
-/// A text file on a machine, or a piece of it, read for the user.
+/// A text file on a machine, or a piece of it, read for the user. A read
+/// goes on through breaks; the page names it `read` to let go of it, and
+/// is told how it goes down `progress` (`held_reads`).
 #[fastctx_gui_command::command]
 async fn read_text(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
     path: String,
     range: fastctx_types::file_read::FileRange,
+    read: Option<String>,
+    progress: Option<tauri::ipc::JavaScriptChannelId>,
+    webview: tauri::Webview,
 ) -> Result<reading::TextRead, String> {
-    reading::read_text(&shell.world(), machine(machine_name)?, path, range).await
+    let machine = machine(machine_name)?;
+    let world = shell.world();
+    let reading = reading::read_text(&world, machine, path, range, held_reads::channel(&webview, progress));
+    shell.held_reads.hold(read, reading).await.unwrap_or_else(|| Err(held_reads::LET_GO.into()))
 }
 
 /// A file on a machine, whole, as bytes for the page to show as it is.
@@ -678,8 +690,14 @@ async fn read_bytes(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
     path: String,
+    read: Option<String>,
+    progress: Option<tauri::ipc::JavaScriptChannelId>,
+    webview: tauri::Webview,
 ) -> Result<reading::BytesRead, String> {
-    reading::read_bytes(&shell.world(), machine(machine_name)?, path).await
+    let machine = machine(machine_name)?;
+    let world = shell.world();
+    let reading = reading::read_bytes(&world, machine, path, held_reads::channel(&webview, progress));
+    shell.held_reads.hold(read, reading).await.unwrap_or_else(|| Err(held_reads::LET_GO.into()))
 }
 
 /// Streams an original file into this device's cache for an external app.
@@ -689,12 +707,24 @@ async fn fetch_file(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
     path: String,
+    read: Option<String>,
+    progress: Option<tauri::ipc::JavaScriptChannelId>,
+    webview: tauri::Webview,
 ) -> Result<String, String> {
-    let cache = match shell.world().cache() {
+    let world = shell.world();
+    let cache = match world.cache() {
         Some(cache) => cache.root().join("files"),
         None => app.path().app_cache_dir().map_err(|error| error.to_string())?,
     };
-    local_files::fetch(&shell.world(), machine(machine_name)?, path, &cache).await
+    let machine = machine(machine_name)?;
+    let fetching = local_files::fetch(&world, machine, path, &cache, held_reads::channel(&webview, progress));
+    shell.held_reads.hold(read, fetching).await.unwrap_or_else(|| Err(held_reads::LET_GO.into()))
+}
+
+/// Lets go of a file read the page no longer wants.
+#[tauri::command]
+fn cancel_read(shell: tauri::State<'_, Shell>, read: String) {
+    shell.held_reads.release(&read);
 }
 
 #[fastctx_gui_command::command]
@@ -725,17 +755,30 @@ async fn fetch_attachment(
     app: tauri::AppHandle,
     shell: tauri::State<'_, Shell>,
     attachment: fastctx_types::attachments::AttachmentSource,
+    read: Option<String>,
+    progress: Option<tauri::ipc::JavaScriptChannelId>,
+    webview: tauri::Webview,
 ) -> Result<attachment_files::Fetched, attachment_files::Failure> {
     let world = shell.world();
-    // Kept by its bytes where this device keeps what it views: opened again,
-    // it is not fetched again.
-    if let Some((path, file)) =
-        world.kept_original(attachment.clone()).await.map_err(attachment_files::Failure::from)?
-    {
-        return Ok(attachment_files::Fetched { path: path.to_string_lossy().into_owned(), file });
-    }
-    let cache = app.path().app_cache_dir().map_err(|error| attachment_files::Failure::failed(error.to_string()))?;
-    attachment_files::fetch(&world, attachment, &cache).await
+    let fetching = async {
+        // Kept by its bytes where this device keeps what it views: opened
+        // again, it is not fetched again.
+        let mut progress = held_reads::channel(&webview, progress);
+        let kept = world
+            .kept_original(attachment.clone(), |reading| held_reads::tell(reading, progress.take()))
+            .await
+            .map_err(attachment_files::Failure::from)?;
+        if let Some((path, file)) = kept {
+            return Ok(attachment_files::Fetched { path: path.to_string_lossy().into_owned(), file });
+        }
+        let cache = app.path().app_cache_dir().map_err(|error| attachment_files::Failure::failed(error.to_string()))?;
+        attachment_files::fetch(&world, attachment, &cache, progress).await
+    };
+    shell
+        .held_reads
+        .hold(read, fetching)
+        .await
+        .unwrap_or_else(|| Err(attachment_files::Failure::failed(held_reads::LET_GO.into())))
 }
 
 #[fastctx_gui_command::command]
@@ -784,8 +827,14 @@ async fn read_binary(
     shell: tauri::State<'_, Shell>,
     machine_name: Option<String>,
     path: String,
+    read: Option<String>,
+    progress: Option<tauri::ipc::JavaScriptChannelId>,
+    webview: tauri::Webview,
 ) -> Result<tauri::ipc::Response, String> {
-    binary_reading::read_binary(&shell.world(), machine(machine_name)?, path).await
+    let machine = machine(machine_name)?;
+    let world = shell.world();
+    let reading = binary_reading::read_binary(&world, machine, path, held_reads::channel(&webview, progress));
+    shell.held_reads.hold(read, reading).await.unwrap_or_else(|| Err(held_reads::LET_GO.into()))
 }
 
 /// Residents or jobs in detail, by id, from every machine that has them.
@@ -974,6 +1023,7 @@ pub fn run() {
                 next: AtomicU64::new(0),
                 page: AtomicU64::new(0),
                 line_requests: Default::default(),
+                held_reads: Default::default(),
             });
             #[cfg(desktop)]
             app.manage(removal::State::default());
@@ -1100,6 +1150,7 @@ pub fn run() {
             line_reading::lines_find,
             line_reading::lines_close,
             line_reading::cancel_line_request,
+            cancel_read,
             open_local,
             save_as,
             pick_folder,

@@ -6,6 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AttachmentSource } from "./attachments";
 import type { MachineName } from "./events";
+import type { HeldRead } from "./reads";
 
 export type { AttachmentSource } from "./attachments";
 
@@ -60,8 +61,8 @@ export interface FetchedAttachment {
   source: "original" | "host_record";
 }
 
-export function fetchAttachment(attachment: AttachmentSource): Promise<FetchedAttachment> {
-  return invoke<FetchedAttachment>("fetch_attachment", { attachment }).catch(typed);
+export function fetchAttachment(attachment: AttachmentSource, held?: HeldRead): Promise<FetchedAttachment> {
+  return invoke<FetchedAttachment>("fetch_attachment", { attachment, ...held?.args }).catch(typed);
 }
 
 /** Saves a copy of a file on this device where the user picks, through the
@@ -73,9 +74,10 @@ export function saveAs(path: string, suggestedName: string): Promise<Saved> {
 }
 
 /** Brings a file to this device and says where it now is; one on this
- *  computer is where it already was. */
-export function fetchFile(machine: MachineName | null, path: string): Promise<string> {
-  return invoke("fetch_file", { machineName: machine, path });
+ *  computer is where it already was. `held` lets go of it and hears how
+ *  it goes. */
+export function fetchFile(machine: MachineName | null, path: string, held?: HeldRead): Promise<string> {
+  return invoke("fetch_file", { machineName: machine, path, ...held?.args });
 }
 
 /** Opens a file on this device with the program the system keeps for it. */

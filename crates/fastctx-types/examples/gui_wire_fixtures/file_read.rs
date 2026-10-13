@@ -64,6 +64,7 @@ pub fn fixtures() -> Fixtures {
                     file,
                     offset: 4_294_967_296,
                     length: 4,
+                    version: Some("3f9a0c1d5e7b2a4c6d8e0f1a2b3c4d5e".into()),
                 },
             },
         },
