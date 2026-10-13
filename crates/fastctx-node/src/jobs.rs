@@ -88,7 +88,7 @@ impl Jobs {
         {
             node.residents.active(&address.resident)?;
         }
-        let (world, machine, executable) = (node.world.clone(), node.machine(), node.fastctx.clone());
+        let (world, names, executable) = (node.world.clone(), node.names(), node.fastctx.clone());
         let registering = node.clone();
         let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
             let _collecting = registering.disk.lock().expect("never poisoned");
@@ -103,7 +103,7 @@ impl Jobs {
             };
             let launch = Launch {
                 world: &world,
-                machine: &machine,
+                names: &names,
                 owner: &owner,
                 town: town.as_ref(),
                 request: &request,
@@ -159,7 +159,7 @@ impl Jobs {
         // job works: its resident here, or the account a resident of
         // another machine sent it for. A page's acts are its own.
         let acting = match owner.resident() {
-            Some(address) if address.machine == *machine => {
+            Some(address) if node.is_me(&address.machine) => {
                 node.residents.about(&address.resident).map(|(about, _)| about.acting)
             }
             Some(_) => account
@@ -224,7 +224,8 @@ impl Jobs {
                 .await
                 .map_err(|error| failure("telling the job's end", error))?;
         }
-        let visited = visited(&node.world.job_owner(machine, &record.owner).jobs(), &launched.job);
+        // Beside its record, in whichever room the job went on (`run::launch`).
+        let visited = launched.record.parent().map(|jobs| visited(jobs, &launched.job)).unwrap_or_default();
         let state = state(&record);
         // Why it answered says something only of a job that still runs.
         let answered = answered.filter(|_| state == RunState::Running);
@@ -233,7 +234,7 @@ impl Jobs {
             .await
             .map_err(|error| Failure::new(format!("reading completion receipts: {error}")))?
             .map_err(|error| failure("reading completion receipts", error))?;
-        if let Some(owner) = record.owner.resident().filter(|owner| owner.machine == *machine) {
+        if let Some(owner) = record.owner.resident().filter(|owner| node.is_me(&owner.machine)) {
             let directory = node.world.conversation(&owner.resident);
             crate::job_receipts::apply_consumed(&directory, &consumed)
                 .map_err(|error| failure("reading completion receipts", error))?;

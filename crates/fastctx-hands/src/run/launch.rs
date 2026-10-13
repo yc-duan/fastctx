@@ -12,16 +12,19 @@ use std::path::{Path, PathBuf};
 
 use fastctx_platform::{Permissions, current_identity, ensure_private_dir, publish_new, spawn_detached};
 use fastctx_types::ipc::Failure;
-use fastctx_types::layout::{ConversationDir, WorldDir};
+use fastctx_types::layout::{ConversationDir, Names, WorldDir};
 use fastctx_types::run::{JobProgram, JobRecord, OutputMode, RunRequest};
-use fastctx_types::{JobId, MachineName, ProcessIdentity, TownName};
+use fastctx_types::{JobId, ProcessIdentity, TownName};
 
 use super::record;
 
 /// Who asks, where, and with what.
 pub struct Launch<'a> {
     pub world: &'a WorldDir,
-    pub machine: &'a MachineName,
+    /// The names machines answer to here: this machine's, and every name
+    /// of a machine renamed since, whose residents' jobs go on in the rooms
+    /// they had under its earlier names.
+    pub names: &'a Names,
     /// Who asks, at the machine it lives on.
     pub owner: &'a fastctx_types::run::JobOwner,
     pub town: Option<&'a TownName>,
@@ -119,7 +122,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
         }
     }
     let cwd = starting_directory(launch)?;
-    let resident = launch.world.job_owner(launch.machine, launch.owner);
+    let resident = launch.world.job_owner(launch.names, launch.owner);
     let (job, output) = reserve(&resident).map_err(|error| failure("could not reserve a job", &error))?;
     let stderr = if mode == OutputMode::Separate {
         let path = output.with_extension("stderr.log");
@@ -141,7 +144,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
     let record = JobRecord {
         call_id: launch.request.call_id.clone(),
         id: job.clone(),
-        machine: launch.machine.clone(),
+        machine: launch.names.me.clone(),
         owner: launch.owner.clone(),
         town: launch.town.cloned(),
         script: launch.request.script.clone(),
@@ -190,7 +193,7 @@ fn starting_directory(launch: &Launch<'_>) -> Result<PathBuf, Failure> {
     let refused = |reason: String| {
         Failure::new(format!(
             "cwd {cwd:?} is not a directory of {}, where the script starts ({reason}); to work in another machine's directory, write `on MACHINE` in the script and `cd` there",
-            launch.machine
+            launch.names.me
         ))
     };
     let path = fastctx_platform::local_path(cwd).map_err(|error| refused(error.to_string()))?;

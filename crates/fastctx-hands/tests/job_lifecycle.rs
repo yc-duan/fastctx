@@ -14,7 +14,7 @@ use fastctx_hands::run::{self, record, shell};
 use fastctx_platform::ipc::{Endpoint, Listener};
 use fastctx_platform::{current_identity, ensure_private_dir, is_alive};
 use fastctx_types::ipc::{ClientFrame, Hello, NodeFrame, Peer, Welcome};
-use fastctx_types::layout::WorldDir;
+use fastctx_types::layout::{Names, WorldDir};
 use fastctx_types::run::{EndedHow, ExitStatus, JobRecord, OutputMode, RunRequest, StopRequest};
 use fastctx_types::{Address, Call, MachineName, ProcessIdentity};
 
@@ -64,9 +64,10 @@ fn exercise() -> Result {
     let environment = environment(&root, &bash);
     let request =
         RunRequest { call_id: None, script: String::new(), cwd: Some(display(&root)), writes_off: false, wait: None };
+    let names = Names { me: machine.clone(), was: Vec::new(), renamed: Vec::new() };
     let launch = run::Launch {
         world: &world,
-        machine: &machine,
+        names: &names,
         owner: &owner,
         town: None,
         request: &request,

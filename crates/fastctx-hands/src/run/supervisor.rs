@@ -12,7 +12,7 @@ use fastctx_platform::ipc::Connection;
 use fastctx_platform::{FileLock, ProcessTree, current_identity, in_job};
 use fastctx_types::Call;
 use fastctx_types::ipc::Peer;
-use fastctx_types::layout::WorldDir;
+use fastctx_types::layout::{ConversationDir, WorldDir};
 use fastctx_types::run::{
     Ended, EndedHow, ExitStatus, Exited, JobRecord, OutputDrained, OutputLost, OutputMode, StopRequest, StopRequested,
 };
@@ -23,8 +23,8 @@ use super::{control, output, record, shell};
 
 /// Runs the job at `record_path` until nothing of it runs any more.
 pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Result<()> {
-    supervise_with(world, record_path, |world, record| {
-        let resident = world.job_owner(&record.machine, &record.owner);
+    supervise_with(world, record_path, |_, record| {
+        let resident = room(record_path)?;
         let (program, args) = shell::command(&resident.job_script(&record.id))?;
         shell::ensure_prelude(fastctx_dir)?;
         let fastctx_home = std::env::var_os("FASTCTX_HOME");
@@ -44,6 +44,17 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
         })?;
         Ok(shell::Prepared { program, args, environment })
     })
+}
+
+/// The room of the conversation a job is for: the one its record is kept
+/// in. Worked out again from the owner's name it could be another, as the
+/// room of a machine renamed since stays under the name it had.
+fn room(record_path: &Path) -> io::Result<ConversationDir> {
+    record_path
+        .parent()
+        .and_then(Path::parent)
+        .map(ConversationDir::at)
+        .ok_or_else(|| io::Error::other(format!("{} is in no conversation's jobs", record_path.display())))
 }
 
 /// Supervises a complete tree with a caller-resolved shell. Lifecycle,
@@ -126,7 +137,7 @@ impl Job {
         // before the shell has been spawned.
         record::write(&self.path, &self.record)?;
         if let Some(request) = self.record.on.as_ref().and_then(|on| on.request.as_ref()) {
-            let directory = self.world.job_owner(&self.record.machine, &self.record.owner);
+            let directory = room(&self.path)?;
             if directory.jobs().join(format!("request-{request}.stopped")).try_exists()? {
                 self.record.stop = Some(StopRequested {
                     at: Timestamp::now(),

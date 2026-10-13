@@ -2,7 +2,7 @@
 //! a job, start its supervisor, or execute an otherwise valid first command.
 
 use fastctx_hands::run::{self, preread};
-use fastctx_types::layout::WorldDir;
+use fastctx_types::layout::{Names, WorldDir};
 use fastctx_types::run::RunRequest;
 use fastctx_types::{Address, MachineName, ResidentId};
 
@@ -13,6 +13,7 @@ fn rejection_precedes_all_job_side_effects() {
     let marker = directory.path().join("executed");
     let path = marker.to_str().unwrap().replace('\\', "/").replace('\'', "'\\''");
     let machine: MachineName = "preread-test".parse().unwrap();
+    let names = Names { me: machine.clone(), was: Vec::new(), renamed: Vec::new() };
     let owner =
         Address { machine: machine.clone(), resident: ResidentId::try_from("lab-cafe".to_string()).unwrap() }.into();
     for tail in [
@@ -32,7 +33,7 @@ fn rejection_precedes_all_job_side_effects() {
             on: None,
             account: None,
             world: &world,
-            machine: &machine,
+            names: &names,
             owner: &owner,
             town: None,
             request: &request,

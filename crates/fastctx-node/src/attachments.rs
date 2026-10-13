@@ -850,7 +850,7 @@ pub async fn take_placed(
     if attachment.owner != origin {
         return Err(Failure::not_run(format!("{from} places files only of its own sessions")));
     }
-    let base = node.world.guest(&origin).attachments();
+    let base = node.world.owner(&node.names(), &origin).attachments();
     let wanted = Attachment { owner: Address { machine: node.machine(), resident }, ..attachment };
     let (directory, held) = {
         let wanted = wanted.clone();

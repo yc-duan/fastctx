@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use fastctx_hands::run::{self, record, shell};
 use fastctx_platform::{FileLock, ensure_private_dir, is_alive};
-use fastctx_types::layout::WorldDir;
+use fastctx_types::layout::{Names, WorldDir};
 use fastctx_types::run::{EndedHow, RunRequest};
 use fastctx_types::{Address, MachineName, ResidentId};
 use sha2::{Digest as _, Sha256};
@@ -137,7 +137,7 @@ fn exercise() -> anyhow::Result<()> {
             on: None,
             account: None,
             world: &world,
-            machine: &machine,
+            names: &Names { me: machine.clone(), was: Vec::new(), renamed: Vec::new() },
             owner: &owner.clone().into(),
             town: None,
             request: &RunRequest { call_id: None, script, cwd: Some(display(&root)), writes_off: false, wait: None },
