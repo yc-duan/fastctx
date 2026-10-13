@@ -38,13 +38,8 @@ export type Place =
   /** Into a network: joining one, or making a new one; with neither, the
    *  page asks which. */
   | { kind: "login"; way?: "join" | "new" }
-  /** A network this device is in: its server, this device's place in it,
-   *  and leaving it. */
-  | { kind: "network"; hub: string }
-  /** The accounts this computer or device is logged in to. */
+  /** The user's own things in the network shown: 「我」. */
   | { kind: "account" }
-  /** An administrator's page of a hub's accounts. */
-  | { kind: "admin" }
   /** A file on a machine, read whole, or its end when it keeps growing. */
   | { kind: "file"; machine: string; path: string; tail: boolean };
 
@@ -86,12 +81,8 @@ export function link(place: Place): string {
       return "#/data";
     case "login":
       return place.way ? `#/login/${place.way}` : "#/login";
-    case "network":
-      return `#/network/${part(place.hub)}`;
     case "account":
       return "#/account";
-    case "admin":
-      return "#/admin";
     case "file":
       return `#/file/${part(place.machine)}/${place.tail ? "tail" : "whole"}/${part(place.path)}`;
   }
@@ -146,13 +137,13 @@ export function placeOf(hash: string): Place {
     case "welcome":
     case "login":
       return parts[1] === "join" || parts[1] === "new" ? { kind: "login", way: parts[1] } : { kind: "login" };
+    // A network's page and the administrator's are gone: what they held is
+    // on 「我」 and on the drawing of the machines.
     case "network":
-      if (parts[1]) return { kind: "network", hub: parts[1] };
-      break;
     case "account":
       return { kind: "account" };
     case "admin":
-      return { kind: "admin" };
+      return { kind: "machines" };
     case "file":
       if (parts[1] && parts[3]) return { kind: "file", machine: parts[1], path: parts.slice(3).join("/"), tail: parts[2] === "tail" };
       break;

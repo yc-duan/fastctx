@@ -254,8 +254,9 @@ export class Sidebar {
     this.switcher.title = words.networks;
   }
 
-  /** Every network this device is in, the one shown checked, each with its
-   *  management; then the ways into another. */
+  /** Every network this device is in, the one shown checked; then the
+   *  ways into another. The people and machines of one are on its drawing,
+   *  the user's own things on 「我」. */
   private drawNetworks(): void {
     const { store, words } = this.options;
     const whole = store.whole.peek();
@@ -268,15 +269,14 @@ export class Sidebar {
             <span class="network-row-text"><span class="network-row-name">${escape(network.name)}</span><span class="network-row-note">${escape(network.admin ? words.admin : words.member)} · ${escape(words.machinesCount(network.machines))}</span></span>
             ${network.hub === shown ? glyph("check", 14) : ""}
           </button>
-          <a class="icon-button network-manage" href="${link({ kind: "network", hub: network.hub })}" role="menuitem" aria-label="${escape(`${words.manageNetwork} ${network.name}`)}" title="${escape(words.manageNetwork)}">${glyph("settings", 16)}</a>
         </li>`,
       )
       .join("");
     const computer = !whole || isComputer(whole);
     this.networks.innerHTML = `${rows ? `<ul class="network-rows">${rows}</ul>` : ""}
       <div class="network-ways">
+        <a class="network-way" href="${link({ kind: "login", way: "join" })}" role="menuitem">${glyph("link", 16)}<span>${escape(rows ? words.joinAnother : words.joinNetwork)}</span></a>
         ${computer ? `<a class="network-way" href="${link({ kind: "login", way: "new" })}" role="menuitem">${glyph("plus", 16)}<span>${escape(words.newNetwork)}</span></a>` : ""}
-        <a class="network-way" href="${link({ kind: "login", way: "join" })}" role="menuitem">${glyph("link", 16)}<span>${escape(words.joinNetwork)}</span></a>
       </div>`;
   }
 
@@ -286,13 +286,14 @@ export class Sidebar {
     return box.width > 0 && box.left >= 0 && box.right <= innerWidth ? box : null;
   }
 
-  /** The foot: the accounts, marked when someone came into one, and the
-   *  settings. */
+  /** The foot: the user, by their name in the network shown, marked when a
+   *  device came into their account; and the settings. */
   private drawFoot(world: WorldNow | null, place: Place): void {
     const { words } = this.options;
     const arrivals = (world?.accounts.hubs ?? []).reduce((n, hub) => n + hub.arrivals.length, 0);
-    const account = loginsOf(world?.accounts).length
-      ? `<a class="place account-place${place.kind === "account" || place.kind === "admin" ? " current" : ""}" href="${link({ kind: "account" })}">${glyph("person", 18)}<span class="place-name">${escape(words.account)}</span>${arrivals ? `<span class="count waiting"><span class="spoken">${escape(words.arrivals(arrivals))}</span>${arrivals}</span>` : ""}</a>`
+    const [me] = loginsOf(world?.accounts);
+    const account = me
+      ? `<a class="place account-place${place.kind === "account" ? " current" : ""}" href="${link({ kind: "account" })}" title="${escape(words.account)}">${glyph("person", 18)}<span class="place-name">${escape(me.account)}</span>${arrivals ? `<span class="count waiting"><span class="spoken">${escape(words.arrivals(arrivals))}</span>${arrivals}</span>` : ""}</a>`
       : "";
     const html = `${account}<a class="place settings${place.kind === "settings" || place.kind === "data" ? " current" : ""}" href="${link({ kind: "settings" })}">${glyph("settings", 18)}<span class="place-name">${escape(words.settings)}</span></a>`;
     if (html !== this.foot.innerHTML) this.foot.innerHTML = html;

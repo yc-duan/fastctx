@@ -3,8 +3,11 @@
 // joined by a bus of square lines, a box for each group of machines by
 // whose they are, as a comment box gathers nodes in a blueprint: the
 // account's own first, then each other account's shared with it, then those
-// whose agent assists from another. A box has a title strip with the
-// group's name, and its machines stand in a grid inside, one to a row and a
+// whose agent assists from another. For the network's administrator, every
+// person has a box, a title strip alone while none of their machines has
+// come, and a dashed box after them adds another person. A box has a title
+// strip with the group's name, and its machines stand in a grid inside, one
+// to a row and a
 // new column every ten, their names to the right. The box lies under the
 // lines and does not break them: the line down from the bus runs on through
 // the title strip as the trunk of the first column, the other columns branch
@@ -18,7 +21,7 @@
 // device, so machines keep their order while others come and go.
 
 import type { Bounds, Point } from "../map-canvas";
-import type { MapHub, MapLink, MapNode } from "./map-nodes";
+import type { MapHub, MapLink, MapNode, MapPerson } from "./map-nodes";
 
 /** A machine's ring and a hub's knot, in the drawing's units. */
 export const RING = 24;
@@ -43,6 +46,8 @@ const LABEL = 28;
 export const ROWS = 10;
 /** On a narrow screen: how far right of the spine the boxes stand. */
 const SIDE = 34;
+/** How wide the dashed box that adds a person is, past its trunk. */
+const ADDING = 150;
 /** Room between boxes, and between the trees of two hubs. */
 const BOX_GAP = 36;
 const HUB_GAP = 160;
@@ -51,7 +56,8 @@ const HUB_GAP = 160;
 export interface GroupNode {
   key: string;
   hub: string;
-  /** "mine", "of:<account>" or "assist:<account>". */
+  /** "mine", "of:<account>", "assist:<account>", or "adding" for the
+   *  dashed box that adds a person. */
   kind: string;
   label: string;
   count: number;
@@ -61,6 +67,8 @@ export interface GroupNode {
   box: Bounds;
   /** Where the box is chosen: its title. */
   point: Point;
+  /** The person whose box it is, for the network's administrator. */
+  person?: MapPerson | undefined;
 }
 
 /** A line of the tree, square at its corners: the hub's down to the
@@ -102,6 +110,11 @@ export interface LayoutChoices {
   /** The room a name takes beside its ring at its size: what a still
    *  drawing measures of its own names, the widest a name may be otherwise. */
   room?: number;
+  /** For the network's administrator: every person, each a box even with
+   *  no machine yet. */
+  people?: readonly MapPerson[];
+  /** The hubs whose people end with the dashed box that adds a person. */
+  adding?: ReadonlySet<string>;
 }
 
 interface Remembered {
@@ -118,9 +131,10 @@ function firstOrder(a: MapNode, b: MapNode): number {
   return Number(b.here) - Number(a.here) || HOLD_RANK[a.hold] - HOLD_RANK[b.hold] || a.name.localeCompare(b.name);
 }
 
-/** The order of groups under a hub: the account's own, others', assisting. */
+/** The order of groups under a hub: the account's own, others', the box
+ *  that adds a person, those assisting. */
 function groupRank(key: string): number {
-  return key === "mine" ? 0 : key.startsWith("of:") ? 1 : 2;
+  return key === "mine" ? 0 : key.startsWith("of:") ? 1 : key === "adding" ? 2 : 3;
 }
 
 /** Puts machines linked directly next to each other, keeping the order
@@ -158,7 +172,7 @@ export class MapLayout {
   }
 
   update(hubs: readonly MapHub[], nodes: readonly MapNode[], choices: LayoutChoices = {}): Placement {
-    const { links = [], folded = new Set<string>(), narrow = false, rows = ROWS, vacant = true, grow = 1, room = NAME } = choices;
+    const { links = [], folded = new Set<string>(), narrow = false, rows = ROWS, vacant = true, grow = 1, room = NAME, people = [], adding = new Set<string>() } = choices;
     // The room a name takes beside its ring, across a column and down a
     // row, as large as it is drawn.
     const NAME_AT = room * grow;
@@ -193,9 +207,21 @@ export class MapLayout {
     let below = 0;
     for (const id of order) {
       const own = nodes.filter((node) => hubOf(node) === id);
-      const kinds = [...new Set(["mine", ...own.map((node) => node.group?.key ?? "mine")])].sort((a, b) => groupRank(a) - groupRank(b) || a.localeCompare(b));
+      const persons = people.filter((person) => person.hub === id);
+      const kinds = [
+        ...new Set([
+          "mine",
+          ...own.map((node) => node.group?.key ?? "mine"),
+          ...persons.map((person) => `of:${person.account}`),
+          ...(adding.has(id) ? ["adding"] : []),
+        ]),
+      ].sort((a, b) => groupRank(a) - groupRank(b) || a.localeCompare(b));
       const blocks = kinds.map((kind) => {
         const members = chained(own.filter((node) => (node.group?.key ?? "mine") === kind).sort(byOrder), links);
+        const person = persons.find((one) => kind === `of:${one.account}`);
+        const label = members[0]?.group?.label ?? person?.label ?? "";
+        // The dashed box that adds a person is a title strip alone.
+        if (kind === "adding") return { kind, key: `adding:${id}`, members, label, person, fold: false, strip: true, width: TRUNK + 20 + ADDING * grow, height: TITLE, perColumn: 1 };
         const key = `group:${id}:${kind}`;
         const fold = folded.has(key) && members.length > 0;
         // The account's own end with the dashed ring.
@@ -204,8 +230,10 @@ export class MapLayout {
         const columns = Math.max(1, Math.ceil(cells / perColumn));
         const tall = Math.min(cells, perColumn);
         const width = TRUNK + TWIG + PAD + (columns - 1) * COLUMN_AT + RING * 2 + NAME_AT;
-        const height = fold ? TITLE : TITLE + PAD * 2 + (tall - 1) * ROW_AT + RING * 2;
-        return { kind, key, members, fold, width, height, perColumn };
+        // A person none of whose machines has come is the strip alone.
+        const strip = fold || cells === 0;
+        const height = strip ? TITLE : TITLE + PAD * 2 + (tall - 1) * ROW_AT + RING * 2;
+        return { kind, key, members, label, person, fold, strip, width, height, perColumn };
       });
       if (narrow) {
         // The hub at the top left, a spine down its left, and each box to
@@ -217,11 +245,11 @@ export class MapLayout {
         for (const block of blocks) {
           const box: Bounds = { x: SIDE, y, width: block.width, height: block.height };
           const online = block.members.filter((node) => node.online === true).length;
-          groups.push({ key: block.key, hub: id, kind: block.kind, label: block.members[0]?.group?.label ?? "", count: block.members.length, online, folded: block.fold, box, point: [SIDE + TRUNK + 50, y + TITLE / 2] });
+          groups.push({ key: block.key, hub: id, kind: block.kind, label: block.label, count: block.members.length, online, folded: block.fold, box, point: [SIDE + TRUNK + 50, y + TITLE / 2], person: block.person });
           join = y + TITLE / 2;
           const trunk = SIDE + TRUNK;
-          branches.push({ points: [[0, join], [trunk, join]], hub: id });
-          if (!block.fold) {
+          branches.push({ points: [[0, join], [trunk, join]], hub: id, out: block.kind === "adding" });
+          if (!block.strip) {
             const slots: (MapNode | null)[] = [...block.members, ...(ending(block.kind) ? [null] : [])];
             branches.push({ points: [[trunk, join], [trunk, y + TITLE + PAD + RING + (slots.length - 1) * ROW_AT]], hub: id });
             slots.forEach((slot, row) => {
@@ -247,12 +275,13 @@ export class MapLayout {
       for (const block of blocks) {
         const box: Bounds = { x, y: top, width: block.width, height: block.height };
         const online = block.members.filter((node) => node.online === true).length;
-        groups.push({ key: block.key, hub: id, kind: block.kind, label: block.members[0]?.group?.label ?? "", count: block.members.length, online, folded: block.fold, box, point: [x + TRUNK + 50, top + TITLE / 2] });
-        // The line from the bus comes down at the first trunk; folded, it
-        // stops in the middle of the title strip.
+        groups.push({ key: block.key, hub: id, kind: block.kind, label: block.label, count: block.members.length, online, folded: block.fold, box, point: [x + TRUNK + 50, top + TITLE / 2], person: block.person });
+        // The line from the bus comes down at the first trunk; to a strip
+        // alone it stops in the middle of it, broken to the box that adds a
+        // person.
         const drop = x + TRUNK;
         drops.push(drop);
-        if (block.fold) branches.push({ points: [[drop, busY], [drop, top + TITLE / 2]], hub: id });
+        if (block.strip) branches.push({ points: [[drop, busY], [drop, top + TITLE / 2]], hub: id, out: block.kind === "adding" });
         else {
           const slots: (MapNode | null)[] = [...block.members, ...(ending(block.kind) ? [null] : [])];
           const columns = Math.ceil(slots.length / rows);

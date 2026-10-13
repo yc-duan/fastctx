@@ -990,45 +990,9 @@ a.details-job {
   margin: 0;
 }
 
-/* Who came into an account lately: each a line saying who and when, with
-   what can be done about it, until it is seen. */
-.joined-lines {
-  list-style: none;
-  padding: 0;
-  margin-top: var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.joined-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
-  border-radius: var(--radius-m);
-  background: var(--accent-wash);
-  font-size: var(--size-ui);
-  line-height: var(--leading-ui);
-  color: var(--text);
-}
-
-.joined-text {
-  flex: 1 1 16em;
-  min-width: 0;
-}
-
-.joined-acts {
-  display: flex;
-  gap: var(--space-1);
-  margin-left: auto;
-}
-
 .quiet-button.danger {
   color: var(--wrong);
 }
-
 
 /* In: the hero gives way to the World's drawing with this computer on
    it, a short title under it, and only what is left to decide. */

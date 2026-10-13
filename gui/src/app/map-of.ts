@@ -4,13 +4,15 @@
 // front page and the machines page draw the same thing; a machine is keyed
 // `m:<name>`, one whose agent assists `assist:<name>`, a hub `hub:<id>`.
 // Between two machines, the direct link each holds with the other, as the
-// two say.
+// two say. Where the account is the network's administrator, every other
+// person there, whose box the machines page draws even with no machine in
+// it.
 
 import { loginsOf, type LinkSeen } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
-import type { MapHub, MapLink, MapNode } from "./map-nodes";
+import type { MapHub, MapLink, MapNode, MapPerson } from "./map-nodes";
 import { osName } from "../world/names";
-import { assistantsOf, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
+import { assistantsOf, isSuper, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
 
 export interface MapWords {
   ownedBy(account: string): string;
@@ -35,6 +37,8 @@ export interface MapNow {
   /** What stands under each hub's name. */
   hubLabels: Map<string, string>;
   links: MapLink[];
+  /** For the network's administrator, everyone else on the hub. */
+  people: MapPerson[];
 }
 
 export function mapOf(world: WorldNow, words: MapWords): MapNow {
@@ -93,7 +97,20 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       group: { key: `assist:${one.owner ?? ""}`, label: words.assistGroup(one.owner ?? "") },
     });
   }
-  return { hubs, nodes, hubLabels, links: linksOf(world, nodes) };
+  return { hubs, nodes, hubLabels, links: linksOf(world, nodes), people: peopleOf(world, words) };
+}
+
+/** Everyone on a hub but the administrator looking, for the administrator
+ *  alone: a member sees only the people whose machines they may use. */
+function peopleOf(world: WorldNow, words: MapWords): MapPerson[] {
+  const logins = loginsOf(world.accounts);
+  return world.accounts.hubs.flatMap((hub) => {
+    const admin = logins.find((login) => login.hub === hub.hub && isSuper(world, login));
+    if (!admin) return [];
+    return hub.accounts
+      .filter((account) => !logins.some((login) => login.hub === hub.hub && login.account === account.name))
+      .map((account) => ({ hub: hub.hub, account: account.name, label: words.ownedBy(account.name), locked: account.locked }));
+  });
 }
 
 /** The names a machine had, as the hubs it is on and, for this computer,

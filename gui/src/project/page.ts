@@ -1,7 +1,8 @@
 // A project's overview, on one screen: what it is, who is in it now, the
 // pages its residents wrote and where its things are, as its record has
 // them. Journals and decisions are project memory, not shown until it is
-// finished (`world-journals.md`).
+// finished (`world-journals.md`). Its "⋯" shares it and hands it on, where
+// the reader may (`../app/project-acts.ts`).
 // Side by side where there is room, each column scrolling on its own;
 // behind tabs on a narrow screen. Like the front page, every line is the
 // World's record, nothing summarised.
@@ -35,6 +36,9 @@ export interface ProjectOptions {
   link(address: Address): string;
   pageWords: PageWords;
   pageLink(town: string, page: string): string;
+  /** The project's "⋯": whether it has anything for the reader, opening
+   *  it, and whose the project is where it is another's. */
+  more?: { label: string; shown(town: string): boolean; open(town: string, name: string, anchor: HTMLElement): void; sharedBy(town: string): string | null };
 }
 
 type Tab = "here" | "pages" | "places";
@@ -57,7 +61,7 @@ export class ProjectPage {
     this.element.innerHTML = `
       ${options.head(
         `<h1 class="page-title"></h1>`,
-        `<button class="text-button revise" type="button" disabled>${glyph("edit", 16)}<span>${escape(options.edit)}</span></button><button class="text-button begin-here" type="button">${glyph("plus", 16)}<span>${escape(options.newTalk)}</span></button>`,
+        `<button class="text-button revise" type="button" disabled>${glyph("edit", 16)}<span>${escape(options.edit)}</span></button><button class="text-button begin-here" type="button">${glyph("plus", 16)}<span>${escape(options.newTalk)}</span></button>${options.more ? `<button class="icon-button project-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(options.more.label)}" title="${escape(options.more.label)}" hidden>${glyph("more", 18)}</button>` : ""}`,
       )}
       <header class="project-intro"></header>
       <div class="tabs" role="tablist"></div>
@@ -68,6 +72,9 @@ export class ProjectPage {
     this.tabs = this.element.querySelector<HTMLElement>(".tabs")!;
     this.board = this.element.querySelector<HTMLElement>(".project-board")!;
     this.element.querySelector(".begin-here")!.addEventListener("click", () => options.begin(options.town));
+    this.element.querySelector(".project-more")?.addEventListener("click", (event) => {
+      options.more?.open(options.town, this.record?.name ?? options.town, event.currentTarget as HTMLElement);
+    });
     this.element.querySelector(".revise")!.addEventListener("click", () => {
       if (this.record) options.revise(options.town, this.record);
     });
@@ -91,11 +98,14 @@ export class ProjectPage {
     const record = map.record;
     this.record = record;
     this.element.querySelector<HTMLButtonElement>(".revise")!.disabled = false;
+    const more = this.element.querySelector<HTMLButtonElement>(".project-more");
+    if (more) more.hidden = !this.options.more?.shown(map.town);
     this.title.textContent = record.name;
+    const sharedBy = this.options.more?.sharedBy(map.town) ?? null;
     const intro = `
       <p class="project-lede">${escape(record.what)}</p>
       <p class="project-facts">${factRow(
-        [...record.machines, words.opened(this.writer(map.opened.by), map.opened.on, words.day(new Date(map.opened.at)))].map(escape),
+        [...record.machines, words.opened(this.writer(map.opened.by), map.opened.on, words.day(new Date(map.opened.at))), ...(sharedBy ? [sharedBy] : [])].map(escape),
       )}</p>`;
     const sections: [Tab, string, string][] = [
       [

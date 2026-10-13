@@ -1,6 +1,6 @@
 // What the drawing of the machines shows (`map-of.ts` reads it from the
-// World): each hub, each machine with what is said of it, and the direct
-// links between machines.
+// World): each hub, each machine with what is said of it, the direct links
+// between machines, and for the network's administrator every person.
 
 export interface MapHub {
   id: string;
@@ -52,4 +52,14 @@ export interface MapLink {
   ms?: number | undefined;
   /** Why it is down. */
   why?: string | undefined;
+}
+
+/** A person of a network, as its administrator sees them on the drawing:
+ *  a box of their own, with or without machines, and their "⋯". */
+export interface MapPerson {
+  hub: string;
+  account: string;
+  /** Their box's name, as a machine of theirs is grouped. */
+  label: string;
+  locked: boolean;
 }

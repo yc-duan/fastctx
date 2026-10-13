@@ -5,7 +5,10 @@
 // strip, and the machines standing in a grid inside, names to the right.
 // The names are written on the paper and grow and shrink with it. Nearer,
 // the drawing shows what each machine is and the agents on it. The account's
-// own end with a dashed ring that adds a machine. A machine of another
+// own end with a dashed ring that adds a machine. For the network's
+// administrator every person has a box, a strip alone until a machine of
+// theirs comes, with a "⋯" at its end and a small lock while they are
+// locked, and a dashed box after them adds a person. A machine of another
 // whose agent alone assists is a broken ring of clay; one out of reach is
 // drawn with a dry pen. A machine others may connect to directly wears a
 // dashed halo, in pencil until the hub has checked it: every machine that
@@ -18,10 +21,13 @@ import { MapCanvas, PenLayer, type Bounds, type CanvasEvent, type CanvasFrame, t
 import { blot, circle, outline, ruled, seeded, ticks } from "../pen/shapes";
 import type { MachinesWords } from "./account-words";
 import { KNOT, MapLayout, RING, ROWS, TITLE, TRUNK, type Placement } from "./map-layout";
-import type { MapHub, MapLink, MapNode } from "./map-nodes";
+import type { MapHub, MapLink, MapNode, MapPerson } from "./map-nodes";
+import type { PeopleWords } from "./people-words";
 
 export interface MachineMapOptions {
   words: MachinesWords;
+  /** What is said of the people, where the drawing shows them. */
+  people?: PeopleWords;
   /** Where this device remembers the places, or nowhere. */
   storageKey: string | null;
   event(event: CanvasEvent): void;
@@ -60,6 +66,10 @@ export interface MachineMapScene {
   /** While a new place for the server is chosen: the machines that can take
    *  it, by key, and whether each goes to sleep; the rest are faint. */
   lit?: ReadonlyMap<string, { sleeps: boolean }> | null;
+  /** For the network's administrator: every person, and the hubs whose
+   *  people end with the dashed box that adds one. */
+  people?: readonly MapPerson[];
+  adding?: readonly string[];
 }
 
 /** Where this device remembers the order of the machines on the drawing,
@@ -68,6 +78,12 @@ export const MAP_ORDER = "machines-map";
 
 /** The key of a hub's dashed ring that adds a machine. */
 export const addKey = (hub: string) => `add:${hub}`;
+
+/** The key of a person's "⋯" on their box. */
+export const personKey = (hub: string, account: string) => `who:${hub}:${account}`;
+
+/** How wide a person's "⋯" is pressed at the end of their box's strip. */
+const MORE = 40;
 
 /** Past this many machines, others' boxes start folded: the drawing fitted
  *  to its page is too small to read them all. */
@@ -231,7 +247,7 @@ export class MachineMap {
     if (this.options.still) this.placement = this.fill(scene);
     else {
       this.narrow = this.isNarrow();
-      this.placement = this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, narrow: this.narrow });
+      this.placement = this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, narrow: this.narrow, people: scene.people ?? [], adding: new Set(scene.adding ?? []) });
     }
     this.compose();
     this.place();
@@ -242,7 +258,11 @@ export class MachineMap {
     const placement = this.placement;
     if (!placement) return null;
     if (key.startsWith("hub:")) return placement.hubs.get(key.slice(4)) ?? null;
-    if (key.startsWith("group:")) return placement.groups.find((group) => group.key === key)?.point ?? null;
+    if (key.startsWith("group:") || key.startsWith("adding:")) return placement.groups.find((group) => group.key === key)?.point ?? null;
+    if (key.startsWith("who:")) {
+      const box = placement.groups.find((group) => group.person && personKey(group.hub, group.person.account) === key)?.box;
+      return box ? [box.x + box.width - MORE / 2, box.y + TITLE / 2] : null;
+    }
     // A hub's dashed ring waits where its next machine will stand.
     if (key.startsWith("add:")) return this.layout.vacant(key.slice(4));
     return placement.machines.get(key) ?? null;
@@ -359,10 +379,26 @@ export class MachineMap {
         kind: "group",
         point: group.point,
         radius: TITLE / 2 + 4,
-        box: { x: group.box.x, y: group.box.y, width: group.box.width, height: TITLE, corners: group.folded ? [7, 7, 7, 7] : [7, 7, 0, 0] },
-        label: group.label,
-        sub: words.groupSub(group.count, group.online),
+        box: { x: group.box.x, y: group.box.y, width: group.box.width, height: TITLE, corners: group.box.height <= TITLE ? [7, 7, 7, 7] : [7, 7, 0, 0] },
+        label: group.kind === "adding" ? (this.options.people?.addPerson ?? "") : group.label,
+        sub: group.kind === "adding" ? "" : this.countOf(group),
       })),
+      // A person's "⋯", over the end of their box's strip.
+      ...placement.groups.flatMap((group): CanvasItem[] => {
+        const person = group.person;
+        if (!person || !this.options.people) return [];
+        const { x, y, width, height } = group.box;
+        return [
+          {
+            key: personKey(group.hub, person.account),
+            kind: "group",
+            point: [x + width - MORE / 2, y + TITLE / 2],
+            radius: TITLE / 2,
+            box: { x: x + width - MORE, y, width: MORE, height: TITLE, corners: [0, 7, height <= TITLE ? 7 : 0, 0] },
+            label: this.options.people.more(person.account),
+          },
+        ];
+      }),
       ...scene.adds.flatMap((hub): CanvasItem[] => {
         const point = this.pointOf(addKey(hub));
         return point ? [{ key: addKey(hub), kind: "machine", point, radius: RING, label: scene.waiting.has(hub) ? words.waitingJoin : words.addMachine }] : [];
@@ -387,6 +423,13 @@ export class MachineMap {
     if (this.surface.selection !== selected) this.surface.setSelection(selected);
   }
 
+  /** What a box's strip says after its name: how many machines and how
+   *  many online, or that a person has none yet. */
+  private countOf(group: Placement["groups"][number]): string {
+    if (!group.count && group.person && this.options.people) return this.options.people.noMachinesYet;
+    return this.options.words.groupSub(group.count, group.online);
+  }
+
   /** The ink, the boxes and the names, composed again only when what they
    *  show changes. */
   private compose(): void {
@@ -407,7 +450,7 @@ export class MachineMap {
       scene.nodes.map((node) => [node.key, node.name, node.sub, node.online, node.hold, node.reaching, node.here, near ? node.busy : null, node.directAt, node.through]),
       [...scene.opening],
       [...placement.machines],
-      placement.groups.map((group) => [group.key, group.folded, group.box, group.count, group.online]),
+      placement.groups.map((group) => [group.key, group.folded, group.box, group.count, group.online, group.person?.locked]),
     ]);
     if (key === this.composed) return;
     this.composed = key;
@@ -447,6 +490,18 @@ export class MachineMap {
       if (!group.folded) continue;
       const at: Point = [group.box.x + TRUNK, group.box.y + TITLE / 2];
       add(blot(at, 4.2, seeded(`folded:${group.key}`)), around(at, 6), "marker", graphite, 0.85);
+    }
+
+    // The dashed box that adds a person, a small cross at its start.
+    for (const group of placement.groups) {
+      if (group.kind !== "adding") continue;
+      const { x, y, width } = group.box;
+      const random = seeded(`adding:${group.hub}`);
+      for (const d of ticks(stripPoints(x, y, width, TITLE, 7), 7, 4, 1.3, random)) add(d, { x: x - 4, y: y - 4, width: width + 8, height: TITLE + 8 }, "dry", graphite, 0.6);
+      const at: Point = [x + TRUNK + 14, y + TITLE / 2];
+      const arm = 5;
+      add(outline([[at[0] - arm, at[1]], [at[0] + arm, at[1]]], 1.5, random), around(at, arm + 3), "dry", graphite, 0.75);
+      add(outline([[at[0], at[1] - arm], [at[0], at[1] + arm]], 1.5, random), around(at, arm + 3), "dry", graphite, 0.75);
     }
 
     // The dashed ring that adds a machine, a small cross in it.
@@ -512,11 +567,14 @@ export class MachineMap {
     this.boxes.innerHTML = placement.groups
       .map((group) => {
         const { x, y, width, height } = group.box;
+        // The dashed box that adds a person is its pen strokes alone.
+        if (group.kind === "adding") return "";
         const tone = group.kind === "mine" ? "mine" : group.kind.startsWith("assist:") ? "assist" : "others";
-        const strip = group.folded
+        const locked = group.person?.locked ? " locked" : "";
+        const strip = height <= TITLE
           ? `<rect class="box-title" x="${x}" y="${y}" width="${width}" height="${TITLE}" rx="7"/>`
           : `<rect class="box-body" x="${x}" y="${y}" width="${width}" height="${height}" rx="7"/><path class="box-title" d="M${x} ${y + TITLE}V${y + 7}Q${x} ${y} ${x + 7} ${y}H${x + width - 7}Q${x + width} ${y} ${x + width} ${y + 7}V${y + TITLE}Z"/>`;
-        return `<g class="box ${tone}">${strip}</g>`;
+        return `<g class="box ${tone}${locked}">${strip}</g>`;
       })
       .join("");
 
@@ -533,14 +591,27 @@ export class MachineMap {
     // only leads to the machines page), then its name and how many.
     const still = this.options.still ?? false;
     for (const group of placement.groups) {
-      const { x, y } = group.box;
+      const { x, y, width } = group.box;
       const middle = y + TITLE / 2;
       const arrowAt = x + TRUNK + 20;
-      if (!still) {
+      if (group.kind === "adding") {
+        text.push(`<text class="box-name adding" x="${x + TRUNK + 28}" y="${middle + 5}">${escapeText(this.options.people?.addPerson ?? "")}</text>`);
+        continue;
+      }
+      // Only a box with machines in it folds.
+      const folds = !still && group.count > 0;
+      if (folds) {
         const d = group.folded ? `M${arrowAt - 2} ${middle - 4}L${arrowAt + 2} ${middle}L${arrowAt - 2} ${middle + 4}` : `M${arrowAt - 4} ${middle - 2}L${arrowAt} ${middle + 2}L${arrowAt + 4} ${middle - 2}`;
         text.push(`<path class="box-arrow" d="${d}"/>`);
       }
-      text.push(`<text class="box-name" x="${still ? x + TRUNK + 14 : arrowAt + 12}" y="${middle + 5}"><tspan>${escapeText(group.label)}</tspan><tspan class="box-count" dx="10">${escapeText(words.groupSub(group.count, group.online))}</tspan></text>`);
+      const locked = group.person?.locked ? " locked" : "";
+      text.push(`<text class="box-name${locked}" x="${folds ? arrowAt + 12 : x + TRUNK + 14}" y="${middle + 5}"><tspan>${escapeText(group.label)}</tspan><tspan class="box-count" dx="10">${escapeText(this.countOf(group))}</tspan></text>`);
+      if (group.person && this.options.people) {
+        // A small lock while the person is locked, then the "⋯".
+        const end = x + width - MORE / 2;
+        if (group.person.locked) text.push(`<path class="box-lock" d="${lockPath(end - 26, middle)}"/>`);
+        text.push(`<g class="box-more">${[-6, 0, 6].map((dx) => `<circle cx="${end + dx}" cy="${middle}" r="1.6"/>`).join("")}</g>`);
+      }
     }
     const nameAt = (key: string, point: Point, name: string, sub: string, quiet = false) => {
       const x = point[0] + RING + 15;
@@ -615,6 +686,28 @@ function crescent(centre: Point, r: number): string {
   const [x, y] = centre;
   const tip = (sign: number) => `${(x + r * 0.35).toFixed(1)} ${(y + sign * r * 0.94).toFixed(1)}`;
   return `M${tip(-1)}A${r} ${r} 0 1 0 ${tip(1)}A${(r * 0.78).toFixed(1)} ${(r * 0.78).toFixed(1)} 0 1 1 ${tip(-1)}Z`;
+}
+
+/** A small padlock centred on `x`, `y`. */
+function lockPath(x: number, y: number): string {
+  return `M${x - 4.5} ${y - 0.5}h9v6.5h-9zM${x - 2.6} ${y - 0.5}v-2.4a2.6 2.6 0 0 1 5.2 0v2.4`;
+}
+
+/** Points round a rounded rectangle, for a box drawn as broken strokes. */
+function stripPoints(x: number, y: number, width: number, height: number, r: number): Point[] {
+  const points: Point[] = [];
+  const corner = (cx: number, cy: number, from: number) => {
+    for (let step = 0; step <= 4; step += 1) {
+      const angle = from + (step / 4) * (Math.PI / 2);
+      points.push([cx + Math.cos(angle) * r, cy + Math.sin(angle) * r]);
+    }
+  };
+  corner(x + width - r, y + r, -Math.PI / 2);
+  corner(x + width - r, y + height - r, 0);
+  corner(x + r, y + height - r, Math.PI / 2);
+  corner(x + r, y + r, Math.PI);
+  points.push(points[0]!);
+  return points;
 }
 
 /** Points round a circle, for a ring drawn as broken strokes. */

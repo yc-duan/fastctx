@@ -318,154 +318,6 @@ a.text-button {
   color: var(--text-3);
 }
 
-.account-part {
-  margin: var(--space-6) 0 var(--space-1);
-  font-family: var(--font-reading);
-  font-weight: 400;
-  font-size: var(--size-ui);
-  color: var(--text);
-}
-
-.account-part + .field-hint {
-  display: block;
-  margin: 0 0 var(--space-2);
-}
-
-.account-section .joined-lines {
-  margin-top: var(--space-4);
-}
-
-/* Devices, projects, accounts and the machines reaching this account's:
-   each a slip of fill, set a little apart, none outlined. */
-.account-devices,
-.account-projects,
-.admin-accounts,
-.account-reaching {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-}
-
-.account-device {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-m);
-  background: var(--fill);
-}
-
-.account-device .dot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  margin-top: calc((var(--size-ui) * var(--leading-ui) - 7px) / 2);
-  border-radius: var(--radius-full);
-  background: var(--text-2);
-}
-
-.account-device.offline .dot {
-  background: none;
-  box-shadow: inset 0 0 0 1.2px var(--text-3);
-}
-
-.account-device-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.account-device-name {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--size-ui);
-  color: var(--text);
-}
-
-.account-device-facts {
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.account-project .sep {
-  margin: 0 6px;
-}
-
-.account-device .quiet-button {
-  flex: none;
-}
-
-.account-acts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px var(--space-1);
-  margin-left: calc(-1 * var(--space-3));
-}
-
-.account-logout .glyph {
-  color: var(--wrong);
-}
-
-/* The hub and the account, each with what is done to it at the end of its
-   row; leaving the account alone at the foot of the section. */
-.account-facts dd {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: var(--space-3);
-}
-
-.account-fact {
-  flex: 1 1 12em;
-  min-width: 0;
-}
-
-.account-facts .text-button {
-  flex: none;
-  margin: -6px calc(-1 * var(--space-3)) -6px 0;
-}
-
-.account-leave {
-  margin-top: var(--space-6);
-}
-
-.account-project {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
-  min-height: 40px;
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-m);
-  background: var(--fill);
-}
-
-.account-project-name {
-  font-size: var(--size-ui);
-  color: var(--text);
-  text-decoration: none;
-}
-
-.account-project-name:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.account-shared {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-}
-
 /* An account a project is shared with: its name, and the cross that
    stops sharing. */
 .chip {
@@ -495,56 +347,6 @@ a.text-button {
 .chip-x:hover {
   color: var(--wrong);
   background: color-mix(in srgb, var(--wrong) 14%, transparent);
-}
-
-.admin-section .check-row {
-  margin-top: var(--space-2);
-}
-
-.admin-account {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-m);
-  background: var(--fill);
-}
-
-.admin-account.locked .admin-account-name {
-  color: var(--text-3);
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
-}
-
-.admin-account-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.admin-account-name {
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-ui);
-  color: var(--text);
-}
-
-.admin-account-opened {
-  margin-left: auto;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-/* An administrator acts on accounts often enough that what can be done
-   is always shown, quietly. */
-.admin-account .machine-acts {
-  display: flex;
-  flex-wrap: wrap;
-  margin: 2px 0 0 calc(-1 * var(--space-3));
-  padding-left: 0;
-  opacity: 1;
-}
-
-.admin-account .quiet-button {
-  height: 26px;
 }
 
 /* The sidebar, logged in to more than one account: a part for each, under
@@ -639,8 +441,7 @@ a.text-button {
    using another's agent lets happen. A ruled line down its left edge, in
    graphite, or in clay where it asks for care. */
 .machines-note,
-.choice-margin,
-.admin-super {
+.choice-margin {
   position: relative;
   display: flex;
   align-items: flex-start;
@@ -653,8 +454,7 @@ a.text-button {
 }
 
 .machines-note::before,
-.choice-margin::before,
-.admin-super::before {
+.choice-margin::before {
   content: "";
   position: absolute;
   left: 0;
@@ -668,8 +468,7 @@ a.text-button {
   mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
 }
 
-.machines-note .glyph,
-.admin-super .glyph {
+.machines-note .glyph {
   flex: none;
   margin-top: 2px;
   color: var(--text-3);
@@ -691,45 +490,4 @@ a.text-button {
 
 .host-home .home-talk .glyph {
   margin-right: 2px;
-}
-
-/* The machines whose agents may reach the account's, on its page: each a
-   line with the shield, set as the devices are. */
-.account-reach {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-m);
-  background: var(--fill);
-}
-
-.reach-mark {
-  flex: none;
-  display: grid;
-  place-items: center;
-  margin-top: 1px;
-  color: var(--accent);
-}
-
-.account-reach .quiet-button {
-  flex: none;
-}
-
-.account-empty {
-  margin: 0;
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.account-super {
-  margin-top: var(--space-4);
-}
-
-.admin-super {
-  margin-top: var(--space-1);
-}
-
-.admin-super + .account-acts {
-  margin-bottom: var(--space-2);
 }

@@ -20,6 +20,7 @@ import "./app/shell.css";
 import "./app/sheet.css";
 import "./app/pages.css";
 import "./app/accounts.css";
+import "./app/me.css";
 import "./app/when.css";
 import "./app/assist.css";
 import "./app/machines.css";
@@ -34,8 +35,10 @@ import "./home/front.css";
 import "./project/project.css";
 import "./pages/pages.css";
 
-import { AccountPage } from "./app/account";
-import { AdminPage } from "./app/admin";
+import { MePage } from "./app/me";
+import { ProjectActs, enProjectActs, zhProjectActs } from "./app/project-acts";
+import { enMe, zhMe } from "./app/me-words";
+import { enPeople, zhPeople } from "./app/people-words";
 import { LoginPage } from "./app/login";
 import { MachinesPage } from "./app/machines";
 import { AgentLoginsPage } from "./app/agent-logins";
@@ -49,7 +52,6 @@ import "./app/agent-logins.css";
 import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenTakeUp } from "./specimen/logins";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
-import { NetworkPage, enNetwork, zhNetwork } from "./app/network-page";
 import { deviceFeatures } from "./app/device-features";
 import { readFeatures, setFeature, watchFeatures } from "./world/features";
 import { untilAnswered, whyOf } from "./world/again";
@@ -107,7 +109,7 @@ import {
   zhShell,
   readerWords } from "./app/words";
 import { enRemoval, zhRemoval } from "./app/removal-words";
-import { enAccess, enAccount, enAdmin, enLogin, enMachines, enToken, zhAccess, zhAccount, zhAdmin, zhLogin, zhMachines, zhToken } from "./app/account-words";
+import { enAccess, enLogin, enMachines, enToken, zhAccess, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { loginsOf, type AccountChange, type Login } from "./world/accounts";
 import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, loginKey, loginLabel, machinesOf, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
@@ -295,7 +297,7 @@ let place: Place = { kind: "home" };
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
-  return ["feature", "data", "admin", "network", "journal", "page", "file", "login", "talks", "archived", "machine", "usage"].includes(at.kind);
+  return ["feature", "data", "journal", "page", "file", "login", "talks", "archived", "machine", "usage"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -308,8 +310,6 @@ function parentOf(at: Place): Place {
       return { kind: "features" };
     case "data":
       return { kind: "settings" };
-    case "admin":
-      return { kind: "account" };
     case "machine":
       return { kind: "machines" };
     case "journal":
@@ -528,9 +528,11 @@ const specimenAddresses = [
 /** Makes a change as a login, and asks the World again. */
 const change = async (login: Login, made: AccountChange): Promise<void> => {
   if (!live) {
-    const changed = specimenChange(store.world.peek(), login.hub, made);
+    // Kept in the specimen, so what was done stays as the page is read again.
+    const changed = specimenChange(specimen.world, login.hub, made);
     if (!changed) return notLive();
-    store.world.set(changed);
+    specimen.world = changed;
+    await store.refresh();
     return;
   }
   await accountChange(login.hubName, login.account, made);
@@ -605,6 +607,14 @@ const journalForm = new JournalForm({
 /** What the user does to conversations from their "⋯", and the line that
  *  says what was just done (`app/talk-acts.ts`). */
 const talkMenuWords = english ? enTalkMenu : zhTalkMenu;
+const projectActsWords = english ? enProjectActs : zhProjectActs;
+const projectActs = new ProjectActs({
+  words: projectActsWords,
+  access: english ? enAccess : zhAccess,
+  store,
+  confirm: accountConfirm,
+  change: (login, made) => change(login, made),
+});
 const talkToast = new TalkToast({ undo: talkMenuWords.undo }, () => shell.footBox());
 const talkActs = new TalkActs({
   words: talkMenuWords,
@@ -1526,6 +1536,15 @@ function projectPage(town: string): Page {
     link: talkLink,
     pageWords,
     pageLink: (town, page) => link({ kind: "page", town, page, version: null }),
+    more: {
+      label: projectActsWords.more,
+      shown: (town) => projectActs.acts(town).length > 0,
+      open: (town, name, anchor) => projectActs.open(town, name, anchor),
+      sharedBy: (town) => {
+        const owner = projectActs.sharedBy(town);
+        return owner ? projectActsWords.sharedBy(owner) : null;
+      },
+    },
   });
   if (!live) {
     const map = specimenMap();
@@ -1709,6 +1728,7 @@ function show(next: Place): void {
         store,
         words: english ? enMachines : zhMachines,
         access: english ? enAccess : zhAccess,
+        people: english ? enPeople : zhPeople,
         head,
         focus: next.focus ?? null,
         when,
@@ -1870,36 +1890,17 @@ function show(next: Place): void {
       });
       break;
     }
-    case "network":
-      page = new NetworkPage({
-        store,
-        words: english ? enNetwork : zhNetwork,
-        hub: next.hub,
-        head,
-        change,
-        confirm: accountConfirm,
-      });
-      break;
     case "account":
-      page = new AccountPage({
+      page = new MePage({
         store,
-        words: english ? enAccount : zhAccount,
+        words: english ? enMe : zhMe,
         machines: english ? enMachines : zhMachines,
         head,
         when,
-        change,
-        invite: (login, kind) => tokens.open(login, kind),
-        confirm: accountConfirm,
-      });
-      break;
-    case "admin":
-      page = new AdminPage({
-        store,
-        words: english ? enAdmin : zhAdmin,
-        head,
-        when,
+        short: (until, now) => (english ? enAccess : zhAccess).moment.short(until, now),
         change,
         confirm: accountConfirm,
+        say: (text, options) => talkToast.say(text, options),
       });
       break;
     case "file":
@@ -2010,14 +2011,12 @@ function specimenPlace(): Place | null {
     case "machine":
       return { kind: "machine", name: params.get("m") ?? "desktop" };
     case "invite":
-      return { kind: "account" };
+      return { kind: "machines" };
     case "welcome":
     case "login":
       return { kind: "login" };
     case "account":
       return { kind: "account" };
-    case "admin":
-      return { kind: "admin" };
     case "settings":
       return { kind: "settings" };
     case "data":

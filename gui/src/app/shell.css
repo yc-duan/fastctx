@@ -679,7 +679,6 @@ html.framed .page-head {
   padding-right: calc(3 * 46px + var(--space-2));
 }
 
-
 /* What a pointer shows on hover, raised by a long press on a touch screen. */
 .touch-hint,
 .pointer-hint {
@@ -961,16 +960,6 @@ html.framed .page-head {
   animation: none;
 }
 
-/* A network's own page: what a server is, drawn; then the facts. */
-.network-body {
-  padding: var(--space-5) var(--space-6) var(--space-7);
-}
-
-.network-figure {
-  max-width: 420px;
-  margin: 0 0 var(--space-5);
-}
-
 .network-drawing {
   width: 100%;
   height: auto;
@@ -992,43 +981,6 @@ html.framed .page-head {
 
 .network-drawing .nf-mark {
   color: var(--text-2);
-}
-
-.network-figure figcaption {
-  margin-top: var(--space-2);
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.network-facts {
-  display: grid;
-  gap: var(--space-2);
-  max-width: 560px;
-  margin: 0 0 var(--space-5);
-}
-
-.network-facts > div {
-  display: grid;
-  grid-template-columns: 8em minmax(0, 1fr);
-  align-items: baseline;
-  gap: var(--space-3);
-}
-
-.network-facts dt {
-  font-size: var(--size-small);
-  color: var(--text-3);
-}
-
-.network-facts dd {
-  margin: 0;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-
-.network-acts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
 }
 
 .text-button.danger-text:hover {

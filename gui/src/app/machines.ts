@@ -7,8 +7,9 @@
 // a dashed ring adds a machine: it says one is on its way once a way in was
 // given, and the machine is circled as it arrives. A machine of the
 // account's own is shared and removed from here; whom it is shared with is
-// taken back with a press. Long sayings stand behind a
-// pointer's rest, not on the page.
+// taken back with a press. The network's administrator manages its people
+// here too (`map-people.ts`). Long sayings stand behind a pointer's rest,
+// not on the page.
 
 import { glyph } from "../conversation/glyphs";
 import { layerOpened, type Layer } from "./back";
@@ -34,7 +35,9 @@ import { AssistSheet, assistChange, assistancesIn, type Assistance } from "./ass
 import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
-import { foldedOf, MachineMap, MAP_ORDER } from "./machine-map";
+import { foldedOf, MachineMap, MAP_ORDER, personKey } from "./machine-map";
+import { MapPeople } from "./map-people";
+import type { PeopleWords } from "./people-words";
 import { RING } from "./map-layout";
 import { mapOf } from "./map-of";
 import type { MapNode } from "./map-nodes";
@@ -48,6 +51,7 @@ export interface MachinesOptions {
   store: Store;
   words: MachinesWords;
   access: AccessWords;
+  people: PeopleWords;
   head(title: string, actions?: string): string;
   /** The machine to bring into view, when one was named. */
   focus: string | null;
@@ -154,6 +158,7 @@ export class MachinesPage implements Page {
   private readonly giving: GiveSheet;
   private readonly assistSheet: AssistSheet;
   private readonly moving: HubMoving;
+  private readonly people: MapPeople;
   /** While the server's new place is chosen: what to do, and why a machine
    *  pressed cannot take it. */
   private readonly chooseBar: HTMLElement;
@@ -186,6 +191,23 @@ export class MachinesPage implements Page {
     this.giving = new GiveSheet(options.access);
     this.assistSheet = new AssistSheet(options.access);
     this.moving = new HubMoving({ ...options.moving, words, access: options.access, confirm: options.confirm, changed: () => this.redraw() });
+    this.people = new MapPeople({
+      words: options.people,
+      store: options.store,
+      confirm: options.confirm,
+      change: options.change,
+      card: (key, html, go) => {
+        this.openCard(key, this.map.screenOf(key) ?? [0, 0], html, go);
+        return this.card;
+      },
+      undo: (said, redo) => this.offerUndo(said, redo),
+      failed: (said) => {
+        this.note = { machine: "", text: said };
+        this.redraw();
+      },
+      redraw: () => this.redraw(),
+      ownedBy: (account) => words.ownedBy(account),
+    });
     this.title = words.title;
     this.selected = options.focus ? `m:${options.focus}` : null;
     // Come to one from elsewhere, what is known of it is open; a machine's
@@ -223,6 +245,7 @@ export class MachinesPage implements Page {
     this.map = new MachineMap({
       afterHints: again,
       words,
+      people: options.people,
       storageKey: MAP_ORDER,
       event: (event) => {
         if (event.kind === "select") this.choose(event.key);
@@ -489,6 +512,17 @@ export class MachinesPage implements Page {
       this.whyNot = this.moving.whyNot(machine);
       if (!this.whyNot) this.moving.confirmTo(machine, () => this.showMove());
       this.redraw();
+      return;
+    }
+    // The dashed box that adds a person is itself the way to add one; a
+    // person's "⋯" lists what may be done to them.
+    if (key?.startsWith("adding:")) {
+      this.people.add(key.slice("adding:".length), key);
+      return;
+    }
+    if (key?.startsWith("who:")) {
+      const at = this.map.screenOf(key);
+      if (at) this.openMenu(key, [at[0] - 20, at[1] + 18], this.narrow());
       return;
     }
     // A group's knot folds its machines away, or opens them again.
@@ -761,7 +795,7 @@ export class MachinesPage implements Page {
    *  another whose agent assists it. A machine come to a hub one was on its
    *  way to is circled as it arrives. */
   private drawMap(world: WorldNow): void {
-    const { hubs, nodes, hubLabels, links } = mapOf(world, this.options.words);
+    const { hubs, nodes, hubLabels, links, people } = mapOf(world, this.options.words);
     for (const [hub, before] of this.waiting) {
       const arrived = nodes.filter((node) => node.hubs.includes(hub) && !before.has(node.key));
       if (!arrived.length) continue;
@@ -794,22 +828,27 @@ export class MachinesPage implements Page {
       framed: this.framing.length ? this.framing : this.framed,
       folded: this.foldedOf(nodes),
       lit: this.moving.chosenHub ? this.litKeys(world) : null,
+      people: this.people.shown(people),
+      adding: this.people.hubs(world),
     });
   }
 
   /** What can be done to a spot, as `world` stands. */
   private actsOf(key: string, world: WorldNow): Act[] {
     const { words } = this.options;
+    const person = personOf(key);
+    if (person) return this.people.acts(world, person.hub, person.account);
     const spot = this.spots(world).get(key);
     if (!spot) return [];
     const details: Act = { act: "details", label: words.details, icon: "info" };
     if (spot.kind === "hub") {
       const logins = loginsOf(world.accounts).filter((login) => login.hub === spot.hub.hub);
       const top = logins.some((login) => spot.hub.accounts.find((account) => account.name === login.account)?.level === "super");
+      const open = spot.hub.self_registration;
       return [
         ...(logins.length ? [{ act: "invite", label: words.inviteDevice, icon: "plus" as const }] : []),
         ...(top ? [{ act: "move", label: words.moveHub, icon: "move" as const }] : []),
-        ...(top ? [{ act: "manage", label: words.manageHub, icon: "settings" as const }] : []),
+        ...(top ? [{ act: "signup", label: this.options.people.signUpState(open), icon: "signup" as const, on: open }] : []),
         details,
       ];
     }
@@ -855,7 +894,7 @@ export class MachinesPage implements Page {
     const switches = settings
       .map(
         (act) =>
-          `<button class="sheet-row sheet-switch" type="button" role="switch" aria-checked="${act.on}" data-map-act="${act.act}" data-key="${escape(key)}">${glyph(act.icon, 18)}<span class="sheet-row-label">${escape(act.act === "direct" ? words.allowDirect : act.label)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>`,
+          `<button class="sheet-row sheet-switch" type="button" role="switch" aria-checked="${act.on}" data-map-act="${act.act}" data-key="${escape(key)}">${glyph(act.icon, 18)}<span class="sheet-row-label">${escape(act.act === "direct" ? words.allowDirect : act.act === "signup" ? this.options.people.signUp : act.label)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>`,
       )
       .join("");
     const removals = dangers
@@ -882,6 +921,8 @@ export class MachinesPage implements Page {
     const act = button.dataset.mapAct!;
     this.closeMenu();
     if (act === "fit") return this.map.fit();
+    const person = personOf(key);
+    if (person) return this.people.run(act, person.hub, person.account, key);
     const spot = this.spots(world).get(key);
     if (!spot) return;
     if (act === "details") {
@@ -892,7 +933,7 @@ export class MachinesPage implements Page {
     if (spot.kind === "hub") {
       const login = this.hubLogin(spot.hub.hub);
       if (act === "invite" && login) this.invite(login);
-      else if (act === "manage") location.hash = link({ kind: "admin" });
+      else if (act === "signup") this.people.signUp(spot.hub.hub);
       else if (act === "move") {
         const top = this.superLogin(spot.hub, world);
         if (!top) return;
@@ -1070,7 +1111,7 @@ export class MachinesPage implements Page {
 
   /** A card beside a ring, or rising from below on a narrow page; `go`
    *  runs when it is confirmed, and an error it throws stays in the card. */
-  private openCard(key: string, at: Point, html: string, go: () => Promise<void>): void {
+  private openCard(key: string, at: Point, html: string, go: () => Promise<void | "keep">): void {
     this.closeMenu();
     this.cardFor = key;
     this.float();
@@ -1094,7 +1135,11 @@ export class MachinesPage implements Page {
       const button = this.card.querySelector<HTMLButtonElement>(".map-card-go");
       if (button) button.disabled = true;
       go().then(
-        () => {
+        (kept) => {
+          if (kept === "keep") {
+            if (button) button.disabled = false;
+            return;
+          }
           this.closeCard();
           void this.options.store.refresh().then(() => this.redraw());
         },
@@ -1173,7 +1218,7 @@ export class MachinesPage implements Page {
     const html = acts
       .map(
         (act) =>
-          `<button class="map-act${act.danger ? " danger" : ""}" type="button" data-map-act="${act.act}" data-key="${escape(key)}" aria-label="${escape(act.label)}" title="${escape(act.label)}">${glyph(act.icon, 18)}</button>`,
+          `<button class="map-act${act.danger ? " danger" : ""}${act.on ? " on" : ""}" type="button" data-map-act="${act.act}" data-key="${escape(key)}" aria-label="${escape(act.label)}" title="${escape(act.label)}"${act.on === undefined ? "" : ` aria-pressed="${act.on}"`}>${glyph(act.icon, 18)}</button>`,
       )
       .join("");
     if (html !== this.floated) {
@@ -1207,10 +1252,14 @@ export class MachinesPage implements Page {
     const world = this.options.store.world.peek();
     if (!world) return;
     const { words } = this.options;
-    if (key?.startsWith("add:")) return this.choose(key);
+    if (key?.startsWith("add:") || key?.startsWith("adding:")) return this.choose(key);
+    // A person's strip, pressed with the right button, lists what their "⋯"
+    // does.
+    const strip = key?.match(/^group:([^:]+):of:(.+)$/);
+    if (strip && this.people.acts(world, strip[1]!, strip[2]!).length) key = personKey(strip[1]!, strip[2]!);
     const acts: Act[] = key ? this.actsOf(key, world) : [{ act: "fit", label: words.fit, icon: "expand" }];
     if (!acts.length) return;
-    if (key) this.selected = key;
+    if (key && !key.startsWith("who:")) this.selected = key;
     this.menuFor = { key, at, sheet };
     this.menu.innerHTML = acts
       .map(
@@ -1486,7 +1535,7 @@ export class MachinesPage implements Page {
         return `<li class="panel-login" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}">
           <span class="panel-login-name">${glyph("person", 14)}<span>${escape(login.account)}</span>${this.tag(top ? words.levelSuper : words.levelMember, top ? "tag-own" : "")}</span>
           ${!top && admin ? `<span class="panel-said" title="${escape(words.superNote(admin))}">${glyph("shield", 13)}<span>${escape(words.superShort(admin))}</span></span>` : ""}
-          <span class="panel-login-acts">${this.button("invite", words.inviteDevice, "", glyph("plus", 13))}${top && !me?.locked ? `<a class="text-button quiet-button" href="${link({ kind: "admin" })}">${glyph("settings", 13)}<span>${escape(words.manageHub)}</span></a>` : ""}</span>
+          <span class="panel-login-acts">${this.button("invite", words.inviteDevice, "", glyph("plus", 13))}</span>
         </li>`;
       })
       .join("");
@@ -1521,6 +1570,12 @@ export class MachinesPage implements Page {
     return `${agents}${jobs.length ? `<p class="machine-jobs">${escape(words.jobs(jobs.length))}</p>` : ""}`;
   }
 
+}
+
+/** The person a key on the drawing stands for: their "⋯". */
+function personOf(key: string): { hub: string; account: string } | null {
+  const found = key.match(/^who:([^:]+):(.+)$/);
+  return found ? { hub: found[1]!, account: found[2]! } : null;
 }
 
 /** Why a hub is not reached, in the kernel's words, for the hover. */

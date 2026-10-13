@@ -548,11 +548,13 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
 
 /** The changes a specimen takes as asked: where other machines connect to
  *  a machine directly, so the machines page shows what follows, assistance
- *  with its deadlines, and renaming; nothing really connects. Anything else
- *  it refuses. */
+ *  with its deadlines, renaming, and the people and what is given to them;
+ *  nothing really connects. Anything else it refuses. */
 export function specimenChange(world: WorldNow | null, hub: string, made: AccountChange): WorldNow | null {
   if (!world) return null;
   if (made.change === "rename") return renamed(world, hub, made.machine, made.to);
+  const people = peopleChanged(world, hub, made);
+  if (people) return people;
   if (made.change === "assist") {
     if (made.assisting && made.until && new Date(made.until) <= new Date()) throw new Error("the assistance's deadline has already passed");
     const home = made.home ?? null;
@@ -574,6 +576,58 @@ export function specimenChange(world: WorldNow | null, hub: string, made: Accoun
         },
   );
   return { ...world, accounts: { ...world.accounts, hubs } };
+}
+
+/** What is done to the people of `hub` and to what they are given, as the
+ *  hub would do it; null for any other change. */
+function peopleChanged(world: WorldNow, hub: string, made: AccountChange): WorldNow | null {
+  const change = (edit: (one: HubAccounts) => HubAccounts): WorldNow => ({
+    ...world,
+    accounts: { ...world.accounts, hubs: world.accounts.hubs.map((one) => (one.hub === hub ? edit(one) : one)) },
+  });
+  switch (made.change) {
+    case "open_account":
+      return change((one) => {
+        if (one.accounts.some((account) => account.name === made.name)) throw new Error(`the account ${made.name} already exists`);
+        return { ...one, accounts: [...one.accounts, { name: made.name, level: "member", locked: false, opened: new Date().toISOString() }] };
+      });
+    case "set_account":
+      return change((one) => ({ ...one, accounts: one.accounts.map((account) => (account.name === made.name ? { ...account, locked: made.locked } : account)) }));
+    case "delete_account":
+      return change((one) => ({
+        ...one,
+        accounts: one.accounts.filter((account) => account.name !== made.name),
+        members: one.members.filter((member) => member.home !== made.name),
+        shares: one.shares.filter((share) => share.account !== made.name),
+        assists: one.assists.filter((assist) => assist.account !== made.name),
+      }));
+    case "set_password":
+      return world;
+    case "settings":
+      return change((one) => ({ ...one, self_registration: made.self_registration }));
+    case "share":
+      return change((one) => ({
+        ...one,
+        shares: made.shared ? [...one.shares.filter((share) => !(share.machine === made.machine && share.account === made.to)), { machine: made.machine, account: made.to }] : one.shares.filter((share) => !(share.machine === made.machine && share.account === made.to)),
+      }));
+    case "stop_acting":
+      return change((one) => ({ ...one, acting: one.acting.filter((acting) => acting.machine !== made.machine) }));
+    case "seen":
+      return change((one) => ({ ...one, arrivals: one.arrivals.filter((arrival) => arrival.name !== made.name) }));
+    case "remove":
+      return change((one) => ({ ...one, members: one.members.filter((member) => member.name !== made.name), arrivals: one.arrivals.filter((arrival) => arrival.name !== made.name) }));
+    case "share_project":
+      return change((one) => ({
+        ...one,
+        projects: one.projects.map((project) =>
+          project.name !== made.town ? project : { ...project, granted: made.shared ? [...project.granted.filter((to) => to !== made.with), made.with] : project.granted.filter((to) => to !== made.with) },
+        ),
+      }));
+    case "move_project":
+      return change((one) => ({ ...one, projects: one.projects.map((project) => (project.name === made.town ? { ...project, owner: made.to, granted: project.granted.filter((to) => to !== made.to) } : project)) }));
+    default:
+      return null;
+  }
 }
 
 /** A machine on `hub` renamed `to` as its hub would: the name it had stays

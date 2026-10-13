@@ -54,11 +54,13 @@ export interface ShellWords {
   networks: string;
   newNetwork: string;
   joinNetwork: string;
-  manageNetwork: string;
+  /** Joining one more, once this device is in a network. */
+  joinAnother: string;
   admin: string;
   member: string;
   /** How many machines a network has, as its row says it. */
   machinesCount(n: number): string;
+  /** The user's own page, named in the sidebar by their name there. */
   account: string;
   /** Who came into the accounts lately, not yet shown, for a screen reader. */
   arrivals(n: number): string;
@@ -1463,13 +1465,13 @@ export const zhShell: ShellWords = {
   phone: "手机",
   logIn: "加入网络",
   networks: "网络",
-  newNetwork: "新建网络",
-  joinNetwork: "加入网络",
-  manageNetwork: "管理",
+  newNetwork: "新建网络…",
+  joinNetwork: "加入网络…",
+  joinAnother: "加入另一个网络…",
   admin: "管理员",
   member: "成员",
   machinesCount: (n) => `${n} 台机器`,
-  account: "账号",
+  account: "我",
   arrivals: (n) => `${n} 台新设备`,
   groupOf: (login) => login,
   more: (n) => `另外 ${n} 个`,
@@ -1509,13 +1511,13 @@ export const enShell: ShellWords = {
   phone: "phone",
   logIn: "Join a network",
   networks: "Networks",
-  newNetwork: "New network",
-  joinNetwork: "Join a network",
-  manageNetwork: "Manage",
+  newNetwork: "New network…",
+  joinNetwork: "Join a network…",
+  joinAnother: "Join another network…",
   admin: "Administrator",
   member: "Member",
   machinesCount: (n) => (n === 1 ? "1 machine" : `${n} machines`),
-  account: "Account",
+  account: "Me",
   arrivals: (n) => `${n} new device${n === 1 ? "" : "s"}`,
   groupOf: (login) => login,
   more: (n) => `${n} more`,
