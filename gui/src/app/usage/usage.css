@@ -2,14 +2,14 @@
    drawings to choose from, two cards at the foot; every box a solid fill,
    never a line round it. The drawings' marks come from the pen. */
 
-.usage-page {
+.ledger-page {
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
 }
 
-.usage-title {
+.ledger-title {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -17,24 +17,24 @@
   color: var(--text-strong);
 }
 
-.usage-title > svg {
+.ledger-title > svg {
   flex: none;
   color: var(--text-2);
 }
 
-.usage-who {
+.ledger-who {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.usage-title .tag {
+.ledger-title .tag {
   font-family: var(--font-reading);
   font-size: var(--size-small);
 }
 
-.usage-machine {
+.ledger-machine {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -45,7 +45,7 @@
   white-space: nowrap;
 }
 
-.usage-talk {
+.ledger-talk {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -57,26 +57,26 @@
   transition: background-color var(--hover) ease;
 }
 
-.usage-talk:hover {
+.ledger-talk:hover {
   background: var(--fill-strong);
 }
 
-.usage-body {
+.ledger-body {
   flex: 1;
   padding: var(--space-2) var(--gutter) var(--space-10);
   scrollbar-gutter: stable;
 }
 
-.usage-body > * {
+.ledger-body > * {
   max-width: 1080px;
 }
 
-.usage-reading {
+.ledger-reading {
   padding: var(--space-6) 0;
 }
 
 /* The strip: the windows, this week, who used it. */
-.usage-strip {
+.ledger-strip {
   display: grid;
   grid-template-columns: auto minmax(0, 0.85fr) minmax(0, 1.3fr);
   align-items: center;
@@ -86,12 +86,12 @@
   background: var(--fill);
 }
 
-.usage-rings {
+.ledger-rings {
   display: flex;
   gap: var(--space-4);
 }
 
-.usage-ring {
+.ledger-ring {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -99,13 +99,13 @@
   cursor: default;
 }
 
-.usage-ring-face {
+.ledger-ring-face {
   position: relative;
   width: 76px;
   height: 76px;
 }
 
-.usage-ring-face svg {
+.ledger-ring-face svg {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -113,7 +113,7 @@
   overflow: visible;
 }
 
-.usage-ring-num {
+.ledger-ring-num {
   position: absolute;
   inset: 0;
   display: grid;
@@ -123,54 +123,54 @@
   font-variant-numeric: tabular-nums;
 }
 
-.usage-ring-num small {
+.ledger-ring-num small {
   font-size: 11px;
   color: var(--text-3);
   margin-left: 1px;
 }
 
-.usage-ring-name {
+.ledger-ring-name {
   font-size: var(--size-small);
   color: var(--text-2);
 }
 
-.usage-ring-left {
+.ledger-ring-left {
   min-height: 1.3em;
   font-size: 12px;
   color: var(--text-3);
   white-space: nowrap;
 }
 
-.usage-trace {
+.ledger-trace {
   fill: var(--pen-trace);
 }
 
-.usage-arc {
+.ledger-arc {
   fill: var(--pen-clay);
 }
 
-.usage-arc.high {
+.ledger-arc.high {
   fill: var(--caution);
 }
 
-.usage-arc.spent {
+.ledger-arc.spent {
   fill: var(--wrong);
 }
 
-.usage-totals {
+.ledger-totals {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
 }
 
-.usage-key {
+.ledger-key {
   font-size: var(--size-small);
   color: var(--text-3);
   cursor: default;
 }
 
-.usage-big {
+.ledger-big {
   font-size: 26px;
   line-height: 1.25;
   color: var(--text-strong);
@@ -178,7 +178,7 @@
   white-space: nowrap;
 }
 
-.usage-about {
+.ledger-about {
   margin-right: 4px;
   font-size: 15px;
   color: var(--text-3);
@@ -187,13 +187,13 @@
   cursor: help;
 }
 
-.usage-unit {
+.ledger-unit {
   margin-left: 5px;
   font-size: 14px;
   color: var(--text-3);
 }
 
-.usage-facts {
+.ledger-facts {
   display: flex;
   flex-wrap: wrap;
   gap: 2px var(--space-3);
@@ -201,32 +201,32 @@
   color: var(--text-2);
 }
 
-.usage-up {
+.ledger-up {
   color: var(--accent);
 }
 
 /* Who used it this week: a row each, pressed to narrow the drawings to
    them. */
-.usage-people {
+.ledger-people {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
 }
 
-.usage-key-row {
+.ledger-key-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   min-height: 22px;
 }
 
-.usage-all {
+.ledger-all {
   font-size: var(--size-small);
   color: var(--accent);
 }
 
-.usage-person {
+.ledger-person {
   display: grid;
   grid-template-columns: 12px minmax(0, 1fr) auto 92px;
   align-items: center;
@@ -239,25 +239,25 @@
   transition: background-color var(--hover) ease, opacity var(--hover) ease;
 }
 
-.usage-person:hover {
+.ledger-person:hover {
   background: var(--fill);
 }
 
-.usage-person.on {
+.ledger-person.on {
   background: var(--accent-wash);
 }
 
-.usage-person.faded {
+.ledger-person.faded {
   opacity: 0.45;
 }
 
-.usage-swatch {
+.ledger-swatch {
   width: 10px;
   height: 10px;
   border-radius: 3px;
 }
 
-.usage-person-name {
+.ledger-person-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -266,34 +266,34 @@
   color: var(--text-strong);
 }
 
-.usage-person-why {
+.ledger-person-why {
   display: block;
   white-space: normal;
   font-size: 12px;
   color: var(--text-3);
 }
 
-.usage-person-value {
+.ledger-person-value {
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   text-align: right;
 }
 
-.usage-bar {
+.ledger-bar {
   display: block;
   width: 92px;
   height: 12px;
 }
 
-.usage-none {
+.ledger-none {
   margin: var(--space-2) 0 0;
   font-size: var(--size-small);
   color: var(--text-3);
 }
 
 /* The assistance the reader has of the login. */
-.usage-assisted {
+.ledger-assisted {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -302,7 +302,7 @@
   color: var(--text-2);
 }
 
-.usage-assisted-until {
+.ledger-assisted-until {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -310,17 +310,17 @@
   font-size: var(--size-ui);
 }
 
-.usage-assisted .usage-bar {
+.ledger-assisted .ledger-bar {
   width: min(220px, 100%);
 }
 
-.usage-assisted-note {
+.ledger-assisted-note {
   color: var(--text-3);
   font-size: 12px;
 }
 
 /* The drawings, a tab each; the unit beside them. */
-.usage-tabs {
+.ledger-tabs {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -329,7 +329,7 @@
   margin: var(--space-5) 0 var(--space-2);
 }
 
-.usage-switch {
+.ledger-switch {
   display: inline-flex;
   gap: 2px;
   padding: 3px;
@@ -337,7 +337,7 @@
   background: var(--fill);
 }
 
-.usage-switch button {
+.ledger-switch button {
   min-height: 28px;
   padding: 0 14px;
   border-radius: var(--radius-full);
@@ -347,28 +347,28 @@
   transition: color var(--hover) ease, background-color var(--hover) ease;
 }
 
-.usage-switch button:hover {
+.ledger-switch button:hover {
   color: var(--text);
 }
 
-.usage-switch button.current {
+.ledger-switch button.current {
   color: var(--text-strong);
   background: var(--fill-strong);
 }
 
-.usage-switch.small button {
+.ledger-switch.small button {
   min-height: 24px;
   padding: 0 11px;
   font-size: var(--size-small);
 }
 
-.usage-panel {
+.ledger-panel {
   padding: var(--space-3) var(--space-4) var(--space-3);
   border-radius: var(--radius-l);
   background: var(--fill);
 }
 
-.usage-panel-head {
+.ledger-panel-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -378,16 +378,16 @@
   color: var(--text-2);
 }
 
-.usage-panel-title {
+.ledger-panel-title {
   color: var(--text-strong);
   font-size: var(--size-ui);
 }
 
-.usage-grow {
+.ledger-grow {
   flex: 1;
 }
 
-.usage-legend {
+.ledger-legend {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
@@ -396,78 +396,78 @@
   color: var(--text-3);
 }
 
-.usage-legend i {
+.ledger-legend i {
   display: inline-block;
   width: 11px;
   height: 11px;
   border-radius: 3px;
 }
 
-.usage-legend .usage-keyed + .usage-keyed {
+.ledger-legend .ledger-keyed + .ledger-keyed {
   margin-left: var(--space-2);
 }
 
-.usage-figure {
+.ledger-figure {
   margin-top: var(--space-2);
   width: 100%;
   min-width: 0;
 }
 
-.usage-figure svg {
+.ledger-figure svg {
   display: block;
   overflow: visible;
 }
 
-.usage-empty-figure {
+.ledger-empty-figure {
   display: grid;
   place-items: center;
   min-height: 160px;
 }
 
-.usage-axis {
+.ledger-axis {
   fill: var(--text-3);
   font-family: var(--font-reading);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
-.usage-axis.strong {
+.ledger-axis.strong {
   fill: var(--text-2);
 }
 
-.usage-rule {
+.ledger-rule {
   fill: var(--pen-rule);
 }
 
-.usage-empty {
+.ledger-empty {
   fill: var(--fill-strong);
 }
 
-.usage-area {
+.ledger-area {
   fill: color-mix(in srgb, var(--pen-clay) 14%, transparent);
 }
 
-.usage-area-five {
+.ledger-area-five {
   fill: color-mix(in srgb, var(--pen-graphite) 22%, transparent);
 }
 
-.usage-now {
+.ledger-now {
   fill: var(--pen-graphite);
   fill-opacity: 0.7;
 }
 
-.usage-today {
+.ledger-today {
   fill: var(--text-strong);
 }
 
-.usage-facts-row {
+.ledger-facts-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: var(--space-2);
 }
 
-.usage-fact {
+.ledger-fact {
   padding: 2px 10px;
   border-radius: var(--radius-full);
   background: var(--fill);
@@ -477,14 +477,14 @@
 }
 
 /* The cards at the foot: where the use went, and the models. */
-.usage-cards {
+.ledger-cards {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
   gap: var(--space-3);
   margin-top: var(--space-3);
 }
 
-.usage-card {
+.ledger-card {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-l);
   background: var(--fill);
@@ -492,7 +492,7 @@
   color: var(--text-2);
 }
 
-.usage-card-head {
+.ledger-card-head {
   display: flex;
   justify-content: space-between;
   gap: var(--space-3);
@@ -501,18 +501,18 @@
   font-size: var(--size-ui);
 }
 
-.usage-card-note {
+.ledger-card-note {
   color: var(--text-3);
   font-size: var(--size-small);
 }
 
-.usage-parts {
+.ledger-parts {
   display: block;
   width: 100%;
   height: 22px;
 }
 
-.usage-keys {
+.ledger-keys {
   display: flex;
   flex-wrap: wrap;
   gap: 4px var(--space-4);
@@ -521,20 +521,20 @@
   font-variant-numeric: tabular-nums;
 }
 
-.usage-keyed {
+.ledger-keyed {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.usage-keyed i {
+.ledger-keyed i {
   display: inline-block;
   width: 9px;
   height: 9px;
   border-radius: 2px;
 }
 
-.usage-model {
+.ledger-model {
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr) 38px 76px;
   align-items: center;
@@ -543,62 +543,62 @@
   font-variant-numeric: tabular-nums;
 }
 
-.usage-model-name {
+.ledger-model-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-strong);
 }
 
-.usage-model .usage-bar {
+.ledger-model .ledger-bar {
   width: 100%;
 }
 
-.usage-model-share,
-.usage-model-value {
+.ledger-model-share,
+.ledger-model-value {
   text-align: right;
   white-space: nowrap;
 }
 
 @media (max-width: 900px) {
-  .usage-strip {
+  .ledger-strip {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .usage-strip > .usage-people,
-  .usage-strip > .usage-assisted {
+  .ledger-strip > .ledger-people,
+  .ledger-strip > .ledger-assisted {
     grid-column: 1 / -1;
   }
 }
 
 @media (max-width: 640px) {
-  .usage-strip {
+  .ledger-strip {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-4);
     padding: var(--space-4);
   }
 
-  .usage-rings {
+  .ledger-rings {
     justify-content: space-around;
   }
 
-  .usage-cards {
+  .ledger-cards {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .usage-panel {
+  .ledger-panel {
     padding: var(--space-3);
   }
 
-  .usage-machine {
+  .ledger-machine {
     display: none;
   }
 
-  .usage-talk span {
+  .ledger-talk span {
     display: none;
   }
 
-  .usage-talk {
+  .ledger-talk {
     padding: 0 9px;
   }
 }

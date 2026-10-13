@@ -49,7 +49,7 @@ export function ring(share: number | null, seed: string, size = 76): string {
     arc = outline(points, size * 0.07, random, { pressure: 0.2, taperStart: 0.03, taperEnd: Math.min(0.2, 0.05 / Math.min(1, share)) });
   }
   const level = share === null ? "" : share >= 1 ? " spent" : share >= 0.9 ? " high" : "";
-  return `<svg class="usage-ring-ink${share === null ? " unread" : ""}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><path class="usage-trace" d="${track}"/><g filter="url(#pen-marker-lite)"><path class="usage-arc${level}" d="${arc}"/></g></svg>`;
+  return `<svg class="ledger-ring-ink${share === null ? " unread" : ""}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><path class="ledger-trace" d="${track}"/><g filter="url(#pen-marker-lite)"><path class="ledger-arc${level}" d="${arc}"/></g></svg>`;
 }
 
 /** A short bar: a ruled line, inked along `share` of it. */
@@ -58,7 +58,7 @@ export function bar(share: number, seed: string, width: number, height: number, 
   const y = height / 2;
   const whole = ruled([2, y], [width - 2, y], 1, random);
   const filled = share > 0.005 ? outline(ruledPoints([3, y], [3 + Math.max(2, (width - 6) * Math.min(1, share)), y], random), height * 0.72, random, { pressure: 0.12, taper: 0.03 }) : "";
-  return `<svg class="usage-bar" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><path class="usage-trace" d="${whole}"/><g filter="url(#pen-marker-lite)"><path fill="${ink}" d="${filled}"/></g></svg>`;
+  return `<svg class="ledger-bar" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><path class="ledger-trace" d="${whole}"/><g filter="url(#pen-marker-lite)"><path fill="${ink}" d="${filled}"/></g></svg>`;
 }
 
 export interface CalendarInput {
@@ -108,7 +108,7 @@ export function calendar(input: CalendarInput): { svg: string; height: number; w
       else empty += path;
       const said = `${words.day(new Date(day))}\n${sum ? amounts.say(sum) : words.unused}${split(values, people, amounts)}`;
       hits += `<rect x="${f(x - 1)}" y="${f(y - 1)}" width="${f(pitch)}" height="${f(pitch)}" fill="transparent"${hint(said)}/>`;
-      if (day === today) hits += `<path class="usage-today" d="${blot([x + cell / 2, y + cell + 3.6], 1.4, random)}"/>`;
+      if (day === today) hits += `<path class="ledger-today" d="${blot([x + cell / 2, y + cell + 3.6], 1.4, random)}"/>`;
       if (weekday === 0) {
         const month = new Date(day).getMonth();
         if (month !== lastMonth && week < weeks - 1) named.push({ x, month });
@@ -120,9 +120,9 @@ export function calendar(input: CalendarInput): { svg: string; height: number; w
   // soon after for both names to fit: the later one is kept.
   const months = named
     .filter((one, index) => index === named.length - 1 || named[index + 1]!.x - one.x >= 32)
-    .map((one) => `<text class="usage-axis" x="${f(one.x)}" y="${top - 6}">${escape(words.month(one.month))}</text>`)
+    .map((one) => `<text class="ledger-axis" x="${f(one.x)}" y="${top - 6}">${escape(words.month(one.month))}</text>`)
     .join("");
-  const labels = [0, 2, 4, 6].map((weekday) => `<text class="usage-axis" x="0" y="${f(top + weekday * pitch + cell - 1)}">${escape(words.weekday[weekday]!.slice(-1))}</text>`).join("");
+  const labels = [0, 2, 4, 6].map((weekday) => `<text class="ledger-axis" x="0" y="${f(top + weekday * pitch + cell - 1)}">${escape(words.weekday[weekday]!.slice(-1))}</text>`).join("");
   // Each week's total, stacked by person.
   const barTop = top + 7 * pitch + 12;
   const barHeight = 44;
@@ -148,10 +148,10 @@ export function calendar(input: CalendarInput): { svg: string; height: number; w
     const said = `${words.weekFrom(new Date(dayAt(week, 0)))}\n${sum ? amounts.say(sum) : words.unused}${split(byPerson, people, amounts)}`;
     hits += `<rect x="${f(x - 1)}" y="${barTop}" width="${f(pitch)}" height="${barHeight}" fill="transparent"${hint(said)}/>`;
   });
-  const base = `<path class="usage-rule" d="${ruled([left, barTop + barHeight + 1], [left + weeks * pitch - 3, barTop + barHeight + 1], 0.9, random)}"/><text class="usage-axis" x="0" y="${barTop + barHeight - 2}">${escape(words.weekRow)}</text>`;
+  const base = `<path class="ledger-rule" d="${ruled([left, barTop + barHeight + 1], [left + weeks * pitch - 3, barTop + barHeight + 1], 0.9, random)}"/><text class="ledger-axis" x="0" y="${barTop + barHeight - 2}">${escape(words.weekRow)}</text>`;
   const height = barTop + barHeight + 6;
   return {
-    svg: `<svg class="usage-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="usage-empty" d="${empty}"/><g filter="url(#pen-marker-lite)">${inked}${bars}</g>${base}${months}${labels}${hits}</svg>`,
+    svg: `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="ledger-empty" d="${empty}"/><g filter="url(#pen-marker-lite)">${inked}${bars}</g>${base}${months}${labels}${hits}</svg>`,
     height,
     weeks,
   };
@@ -177,7 +177,7 @@ export function miniCalendar(days: Map<number, Map<number, number>>, today: numb
       else empty += path;
     }
   }
-  return `<svg class="usage-mini" viewBox="0 0 ${weeks * pitch} ${7 * pitch}" width="${weeks * pitch}" height="${7 * pitch}" aria-hidden="true"><path class="usage-empty" d="${empty}"/><g filter="url(#pen-marker-lite)">${inked}</g></svg>`;
+  return `<svg class="ledger-mini" viewBox="0 0 ${weeks * pitch} ${7 * pitch}" width="${weeks * pitch}" height="${7 * pitch}" aria-hidden="true"><path class="ledger-empty" d="${empty}"/><g filter="url(#pen-marker-lite)">${inked}</g></svg>`;
 }
 
 export interface QuotaInput {
@@ -217,13 +217,13 @@ export function quota(input: QuotaInput): { svg: string; said: string } {
   let labels = "";
   for (const share of [0, 0.25, 0.5, 0.75, 1]) {
     grid += ruled([left, y(share)], [left + w, y(share)], share === 0 ? 1 : 0.6, random);
-    labels += `<text class="usage-axis" x="${left - 6}" y="${f(y(share) + 4)}" text-anchor="end">${share * 100}%</text>`;
+    labels += `<text class="ledger-axis" x="${left - 6}" y="${f(y(share) + 4)}" text-anchor="end">${share * 100}%</text>`;
   }
   grid += ruled([left, yb(0)], [left + w, yb(0)], 0.9, random);
-  labels += `<text class="usage-axis" x="${left - 6}" y="${f(yb(0) - 2)}" text-anchor="end">5h</text>`;
+  labels += `<text class="ledger-axis" x="${left - 6}" y="${f(yb(0) - 2)}" text-anchor="end">5h</text>`;
   // Each whole day named under its middle, each midnight ticked.
   for (let day = daysBefore(dayOf(start), -1); day < end; day = daysBefore(day, -1)) {
-    if (day + DAY_MS / 2 < end) labels += `<text class="usage-axis" x="${f(x(day + DAY_MS / 2))}" y="${height - 6}" text-anchor="middle">${escape(words.weekday[weekdayOf(day)]!)}</text>`;
+    if (day + DAY_MS / 2 < end) labels += `<text class="ledger-axis" x="${f(x(day + DAY_MS / 2))}" y="${height - 6}" text-anchor="middle">${escape(words.weekday[weekdayOf(day)]!)}</text>`;
     grid += ruled([x(day), yb(0) - 2], [x(day), yb(0) + 3], 0.8, random);
   }
   const shown = (track: Track | null, from: boolean): [number, number][] => {
@@ -248,12 +248,12 @@ export function quota(input: QuotaInput): { svg: string; said: string } {
   let areas = "";
   if (weekPoints.length) {
     const steps = stepped(weekPoints, lastAt);
-    areas += `<path class="usage-area" d="M${f(x(steps[0]![0]))} ${f(y(0))}L${steps.map(([at, share]) => `${f(x(at))} ${f(y(share))}`).join("L")}L${f(x(lastAt))} ${f(y(0))}Z"/>`;
+    areas += `<path class="ledger-area" d="M${f(x(steps[0]![0]))} ${f(y(0))}L${steps.map(([at, share]) => `${f(x(at))} ${f(y(share))}`).join("L")}L${f(x(lastAt))} ${f(y(0))}Z"/>`;
     ink += `<path fill="var(--pen-clay)" d="${outline(steps.map(([at, share]) => [x(at), y(share)] as Point), 2.2, random, { pressure: 0.15, taper: 0.01 })}"/>`;
   }
   if (fivePoints.length) {
     const steps = stepped(fivePoints, lastAt);
-    areas += `<path class="usage-area-five" d="M${f(x(steps[0]![0]))} ${f(yb(0))}L${steps.map(([at, share]) => `${f(x(at))} ${f(yb(share))}`).join("L")}L${f(x(lastAt))} ${f(yb(0))}Z"/>`;
+    areas += `<path class="ledger-area-five" d="M${f(x(steps[0]![0]))} ${f(yb(0))}L${steps.map(([at, share]) => `${f(x(at))} ${f(yb(share))}`).join("L")}L${f(x(lastAt))} ${f(yb(0))}Z"/>`;
     ink += `<path fill="var(--pen-graphite)" d="${outline(steps.map(([at, share]) => [x(at), yb(share)] as Point), 1.1, random, { pressure: 0.15, taper: 0.01 })}"/>`;
   }
   // Carried on at the last day's pace.
@@ -270,8 +270,8 @@ export function quota(input: QuotaInput): { svg: string; said: string } {
       carried += dot([x(now + (until - now) * t), y(week.last + (reaches - week.last) * t)], 1.3, random);
     }
   }
-  const nowLine = now < end ? `<path class="usage-now" d="${ruled([x(now), top - 2], [x(now), yb(0)], 0.8, random)}"/><text class="usage-axis strong" x="${f(x(now) + 5)}" y="${top + 9}">${escape(words.now)}</text>` : "";
-  const resetMark = `<text class="usage-axis" x="${f(left + w)}" y="${top - 2}" text-anchor="end">${escape(words.reset)}</text>`;
+  const nowLine = now < end ? `<path class="ledger-now" d="${ruled([x(now), top - 2], [x(now), yb(0)], 0.8, random)}"/><text class="ledger-axis strong" x="${f(x(now) + 5)}" y="${top + 9}">${escape(words.now)}</text>` : "";
+  const resetMark = `<text class="ledger-axis" x="${f(left + w)}" y="${top - 2}" text-anchor="end">${escape(words.reset)}</text>`;
   // An hour's hover: the last shares read by then.
   let hits = "";
   const lastOf = (points: [number, number][], at: number) => {
@@ -288,7 +288,7 @@ export function quota(input: QuotaInput): { svg: string; said: string } {
     hits += `<rect x="${f(x(at))}" y="${top}" width="${f(slot)}" height="${f(yb(0) - top)}" fill="transparent"${hint(words.quotaAt(new Date(at + HOUR_MS), pct(weekShare), pct(fiveShare)))}/>`;
   }
   return {
-    svg: `<svg class="usage-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="usage-rule" d="${grid}"/>${labels}${areas}<g filter="url(#pen-marker-lite)">${ink}</g><path fill="var(--pen-clay)" fill-opacity="0.8" d="${carried}"/>${nowLine}${resetMark}${hits}</svg>`,
+    svg: `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="ledger-rule" d="${grid}"/>${labels}${areas}<g filter="url(#pen-marker-lite)">${ink}</g><path fill="var(--pen-clay)" fill-opacity="0.8" d="${carried}"/>${nowLine}${resetMark}${hits}</svg>`,
     said,
   };
 }
@@ -321,7 +321,7 @@ export function daily(input: DailyInput): string {
   let labels = "";
   for (const share of [0, 0.5, 1]) {
     grid += ruled([left, y(scale * share)], [left + w, y(scale * share)], share === 0 ? 1 : 0.6, random);
-    labels += `<text class="usage-axis" x="${left - 6}" y="${f(y(scale * share) + 4)}" text-anchor="end">${share === 0 ? "0" : escape(amounts.axis(scale * share))}</text>`;
+    labels += `<text class="ledger-axis" x="${left - 6}" y="${f(y(scale * share) + 4)}" text-anchor="end">${share === 0 ? "0" : escape(amounts.axis(scale * share))}</text>`;
   }
   const n = columns.length;
   const slot = w / Math.max(1, n);
@@ -342,12 +342,12 @@ export function daily(input: DailyInput): string {
     }
     const at = new Date(column.day);
     const label = n <= 8 ? words.weekday[weekdayOf(column.day)]! : (n - 1 - index) % every === 0 ? `${at.getMonth() + 1}/${at.getDate()}` : "";
-    if (label) labels += `<text class="usage-axis" x="${f(cx)}" y="${height - 6}" text-anchor="middle">${escape(label)}</text>`;
+    if (label) labels += `<text class="ledger-axis" x="${f(cx)}" y="${height - 6}" text-anchor="middle">${escape(label)}</text>`;
     const sum = total(column.values);
     const said = `${words.day(at)}\n${sum ? amounts.say(sum) : words.unused}${split(column.values, people, amounts)}`;
     hits += `<rect x="${f(cx - slot / 2)}" y="${top}" width="${f(slot)}" height="${h}" fill="transparent"${hint(said)}/>`;
   });
-  return `<svg class="usage-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="usage-rule" d="${grid}"/>${labels}<g filter="url(#pen-marker-lite)">${ink}</g>${hits}</svg>`;
+  return `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="ledger-rule" d="${grid}"/>${labels}<g filter="url(#pen-marker-lite)">${ink}</g>${hits}</svg>`;
 }
 
 /** A round top for an axis: 1, 2, 5 or 10 times a power of ten. */
@@ -386,7 +386,7 @@ export function punch(input: PunchInput): string {
   let labels = "";
   let hits = "";
   for (let weekday = 0; weekday < 7; weekday += 1) {
-    labels += `<text class="usage-axis" x="${left - 8}" y="${f(top + ch * weekday + ch / 2 + 4)}" text-anchor="end">${escape(words.weekday[weekday]!)}</text>`;
+    labels += `<text class="ledger-axis" x="${left - 8}" y="${f(top + ch * weekday + ch / 2 + 4)}" text-anchor="end">${escape(words.weekday[weekday]!)}</text>`;
     for (let hour = 0; hour < 24; hour += 1) {
       const cx = left + cw * hour + cw / 2;
       const cy = top + ch * weekday + ch / 2;
@@ -397,8 +397,8 @@ export function punch(input: PunchInput): string {
     }
   }
   const marks = width < 520 ? [0, 6, 12, 18] : [0, 3, 6, 9, 12, 15, 18, 21];
-  for (const hour of marks) labels += `<text class="usage-axis" x="${f(left + cw * hour + cw / 2)}" y="${height - 6}" text-anchor="middle">${hour}:00</text>`;
-  return `<svg class="usage-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="usage-trace" d="${base}"/><g filter="url(#pen-marker-lite)"><path fill="${ink}" fill-opacity="0.9" d="${dots}"/></g>${labels}${hits}</svg>`;
+  for (const hour of marks) labels += `<text class="ledger-axis" x="${f(left + cw * hour + cw / 2)}" y="${height - 6}" text-anchor="middle">${hour}:00</text>`;
+  return `<svg class="ledger-chart" viewBox="0 0 ${f(width)} ${height}" width="${f(width)}" height="${height}"><path class="ledger-trace" d="${base}"/><g filter="url(#pen-marker-lite)"><path fill="${ink}" fill-opacity="0.9" d="${dots}"/></g>${labels}${hits}</svg>`;
 }
 
 /** One bar of parts, each in its ink and as long as its share. */
@@ -414,10 +414,10 @@ export function parts(shares: { value: number; ink: string; said: string }[], se
     hits += `<rect x="${f(x)}" y="0" width="${f(Math.max(0, length))}" height="22" fill="transparent"${hint(one.said)}/>`;
     x += length;
   }
-  return `<svg class="usage-parts" viewBox="0 0 ${width} 22" preserveAspectRatio="none"><g filter="url(#pen-marker-lite)">${ink}</g>${hits}</svg>`;
+  return `<svg class="ledger-parts" viewBox="0 0 ${width} 22" preserveAspectRatio="none"><g filter="url(#pen-marker-lite)">${ink}</g>${hits}</svg>`;
 }
 
 /** A dashed rule, for an empty chart's baseline. */
 export function emptyLine(width: number, seed: string): string {
-  return `<svg class="usage-bar" viewBox="0 0 ${width} 6" preserveAspectRatio="none" aria-hidden="true"><path class="usage-trace" d="${dashed([2, 3], [width - 2, 3], 1, seeded(seed))}"/></svg>`;
+  return `<svg class="ledger-bar" viewBox="0 0 ${width} 6" preserveAspectRatio="none" aria-hidden="true"><path class="ledger-trace" d="${dashed([2, 3], [width - 2, 3], 1, seeded(seed))}"/></svg>`;
 }

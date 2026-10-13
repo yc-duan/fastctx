@@ -348,7 +348,7 @@
   display: block;
 }
 
-.usage-mini .usage-empty {
+.ledger-mini .ledger-empty {
   fill: var(--fill-strong);
 }
 
