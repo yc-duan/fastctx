@@ -1,9 +1,11 @@
-// The World as the interface holds it: asked once every two seconds while
-// the window is in view, by this one place, and read by every part that
-// shows it. Outside the shell there is no World to ask; a specimen stands
-// in, so the interface can be looked at in a plain browser.
+// The World as the interface holds it: followed in this one place as the
+// node or the phone tells each change, and read by every part that shows
+// it; nothing is asked of any machine while nothing changes
+// (`world-network.md`, 近况). Outside the shell there is no World to follow;
+// a specimen stands in, so the interface can be looked at in a plain
+// browser.
 
-import { inShell, worldNow, type WorldNow } from "../world/bridge";
+import { inShell, watchWorld, worldNow, type WorldNow } from "../world/bridge";
 import type { Address } from "../world/events";
 import type { ResidentNow, RunningJob, WhoFor } from "../world/world";
 import { keepNetwork, shownNetwork, viewOf } from "./network";
@@ -21,18 +23,21 @@ export interface Store {
   showNetwork(hub: string): void;
   /** Why the World could not be asked the last time, or `null`. */
   readonly trouble: Signal<string | null>;
-  /** When the World was last read, or the specimen's moment. */
+  /** Now, moving on while the window is in view, for what is shown as so
+   *  long ago; or the specimen's moment. */
   readonly clock: Signal<Date>;
-  /** How many seconds the World has been asked without answering yet, 0
-   *  while it is not being asked. Nothing gives up on it: a machine that
-   *  keeps its connection but never answers holds the answer back, and
-   *  this says so instead of the page standing still in silence. */
+  /** How many seconds the local service has not given the World since it
+   *  was first asked for it or the watch broke, 0 while it is followed.
+   *  Nothing gives up on it; this says so instead of the page standing
+   *  still in silence. */
   readonly unanswered: Signal<number>;
-  /** Asks again at once, as after the user changed something. */
+  /** Reads it again at once, as after the user changed something. */
   refresh(): Promise<void>;
 }
 
-const interval = 2000;
+/** How often what is shown as so long ago moves on: the World itself comes
+ *  as it changes. */
+const tick = 2000;
 
 export function createStore(specimen: () => { world: WorldNow; now: Date }): Store {
   const live = inShell();
@@ -66,37 +71,48 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   });
   window.addEventListener("pagehide", keep);
 
-  let timer = 0;
-  let asking: Promise<void> | null = null;
-  const ask = (): Promise<void> => {
-    if (asking) return asking;
-    const began = Date.now();
-    const counting = window.setInterval(() => unanswered.set(Math.floor((Date.now() - began) / 1000)), 1000);
-    asking = worldNow()
-      .then((now) => {
-        remember(now);
-        read(now);
-        trouble.set(null);
-      })
-      .catch((error: unknown) => trouble.set(String(error)))
-      .finally(() => {
-        clearInterval(counting);
-        unanswered.set(0);
-        clock.set(new Date());
-        asking = null;
-      });
-    return asking;
+  // Counted from when the World was first asked for, or the watch broke,
+  // until it comes again.
+  let waiting: number | null = Date.now();
+  const moveOn = () => {
+    clock.set(new Date());
+    unanswered.set(waiting === null ? 0 : Math.floor((Date.now() - waiting) / 1000));
   };
-  // A window out of view asks nothing; coming back into view asks at once.
-  const loop = async () => {
-    clearTimeout(timer);
+  // What is shown as so long ago moves on while the window is in view.
+  let ticking = 0;
+  const follow = () => {
+    clearInterval(ticking);
     if (document.visibilityState !== "visible") return;
-    await ask();
-    timer = window.setTimeout(loop, interval);
+    moveOn();
+    ticking = window.setInterval(moveOn, tick);
   };
-  document.addEventListener("visibilitychange", () => void loop());
-  void loop();
-  return { live, world, whole, showNetwork, trouble, clock, unanswered, refresh: ask };
+  document.addEventListener("visibilitychange", follow);
+  follow();
+
+  const came = (now: WorldNow) => {
+    remember(now);
+    read(now);
+    trouble.set(null);
+    waiting = null;
+    moveOn();
+  };
+  void watchWorld((piece) => {
+    if (piece.kind === "world") {
+      came(piece.world);
+      return;
+    }
+    trouble.set(piece.error);
+    waiting ??= piece.since;
+    moveOn();
+  }).catch((error: unknown) => trouble.set(String(error)));
+  const refresh = async () => {
+    try {
+      came(await worldNow());
+    } catch (error) {
+      trouble.set(String(error));
+    }
+  };
+  return { live, world, whole, showNetwork, trouble, clock, unanswered, refresh };
 }
 
 /** What each machine last answered with about its residents. A machine
@@ -110,6 +126,8 @@ const keptKey = "fastctx.last-answered";
 function remember(world: WorldNow): void {
   for (const machine of world.who.machines) {
     if (machine.kind === "answered") lastAnswered.set(machine.reply.machine, machine.reply.residents);
+    // What the hub kept of a machine gone offline is the latest there is.
+    if (machine.kind === "offline" && machine.last) lastAnswered.set(machine.machine, machine.last.residents);
   }
 }
 

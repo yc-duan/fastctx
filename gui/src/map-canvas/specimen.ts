@@ -54,7 +54,7 @@ update();
 select.addEventListener("change", () => { world = makeWorld(select.value); layoutEngine = new StableNetworkLayout(); changed = false; level = -1; update(); surface.fit(); });
 document.querySelector("#change")!.addEventListener("click", () => {
   if (!changed) world.nodes.push({ key: "machine:added", name: "new-machine", sub: "", hubs: world.hubs.slice(0, 2).map(h => h.id),
-    here: false, online: true, hold: "mine", reaching: false, marks: ["idle"], title: "New machine" });
+    here: false, online: true, hold: "mine", reaching: false, busy: 0, title: "New machine" });
   else world.nodes = world.nodes.filter(n => n.key !== "machine:added");
   changed = !changed;
   update();
@@ -71,7 +71,7 @@ function makeWorld(mode: string): { hubs: MapHub[]; nodes: MapNode[] } {
     key: `machine:${String(i + 1).padStart(2, "0")}`, name: `machine-${String(i + 1).padStart(2, "0")}`, sub: i % 4 === 0 ? "Linux" : "",
     hubs: i % 10 === 0 && hubCount > 1 ? hubs.map(h => h.id) : [hubs[i % hubCount].id],
     here: i === 0, online: i % 13 !== 12, hold: "mine", reaching: false,
-    marks: i % 3 === 0 ? ["busy", "idle"] : ["idle"], title: `Machine ${i + 1}`,
+    busy: i % 3 === 0 ? 1 : 0, title: `Machine ${i + 1}`,
   }));
   return { hubs, nodes };
 }
@@ -119,10 +119,10 @@ function compose(): void {
       const points = quadratic(start, control, end);
       add(outline(points, 1.5, random), strokeBounds(points, 3), offline ? "dry" : "marker", ink, 0.4);
     }
-    if (level >= 1) node.marks.forEach((_, index) => {
+    if (level >= 1) for (let index = 0; index < node.busy; index++) {
       const p: Point = [item.point[0] + index * 12 - 6, item.point[1] - 39];
       add(blot(p, 3.4, random), strokeBounds([p], 5), "marker", accent);
-    });
+    }
     if (level >= 2) {
       const arc = Array.from({ length: 20 }, (_, i): Point => [item.point[0] + Math.cos(i / 19 * Math.PI * 0.8) * 35, item.point[1] + Math.sin(i / 19 * Math.PI * 0.8) * 35]);
       add(outline(arc, 2, random), strokeBounds(arc, 3), "marker", accent);

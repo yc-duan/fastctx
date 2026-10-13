@@ -11,7 +11,6 @@ import type { WorldNow } from "../world/bridge";
 import type { MapHub, MapLink, MapNode } from "./map-nodes";
 import { osName } from "../world/names";
 import { assistantsOf, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
-import { residentsOf } from "./store";
 
 export interface MapWords {
   ownedBy(account: string): string;
@@ -39,11 +38,10 @@ export interface MapNow {
 }
 
 export function mapOf(world: WorldNow, words: MapWords): MapNow {
-  const residents = residentsOf(world).filter((r) => r.here || r.now?.waiting_for_user);
-  const marks = (machine: string) =>
-    residents
-      .filter((r) => r.about.machine === machine)
-      .map((r) => (r.now?.waiting_for_user ? "waiting" : r.now?.activity === "busy" ? "busy" : "idle") as MapNode["marks"][number]);
+  // How many agents are at work or waiting on each machine its owner sees;
+  // a machine away has none now.
+  const busy = new Map<string, number>();
+  for (const machine of world.who.machines) if (machine.kind === "answered" && machine.reply.busy) busy.set(machine.reply.machine, machine.reply.busy);
   const logins = loginsOf(world.accounts);
   const hubs: MapHub[] = world.accounts.hubs.filter((hub) => hub.logins.length).map((hub) => ({ id: hub.hub, name: hub.name, online: hub.link.kind === "online" }));
   const hubLabels = new Map(world.accounts.hubs.map((hub) => [hub.hub, hub.link.kind === "online" ? words.hubOnline : hub.link.kind === "connecting" ? words.hubConnecting : words.hubOff]));
@@ -68,7 +66,7 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       online: machine.here ? true : machine.online,
       hold: mine ? "mine" : "others",
       reaching,
-      marks: marks(machine.name),
+      busy: busy.get(machine.name) ?? 0,
       title: [machine.written, owner ? words.ownedBy(owner) : "", reaching ? words.reachingWhat : "", direct.length ? words.takesDirect : "", was.length ? words.formerly(was) : ""].filter(Boolean).join(" · "),
       ...(was.length ? { was: was.map((name) => `m:${name}${suffix}`) } : {}),
       directAt: direct,
@@ -90,7 +88,7 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       online: one.online,
       hold: "assist",
       reaching: machineActsFor(world, one.machine, one.login),
-      marks: marks(one.machine),
+      busy: 0,
       title: words.assistantSaid(one.owner ?? ""),
       group: { key: `assist:${one.owner ?? ""}`, label: words.assistGroup(one.owner ?? "") },
     });

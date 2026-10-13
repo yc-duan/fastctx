@@ -43,16 +43,28 @@ enum Ended {
 
 pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::Changes>) {
     let mut failures: u32 = 0;
-    loop {
+    'sessions: loop {
         let mut online_since = None;
         let started = Instant::now();
-        let ended = tokio::select! {
-            ended = connect(&inner, &mut online_since) => ended,
-            changed = changed(&inner, &mut changes) => {
-                let reason = changed.expect("watching network and resume notifications");
-                reconnect(&inner, reason);
-                failures = 0;
-                continue;
+        let ended = {
+            let connecting = connect(&inner, &mut online_since);
+            tokio::pin!(connecting);
+            loop {
+                tokio::select! {
+                    ended = &mut connecting => break ended,
+                    changed = changed(&inner, &mut changes) => {
+                        // A session on may well have lived through it: the
+                        // hub is asked first, and only no answer ends it
+                        // (`world-network.md`, 有人在等，就替他看着线).
+                        if matches!(*inner.status.borrow(), Status::Online { .. }) {
+                            inner.check.notify_one();
+                            continue;
+                        }
+                        reconnect(&inner, changed.expect("watching network and resume notifications"));
+                        failures = 0;
+                        continue 'sessions;
+                    }
+                }
             }
         };
         match ended {
@@ -182,6 +194,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             dialed: Some(address),
             any_names: true,
             renames: true,
+            afoot: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
@@ -314,6 +327,8 @@ async fn connected(
             if let Err(error) = inner.refresh().await {
                 inner.node.log(format!("asking the hub for the view: {error}"));
             }
+            // The hub tells what is afoot elsewhere before it answers.
+            inner.afoot_synced(generation);
             tell_worked(&inner).await;
             inner.node.directory_changed();
             inner.node.connected();
@@ -327,6 +342,8 @@ async fn connected(
     // wait behind letters and answers the hub queued before it.
     let mut heard = Instant::now();
     let mut last_ping = 0;
+    // A check asked since the hub was last heard, and how long it waits.
+    let mut checking: Option<Instant> = None;
     let ended = loop {
         let next = tokio::select! {
             // Checked first, so that once nothing has come for the whole
@@ -334,6 +351,19 @@ async fn connected(
             biased;
             _ = tokio::time::sleep_until(heard + SILENCE) => {
                 break Ended::Retry(format!("nothing came from the hub for {} s", SILENCE.as_secs()));
+            },
+            _ = tokio::time::sleep_until(checking.unwrap_or(heard + SILENCE)), if checking.is_some() => {
+                break Ended::Reroute("the hub did not answer a check after the network changed".to_string());
+            },
+            () = inner.check.notified() => {
+                if checking.is_none() {
+                    checking = Some(Instant::now() + inner.check_within());
+                    // Numbered apart from the heartbeats, so its pong measures
+                    // nothing.
+                    let paths = inner.view().direct_links.then(|| inner.paths());
+                    let _ = up.send(Up::Ping { n: 0, paths });
+                }
+                continue;
             },
             _ = &mut writer_stopped => break Ended::Retry("writing to the hub failed".to_string()),
             () = &mut rerouted => break Ended::Reroute("the ways this machine connects to the hub by changed".to_string()),
@@ -355,10 +385,12 @@ async fn connected(
             },
             Some(Ok(_)) => {
                 heard = Instant::now();
+                checking = None;
                 continue;
             }
         };
         heard = Instant::now();
+        checking = None;
         match frame {
             Down::Pong { n } => {
                 if n > last_ping {
@@ -405,6 +437,7 @@ async fn connected(
                 });
             }
             Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
+            Down::Afoot { machine, busy, change } => inner.heard_afoot(machine, busy, *change),
             Down::Refused { reason } => break refused(reason),
             Down::Welcome { .. }
             | Down::LoginResponse { .. }

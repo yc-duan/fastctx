@@ -1,13 +1,15 @@
 //! What `fastctx w` reads: who is here, and what each is doing
 //! (`world-town.md`).
 
+use std::collections::BTreeMap;
+
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::project::{Record, TownSummary};
 use crate::residents::{About, Action, MessageLine, Moved, Now};
 use crate::run::JobRecord;
-use crate::{JobId, MachineName, TownName};
+use crate::{JobId, MachineName, ResidentId, TownName};
 
 /// One machine's answer to `fastctx w`: the residents that live on it, and
 /// every job still running on it, whoever started it.
@@ -19,6 +21,187 @@ pub struct WhoReply {
     /// The same local history reader used by `Since`, included in this call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<crate::since::SinceReply>,
+    /// How many agents are at work or waiting for someone on the machine,
+    /// whosever they are: told its owner alone (`world-gui.md`, 机器页).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busy: Option<u32>,
+}
+
+/// What is afoot on a machine (`world-network.md`, 近况): its residents and
+/// the jobs running on it, by id. The machine keeps its own whole, its hub
+/// the latest each machine told, and each member what it was told of each
+/// machine; between them goes only what changed (`AfootChange`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AfootState<R, J> {
+    pub residents: BTreeMap<ResidentId, R>,
+    pub jobs: BTreeMap<JobId, J>,
+}
+
+impl<R, J> Default for AfootState<R, J> {
+    fn default() -> Self {
+        Self { residents: BTreeMap::new(), jobs: BTreeMap::new() }
+    }
+}
+
+/// How what is afoot on a machine changed: what came or changed, whole, and
+/// what went, by id. `anew` starts from nothing, as when the one telling
+/// cannot know what the one told still holds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AfootChange<R, J> {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub anew: bool,
+    #[serde(default = "Vec::new", skip_serializing_if = "Vec::is_empty")]
+    pub residents: Vec<R>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub residents_gone: Vec<ResidentId>,
+    #[serde(default = "Vec::new", skip_serializing_if = "Vec::is_empty")]
+    pub jobs: Vec<J>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jobs_gone: Vec<JobId>,
+}
+
+impl<R, J> Default for AfootChange<R, J> {
+    fn default() -> Self {
+        Self { anew: false, residents: Vec::new(), residents_gone: Vec::new(), jobs: Vec::new(), jobs_gone: Vec::new() }
+    }
+}
+
+impl<R, J> AfootChange<R, J> {
+    /// Whether it changes nothing.
+    pub fn is_empty(&self) -> bool {
+        !self.anew
+            && self.residents.is_empty()
+            && self.residents_gone.is_empty()
+            && self.jobs.is_empty()
+            && self.jobs_gone.is_empty()
+    }
+}
+
+/// Something afoot, known by its id.
+pub trait Afloat {
+    type Id: Ord + Clone;
+    fn id(&self) -> Self::Id;
+}
+
+impl Afloat for ResidentNow {
+    type Id = ResidentId;
+    fn id(&self) -> ResidentId {
+        self.about.id.clone()
+    }
+}
+
+impl Afloat for RunningJob {
+    type Id = JobId;
+    fn id(&self) -> JobId {
+        self.job.clone()
+    }
+}
+
+impl Afloat for AfootResident {
+    type Id = ResidentId;
+    fn id(&self) -> ResidentId {
+        self.resident.about.id.clone()
+    }
+}
+
+impl Afloat for AfootJob {
+    type Id = JobId;
+    fn id(&self) -> JobId {
+        self.job.job.clone()
+    }
+}
+
+impl<R, J> AfootState<R, J>
+where
+    R: Afloat<Id = ResidentId> + Clone + PartialEq,
+    J: Afloat<Id = JobId> + Clone + PartialEq,
+{
+    /// Takes in what changed.
+    pub fn apply(&mut self, change: AfootChange<R, J>) {
+        if change.anew {
+            self.residents.clear();
+            self.jobs.clear();
+        }
+        for id in change.residents_gone {
+            self.residents.remove(&id);
+        }
+        for resident in change.residents {
+            self.residents.insert(resident.id(), resident);
+        }
+        for id in change.jobs_gone {
+            self.jobs.remove(&id);
+        }
+        for job in change.jobs {
+            self.jobs.insert(job.id(), job);
+        }
+    }
+
+    /// What changed from this to `now`.
+    pub fn change_to(&self, now: &Self) -> AfootChange<R, J> {
+        AfootChange {
+            anew: false,
+            residents: now
+                .residents
+                .iter()
+                .filter(|(id, resident)| self.residents.get(id) != Some(resident))
+                .map(|(_, resident)| resident.clone())
+                .collect(),
+            residents_gone: self.residents.keys().filter(|id| !now.residents.contains_key(id)).cloned().collect(),
+            jobs: now
+                .jobs
+                .iter()
+                .filter(|(id, job)| self.jobs.get(id) != Some(job))
+                .map(|(_, job)| job.clone())
+                .collect(),
+            jobs_gone: self.jobs.keys().filter(|id| !now.jobs.contains_key(id)).cloned().collect(),
+        }
+    }
+
+    /// All of it, from nothing.
+    pub fn whole(&self) -> AfootChange<R, J> {
+        AfootChange { anew: true, ..Self::default().change_to(self) }
+    }
+}
+
+/// What is afoot on a machine as the machine tells its hub.
+pub type Afoot = AfootState<AfootResident, AfootJob>;
+/// What is afoot on a machine as a member is told of it.
+pub type AfootSeen = AfootState<ResidentNow, RunningJob>;
+
+/// A resident as its machine tells it, at the grain of turns, with the
+/// accounts of that hub it works for.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AfootResident {
+    pub resident: ResidentNow,
+    pub accounts: Vec<crate::AccountName>,
+}
+
+/// A job running on a machine as the machine tells it, with the accounts of
+/// that hub it runs for.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AfootJob {
+    pub job: RunningJob,
+    pub accounts: Vec<crate::AccountName>,
+}
+
+impl ResidentNow {
+    /// At work, or waiting for someone to answer it.
+    pub fn in_progress(&self) -> bool {
+        self.now.as_ref().is_some_and(|now| {
+            now.activity == crate::residents::Activity::Busy || now.waiting_for_user || now.asked.is_some()
+        })
+    }
+
+    /// As it is told while it changes only from turn to turn: without the
+    /// tool it is in and the last thing it did.
+    pub fn at_turn_grain(mut self) -> Self {
+        self.tools.clear();
+        self.last_action = None;
+        if let Some(now) = &mut self.now {
+            now.last_tool_at = None;
+        }
+        self
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,10 +304,14 @@ pub enum MachineWho {
     Answered {
         reply: WhoReply,
     },
-    /// Not connected; `since` is when it was last seen, when known.
+    /// Not connected; `since` is when it was last seen, when known. `last`
+    /// is what was afoot on it as it last told, when that is known
+    /// (`world-network.md`, 近况).
     Offline {
         machine: MachineName,
         since: Option<Timestamp>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last: Option<Box<WhoReply>>,
     },
     /// Connected, or thought to be, but its answer did not come.
     NoAnswer {
@@ -243,7 +430,7 @@ impl WorldWho {
                         reason: "answered current activity without the requested history".into(),
                     },
                 },
-                MachineWho::Offline { machine, since } => {
+                MachineWho::Offline { machine, since, .. } => {
                     MachineSince::Offline { machine: machine.clone(), since: *since }
                 }
                 MachineWho::NoAnswer { machine, reason } => {

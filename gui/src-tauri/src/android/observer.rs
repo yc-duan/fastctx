@@ -1,5 +1,8 @@
-//! Executes the page's explicit notification policy without a WebView.
-//! State survives process death; unavailable machines retain their last facts.
+//! Executes the page's explicit notification policy without a WebView,
+//! following the World as the hubs push what is afoot on each machine, so a
+//! turn that ends or a question asked is told the moment it reaches this
+//! phone (`world-gui.md`, 对话). State survives process death; unavailable
+//! machines retain their last facts.
 //! The page gives the titles, in its words; the body is the agent's own:
 //! what it asks, or the reply that ended its turn. A question asked without
 //! waiting with a few answers carries them as buttons, each with the words
@@ -8,13 +11,11 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use fastctx_client::World;
 use fastctx_platform::{Permissions, publish};
 use fastctx_types::residents::{Activity, Asked, AskedFor, Origin};
-use fastctx_types::town::{MachineWho, ResidentNow};
-use fastctx_types::world::LinkState;
+use fastctx_types::town::{MachineWho, ResidentNow, WorldWho};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -129,12 +130,11 @@ fn format(template: &str, resident: &ResidentNow, policy: &Policy) -> String {
     template.replacen("{who}", &format!("{agent} · {}", resident.about.machine), 1)
 }
 
-async fn observe(world: &World, bridge: &Bridge, observed: &mut Observed) -> Result<(), String> {
+fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<(), String> {
     let policy: Policy = serde_json::from_str(&bridge.string("configuration")?).map_err(|error| error.to_string())?;
     if policy.rules.is_empty() {
         return Ok(());
     }
-    let who = world.who(None, true).await.map_err(|error| error.to_string())?;
     for machine in who.machines {
         let MachineWho::Answered { reply } = machine else { continue };
         let residents: Vec<_> = reply.residents.into_iter().filter(|resident| resident.removed.is_none()).collect();
@@ -235,40 +235,60 @@ pub(super) async fn run(world: World, directory: PathBuf, bridge: Arc<Bridge>) {
     };
     let mut saved = serde_json::to_vec(&observed).expect("notification observations");
     let mut last_error = None;
+    let mut again = fastctx_client::Again::default();
     loop {
-        let state = world.device().expect("Android device").state();
-        // The World this phone sees is the hubs it is logged in to.
-        let hubs = (!state.hubs.is_empty())
-            .then(|| state.hubs.iter().map(|hub| hub.hub.to_string()).collect::<Vec<_>>().join(","));
-        let result = async {
-            if observed.world != hubs {
-                for key in observed.residents.keys() {
-                    bridge.action("dismissNotice", &format!("{key}:asked"))?;
-                    bridge.action("dismissNotice", &format!("{key}:finished"))?;
+        let mut watch = match world.watch_world().await {
+            Ok(watch) => Some(watch),
+            Err(error) => {
+                report(&bridge, &mut last_error, Some(again.broke(error.to_string()).why));
+                None
+            }
+        };
+        while let Some(watching) = &mut watch {
+            let now = match watching.next().await {
+                Ok(now) => now,
+                Err(error) => {
+                    report(&bridge, &mut last_error, Some(again.broke(error.to_string()).why));
+                    break;
                 }
-                observed = Observed { world: hubs.clone(), ..Observed::default() };
-            }
-            if state.hubs.iter().any(|hub| matches!(hub.link, LinkState::Online { .. })) {
-                observe(&world, &bridge, &mut observed).await?;
-            }
-            let bytes = serde_json::to_vec(&observed).map_err(|error| error.to_string())?;
-            if saved != bytes {
-                publish(&path, &bytes, Permissions::Private).map_err(|error| error.to_string())?;
-                saved = bytes;
-            }
-            Ok::<_, String>(())
+            };
+            again.came();
+            let state = world.device().expect("Android device").state();
+            // The World this phone sees is the hubs it is logged in to.
+            let hubs = (!state.hubs.is_empty())
+                .then(|| state.hubs.iter().map(|hub| hub.hub.to_string()).collect::<Vec<_>>().join(","));
+            let result = (|| {
+                if observed.world != hubs {
+                    for key in observed.residents.keys() {
+                        bridge.action("dismissNotice", &format!("{key}:asked"))?;
+                        bridge.action("dismissNotice", &format!("{key}:finished"))?;
+                    }
+                    observed = Observed { world: hubs.clone(), ..Observed::default() };
+                }
+                observe(now.who, &bridge, &mut observed)?;
+                let bytes = serde_json::to_vec(&observed).map_err(|error| error.to_string())?;
+                if saved != bytes {
+                    publish(&path, &bytes, Permissions::Private).map_err(|error| error.to_string())?;
+                    saved = bytes;
+                }
+                Ok::<_, String>(())
+            })();
+            report(&bridge, &mut last_error, result.err());
         }
-        .await;
-        let error = result.err();
-        if error != last_error {
-            if let Some(error) = &error {
-                super::bridge::report(error.clone());
-            } else if let Err(error) = bridge.action("reportError", "") {
-                eprintln!("{error}");
-            }
-            last_error = error;
-        }
-        // The same sampling interval as the page's central World store.
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        again.pause(&world, None).await;
     }
+}
+
+/// Tells the page what went wrong last, or that nothing is wrong now, once
+/// each time that changes.
+fn report(bridge: &Bridge, last_error: &mut Option<String>, error: Option<String>) {
+    if error == *last_error {
+        return;
+    }
+    if let Some(error) = &error {
+        super::bridge::report(error.clone());
+    } else if let Err(error) = bridge.action("reportError", "") {
+        eprintln!("{error}");
+    }
+    *last_error = error;
 }

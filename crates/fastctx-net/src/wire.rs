@@ -16,6 +16,7 @@
 //! end of a data connection.
 
 use fastctx_types::access::TownId;
+use fastctx_types::town::{AfootJob, AfootResident, ResidentNow, RunningJob};
 use fastctx_types::{AccountName, HubName, MachineName, TownName};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -91,6 +92,10 @@ pub enum Up {
     Ack { seq: u64 },
     /// A question for the hub itself.
     Ask { id: u64, question: Question },
+    /// How what is afoot on this machine changed since it last told this
+    /// session (`world-network.md`, 近况); sent only to a hub whose view
+    /// says it takes it.
+    Afoot { change: Box<fastctx_types::town::AfootChange<AfootResident, AfootJob>> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -129,6 +134,10 @@ pub enum Intent {
         /// would never connect again under a name it did not ask for.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         renames: bool,
+        /// The member reads `Down::Afoot`. Earlier releases do not say so,
+        /// and would end the session on a frame they cannot read.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        afoot: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -288,6 +297,15 @@ pub enum Down {
     /// A project this member may use has new entries in its ledger.
     LedgerChanged {
         town: TownId,
+    },
+    /// How what is afoot on `machine` changed as this member may see it,
+    /// since this session was last told of it; and, to the machine's owner
+    /// alone, how many agents are at work or waiting there now.
+    Afoot {
+        machine: MachineName,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        busy: Option<u32>,
+        change: Box<fastctx_types::town::AfootChange<ResidentNow, RunningJob>>,
     },
 }
 

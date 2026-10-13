@@ -40,6 +40,9 @@ pub use records::{
 
 pub struct Residents {
     state: Mutex<State>,
+    /// Moves whenever a resident may have changed: came, went, or changed
+    /// in what is kept of it (`changes`).
+    changed: tokio::sync::watch::Sender<u64>,
     /// This machine's name now, which every resident living here is told as
     /// living on, whatever the machine was called when it was born.
     here: std::sync::RwLock<Option<fastctx_types::MachineName>>,
@@ -105,7 +108,7 @@ impl State {
     }
 }
 
-struct StateGuard<'a>(std::sync::MutexGuard<'a, State>);
+struct StateGuard<'a>(std::sync::MutexGuard<'a, State>, &'a tokio::sync::watch::Sender<u64>);
 
 impl std::ops::Deref for StateGuard<'_> {
     type Target = State;
@@ -126,6 +129,9 @@ impl Drop for StateGuard<'_> {
             && let Err(error) = self.0.live.release()
         {
             cache::failed("spilling inactive resident state", error);
+        }
+        if self.0.live.take_touched() {
+            self.1.send_modify(|changes| *changes = changes.wrapping_add(1));
         }
     }
 }
@@ -265,6 +271,7 @@ impl Residents {
         Ok((
             Self {
                 state: Mutex::new(state),
+                changed: tokio::sync::watch::channel(0).0,
                 here: Default::default(),
                 speaking: Default::default(),
                 paying: Default::default(),
@@ -342,7 +349,12 @@ impl Residents {
     }
 
     fn lock(&self) -> StateGuard<'_> {
-        StateGuard(self.state.lock().expect("never poisoned"))
+        StateGuard(self.state.lock().expect("never poisoned"), &self.changed)
+    }
+
+    /// Moves whenever a resident may have changed.
+    pub fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changed.subscribe()
     }
 
     /// The resident a session is, made now if it is new.
@@ -560,6 +572,7 @@ impl Residents {
     /// This machine is called `name` now (`world-network.md`, 机器的名字).
     pub fn set_here(&self, name: fastctx_types::MachineName) {
         *self.here.write().expect("never poisoned") = Some(name);
+        self.changed.send_modify(|changes| *changes = changes.wrapping_add(1));
     }
 
     /// `about` of a resident living here, on this machine as it is called

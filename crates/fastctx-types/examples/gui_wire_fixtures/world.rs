@@ -207,6 +207,7 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                 MachineWho::Answered {
                     reply: WhoReply {
                         history: None,
+                        busy: Some(2),
                         machine: machine(),
                         residents: residents(),
                         jobs: [None, Some(u32::MAX)]
@@ -229,8 +230,18 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                             .collect(),
                     },
                 },
-                MachineWho::Offline { machine: "laptop".parse().unwrap(), since: Some(at()) },
-                MachineWho::Offline { machine: "unknown".parse().unwrap(), since: None },
+                MachineWho::Offline {
+                    machine: "laptop".parse().unwrap(),
+                    since: Some(at()),
+                    last: Some(Box::new(WhoReply {
+                        history: None,
+                        busy: None,
+                        machine: "laptop".parse().unwrap(),
+                        residents: residents().into_iter().take(1).collect(),
+                        jobs: Vec::new(),
+                    })),
+                },
+                MachineWho::Offline { machine: "unknown".parse().unwrap(), since: None, last: None },
                 MachineWho::NoAnswer { machine: "lab".parse().unwrap(), reason: "node disconnected".into() },
             ],
             others: vec![fastctx_types::town::WhoFor {

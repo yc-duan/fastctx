@@ -12,6 +12,7 @@
 pub mod activity;
 mod admission;
 mod admitted;
+mod afoot;
 mod again;
 mod agent_activity;
 mod agents;
@@ -35,6 +36,7 @@ mod data;
 mod delivery;
 mod desk;
 mod devices;
+mod facts;
 mod features;
 mod file_read;
 mod file_search;
@@ -84,6 +86,7 @@ mod server_invitation;
 mod session_live;
 mod session_options;
 mod session_record;
+mod shown;
 mod since;
 mod speech;
 mod stats;
@@ -162,6 +165,14 @@ pub(crate) struct Node {
     /// Moves whenever the ways to other machines may have changed, on any
     /// link (`Node::reopened`).
     ways: tokio::sync::watch::Sender<u64>,
+    /// Moves whenever a hub's view may have changed, or this computer's name
+    /// did: what is afoot here is told again then (`afoot`).
+    views: tokio::sync::watch::Sender<u64>,
+    /// Moves whenever what an interface shows of the World may have changed,
+    /// beyond the residents and jobs here (`shown`).
+    shown: tokio::sync::watch::Sender<u64>,
+    /// What the other machines said of themselves (`facts`).
+    facts: facts::Facts,
     /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: tokio::sync::Mutex<()>,
     /// Held while a town's record or journals are written from here, from
@@ -226,6 +237,18 @@ impl Node {
     /// changed.
     pub(crate) fn tools_changed(&self, resident: Option<&fastctx_types::ResidentId>) {
         let _ = self.tools.send(resident.cloned());
+    }
+
+    /// What an interface shows of the World may have changed.
+    pub(crate) fn shown_changed(&self) {
+        self.shown.send_modify(|changes| *changes = changes.wrapping_add(1));
+    }
+
+    /// A hub's view may have changed, or this computer's name did: what is
+    /// afoot here, and what an interface shows, may change with it.
+    pub(crate) fn views_changed(&self) {
+        self.views.send_modify(|changes| *changes = changes.wrapping_add(1));
+        self.shown_changed();
     }
 
     pub(crate) fn machine(&self) -> MachineName {
@@ -485,6 +508,9 @@ pub async fn run_prepared(
         log,
         links: RwLock::new(std::collections::BTreeMap::new()),
         ways: tokio::sync::watch::channel(0).0,
+        views: tokio::sync::watch::channel(0).0,
+        shown: tokio::sync::watch::channel(0).0,
+        facts: facts::Facts::default(),
         syncing: tokio::sync::Mutex::new(()),
         writing: tokio::sync::Mutex::new(()),
         taking: Default::default(),
@@ -554,6 +580,7 @@ pub async fn run_prepared(
     speech::recover(&node).await;
     on_delivery::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
+    afoot::start(&node);
     let jobs_node = node.clone();
     tokio::spawn(async move {
         let mut again = again::Again::default();

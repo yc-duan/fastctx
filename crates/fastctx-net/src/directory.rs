@@ -535,6 +535,11 @@ pub struct View {
     /// asked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub renames: bool,
+    /// Whether this hub takes `Up::Afoot` and passes on what is afoot on
+    /// each machine (`world-network.md`, 近况). Earlier hubs omit it, and
+    /// would end the session of a member that sent it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub afoot: bool,
     /// Where this member reaches the hub now, given by a hub that was moved
     /// to where it runs (`crate::moving`); a hub never moved gives none, and
     /// the member keeps the addresses it logged in with.
@@ -563,6 +568,7 @@ impl View {
             forwarders: Vec::new(),
             moving: false,
             renames: false,
+            afoot: false,
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),
             directory: Directory::default(),

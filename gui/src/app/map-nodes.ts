@@ -19,8 +19,10 @@ export interface MapNode {
   hold: "mine" | "others" | "assist";
   /** Its agents may reach the account's machines. */
   reaching: boolean;
-  /** The agents on it, by what they are doing. */
-  marks: ("busy" | "waiting" | "idle")[];
+  /** How many agents are at work or waiting on it now, whosever they
+   *  are: given to its owner alone, none for anyone else (`world-gui.md`,
+   *  机器页). */
+  busy: number;
   /** What it is, said whole, for a pointer resting on it. */
   title: string;
   /** The keys it had under the names it had: renamed, it keeps the place

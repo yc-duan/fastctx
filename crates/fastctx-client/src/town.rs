@@ -85,7 +85,7 @@ impl TownView {
                     residents.extend(reply.residents);
                     jobs.extend(reply.jobs);
                 }
-                MachineWho::Offline { machine, since } => machines.push(MachineState::Offline { machine, since }),
+                MachineWho::Offline { machine, since, .. } => machines.push(MachineState::Offline { machine, since }),
                 MachineWho::NoAnswer { machine, reason } => machines.push(MachineState::NoAnswer { machine, reason }),
             }
         }

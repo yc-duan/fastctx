@@ -124,11 +124,15 @@ export interface WhoReply {
   residents: ResidentNow[];
   jobs: RunningJob[];
   history?: import("./since").SinceCoverage & { events: import("./since").SinceEvent[]; undated: import("./since").UndatedFact[] };
+  /** How many agents are at work or waiting on the machine, whosever they
+   *  are: told to its owner alone (`world-gui.md`, 机器页). */
+  busy?: number;
 }
 
 export type MachineWho =
   | { kind: "answered"; reply: WhoReply }
-  | { kind: "offline"; machine: MachineName; since: Timestamp | null }
+  /** `last`: what was afoot on it as it last told, when that is known. */
+  | { kind: "offline"; machine: MachineName; since: Timestamp | null; last?: WhoReply }
   | { kind: "no_answer"; machine: MachineName; reason: string };
 
 export type WhoScope =

@@ -16,6 +16,7 @@
 
 mod accounts;
 mod addresses;
+mod afoot;
 mod answering;
 mod calls;
 mod changes;
@@ -53,6 +54,7 @@ use crate::envelope::{Envelope, Kind};
 use crate::message::LetterId;
 use crate::sign::{Domain, PublicKey, SecretKey, Signed};
 use crate::wire::{CallStatus, Change, Question, Told};
+pub use afoot::Elsewhere;
 pub use direct::DataWay;
 pub use ledger::{Page, PageItem};
 use state::{Counter, LettersFile};
@@ -108,6 +110,10 @@ pub trait Node: Send + Sync + 'static {
     /// line to the hub came or went, the hub said anew who is online, or a
     /// direct link came up or went down.
     fn ways_changed(&self) {}
+    /// What the hub told of what is afoot on the other machines changed
+    /// (`Link::afoot`), or the session on now has given its first telling
+    /// of it (`Link::afoot_ready`).
+    fn afoot_changed(&self) {}
     /// Lets other computers reach this machine at exactly the TCP `ports`
     /// through its own firewall, as far as the World does that, and says
     /// what it knows of that firewall: this machine takes direct connections
@@ -226,6 +232,9 @@ pub(crate) struct Inner {
     outbox_changed: Notify,
     /// An application knows when its network changed or it returned to the foreground.
     reconnect: Notify,
+    /// The session on now is to be asked at once whether the hub still
+    /// hears it (`session::run`).
+    check: Notify,
     /// Woken when the ways to the hub this machine should connect by changed.
     rerouted: Notify,
     /// Counts the changes of this machine's network the link noticed; the
@@ -237,6 +246,8 @@ pub(crate) struct Inner {
     line: Mutex<line::Line>,
     /// The direct links (`direct`).
     direct: direct::Direct,
+    /// What is afoot here and elsewhere (`afoot`).
+    afoots: afoot::Afoots,
     /// The task that keeps the connection.
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -346,11 +357,13 @@ impl Link {
             next_id: AtomicU64::new(0),
             outbox_changed: Notify::new(),
             reconnect: Notify::new(),
+            check: Notify::new(),
             rerouted: Notify::new(),
             network: watch::channel(0).0,
             hub_ms: Mutex::new(None),
             line: Mutex::default(),
             direct: direct::Direct::default(),
+            afoots: afoot::Afoots::default(),
             task: Mutex::new(None),
         });
         inner.line_started();
@@ -439,6 +452,26 @@ impl Link {
     /// The round trip to the hub, as last measured.
     pub fn hub_ms(&self) -> Option<u32> {
         *self.inner.hub_ms.lock().expect("never poisoned")
+    }
+
+    /// Tells the hub that what is afoot on this machine is `afoot` now
+    /// (`world-network.md`, 近况): the change from what it was told, as soon
+    /// as a session to a hub that takes it is on, and all of it to each new
+    /// session.
+    pub fn tell_afoot(&self, afoot: fastctx_types::town::Afoot) {
+        self.inner.tell_afoot(afoot);
+    }
+
+    /// What is afoot on each other machine of this hub as the hub last told
+    /// it, as this machine may see it.
+    pub fn afoot(&self) -> std::collections::BTreeMap<MachineName, Elsewhere> {
+        self.inner.afoot_elsewhere()
+    }
+
+    /// Whether `afoot` is what the session on now first told, or there is
+    /// no session; false between a session's start and its first telling.
+    pub fn afoot_ready(&self) -> bool {
+        self.inner.afoot_ready()
     }
 
     /// How this machine's calls to `machine` go now: over a direct link, or
@@ -752,6 +785,7 @@ impl Inner {
             if let Some(this) = self.this.upgrade() {
                 this.follow_view();
             }
+            self.prune_afoot();
             self.ways_changed();
         }
         self.reroute_if_changed();

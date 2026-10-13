@@ -343,7 +343,7 @@ export class MachineMap {
       [...scene.hubLabels],
       scene.adds,
       [...scene.waiting],
-      scene.nodes.map((node) => [node.key, node.name, node.sub, node.online, node.hold, node.reaching, node.here, near ? node.marks : null, node.directAt, node.through]),
+      scene.nodes.map((node) => [node.key, node.name, node.sub, node.online, node.hold, node.reaching, node.here, near ? node.busy : null, node.directAt, node.through]),
       [...scene.opening],
       [...placement.machines],
       placement.groups.map((group) => [group.key, group.folded, group.box, group.count, group.online]),
@@ -436,16 +436,13 @@ export class MachineMap {
         ];
         add(outline(tick, 2.2, random, { pressure: 0.25, taper: 0.2 }), spanning(tick, 4), "marker", clay);
       }
-      // The agents on it, round the upper right of its ring, clear of its
-      // name on its right.
-      node.marks.forEach((mark, place) => {
+      // The agents at work or waiting on it, round the upper right of its
+      // ring, clear of its name on its right: one dot each, no names.
+      for (let place = 0; place < node.busy; place++) {
         const at = -1.15 + place * 0.36;
         const spot: Point = [x + Math.cos(at) * (RING + 13), y + Math.sin(at) * (RING + 13)];
-        const own = seeded(`map-agent:${node.key}:${place}`);
-        if (mark === "waiting") add(circle(spot, 4.6, 1.6, own), around(spot, 8), "marker", clay);
-        else if (mark === "busy") add(blot(spot, 4, own), around(spot, 7), "marker", clay);
-        else add(circle(spot, 3.2, 1.1, own), around(spot, 6), "marker", graphite, 0.9);
-      });
+        add(blot(spot, 4, seeded(`map-agent:${node.key}:${place}`)), around(spot, 7), "marker", clay);
+      }
     }
     void this.pens.update(strokes).catch((error: unknown) => console.warn("the machines drawing could not be inked", error));
 
@@ -513,7 +510,7 @@ export class MachineMap {
     if (!scene || !placement) return;
     const near = this.level >= 1;
     const lit = scene.lit ?? null;
-    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.marks.includes("busy")]), [...placement.machines], lit && [...lit]]);
+    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.busy > 0]), [...placement.machines], lit && [...lit]]);
     if (key === this.marked) return;
     this.marked = key;
     const circles: string[] = [];
@@ -543,7 +540,7 @@ export class MachineMap {
     if (near) {
       for (const branch of placement.branches) {
         const node = branch.machine ? scene.nodes.find((one) => one.key === branch.machine) : undefined;
-        if (!node || node.online !== true || !node.marks.includes("busy")) continue;
+        if (!node || node.online !== true || node.busy === 0) continue;
         const [from, to] = [branch.points[0]!, branch.points[branch.points.length - 1]!];
         flows.push(`<path class="flow" d="M${from[0].toFixed(1)} ${from[1].toFixed(1)}L${to[0].toFixed(1)} ${to[1].toFixed(1)}"/>`);
       }

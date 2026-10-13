@@ -39,6 +39,9 @@ export interface MachinePageWords {
   connection: string;
   about: string;
   present: string;
+  /** Agents of other accounts at work or waiting on it, told its owner
+   *  without their names. */
+  othersAtWork(count: number): string;
   sharing: string;
 
   threads(count: number): string;
@@ -134,6 +137,7 @@ export const zhMachinePage: MachinePageWords = {
   connection: "连线",
   about: "关于",
   present: "在这台上",
+  othersAtWork: (count) => `另有 ${count} 个在跑`,
   sharing: "共享与协助",
 
   threads: (count) => `${count} 线程`,
@@ -217,6 +221,7 @@ export const enMachinePage: MachinePageWords = {
   connection: "Connection",
   about: "About",
   present: "On it",
+  othersAtWork: (count) => `${count} more running`,
   sharing: "Sharing",
 
   threads: (count) => `${count} threads`,

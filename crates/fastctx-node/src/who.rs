@@ -108,7 +108,7 @@ pub fn who(
         jobs.retain(|job| job.town.as_ref() == Some(town));
     }
     jobs.sort_by_key(|job| job.started_at);
-    Ok(WhoReply { machine: machine.clone(), residents, jobs, history: None })
+    Ok(WhoReply { machine: machine.clone(), residents, jobs, history: None, busy: None })
 }
 
 /// Marks what `reply` shows that works for no account `acting` works for,

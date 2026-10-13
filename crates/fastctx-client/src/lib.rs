@@ -39,6 +39,7 @@ pub mod shown;
 mod thumbnail;
 pub mod town;
 pub mod world;
+pub mod world_now;
 
 pub use address::hub_addresses;
 pub use again::{Again, Interruption};
@@ -263,7 +264,8 @@ impl Client {
             NodeFrame::Watched { .. }
             | NodeFrame::On { .. }
             | NodeFrame::ToolsChanged { .. }
-            | NodeFrame::Features { .. } => Err(broken("the node answered a call as a stream".to_string())),
+            | NodeFrame::Features { .. }
+            | NodeFrame::World { .. } => Err(broken("the node answered a call as a stream".to_string())),
             NodeFrame::FileRead { .. } => Err(broken("use read_file to consume a file byte stream".to_string())),
             NodeFrame::LinesRead { .. } => Err(broken("use World.lines to consume logical rows".to_string())),
         }
@@ -313,6 +315,18 @@ impl Client {
         let id = self.next;
         self.connection
             .send(&to_json(&ClientFrame::Call { id, call: Call::WatchFeatures }))
+            .await
+            .map_err(CallError::Broken)?;
+        Ok((self, id))
+    }
+
+    /// Sends a `WatchWorld` call; the connection carries the World as an
+    /// interface shows it from then on.
+    pub(crate) async fn watch_world(mut self) -> Result<(Client, u64), CallError> {
+        self.next += 1;
+        let id = self.next;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchWorld }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))

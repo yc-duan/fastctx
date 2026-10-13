@@ -762,10 +762,15 @@ export class MachinePage implements Page {
     const viewer = loginsOf(world.accounts).find((login) => machine.on.some((on) => on.hub === login.hub)) ?? null;
     const group = viewer ? (groupsOf(world).find((one) => sameLogin(one.login, viewer)) ?? null) : null;
     const residents = residentsOf(world).filter(
-      (r) => r.about.machine === machine.name && (r.now?.activity === "busy" || r.now?.waiting_for_user) && (!group || residentIn(world, group, r)),
+      (r) => r.about.machine === machine.name && (r.now?.activity === "busy" || r.now?.waiting_for_user || !!r.now?.asked) && (!group || residentIn(world, group, r)),
     );
     const jobs = jobsOf(world).filter((job) => job.machine === machine.name);
-    this.presentBox.hidden = !residents.length && !jobs.length;
+    // Its owner is told how many are at work or waiting there, whosever
+    // they are; those of other accounts go without their names.
+    const answered = world.who.machines.find((one) => one.kind === "answered" && one.reply.machine === machine.name);
+    const busy = answered?.kind === "answered" ? (answered.reply.busy ?? 0) : 0;
+    const others = Math.max(0, busy - residents.length);
+    this.presentBox.hidden = !residents.length && !jobs.length && !others;
     const agents = residents
       .map(
         (r) =>
@@ -777,7 +782,7 @@ export class MachinePage implements Page {
     this.put(
       "present",
       this.presentBox,
-      `<h2 class="mp-card-title">${escape(words.present)}</h2>${agents ? `<ul class="machine-agents">${agents}</ul>` : ""}${jobs.length ? `<p class="machine-jobs">${escape(machines.jobs(jobs.length))}</p>` : ""}`,
+      `<h2 class="mp-card-title">${escape(words.present)}</h2>${agents ? `<ul class="machine-agents">${agents}</ul>` : ""}${others ? `<p class="machine-jobs">${escape(words.othersAtWork(others))}</p>` : ""}${jobs.length ? `<p class="machine-jobs">${escape(machines.jobs(jobs.length))}</p>` : ""}`,
     );
   }
 

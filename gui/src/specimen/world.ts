@@ -239,6 +239,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
         kind: "answered",
         reply: {
           machine: "laptop",
+          busy: 2,
           residents: [
             resident("claude-2b1c", "laptop", claude(), "mark50", "claude-opus-5-5", "05:02:00", {
               now: { owed: {}, answering: [], activity: "busy", since: at("13:36:00"), turn: "t3", trouble: null, desk: false, waiting_for_user: false, title: "PID 环改定点" },
@@ -263,6 +264,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
         kind: "answered",
         reply: {
           machine: "desktop",
+          busy: 1,
           residents: [
             resident("codex-5e2a", "desktop", codex(), "ingest", "gpt-6.1-sol", "12:58:00", {
               now: { owed: {}, answering: [], activity: "busy", since: at("13:20:00"), turn: "t2", trouble: null, desk: false, waiting_for_user: true, title: "批量提交" },

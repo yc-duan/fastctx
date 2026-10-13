@@ -71,6 +71,7 @@ impl Device {
                 let version = session.link.collab_write(&account, collab).await.map_err(failed)?;
                 return Ok((Reply::CollabWritten { version }, here()));
             }
+            Call::WorldNow => return Ok((Reply::WorldNow(Box::new(self.world_now().await?)), here())),
             Call::Features => return Ok((Reply::Features(self.features()?), here())),
             Call::SetFeature { feature, on } => return Ok((Reply::Features(self.set_feature(feature, on)?), here())),
             Call::Accounts => {

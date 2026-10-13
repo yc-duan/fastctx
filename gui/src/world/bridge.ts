@@ -79,6 +79,26 @@ export function worldNow(): Promise<WorldNow> {
   return invoke<WorldNow>("world_now");
 }
 
+export type WorldPiece =
+  | { kind: "world"; world: WorldNow }
+  | { kind: "interrupted"; error: string; since: number };
+
+/** Follows the World: first as it is, then after each change, nothing
+ *  asked of any machine meanwhile (`world-network.md`, 近况). Resolves to
+ *  the id `unwatch` takes. */
+export function watchWorld(onPiece: (piece: WorldPiece) => void): Promise<number> {
+  const pieces = new Channel<WorldPiece>();
+  // A channel whose handler throws once never delivers again.
+  pieces.onmessage = (piece) => {
+    try {
+      onPiece(piece);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+  return invoke("world_watch", { pieces });
+}
+
 /** Watches a resident: the part it opens on, then each piece as it
  *  comes. */
 export async function watch(

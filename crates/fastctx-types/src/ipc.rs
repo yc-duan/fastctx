@@ -108,6 +108,9 @@ pub enum NodeFrame {
     /// The interface's optional parts as a `WatchFeatures` call sees them:
     /// first as they are, then after each change.
     Features { id: u64, features: crate::features::Features },
+    /// The World as a `WatchWorld` call sees it: first as it is, then after
+    /// each change.
+    World { id: u64, world: Box<crate::world::WorldNow> },
 }
 
 /// Why a call did not do what it asked, in words for whoever reads the

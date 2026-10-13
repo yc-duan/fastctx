@@ -13,6 +13,7 @@ mod store;
 mod thumbnail;
 mod upload;
 pub(crate) mod watch;
+mod world_now;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -44,6 +45,10 @@ pub struct Device {
     /// Moves whenever the ways to the machines may have changed, on any of
     /// its links (`fastctx_net::link::Way`).
     ways: Arc<tokio::sync::watch::Sender<u64>>,
+    /// What it keeps to show the World without asking (`world_now`).
+    shown: world_now::Shown,
+    /// Moves whenever what it shows of the World may have changed.
+    shown_changes: Arc<tokio::sync::watch::Sender<u64>>,
 }
 
 pub(super) struct Session {
@@ -87,6 +92,8 @@ impl Device {
             managed,
             features: features::Switches::default(),
             ways: Arc::new(tokio::sync::watch::channel(0).0),
+            shown: world_now::Shown::default(),
+            shown_changes: Arc::new(tokio::sync::watch::channel(0).0),
         });
         for membership in memberships {
             device.start(membership)?;
@@ -232,6 +239,9 @@ impl Device {
             link: std::sync::OnceLock::new(),
             arrivals,
             ways: self.ways.clone(),
+            shown: self.shown_changes.clone(),
+            towns_stale: self.shown.stale.clone(),
+            projects: std::sync::Mutex::new(None),
         });
         let link = Arc::new(start(self.store.net(&id), membership, key, handler.clone())?);
         let _ = handler.link.set(Arc::downgrade(&link));
@@ -331,6 +341,20 @@ struct Handler {
     arrivals: std::path::PathBuf,
     /// The device's, moved when this link's ways may have changed.
     ways: Arc<tokio::sync::watch::Sender<u64>>,
+    /// The device's, moved when what it shows of the World may have changed.
+    shown: Arc<tokio::sync::watch::Sender<u64>>,
+    /// The device's, set when its projects are to be listed again.
+    towns_stale: Arc<std::sync::atomic::AtomicBool>,
+    /// The projects the view named when it was last seen.
+    projects: std::sync::Mutex<Option<Vec<(fastctx_types::access::TownId, fastctx_types::TownName)>>>,
+}
+
+impl Handler {
+    /// The projects are to be listed again.
+    fn towns_changed(&self) {
+        self.towns_stale.store(true, std::sync::atomic::Ordering::Release);
+        changed(&self.shown);
+    }
 }
 
 impl fastctx_net::link::Node for Handler {
@@ -352,17 +376,37 @@ impl fastctx_net::link::Node for Handler {
         Box::pin(async { Ok(Err("a device receives no letters".to_string())) })
     }
 
-    fn ledger_changed(&self, _: Option<fastctx_types::access::TownId>) {}
+    fn ledger_changed(&self, _: Option<fastctx_types::access::TownId>) {
+        self.towns_changed();
+    }
 
     fn directory_changed(&self) {
         let Some(link) = self.link.get().and_then(std::sync::Weak::upgrade) else { return };
-        if let Err(error) = fastctx_net::arrivals::notice(&self.arrivals, &link.view()) {
+        let view = link.view();
+        if let Err(error) = fastctx_net::arrivals::notice(&self.arrivals, &view) {
             eprintln!("World device: keeping who came into this device's accounts: {error}");
         }
+        let projects: Vec<_> =
+            view.projects.iter().map(|project| (project.town.clone(), project.name.clone())).collect();
+        let renamed = self.projects.lock().expect("never poisoned").replace(projects.clone()) != Some(projects);
+        if renamed {
+            self.towns_changed();
+        } else {
+            changed(&self.shown);
+        }
+    }
+
+    fn connected(&self) {
+        self.towns_changed();
     }
 
     fn ways_changed(&self) {
         changed(&self.ways);
+        changed(&self.shown);
+    }
+
+    fn afoot_changed(&self) {
+        changed(&self.shown);
     }
 
     fn log(&self, line: String) {

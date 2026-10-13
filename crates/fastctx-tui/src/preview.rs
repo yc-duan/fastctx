@@ -263,12 +263,12 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
         scope,
         machines: vec![
             MachineWho::Answered {
-                reply: WhoReply { history: None, machine: machine("desktop"), residents: desktop, jobs: desktop_jobs },
+                reply: WhoReply { history: None, machine: machine("desktop"), residents: desktop, jobs: desktop_jobs, busy: None },
             },
             MachineWho::Answered {
-                reply: WhoReply { history: None, machine: machine("laptop"), residents: laptop, jobs: laptop_jobs },
+                reply: WhoReply { history: None, machine: machine("laptop"), residents: laptop, jobs: laptop_jobs, busy: None },
             },
-            MachineWho::Offline { machine: machine("server"), since: Some(ago(now, 95)) },
+            MachineWho::Offline { machine: machine("server"), since: Some(ago(now, 95)), last: None },
         ],
     }
 }

@@ -72,9 +72,52 @@ pub(crate) async fn available(node: &Node, town: Option<&TownName>) -> Result<BT
 }
 
 pub async fn list(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
+    let towns = query(node, None).await.map_err(Failure::new)?;
+    summaries(node, towns).await
+}
+
+/// The projects kept here, asking no hub: what an interface lists
+/// (`crate::shown`). Those this computer may use and does not span are
+/// taken as they come and change (`follow`).
+pub async fn held(node: &Arc<Node>) -> Result<Vec<TownSummary>, Failure> {
+    let towns = available(node, None).await.map_err(Failure::new)?.into_keys().collect();
+    summaries(node, towns).await
+}
+
+/// Takes, from `link`'s hub, `town`'s new entries when this computer keeps
+/// it without spanning it; with no town, every project this computer may
+/// use that it does not have whole, as when it connects again. A project
+/// that spans it is taken as it changes already (`super::sync`).
+pub async fn follow(
+    node: &Arc<Node>,
+    link: &Arc<fastctx_net::link::Link>,
+    town: Option<&fastctx_types::access::TownId>,
+) -> Result<(), String> {
+    match town {
+        None => query(node, None).await.map(|_| ()),
+        Some(town) => {
+            let Some(name) = link.view().project(town).map(|project| project.name.clone()) else { return Ok(()) };
+            query(node, Some(&name)).await.map(|_| ())
+        }
+    }
+}
+
+/// Takes the projects `link`'s view names that this computer keeps nothing
+/// of yet: one shared with an account here since.
+pub async fn follow_view(node: &Arc<Node>, link: &Arc<fastctx_net::link::Link>) -> Result<(), String> {
+    let names: Vec<TownName> = link.view().projects.iter().map(|project| project.name.clone()).collect();
+    for name in names {
+        let kept = super::names::place(&node.world, &name).map_err(|error| format!("reading {name}: {error}"))?;
+        if kept.is_none() {
+            query(node, Some(&name)).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn summaries(node: &Arc<Node>, towns: Vec<TownName>) -> Result<Vec<TownSummary>, Failure> {
     let alone = !node.connected_anywhere();
     let here = node.machine();
-    let towns = query(node, None).await.map_err(Failure::new)?;
     let world = node.world.clone();
     tokio::task::spawn_blocking(move || {
         let mut listed = Vec::new();

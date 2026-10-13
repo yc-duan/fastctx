@@ -54,6 +54,12 @@ pub enum Call {
     /// Answered with `NodeFrame::Features`: the switches as they are, then
     /// again each time they change, until the client leaves.
     WatchFeatures,
+    /// The World as an interface shows it, read from what this computer
+    /// holds (`crate::world::WorldNow`).
+    WorldNow,
+    /// Answered with `NodeFrame::World`: the World as an interface shows it,
+    /// then again each time it changes, until the client leaves.
+    WatchWorld,
     /// Answered `Done` once a way from this computer to `machine` opens that
     /// was not there when asked: its line to the hub came back, the machine
     /// connected anew, or a direct link with it came up. An interface that
@@ -710,6 +716,7 @@ pub enum Reply {
         token: Option<String>,
     },
     Accounts(crate::accounts::AccountsReply),
+    WorldNow(Box<crate::world::WorldNow>),
     ServerInvitation {
         command: String,
     },

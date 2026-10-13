@@ -20,6 +20,9 @@ const KEPT: usize = 2000;
 /// How far back changes are kept.
 const DAYS: i64 = 30;
 
+/// How many of the line's longest recent round trips a check waits for.
+const CHECK_TIMES: u64 = 4;
+
 /// How far back round trips are kept: one each heartbeat.
 const TRIPS: SignedDuration = SignedDuration::from_hours(1);
 
@@ -52,6 +55,17 @@ impl Inner {
         if let Err(error) = state::write(&self.dir.path().join("line.json"), &line.changes) {
             self.node.log(format!("keeping how the line to the hub held: {error}"));
         }
+    }
+
+    /// How long an answer to a check may take before the line is taken for
+    /// dead: several times the longest round trip it made over the last
+    /// hour, at most its silence (`world-network.md`, 有人在等，就替他看着线).
+    /// Before any round trip is measured, it is the silence.
+    pub(super) fn check_within(&self) -> std::time::Duration {
+        let longest = self.line.lock().expect("never poisoned").trips.iter().map(|trip| trip.ms).max();
+        longest.map_or(crate::wire::SILENCE, |ms| {
+            std::time::Duration::from_millis(u64::from(ms) * CHECK_TIMES).min(crate::wire::SILENCE)
+        })
     }
 
     /// Keeps one heartbeat's round trip.

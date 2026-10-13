@@ -178,3 +178,17 @@ pub struct Node {
     /// What each of this computer's accounts may do on it.
     pub rights: Vec<(crate::AccountName, crate::access::Rights)>,
 }
+
+/// The World as an interface shows it (`world-gui.md`): this computer, who
+/// is on each machine as far as the accounts here may see, the machines hub
+/// by hub, the projects, and the accounts with what they see. The node
+/// reads it from what it holds, asking no machine, and tells it again
+/// whenever it changes (`world-network.md`, 近况).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorldNow {
+    pub here: MachineName,
+    pub who: crate::town::WorldWho,
+    pub nodes: NodesReply,
+    pub towns: Vec<crate::project::TownSummary>,
+    pub accounts: crate::accounts::AccountsReply,
+}

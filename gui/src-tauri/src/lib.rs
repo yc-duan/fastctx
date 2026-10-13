@@ -17,6 +17,7 @@ mod hub_moving;
 mod item_details;
 mod kept;
 mod transcript;
+mod world_watch;
 
 #[cfg(desktop)]
 mod founding;
@@ -46,11 +47,10 @@ use fastctx_client::Conversation;
 use fastctx_client::World;
 use fastctx_types::file_search::{FileSearchReply, FileSearchRequest};
 use fastctx_types::management::{Managed, Management};
-use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp, TownSummary};
+use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp};
 use fastctx_types::residents::Landed;
 use fastctx_types::session::control::{Control, Controlled, Offers};
-use fastctx_types::town::{LookedUp, WhoScope, WorldWho};
-use fastctx_types::world::NodesReply;
+use fastctx_types::town::{LookedUp, WorldWho};
 use fastctx_types::{Address, AgentName, EntryId, JournalName, MachineName, ResidentId, TownName};
 use serde::Serialize;
 use tauri::Manager as _;
@@ -198,17 +198,6 @@ pub fn reconnect_device(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// The World as the front page reads it, asked in one go: who is where, the
-/// machines hub by hub, the projects, and the accounts with what they see.
-#[derive(Serialize)]
-struct WorldNow {
-    here: MachineName,
-    who: WorldWho,
-    nodes: NodesReply,
-    towns: Vec<TownSummary>,
-    accounts: fastctx_types::accounts::AccountsReply,
-}
-
 /// One piece of a watched conversation, as the page receives it: the page
 /// holds a part of it near its reader (`transcript.rs`).
 #[derive(Clone, Serialize)]
@@ -287,21 +276,6 @@ fn resident(id: String) -> Result<ResidentId, String> {
 
 fn machine(name: Option<String>) -> Result<Option<MachineName>, String> {
     name.map(|name| name.parse::<MachineName>().map_err(|error| error.to_string())).transpose()
-}
-
-#[fastctx_gui_command::command]
-async fn world_now(shell: tauri::State<'_, Shell>) -> Result<WorldNow, String> {
-    let world = shell.world();
-    let (who, nodes, accounts) = tokio::join!(world.who(None, true), world.nodes(), world.accounts());
-    let nodes = nodes.map_err(|error| error.to_string())?;
-    let who = who.map_err(|error| error.to_string())?;
-    let accounts = accounts.map_err(|error| error.to_string())?;
-    // Asked of the whole World, `who` lists its towns as well: the same
-    // list `towns` would read again.
-    let WhoScope::World { towns } = &who.scope else {
-        return Err("the node answered about one town when asked about the World".to_string());
-    };
-    Ok(WorldNow { here: nodes.machine.clone(), towns: towns.clone(), who, nodes, accounts })
 }
 
 /// Starts watching a resident: returns the part of it the page opens on,
@@ -1105,7 +1079,8 @@ pub fn run() {
             logins::preview_agent_change,
             logins::change_agent_login,
             logins::read_agent_limits,
-            world_now,
+            world_watch::world_now,
+            world_watch::world_watch,
             since,
             agents,
             project,

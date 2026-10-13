@@ -152,6 +152,41 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             }
         }
+        if let Call::WatchWorld = call {
+            // An interface follows the World for as long as it is open: as
+            // it is first, then after each change (`world-network.md`, 近况).
+            let mut residents = node.residents.changes();
+            let mut shown = node.shown.subscribe();
+            let mut jobs = node.jobs.subscribe();
+            let mut told = None;
+            loop {
+                if crate::shown::ready(node) {
+                    match crate::shown::now(node).await {
+                        Ok(world) => {
+                            let frame = json(&NodeFrame::World { id, world: Box::new(world) });
+                            if told.as_ref() != Some(&frame) {
+                                writer.send(&frame).await?;
+                                told = Some(frame);
+                            }
+                        }
+                        Err(failure) => {
+                            writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                            return writer.drain().await;
+                        }
+                    }
+                }
+                tokio::select! {
+                    changed = residents.changed() => if changed.is_err() { return Ok(()) },
+                    changed = shown.changed() => if changed.is_err() { return Ok(()) },
+                    job = jobs.recv() => {
+                        if matches!(job, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
+                            return Ok(());
+                        }
+                    }
+                    _ = reader.recv() => return Ok(()),
+                }
+            }
+        }
         if let Call::Reopened { machine } = call {
             // An interface pausing before it tries again waits here for a
             // way to open; its leaving ends the wait.
@@ -1068,6 +1103,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::features::set(&node.world, &node.features, feature, on).map(Reply::Features)
         }
         Call::WatchFeatures => Err(Failure::new("a features watch is answered as it goes, not at once")),
+        Call::WatchWorld => Err(Failure::new("a World watch is answered as it goes, not at once")),
+        Call::WorldNow => crate::shown::now(node).await.map(|world| Reply::WorldNow(Box::new(world))),
         Call::Reopened { .. } => Err(Failure::new("a way opening is waited for on a connection of its own")),
         Call::Nodes => nodes(node).await.map(Reply::Nodes),
         Call::Machines { resident, login, thread } => {
@@ -1201,6 +1238,7 @@ async fn run_started(
     let action = crate::jobs::action(&reply, &script, started_at);
     let world = node.world.clone();
     blocking("recording the action", move || crate::residents::record_action(&world, &resident, &action)).await?;
+    node.shown_changed();
     Ok(reply)
 }
 
@@ -1239,6 +1277,7 @@ async fn write(
     let action = crate::write::action(&op, &outcome, &here, started_at);
     let world = node.world.clone();
     blocking("recording the action", move || crate::residents::record_action(&world, &resident, &action)).await?;
+    node.shown_changed();
     Ok(outcome)
 }
 
@@ -1315,7 +1354,7 @@ async fn who(
             crate::around::Heard::Answered(_) => {
                 MachineWho::NoAnswer { machine, reason: "it answered something else".to_string() }
             }
-            crate::around::Heard::Offline(since) => MachineWho::Offline { machine, since },
+            crate::around::Heard::Offline(since) => MachineWho::Offline { machine, since, last: None },
             crate::around::Heard::NoAnswer(reason) => MachineWho::NoAnswer { machine, reason },
         });
     }

@@ -939,7 +939,7 @@ impl fastctx_net::link::Node for Handler {
             let mut again = crate::again::Again::default();
             loop {
                 let error = match crate::ledger::sync(&node, &hub, town.clone()).await {
-                    Ok(()) => return,
+                    Ok(()) => break,
                     Err(error) => error,
                 };
                 if !node.link_of(&hub).is_some_and(|link| matches!(link.status(), Status::Online { .. })) {
@@ -951,6 +951,14 @@ impl fastctx_net::link::Node for Handler {
                 node.log.line(format_args!("taking the projects' ledgers: {error}; trying again"));
                 tokio::time::sleep(again.next()).await;
             }
+            // What this computer keeps of projects it does not span is kept
+            // as current as the rest (`world-network.md`, 隔着网络也要顺手).
+            if let Some(link) = node.link_of(&hub)
+                && let Err(error) = crate::ledger::query::follow(&node, &link, town.as_ref()).await
+            {
+                node.log.line(format_args!("taking the ledgers of projects this computer does not span: {error}"));
+            }
+            node.shown_changed();
         });
     }
 
@@ -976,11 +984,28 @@ impl fastctx_net::link::Node for Handler {
         crate::hub_arrival::check(&node, &self.hub);
         // The machines each session may use are in its tools' descriptions.
         node.tools_changed(None);
+        node.views_changed();
+        // A project shared with an account here since is taken to be listed.
+        if let Some(link) = node.link_of(&self.hub) {
+            tokio::spawn(async move {
+                if let Err(error) = crate::ledger::query::follow_view(&node, &link).await {
+                    node.log.line(format_args!("taking a project shared with this computer: {error}"));
+                }
+                node.shown_changed();
+            });
+        }
     }
 
     fn ways_changed(&self) {
         if let Some(node) = self.node.upgrade() {
             node.ways_changed();
+            node.shown_changed();
+        }
+    }
+
+    fn afoot_changed(&self) {
+        if let Some(node) = self.node.upgrade() {
+            node.shown_changed();
         }
     }
 

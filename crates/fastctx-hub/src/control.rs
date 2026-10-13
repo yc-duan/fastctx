@@ -38,6 +38,8 @@ pub(crate) struct Said {
     pub dialed: Option<SocketAddr>,
     /// Whether it takes a new name the hub gives it.
     pub renames: bool,
+    /// Whether it reads what is afoot on other machines.
+    pub afoot: bool,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -237,6 +239,7 @@ fn open(
         direct: said.direct,
         interfaces: said.interfaces,
         paths: None,
+        afoot: said.afoot,
     };
     let replaced = hub.sessions().insert(name.clone(), session);
     drop(store);
@@ -361,6 +364,7 @@ fn handle(
         }
         Up::Call { id, message } => reply(Down::Status { id, status: call(hub, name, generation, id, message) }),
         Up::Answer { call, message } => answer(hub, name, generation, call, message),
+        Up::Afoot { change } => crate::afoot::heard(hub, name, *change),
         Up::Cancel { id } => {
             hub.calls
                 .lock()
@@ -699,7 +703,21 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
         Question::LedgerWrite { town, entry } => {
             let (seq, tell) = {
                 let store = hub.store();
-                hub.ledgers.lock().expect("never poisoned").write(&store, name, &town, entry)?
+                let (seq, mut tell) = hub.ledgers.lock().expect("never poisoned").write(&store, name, &town, entry)?;
+                // Every member that may read the project hears of it too, as
+                // one that keeps a copy it does not span keeps it current
+                // (`world-network.md`, 隔着网络也要顺手).
+                let directory = &store.book.directory;
+                tell.extend(
+                    directory
+                        .members
+                        .iter()
+                        .filter(|member| directory.member_in_project(&member.name, &town))
+                        .map(|member| member.name.clone()),
+                );
+                tell.sort();
+                tell.dedup();
+                (seq, tell)
             };
             hub.log.line(format_args!("{name} wrote entry {seq} of {town}"));
             for machine in tell {

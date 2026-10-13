@@ -101,7 +101,7 @@ impl Device {
         heard
     }
 
-    fn here(&self) -> MachineName {
+    pub(super) fn here(&self) -> MachineName {
         self.state().name.unwrap_or_else(|| MachineName::try_from("device").expect("a valid name"))
     }
 
@@ -151,7 +151,7 @@ impl Device {
                 Heard::Answered(_) => {
                     MachineWho::NoAnswer { machine, reason: "it answered something else".to_string() }
                 }
-                Heard::Offline(since) => MachineWho::Offline { machine, since },
+                Heard::Offline(since) => MachineWho::Offline { machine, since, last: None },
                 Heard::NoAnswer(reason) => MachineWho::NoAnswer { machine, reason },
             })
             .collect();

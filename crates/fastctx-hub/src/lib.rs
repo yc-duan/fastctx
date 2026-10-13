@@ -23,6 +23,7 @@
 //! directory it runs from then stands by for the move, serves, or, at the
 //! old place, forwards to the new one, as its files say.
 
+mod afoot;
 mod assists;
 mod control;
 mod data;
@@ -205,6 +206,8 @@ pub(crate) struct Hub {
     /// read again.
     assists_changed: tokio::sync::Notify,
     next_assist_end: assists::NextEnd,
+    /// What is afoot on each machine, taken after `sessions` and `store`.
+    afoots: Mutex<afoot::Afoots>,
 }
 
 /// A member's open control connection.
@@ -223,6 +226,8 @@ pub(crate) struct Session {
     interfaces: Vec<std::net::IpAddr>,
     /// How its lines go, as it last said.
     paths: Option<fastctx_net::directory::Paths>,
+    /// Whether it reads what is afoot on other machines.
+    afoot: bool,
 }
 
 pub(crate) enum Out {
@@ -238,6 +243,10 @@ impl Hub {
 
     fn sessions(&self) -> MutexGuard<'_, HashMap<MachineName, Session>> {
         self.sessions.lock().expect("never poisoned")
+    }
+
+    fn afoots(&self) -> MutexGuard<'_, afoot::Afoots> {
+        self.afoots.lock().expect("never poisoned")
     }
 
     fn next(&self) -> u64 {
@@ -306,6 +315,7 @@ impl Hub {
         for out in outs {
             let _ = out.send(Out::Frame(Down::DirectoryChanged));
         }
+        afoot::settle(self);
     }
 
     /// The directory changed, or who is online did: every member is told to
@@ -321,6 +331,7 @@ impl Hub {
         control::cut_calls(self);
         data::cut_streams(self);
         moving::follow::settle(self);
+        afoot::settle(self);
     }
 }
 
@@ -422,6 +433,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         moving: moving::Moving::new(switched),
         assists_changed: tokio::sync::Notify::new(),
         next_assist_end: assists::NextEnd::default(),
+        afoots: Mutex::new(afoot::Afoots::default()),
     });
     if driven {
         moving::out::drive(&hub);
@@ -537,9 +549,9 @@ async fn intended(
     match (path.as_str(), intent) {
         (
             wire::CONTROL_PATH,
-            Intent::Session { key, proof, letters, through, direct, interfaces, any_names, dialed, renames },
+            Intent::Session { key, proof, letters, through, direct, interfaces, any_names, dialed, renames, afoot },
         ) => {
-            let said = control::Said { through, direct, interfaces, any_names, dialed, renames };
+            let said = control::Said { through, direct, interfaces, any_names, dialed, renames, afoot };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
         (wire::CONTROL_PATH, Intent::Login { account, request }) => {

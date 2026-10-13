@@ -668,4 +668,5 @@ async fn record(node: &Arc<Node>, resident: &ResidentId, action: Action) {
     if let Ok(Err(error)) | Err(error) = recorded.map_err(std::io::Error::other) {
         node.log.line(format_args!("recording an action: {error}"));
     }
+    node.shown_changed();
 }

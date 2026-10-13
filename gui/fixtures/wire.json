@@ -9049,13 +9049,95 @@
                     "account": "bob"
                   }
                 }
-              ]
+              ],
+              "busy": 2
             }
           },
           {
             "kind": "offline",
             "machine": "laptop",
-            "since": "2026-10-04T12:06:07Z"
+            "since": "2026-10-04T12:06:07Z",
+            "last": {
+              "machine": "laptop",
+              "residents": [
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
+                  },
+                  "town": null,
+                  "here": true,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "desk_since": "2026-10-04T12:06:07Z",
+                    "waiting_for_user": true,
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": "端口对拍",
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "asked": {
+                      "id": "[\"codex\",\"r-1\"]",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": true,
+                      "what": "command",
+                      "text": "cargo test"
+                    }
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
+                  "moved": null,
+                  "removed": null
+                }
+              ],
+              "jobs": []
+            }
           },
           {
             "kind": "offline",
@@ -10500,13 +10582,95 @@
                     "account": "bob"
                   }
                 }
-              ]
+              ],
+              "busy": 2
             }
           },
           {
             "kind": "offline",
             "machine": "laptop",
-            "since": "2026-10-04T12:06:07Z"
+            "since": "2026-10-04T12:06:07Z",
+            "last": {
+              "machine": "laptop",
+              "residents": [
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
+                  },
+                  "town": null,
+                  "here": true,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "desk_since": "2026-10-04T12:06:07Z",
+                    "waiting_for_user": true,
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": "端口对拍",
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "asked": {
+                      "id": "[\"codex\",\"r-1\"]",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": true,
+                      "what": "command",
+                      "text": "cargo test"
+                    }
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
+                  "moved": null,
+                  "removed": null
+                }
+              ],
+              "jobs": []
+            }
           },
           {
             "kind": "offline",
@@ -10950,13 +11114,95 @@
                     "account": "bob"
                   }
                 }
-              ]
+              ],
+              "busy": 2
             }
           },
           {
             "kind": "offline",
             "machine": "laptop",
-            "since": "2026-10-04T12:06:07Z"
+            "since": "2026-10-04T12:06:07Z",
+            "last": {
+              "machine": "laptop",
+              "residents": [
+                {
+                  "about": {
+                    "id": "codex-ab10",
+                    "host": {
+                      "agent": "codex",
+                      "client": "codex-mcp-client",
+                      "version": "fixture-version"
+                    },
+                    "machine": "desktop",
+                    "born_at": "2026-10-04T12:06:07Z",
+                    "origin": {
+                      "kind": "user"
+                    },
+                    "session": null,
+                    "world_started": false,
+                    "model": null,
+                    "acting": {
+                      "kind": "here"
+                    }
+                  },
+                  "town": null,
+                  "here": true,
+                  "now": {
+                    "activity": "busy",
+                    "since": "2026-10-04T12:06:07Z",
+                    "turn": "turn-1",
+                    "owed": {
+                      "turn-1": [
+                        {
+                          "machine": "desktop",
+                          "resident": "codex-ab12"
+                        }
+                      ]
+                    },
+                    "answering": [
+                      {
+                        "machine": "desktop",
+                        "resident": "codex-ab12"
+                      }
+                    ],
+                    "trouble": null,
+                    "desk": true,
+                    "desk_since": "2026-10-04T12:06:07Z",
+                    "waiting_for_user": true,
+                    "waiting_since": "2026-10-04T12:06:07Z",
+                    "title": "端口对拍",
+                    "last_tool_at": "2026-10-04T12:06:07Z",
+                    "asked": {
+                      "id": "[\"codex\",\"r-1\"]",
+                      "at": "2026-10-04T12:06:07Z",
+                      "waits": true,
+                      "what": "command",
+                      "text": "cargo test"
+                    }
+                  },
+                  "last_action": {
+                    "at": "2026-10-04T12:06:07Z",
+                    "machine": "desktop",
+                    "hand": "run",
+                    "what": "pwd",
+                    "result": "exit 0"
+                  },
+                  "tools": [
+                    {
+                      "turn": "turn-1",
+                      "id": "call-1",
+                      "started_at": "2026-10-04T12:06:07Z",
+                      "name": "run",
+                      "machine": "desktop",
+                      "detail": "cargo test"
+                    }
+                  ],
+                  "moved": null,
+                  "removed": null
+                }
+              ],
+              "jobs": []
+            }
           },
           {
             "kind": "offline",

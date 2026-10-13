@@ -23,6 +23,9 @@ pub(super) struct Cache {
     root: PathBuf,
     entries: HashMap<ResidentId, Live>,
     clean: HashMap<ResidentId, Vec<u8>>,
+    /// A resident was put in, taken out or handed out to be changed since
+    /// this was last asked (`take_touched`).
+    touched: bool,
 }
 
 impl Cache {
@@ -32,7 +35,7 @@ impl Cache {
     }
     pub fn new(root: PathBuf) -> io::Result<Self> {
         fastctx_platform::ensure_private_dir(&root)?;
-        Ok(Self { root, entries: HashMap::new(), clean: HashMap::new() })
+        Ok(Self { root, entries: HashMap::new(), clean: HashMap::new(), touched: false })
     }
 
     fn path(&self, id: &ResidentId) -> PathBuf {
@@ -44,29 +47,45 @@ impl Cache {
     }
 
     pub fn insert(&mut self, id: ResidentId, live: Live) {
+        self.touched = true;
         self.entries.insert(id, live);
     }
 
     pub fn get(&mut self, id: &ResidentId) -> Option<&Live> {
-        self.get_mut(id).map(|live| &*live)
+        self.load(id).then(|| &self.entries[id])
     }
 
     pub fn get_mut(&mut self, id: &ResidentId) -> Option<&mut Live> {
+        if !self.load(id) {
+            return None;
+        }
+        self.touched = true;
+        self.entries.get_mut(id)
+    }
+
+    /// Whether `id` is on record, read into memory when it was put aside.
+    fn load(&mut self, id: &ResidentId) -> bool {
         if !self.entries.contains_key(id) {
             let bytes = match std::fs::read(self.path(id)) {
                 Ok(bytes) => bytes,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return false,
                 Err(error) => failed(&format!("reading resident cache for {id}"), error),
             };
             let live = required(serde_json::from_slice(&bytes), "decoding resident cache");
             self.entries.insert(id.clone(), live);
             self.clean.insert(id.clone(), bytes);
         }
-        self.entries.get_mut(id)
+        true
+    }
+
+    /// Whether a resident may have changed since this was last asked.
+    pub fn take_touched(&mut self) -> bool {
+        std::mem::take(&mut self.touched)
     }
 
     /// Forgets `id` altogether, here and on disk.
     pub fn remove(&mut self, id: &ResidentId) {
+        self.touched = true;
         self.entries.remove(id);
         self.clean.remove(id);
         match std::fs::remove_file(self.path(id)) {
