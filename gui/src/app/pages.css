@@ -123,11 +123,20 @@
   height: 100%;
 }
 
+/* The head lies over the page's top across its width, so the way back has
+   the room every page's has; only its buttons take the pointer, and what
+   scrolls under it is still reached. */
 .welcome-page > .page-head {
   position: absolute;
   top: 0;
   left: 0;
+  right: 0;
   z-index: 1;
+  pointer-events: none;
+}
+
+.welcome-page > .page-head button {
+  pointer-events: auto;
 }
 
 .welcome {

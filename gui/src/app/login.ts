@@ -60,6 +60,9 @@ export interface LoginOptions {
   /** Reads a QR code with the camera, where the shell can; null when the
    *  person turned back. */
   scan?: (() => Promise<string | null>) | undefined;
+  /** What a phone is called in its own settings, offered as its name the
+   *  first time it logs in. */
+  deviceName?: (() => Promise<string>) | undefined;
   /** Installs the startup service where it is missing. */
   keep?: (() => Promise<KeptNow>) | undefined;
   /** The World's drawing, with this computer marked on it once it is in. */
@@ -73,6 +76,18 @@ type Step = "choose" | "password" | "open" | "scan" | "create" | "remote" | "don
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 /** The port a server made here listens on unless told otherwise. */
 const hubPort = 7443;
+
+/** A name the World takes, made from what a phone calls itself
+ *  (`world-network.md`, 机器的名字): full-width letters made half-width,
+ *  a hyphen where anything but letters and digits of any language stood,
+ *  and at most 32 characters and 64 bytes. "REDMI K80 Ultra" is
+ *  REDMI-K80-Ultra. The World's own rule still checks it before it is sent. */
+function nameFrom(said: string): string {
+  let name = said.normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
+  const bytes = (text: string) => new TextEncoder().encode(text).length;
+  while ([...name].length > 32 || bytes(name) > 64) name = [...name].slice(0, -1).join("").replace(/-+$/, "");
+  return name;
+}
 
 export class LoginPage implements Page {
   readonly element: HTMLElement;
@@ -93,6 +108,8 @@ export class LoginPage implements Page {
   private readonly stop: () => void;
   /** The way through a server over SSH, while it is open. */
   private remote: RemoteWorld | null = null;
+  /** The name a phone is offered, made from what it calls itself. */
+  private suggested = "";
 
   constructor(private readonly options: LoginOptions) {
     const { words } = options;
@@ -124,6 +141,16 @@ export class LoginPage implements Page {
     });
     this.draw();
     void this.refreshSetup();
+    if (options.device && options.deviceName) {
+      options.deviceName().then(
+        (name) => {
+          this.suggested = nameFrom(name);
+          const field = this.body.querySelector<HTMLInputElement>("[name=name]");
+          if (field && !field.value) field.value = this.suggested;
+        },
+        (error: unknown) => console.error("reading the phone's name", error),
+      );
+    }
     // The logins this computer has, as the World answers.
     let shown = "";
     this.stop = effect(() => {
@@ -356,10 +383,13 @@ export class LoginPage implements Page {
       slot.innerHTML = "";
       return;
     }
-    // A phone has no name until it first logs in; a computer has its own.
+    // A phone has no name until it first logs in, so it is offered what it
+    // calls itself as a name it can change; a computer has its own, which
+    // the field shows faintly and takes when left empty.
     const phone = this.options.device;
+    const shown = phone ? "" : (world?.here ?? "");
     slot.innerHTML = `<label class="field"><span class="field-label">${escape(phone ? words.phoneName : words.name)}</span>
-      <input name="name" class="mono" autocomplete="off" spellcheck="false" autocapitalize="off"${phone ? " required" : ""} placeholder="${escape(phone ? "phone" : (world?.here ?? ""))}" value="${escape(typed)}"></label>`;
+      <input name="name" class="mono" autocomplete="off" spellcheck="false" autocapitalize="off"${phone ? " required" : ""} placeholder="${escape(shown)}" value="${escape(typed || (phone ? this.suggested : ""))}"></label>`;
   }
 
   /** What is left for the person once in: a startup service that did not

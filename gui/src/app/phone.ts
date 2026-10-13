@@ -77,6 +77,8 @@ export interface PhoneStatus {
   powerSave: boolean;
   manufacturer: string;
   model: string;
+  /** What the phone is called in its own settings, or its maker and model. */
+  deviceName: string;
   background: { vendor: "honor" | "xiaomi" | "other"; backgroundRestricted: boolean | null };
 }
 

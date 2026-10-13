@@ -269,7 +269,7 @@ export class SettingsPage implements Page {
     });
     // The version is said once, by the local service's own row below.
     const facts: [string, string, string?][] = [
-      [words.machine, world.here],
+      [this.options.phone ? words.phoneName : words.machine, world.here],
       ...(hubs.length ? hubs : [[words.link, words.alone] as [string, string]]),
     ];
     this.device.innerHTML = facts

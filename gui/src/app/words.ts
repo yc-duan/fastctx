@@ -321,6 +321,8 @@ export interface SettingsWords {
   sizes: Record<string, string>;
   device: string;
   machine: string;
+  /** The same row on a phone, which logs in but is never a machine. */
+  phoneName: string;
   alone: string;
   link: string;
   /** A hub this computer or device is logged in to. */
@@ -422,6 +424,7 @@ export const zhSettings: SettingsWords = {
   sizes: { "14": "小", "15": "标准", "16": "大", "17": "特大" },
   device: "本机",
   machine: "机器名",
+  phoneName: "手机名称",
   alone: "未加入网络",
   link: "中枢服务器",
   hub: (name) => `中枢服务器 ${name}`,
@@ -541,6 +544,7 @@ export const enSettings: SettingsWords = {
   sizes: { "14": "Small", "15": "Standard", "16": "Large", "17": "Extra large" },
   device: "This device",
   machine: "Machine name",
+  phoneName: "Phone name",
   alone: "Not in a network",
   link: "Hub",
   hub: (name) => `Hub ${name}`,

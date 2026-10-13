@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import org.json.JSONArray
 import org.json.JSONObject
@@ -133,6 +134,13 @@ object WorldRuntime {
             .put("lowPowerStandby", if (Build.VERSION.SDK_INT >= 33) power.isLowPowerStandbyEnabled else false)
             .put("lowPowerStandbyExempt", if (Build.VERSION.SDK_INT >= 34) power.isExemptFromLowPowerStandby else JSONObject.NULL)
             .put("manufacturer", Build.MANUFACTURER).put("model", Build.MODEL).put("sdk", Build.VERSION.SDK_INT)
+            .put("deviceName", deviceName())
             .put("background", WorldBackground.details(context))
     }
+
+    /** What the phone is called in its own settings, as its owner sees it; its maker and model, which
+     *  can be a code, where it has no such name. */
+    private fun deviceName(): String =
+        (if (Build.VERSION.SDK_INT >= 25) Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) else null)
+            ?.takeIf { it.isNotBlank() } ?: "${Build.MANUFACTURER} ${Build.MODEL}"
 }

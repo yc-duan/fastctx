@@ -1477,7 +1477,9 @@ function show(next: Place): void {
   else if (!replaced && shownPage && link(place) !== to) trail.push({ place, title: shownPage.title || placeName(place) });
   const came = inner(next) ? trail[trail.length - 1] : undefined;
   const parent = parentOf(next);
-  backName = !inner(next) ? null : came ? came.title : placeName(parent);
+  // A phone logged in nowhere has only its way in, with nothing behind it.
+  const onlyWayIn = next.kind === "login" && asDevice && !loginsOf(store.world.peek()?.accounts).length;
+  backName = !inner(next) || onlyWayIn ? null : came ? came.title : placeName(parent);
   place = next;
   let page: Page;
   switch (next.kind) {
@@ -1608,6 +1610,7 @@ function show(next: Place): void {
         // A phone reads the token off the computer's screen; a specimen
         // shows the button when asked as a phone.
         scan: canScan() ? scanToken : !live && params.has("phone") ? async () => "FX5SPECIMEN" : undefined,
+        deviceName: !asDevice ? undefined : live ? () => phoneSeam.status().then((status) => status.deviceName) : async () => "REDMI K80 Ultra",
         keep: asDevice ? undefined : () => (live ? keepHere() : notLive()),
         nameProblem: live ? nameProblem : specimenNameProblem,
         drawing: {

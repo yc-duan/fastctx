@@ -241,6 +241,7 @@ export const specimenPhone: PhoneSeam = {
     powerSave: false,
     manufacturer: "HONOR",
     model: "ANN-AN00",
+    deviceName: "HONOR 80",
     background: { vendor: "honor", backgroundRestricted: false },
   }),
   allow: async () => {},
