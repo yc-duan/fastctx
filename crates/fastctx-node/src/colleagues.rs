@@ -126,7 +126,7 @@ async fn ask_for_account(
         )));
     }
     let here = node.machine();
-    if machine == here {
+    if node.is_me(&machine) {
         let acting = Acting::one(link.membership().id.clone(), account.clone());
         let address = Address { machine: here.clone(), resident: request.about.id.clone() };
         let id = ask_here(node, address, acting, call_town, request.label, request.prompt, started).await?;
@@ -174,7 +174,7 @@ pub async fn ask_here(
     }
     // The Codex home it is born in must be one this machine has, so the
     // account the user chose is the one that answers.
-    if started.callee.login.machine != node.machine() {
+    if !node.is_me(&started.callee.login.machine) {
         return Err(Failure::not_run("the configured callee lives on another machine"));
     }
     let home = crate::homes::listed(node, "codex", started.callee.login.home.as_deref()).map_err(|failure| {
@@ -484,7 +484,7 @@ pub async fn message(
         }
         None => choices.acting,
     };
-    if to.machine == node.machine() {
+    if node.is_me(&to.machine) {
         let (recipient, _) = node
             .residents
             .about(&to.resident)

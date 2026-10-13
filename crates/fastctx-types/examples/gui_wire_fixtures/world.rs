@@ -275,6 +275,7 @@ fn nodes() -> Vec<NodesReply> {
         version: "fixture-version".into(),
         completion_receipts: false,
         upload_resumes: false,
+        stats: lifetime,
         shell: String::new(),
         form: None,
         node_lifetime: lifetime.then(|| {

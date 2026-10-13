@@ -154,6 +154,11 @@ pub enum Action {
         machine: MachineName,
         account: AccountName,
     },
+    /// A machine renamed; its names before still name it.
+    Rename {
+        machine: MachineName,
+        to: MachineName,
+    },
     /// A membership removed by logout, removal, or account deletion.
     Left {
         name: MachineName,

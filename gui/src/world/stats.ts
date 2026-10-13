@@ -1,0 +1,118 @@
+// How a machine says it is doing, for its details page
+// (`fastctx_types::stats`): read when asked, nothing sampled meanwhile.
+
+import type { HubName } from "./accounts";
+import type { MachineName, Timestamp } from "./wire";
+
+export interface MachineStats {
+  machine: MachineName;
+  /** When this was read. */
+  at: Timestamp;
+  /** When the machine started, as its clock has it. */
+  boot?: Timestamp;
+  /** The system as people call it, such as `Ubuntu 24.04.1 LTS`. */
+  system: string;
+  /** The kernel's own version, where it is not in `system`. */
+  kernel?: string;
+  /** The machine's own host name. */
+  host: string;
+  arch: string;
+  cpu: Cpu;
+  memory: Memory;
+  disks: Disk[];
+  cards: Card[];
+  gpus?: Gpu[];
+  /** Its lines to the hubs it is on. */
+  lines: Line[];
+  node: NodeSeen;
+}
+
+export interface Cpu {
+  /** Empty when the system does not say. */
+  model: string;
+  /** Logical processors. */
+  threads: number;
+  /** How busy all of them were lately, 0 to 1. */
+  busy?: number;
+  /** Load averages over 1, 5 and 15 minutes, where the system keeps them. */
+  load?: [number, number, number];
+}
+
+/** Bytes. */
+export interface Memory {
+  total: number;
+  used: number;
+  /** The page file or swap. */
+  swap_total: number;
+  swap_used: number;
+}
+
+export interface Disk {
+  /** `C:/`, or a mount point such as `/`. */
+  at: string;
+  label?: string;
+  fs?: string;
+  total: number;
+  free: number;
+}
+
+/** A network card. */
+export interface Card {
+  name: string;
+  up: boolean;
+  /** A card of the machine's own, not a virtual switch or a tunnel a
+   *  program made: what crosses a tunnel crosses a card too. */
+  hardware?: boolean;
+  /** Link speed in bits a second, where the system knows it. */
+  speed?: number;
+  /** Bytes since it came up. */
+  received: number;
+  sent: number;
+  /** Bytes a second, lately. */
+  receiving?: number;
+  sending?: number;
+  addresses?: string[];
+}
+
+export interface Gpu {
+  name: string;
+  /** Bytes. */
+  memory_total: number;
+  memory_used: number;
+  /** 0 to 1. */
+  busy?: number;
+}
+
+/** The machine's line to one hub. */
+export interface Line {
+  hub: HubName;
+  /** Since when it is up, or, while it is down, since when it tries. */
+  since: Timestamp;
+  up: boolean;
+  /** The machine it goes through, when its own line is down. */
+  through?: string;
+  /** Round trips over the last hour, one each heartbeat; only those after
+   *  the moment asked for, when one was. */
+  trips: Trip[];
+  /** When it came up and went down over the last 30 days, oldest first;
+   *  only those after the moment asked for, when one was. */
+  changes: LineChange[];
+}
+
+export interface Trip {
+  at: Timestamp;
+  ms: number;
+}
+
+export type LineChange =
+  /** The node started: before it, the machine or the node was not running. */
+  | { kind: "started"; at: Timestamp }
+  | { kind: "up"; at: Timestamp }
+  | { kind: "down"; at: Timestamp; why?: string };
+
+export interface NodeSeen {
+  version: string;
+  started: Timestamp;
+  /** Whether a system service keeps it running. */
+  service: boolean;
+}

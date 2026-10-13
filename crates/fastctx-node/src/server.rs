@@ -246,7 +246,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 Peer::Command { resident: Some(speaker), .. } if *speaker == resident => {
                     // A script another machine sent here goes on for the
                     // account it was sent for.
-                    let account = (resident.machine != node.machine())
+                    let account = (!node.is_me(&resident.machine))
                         .then(|| crate::on::sent_for(node, request.job.as_ref()))
                         .flatten();
                     let origin = fastctx_types::on::OnOrigin {
@@ -592,7 +592,7 @@ async fn collect_notes(
             .filter(|job| Some(&job.job) != answering.as_ref())
             .map(|job| (format!("{} on {}", job.job, job.machine), job.started_at, job.command))
             .collect();
-        notes.extend(crate::jobs::still_running(&node.world, &node.machine(), &id, answering.as_ref(), elsewhere)?);
+        notes.extend(crate::jobs::still_running(&node.world, &node.names(), &id, answering.as_ref(), elsewhere)?);
         Ok((notes, heard))
     })
     .await?;
@@ -685,7 +685,7 @@ async fn taken(
 
 fn active_caller(node: &Node, peer: &Peer) -> Result<(), Failure> {
     if let Ok(Caller::Resident(address)) = caller::of(node, peer)
-        && address.machine == node.machine()
+        && node.is_me(&address.machine)
     {
         node.residents.active(&address.resident)?;
     }
@@ -751,7 +751,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::JobChanged { job, owner, town } => node.jobs.changed(node, job, owner, town).await.map(|()| Reply::Done),
         Call::Saw { owner, town: _, seen } => {
-            let (world, here) = (node.world.clone(), node.machine());
+            let (world, here) = (node.world.clone(), node.names());
             blocking("recording what was seen", move || crate::residents::record_seen(&world, &here, &owner, &seen))
                 .await
                 .map(|()| Reply::Done)
@@ -767,7 +767,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let since = match since {
                 Some(at) => Some(at),
                 None => match &you {
-                    Some(address) if address.machine == node.machine() => {
+                    Some(address) if node.is_me(&address.machine) => {
                         let world = node.world.clone();
                         let id = address.resident.clone();
                         blocking("reading the previous turn", move || {
@@ -870,6 +870,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::focus::folders(node, &acting, machine, path).await.map(Reply::Folders)
+        }
+        Call::Stats { machine, after } => {
+            users_voice(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            crate::stats::query(node, &acting, machine, after).await.map(|stats| Reply::Stats(Box::new(stats)))
         }
         Call::Open { agent, town, node: target, text, model, reasoning_effort, attachments, choices } => {
             users_voice(node, peer)?;
@@ -990,6 +995,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::world::change(node, hub.as_ref(), &account, change).await.map(|token| Reply::Changed { token })
         }
         Call::Accounts => Ok(Reply::Accounts(crate::world::accounts(node))),
+        Call::RenameHere { to } => crate::world::rename_here(node, to).await.map(|()| Reply::Done),
         Call::MachineLog { hub, account, before } => {
             users_voice(node, peer)?;
             crate::world::hub_link(node, Some(&hub))?
@@ -1076,7 +1082,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
 /// Answers once a way from this computer to `machine` opens that was not
 /// there when asked (`Call::Reopened`).
 async fn reopened(node: &Arc<Node>, machine: MachineName) -> Result<Reply, Failure> {
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         return Err(Failure::new(format!("{machine} is this computer; no way to it opens")));
     }
     node.reopened(vec![(&machine).into()]).await;
@@ -1159,12 +1165,12 @@ async fn run_started(
     target: Option<MachineName>,
     call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
-    let here = node.machine();
-    if let Some(target) = target.filter(|target| *target != here) {
+    if let Some(target) = target.filter(|target| !node.is_me(target)) {
         return Err(Failure::new(format!(
             "run goes to another machine only through `on`: write `on {target}` in the script to run part of it there"
         )));
     }
+    let here = node.machine();
     let script = request.script.clone();
     let started_at = jiff::Timestamp::now();
     // A script of one `on` goes where it names (`world-run.md`, 这里).
@@ -1218,15 +1224,15 @@ async fn write(
     op: WriteOp,
     target: Option<MachineName>,
 ) -> Result<WriteOutcome, Failure> {
-    let here = node.machine();
-    if let Some(target) = target.filter(|target| *target != here) {
+    if let Some(target) = target.filter(|target| !node.is_me(target)) {
         return Err(Failure::new(format!(
             "files on {target} are written there: `on {target} edit PATH` or `on {target} write PATH` in the run tool"
         )));
     }
+    let here = node.machine();
     let started_at = jiff::Timestamp::now();
     let owner = Address { machine: here.clone(), resident: resident.clone() };
-    let (world, machine, writing, written) = (node.world.clone(), here.clone(), town.clone(), op.clone());
+    let (world, machine, writing, written) = (node.world.clone(), node.names(), town.clone(), op.clone());
     let outcome =
         blocking("writing", move || crate::write::write_here(&world, &machine, &owner, writing.as_ref(), written))
             .await?;
@@ -1366,7 +1372,7 @@ async fn nodes(node: &Arc<Node>) -> Result<NodesReply, Failure> {
         let logins: Vec<fastctx_types::AccountName> =
             view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
         let mut asks = Vec::new();
-        for machine in view.machines().filter(|machine| machine.name != here) {
+        for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
             let rights: Vec<_> =
                 logins.iter().map(|account| (account.clone(), view.rights(account, &machine.name))).collect();
             let Some(account) = rights.iter().find(|(_, rights)| rights.hands).map(|(account, _)| account.clone())

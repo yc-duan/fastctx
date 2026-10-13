@@ -21,6 +21,54 @@ use std::path::{Path, PathBuf};
 
 use crate::{Address, JobId, MachineName, ResidentId, TownName};
 
+/// What names a machine, as the machine resolving a directory knows it
+/// (`world-network.md`, 机器的名字): whether a name is its own, now or before
+/// it was renamed, and every name another machine had, each of which still
+/// names it in what was written under it.
+pub trait Here {
+    /// Whether `machine` names this machine.
+    fn is_here(&self, machine: &MachineName) -> bool;
+
+    /// Every name of the machine `machine` names, as known here; none when
+    /// nothing more is known of it than the name itself.
+    fn names_of(&self, machine: &MachineName) -> Vec<MachineName> {
+        let _ = machine;
+        Vec::new()
+    }
+}
+
+/// A machine that knows only its name now.
+impl Here for MachineName {
+    fn is_here(&self, machine: &MachineName) -> bool {
+        self == machine
+    }
+}
+
+/// The names machines answer to, as one machine knows them.
+#[derive(Clone, Debug)]
+pub struct Names {
+    /// This machine's name now.
+    pub me: MachineName,
+    /// The names this machine had, oldest first.
+    pub was: Vec<MachineName>,
+    /// Every other machine that was renamed, by all its names, its name now
+    /// first.
+    pub renamed: Vec<Vec<MachineName>>,
+}
+
+impl Here for Names {
+    fn is_here(&self, machine: &MachineName) -> bool {
+        self.me == *machine || self.was.contains(machine)
+    }
+
+    fn names_of(&self, machine: &MachineName) -> Vec<MachineName> {
+        if self.is_here(machine) {
+            return std::iter::once(self.me.clone()).chain(self.was.iter().cloned()).collect();
+        }
+        self.renamed.iter().find(|names| names.contains(machine)).cloned().unwrap_or_default()
+    }
+}
+
 /// The World's directory on this machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorldDir {
@@ -137,14 +185,27 @@ impl WorldDir {
     }
 
     /// The directory of `owner` on the machine `here`: its home or its guest
-    /// room.
-    pub fn owner(&self, here: &MachineName, owner: &Address) -> ConversationDir {
-        if owner.machine == *here { self.conversation(&owner.resident) } else { self.guest(owner) }
+    /// room. A machine renamed since its conversation first worked here
+    /// keeps the room it had: what is kept there is found under any of its
+    /// names.
+    pub fn owner(&self, here: &impl Here, owner: &Address) -> ConversationDir {
+        if here.is_here(&owner.machine) {
+            return self.conversation(&owner.resident);
+        }
+        let room = self.guest(owner);
+        if room.path.exists() {
+            return room;
+        }
+        here.names_of(&owner.machine)
+            .into_iter()
+            .map(|machine| self.guest(&Address { machine, resident: owner.resident.clone() }))
+            .find(|named| named.path.exists())
+            .unwrap_or(room)
     }
 
     /// Where a job of `owner` keeps its record and output. Page work has its
     /// own directories in its project; no page is a conversation.
-    pub fn job_owner(&self, here: &MachineName, owner: &crate::run::JobOwner) -> ConversationDir {
+    pub fn job_owner(&self, here: &impl Here, owner: &crate::run::JobOwner) -> ConversationDir {
         match owner {
             crate::run::JobOwner::Resident(address) => self.owner(here, address),
             crate::run::JobOwner::Page { page } => {
@@ -159,7 +220,7 @@ impl WorldDir {
     /// record's place now.
     pub fn job_record(
         &self,
-        here: &MachineName,
+        here: &impl Here,
         town: Option<&TownName>,
         owner: &crate::run::JobOwner,
         job: &JobId,
@@ -179,7 +240,7 @@ impl WorldDir {
     /// Every directory holding jobs of `owner` here: its conversation's,
     /// and those of the earlier layout that still hold jobs an older program
     /// started.
-    pub fn job_directories(&self, here: &MachineName, owner: &Address) -> std::io::Result<Vec<PathBuf>> {
+    pub fn job_directories(&self, here: &impl Here, owner: &Address) -> std::io::Result<Vec<PathBuf>> {
         let mut directories = vec![self.owner(here, owner).jobs()];
         let earlier = self.earlier();
         for parent in earlier.parents()? {
@@ -633,8 +694,8 @@ impl Earlier<'_> {
     }
 
     /// The directory the jobs of `owner` were put in when it lived in `town`.
-    pub fn owner(&self, here: &MachineName, town: Option<&TownName>, owner: &Address) -> PathBuf {
-        let name = if owner.machine == *here { owner.resident.to_string() } else { owner.key() };
+    pub fn owner(&self, here: &impl Here, town: Option<&TownName>, owner: &Address) -> PathBuf {
+        let name = if here.is_here(&owner.machine) { owner.resident.to_string() } else { owner.key() };
         self.directory(town, &name)
     }
 

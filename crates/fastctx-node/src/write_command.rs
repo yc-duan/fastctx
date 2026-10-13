@@ -16,11 +16,11 @@ pub(crate) async fn write(
     let Caller::Resident(owner) = caller::of(node, peer)? else {
         return Err(Failure::new("edit and write work only inside a script run by the run tool"));
     };
-    let here = node.machine();
-    let town = if owner.machine == here {
+    let here = node.names();
+    let town = if node.is_me(&owner.machine) {
         node.residents
             .town_of(&owner.resident)
-            .ok_or_else(|| Failure::new(format!("no resident {} lives on {here}", owner.resident)))?
+            .ok_or_else(|| Failure::new(format!("no resident {} lives on {}", owner.resident, here.me)))?
     } else {
         town
     };
@@ -29,7 +29,7 @@ pub(crate) async fn write(
     let result = tokio::task::spawn_blocking(move || {
         let at = jiff::Timestamp::now();
         let outcome = crate::write::write_job(&world, &here, &owner, town.as_ref(), op.clone(), job.as_ref())?;
-        let action = crate::write::action(&op, &outcome, &here, at);
+        let action = crate::write::action(&op, &outcome, &here.me, at);
         let recorded = crate::residents::record_owned_action(&world, &here, &owner, &action);
         std::io::Result::Ok((outcome, recorded))
     })

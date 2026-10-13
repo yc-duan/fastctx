@@ -56,7 +56,7 @@ impl Caller {
     pub fn town(&self, node: &Node) -> Option<TownName> {
         match self {
             Caller::Page(page) => Some(page.town.clone()),
-            Caller::Resident(address) if address.machine == node.machine() => {
+            Caller::Resident(address) if node.is_me(&address.machine) => {
                 node.residents.town_of(&address.resident).flatten()
             }
             _ => None,
@@ -69,7 +69,7 @@ impl Caller {
             return Ok(town);
         }
         Err(Failure::new(match self {
-            Caller::Resident(address) if address.machine != node.machine() => format!(
+            Caller::Resident(address) if !node.is_me(&address.machine) => format!(
                 "name the project: this session's project is known on {}, where it runs; `fastctx project list` lists the projects",
                 address.machine
             ),

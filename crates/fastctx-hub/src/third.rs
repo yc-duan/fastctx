@@ -114,6 +114,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         }
         book.directory.members.push(Member {
             name: name.clone(),
+            was: Vec::new(),
             key,
             kind: if machine { Kind::Computer } else { Kind::Phone },
             logins: BTreeSet::from([new.admin.clone()]),

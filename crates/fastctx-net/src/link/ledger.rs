@@ -26,11 +26,10 @@ pub struct PageItem {
 impl Link {
     /// An entry of `town` by this machine, written now.
     pub fn entry(&self, town: &TownId, machines: Option<Vec<MachineName>>, files: Vec<File>) -> Entry {
-        let membership = &self.inner.membership;
         Entry {
-            hub: membership.id.clone(),
+            hub: self.inner.hub.clone(),
             town: town.clone(),
-            author: membership.name.clone(),
+            author: self.inner.me(),
             key: self.inner.key.public(),
             at: Timestamp::now(),
             machines,
@@ -104,7 +103,7 @@ impl Link {
             Told::Entries { entries, more } => (entries, more),
             _ => return Err("the hub answered something else".to_string()),
         };
-        let hub = &self.inner.membership.id;
+        let hub = &self.inner.hub;
         let read = entries
             .into_iter()
             .map(|(seq, signed)| match crate::ledger::open(&signed, hub, town) {

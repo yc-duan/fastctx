@@ -127,7 +127,7 @@ async fn connected(inner: Weak<Inner>, tcp: tokio::net::TcpStream, from: SocketA
         Err(_) => return log(format!("no WebSocket within {} s", SILENCE.as_secs())),
     };
     let path = path.lock().expect("never poisoned").clone();
-    let forward = format!("{}/{}", peer::FORWARD_PATH, inner.membership.id);
+    let forward = format!("{}/{}", peer::FORWARD_PATH, inner.hub);
     if path == forward {
         return forward_to_hub(inner, socket, from).await;
     }
@@ -154,10 +154,10 @@ async fn connected(inner: Weak<Inner>, tcp: tokio::net::TcpStream, from: SocketA
         let reason = format!("it speaks direct protocol {protocol}, this machine {}", peer::PROTOCOL);
         return refuse(&mut socket, reason).await;
     }
-    if hub != inner.membership.id {
+    if hub != inner.hub {
         return refuse(&mut socket, format!("this machine takes direct connections for another hub than {hub}")).await;
     }
-    let me = inner.membership.name.clone();
+    let me = inner.me();
     let welcome = Frame::Welcome { name: me.clone(), proof: inner.key.sign(Domain::Peer, &binding) };
     // Who connects, by the key it proves it holds, from the roster this
     // machine last had: also while it cannot reach the hub.

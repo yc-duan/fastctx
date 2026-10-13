@@ -109,7 +109,7 @@ struct Parked {
 }
 
 fn directory(node: &Node, owner: &Address) -> PathBuf {
-    node.world.owner(&node.machine(), owner).book("on-deliveries")
+    node.world.owner(&node.names(), owner).book("on-deliveries")
 }
 
 fn receipt(
@@ -216,7 +216,7 @@ pub(crate) fn park(node: &Arc<Node>, to: &ResidentId, delivery: &Delivery) -> io
         return Ok(true);
     }
     let owner = Address { machine: node.machine(), resident: to.clone() };
-    let nested = follower.as_ref().is_some_and(|follower| follower != &node.machine());
+    let nested = follower.as_ref().is_some_and(|follower| !node.is_me(follower));
     if !nested && !held(&state, &owner, machine, job, request.as_ref()) {
         return Ok(false);
     }
@@ -323,7 +323,7 @@ async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> Result<(), Held>
         receipt_exists(node, &receipt(node, &node.machine(), &parked.to, machine, job, request.as_ref()))?
             || stopped(node, &parked.to, machine, request.as_ref())?
     };
-    if !taken && let Some(follower) = follower.as_ref().filter(|follower| *follower != &node.machine()) {
+    if !taken && let Some(follower) = follower.as_ref().filter(|follower| !node.is_me(follower)) {
         let acting = node.residents.about(&parked.to).map(|(about, _)| about.acting).unwrap_or_default();
         let call = fastctx_types::remote::RemoteCall::OnReceipt {
             owner: owner.clone(),

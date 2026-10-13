@@ -3,7 +3,7 @@
     {
       "records": [
         {
-          "id": 29,
+          "id": 30,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -20,7 +20,7 @@
           }
         },
         {
-          "id": 28,
+          "id": 29,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -39,7 +39,7 @@
           }
         },
         {
-          "id": 27,
+          "id": 28,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -61,7 +61,7 @@
           }
         },
         {
-          "id": 26,
+          "id": 27,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -83,7 +83,7 @@
           }
         },
         {
-          "id": 25,
+          "id": 26,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -103,7 +103,7 @@
           }
         },
         {
-          "id": 24,
+          "id": 25,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -123,7 +123,7 @@
           }
         },
         {
-          "id": 23,
+          "id": 24,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -140,7 +140,7 @@
           }
         },
         {
-          "id": 22,
+          "id": 23,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -165,7 +165,7 @@
           }
         },
         {
-          "id": 21,
+          "id": 22,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -183,7 +183,7 @@
           }
         },
         {
-          "id": 20,
+          "id": 21,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -203,7 +203,7 @@
           }
         },
         {
-          "id": 19,
+          "id": 20,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": "ada",
@@ -221,7 +221,7 @@
           }
         },
         {
-          "id": 18,
+          "id": 19,
           "at": "2026-10-10T12:00:00Z",
           "actor": {
             "account": null,
@@ -233,6 +233,24 @@
             "change": "remove",
             "name": "laptop",
             "reason": "retired"
+          },
+          "outcome": {
+            "kind": "done"
+          }
+        },
+        {
+          "id": 18,
+          "at": "2026-10-10T12:00:00Z",
+          "actor": {
+            "account": "ada",
+            "authenticated": true,
+            "member": "laptop",
+            "peer": null
+          },
+          "action": {
+            "change": "rename",
+            "machine": "laptop",
+            "to": "gpu-2"
           },
           "outcome": {
             "kind": "done"
@@ -1509,6 +1527,8 @@
               },
               "ms": 38
             },
+            "me": "desktop",
+            "renames": true,
             "logins": [
               "ada"
             ],
@@ -1561,6 +1581,9 @@
               },
               {
                 "name": "server",
+                "was": [
+                  "izbp1abc0x2y3z"
+                ],
                 "kind": "computer",
                 "logins": [
                   "ada"
@@ -1671,6 +1694,9 @@
       },
       {
         "machine": "desktop",
+        "was": [
+          "desktop-7q2m9x"
+        ],
         "hubs": []
       }
     ],
@@ -1723,6 +1749,11 @@
         "change": "remove",
         "name": "pixel",
         "reason": "lost"
+      },
+      {
+        "change": "rename",
+        "machine": "server",
+        "to": "台式机"
       },
       {
         "change": "logout"
@@ -10950,6 +10981,7 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "stats": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -11088,6 +11120,7 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "stats": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -11228,6 +11261,7 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "stats": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -11368,6 +11402,7 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "stats": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -11507,6 +11542,7 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "stats": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -11650,6 +11686,7 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "stats": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -11794,6 +11831,7 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "stats": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -11938,6 +11976,7 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "stats": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -12081,6 +12120,7 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "stats": true,
           "shell": "",
           "node_lifetime": {
             "process": {
@@ -19348,5 +19388,163 @@
         "client_protocol": 6
       }
     }
+  },
+  "stats": {
+    "stats": [
+      {
+        "machine": "desktop",
+        "at": "2026-10-13T08:30:00Z",
+        "boot": "2026-10-10T01:12:40Z",
+        "system": "Windows 11 Pro 24H2 (26200.6584)",
+        "host": "DESKTOP-EXAMPLE",
+        "arch": "x86_64",
+        "cpu": {
+          "model": "AMD Ryzen 9 7950X 16-Core Processor",
+          "threads": 32,
+          "busy": 0.18
+        },
+        "memory": {
+          "total": 68719476736,
+          "used": 30064771072,
+          "swap_total": 78383153152,
+          "swap_used": 41875931136
+        },
+        "disks": [
+          {
+            "at": "C:/",
+            "label": "系统",
+            "fs": "NTFS",
+            "total": 1000202039296,
+            "free": 212000000000
+          },
+          {
+            "at": "V:/",
+            "fs": "NTFS",
+            "total": 2000381014016,
+            "free": 92000000000
+          }
+        ],
+        "cards": [
+          {
+            "name": "Ethernet",
+            "up": true,
+            "hardware": true,
+            "speed": 1000000000,
+            "received": 912345678901,
+            "sent": 123456789012,
+            "receiving": 1250000.0,
+            "sending": 64000.0,
+            "addresses": [
+              "192.168.1.20",
+              "fd00::20"
+            ]
+          },
+          {
+            "name": "Wi-Fi",
+            "up": false,
+            "hardware": true,
+            "received": 0,
+            "sent": 0
+          }
+        ],
+        "gpus": [
+          {
+            "name": "NVIDIA GeForce RTX 4090",
+            "memory_total": 25757220864,
+            "memory_used": 6442450944,
+            "busy": 0.42
+          }
+        ],
+        "lines": [
+          {
+            "hub": "home",
+            "since": "2026-10-13T07:58:10Z",
+            "up": true,
+            "trips": [
+              {
+                "at": "2026-10-13T08:29:40Z",
+                "ms": 38
+              },
+              {
+                "at": "2026-10-13T08:29:50Z",
+                "ms": 41
+              }
+            ],
+            "changes": [
+              {
+                "kind": "started",
+                "at": "2026-10-12T22:01:00Z"
+              },
+              {
+                "kind": "up",
+                "at": "2026-10-12T22:01:01Z"
+              },
+              {
+                "kind": "down",
+                "at": "2026-10-13T07:57:30Z",
+                "why": "nothing came from the hub for 30 s"
+              },
+              {
+                "kind": "up",
+                "at": "2026-10-13T07:58:10Z"
+              }
+            ]
+          }
+        ],
+        "node": {
+          "version": "1.0.0",
+          "started": "2026-10-12T22:01:00Z",
+          "service": true
+        }
+      },
+      {
+        "machine": "server",
+        "at": "2026-10-13T08:30:02Z",
+        "boot": "2026-09-01T00:00:00Z",
+        "system": "Ubuntu 24.04.1 LTS",
+        "kernel": "Linux 6.8.0-45-generic",
+        "host": "server",
+        "arch": "x86_64",
+        "cpu": {
+          "model": "",
+          "threads": 2,
+          "load": [
+            0.12,
+            0.08,
+            0.05
+          ]
+        },
+        "memory": {
+          "total": 2065588224,
+          "used": 912000000,
+          "swap_total": 0,
+          "swap_used": 0
+        },
+        "disks": [
+          {
+            "at": "/",
+            "fs": "ext4",
+            "total": 42000000000,
+            "free": 18000000000
+          }
+        ],
+        "cards": [],
+        "lines": [
+          {
+            "hub": "home",
+            "since": "2026-10-13T08:00:00Z",
+            "up": false,
+            "through": "desktop",
+            "trips": [],
+            "changes": []
+          }
+        ],
+        "node": {
+          "version": "1.0.0",
+          "started": "2026-10-01T00:00:00Z",
+          "service": false
+        }
+      }
+    ]
   }
 }

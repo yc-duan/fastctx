@@ -156,6 +156,13 @@ export class MapLayout {
     const order = this.hubOrder.filter((id) => live.has(id));
     for (const node of [...nodes].sort(firstOrder)) {
       if (this.order.has(node.key)) continue;
+      // Renamed, it keeps the place it had under a name it had.
+      const was = node.was?.find((key) => this.order.has(key) && !nodes.some((other) => other.key === key));
+      if (was !== undefined) {
+        this.order.set(node.key, this.order.get(was)!);
+        this.order.delete(was);
+        continue;
+      }
       this.order.set(node.key, this.next);
       this.next += 1;
     }

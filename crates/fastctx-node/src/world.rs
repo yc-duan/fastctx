@@ -222,9 +222,9 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
                 node.machine()
             )));
         }
-        crate::machine::rename(&node.world, &name)
+        let names = crate::machine::rename(&node.world, &name)
             .map_err(|error| Failure::new(format!("renaming this computer to {name}: {error}")))?;
-        node.set_machine(name.clone());
+        node.set_names(names);
     }
     match node.link_of(&hub) {
         // Logged in again where the hub is reached now, as after a move this
@@ -261,6 +261,56 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
     Ok(Reply::LoggedIn { hub: hub_name, name, account })
 }
 
+/// The hub `hub` calls this computer `to` now, no longer `from`
+/// (`world-network.md`, 机器的名字). It takes the name, keeping the one it had
+/// among those that still name it, and asks its other hubs to call it so
+/// too: a computer has one name on every hub it is on.
+pub(crate) fn follow_rename(node: &Arc<Node>, hub: &HubId, from: &MachineName, to: &MachineName) {
+    if node.machine().as_str() != to.as_str() {
+        let names = crate::machine::renamed(&node.machine_names(), to);
+        if let Err(error) = crate::machine::keep(&node.world, &names) {
+            node.log.line(format_args!("recording that this computer is {to} now: {error}"));
+        }
+        node.set_names(names);
+        node.log.line(format_args!("this computer is {to} now, no longer {from}"));
+    }
+    // Every session's tools say where its shell is.
+    node.tools_changed(None);
+    node.ways_changed();
+    for link in node.links().into_iter().filter(|link| link.hub() != hub) {
+        let node = node.clone();
+        tokio::spawn(async move { same_name(&node, &link).await });
+    }
+}
+
+/// Asks the hub of `link` to call this computer by its name now, when it
+/// calls it otherwise, as the account it is registered under there, which
+/// may rename its own machine.
+async fn same_name(node: &Arc<Node>, link: &Link) {
+    let (here, there) = (node.machine(), link.name());
+    if here.as_str() == there.as_str() {
+        return;
+    }
+    let view = link.view();
+    let hub = view.hub_name.clone();
+    let Some(account) = view.me().and_then(|me| me.home.clone()) else {
+        node.log.line(format_args!("the hub {hub} calls this computer {there}, and it is no machine there to rename"));
+        return;
+    };
+    if !view.renames {
+        node.log.line(format_args!(
+            "the hub {hub} calls this computer {there}, not {here}, and renames no machine until it is updated"
+        ));
+        return;
+    }
+    match link.manage(&account, Change::Rename { machine: there.clone(), to: here.clone() }).await {
+        Ok(_) => node.log.line(format_args!("the hub {hub} calls this computer {here} now too")),
+        Err(error) => node
+            .log
+            .line(format_args!("the hub {hub} calls this computer {there}, and did not rename it {here}: {error}")),
+    }
+}
+
 /// The link of the hub named `hub`, or of the one hub when none is named.
 pub fn hub_link(node: &Node, hub: Option<&HubName>) -> Result<Arc<Link>, Failure> {
     let links = node.links();
@@ -294,8 +344,51 @@ pub async fn change(
         AccountChange::Seen { name } => crate::admitted::shown(node, &link.membership().id, account, &name)
             .map(|()| None)
             .map_err(|error| Failure::new(format!("recording what was seen: {error}"))),
+        AccountChange::Rename { machine, to } if link.view().is_me(&machine) => {
+            let from = link.name();
+            link.account_change(account, AccountChange::Rename { machine, to: to.clone() })
+                .await
+                .map_err(Failure::new)?;
+            // The hub took it: this computer is `to` from now on, before its
+            // next connection is welcomed under that name.
+            follow_rename(node, link.hub(), &from, &to);
+            Ok(None)
+        }
         change => link.account_change(account, change).await.map_err(Failure::new),
     }
+}
+
+/// Renames this computer `to` (`world-network.md`, 机器的名字). On no hub it
+/// is its own to name. On hubs, the first where it is a registered machine
+/// renames it, and the others follow: one asks, so that a refusal there, a
+/// name taken, is the answer.
+pub async fn rename_here(node: &Arc<Node>, to: MachineName) -> Result<(), Failure> {
+    let from = node.machine();
+    if from.as_str() == to.as_str() {
+        return Ok(());
+    }
+    let links = node.links();
+    if links.is_empty() {
+        let names = crate::machine::renamed(&node.machine_names(), &to);
+        crate::machine::keep(&node.world, &names)
+            .map_err(|error| Failure::new(format!("renaming this computer to {to}: {error}")))?;
+        node.set_names(names);
+        node.log.line(format_args!("this computer is {to} now, no longer {from}"));
+        node.tools_changed(None);
+        return Ok(());
+    }
+    let Some((link, account)) = links.iter().find_map(|link| {
+        let view = link.view();
+        view.me().and_then(|me| me.home.clone()).map(|account| (link.clone(), account))
+    }) else {
+        return Err(Failure::new("this computer is a machine of no hub it is on, so no hub renames it"));
+    };
+    let machine = link.name();
+    link.account_change(&account, AccountChange::Rename { machine: machine.clone(), to: to.clone() })
+        .await
+        .map_err(Failure::new)?;
+    follow_rename(node, link.hub(), &machine, &to);
+    Ok(())
 }
 
 /// Logs this computer out of `account`; with no login left on that hub,
@@ -350,7 +443,8 @@ pub fn accounts(node: &Node) -> AccountsReply {
             accounts
         })
         .collect();
-    AccountsReply { machine: node.machine(), hubs }
+    let names = node.machine_names();
+    AccountsReply { machine: names.name, was: names.was, hubs }
 }
 
 /// What this machine is like.
@@ -368,6 +462,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         version: env!("CARGO_PKG_VERSION").to_string(),
         completion_receipts: true,
         upload_resumes: true,
+        stats: true,
         shell: shell().clone(),
         form: Some(form()),
         node_lifetime: Some(Box::new(node.lifetime.clone())),
@@ -717,6 +812,9 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(format!("reading the canon on {machine}: {error}")))
                 }
                 RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
+                RemoteCall::Stats { after } => {
+                    crate::stats::here(&node, after).await.map(|stats| RemoteReply::Stats(Box::new(stats)))
+                }
                 RemoteCall::Interfaces => {
                     crate::hub_arrival::interfaces().map(|addresses| RemoteReply::Interfaces { addresses })
                 }
@@ -856,6 +954,20 @@ impl fastctx_net::link::Node for Handler {
         });
     }
 
+    fn renamed(&self, from: &MachineName, to: &MachineName) {
+        if let Some(node) = self.node.upgrade() {
+            follow_rename(&node, &self.hub, from, to);
+        }
+    }
+
+    /// Connected again: a hub that calls this computer otherwise than the
+    /// others, as one away when another renamed it, is asked to follow.
+    fn connected(&self) {
+        let Some(node) = self.node.upgrade() else { return };
+        let Some(link) = node.link_of(&self.hub) else { return };
+        tokio::spawn(async move { same_name(&node, &link).await });
+    }
+
     /// Someone may have logged in to an account this computer is logged in
     /// to: its user is told who, from the views before and after.
     fn directory_changed(&self) {
@@ -894,7 +1006,7 @@ pub fn machines(node: &Node, acting: &Acting) -> (MachineName, Vec<String>) {
     for link in node.links() {
         let view = link.view();
         let accounts = node.accounts_on(&link, acting);
-        for machine in view.machines().filter(|machine| machine.name != here) {
+        for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
             if keys.contains(&machine.key) {
                 continue;
             }

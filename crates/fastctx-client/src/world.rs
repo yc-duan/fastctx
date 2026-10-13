@@ -680,6 +680,27 @@ impl World {
         }
     }
 
+    /// How `machine`, or this computer, is doing, for its details page; its
+    /// lines' history only after `after`, when given.
+    pub async fn stats(
+        &self,
+        machine: Option<MachineName>,
+        after: Option<jiff::Timestamp>,
+    ) -> Result<fastctx_types::stats::MachineStats, Error> {
+        match self.ask(Call::Stats { machine, after }).await? {
+            Reply::Stats(stats) => Ok(*stats),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Renames this computer `to`; the names it had keep naming it.
+    pub async fn rename_here(&self, to: MachineName) -> Result<(), Error> {
+        match self.ask(Call::RenameHere { to }).await? {
+            Reply::Done => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// Every hub this computer is on, with what it sees of each.
     pub async fn accounts(&self) -> Result<AccountsReply, Error> {
         match self.ask(Call::Accounts).await? {

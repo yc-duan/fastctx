@@ -26,10 +26,15 @@ use crate::sign::PublicKey;
 pub use fastctx_types::accounts::{Level, MemberKind as Kind, Paths, Reach};
 
 /// A computer, phone or web AI on the hub, under a name no other member
-/// on the hub has.
+/// on the hub has, nor had.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
     pub name: MachineName,
+    /// The names it had before it was renamed, oldest first. Each still
+    /// names it: what was written under one, a letter waiting, another
+    /// machine's records, a script, reaches it (`world-network.md`, 机器的名字).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub was: Vec<MachineName>,
     pub key: PublicKey,
     pub kind: Kind,
     /// The accounts logged in on it.
@@ -65,6 +70,11 @@ pub struct Member {
 impl Member {
     pub fn is_machine(&self) -> bool {
         self.home.is_some()
+    }
+
+    /// Whether `name` is its name, now or before.
+    pub fn named(&self, name: &MachineName) -> bool {
+        self.name == *name || self.was.contains(name)
     }
 }
 
@@ -183,8 +193,61 @@ pub struct Directory {
 }
 
 impl Directory {
+    /// The member `name` names: its name now, or one it had. No two members
+    /// have a name in common, now or before, so at most one does.
     pub fn member(&self, name: &MachineName) -> Option<&Member> {
-        self.members.iter().find(|member| member.name == *name)
+        self.members.iter().find(|member| member.name == *name).or_else(|| self.formerly(name))
+    }
+
+    /// The member that had `name` before it was renamed.
+    pub fn formerly(&self, name: &MachineName) -> Option<&Member> {
+        self.members.iter().find(|member| member.was.contains(name))
+    }
+
+    /// The name `name` stands for now: the current name of the member it
+    /// names, or itself when it names none. Every judgment goes by it, as
+    /// what the directory records of a machine is under its current name.
+    pub fn canonical<'a>(&'a self, name: &'a MachineName) -> &'a MachineName {
+        self.member(name).map_or(name, |member| &member.name)
+    }
+
+    /// Whether `one` and `other` name one member, or are one name.
+    pub fn same(&self, one: &MachineName, other: &MachineName) -> bool {
+        self.canonical(one) == self.canonical(other)
+    }
+
+    /// Renames the member `from` names to `to`, with what is recorded of it
+    /// as a machine: its former names keep naming it. `to` may be one of its
+    /// own former names, which it takes back. The caller checks that no
+    /// other member has or had `to`.
+    pub fn rename(&mut self, from: &MachineName, to: &MachineName) -> Option<MachineName> {
+        let member = self.members.iter_mut().find(|member| member.named(from))?;
+        let old = std::mem::replace(&mut member.name, to.clone());
+        member.was.retain(|name| name != to);
+        if !member.was.contains(&old) && old != *to {
+            member.was.push(old.clone());
+        }
+        for share in &mut self.shares {
+            if share.machine == old {
+                share.machine = to.clone();
+            }
+        }
+        for assist in &mut self.assists {
+            if assist.machine == old {
+                assist.machine = to.clone();
+            }
+        }
+        for plan in &mut self.plans {
+            if plan.machine == old {
+                plan.machine = to.clone();
+            }
+        }
+        for acting in &mut self.acting {
+            if acting.machine == old {
+                acting.machine = to.clone();
+            }
+        }
+        Some(old)
     }
 
     pub fn by_key(&self, key: &PublicKey) -> Option<&Member> {
@@ -217,6 +280,7 @@ impl Directory {
 
     /// Whether `machine` is shared with `account`.
     pub fn shared(&self, account: &AccountName, machine: &MachineName) -> bool {
+        let machine = self.canonical(machine);
         self.shares.iter().any(|share| share.account == *account && share.machine == *machine)
     }
 
@@ -230,6 +294,7 @@ impl Directory {
         machine: &'a MachineName,
     ) -> impl Iterator<Item = &'a Assist> {
         let now = Timestamp::now();
+        let machine = self.canonical(machine);
         self.assists
             .iter()
             .filter(move |assist| assist.account == *account && assist.machine == *machine && assist.live(now))
@@ -244,10 +309,10 @@ impl Directory {
         if !member.is_machine() {
             return Rights::NONE;
         }
-        if member.home.as_ref() == Some(account) || self.is_super(account) || self.shared(account, machine) {
+        if member.home.as_ref() == Some(account) || self.is_super(account) || self.shared(account, &member.name) {
             return Rights::ALL;
         }
-        Rights { hands: false, agents: self.assisting(account, machine).next().is_some() }
+        Rights { hands: false, agents: self.assisting(account, &member.name).next().is_some() }
     }
 
     /// Whether `account` may use `agent`'s login `home` on `machine` (none
@@ -269,6 +334,7 @@ impl Directory {
     /// assistance, before the hub drops the record of the use
     /// (`settle_acting`).
     pub fn may_act_for(&self, account: &AccountName, member: &MachineName) -> bool {
+        let member = self.canonical(member);
         self.logged_in(member, account)
             || (self.acting.iter().any(|acting| acting.account == *account && acting.machine == *member)
                 && self.rights(account, member).agents)
@@ -276,6 +342,7 @@ impl Directory {
 
     /// The accounts `member` may act for.
     pub fn acts_for(&self, member: &MachineName) -> BTreeSet<AccountName> {
+        let member = self.canonical(member);
         let mut accounts: BTreeSet<AccountName> =
             self.member(member).map(|member| member.logins.clone()).unwrap_or_default();
         accounts.extend(
@@ -463,6 +530,11 @@ pub struct View {
     /// of a member that asked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub moving: bool,
+    /// Whether this hub renames machines (`crate::wire::Change::Rename`).
+    /// Earlier hubs omit it, and would end the session of a member that
+    /// asked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub renames: bool,
     /// Where this member reaches the hub now, given by a hub that was moved
     /// to where it runs (`crate::moving`); a hub never moved gives none, and
     /// the member keeps the addresses it logged in with.
@@ -490,6 +562,7 @@ impl View {
             trial: Vec::new(),
             forwarders: Vec::new(),
             moving: false,
+            renames: false,
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),
             directory: Directory::default(),
@@ -498,6 +571,11 @@ impl View {
 
     pub fn me(&self) -> Option<&Member> {
         self.directory.member(&self.me)
+    }
+
+    /// Whether `name` names this member: its name now, or one it had.
+    pub fn is_me(&self, name: &MachineName) -> bool {
+        *name == self.me || self.me().is_some_and(|me| me.named(name))
     }
 
     /// The accounts this member may act for.

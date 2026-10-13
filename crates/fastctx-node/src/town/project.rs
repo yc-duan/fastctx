@@ -144,7 +144,7 @@ async fn checked(node: &Arc<Node>, hub: Option<&HubId>, mut record: Record) -> R
         )));
     }
     for place in &mut record.places {
-        if place.location.machine == node.machine() {
+        if node.is_me(&place.location.machine) {
             place.location.path = fastctx_platform::local_path(&place.location.path)
                 .map_err(|error| Failure::new(error.to_string()))?
                 .to_string_lossy()
@@ -156,7 +156,7 @@ async fn checked(node: &Arc<Node>, hub: Option<&HubId>, mut record: Record) -> R
         }
     }
     if let Some(canon) = &mut record.canon {
-        if canon.machine == node.machine() {
+        if node.is_me(&canon.machine) {
             canon.path = fastctx_platform::local_path(&canon.path)
                 .map_err(|error| Failure::new(error.to_string()))?
                 .to_string_lossy()
@@ -193,7 +193,9 @@ fn owner(
 ) -> Result<Option<HubAccount>, Failure> {
     let acting = crate::around::acting_of(node, caller);
     let mut accounts = Vec::new();
-    for link in node.links().into_iter().filter(|link| hub.as_ref().is_none_or(|hub| link.membership().hub_name == *hub)) {
+    for link in
+        node.links().into_iter().filter(|link| hub.as_ref().is_none_or(|hub| link.membership().hub_name == *hub))
+    {
         let id = link.membership().id.clone();
         for account in node.accounts_on(&link, &acting) {
             if named.as_ref().is_none_or(|named| *named == account) {
@@ -204,7 +206,9 @@ fn owner(
     match named {
         Some(named) => match accounts.len() {
             1 => Ok(accounts.pop()),
-            0 => Err(Failure::not_run(format!("this does not work for an account {named} on any hub this computer is on"))),
+            0 => Err(Failure::not_run(format!(
+                "this does not work for an account {named} on any hub this computer is on"
+            ))),
             _ => Err(Failure::not_run(format!("accounts named {named} are on several hubs; name the hub"))),
         },
         None => match accounts.len() {
@@ -263,7 +267,8 @@ pub async fn spans_here(node: &Arc<Node>, town: &TownName) -> Result<(), Failure
 /// Refuses unless the resident `id` works for an account that may use
 /// `town`: a town's residents work for its accounts.
 fn works_in(node: &Node, id: &fastctx_types::ResidentId, town: &TownName) -> Result<(), Failure> {
-    let Some(place) = crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?
+    let Some(place) =
+        crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?
     else {
         return Err(map::no_ledger(node, town));
     };
@@ -282,7 +287,7 @@ fn works_in(node: &Node, id: &fastctx_types::ResidentId, town: &TownName) -> Res
 async fn enter(node: &Arc<Node>, caller: &Caller, town: TownName) -> Result<Reply, Failure> {
     let here = node.machine();
     let id = match caller {
-        Caller::Resident(address) if address.machine == here => address.resident.clone(),
+        Caller::Resident(address) if node.is_me(&address.machine) => address.resident.clone(),
         Caller::Resident(address) => {
             return Err(Failure::new(format!(
                 "{} lives on {}; enter the town there, running the command without a node",

@@ -104,7 +104,7 @@ pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io
 
 fn deliver(node: &Node, record: &JobRecord, update: &JobFacts) -> io::Result<()> {
     let owner = record.owner.resident().expect("a fact update has a resident owner");
-    if owner.machine == node.machine() {
+    if node.is_me(&owner.machine) {
         return storage::receive(node, &owner.resident, update);
     }
     let acting = record

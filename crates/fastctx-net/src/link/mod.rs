@@ -24,6 +24,7 @@ mod direct;
 mod kernel;
 mod ledger;
 mod letters;
+mod line;
 mod machine_log;
 mod moving;
 mod outgoing;
@@ -97,6 +98,12 @@ pub trait Node: Send + Sync + 'static {
     /// This machine's view of the directory may have changed: the link has
     /// just asked the hub.
     fn directory_changed(&self) {}
+    /// The hub calls this machine `to` now, no longer `from`.
+    fn renamed(&self, from: &MachineName, to: &MachineName) {
+        let _ = (from, to);
+    }
+    /// The link connected to the hub again and has asked it for the view.
+    fn connected(&self) {}
     /// The ways to other machines may have changed (`Link::way_to`): the
     /// line to the hub came or went, the hub said anew who is online, or a
     /// direct link came up or went down.
@@ -191,7 +198,14 @@ pub(crate) struct Inner {
     /// This link itself, for what it starts that outlives a call.
     this: Weak<Inner>,
     dir: NetDir,
-    membership: Membership,
+    /// The hub this link is to, the certificate pinned for it, and what
+    /// kind of member this is there: none of them changes.
+    hub: crate::ids::HubId,
+    cert: crate::ids::CertPin,
+    kind: crate::directory::Kind,
+    /// This machine's place on the hub as its membership file keeps it: its
+    /// name there changes when the hub renames it (`Inner::follow_name`).
+    membership: Mutex<Membership>,
     /// Where the hub is reached now (`addresses`): the membership's, until
     /// a hub that moved says otherwise.
     addresses: Mutex<Vec<SocketAddr>>,
@@ -219,6 +233,8 @@ pub(crate) struct Inner {
     network: watch::Sender<u64>,
     /// The round trip to the hub, as last measured.
     hub_ms: Mutex<Option<u32>>,
+    /// How the line to the hub has held (`line`).
+    line: Mutex<line::Line>,
     /// The direct links (`direct`).
     direct: direct::Direct,
     /// The task that keeps the connection.
@@ -313,7 +329,10 @@ impl Link {
             this: this.clone(),
             dir,
             addresses: Mutex::new(membership.addresses.clone()),
-            membership,
+            hub: membership.id.clone(),
+            cert: membership.cert,
+            kind: membership.kind,
+            membership: Mutex::new(membership),
             key,
             node,
             counter,
@@ -330,9 +349,11 @@ impl Link {
             rerouted: Notify::new(),
             network: watch::channel(0).0,
             hub_ms: Mutex::new(None),
+            line: Mutex::default(),
             direct: direct::Direct::default(),
             task: Mutex::new(None),
         });
+        inner.line_started();
         // A machine that allows direct connections takes them from the
         // roster it last had, before it reaches the hub, and whether or not
         // it does.
@@ -366,9 +387,20 @@ impl Link {
     }
 
     /// This machine's place on the hub. Its addresses are those it logged
-    /// in with; where the hub is reached now is `hub_addresses`.
-    pub fn membership(&self) -> &Membership {
-        &self.inner.membership
+    /// in with, or the hub gave since; where the hub is reached now is
+    /// `hub_addresses`.
+    pub fn membership(&self) -> Membership {
+        self.inner.membership()
+    }
+
+    /// The hub this link is to.
+    pub fn hub(&self) -> &crate::ids::HubId {
+        &self.inner.hub
+    }
+
+    /// This machine's name on the hub now.
+    pub fn name(&self) -> MachineName {
+        self.inner.me()
     }
 
     /// Where the hub is reached now, in the order to try: what this machine
@@ -547,6 +579,43 @@ impl Inner {
         self.view.lock().expect("never poisoned").clone()
     }
 
+    /// This machine's place on the hub, as kept now.
+    pub(crate) fn membership(&self) -> Membership {
+        self.membership.lock().expect("never poisoned").clone()
+    }
+
+    /// This machine's name on the hub now.
+    pub(crate) fn me(&self) -> MachineName {
+        self.membership.lock().expect("never poisoned").name.clone()
+    }
+
+    /// Changes the membership as `change` does and keeps it in the
+    /// membership file. The change holds while the node runs even when
+    /// keeping it fails; after a restart the hub says it again.
+    pub(crate) fn keep_membership(&self, change: impl FnOnce(&mut Membership)) -> io::Result<()> {
+        let mut membership = self.membership.lock().expect("never poisoned");
+        change(&mut membership);
+        state::write(&self.dir.membership(), &*membership)
+    }
+
+    /// Takes `name` as this machine's name on the hub, which renamed it
+    /// (`world-network.md`, 机器的名字): what it is called there is the hub's
+    /// to say, and the hub says it of this machine's key. Kept in the
+    /// membership file, and told to the node.
+    pub(crate) fn follow_name(&self, name: MachineName) {
+        let before = self.me();
+        if before == name {
+            return;
+        }
+        match self.keep_membership(|kept| kept.name = name.clone()) {
+            Ok(()) => self.node.log(format!("the hub calls this machine {name} now, no longer {before}")),
+            Err(error) => {
+                self.node.log(format!("the hub calls this machine {name} now; recording that failed: {error}"))
+            }
+        }
+        self.node.renamed(&before, &name);
+    }
+
     fn connection(&self) -> Option<Connection> {
         self.connection.lock().expect("never poisoned").clone()
     }
@@ -560,7 +629,7 @@ impl Inner {
     /// each machine that allows direct connections, in the hub's order.
     fn upstreams(&self) -> Vec<Upstream> {
         let view = self.view();
-        let forwarders = view.forwarders.iter().filter(|forwarder| forwarder.name != self.membership.name).cloned();
+        let forwarders = view.forwarders.iter().filter(|forwarder| !view.is_me(&forwarder.name)).cloned();
         std::iter::once(Upstream::Hub(self.hub_addresses())).chain(forwarders.map(Upstream::Through)).collect()
     }
 
@@ -576,7 +645,7 @@ impl Inner {
                 upstreams.push(upstream);
             }
         }
-        Endpoint::Hub { upstreams, hub: self.membership.id.clone(), cert: self.membership.cert }
+        Endpoint::Hub { upstreams, hub: self.hub.clone(), cert: self.cert }
     }
 
     /// Hands `event` to the call `id` made on `on`.
@@ -663,11 +732,17 @@ impl Inner {
         let Told::Directory { view } = self.ask(Question::Directory).await? else {
             return Err("the hub answered something else".to_string());
         };
-        if view.hub != self.membership.id || view.me != self.membership.name {
-            return Err(format!(
-                "the hub gave the view of {} on {}, not of {} on {}",
-                view.me, view.hub, self.membership.name, self.membership.id
-            ));
+        if view.hub != self.hub {
+            return Err(format!("the hub gave a view of {}, not of {}", view.hub, self.hub));
+        }
+        let me = self.me();
+        if view.me != me {
+            // The hub renamed this machine: it says so of this machine's key.
+            let renamed = view.me().is_some_and(|member| member.key == self.key.public() && member.named(&me));
+            if !renamed {
+                return Err(format!("the hub gave the view of {}, not of {me}", view.me));
+            }
+            self.follow_name(view.me.clone());
         }
         let changed = *self.view() != *view;
         if changed {
@@ -688,22 +763,33 @@ impl Inner {
     /// view again once when it does not: a grant the hub just made may not
     /// be in the view yet.
     async fn admit(&self, envelope: &Envelope) -> Result<Caller, String> {
-        if envelope.to != self.membership.name || envelope.hub != self.membership.id {
+        if envelope.hub != self.hub {
             return Err(format!("it is for {} on {}", envelope.to, envelope.hub));
         }
         let (account, purpose) = envelope.standing()?;
-        let me = &self.membership.name;
-        let check = |view: &View| match (envelope.kind, purpose) {
-            (Kind::Letter, Purpose::Echo) => view.admits_echo(&envelope.from, account, me),
-            _ => view.admits(&envelope.from, account, me, purpose),
-        };
-        if check(&self.view()).is_err() {
-            if let Err(error) = self.refresh().await {
-                self.node.log(format!("asking the hub for the view: {error}"));
+        // A name this machine or the sender had before the hub renamed it
+        // names it all the same, as in a letter kept since; the sender is
+        // known by its name now.
+        let check = |view: &View| -> Result<MachineName, String> {
+            if !view.is_me(&envelope.to) {
+                return Err(format!("it is for {} on {}", envelope.to, envelope.hub));
             }
-            check(&self.view())?;
-        }
-        Ok(Caller { machine: envelope.from.clone(), account: account.clone() })
+            match (envelope.kind, purpose) {
+                (Kind::Letter, Purpose::Echo) => view.admits_echo(&envelope.from, account, &view.me),
+                _ => view.admits(&envelope.from, account, &view.me, purpose),
+            }?;
+            Ok(view.canonical(&envelope.from).clone())
+        };
+        let from = match check(&self.view()) {
+            Ok(from) => from,
+            Err(_) => {
+                if let Err(error) = self.refresh().await {
+                    self.node.log(format!("asking the hub for the view: {error}"));
+                }
+                check(&self.view())?
+            }
+        };
+        Ok(Caller { machine: from, account: account.clone() })
     }
 
     async fn ask(&self, question: Question) -> Result<Told, String> {

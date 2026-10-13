@@ -53,7 +53,7 @@ pub async fn tell(
     notice: Notice,
     owed: Owed,
 ) -> Result<Landed, Failure> {
-    if to.machine == node.machine() {
+    if node.is_me(&to.machine) {
         let delivery = Delivery { id, at: Timestamp::now(), notice };
         if crate::on_delivery::park(node, &to.resident, &delivery)
             .map_err(|error| Failure::new(format!("keeping the on completion: {error}")))?
@@ -66,7 +66,7 @@ pub async fn tell(
         // Words a resident said make it owed the turn they go into, which
         // the receiving machine knows from who sent them.
         Notice::Words { from: Speaker::Resident { address }, text }
-            if address.machine == node.machine() && matches!(owed, Owed::Speaker(_)) =>
+            if node.is_me(&address.machine) && matches!(owed, Owed::Speaker(_)) =>
         {
             Letter::Speak { to: to.resident.clone(), from: address.resident, text, accounts: Vec::new() }
         }

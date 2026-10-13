@@ -73,7 +73,7 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
         },
         Err(reason) => {
             inner.node.log(format!("refused a call from {}: {reason}", caller.machine));
-            Err(Failure::new(format!("{} refused the call: {reason}", inner.membership.name)))
+            Err(Failure::new(format!("{} refused the call: {reason}", inner.me())))
         }
     };
     if registered.as_ref().is_some_and(|registered| !registered.wanted()) {
@@ -111,7 +111,7 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
             return;
         }
     };
-    let ticket = Ticket { stream, source: inner.membership.name.clone(), sink: caller.machine.clone() };
+    let ticket = Ticket { stream, source: inner.me(), sink: caller.machine.clone() };
     let carried = Carried { stream, bytes: bytes.len() as u64, sha256: crate::sign::Digest(sha256(&bytes)) };
     let large = answer_envelope(&inner, &message, Kind::Answer, Some(ticket), &Body::LargeAnswer { carried });
     if let Err(error) = send(&replier, large).await {
@@ -142,8 +142,8 @@ fn answer_envelope(
     body: &impl serde::Serialize,
 ) -> Envelope {
     Envelope {
-        hub: inner.membership.id.clone(),
-        from: inner.membership.name.clone(),
+        hub: inner.hub.clone(),
+        from: inner.me(),
         to: call.from.clone(),
         n: 0,
         kind,
@@ -179,7 +179,7 @@ async fn open_call(
     let body: Body = call.body()?;
     let from_the_caller = || -> Result<u64, String> {
         let ticket = call.stream.as_ref().ok_or("it names no data connection")?;
-        if ticket.source != call.from || ticket.sink != inner.membership.name {
+        if ticket.source != call.from || !inner.view().is_me(&ticket.sink) {
             return Err(format!("its data connection is for {} to {}", ticket.source, ticket.sink));
         }
         Ok(ticket.stream)

@@ -81,15 +81,20 @@ impl Inner {
         call: RemoteCall,
         mut feed: Option<Feed>,
     ) -> Result<RemoteResult, CallFailure> {
-        if *to == self.membership.name {
+        // What a name the machine had before it was renamed names is called
+        // by its name now.
+        let view = self.view();
+        if view.is_me(to) {
             return Err(CallFailure::Unreachable { name: to.clone(), reason: "it is this machine".to_string() });
         }
+        let to = &view.canonical(to).clone();
+        drop(view);
         // A phone links directly with a machine only while it has calls to
         // it; the first goes through the hub while the link comes up.
         let _demand = self.demand(to);
         let via = match self.direct_link_for(to, account, &call) {
             Some(conn) => {
-                if let Some(resident) = crate::message::worked_for(&self.membership.name, &call) {
+                if let Some(resident) = crate::message::worked_for(&self.me(), &call) {
                     self.direct.note_worked(Worked { to: to.clone(), account: account.clone(), purpose, resident });
                     if self.connection().is_some() && self.view().direct_links {
                         let inner = self.clone();
@@ -108,11 +113,11 @@ impl Inner {
             let stream = crate::sign::random::<8>().map(u64::from_le_bytes).map_err(|error| {
                 CallFailure::Unreachable { name: to.clone(), reason: format!("choosing a data connection: {error}") }
             })?;
-            Ok(Ticket { stream, source: self.membership.name.clone(), sink: to.clone() })
+            Ok(Ticket { stream, source: self.me(), sink: to.clone() })
         };
         let envelope = |body: &Body, stream: Option<Ticket>| Envelope {
-            hub: self.membership.id.clone(),
-            from: self.membership.name.clone(),
+            hub: self.hub.clone(),
+            from: self.me(),
             to: to.clone(),
             n,
             kind: Kind::Call,
@@ -291,10 +296,11 @@ impl Inner {
 
     /// The envelope answering this machine's call `n` to `to`, if it is one.
     fn check_answer(&self, to: &MachineName, n: u64, envelope: Envelope) -> Result<Envelope, String> {
-        if envelope.to != self.membership.name || envelope.hub != self.membership.id {
+        let view = self.view();
+        if !view.is_me(&envelope.to) || envelope.hub != self.hub {
             return Err(format!("the answer is for {} on {}", envelope.to, envelope.hub));
         }
-        if envelope.from != *to {
+        if !view.same(&envelope.from, to) {
             return Err(format!("the answer is from {}, not {to}", envelope.from));
         }
         if !envelope.kind.is_answer() || envelope.re != Some(n) {
@@ -313,7 +319,8 @@ impl Inner {
         carried: &Carried,
     ) -> Result<RemoteResult, String> {
         let ticket = answer.stream.as_ref().ok_or("the answer names no data connection")?;
-        if ticket.source != *to || ticket.sink != self.membership.name || ticket.stream != carried.stream {
+        let view = self.view();
+        if !view.same(&ticket.source, to) || !view.is_me(&ticket.sink) || ticket.stream != carried.stream {
             return Err(format!("its data connection is for {} to {}", ticket.source, ticket.sink));
         }
         let bytes = crate::data::sink(&via.endpoint(self), &self.key, carried).await?;
@@ -374,8 +381,8 @@ impl Inner {
         letter: Letter,
     ) -> Envelope {
         Envelope {
-            hub: self.membership.id.clone(),
-            from: self.membership.name.clone(),
+            hub: self.hub.clone(),
+            from: self.me(),
             to: to.clone(),
             n,
             kind: Kind::Letter,

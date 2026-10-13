@@ -158,7 +158,7 @@ pub(crate) async fn item_detail(
         None if node.residents.about(&resident).is_some() => node.machine(),
         None => crate::colleagues::find_for(node, &fastctx_types::access::Acting::Here, &resident).await?,
     };
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         let detail = item_detail_here(node, &resident, turn.as_deref(), &item).await?;
         return Ok((Address { machine, resident }, detail));
     }

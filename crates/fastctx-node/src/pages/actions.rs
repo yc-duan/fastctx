@@ -33,7 +33,7 @@ pub async fn relay(
         PageInvocation::Say { to, .. } => to.machine.clone(),
         PageInvocation::Journal { .. } => node.machine(),
     };
-    if target == node.machine() {
+    if node.is_me(&target) {
         return execute(node, source, action).await;
     }
     // The remote request is issued only after this node's gate, signed as
@@ -95,7 +95,7 @@ fn consenter_may(node: &Node, by: &MachineName, action: &PageInvocation, town: &
         .ok_or_else(|| Failure::new(format!("there is no project {town} on {}", node.machine())))?;
     // A project kept on no hub is this computer's own, consented to here.
     let Some(link) = node.link_of(&place.hub) else {
-        return if *by == node.machine() {
+        return if node.is_me(by) {
             Ok(())
         } else {
             Err(Failure::new(format!("the consent was written by {by}, and {town} is kept on this computer alone")))
@@ -138,7 +138,7 @@ pub async fn answer(node: &Arc<Node>, source: PageSource, action: PageInvocation
 async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -> Result<PageResult, Failure> {
     match action {
         PageInvocation::Run { machine, script } => {
-            if machine != node.machine() {
+            if !node.is_me(&machine) {
                 return Err(Failure::new(format!("this command is for {machine}, not {}", node.machine())));
             }
             let town = Some(source.town.clone());
@@ -149,7 +149,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             Ok(PageResult::Run(reply))
         }
         PageInvocation::Say { to, text } => {
-            if to.machine != node.machine() {
+            if !node.is_me(&to.machine) {
                 return Err(Failure::new("the page's recipient lives on another machine"));
             }
             resident(node, &source.town, &to).await?;
@@ -186,7 +186,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
 }
 
 pub(super) async fn resident(node: &Arc<Node>, town: &TownName, to: &Address) -> Result<(), Failure> {
-    let lives = if to.machine == node.machine() {
+    let lives = if node.is_me(&to.machine) {
         node.residents.active(&to.resident)?;
         node.residents.town_of(&to.resident).flatten().as_ref() == Some(town)
     } else {

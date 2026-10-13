@@ -9,7 +9,7 @@
 
 use std::net::SocketAddr;
 
-use super::{Inner, Membership, state};
+use super::Inner;
 use crate::dial::Upstream;
 use crate::directory::View;
 
@@ -35,8 +35,7 @@ impl Inner {
             }
             std::mem::replace(&mut *held, view.hub_addresses.clone())
         };
-        let membership = Membership { addresses: view.hub_addresses.clone(), ..self.membership.clone() };
-        match state::write(&self.dir.membership(), &membership) {
+        match self.keep_membership(|kept| kept.addresses = view.hub_addresses.clone()) {
             Ok(()) => self.node.log(format!(
                 "the hub is reached at {} now, no longer at {}",
                 list(&view.hub_addresses),
@@ -68,8 +67,7 @@ impl super::Link {
     pub fn reach_hub_at(&self, addresses: Vec<SocketAddr>) {
         let inner = &self.inner;
         let before = std::mem::replace(&mut *inner.addresses.lock().expect("never poisoned"), addresses.clone());
-        let membership = Membership { addresses: addresses.clone(), ..inner.membership.clone() };
-        match state::write(&inner.dir.membership(), &membership) {
+        match inner.keep_membership(|kept| kept.addresses = addresses.clone()) {
             Ok(()) => inner.node.log(format!(
                 "the hub is reached at {} now, no longer at {}",
                 list(&addresses),

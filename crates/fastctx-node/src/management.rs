@@ -22,7 +22,7 @@ pub async fn manage(
         None if node.residents.about(&resident).is_some() => node.machine(),
         None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
-    let managed = if machine == node.machine() {
+    let managed = if node.is_me(&machine) {
         here(node, &resident, action).await?
     } else {
         let call = RemoteCall::Manage { resident: resident.clone(), action };
@@ -298,7 +298,12 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             let changed = match node.residents.set_focus(&node.world, id, focus.clone()) {
                 Ok(changed) => changed,
                 Err(error) => {
-                    step(&mut result, "records", Outcome::Failed, format!("Saving its machines and folders failed: {error}"));
+                    step(
+                        &mut result,
+                        "records",
+                        Outcome::Failed,
+                        format!("Saving its machines and folders failed: {error}"),
+                    );
                     return Ok(result);
                 }
             };
@@ -306,7 +311,8 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 &mut result,
                 "records",
                 Outcome::Done,
-                if changed { "Machines and folders changed." } else { "These are already its machines and folders." }.into(),
+                if changed { "Machines and folders changed." } else { "These are already its machines and folders." }
+                    .into(),
             );
             if changed {
                 match crate::focus::changed(node, id, &about, &focus).await {

@@ -40,6 +40,9 @@ pub use records::{
 
 pub struct Residents {
     state: Mutex<State>,
+    /// This machine's name now, which every resident living here is told as
+    /// living on, whatever the machine was called when it was born.
+    here: std::sync::RwLock<Option<fastctx_types::MachineName>>,
     speaking: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
     paying: crate::leases::Registry<ResidentId, tokio::sync::Mutex<()>>,
     management: crate::leases::Registry<ResidentId, tokio::sync::RwLock<()>>,
@@ -262,6 +265,7 @@ impl Residents {
         Ok((
             Self {
                 state: Mutex::new(state),
+                here: Default::default(),
                 speaking: Default::default(),
                 paying: Default::default(),
                 management: Default::default(),
@@ -550,7 +554,21 @@ impl Residents {
     }
 
     pub fn about(&self, id: &ResidentId) -> Option<(About, Option<TownName>)> {
-        self.lock().live.get(id).map(|live| (live.about.clone(), live.town()))
+        self.lock().live.get(id).map(|live| (self.placed(live.about.clone()), live.town()))
+    }
+
+    /// This machine is called `name` now (`world-network.md`, 机器的名字).
+    pub fn set_here(&self, name: fastctx_types::MachineName) {
+        *self.here.write().expect("never poisoned") = Some(name);
+    }
+
+    /// `about` of a resident living here, on this machine as it is called
+    /// now.
+    fn placed(&self, mut about: About) -> About {
+        if let Some(here) = &*self.here.read().expect("never poisoned") {
+            about.machine = here.clone();
+        }
+        about
     }
 
     pub fn now(&self, id: &ResidentId) -> Option<Now> {
@@ -587,7 +605,7 @@ impl Residents {
             removed: live.removed,
             town: live.town(),
             here: here(live),
-            about: live.about.clone(),
+            about: self.placed(live.about.clone()),
             now: live.now.clone(),
         })
     }

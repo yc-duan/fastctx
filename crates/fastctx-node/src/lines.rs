@@ -88,7 +88,7 @@ pub(crate) async fn open(
     path: String,
     decoding: Decoding,
 ) -> std::result::Result<(Reply, Lease), Failure> {
-    if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
+    if let Some(machine) = machine.filter(|machine| !node.is_me(machine)) {
         let (link, account) = node.speaking(&Acting::Here, &(&machine).into(), Purpose::Hands).map_err(failed)?;
         let (reply, lease) = fastctx_net::lines::open(link, machine, account, path, decoding).await?;
         return Ok((reply, Lease::Remote(lease)));
@@ -120,7 +120,7 @@ pub(crate) async fn open(
             if path != expected && record.stderr.as_ref().is_none_or(|stderr| std::path::Path::new(stderr) != path) {
                 return Err(failed("the path is not this job's output"));
             }
-            let job_record = node.world.job_owner(&node.machine(), &record.owner).job_record(&record.id);
+            let job_record = node.world.job_owner(&node.names(), &record.owner).job_record(&record.id);
             let notes_record = (path == expected).then(|| job_record.clone());
             (Some(job_record), notes_record)
         }
@@ -314,7 +314,7 @@ pub(crate) async fn call(
     machine: Option<MachineName>,
     request: Request,
 ) -> std::result::Result<Reply, Failure> {
-    if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
+    if let Some(machine) = machine.filter(|machine| !node.is_me(machine)) {
         return match node
             .call_with_stream(
                 &Acting::Here,

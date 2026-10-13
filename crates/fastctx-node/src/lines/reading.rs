@@ -88,7 +88,7 @@ fn start(
         tokio::select! {
             () = sender.closed() => {},
             result = async {
-                if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
+                if let Some(machine) = machine.filter(|machine| !node.is_me(machine)) {
                     let (link, account) = node.speaking(&Acting::Here, &(&machine).into(), Purpose::Hands).map_err(failed)?;
                     fastctx_net::lines_read::read(&link, machine, account, fastctx_types::lines::ReadRequest { source, start, count }, &sender, only_notes).await
                 } else {

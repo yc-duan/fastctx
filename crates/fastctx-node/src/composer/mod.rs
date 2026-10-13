@@ -62,7 +62,7 @@ pub async fn request(
         None if node.residents.about(&resident).is_some() => node.machine(),
         None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         return here(node, &node.machine(), &resident, request).await;
     }
     let call = RemoteCall::Composer { resident, request };

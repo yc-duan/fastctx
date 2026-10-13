@@ -55,6 +55,24 @@
   grid-column: 1 / -1;
 }
 
+/* This computer's name: the way to its page, then renaming it; the field
+   takes the row while it is renamed. */
+.settings-name-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-2);
+}
+
+.settings-name-value .quiet-button {
+  height: 24px;
+  padding: 0 var(--space-2);
+}
+
+.settings-name + .facts {
+  margin-top: var(--space-2);
+}
+
 .machine-jobs {
   margin: var(--space-1) 0 0;
   padding-left: calc(8px + 2px + var(--space-2));

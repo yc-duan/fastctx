@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use fastctx_file_search::Search;
 use fastctx_types::MachineName;
-use fastctx_types::file_search::{FileSearchReply, FileSearchRequest, FileSearchResult, FileSearchScope};
 use fastctx_types::access::{Acting, Purpose};
+use fastctx_types::file_search::{FileSearchReply, FileSearchRequest, FileSearchResult, FileSearchScope};
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 
@@ -71,7 +71,7 @@ pub(crate) async fn open(
     machine: Option<MachineName>,
     scope: FileSearchScope,
 ) -> Result<(FileSearchReply, Lease), Failure> {
-    if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
+    if let Some(machine) = machine.filter(|machine| !node.is_me(machine)) {
         let (link, account) = node
             .speaking(acting, &(&machine).into(), Purpose::Hands)
             .map_err(|failure| Failure::new(failure.to_string()))?;
@@ -209,11 +209,10 @@ async fn roots(node: &Arc<Node>, scope: &FileSearchScope) -> Result<Vec<String>,
                 .map_err(failed)?
                 .map_err(failed)?
                 .ok_or_else(|| Failure::new("the resident's project has no local address book"))?;
-            let here = node.machine();
             Ok(record
                 .places
                 .into_iter()
-                .filter(|place| place.location.machine == here)
+                .filter(|place| node.is_me(&place.location.machine))
                 .map(|place| place.location.path)
                 .collect())
         }

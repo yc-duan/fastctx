@@ -92,7 +92,7 @@ pub async fn upload(
         },
         None => node.machine(),
     };
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         let (mut arriving, mut guard) =
             match arrival(node, &node.machine(), target, file, composer.as_ref(), true).await? {
                 Arrival::Ended(uploaded) => return Ok(uploaded),
@@ -591,7 +591,7 @@ fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Res
     if attachment.owner.resident != *resident {
         return Err(unknown());
     }
-    let placed = attachment.owner.machine != node.machine();
+    let placed = !node.is_me(&attachment.owner.machine);
     // A work copy can occupy id-2 after an earlier copy changed. The path
     // supplies only a slot hint under this resident; stored equality below
     // still authenticates the whole receipt before any bytes are opened.
@@ -934,7 +934,7 @@ pub async fn opening(
         return Ok((node.residents.new_id(agent)?, Opening { lock: None, directory: None }));
     };
     let id = first.owner.resident.clone();
-    if first.owner.machine != node.machine() || first.town.as_ref() != town {
+    if !node.is_me(&first.owner.machine) || first.town.as_ref() != town {
         return Err(failure("the upload draft belongs to another machine or town"));
     }
     let directory = node.world.conversation(&id);

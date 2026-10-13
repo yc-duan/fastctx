@@ -35,7 +35,7 @@ impl PendingStop {
 /// sends them.
 fn pending_path(node: &Node, owner: &Address, machine: &MachineName, request: &str) -> PathBuf {
     let id = crate::speech::fixed_id("stop", &[owner.machine.key(), owner.resident.as_str(), machine.key(), request]);
-    node.world.owner(&node.machine(), owner).book("on-stops").join(format!("{id}.json"))
+    node.world.owner(&node.names(), owner).book("on-stops").join(format!("{id}.json"))
 }
 
 /// The pending stop itself retains suppression if the separate receipt
@@ -235,7 +235,7 @@ async fn resume_pending_stops(node: &Arc<Node>) -> std::io::Result<()> {
 /// end is owed to the resident.
 pub(crate) async fn serve(node: &Arc<Node>, origin: OnOrigin, job: Option<JobId>) -> Result<RemoteReply, Failure> {
     let owner = JobOwner::Resident(origin.resident.clone());
-    let directory = node.world.job_owner(&node.machine(), &owner);
+    let directory = node.world.job_owner(&node.names(), &owner);
     if let Some(request) = &origin.request {
         fastctx_platform::ensure_private_dir(&directory.jobs())
             .and_then(|()| {

@@ -1268,12 +1268,13 @@
 }
 
 /* A machine's direct links in its details: the ones up, then those down
-   with why, quieter; where others connect to it, under them. */
+   with why, quieter; where others connect to it, under them. Its label
+   keeps its own column, the list wraps in the next. */
 .panel-direct {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
-  gap: 6px var(--space-2);
+  gap: 4px var(--space-2);
   margin: var(--space-3) 0 0;
   font-size: var(--size-ui);
 }
@@ -1293,7 +1294,7 @@
 }
 
 .panel-direct-at {
-  flex-basis: 100%;
+  grid-column: 2;
   margin: 0;
   font-size: var(--size-small);
   color: var(--text-3);

@@ -56,6 +56,10 @@ impl Link {
             }
             AccountChange::Direct { machine, at } => Change::Direct { machine, at },
             AccountChange::Remove { name, reason } => Change::Remove { name, reason },
+            AccountChange::Rename { .. } if !self.view().renames => {
+                return Err(format!("the hub {} runs an older fastctx that renames no machine", self.hub_name()));
+            }
+            AccountChange::Rename { machine, to } => Change::Rename { machine, to },
             AccountChange::Logout => Change::Logout,
             AccountChange::Token { register, name, kind, expires } => Change::Token { register, name, kind, expires },
             AccountChange::SetPassword { target, password } => {
@@ -139,6 +143,8 @@ impl Link {
             name: view.hub_name.clone(),
             addresses: self.hub_addresses(),
             link: self.state(),
+            me: Some(view.me.clone()),
+            renames: view.renames,
             logins: me.map(|me| me.logins.iter().cloned().collect()).unwrap_or_default(),
             home: me.and_then(|me| me.home.clone()),
             self_registration: view.self_registration,
@@ -157,6 +163,7 @@ impl Link {
                 .iter()
                 .map(|member| MemberSeen {
                     name: member.name.clone(),
+                    was: member.was.clone(),
                     kind: member.kind,
                     logins: member.logins.iter().cloned().collect(),
                     home: member.home.clone(),

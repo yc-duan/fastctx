@@ -592,6 +592,17 @@ async fn folders(
     shell.world().folders(machine(machine_name)?, path).await.map_err(|error| error.to_string())
 }
 
+/// How `machine_name` (this computer when absent) is doing, for its details
+/// page; its lines' history only after `after`, when given.
+#[fastctx_gui_command::command]
+async fn machine_stats(
+    shell: tauri::State<'_, Shell>,
+    machine_name: Option<String>,
+    after: Option<jiff::Timestamp>,
+) -> Result<fastctx_types::stats::MachineStats, String> {
+    shell.world().stats(machine(machine_name)?, after).await.map_err(|error| error.to_string())
+}
+
 /// Removes a resident from the World, lets it sleep, wakes it or moves it
 /// to another project, or points it at machines and folders, as the user;
 /// each stage is answered as it went.
@@ -1131,6 +1142,8 @@ pub fn run() {
             claude_consent,
             find_files,
             folders,
+            machine_stats,
+            accounts::rename_here,
             pages::page_read,
             pages::page_history,
             pages::page_consent,

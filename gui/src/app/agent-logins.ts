@@ -31,6 +31,7 @@ import type { Confirm } from "./confirm";
 import { FolderSheet } from "./folder-sheet";
 import { redrawKeepingFocus } from "./focus";
 import { AssistSheet, type Assistance } from "./assist-sheet";
+import { link } from "./places";
 import { detailOf } from "./problem";
 import { machinesOf, owns, ownerOf } from "./reach";
 import type { Page } from "./shell";
@@ -77,6 +78,9 @@ interface Shown {
   /** The account that owns it among this device's, who lets what is on it
    *  assist others and sets plans; null on a machine of another's. */
   owner: AccountLogin | null;
+  /** It has a page of its own: a machine the account may work on, not one
+   *  whose agent only assists. */
+  page: boolean;
 }
 
 const TAB = "agents.tab";
@@ -210,6 +214,7 @@ export class AgentLoginsPage implements Page {
         tag: here ? words.here : owner ? words.yours : sharer ? words.sharedBy(sharer) : null,
         heard: heard.kind === "answered" ? { kind: "answered", logins: heard.logins } : { kind: "away", said: heard.kind === "offline" ? words.offline : words.noAnswer },
         owner,
+        page: here || !!machine,
       };
     });
     const first = this.options.machine;
@@ -242,7 +247,8 @@ export class AgentLoginsPage implements Page {
 
   private machine(machine: Shown, world: WorldNow | null, now: Date): string {
     const { words } = this.options;
-    const head = `<header class="logins-machine-head">${glyph(machine.here ? "desktop" : "server", 18)}<h2>${escape(machine.name)}</h2>${machine.tag ? `<span class="tag">${escape(machine.tag)}</span>` : ""}`;
+    const name = machine.page ? `<a class="logins-machine-link" href="${link({ kind: "machine", name: machine.name })}">${escape(machine.name)}</a>` : escape(machine.name);
+    const head = `<header class="logins-machine-head">${glyph(machine.here ? "desktop" : "server", 18)}<h2>${name}</h2>${machine.tag ? `<span class="tag">${escape(machine.tag)}</span>` : ""}`;
     if (machine.heard.kind === "away") return `<section class="logins-machine">${head}<span class="logins-away">${escape(machine.heard.said)}</span></header></section>`;
     const record = machine.heard.logins;
     const agent = record[this.agent];

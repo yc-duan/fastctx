@@ -54,7 +54,7 @@ pub(crate) async fn folders(
     path: Option<String>,
 ) -> Result<Folders, Failure> {
     let here = node.machine();
-    let Some(target) = machine.filter(|machine| *machine != here) else {
+    let Some(target) = machine.filter(|machine| !node.is_me(machine)) else {
         return folders_here(here, path).await;
     };
     match node

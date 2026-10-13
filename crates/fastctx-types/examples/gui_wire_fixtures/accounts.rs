@@ -34,6 +34,8 @@ fn hub() -> HubAccounts {
         name: "home".parse().unwrap(),
         addresses: vec!["203.0.113.10:7443".parse().unwrap()],
         link: online(),
+        me: Some("desktop".parse().unwrap()),
+        renames: true,
         logins: vec!["ada".parse().unwrap()],
         home: Some("ada".parse().unwrap()),
         self_registration: true,
@@ -44,6 +46,7 @@ fn hub() -> HubAccounts {
         members: vec![
             MemberSeen {
                 name: "desktop".parse().unwrap(),
+                was: vec![],
                 kind: MemberKind::Computer,
                 logins: vec!["ada".parse().unwrap()],
                 home: Some("ada".parse().unwrap()),
@@ -70,6 +73,7 @@ fn hub() -> HubAccounts {
             },
             MemberSeen {
                 name: "server".parse().unwrap(),
+                was: vec!["izbp1abc0x2y3z".parse().unwrap()],
                 kind: MemberKind::Computer,
                 logins: vec!["ada".parse().unwrap()],
                 home: Some("ada".parse().unwrap()),
@@ -93,6 +97,7 @@ fn hub() -> HubAccounts {
             },
             MemberSeen {
                 name: "pixel".parse().unwrap(),
+                was: vec![],
                 kind: MemberKind::Phone,
                 logins: vec!["ada".parse().unwrap()],
                 home: None,
@@ -151,8 +156,8 @@ pub fn fixtures() -> Fixtures {
     let account = || "ada".parse().unwrap();
     Fixtures {
         replies: vec![
-            AccountsReply { machine: machine(), hubs: vec![hub()] },
-            AccountsReply { machine: machine(), hubs: vec![] },
+            AccountsReply { machine: machine(), was: vec![], hubs: vec![hub()] },
+            AccountsReply { machine: machine(), was: vec!["desktop-7q2m9x".parse().unwrap()], hubs: vec![] },
         ],
         changes: vec![
             AccountChange::Share { machine: machine(), to: "bo".parse().unwrap(), shared: true },
@@ -183,6 +188,7 @@ pub fn fixtures() -> Fixtures {
             },
             AccountChange::Direct { machine: "server".parse().unwrap(), at: vec![] },
             AccountChange::Remove { name: "pixel".parse().unwrap(), reason: "lost".into() },
+            AccountChange::Rename { machine: "server".parse().unwrap(), to: "台式机".parse().unwrap() },
             AccountChange::Logout,
             AccountChange::Token {
                 register: true,

@@ -117,13 +117,13 @@ pub(crate) fn places(node: &Node, env: &[(OsString, OsString)], home: &Path, cla
 pub async fn query(node: &Arc<Node>, acting: &Acting, machine: Option<MachineName>) -> Result<WorldAgents, Failure> {
     let here = node.machine();
     let mut machines = Vec::new();
-    if machine.as_ref().is_none_or(|machine| *machine == here) {
+    if machine.as_ref().is_none_or(|machine| node.is_me(machine)) {
         machines.push(match self::here(node).await {
             Ok(reply) => MachineAgents::Answered { reply },
             Err(error) => MachineAgents::NoAnswer { machine: here.clone(), reason: error.message },
         });
     }
-    let heard = match machine.filter(|machine| *machine != here) {
+    let heard = match machine.filter(|machine| !node.is_me(machine)) {
         None => {
             crate::around::ask_each(crate::around::reachable(node, acting, Purpose::Look), |_| RemoteCall::Agents).await
         }

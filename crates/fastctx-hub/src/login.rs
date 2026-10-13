@@ -326,6 +326,22 @@ pub(crate) fn taken_by(asked: &MachineName, taken: &MachineName) -> String {
     }
 }
 
+/// Why `asked` cannot be a new name on the hub, if it cannot: another
+/// member than `except` has it, or had it before it was renamed, and it
+/// still names that member.
+pub(crate) fn name_taken(
+    directory: &fastctx_net::directory::Directory,
+    asked: &MachineName,
+    except: Option<&PublicKey>,
+) -> Option<String> {
+    let holder = directory.member(asked).filter(|member| Some(&member.key) != except)?;
+    Some(if holder.name == *asked {
+        taken_by(asked, &holder.name)
+    } else {
+        format!("the name {asked} was {}'s before it was renamed, and still names it", holder.name)
+    })
+}
+
 /// What a device of a release from before names of any language is told
 /// when the hub has such a name.
 pub(crate) const OLDER_RELEASE: &str = "this hub has names beyond lowercase English letters, digits and hyphens, which this release of fastctx cannot read; update fastctx";
@@ -415,12 +431,13 @@ fn join(
                     member.name.clone()
                 }
                 None => {
-                    if let Some(taken) = directory.member(&joining.name) {
-                        return Err(format!("{}; log in under another", taken_by(&joining.name, &taken.name)));
+                    if let Some(taken) = name_taken(directory, &joining.name, None) {
+                        return Err(format!("{taken}; log in under another"));
                     }
                     let home = (register && joining.kind.is_computer()).then(|| account.clone());
                     directory.members.push(Member {
                         name: joining.name.clone(),
+                        was: Vec::new(),
                         key: joining.key,
                         kind: joining.kind,
                         logins: [account.clone()].into(),

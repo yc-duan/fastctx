@@ -31,17 +31,19 @@ pub(crate) struct Reachable {
 /// computer on several of them is asked once, through the first hub where
 /// `acting` may ask it.
 pub(crate) fn reachable(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<Reachable> {
-    let here = node.machine();
     let mut reachable = Vec::new();
     let mut keys = Vec::new();
     for link in node.links() {
         let view = link.view();
         let accounts = node.accounts_on(&link, acting);
-        for machine in view.machines().filter(|machine| machine.name != here) {
+        // This computer as its hub calls it, which a hub that has not
+        // followed a rename yet calls it otherwise.
+        let here = &view.me;
+        for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
             if keys.contains(&machine.key) {
                 continue;
             }
-            if let Some(account) = view.account_for(&accounts, &here, &machine.name, purpose) {
+            if let Some(account) = view.account_for(&accounts, here, &machine.name, purpose) {
                 keys.push(machine.key);
                 reachable.push(Reachable { link: link.clone(), name: machine.name.clone(), account });
             }
@@ -52,7 +54,10 @@ pub(crate) fn reachable(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<R
 
 /// Asks each of `machines` at once, the online ones by the call `call`
 /// makes for each; the others say why they were not asked.
-pub(crate) async fn ask_each(machines: Vec<Reachable>, call: impl Fn(&MachineName) -> RemoteCall) -> Vec<(MachineName, Heard)> {
+pub(crate) async fn ask_each(
+    machines: Vec<Reachable>,
+    call: impl Fn(&MachineName) -> RemoteCall,
+) -> Vec<(MachineName, Heard)> {
     let mut heard = Vec::new();
     let mut asks = Vec::new();
     let mut refreshed: Vec<(Arc<Link>, Result<(), String>)> = Vec::new();
@@ -106,7 +111,7 @@ pub(crate) async fn ask_each(machines: Vec<Reachable>, call: impl Fn(&MachineNam
 /// or this computer's logins for the user and pages.
 pub(crate) fn acting_of(node: &Node, caller: &crate::town::caller::Caller) -> Acting {
     match caller {
-        crate::town::caller::Caller::Resident(address) if address.machine == node.machine() => {
+        crate::town::caller::Caller::Resident(address) if node.is_me(&address.machine) => {
             node.residents.about(&address.resident).map(|(about, _)| about.acting).unwrap_or_default()
         }
         // A resident of another machine runs commands here only in a job
@@ -114,7 +119,7 @@ pub(crate) fn acting_of(node: &Node, caller: &crate::town::caller::Caller) -> Ac
         // never for the ones this computer is logged in to
         // (`world-network.md`, 一个登录，只在登录它的那台电脑上用).
         crate::town::caller::Caller::Resident(address) => {
-            Acting::Accounts { accounts: crate::jobs::running_for(&node.world, &node.machine(), address) }
+            Acting::Accounts { accounts: crate::jobs::running_for(&node.world, &node.names(), address) }
         }
         _ => Acting::Here,
     }

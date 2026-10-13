@@ -154,7 +154,7 @@ impl Inner {
     /// roster no longer gives, as the hub cuts the calls it passes on: the
     /// caller is told, and the call's data connections end.
     pub(crate) fn cut_lapsed(&self, view: &View) {
-        let me = &self.membership.name;
+        let me = &view.me;
         let mut answering = self.direct.answering.lock().expect("never poisoned");
         let lapsed: Vec<(u64, String)> = answering
             .iter()
@@ -230,7 +230,7 @@ async fn dial(inner: &Inner, peer: &MachineName, at: &[SocketAddr]) -> Result<Li
     let hello = Frame::Hello {
         protocol: peer::PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
-        hub: inner.membership.id.clone(),
+        hub: inner.hub.clone(),
         intent: Intent::Link { key: inner.key.public(), proof: inner.key.sign(Domain::Peer, &dialed.binding) },
     };
     peer::send(&mut socket, &hello).await?;

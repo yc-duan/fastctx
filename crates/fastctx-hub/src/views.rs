@@ -65,6 +65,7 @@ pub(crate) fn view_for(
         trial,
         forwarders,
         moving: true,
+        renames: true,
         hub_addresses: crate::moving::addresses_for(store, me),
         hub_moves: crate::moving::requests::told(hub, store, me, whole),
         directory,

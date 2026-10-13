@@ -27,13 +27,13 @@ pub(crate) async fn query(
 ) -> Result<WorldLogins, Failure> {
     let here = node.machine();
     let mut machines = Vec::new();
-    if machine.as_ref().is_none_or(|machine| *machine == here) {
+    if machine.as_ref().is_none_or(|machine| node.is_me(machine)) {
         machines.push(match super::here(node).await {
             Ok(logins) => MachineLoginsHeard::Answered { logins: Box::new(logins) },
             Err(error) => MachineLoginsHeard::NoAnswer { machine: here.clone(), reason: error.message },
         });
     }
-    let heard = match machine.filter(|machine| *machine != here) {
+    let heard = match machine.filter(|machine| !node.is_me(machine)) {
         None => {
             crate::around::ask_each(crate::around::reachable(node, acting, Purpose::Look), |_| RemoteCall::AgentLogins)
                 .await
@@ -134,7 +134,7 @@ pub(crate) async fn scan(
     stop: bool,
     limits: bool,
 ) -> Result<MachineLogins, Failure> {
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         return super::scan::scan(node, stop, limits).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::ScanAgents { stop, limits }).await? {
@@ -150,7 +150,7 @@ pub(crate) async fn add(
     dir: PathBuf,
     limits: bool,
 ) -> Result<MachineLogins, Failure> {
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         return super::take_up(node, agent, dir, limits).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::AddAgentLogin { agent, dir, limits }).await? {
@@ -165,7 +165,7 @@ pub(crate) async fn folder(
     dir: PathBuf,
     change: FolderChange,
 ) -> Result<MachineLogins, Failure> {
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         return super::folders::change(node, dir, change).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::AgentFolder { dir, change }).await? {
@@ -181,7 +181,7 @@ pub(crate) async fn preview(
     dir: PathBuf,
     into: bool,
 ) -> Result<ChangePreview, Failure> {
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         return super::change::preview(node, agent, dir, into).await;
     }
     match ask(node, &machine, Purpose::Hands, RemoteCall::PreviewAgentChange { agent, dir, into }).await? {
@@ -198,7 +198,7 @@ pub(crate) async fn change(
     into: bool,
     raise_output_limit: bool,
 ) -> Result<LoginChange, Failure> {
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         return super::change::change(node, agent, dir, into, raise_output_limit).await;
     }
     let call = RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit };
@@ -214,7 +214,7 @@ pub(crate) async fn read_limits(
     agent: AgentName,
     dir: PathBuf,
 ) -> Result<MachineLogins, Failure> {
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         super::limits::read(node, &agent, &dir).await?;
         return super::here(node).await;
     }

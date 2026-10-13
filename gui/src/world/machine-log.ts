@@ -22,6 +22,7 @@ export type MachineLogAction =
   | { change: "relay_at"; machine: MachineName; addresses: string[] }
   | { change: "direct"; machine: MachineName; at: string[] }
   | { change: "remove"; name: MachineName; reason: string }
+  | { change: "rename"; machine: MachineName; to: MachineName }
   | { change: "logout" }
   | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp }
   | { change: "password_start" | "password_finish"; target: AccountName }

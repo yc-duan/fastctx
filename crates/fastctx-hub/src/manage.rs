@@ -22,9 +22,44 @@ use jiff::Timestamp;
 use crate::store::{Removed, Store, TokenRecord};
 use crate::{Hub, Out};
 
-pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, change: Change) -> Result<Told, String> {
+/// Makes `change` as `account`, asked by the member `asker`. Returns the
+/// answer, and the sessions the change ends, with why: the caller ends them
+/// once the answer is on its way (`end`), so a member that renamed or
+/// removed itself hears that it did.
+pub(crate) fn change(
+    hub: &Hub,
+    asker: &MachineName,
+    account: &AccountName,
+    change: Change,
+) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
     let mut ended = Vec::new();
-    let told = {
+    let renaming = matches!(change, Change::Rename { .. });
+    let told = match made(hub, asker, account, change, &mut ended, renaming) {
+        Ok(told) => told,
+        Err(reason) => return (Err(reason), Vec::new()),
+    };
+    hub.changed();
+    (Ok(told), ended)
+}
+
+/// Ends the sessions a change ended.
+pub(crate) fn end(hub: &Hub, ended: Vec<(MachineName, Refusal)>) {
+    for (name, refusal) in ended {
+        if let Some(session) = hub.sessions().get(&name) {
+            let _ = session.out.send(Out::End(refusal));
+        }
+    }
+}
+
+fn made(
+    hub: &Hub,
+    asker: &MachineName,
+    account: &AccountName,
+    change: Change,
+    ended: &mut Vec<(MachineName, Refusal)>,
+    renaming: bool,
+) -> Result<Told, String> {
+    {
         let mut store = hub.store();
         // An assistance past its deadline is ended first, as the hub's own
         // doing, so no change is made over it: letting that login assist
@@ -54,7 +89,7 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
                 return Err(format!("{asker} is not logged in to the account {account}"));
             }
             let super_ = found.level == Level::Super;
-            let told = apply(hub, &mut store, asker, account, super_, change, &mut ended)?;
+            let told = apply(hub, &mut store, asker, account, super_, change, ended)?;
             store.book.directory.settle_acting();
             crate::machine_log::effects(&mut store, &before.directory, &actor, &action)?;
             let committed = match &told {
@@ -65,7 +100,24 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
             Ok(told)
         })();
         match result {
-            Ok(told) => told,
+            Ok(told) => {
+                // What the hub keeps for a renamed machine moves under its
+                // new name once the directory that says it is kept; a hub
+                // stopped in between moves it when it opens.
+                if renaming {
+                    match store.settle_names() {
+                        Ok(said) => {
+                            for line in said {
+                                hub.log.line(format_args!("{line}"));
+                            }
+                        }
+                        Err(error) => hub.log.line(format_args!(
+                            "moving what is kept for a renamed machine: {error}; it is moved when the hub starts again"
+                        )),
+                    }
+                }
+                Ok(told)
+            }
             Err(reason) => {
                 store.book = before;
                 if store.hub.self_registration != before_hub.self_registration {
@@ -85,17 +137,10 @@ pub(crate) fn change(hub: &Hub, asker: &MachineName, account: &AccountName, chan
                 if expired {
                     hub.changed();
                 }
-                return Err(reason);
+                Err(reason)
             }
         }
-    };
-    for (name, refusal) in ended {
-        if let Some(session) = hub.sessions().get(&name) {
-            let _ = session.out.send(Out::End(refusal));
-        }
     }
-    hub.changed();
-    Ok(told)
 }
 
 fn apply(
@@ -182,6 +227,10 @@ fn apply(
             }
             Ok(Told::Done)
         }
+        Change::Rename { machine, to } => {
+            rename(store, account, super_, &machine, &to, ended)?;
+            Ok(Told::Done)
+        }
         Change::Logout => {
             log_out(store, asker, account, None, "logged out", ended)?;
             Ok(Told::Done)
@@ -191,8 +240,8 @@ fn apply(
                 return Err("the token would have expired already".to_string());
             }
             if let Some(name) = &name {
-                if let Some(taken) = store.book.directory.member(name) {
-                    return Err(crate::login::taken_by(name, &taken.name));
+                if let Some(taken) = crate::login::name_taken(&store.book.directory, name, None) {
+                    return Err(taken);
                 }
                 if let Some(reason) = crate::login::unread(store, name, None) {
                     return Err(reason);
@@ -353,6 +402,44 @@ fn own_machine(
         return Err(format!("{machine} is not one of the account {account}'s machines"));
     }
     Ok(owner)
+}
+
+/// Renames `machine`, one of `account`'s own or, for the super
+/// administrator, any, to `to` (`world-network.md`, 机器的名字). The names it
+/// had keep naming it, so nothing written under one is lost: a letter
+/// waiting, another machine's records, a script. It takes the new name the
+/// next time it connects: a session open now ends, and it connects again at
+/// once; one away takes it when it is back. A machine whose release would
+/// not take a name it did not ask for is not renamed.
+fn rename(
+    store: &mut Store,
+    account: &AccountName,
+    super_: bool,
+    machine: &MachineName,
+    to: &MachineName,
+    ended: &mut Vec<(MachineName, Refusal)>,
+) -> Result<(), String> {
+    let directory = &store.book.directory;
+    own_machine(directory, account, super_, machine)?;
+    let member = directory.member(machine).expect("own_machine found it");
+    if member.name.as_str() == to.as_str() {
+        return Err(format!("{machine} is called {to} already"));
+    }
+    if let Some(taken) = crate::login::name_taken(directory, to, Some(&member.key)) {
+        return Err(taken);
+    }
+    if let Some(reason) = crate::login::unread(store, to, Some(&member.key)) {
+        return Err(reason);
+    }
+    let old = member.name.clone();
+    if !store.letters.get(&old).is_some_and(|letters| letters.renames) {
+        return Err(format!(
+            "{old} has not connected with a release of fastctx that takes a new name; update fastctx there and let it connect first"
+        ));
+    }
+    store.book.directory.rename(&old, to);
+    ended.push((old, Refusal::Renamed { to: to.clone() }));
+    Ok(())
 }
 
 /// Checks `to` is an account other than `owner`, whose machine `machine` is:

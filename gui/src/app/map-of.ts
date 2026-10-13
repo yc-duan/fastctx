@@ -23,6 +23,8 @@ export interface MapWords {
   assistShort(owner: string): string;
   assistantSaid(owner: string): string;
   reachingWhat: string;
+  /** The names a machine had, each still naming it. */
+  formerly(names: string[]): string;
   hubOnline: string;
   hubConnecting: string;
   hubOff: string;
@@ -53,6 +55,9 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
     const reaching = !mine && logins.some((login) => machineActsFor(world, machine.name, login));
     const member = world.accounts.hubs.flatMap((hub) => hub.members).find((one) => one.name === machine.name && one.kind === "computer");
     const direct = member?.direct ?? [];
+    const was = formerNames(world, machine);
+    // Written with its hub where another hub has a computer of its name.
+    const suffix = machine.written.startsWith(machine.name) ? machine.written.slice(machine.name.length) : "";
     const hubLink = machine.here ? world.accounts.hubs.map((hub) => hub.link).find((link) => link.kind === "online") : undefined;
     nodes.push({
       key: `m:${machine.written}`,
@@ -64,7 +69,8 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
       hold: mine ? "mine" : "others",
       reaching,
       marks: marks(machine.name),
-      title: [machine.written, owner ? words.ownedBy(owner) : "", reaching ? words.reachingWhat : "", direct.length ? words.takesDirect : ""].filter(Boolean).join(" · "),
+      title: [machine.written, owner ? words.ownedBy(owner) : "", reaching ? words.reachingWhat : "", direct.length ? words.takesDirect : "", was.length ? words.formerly(was) : ""].filter(Boolean).join(" · "),
+      ...(was.length ? { was: was.map((name) => `m:${name}${suffix}`) } : {}),
       directAt: direct,
       through: machine.through ?? null,
       hubMs: (hubLink?.kind === "online" ? hubLink.ms : member?.paths?.hub_ms) ?? undefined,
@@ -90,6 +96,18 @@ export function mapOf(world: WorldNow, words: MapWords): MapNow {
     });
   }
   return { hubs, nodes, hubLabels, links: linksOf(world, nodes) };
+}
+
+/** The names a machine had, as the hubs it is on and, for this computer,
+ *  its node remember them. */
+export function formerNames(world: WorldNow, machine: { name: string; here: boolean; on: { hub: string }[] }): string[] {
+  const was = new Set<string>(machine.here ? (world.accounts.was ?? []) : []);
+  for (const hub of world.accounts.hubs) {
+    if (!machine.on.some((on) => on.hub === hub.hub)) continue;
+    for (const member of hub.members) if (member.name === machine.name) for (const name of member.was ?? []) was.add(name);
+  }
+  was.delete(machine.name);
+  return [...was];
 }
 
 /** The direct links between machines on the drawing, each pair once: up

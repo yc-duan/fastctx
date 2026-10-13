@@ -45,7 +45,7 @@ impl Jobs {
     ) -> Result<(), Failure> {
         // With nobody waiting there is nobody to wake.
         let _ = self.changes.send(job.clone());
-        let path = node.world.job_record(&node.machine(), town.as_ref(), &owner, &job);
+        let path = node.world.job_record(&node.names(), town.as_ref(), &owner, &job);
         let record = read(&path).await.inspect_err(|_| {
             crate::inbox::retry_job(node, &path);
         })?;
@@ -84,7 +84,7 @@ impl Jobs {
     ) -> Result<run::Launched, Failure> {
         let _operation = node.data_operations.read().await;
         if let Some(address) = owner.resident()
-            && address.machine == node.machine()
+            && node.is_me(&address.machine)
         {
             node.residents.active(&address.resident)?;
         }
@@ -268,7 +268,7 @@ impl Jobs {
 /// 输出). Only `owner`'s own finished jobs go, never one owed word of its
 /// end or sent here by another machine's `on`.
 pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_types::Address, job: JobId) {
-    let path = node.world.job_record(&node.machine(), town.as_ref(), &owner.clone().into(), &job);
+    let path = node.world.job_record(&node.names(), town.as_ref(), &owner.clone().into(), &job);
     let checked = {
         let path = path.clone();
         tokio::task::spawn_blocking(move || -> std::io::Result<Option<JobRecord>> {
@@ -493,16 +493,16 @@ async fn supervisor_gone(record: &JobRecord, launched: &run::Launched) -> bool {
 /// `None` when there are none but `answering`, the job this answer is about.
 pub fn still_running(
     world: &WorldDir,
-    here: &fastctx_types::MachineName,
+    here: &fastctx_types::layout::Names,
     resident: &fastctx_types::ResidentId,
     answering: Option<&JobId>,
     elsewhere: Vec<(String, Timestamp, String)>,
 ) -> std::io::Result<Option<String>> {
     let owner = fastctx_types::run::JobOwner::Resident(fastctx_types::Address {
-        machine: here.clone(),
+        machine: here.me.clone(),
         resident: resident.clone(),
     });
-    let address = fastctx_types::Address { machine: here.clone(), resident: resident.clone() };
+    let address = fastctx_types::Address { machine: here.me.clone(), resident: resident.clone() };
     let mut running = Vec::new();
     for jobs in world.job_directories(here, &address)? {
         for owed in read_dir(&jobs)? {
@@ -541,7 +541,7 @@ pub fn still_running(
 /// where it works.
 pub(crate) fn running_for(
     world: &WorldDir,
-    here: &fastctx_types::MachineName,
+    here: &fastctx_types::layout::Names,
     owner: &fastctx_types::Address,
 ) -> Vec<fastctx_types::access::HubAccount> {
     let directories = world.job_directories(here, owner).unwrap_or_default();

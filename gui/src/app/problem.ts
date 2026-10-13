@@ -8,8 +8,13 @@ export interface ProblemWords {
   locked: string;
   unreachable: string;
   nameTaken: string;
+  /** A name another machine had before it was renamed, which still names
+   *  that one. */
+  formerName: string;
   /** Devices on the server that cannot read the name yet. */
   olderDevices: string;
+  /** A machine, or the hub, whose fastctx does not rename yet. */
+  renameOlder: string;
   accountTaken: string;
   noSelfRegistration: string;
   codeUsed: string;
@@ -35,7 +40,9 @@ export const zhProblems: ProblemWords = {
   locked: "该账号已被锁定，请联系管理员",
   unreachable: "无法连接中枢服务器，请检查地址和网络",
   nameTaken: "这个名称已被使用",
+  formerName: "这是另一台机器的曾用名，仍指向它",
   olderDevices: "网络里还有设备在用旧版本，读不了这个名字",
+  renameOlder: "Fastctx 版本较旧，更新后才能改名",
   accountTaken: "这个账号已存在",
   noSelfRegistration: "这台中枢服务器不开放注册，请联系管理员",
   codeUsed: "二维码已使用过",
@@ -56,7 +63,9 @@ export const enProblems: ProblemWords = {
   locked: "This account is locked. Contact the administrator",
   unreachable: "Can't reach the hub. Check the address and network",
   nameTaken: "That name is already in use",
+  formerName: "Another machine had that name and it still points there",
   olderDevices: "Some devices in this network run an older version that can't read this name",
+  renameOlder: "Its Fastctx is older; update it to rename",
   accountTaken: "That account already exists",
   noSelfRegistration: "This hub doesn't allow sign-up. Contact the administrator",
   codeUsed: "This code has already been used",
@@ -76,6 +85,9 @@ const KNOWN: [RegExp, keyof ProblemWords][] = [
   [/too many wrong passwords/i, "tooManyTries"],
   [/is locked/i, "locked"],
   [/the name .* is taken/i, "nameTaken"],
+  [/before it was renamed, and still names it/i, "formerName"],
+  [/release of fastctx that takes a new name|older fastctx that renames no machine/i, "renameOlder"],
+  [/is not one of the account .* machines/i, "notAllowed"],
   [/release of fastctx that cannot read such a name/i, "olderDevices"],
   [/account .* exists already/i, "accountTaken"],
   [/opens accounts only through/i, "noSelfRegistration"],

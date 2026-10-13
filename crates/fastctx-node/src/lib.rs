@@ -17,6 +17,7 @@ mod agent_activity;
 mod agents;
 mod around;
 mod asked;
+mod assists;
 mod attach;
 mod attachment_files;
 mod attachments;
@@ -58,7 +59,6 @@ mod ledger;
 mod letters;
 mod lifetime;
 mod lines;
-mod assists;
 mod log;
 mod login_identity;
 mod logins;
@@ -86,6 +86,7 @@ mod session_options;
 mod session_record;
 mod since;
 mod speech;
+mod stats;
 mod stop;
 mod talk;
 pub mod thumbnail;
@@ -126,9 +127,10 @@ pub(crate) struct Node {
     /// This program's own copy under the World, which everything the node
     /// starts from itself runs from (`own.rs`).
     fastctx: PathBuf,
-    /// This machine's name, the same on every hub; it changes only when a
-    /// computer on no hub logs in under another.
-    machine: RwLock<MachineName>,
+    /// This machine's name, the same on every hub, and the names it had: it
+    /// changes when a computer on no hub logs in under another, and when a
+    /// hub renames it (`world::follow_rename`).
+    machine: RwLock<machine::MachineFile>,
     jobs: jobs::Jobs,
     job_watches: job_watch::Watches,
     disk: std::sync::Mutex<()>,
@@ -204,6 +206,8 @@ pub(crate) struct Node {
     renewal: renewal::Startup,
     supervised: bool,
     lifetime: fastctx_types::node_lifetime::NodeLifetime,
+    /// When this node started.
+    started: jiff::Timestamp,
 }
 
 impl Node {
@@ -225,11 +229,42 @@ impl Node {
     }
 
     pub(crate) fn machine(&self) -> MachineName {
+        self.machine.read().expect("never poisoned").name.clone()
+    }
+
+    /// Whether `machine` names this computer: its name now, or one it had.
+    /// What was written under a name it had, a conversation's records, a
+    /// job's, a letter, is this computer's all the same.
+    pub(crate) fn is_me(&self, machine: &MachineName) -> bool {
+        self.machine.read().expect("never poisoned").is(machine)
+    }
+
+    /// Takes the name and the names it had that `machine.json` keeps now.
+    pub(crate) fn set_names(&self, names: machine::MachineFile) {
+        self.residents.set_here(names.name.clone());
+        *self.machine.write().expect("never poisoned") = names;
+    }
+
+    /// This computer's name and the names it had.
+    pub(crate) fn machine_names(&self) -> machine::MachineFile {
         self.machine.read().expect("never poisoned").clone()
     }
 
-    pub(crate) fn set_machine(&self, name: MachineName) {
-        *self.machine.write().expect("never poisoned") = name;
+    /// The names machines answer to, as this computer knows them: its own,
+    /// and the names the machines on its hubs had (`world-network.md`, 机器的
+    /// 名字).
+    pub(crate) fn names(&self) -> fastctx_types::layout::Names {
+        let own = self.machine.read().expect("never poisoned").clone();
+        let mut renamed: Vec<Vec<MachineName>> = Vec::new();
+        for link in self.links() {
+            for member in link.view().members.iter().filter(|member| !member.was.is_empty()) {
+                if own.is(&member.name) || renamed.iter().any(|names| names.contains(&member.name)) {
+                    continue;
+                }
+                renamed.push(std::iter::once(member.name.clone()).chain(member.was.iter().cloned()).collect());
+            }
+        }
+        fastctx_types::layout::Names { me: own.name, was: own.was, renamed }
     }
 }
 
@@ -357,8 +392,8 @@ pub async fn run_prepared(
     // written to its log, or it would leave no trace.
     let panics = log.clone();
     std::panic::set_hook(Box::new(move |info| panics.line(format_args!("panicked: {info}"))));
-    let machine = machine::name(&world)?;
-    log.line(format_args!("node {} starting as {machine}", env!("CARGO_PKG_VERSION")));
+    let machine = machine::names(&world)?;
+    log.line(format_args!("node {} starting as {}", env!("CARGO_PKG_VERSION"), machine.name));
     let lifetime = lifetime::inspect(supervision.is_some())
         .inspect_err(|error| log.line(format_args!("could not check the node's process containment: {error}")))
         .context("checking the node's process containment")?;
@@ -390,6 +425,7 @@ pub async fn run_prepared(
     }
 
     let (residents, problems) = residents::Residents::load(&world)?;
+    residents.set_here(machine.name.clone());
     let unfinished = residents.unfinished();
     for (path, error) in &problems {
         log.line(format_args!("could not read {}: {error}", path.display()));
@@ -474,6 +510,7 @@ pub async fn run_prepared(
         renewal,
         supervised: supervision.is_some(),
         lifetime,
+        started: jiff::Timestamp::now(),
     });
     // The third version's projects are kept as this computer's own, to be
     // carried into its account at its hub.

@@ -148,6 +148,14 @@ pub(crate) async fn account_change(
     shell.world().account(hub(hub_name)?, account(account_name)?, change).await.map_err(|error| error.to_string())
 }
 
+/// Renames this computer `name`: on no hub here, on hubs through the one it
+/// is registered on, which the others follow.
+#[fastctx_gui_command::command]
+pub(crate) async fn rename_here(shell: tauri::State<'_, Shell>, name: String) -> Result<(), String> {
+    let to = name.parse::<fastctx_types::MachineName>().map_err(|error| error.to_string())?;
+    shell.world().rename_here(to).await.map_err(|error| error.to_string())
+}
+
 /// The line that installs fastctx on a Linux server and registers it as a
 /// machine of `account`, valid for `hours`.
 #[fastctx_gui_command::command]

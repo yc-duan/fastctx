@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tomllib
@@ -22,7 +23,9 @@ def main():
     gui = ROOT/'gui'
     output = gui/'src-tauri/licenses'
     output.mkdir(exist_ok=True)
-    target = args.target or next(line[6:] for line in subprocess.check_output(
+    # Tauri names the target it builds for to its hooks; an Android build
+    # runs on a computer whose own target is another.
+    target = args.target or os.environ.get('TAURI_ENV_TARGET_TRIPLE') or next(line[6:] for line in subprocess.check_output(
         ['rustc', '-vV'], text=True).splitlines() if line.startswith('host: '))
     native = output/'THIRD_PARTY_RUST.md'
     subprocess.run(['cargo', 'about', 'generate', '--locked', '--offline', '--fail',
@@ -57,7 +60,8 @@ def main():
         shutil.copyfile(ROOT/name, output/name)
     text += '\n'+gui_input_marker(ROOT)+'\n'
     (output/'THIRD_PARTY_LICENSES.md').write_text(share_html_notices(text), encoding='utf-8', newline='\n')
-    if 'linux' in target:
+    # The Debian package's copyright file; Android is Linux too, without it.
+    if '-linux-gnu' in target:
         (output/'copyright').write_text(
             'Fastctx '+json.loads((gui/'package.json').read_text())['version']+'\n\n'
             +(ROOT/'NOTICE').read_text(encoding='utf-8')+'\n'

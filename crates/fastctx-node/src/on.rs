@@ -119,7 +119,7 @@ impl Pieces {
             (context.node.clone(), context.origin.clone(), context.consumed.clone(), context.through_exit)
         };
         let complete = !through_exit && !matches!(&end, OnEnd::Exited { remaining, .. } if *remaining > 0);
-        if origin.resident.machine == node.machine() && !consumed.is_empty() {
+        if node.is_me(&origin.resident.machine) && !consumed.is_empty() {
             let directory = node.world.conversation(&origin.resident.resident);
             tokio::task::spawn_blocking(move || crate::job_receipts::apply_consumed(&directory, &consumed))
                 .await
@@ -155,7 +155,7 @@ impl Pieces {
 pub(crate) fn acting(node: &Node, origin: &OnOrigin) -> Acting {
     match &origin.account {
         Some(account) => Acting::one(account.hub.clone(), account.account.clone()),
-        None if origin.resident.machine == node.machine() => {
+        None if node.is_me(&origin.resident.machine) => {
             node.residents.about(&origin.resident.resident).map(|(about, _)| about.acting).unwrap_or_default()
         }
         None => Acting::Accounts { accounts: Vec::new() },
@@ -176,7 +176,7 @@ pub(crate) fn sent_for(node: &Node, job: Option<&JobId>) -> Option<fastctx_types
 /// before the end stops the job.
 pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) -> Result<OnFollowing, Failure> {
     origin.call_id = if let Some(job) = &request.job {
-        let path = node.world.owner(&node.machine(), &origin.resident).job_record(job);
+        let path = node.world.owner(&node.names(), &origin.resident).job_record(job);
         fastctx_hands::run::record::read(&path)
             .map_err(|error| Failure::new(format!("reading the on's job: {error}")))?
             .call_id
@@ -190,7 +190,7 @@ pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) ->
     let parent = request
         .job
         .as_ref()
-        .map(|job| node.world.job_owner(&node.machine(), &origin.resident.clone().into()).job_record(job));
+        .map(|job| node.world.job_owner(&node.names(), &origin.resident.clone().into()).job_record(job));
     let context = ReceiptContext {
         node: node.clone(),
         parent,
@@ -443,11 +443,10 @@ fn straight(
     if to.hub.as_ref().is_some_and(|hub| *hub != link.membership().hub_name) {
         return false;
     }
-    let here = node.machine();
     let view = link.view();
     let to = &to.name;
-    *from != here
-        && *to != here
+    !node.is_me(from)
+        && !node.is_me(to)
         && view.member(to).is_some()
         && view.rights(account, to).hands
         && view.may_act_for(account, to)
@@ -669,7 +668,7 @@ async fn sizes(package: &OnPackage) -> Result<OnSizes, Failure> {
 /// it lives here, so the machine it went to may write back about it; and
 /// beside the job whose script it is part of, for that job's answer.
 async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> Result<(), Failure> {
-    if origin.resident.machine != node.machine() {
+    if !node.is_me(&origin.resident.machine) {
         return Ok(());
     }
     let action = Action {
@@ -703,7 +702,7 @@ async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> 
 }
 
 async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &JobId) -> Result<(), Failure> {
-    let here = node.machine();
+    let here = node.names();
     let action = Action {
         at: jiff::Timestamp::now(),
         machine: request.machine.clone(),
@@ -714,7 +713,7 @@ async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &J
     let (world, origin, request, job) = (node.world.clone(), origin.clone(), request.clone(), job.clone());
     tokio::task::spawn_blocking(move || -> std::io::Result<()> {
         let owner = JobOwner::Resident(origin.resident.clone());
-        if origin.resident.machine == here {
+        if fastctx_types::layout::Here::is_here(&here, &origin.resident.machine) {
             crate::residents::record_action(&world, &origin.resident.resident, &action)?;
         }
         if let Some(parent) = &request.job {
@@ -833,7 +832,7 @@ async fn take_piped(
 /// it is all written: from this machine's own disk, or over a data
 /// connection from the machine it was written on.
 async fn take_output(node: &Arc<Node>, producer: &OnOrigin, source: &OnSource, path: &Path) -> Result<(), Failure> {
-    if source.machine == node.machine() {
+    if node.is_me(&source.machine) {
         let record_path = on_job(node, producer, &source.job)?;
         let _reading = crate::job_reader::open(node, &record_path).await?;
         piped_record(&record_path, producer).await?;
@@ -1017,7 +1016,7 @@ pub async fn serve_follow(
 /// The record of the `on` job `job` of the resident in `origin`.
 pub(crate) fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result<PathBuf, Failure> {
     let owner = JobOwner::Resident(origin.resident.clone());
-    let path = node.world.job_record(&node.machine(), origin.town.as_ref(), &owner, job);
+    let path = node.world.job_record(&node.names(), origin.town.as_ref(), &owner, job);
     match fastctx_hands::run::record::read(&path) {
         Ok(record)
             if record
@@ -1061,7 +1060,7 @@ impl Staged {
         stream: &mut Stream,
     ) -> Result<Self, Failure> {
         let owner = JobOwner::Resident(origin.resident.clone());
-        let directory = node.world.job_owner(&node.machine(), &owner).out();
+        let directory = node.world.job_owner(&node.names(), &owner).out();
         let name = random_name().map_err(|error| Failure::new(format!("naming the package: {error}")))?;
         let created = directory.clone();
         tokio::task::spawn_blocking(move || std::fs::create_dir_all(&created))
@@ -1325,7 +1324,7 @@ async fn hand_over(
             sink.facts(crate::run_facts::writes(record_path).map_err(|error| error.to_string())?).await?;
             // A letter goes only for an end nobody followed, and takes the
             // marker that it is owed: without one, the letter went.
-            let owed = node.world.job_owner(&node.machine(), &record.owner).job_owed(job);
+            let owed = node.world.job_owner(&node.names(), &record.owner).job_owed(job);
             let lettered = record.end.is_some() && matches!(tokio::fs::try_exists(&owed).await, Ok(false));
             let complete = record.end.is_some();
             let (node, path) = (node.clone(), record_path.to_path_buf());

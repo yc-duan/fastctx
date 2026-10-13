@@ -152,7 +152,7 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
 }
 
 async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
-    let membership = &inner.membership;
+    let membership = inner.membership();
     let dialed =
         dial::dial_upstream(upstream, &membership.id, membership.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
             .await
@@ -181,6 +181,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             interfaces,
             dialed: Some(address),
             any_names: true,
+            renames: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
@@ -198,21 +199,16 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
     };
     match welcome {
         Down::Welcome { hub, hub_name, name, taken, letters, .. } => {
-            if hub != membership.id || name != membership.name {
-                return Err(Ended::Retry(format!(
-                    "the hub knows this machine as {name} on {hub}, not {} on {}",
-                    membership.name, membership.id
-                )));
+            if hub != membership.id {
+                return Err(Ended::Retry(format!("the hub is {hub}, not {}", membership.id)));
+            }
+            if name != membership.name {
+                inner.follow_name(name);
             }
             // The hub's short name is the hub's to say: a membership kept
             // before it was known takes it from the welcome.
             if hub_name != membership.hub_name {
-                let corrected = super::Membership {
-                    hub_name: hub_name.clone(),
-                    addresses: inner.hub_addresses(),
-                    ..membership.clone()
-                };
-                match super::state::write(&inner.dir.membership(), &corrected) {
+                match inner.keep_membership(|kept| kept.hub_name = hub_name.clone()) {
                     Ok(()) => inner.node.log(format!("the hub {hub} is called {hub_name}")),
                     Err(error) => inner.node.log(format!("recording that the hub is called {hub_name}: {error}")),
                 }
@@ -267,6 +263,7 @@ async fn connected(
         Some(through) => inner.node.log(format!("connected to the hub through {through}, at {address} {route}")),
         None => inner.node.log(format!("connected to the hub at {address} {route}")),
     }
+    inner.line_changed(fastctx_types::stats::LineChange::Up { at: Timestamp::now() });
 
     // This guard also runs when a network event cancels connect(). Pending
     // callers must learn that their old connection ended before another
@@ -308,7 +305,7 @@ async fn connected(
         preferred.push(Upstream::Hub(addresses[..position].to_vec()));
     }
     if !preferred.is_empty() {
-        let (hub, cert) = (inner.membership.id.clone(), inner.membership.cert);
+        let (hub, cert) = (inner.hub.clone(), inner.cert);
         tasks.0.push(tokio::spawn(ask_preferred(preferred, hub, cert, returned)));
     }
     {
@@ -319,6 +316,7 @@ async fn connected(
             }
             tell_worked(&inner).await;
             inner.node.directory_changed();
+            inner.node.connected();
             // Whatever the projects' ledgers gained while this machine was
             // away is taken now.
             inner.node.ledger_changed(None);
@@ -369,6 +367,7 @@ async fn connected(
                     if let Some(sent) = pinged.remove(&n) {
                         let ms = u32::try_from(sent.elapsed().as_millis()).unwrap_or(u32::MAX);
                         *inner.hub_ms.lock().expect("never poisoned") = Some(ms);
+                        inner.trip(ms);
                     }
                     pinged.retain(|sent, _| *sent > n);
                 }
@@ -441,6 +440,8 @@ struct Connected<'a> {
 
 impl Drop for Connected<'_> {
     fn drop(&mut self) {
+        self.inner
+            .line_changed(fastctx_types::stats::LineChange::Down { at: Timestamp::now(), why: self.reason.clone() });
         let mut connection = self.inner.connection.lock().expect("never poisoned");
         let ended = connection.as_ref().is_some_and(|connection| connection.generation == self.generation);
         if ended {
@@ -472,6 +473,8 @@ impl Drop for Tasks {
 fn refused(reason: Refusal) -> Ended {
     match reason {
         Refusal::Removed { .. } => Ended::Stop(reason.to_string()),
+        // Connected again at once, under the name the hub gives.
+        Refusal::Renamed { .. } => Ended::Reroute(reason.to_string()),
         other => Ended::Retry(other.to_string()),
     }
 }
@@ -678,7 +681,10 @@ async fn take_letter(inner: &Inner, message: &Envelope) -> std::io::Result<()> {
         Err(error) => return set_aside(format!("from {}: {error}", message.from)),
     };
     let digest = crate::sign::Digest(sha256(&serde_json::to_vec(&letter).expect("letters serialize")));
-    match letters::receipt(&inner.dir, &caller.machine, &id)? {
+    // Receipts go by the name the letter was sent under, which it is sent
+    // under again: a sender renamed since still sends it so.
+    let sender = &message.from;
+    match letters::receipt(&inner.dir, sender, &id)? {
         Some(receipt) if receipt.digest == digest => return Ok(()),
         Some(_) => {
             return set_aside(format!(
@@ -693,5 +699,5 @@ async fn take_letter(inner: &Inner, message: &Envelope) -> std::io::Result<()> {
     if let Err(reason) = inner.node.letter(caller, purpose, id.clone(), letter).await? {
         set_aside(format!("from {from}: {reason}"))?;
     }
-    letters::keep_receipt(&inner.dir, &from, &id, &Receipt { digest, at: Timestamp::now() })
+    letters::keep_receipt(&inner.dir, sender, &id, &Receipt { digest, at: Timestamp::now() })
 }

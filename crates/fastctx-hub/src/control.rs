@@ -36,6 +36,8 @@ pub(crate) struct Said {
     /// The address it dialed: a hub that moved tells by it whether the
     /// member still comes through the old place (`crate::moving`).
     pub dialed: Option<SocketAddr>,
+    /// Whether it takes a new name the hub gives it.
+    pub renames: bool,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -188,6 +190,7 @@ fn open(
     let too_old = !said.any_names && crate::login::beyond_older_releases(&store);
     let entry = store.letters_of(name).map_err(|error| storage_failure(hub, "making letter records", &error))?;
     entry.any_names = said.any_names;
+    entry.renames = said.renames;
     if too_old {
         // A member back on a release from before names of any language,
         // which would fail on the first name it cannot read: it is told why
@@ -250,8 +253,12 @@ pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
         let mut sessions = hub.sessions();
         if sessions.get(name).is_some_and(|session| session.generation == generation) {
             sessions.remove(name);
+            // Renamed while connected, it may be connected again under its
+            // name now, which what is kept of it is under.
+            let current = store.book.directory.canonical(name).clone();
+            let back = sessions.contains_key(&current);
             drop(sessions);
-            if let Some(entry) = store.letters.get_mut(name) {
+            if !back && let Some(entry) = store.letters.get_mut(&current) {
                 entry.connected_at = None;
                 entry.last_seen = Some(Timestamp::now());
             }
@@ -360,6 +367,14 @@ fn handle(
                 .expect("never poisoned")
                 .retain(|_, pending| !(pending.caller == *name && pending.id == id));
         }
+        // The answer goes out before any session the change ends, the
+        // asker's own among them: a machine that renamed or removed itself
+        // hears that it did.
+        Up::Ask { id, question: Question::Manage { account, change } } => {
+            let (answer, ended) = crate::manage::change(hub, name, &account, change);
+            reply(Down::Told { id, answer });
+            crate::manage::end(hub, ended);
+        }
         Up::Ask { id, question: Question::KernelRelease { version, allow_partial } } => {
             let releases = hub.releases.clone();
             let out = out.clone();
@@ -388,25 +403,39 @@ fn handle(
 }
 
 /// Checks an envelope from the member `name`: it says it is from `name`
-/// and for this hub.
+/// and for this hub. A name the member had before it was renamed is its
+/// own all the same, as on a letter it kept since.
 fn own(hub: &Hub, name: &MachineName, message: &Envelope) -> Result<(), String> {
-    if message.from != *name {
+    let store = hub.store();
+    let directory = &store.book.directory;
+    if !directory.same(&message.from, name) {
         return Err(format!("it says it is from {}, on the connection of {name}", message.from));
     }
-    let world = hub.store().hub.id.clone();
-    if message.hub != world {
+    if message.hub != store.hub.id {
         return Err(format!("it is for the hub {}", message.hub));
     }
-    if message.to == *name {
+    if directory.same(&message.to, name) {
         return Err("a machine's own calls and letters do not go through the hub".to_string());
     }
     Ok(())
 }
 
-/// The standing a call or a letter names, if the directory allows it.
+/// What a name stands for now, by the directory (`Directory::canonical`).
+fn canonical(hub: &Hub, name: &MachineName) -> MachineName {
+    hub.store().book.directory.canonical(name).clone()
+}
+
+/// `address` with its machine named as it is now.
+fn canonical_address(hub: &Hub, address: fastctx_types::Address) -> fastctx_types::Address {
+    fastctx_types::Address { machine: canonical(hub, &address.machine), resident: address.resident }
+}
+
+/// The standing a call or a letter names, if the directory allows it: of
+/// the machines as they are named now.
 fn standing(hub: &Hub, message: &Envelope) -> Result<Standing, String> {
     let (account, purpose) = message.standing()?;
-    let standing = Standing { from: message.from.clone(), account: account.clone(), to: message.to.clone(), purpose };
+    let (from, to) = (canonical(hub, &message.from), canonical(hub, &message.to));
+    let standing = Standing { from, account: account.clone(), to, purpose };
     match standing.lapsed(hub) {
         Some(why) => Err(why),
         None => Ok(standing),
@@ -434,7 +463,7 @@ fn letter(hub: &Hub, name: &MachineName, seq: u64, message: Envelope, reply: &im
         }
     }) {
         Ok(()) => {
-            let to = message.to.clone();
+            let to = canonical(hub, &message.to);
             let kept = {
                 let mut store = hub.store();
                 store.keep_letter(&to, &message).map_err(|error| storage_failure(hub, "keeping a letter", &error))?
@@ -504,9 +533,10 @@ fn echoes_work(hub: &Hub, message: &Envelope) -> bool {
     };
     let fastctx_types::remote::Letter::Notice { to, .. } = body.letter else { return false };
     let store = hub.store();
-    let resident = fastctx_types::Address { machine: message.to.clone(), resident: to };
-    store.book.directory.admits_echo(&message.from, account, &message.to).is_ok()
-        && store.worked.contains(&(message.from.clone(), resident))
+    let directory = &store.book.directory;
+    let (from, machine) = (directory.canonical(&message.from).clone(), directory.canonical(&message.to).clone());
+    let resident = fastctx_types::Address { machine, resident: to };
+    directory.admits_echo(&message.from, account, &message.to).is_ok() && store.worked.contains(&(from, resident))
 }
 
 /// The agent's login a call starts a session of, if it starts one: a
@@ -576,7 +606,7 @@ fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelo
     if message.kind != Kind::Call {
         return CallStatus::Refused { reason: format!("a {:?} is not a call", message.kind) };
     }
-    let to = message.to.clone();
+    let to = canonical(hub, &message.to);
     let last_seen = {
         let store = hub.store();
         if store.book.directory.member(&to).is_none() {
@@ -591,7 +621,7 @@ fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelo
     if let Err(reason) = use_agent(hub, &message, &standing) {
         return CallStatus::Refused { reason };
     }
-    if let Some(resident) = worked_for(&message)
+    if let Some(resident) = worked_for(&message).map(|resident| canonical_address(hub, resident))
         && let Err(error) = hub.store().note_worked(&to, resident)
     {
         hub.log.line(format_args!("noting that {to} works for a resident: {error}"));
@@ -631,7 +661,11 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
     // The caller may have given up or left; an answer nobody waits for is
     // dropped, as a call does not outlive its caller.
     let Some(pending) = pending else { return };
-    let fits = message.from == *name && message.kind.is_answer() && message.to == pending.caller;
+    let fits = {
+        let store = hub.store();
+        let directory = &store.book.directory;
+        directory.same(&message.from, name) && message.kind.is_answer() && directory.same(&message.to, &pending.caller)
+    };
     if !fits {
         hub.log.line(format_args!("{name} answered call {call} with something that is not its answer"));
         hub.tell(&pending.caller, Down::Status { id: pending.id, status: CallStatus::Lost });
@@ -652,15 +686,16 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
     match question {
         Question::MachineLog { account, before } => {
             let store = hub.store();
+            let renames = store.letters.get(name).is_some_and(|letters| letters.renames);
             store
                 .book
                 .machine_log
-                .read(&store.book.directory, name, &account, before)
+                .read(&store.book.directory, name, &account, before, renames)
                 .map(|page| Told::MachineLog { page })
         }
         Question::KernelRelease { .. } => Err("release reads are dispatched asynchronously".into()),
         Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),
-        Question::Manage { account, change } => crate::manage::change(hub, name, &account, change),
+        Question::Manage { .. } => Err("changes are made as they come".into()),
         Question::LedgerWrite { town, entry } => {
             let (seq, tell) = {
                 let store = hub.store();
@@ -672,7 +707,11 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
             }
             Ok(Told::Written { seq })
         }
-        Question::LedgerTowns => Ok(Told::Towns { towns: hub.ledgers.lock().expect("never poisoned").towns_of(name) }),
+        Question::LedgerTowns => {
+            let store = hub.store();
+            let towns = hub.ledgers.lock().expect("never poisoned").towns_of(&store.book.directory, name);
+            Ok(Told::Towns { towns })
+        }
         Question::LedgerCatalog => {
             let store = hub.store();
             let directory = &store.book.directory;
@@ -700,6 +739,12 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
             // a direct link: only while that call is allowed.
             let mut store = hub.store();
             store.book.directory.admits(name, &account, &to, purpose)?;
+            let directory = &store.book.directory;
+            let to = directory.canonical(&to).clone();
+            let resident = fastctx_types::Address {
+                machine: directory.canonical(&resident.machine).clone(),
+                resident: resident.resident,
+            };
             store.note_worked(&to, resident).map_err(|error| format!("noting the work: {error}"))?;
             Ok(Told::Done)
         }

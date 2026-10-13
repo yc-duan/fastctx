@@ -34,6 +34,8 @@ mod renewal;
 mod session;
 #[path = "gui_wire_fixtures/since.rs"]
 mod since;
+#[path = "gui_wire_fixtures/stats.rs"]
+mod stats;
 #[path = "gui_wire_fixtures/world.rs"]
 mod world;
 
@@ -63,6 +65,7 @@ struct Fixtures {
     claude: claude::Fixtures,
     management: management::Fixtures,
     renewal: renewal::Fixtures,
+    stats: stats::Fixtures,
 }
 
 fn main() {
@@ -85,6 +88,7 @@ fn main() {
         claude: claude::fixtures(),
         management: management::fixtures(),
         renewal: renewal::fixtures(),
+        stats: stats::fixtures(),
     };
     let mut out = io::stdout().lock();
     serde_json::to_writer_pretty(&mut out, &fixtures).expect("serialize GUI fixtures");

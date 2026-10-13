@@ -22,7 +22,7 @@ use jiff::Timestamp;
 /// Does `op` on this machine for `owner`.
 pub fn write_here(
     world: &WorldDir,
-    here: &MachineName,
+    here: &fastctx_types::layout::Names,
     owner: &Address,
     town: Option<&TownName>,
     op: WriteOp,
@@ -32,7 +32,7 @@ pub fn write_here(
 
 pub(crate) fn write_job(
     world: &WorldDir,
-    here: &MachineName,
+    here: &fastctx_types::layout::Names,
     owner: &Address,
     town: Option<&TownName>,
     op: WriteOp,
@@ -40,7 +40,7 @@ pub(crate) fn write_job(
 ) -> io::Result<WriteOutcome> {
     let directory = world.owner(here, owner);
     let seen = load_seen(&directory.seen())?;
-    let mut writer = Writer::new(world, here.as_str())?;
+    let mut writer = Writer::new(world, here.me.as_str())?;
     // A job an older program still runs keeps its record where that program
     // put it, and its scratch beside it.
     let record_path = job.map(|job| world.job_record(here, town, &owner.clone().into(), job));
@@ -52,7 +52,7 @@ pub(crate) fn write_job(
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "write does not belong to an active job"));
         }
         if record.call_id.is_some() {
-            writer = writer.with_facts(job_directory.job_scratch(job).join("diffs"), here.clone())?;
+            writer = writer.with_facts(job_directory.job_scratch(job).join("diffs"), here.me.clone())?;
         }
     }
     let outcome = match op {

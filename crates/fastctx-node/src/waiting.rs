@@ -63,7 +63,7 @@ pub async fn wait(
             let mut follower = crate::on_delivery::Following::start(node, &origin, &record.machine);
             follower.started(job);
             held.followers.push((job.clone(), follower));
-            if owner.machine == node.machine() {
+            if node.is_me(&owner.machine) {
                 let gate = node.residents.management(&owner.resident)?;
                 let _claiming = gate.write().await;
                 let directory = node.world.conversation(&owner.resident);
@@ -220,7 +220,7 @@ impl Held {
                     crate::job_receipts::consumed(&self.node, owner, &acting, id, notice)
                         .map_err(|error| Failure::new(error.to_string()))?;
                 }
-                let owed = self.node.world.job_owner(&self.node.machine(), &record.owner).job_owed(job);
+                let owed = self.node.world.job_owner(&self.node.names(), &record.owner).job_owed(job);
                 match tokio::fs::remove_file(&owed).await {
                     Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                         Err(Failure::new(format!("{}: {error}", owed.display())))

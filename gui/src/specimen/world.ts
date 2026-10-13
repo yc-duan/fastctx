@@ -68,7 +68,8 @@ function facts(name: string, os: string, home: string): MachineFacts {
   const form = os === "linux" ? "server" : name === "laptop" ? "laptop" : "desktop";
   return {
     name, os, arch: "x86_64", home, temp: os === "windows" ? `${home}/AppData/Local/Temp` : "/tmp",
-    shell: "", path_separator: os === "windows" ? "\\" : "/", case_sensitive: os !== "windows", version: "1.0.0", form,
+    shell: "", path_separator: os === "windows" ? "\\" : "/", case_sensitive: os !== "windows", version: name === "gpu" ? "0.9.0" : "1.0.0", form,
+    ...(name === "gpu" ? {} : { stats: true }),
   };
 }
 
@@ -160,6 +161,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       home: "me",
       self_registration: false,
     addresses: ["192.168.1.20:7443"],
+      me: "desktop",
+      renames: true,
       accounts: [
         { name: "me", level: "super", locked: false, opened: at("00:00:00") },
         { name: "ada", level: "member", locked: false, opened: at("00:05:00") },
@@ -168,8 +171,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       members: [
         member("desktop", "computer", ["me"], "me", "00:10:00", true, "5be1fcee", ["192.168.1.20:7444"]),
         member("laptop", "computer", ["me"], "me", "00:20:00", true, "a1c3e9d2"),
-        member("lab", "computer", ["me"], "me", "00:30:00", true, "7d0e44b1"),
-        member("server", "computer", ["me"], "me", "00:00:00", true, "c0ffee12", ["203.0.113.20:7444"]),
+        { ...member("lab", "computer", ["me"], "me", "00:30:00", true, "7d0e44b1"), was: ["lab-old"] },
+        { ...member("server", "computer", ["me"], "me", "00:00:00", true, "c0ffee12", ["203.0.113.20:7444"]), was: ["izbp1abc0x2y3z"] },
         member("studio", "computer", ["me"], "me", "00:40:00", false, "9e8d7c6b"),
         member("pixel", "phone", ["me"], null, "13:20:00", true, "4f2a91aa"),
         member("gpu", "computer", ["bo"], "bo", "03:30:00", true, "be3f0a77"),
@@ -475,10 +478,12 @@ export function specimenAgents(machine: string, at: Date = new Date()): WorldAge
 }
 
 /** The changes a specimen takes as asked: where other machines connect to
- *  a machine directly, so the machines page shows what follows, and
- *  assistance with its deadlines; nothing really connects. Anything else it refuses. */
+ *  a machine directly, so the machines page shows what follows, assistance
+ *  with its deadlines, and renaming; nothing really connects. Anything else
+ *  it refuses. */
 export function specimenChange(world: WorldNow | null, hub: string, made: AccountChange): WorldNow | null {
   if (!world) return null;
+  if (made.change === "rename") return renamed(world, hub, made.machine, made.to);
   if (made.change === "assist") {
     if (made.assisting && made.until && new Date(made.until) <= new Date()) throw new Error("the assistance's deadline has already passed");
     const home = made.home ?? null;
@@ -500,4 +505,68 @@ export function specimenChange(world: WorldNow | null, hub: string, made: Accoun
         },
   );
   return { ...world, accounts: { ...world.accounts, hubs } };
+}
+
+/** A machine on `hub` renamed `to` as its hub would: the name it had stays
+ *  as one it was, and what names it there follows. */
+function renamed(world: WorldNow, hub: string, called: string, to: string): WorldNow {
+  const there = world.accounts.hubs.find((one) => one.hub === hub);
+  // A name it had still names it, as on the hub.
+  const from = there?.members.find((member) => member.name === called || (member.was ?? []).includes(called))?.name ?? called;
+  if (there?.members.some((member) => member.name !== from && (member.name === to || (member.was ?? []).includes(to)))) {
+    throw new Error(`the name ${to} is taken on this hub`);
+  }
+  const name = (machine: string) => (machine === from ? to : machine);
+  const hubs = world.accounts.hubs.map((one) =>
+    one.hub !== hub
+      ? one
+      : {
+          ...one,
+          ...(one.me === from ? { me: to } : {}),
+          members: one.members.map((member) => (member.name !== from ? member : { ...member, name: to, was: [...(member.was ?? []).filter((was) => was !== to), from] })),
+          shares: one.shares.map((share) => ({ ...share, machine: name(share.machine) })),
+          assists: one.assists.map((assist) => ({ ...assist, machine: name(assist.machine) })),
+          plans: one.plans.map((plan) => ({ ...plan, machine: name(plan.machine) })),
+          acting: one.acting.map((acting) => ({ ...acting, machine: name(acting.machine) })),
+        },
+  );
+  const nodes = world.nodes.hubs.map((one) =>
+    one.hub !== hub
+      ? one
+      : {
+          ...one,
+          machines: one.machines.map((node) =>
+            node.name !== from ? node : { ...node, name: to, written: to, facts: "Ok" in node.facts && node.facts.Ok ? { Ok: { ...node.facts.Ok, name: to } } : node.facts },
+          ),
+        },
+  );
+  const machines = world.who.machines.map((machine) =>
+    machine.kind !== "answered"
+      ? { ...machine, machine: name(machine.machine) }
+      : {
+          ...machine,
+          reply: {
+            ...machine.reply,
+            machine: name(machine.reply.machine),
+            residents: machine.reply.residents.map((r) => ({ ...r, about: { ...r.about, machine: name(r.about.machine) } })),
+            jobs: machine.reply.jobs.map((job) => ({ ...job, machine: name(job.machine) })),
+          },
+        },
+  );
+  return { ...world, accounts: { ...world.accounts, hubs }, nodes: { ...world.nodes, hubs: nodes }, who: { ...world.who, machines } };
+}
+
+/** This computer renamed `to`: on each hub it is a machine of, and here. */
+export function specimenRenameHere(world: WorldNow | null, to: string): WorldNow | null {
+  if (!world) return null;
+  const from = world.nodes.machine;
+  let next = world;
+  for (const hub of world.accounts.hubs) if (hub.members.some((member) => member.name === from)) next = renamed(next, hub.hub, from, to);
+  return {
+    ...next,
+    here: to,
+    who: { ...next.who, machine: to },
+    nodes: { ...next.nodes, machine: to, ...(next.nodes.facts ? { facts: { ...next.nodes.facts, name: to } } : {}) },
+    accounts: { ...next.accounts, machine: to, was: [...(next.accounts.was ?? []).filter((was) => was !== to), from] },
+  };
 }

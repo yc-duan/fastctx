@@ -313,10 +313,10 @@ impl Inner {
     /// account (`world-network.md`, 直连). A right taken back lets the link
     /// go with the view that says so.
     fn wanted_links(&self, view: &View) -> BTreeMap<MachineName, Vec<SocketAddr>> {
-        if !self.membership.kind.is_computer() {
+        if !self.kind.is_computer() {
             return BTreeMap::new();
         }
-        let me = &self.membership.name;
+        let me = &view.me;
         let i_listen = view.me().is_some_and(|me| !me.direct.is_empty());
         view.machines()
             .filter(|member| member.name != *me && !member.direct.is_empty())
@@ -331,7 +331,7 @@ impl Inner {
     fn follow_keepers(self: &Arc<Self>, view: &View) {
         let mut wanted = self.wanted_links(view);
         // A phone links on demand: only with machines it has calls to.
-        if !self.membership.kind.is_computer() {
+        if !self.kind.is_computer() {
             let demand = self.direct.demand.lock().expect("never poisoned");
             for member in view.machines() {
                 if !member.direct.is_empty() && demand.get(&member.name).is_some_and(|calls| *calls > 0) {
@@ -388,7 +388,7 @@ impl Inner {
     /// Notes that a phone has a call in flight to `peer`, linking with it
     /// directly while it does; the guard ends the note.
     pub(crate) fn demand(self: &Arc<Self>, peer: &MachineName) -> Option<Demand> {
-        if self.membership.kind.is_computer() {
+        if self.kind.is_computer() {
             return None;
         }
         let first = {

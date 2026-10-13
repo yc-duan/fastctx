@@ -81,7 +81,7 @@ impl Device {
                         fastctx_net::arrivals::fresh(&self.store.arrivals(&accounts.hub)).map_err(failed)?;
                     hubs.push(accounts);
                 }
-                return Ok((Reply::Accounts(AccountsReply { machine: here(), hubs }), here()));
+                return Ok((Reply::Accounts(AccountsReply { machine: here(), was: Vec::new(), hubs }), here()));
             }
             _ => {}
         }
@@ -101,6 +101,11 @@ impl Device {
             Call::Folders { machine, path } => {
                 let machine = machine.ok_or_else(|| failed("choose a machine for its folders; a device has none"))?;
                 (machine, RemoteCall::Folders { path }, None)
+            }
+            Call::Stats { machine, after } => {
+                let machine =
+                    machine.ok_or_else(|| failed("choose a machine; a device has no details page of its own"))?;
+                (machine, RemoteCall::Stats { after }, None)
             }
             Call::Thumbnail { machine, request } => {
                 let machine = machine.ok_or_else(|| failed("choose the machine holding the image"))?;
@@ -224,6 +229,7 @@ impl Device {
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
             (RemoteCall::Folders { .. }, RemoteReply::Folders(folders)) => Reply::Folders(folders),
+            (RemoteCall::Stats { .. }, RemoteReply::Stats(stats)) => Reply::Stats(stats),
             (RemoteCall::Thumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::AttachmentThumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::Lines { .. }, RemoteReply::Lines(reply)) => Reply::Lines(reply),

@@ -33,7 +33,7 @@ pub(crate) async fn read(
         None if node.residents.about(&resident).is_some() => node.machine(),
         None => crate::colleagues::find_for(node, &fastctx_types::access::Acting::Here, &resident).await?,
     };
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         let activity = here(node, &resident, &agent).await?;
         return Ok((Address { machine, resident }, activity));
     }

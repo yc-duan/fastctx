@@ -21,7 +21,7 @@ pub async fn call(
     accept: bool,
     home: Option<PathBuf>,
 ) -> Result<(bool, bool), Failure> {
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         return here(node, accept, home, format!("the user on {machine}")).await;
     }
     let call = RemoteCall::ClaudeConsent { accept, home };

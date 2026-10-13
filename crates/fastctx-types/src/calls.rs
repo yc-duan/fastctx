@@ -200,6 +200,13 @@ pub enum Call {
         machine: Option<MachineName>,
         path: Option<String>,
     },
+    /// How a machine, or this computer, is doing, for its details page;
+    /// with `after`, its lines bring only what came since then.
+    Stats {
+        machine: Option<MachineName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<jiff::Timestamp>,
+    },
     /// On a session's own connection: a `ToolsChanged` frame each time the
     /// tools `resident`, the session's resident when it is known, is
     /// offered may have changed, for as long as the connection stays open.
@@ -498,6 +505,12 @@ pub enum Call {
     },
     /// Every hub this computer is on, with what it sees of each.
     Accounts,
+    /// Renames this computer `to`: on no hub, it is its own to name; on
+    /// hubs, the one it is registered on renames it, and the others follow
+    /// (`world-network.md`, 机器的名字).
+    RenameHere {
+        to: MachineName,
+    },
     /// An enrollment token that registers a Linux server as a machine of
     /// `account`, and the line that installs it there with this node's
     /// version.
@@ -575,6 +588,7 @@ pub enum Reply {
     },
     FilesFound(crate::file_search::FileSearchReply),
     Folders(crate::focus::Folders),
+    Stats(Box<crate::stats::MachineStats>),
     /// What Claude Code on `machine` now records; `changed` is false when it
     /// already said so.
     ClaudeConsent {

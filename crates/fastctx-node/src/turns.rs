@@ -406,7 +406,7 @@ pub fn pay<'a>(
             }
             if landed.is_err() || matches!(landed, Ok(fastctx_types::residents::Landed::Uncertain { .. })) {
                 if landed.is_err()
-                    && answer.to.machine == node.machine()
+                    && node.is_me(&answer.to.machine)
                     && !node.residents.knows(&answer.to.resident)
                     && !node.world.conversation(&answer.to.resident).about().exists()
                     && let Err(error) = crate::inbox::without_reader(directory, &answer)

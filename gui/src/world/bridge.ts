@@ -19,6 +19,7 @@ import type { Address, AgentActivity, MachineName, SessionEvent } from "./events
 import type { Cut, Edge, FindDoc, Found, PartRead, Window } from "../conversation/conversation";
 import type { AccountChange, AccountsReply, HubAccount } from "./accounts";
 import type { HubMoveReply, HubMoveRequest } from "./hub-move";
+import type { MachineStats } from "./stats";
 import type { RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
 import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
@@ -436,6 +437,18 @@ export function loginToken(token: string, name: string | null): Promise<LoggedIn
 /** Opens an account on a hub that lets anyone, and logs in to it. */
 export function openAccount(hub: string, account: string, password: string, register: boolean, name: string | null): Promise<LoggedIn> {
   return invoke("open_account", { hub, accountName: account, password, register, name });
+}
+
+/** How `machine` is doing, or this computer with none; its lines' history
+ *  only after `after`, when given (`fastctx_types::stats`). */
+export function machineStats(machine: MachineName | null, after: string | null = null): Promise<MachineStats> {
+  return invoke("machine_stats", { machineName: machine, after });
+}
+
+/** Renames this computer `name`: on no hub, here alone; on hubs, through
+ *  the one it is registered on, which the others follow. */
+export function renameHere(name: string): Promise<void> {
+  return invoke("rename_here", { name });
 }
 
 /** This computer's addresses another might reach it at. */

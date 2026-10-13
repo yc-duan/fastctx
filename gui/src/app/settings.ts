@@ -22,6 +22,13 @@ import type { SettingsWords } from "./words";
 import { RemovalSection, type Removing } from "./removal";
 import type { RemovalWords } from "./removal-words";
 import { loginsOf } from "../world/accounts";
+import type { NameProblem } from "../world/bridge";
+import type { MachinePageWords } from "./machine-page-words";
+import type { NameSaid } from "./name-words";
+import { formerNames } from "./map-of";
+import { link } from "./places";
+import { machinesOf } from "./reach";
+import { RenameField, renamerOf } from "./rename";
 
 export interface SettingsOptions {
   store: Store;
@@ -53,6 +60,14 @@ export interface SettingsOptions {
   /** Whether calls are wanted changed, for where calls are made by more
    *  than the page. */
   notifyChanged?(on: boolean): void;
+  /** Renaming this computer: the words of its field, the rule a name is
+   *  checked by, and the renaming. */
+  renaming?: {
+    words: MachinePageWords;
+    nameSaid: NameSaid;
+    check(text: string): Promise<NameProblem | null>;
+    here(to: string): Promise<void>;
+  } | undefined;
 }
 
 /** What was done with what an old fastctx left, in a sentence; nothing
@@ -71,6 +86,9 @@ export class SettingsPage implements Page {
   private renewal: RenewalRow | null = null;
   private appUpdate: AppUpdateRow | null = null;
   private device: HTMLElement;
+  /** This computer's name: the way to its page, and renaming it there. */
+  private name: HTMLElement;
+  private renaming: RenameField | null = null;
   private service: HTMLElement;
   private setup: Setup | null = null;
   private busy = false;
@@ -85,7 +103,7 @@ export class SettingsPage implements Page {
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
       <div class="settings scroller">
         <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
-        <section class="home-section settings-device"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts device"></dl><dl class="facts settings-renewal" hidden></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl></section>
+        <section class="home-section settings-device"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts settings-name" hidden></dl><dl class="facts device"></dl><dl class="facts settings-renewal" hidden></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl></section>
         <section class="home-section settings-keys"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
@@ -99,6 +117,10 @@ export class SettingsPage implements Page {
       () => {},
     );
     this.device = this.element.querySelector<HTMLElement>(".device")!;
+    this.name = this.element.querySelector<HTMLElement>(".settings-name")!;
+    this.name.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest("[data-rename]")) this.rename();
+    });
     this.service = this.element.querySelector<HTMLElement>(".settings-service")!;
     this.drawLook();
     this.askService();
@@ -157,13 +179,66 @@ export class SettingsPage implements Page {
       }
       redrawKeepingFocus(this.element, () => this.drawLook());
     });
-    this.stop = effect(() => this.drawDevice(options.store.world.get(), options.store.clock.get()));
+    this.stop = effect(() => {
+      const world = options.store.world.get();
+      this.drawName(world);
+      this.drawDevice(world, options.store.clock.get());
+    });
   }
 
   leave(): void {
     this.stop();
     this.renewal?.leave();
     this.appUpdate?.leave();
+    this.renaming?.dispose();
+  }
+
+  /** This computer's name, which opens its page, the names it had behind
+   *  the pointer, and renaming it where its hubs rename. */
+  private drawName(world: WorldNow | null): void {
+    if (this.renaming) return;
+    const here = machinesOf(world).find((machine) => machine.here);
+    const renaming = this.options.renaming;
+    this.name.hidden = !here || !world;
+    if (!here || !world) return;
+    const former = formerNames(world, here);
+    const renamable = !!renaming && !!renamerOf(here, world, async () => {}, renaming.here);
+    const html = `<dt>${escape(this.options.words.machine)}</dt><dd class="settings-name-value"><a class="settings-link" href="${link({ kind: "machine", name: here.written })}"${
+      former.length && renaming ? ` title="${escape(renaming.words.formerly(former))}"` : ""
+    }><span>${escape(here.written)}</span>${glyph("chevron", 14)}</a>${
+      renamable ? `<button class="text-button quiet-button" type="button" data-rename>${escape(renaming!.words.rename)}</button>` : ""
+    }</dd>`;
+    if (this.name.innerHTML !== html) this.name.innerHTML = html;
+  }
+
+  private rename(): void {
+    const renaming = this.options.renaming;
+    const world = this.options.store.world.peek();
+    const here = machinesOf(world).find((machine) => machine.here);
+    if (!renaming || !world || !here || this.renaming) return;
+    const value = this.name.querySelector<HTMLElement>(".settings-name-value");
+    if (!value) return;
+    const end = () => {
+      field.dispose();
+      this.renaming = null;
+      this.name.innerHTML = "";
+      this.drawName(this.options.store.world.peek());
+    };
+    const field = new RenameField({
+      words: renaming.words,
+      nameSaid: renaming.nameSaid,
+      name: here.name,
+      check: (text) => renaming.check(text),
+      rename: async (to) => {
+        await renaming.here(to);
+        await this.options.store.refresh();
+      },
+      done: end,
+      cancel: end,
+    });
+    this.renaming = field;
+    value.replaceChildren(field.element);
+    field.focus();
   }
 
   private askService(): void {
@@ -267,9 +342,10 @@ export class SettingsPage implements Page {
       const why = link.kind === "connecting" ? (link.last_error ?? "") : link.kind === "stopped" ? link.reason : "";
       return [words.hub(hub.name), [linked, words.as(hub.logins.join(", "))].filter(Boolean).join(" · "), why];
     });
-    // The version is said once, by the local service's own row below.
+    // The version is said once, by the local service's own row below; a
+    // computer's name has its own row above.
     const facts: [string, string, string?][] = [
-      [this.options.phone ? words.phoneName : words.machine, world.here],
+      ...(this.options.phone ? [[words.phoneName, world.here] as [string, string]] : []),
       ...(hubs.length ? hubs : [[words.link, words.alone] as [string, string]]),
     ];
     this.device.innerHTML = facts

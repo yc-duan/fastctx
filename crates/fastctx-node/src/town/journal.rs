@@ -113,7 +113,7 @@ async fn add(node: &Arc<Node>, caller: &Caller, town: TownName, adding: Adding) 
     let at = Timestamp::now();
     let id = free_id(node, &town, at, &here).await?;
     let (agent, model, session) = match caller {
-        Caller::Resident(address) if address.machine == here => match node.residents.about(&address.resident) {
+        Caller::Resident(address) if node.is_me(&address.machine) => match node.residents.about(&address.resident) {
             Some((about, _)) => (Some(about.host.clone()), about.model.clone(), about.session.clone()),
             None => (None, None, None),
         },
@@ -209,7 +209,7 @@ async fn stage(
             return Err(Failure::new(format!("two attachments are named {name}")));
         }
         let path = staging.join(&name);
-        match one.machine.as_ref().filter(|machine| **machine != here) {
+        match one.machine.as_ref().filter(|machine| !node.is_me(machine)) {
             None => {
                 let from = fastctx_platform::local_path(&one.path).map_err(|error| Failure::new(error.to_string()))?;
                 let to = path.clone();
@@ -288,7 +288,8 @@ fn pack(
         let place = crate::ledger::names::place(&node.world, town)
             .map_err(|error| Failure::new(format!("reading {town}: {error}")))?
             .ok_or_else(|| Failure::new(format!("there is no project {town} on {here}")))?;
-        let key = crate::ledger::own_key(&node.world).map_err(|error| Failure::new(format!("this machine's key: {error}")))?;
+        let key = crate::ledger::own_key(&node.world)
+            .map_err(|error| Failure::new(format!("this machine's key: {error}")))?;
         let entry = Entry {
             hub: place.hub,
             town: place.town,

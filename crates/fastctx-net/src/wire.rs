@@ -124,6 +124,11 @@ pub enum Intent {
         /// and cannot read such a name in anything the hub sends them.
         #[serde(default)]
         any_names: bool,
+        /// The machine takes a new name the hub gives it, and reads the
+        /// records of renames. Earlier releases do not say so: one renamed
+        /// would never connect again under a name it did not ask for.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        renames: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -300,6 +305,9 @@ pub enum Refusal {
     Login { reason: String },
     #[error("another connection of this machine replaced this one")]
     Replaced,
+    /// Sent only to a machine whose session said it takes a new name.
+    #[error("this machine is called {to} on the hub now")]
+    Renamed { to: MachineName },
     #[error("the hub is shutting down")]
     ShuttingDown,
     #[error("{reason}")]
@@ -448,6 +456,13 @@ pub enum Change {
     Remove {
         name: MachineName,
         reason: String,
+    },
+    /// Renames `machine`, one of the account's own or, for the super
+    /// administrator, any, to `to`; its names before keep naming it. Sent
+    /// only to a hub whose view says it renames.
+    Rename {
+        machine: MachineName,
+        to: MachineName,
     },
     /// The asking member logs out of the account.
     Logout,

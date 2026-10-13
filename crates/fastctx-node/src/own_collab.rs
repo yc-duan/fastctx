@@ -68,7 +68,7 @@ pub(crate) fn write(node: &Node, mut collab: Collab) -> Result<u64, Failure> {
     collab.validate().map_err(Failure::not_run)?;
     let here = node.machine();
     let logins = collab.callers.iter().chain(collab.callees.iter().map(|callee| &callee.login));
-    if let Some(other) = logins.map(|login| &login.machine).find(|machine| **machine != here) {
+    if let Some(other) = logins.map(|login| &login.machine).find(|machine| !node.is_me(machine)) {
         return Err(Failure::not_run(format!(
             "{other} is not this computer, {here}: a computer in no network calls and is called only by its own logins"
         )));
@@ -227,8 +227,8 @@ pub(crate) fn take_back(node: &Node, link: &Link) {
     let Some(collab) = view.account(&home).and_then(|found| found.collab.clone()) else { return };
     let here = node.machine();
     let own = Collab {
-        callers: collab.callers.into_iter().filter(|caller| caller.machine == here).collect(),
-        callees: collab.callees.into_iter().filter(|callee| callee.login.machine == here).collect(),
+        callers: collab.callers.into_iter().filter(|caller| node.is_me(&caller.machine)).collect(),
+        callees: collab.callees.into_iter().filter(|callee| node.is_me(&callee.login.machine)).collect(),
         ..collab
     };
     match keep(&path, &own) {

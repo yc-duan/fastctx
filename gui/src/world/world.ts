@@ -163,6 +163,8 @@ export interface MachineFacts {
   shell: string;
   /** What kind of device it is; older nodes do not say. */
   form?: "desktop" | "laptop" | "server";
+  /** It tells how it is doing (`machine_stats`); older nodes do not. */
+  stats?: boolean;
   name: MachineName;
   os: string;
   arch: string;

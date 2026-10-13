@@ -103,7 +103,7 @@ pub(crate) fn available(node: &Node, about: &fastctx_types::residents::About) ->
 
 /// What an older interface or node asks of the homes `machine` knows.
 pub(crate) async fn call(node: &Arc<Node>, machine: MachineName, change: HomeChange) -> Result<(), Failure> {
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         return self::change(node, change).await;
     }
     let call = RemoteCall::Homes { change };

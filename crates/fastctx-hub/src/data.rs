@@ -53,14 +53,21 @@ struct Live {
 /// Notes the data connection `ticket` names, allowed under `standing`, as
 /// the session `generation` of `by` asked.
 pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &MachineName, generation: u64) {
+    // Its ends are known by their names now: the members that come to pair
+    // it are.
+    let (source, sink) = {
+        let store = hub.store();
+        let directory = &store.book.directory;
+        (directory.canonical(&ticket.source).clone(), directory.canonical(&ticket.sink).clone())
+    };
     let mut pairing = hub.data.lock().expect("never poisoned");
     let registration = pairing.registered.entry(ticket.stream).or_insert_with(|| Registration {
-        source: ticket.source.clone(),
-        sink: ticket.sink.clone(),
+        source: source.clone(),
+        sink: sink.clone(),
         standings: Vec::new(),
         by: Vec::new(),
     });
-    if registration.source != ticket.source || registration.sink != ticket.sink {
+    if registration.source != source || registration.sink != sink {
         drop(pairing);
         hub.log.line(format_args!(
             "two calls named one data connection between different machines; the second was not registered"

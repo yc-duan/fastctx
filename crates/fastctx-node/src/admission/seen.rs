@@ -27,7 +27,7 @@ pub fn resident(node: &Node, asker: &Asker, id: &ResidentId) -> bool {
 /// which ask to work here: what it did is not that of an account that may
 /// only use the agents here.
 fn address(node: &Node, asker: &Asker, address: &Address) -> bool {
-    asker.hands || (address.machine == node.machine() && resident(node, asker, &address.resident))
+    asker.hands || (node.is_me(&address.machine) && resident(node, asker, &address.resident))
 }
 
 fn owner(node: &Node, asker: &Asker, owner: &JobOwner) -> bool {

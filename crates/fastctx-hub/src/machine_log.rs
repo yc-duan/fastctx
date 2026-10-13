@@ -100,6 +100,9 @@ impl History {
             Action::Remove { name, .. } => {
                 names.insert(name.clone());
             }
+            Action::Rename { machine, .. } => {
+                names.insert(machine.clone());
+            }
             Action::Joined { .. } => {
                 names.extend(actor.member.iter().cloned());
             }
@@ -182,15 +185,23 @@ impl History {
                     accounts.extend(member.logins.iter().cloned());
                 }
             }
-            if matches!(action, Action::Remove { .. } | Action::Left { .. } | Action::DeleteAccount { .. }) {
+            if matches!(
+                action,
+                Action::Remove { .. } | Action::Left { .. } | Action::DeleteAccount { .. } | Action::Rename { .. }
+            ) {
+                let machine = directory.canonical(&name);
                 accounts.extend(
-                    directory.shares.iter().filter(|share| share.machine == name).map(|share| share.account.clone()),
+                    directory
+                        .shares
+                        .iter()
+                        .filter(|share| share.machine == *machine)
+                        .map(|share| share.account.clone()),
                 );
                 accounts.extend(
                     directory
                         .assists
                         .iter()
-                        .filter(|assist| assist.machine == name)
+                        .filter(|assist| assist.machine == *machine)
                         .map(|assist| assist.account.clone()),
                 );
             }
@@ -215,12 +226,16 @@ impl History {
         Ok(())
     }
 
+    /// The records `me` reads for `account`, newest first. Renames are left
+    /// out for a member whose release does not read them (`renames`): it
+    /// could read nothing of a page with one.
     pub(crate) fn read(
         &self,
         directory: &Directory,
         me: &MachineName,
         account: &AccountName,
         before: Option<u64>,
+        renames: bool,
     ) -> Result<Page, String> {
         if !directory.may_act_for(account, me) {
             return Err(format!("{me} may not read the machine log of the account {account}"));
@@ -241,6 +256,7 @@ impl History {
             .rev()
             .filter(|kept| {
                 before.is_none_or(|before| kept.record.id < before)
+                    && (renames || !matches!(kept.record.action, Action::Rename { .. }))
                     && kept.record.at.checked_add(RETENTION).expect("timestamp in range") > now
                     && (whole
                         || kept.accounts.get(account).copied().is_some_and(|kept| Some(kept) == opened)
@@ -292,6 +308,7 @@ pub(crate) fn action(change: &Change, book: &Book) -> Action {
         Change::StopActing { machine } => Action::StopActing { machine: machine.clone() },
         Change::Direct { machine, at } => Action::Direct { machine: machine.clone(), at: at.clone() },
         Change::Remove { name, reason } => Action::Remove { name: name.clone(), reason: reason.clone() },
+        Change::Rename { machine, to } => Action::Rename { machine: machine.clone(), to: to.clone() },
         Change::Logout => Action::Logout,
         Change::Token { register, name, kind, expires } => {
             Action::Token { register: *register, name: name.clone(), kind: *kind, expires: *expires }
@@ -351,7 +368,10 @@ pub(crate) fn effects(store: &mut Store, before: &Directory, actor: &Actor, acti
         }
     }
     for acting in &before.acting {
-        if !after.acting.iter().any(|current| current.account == acting.account && current.machine == acting.machine)
+        if !after
+            .acting
+            .iter()
+            .any(|current| current.account == acting.account && after.same(&current.machine, &acting.machine))
             && !matches!(action, Action::StopActing { machine } if machine == &acting.machine && actor.account.as_ref() == Some(&acting.account))
         {
             effects.push(Action::ActingStopped { machine: acting.machine.clone(), account: acting.account.clone() });

@@ -23,6 +23,7 @@ import "./app/accounts.css";
 import "./app/when.css";
 import "./app/assist.css";
 import "./app/machines.css";
+import "./app/machine-page.css";
 import "./app/agents.css";
 import "./app/features.css";
 import "./app/removal.css";
@@ -58,6 +59,10 @@ import "./app/folder-walk.css";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { link, placeOf, talkLink, type Place } from "./app/places";
+import { MachinePage } from "./app/machine-page";
+import { enMachinePage, zhMachinePage } from "./app/machine-page-words";
+import { enNameSaid, zhNameSaid } from "./app/name-words";
+import { specimenStats } from "./specimen/stats";
 import { SettingsPage } from "./app/settings";
 import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
@@ -124,7 +129,7 @@ import { markdownOf } from "./conversation/export";
 import { specimens, type Specimen } from "./specimen/sessions";
 import { answering, playLater, playTimed, streamSpecimen } from "./specimen/streams";
 import { specimenAgentRecord } from "./specimen/agents";
-import { specimenAgents, specimenChange, specimenNow } from "./specimen/world";
+import { specimenAgents, specimenChange, specimenNow, specimenRenameHere } from "./specimen/world";
 import { specimenHubMove } from "./specimen/hub-move";
 import { specimenRemote } from "./specimen/remote";
 import { specimenNameProblem } from "./specimen/names";
@@ -210,6 +215,8 @@ import {
   accountChange,
   serverCommand,
   machineLog,
+  machineStats,
+  renameHere,
   agentActivity,
 } from "./world/bridge";
 import { en, zh } from "./words";
@@ -261,7 +268,7 @@ let place: Place = { kind: "home" };
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
-  return ["feature", "data", "admin", "network", "journal", "page", "file", "login", "talks"].includes(at.kind);
+  return ["feature", "data", "admin", "network", "journal", "page", "file", "login", "talks", "machine"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -274,6 +281,8 @@ function parentOf(at: Place): Place {
       return { kind: "settings" };
     case "admin":
       return { kind: "account" };
+    case "machine":
+      return { kind: "machines" };
     case "journal":
     case "page":
       return { kind: "project", town: at.town };
@@ -840,7 +849,13 @@ function home(): Page {
     event: (event) => {
       if (event.kind !== "select" || !event.key) return;
       const { key } = event;
-      location.hash = key.startsWith("hub:") ? link({ kind: "account" }) : key.startsWith("group:") ? link({ kind: "machines" }) : link({ kind: "machine", name: key.replace(/^(m|assist):/, "") });
+      location.hash = key.startsWith("hub:")
+        ? link({ kind: "account" })
+        : key.startsWith("group:")
+          ? link({ kind: "machines" })
+          : key.startsWith("assist:")
+            ? link({ kind: "machines", focus: key.slice("assist:".length) })
+            : link({ kind: "machine", name: key.slice("m:".length) });
     },
   });
   const page = new HomePage({
@@ -1508,20 +1523,55 @@ function show(next: Place): void {
     case "page":
       page = pageScreen(next.town, next.page, next.version);
       break;
+    case "machine": {
+      const name = next.name;
+      page = new MachinePage({
+        store,
+        words: english ? enMachinePage : zhMachinePage,
+        machines: english ? enMachines : zhMachines,
+        access: english ? enAccess : zhAccess,
+        nameSaid: english ? enNameSaid : zhNameSaid,
+        head,
+        name,
+        when,
+        ago: (ms) => homeWords.ago(ms),
+        stats: (machine, after) => (live ? machineStats(machine, after) : specimenStats(machine, after)),
+        nameProblem: (text) => (live ? nameProblem("machine", text) : specimenNameProblem("machine", text)),
+        change,
+        renameHere: async (to) => {
+          if (live) return renameHere(to);
+          const renamed = specimenRenameHere(store.world.peek(), to);
+          if (renamed) store.world.set(renamed);
+        },
+        talk: (machine) => beginTalk(null, null, machine),
+        confirm: accountConfirm,
+        replace: (to) => replacePlace(link(to)),
+      });
+      break;
+    }
     case "machines":
-    case "machine":
       page = new MachinesPage({
         store,
         words: english ? enMachines : zhMachines,
         access: english ? enAccess : zhAccess,
         head,
-        focus: next.kind === "machine" ? next.name : null,
+        focus: next.focus ?? null,
         when,
         change,
         invite: (login) => tokens.open(login),
         talk: (machine) => beginTalk(null, null, machine),
         confirm: accountConfirm,
         log: live ? machineLog : specimenMachineLog,
+        renaming: {
+          words: english ? enMachinePage : zhMachinePage,
+          nameSaid: english ? enNameSaid : zhNameSaid,
+          check: (text) => (live ? nameProblem("machine", text) : specimenNameProblem("machine", text)),
+          here: async (to) => {
+            if (live) return renameHere(to);
+            const renamed = specimenRenameHere(store.world.peek(), to);
+            if (renamed) store.world.set(renamed);
+          },
+        },
         moving: {
           move: (login, request) => (live ? hubMove(login.hubName, login.account, request) : specimenMove(request)),
           arrive: () => (live ? arriveHub() : notLive()),
@@ -1704,6 +1754,16 @@ function show(next: Place): void {
           location.replace(url);
         },
         ago: (at, now) => homeWords.ago(now.getTime() - at.getTime()),
+        renaming: {
+          words: english ? enMachinePage : zhMachinePage,
+          nameSaid: english ? enNameSaid : zhNameSaid,
+          check: (text) => (live ? nameProblem("machine", text) : specimenNameProblem("machine", text)),
+          here: async (to) => {
+            if (live) return renameHere(to);
+            const renamed = specimenRenameHere(store.world.peek(), to);
+            if (renamed) store.world.set(renamed);
+          },
+        },
         phone: live ? (onPhone() ? phoneSeam : undefined) : params.has("phone") ? specimenPhone : undefined,
         notifyChanged: (on) => {
           if (live && onPhone()) void configurePhone(presenceWords, on).catch((error: unknown) => console.error("telling the phone its calls", error));
@@ -1757,7 +1817,9 @@ function specimenPlace(): Place | null {
     case "page":
       return { kind: "page", town: "mark50", page: "tuning", version: null };
     case "machines":
-      return { kind: "machine", name: "laptop" };
+      return { kind: "machines", focus: "laptop" };
+    case "machine":
+      return { kind: "machine", name: params.get("m") ?? "desktop" };
     case "invite":
       return { kind: "account" };
     case "welcome":
@@ -1836,7 +1898,7 @@ new Palette({
         group: paletteWords.machines,
         label: machine.written,
         note: machine.here || machine.online ? "" : shellWords.offline,
-        run: go({ kind: "machine", name: machine.name }),
+        run: go({ kind: "machine", name: machine.written }),
       })),
     ];
     return items;

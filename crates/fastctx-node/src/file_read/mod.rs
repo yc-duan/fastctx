@@ -28,7 +28,7 @@ fn start(node: Arc<Node>, acting: Acting, machine: Option<MachineName>, request:
         tokio::select! {
             () = sender.closed() => {},
             result = async {
-                match machine.filter(|machine| *machine != node.machine()) {
+                match machine.filter(|machine| !node.is_me(machine)) {
                     None => {
                         let path = request.path.clone();
                         Ok(local::read(node.machine(), request, &sender).await.map_err(|mut error| {
@@ -68,7 +68,7 @@ fn start_attachment(
             () = sender.closed() => {},
             result = async {
                 let machine = attachment.owner().machine.clone();
-                if machine != node.machine() {
+                if !node.is_me(&machine) {
                     let speakers = node.speakers(&Acting::Here, &(&machine).into(), Purpose::Agents).map_err(|error| Failure::new(error.to_string()))?;
                     let mut refused = None;
                     for (link,account) in speakers {

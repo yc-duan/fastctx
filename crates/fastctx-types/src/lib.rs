@@ -45,6 +45,7 @@ pub mod run;
 pub mod run_facts;
 pub mod session;
 pub mod since;
+pub mod stats;
 pub mod thumbnail;
 pub mod town;
 pub mod uninstall;

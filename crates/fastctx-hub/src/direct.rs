@@ -68,6 +68,7 @@ pub(crate) async fn change(
     machine: MachineName,
     at: Vec<SocketAddr>,
 ) -> Result<Told, String> {
+    let machine = hub.store().book.directory.canonical(&machine).clone();
     let action = Action::Direct { machine: machine.clone(), at: at.clone() };
     let actor = Actor { account: Some(account.clone()), authenticated: true, member: Some(asker.clone()), peer: None };
     let outcome = allow(&hub, &asker, &account, &machine, &at).await;

@@ -380,7 +380,8 @@ fn home_plan(directories: &[(Option<TownName>, PathBuf)], removed: Option<Timest
 /// receipt names alone cannot recover that owner, so those remain readable by
 /// the compatibility lookup rather than being guessed or discarded.
 fn gather_queues(world: &WorldDir, failed: &BTreeSet<String>, gathered: &mut Gathered) -> io::Result<()> {
-    let here = crate::machine::name(world)?;
+    let own = crate::machine::names(world)?;
+    let here = fastctx_types::layout::Names { me: own.name.clone(), was: own.was.clone(), renamed: Vec::new() };
     for name in ["job-deliveries", "on-deliveries", "on-stops"] {
         let shared = world.path().join(name);
         for path in entries(&shared)? {
@@ -390,13 +391,13 @@ fn gather_queues(world: &WorldDir, failed: &BTreeSet<String>, gathered: &mut Gat
             let value: serde_json::Value = read_json(&path)?;
             let owner: Address = match name {
                 "on-deliveries" => Address {
-                    machine: here.clone(),
+                    machine: own.name.clone(),
                     resident: serde_json::from_value(value["to"].clone()).map_err(io::Error::other)?,
                 },
                 "on-stops" => serde_json::from_value(value["origin"]["resident"].clone()).map_err(io::Error::other)?,
                 _ => serde_json::from_value(value["owner"].clone()).map_err(io::Error::other)?,
             };
-            let name_of_owner = if owner.machine == here { owner.resident.to_string() } else { owner.key() };
+            let name_of_owner = if own.is(&owner.machine) { owner.resident.to_string() } else { owner.key() };
             if failed.contains(&name_of_owner) {
                 continue;
             }

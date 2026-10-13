@@ -1,0 +1,197 @@
+//! What a machine says of itself for its details page (`world-gui.md`, 机器的
+//! 详情): when it started, how busy it is, its memory, disks, network cards
+//! and graphics cards, and how its lines to its hubs have held. Only an
+//! account that may work on the machine is told (`RemoteCall::Stats`).
+//!
+//! Rates (how busy the processors are, how fast the cards move bytes) are
+//! measured between two readings: the machine's previous answer to anyone
+//! who asked, or, when there was none lately, a second reading made a
+//! moment after the first.
+//!
+//! The lines' history is long (an hour of round trips, thirty days of
+//! changes), so one who asked before asks for only what came after its
+//! last answer (`RemoteCall::Stats::after`) and keeps the rest.
+
+use std::net::IpAddr;
+
+use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
+
+use crate::{HubName, MachineName};
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MachineStats {
+    pub machine: MachineName,
+    /// When this was read.
+    pub at: Timestamp,
+    /// When the machine started, as its clock has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot: Option<Timestamp>,
+    /// The system as people call it, such as `Windows 11 Pro 24H2 (26200)`
+    /// or `Ubuntu 24.04.1 LTS`.
+    pub system: String,
+    /// The kernel's own version, where it is not in `system`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<String>,
+    /// The machine's own host name.
+    pub host: String,
+    pub arch: String,
+    pub cpu: Cpu,
+    pub memory: Memory,
+    #[serde(default)]
+    pub disks: Vec<Disk>,
+    #[serde(default)]
+    pub cards: Vec<Card>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gpus: Vec<Gpu>,
+    /// Its lines to the hubs it is on.
+    #[serde(default)]
+    pub lines: Vec<Line>,
+    /// Its node: the program's version, and when this node started.
+    pub node: NodeSeen,
+}
+
+/// The rates and shares in a reading are measured, never NaN, so a reading
+/// equals itself as the replies holding it require.
+impl Eq for MachineStats {}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Cpu {
+    /// The processor's own name, such as `AMD Ryzen 9 7950X 16-Core
+    /// Processor`; empty when the system does not say.
+    pub model: String,
+    /// Logical processors.
+    pub threads: u32,
+    /// How busy all of them were between the two readings, 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busy: Option<f32>,
+    /// The load averages over 1, 5 and 15 minutes, where the system keeps
+    /// them (not Windows).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load: Option<[f32; 3]>,
+}
+
+/// Bytes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Memory {
+    pub total: u64,
+    pub used: u64,
+    /// The page file or swap: what is set aside on disk, and in use.
+    #[serde(default)]
+    pub swap_total: u64,
+    #[serde(default)]
+    pub swap_used: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Disk {
+    /// Where it is reached: `C:/`, or a mount point such as `/` or `/data`.
+    pub at: String,
+    /// Its label, where it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Its file system, such as `NTFS` or `ext4`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub fs: String,
+    pub total: u64,
+    /// Bytes free to the machine's user.
+    pub free: u64,
+}
+
+/// A network card.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Card {
+    pub name: String,
+    pub up: bool,
+    /// A card of the machine's own, not one a program made (a virtual
+    /// switch, a tunnel): what crosses a tunnel crosses a card too.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hardware: bool,
+    /// Its link speed, in bits a second, where the system knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<u64>,
+    /// Bytes received and sent since it came up.
+    pub received: u64,
+    pub sent: u64,
+    /// Bytes a second, between the two readings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiving: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sending: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub addresses: Vec<IpAddr>,
+}
+
+/// A graphics card, as its driver's tool tells.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Gpu {
+    pub name: String,
+    /// Bytes.
+    pub memory_total: u64,
+    pub memory_used: u64,
+    /// How busy it is, 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busy: Option<f32>,
+}
+
+/// The machine's line to one hub.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Line {
+    pub hub: HubName,
+    /// Since when it is up, or, while it is down, since when it tries.
+    pub since: Timestamp,
+    pub up: bool,
+    /// The machine it goes through, when its own line is down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<String>,
+    /// The round trips to the hub over the last hour, in milliseconds, one
+    /// each heartbeat; only those after the moment asked for, when one was.
+    #[serde(default)]
+    pub trips: Vec<Trip>,
+    /// When it came up and went down over the last 30 days, oldest first;
+    /// only those after the moment asked for, when one was.
+    #[serde(default)]
+    pub changes: Vec<LineChange>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Trip {
+    pub at: Timestamp,
+    pub ms: u32,
+}
+
+/// One change of a line to a hub.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum LineChange {
+    /// The node started: whatever was before it, the machine or the node
+    /// was not running, or no one recorded it.
+    Started {
+        at: Timestamp,
+    },
+    Up {
+        at: Timestamp,
+    },
+    Down {
+        at: Timestamp,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        why: String,
+    },
+}
+
+impl LineChange {
+    pub fn at(&self) -> Timestamp {
+        match self {
+            LineChange::Started { at } | LineChange::Up { at } | LineChange::Down { at, .. } => *at,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NodeSeen {
+    pub version: String,
+    pub started: Timestamp,
+    /// Whether a system service keeps it running.
+    #[serde(default)]
+    pub service: bool,
+}

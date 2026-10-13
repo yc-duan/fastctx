@@ -115,9 +115,9 @@ impl Node {
         Written { name: name.clone(), hub: shared.then(|| link.membership().hub_name.clone()) }
     }
 
-    /// Whether `machine` is this computer.
+    /// Whether `machine` is this computer, by its name now or one it had.
     pub(crate) fn is_here(&self, machine: &Written) -> bool {
-        machine.name == self.machine()
+        self.is_me(&machine.name)
             && machine.hub.as_ref().is_none_or(|hub| self.links().iter().any(|link| link.membership().hub_name == *hub))
     }
 
@@ -172,7 +172,7 @@ impl Node {
         let may = accounts.iter().any(|account| {
             self.link_of(&account.hub).is_some_and(|link| {
                 let view = link.view();
-                view.logged_in(&here, &account.account) || view.rights(&account.account, &here).hands
+                view.logged_in(&view.me, &account.account) || view.rights(&account.account, &view.me).hands
             })
         });
         if may {
@@ -249,7 +249,6 @@ impl Node {
         let unreachable =
             |failure: Failure| CallFailure::Unreachable { name: to.name.clone(), reason: failure.message };
         let links = self.locate(to).map_err(unreachable)?;
-        let here = self.machine();
         let mut speakers = Vec::new();
         let mut why = Vec::new();
         for link in links {
@@ -260,8 +259,10 @@ impl Node {
                 continue;
             }
             let view = link.view();
+            // This computer as that hub calls it.
+            let here = &view.me;
             for account in accounts {
-                match view.admits(&here, &account, &to.name, purpose) {
+                match view.admits(here, &account, &to.name, purpose) {
                     _ if purpose == Purpose::Echo => speakers.push((link.clone(), account)),
                     Ok(()) => speakers.push((link.clone(), account)),
                     Err(refused) => why.push(refused),

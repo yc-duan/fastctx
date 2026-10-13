@@ -69,7 +69,7 @@ impl DataWay {
         let hello = Frame::Hello {
             protocol: peer::PROTOCOL,
             version: env!("CARGO_PKG_VERSION").to_string(),
-            hub: self.inner.membership.id.clone(),
+            hub: self.inner.hub.clone(),
             intent: Intent::Data { key: key.public(), proof: key.sign(Domain::Peer, &dialed.binding), stream, end },
         };
         peer::send(&mut socket, &hello).await?;

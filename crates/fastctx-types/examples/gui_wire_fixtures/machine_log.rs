@@ -37,6 +37,7 @@ pub fn fixtures() -> Vec<Page> {
         Action::Direct { machine: machine(), at: vec!["203.0.113.20:7444".parse().unwrap()] },
         Action::Direct { machine: machine(), at: vec![] },
         Action::Remove { name: machine(), reason: "retired".into() },
+        Action::Rename { machine: machine(), to: "gpu-2".parse().unwrap() },
         Action::Logout,
         Action::Token { register: false, name: None, kind: MemberKind::Phone, expires: at },
         Action::PasswordStart { target: account() },

@@ -94,7 +94,7 @@ pub(crate) fn choices(
             let Some(collab) = found.collab.as_ref().filter(|collab| collab.on) else { continue };
             let mut calling = false;
             for caller in &collab.callers {
-                if caller.machine == node.machine()
+                if node.is_me(&caller.machine)
                     && caller.agent == login.agent
                     && matches_home(node, &login.agent, caller.home.as_deref(), login.home.as_deref())?
                     && view.may_use_login(&account, &caller.machine, &caller.agent, caller.home.as_deref())

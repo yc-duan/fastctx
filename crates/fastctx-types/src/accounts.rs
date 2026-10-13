@@ -152,6 +152,13 @@ pub enum AccountChange {
         name: MachineName,
         reason: String,
     },
+    /// Renames `machine`, one of the account's own or, for the hub's super
+    /// administrator, any; the names it had keep naming it
+    /// (`world-network.md`, 机器的名字).
+    Rename {
+        machine: MachineName,
+        to: MachineName,
+    },
     Logout,
     Token {
         register: bool,
@@ -203,6 +210,9 @@ pub enum AccountChange {
 pub struct AccountsReply {
     /// This computer's name, the same on every hub.
     pub machine: MachineName,
+    /// The names this computer had, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub was: Vec<MachineName>,
     pub hubs: Vec<HubAccounts>,
 }
 
@@ -215,6 +225,13 @@ pub struct HubAccounts {
     #[serde(default)]
     pub addresses: Vec<SocketAddr>,
     pub link: LinkState,
+    /// This computer's name there: its name, unless that hub has not
+    /// followed a rename yet. None from an older node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub me: Option<MachineName>,
+    /// Whether the hub renames machines.
+    #[serde(default)]
+    pub renames: bool,
     /// The accounts this computer is logged in to there.
     pub logins: Vec<AccountName>,
     /// The account this computer is registered under there, as a machine.
@@ -265,6 +282,9 @@ pub struct AccountSeen {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemberSeen {
     pub name: MachineName,
+    /// The names it had before it was renamed, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub was: Vec<MachineName>,
     pub kind: MemberKind,
     pub logins: Vec<AccountName>,
     /// The account it is registered under, when it is a machine.

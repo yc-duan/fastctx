@@ -11,7 +11,7 @@ use std::path::Path;
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::layout::{ConversationDir, WorldDir};
 use fastctx_types::residents::{About, Action, MessageLine, Now, Places, Seen};
-use fastctx_types::{Address, MachineName, ResidentId};
+use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
 
 /// Writes a new resident's `about` and the project it starts in; fails if
@@ -97,7 +97,12 @@ pub fn record_action(world: &WorldDir, resident: &ResidentId, action: &Action) -
 
 /// Appends what a resident saw on this machine to its `seen` record here,
 /// one line per file, all in one write so each call's lines stay together.
-pub fn record_seen(world: &WorldDir, here: &MachineName, owner: &Address, seen: &[Seen]) -> io::Result<()> {
+pub fn record_seen(
+    world: &WorldDir,
+    here: &fastctx_types::layout::Names,
+    owner: &Address,
+    seen: &[Seen],
+) -> io::Result<()> {
     let _transaction = crate::resident_storage::lock();
     let directory = world.owner(here, owner);
     ensure_private_dir(&directory.books())?;
@@ -105,7 +110,12 @@ pub fn record_seen(world: &WorldDir, here: &MachineName, owner: &Address, seen: 
 }
 
 /// Records a shell write where it happened, including a visiting resident.
-pub fn record_owned_action(world: &WorldDir, here: &MachineName, owner: &Address, action: &Action) -> io::Result<()> {
+pub fn record_owned_action(
+    world: &WorldDir,
+    here: &fastctx_types::layout::Names,
+    owner: &Address,
+    action: &Action,
+) -> io::Result<()> {
     let _transaction = crate::resident_storage::lock();
     let directory = world.owner(here, owner);
     ensure_private_dir(directory.path())?;

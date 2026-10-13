@@ -67,7 +67,7 @@ pub(crate) fn confirmed(
     delivery: JobDelivery,
     acting: Option<&Acting>,
 ) -> io::Result<()> {
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         received(node, &owner, &delivery)?;
     } else {
         let dispatched = crate::here::get_dispatched(node, &owner.resident, &delivery.job);
@@ -116,7 +116,7 @@ fn enqueue(node: &Node, sending: Sending) -> io::Result<()> {
             if sending.through_exit { "exit" } else { "end" },
         ],
     );
-    let directory = node.world.owner(&node.machine(), &sending.owner).book("job-deliveries");
+    let directory = node.world.owner(&node.names(), &sending.owner).book("job-deliveries");
     ensure_private_dir(&directory)?;
     queue(&directory.join(format!("{key}.json")), sending)
 }
@@ -185,7 +185,7 @@ fn received_here(
     seen: &mut HashSet<(PathBuf, bool)>,
 ) -> io::Result<()> {
     let paths = if let Some(origin) = origin {
-        vec![node.world.job_record(&node.machine(), origin.town.as_ref(), &owner.clone().into(), &delivery.job)]
+        vec![node.world.job_record(&node.names(), origin.town.as_ref(), &owner.clone().into(), &delivery.job)]
     } else {
         let mut paths = Vec::new();
         for parent in node.world.job_parents()? {

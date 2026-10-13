@@ -78,6 +78,9 @@ export interface AccountSeen {
 
 export interface MemberSeen {
   name: MachineName;
+  /** The names it had before it was renamed, oldest first; each still
+   *  names it. */
+  was?: MachineName[];
   kind: MemberKind;
   logins: AccountName[];
   /** The account it is registered under, when it is a machine. */
@@ -161,6 +164,11 @@ export interface HubAccounts {
   /** The hub's own addresses, as it publishes them. */
   addresses: string[];
   link: LinkState;
+  /** This computer's name there: its name, unless that hub has not
+   *  followed a rename yet. Absent from an older node. */
+  me?: MachineName;
+  /** Whether the hub renames machines. */
+  renames?: boolean;
   logins: AccountName[];
   home: AccountName | null;
   self_registration: boolean;
@@ -180,6 +188,8 @@ export interface HubAccounts {
 
 export interface AccountsReply {
   machine: MachineName;
+  /** The names this computer had, oldest first. */
+  was?: MachineName[];
   hubs: HubAccounts[];
 }
 
@@ -193,6 +203,9 @@ export type AccountChange =
    *  at `at` before it counts; none, no longer. */
   | { change: "direct"; machine: MachineName; at: string[] }
   | { change: "remove"; name: MachineName; reason: string }
+  /** Renames one of the account's machines, or, for the administrator,
+   *  any; its names before keep naming it. */
+  | { change: "rename"; machine: MachineName; to: MachineName }
   | { change: "logout" }
   | { change: "token"; register: boolean; name: MachineName | null; kind: MemberKind; expires: Timestamp }
   | { change: "set_password"; target: AccountName; password: string }
@@ -210,6 +223,11 @@ export interface Login {
   hub: HubId;
   hubName: HubName;
   account: AccountName;
+}
+
+/** Whether `name` names `member`: its name now, or one it had. */
+export function names(member: Pick<MemberSeen, "name" | "was">, name: MachineName): boolean {
+  return member.name === name || (member.was ?? []).includes(name);
 }
 
 /** Every login, hub by hub, in the order the hubs answered. */

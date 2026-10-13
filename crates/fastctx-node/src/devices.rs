@@ -68,6 +68,8 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
             // The names of the user's folders, for pointing a conversation
             // at some: names only, never contents.
             | RemoteCall::Folders { .. }
+            // How a machine of the user's is doing, for its details page.
+            | RemoteCall::Stats { .. }
             // The user's consent to Claude Code's bypass-permissions mode,
             // which only the user gives, on the machine it is about.
             | RemoteCall::ClaudeConsent { .. }
@@ -164,7 +166,7 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
         }
         Call::Journal(JournalCall::Add { attach, .. }) => {
             for attached in attach {
-                if attached.machine.as_ref().is_some_and(|machine| *machine != here) {
+                if attached.machine.as_ref().is_some_and(|machine| !node.is_me(machine)) {
                     return Err(Failure::new(format!(
                         "{from} attached a file of another machine; a device attaches what it uploads to this one"
                     )));

@@ -55,7 +55,7 @@ pub async fn talk(
         Some(machine) => machine,
         None => locate(node, &to).await?,
     };
-    if machine == here {
+    if node.is_me(&machine) {
         let landed = talk_here(node, &here, &to, text, attachments, files_on.as_ref(), id.as_deref()).await?;
         return Ok((Address { machine: here, resident: to }, landed));
     }
@@ -100,13 +100,12 @@ pub async fn watch(
     composer: Option<String>,
     held: Option<Held>,
 ) -> Result<mpsc::UnboundedReceiver<Result<Watched, String>>, Failure> {
-    let here = node.machine();
     let machine = match machine {
         Some(machine) => machine,
         None => locate(node, &resident).await?,
     };
     let (sender, receiver) = mpsc::unbounded_channel();
-    if machine == here {
+    if node.is_me(&machine) {
         let (lease, opened) = opening(node, &resident, composer, held.as_ref()).await?;
         let Opening { pieces, mut events, slim } = opened;
         for piece in pieces {
@@ -628,7 +627,7 @@ pub async fn open(
             }
         }
     };
-    match target.filter(|target| *target != here) {
+    match target.filter(|target| !node.is_me(target)) {
         None => {
             let (id, landed) = open_here(node, &here, acting, agent, town, text, options, attachments, choices).await?;
             Ok((Address { machine: here, resident: id }, landed))
@@ -753,7 +752,7 @@ pub async fn stop(
         Some(machine) => machine,
         None => locate(node, &resident).await?,
     };
-    if machine == here {
+    if node.is_me(&machine) {
         let stopped = stop_here(node, &resident).await?;
         return Ok((Address { machine: here, resident }, stopped));
     }

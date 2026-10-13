@@ -19,7 +19,11 @@ import { watchFilm } from "../film/theater";
 import type { Point } from "../map-canvas";
 import { blot, circle, outline, ruled, seeded } from "../pen/shapes";
 import type { AccountChange, HubAccounts, Login, MemberSeen } from "../world/accounts";
-import { loginsOf } from "../world/accounts";
+import { loginsOf, names } from "../world/accounts";
+import type { NameProblem } from "../world/bridge";
+import type { MachinePageWords } from "./machine-page-words";
+import type { NameSaid } from "./name-words";
+import { RenameField, renamerOf } from "./rename";
 import type { WorldNow } from "../world/bridge";
 import type { LinkState } from "../world/world";
 import { agentName, osName, titleOf } from "../world/names";
@@ -61,6 +65,14 @@ export interface MachinesOptions {
   log: ReadLog;
   /** Moving the server to another machine. */
   moving: Pick<HubMovingOptions, "move" | "arrive" | "remote">;
+  /** Renaming a machine: the words of its field, the rule a name is
+   *  checked by, and renaming this computer. */
+  renaming: {
+    words: MachinePageWords;
+    nameSaid: NameSaid;
+    check(text: string): Promise<NameProblem | null>;
+    here(to: string): Promise<void>;
+  };
 }
 
 /** One thing on the map, as the page knows it. */
@@ -158,6 +170,8 @@ export class MachinesPage implements Page {
   /** Groups the user folded or opened, by key; the rest follow the
    *  default. */
   private readonly folds = new Map<string, boolean>();
+  /** Come to a spot named in the address, until the drawing knows it. */
+  private focusing: boolean;
 
   /** In no network: the film and the ways into one, instead of the
    *  drawing. */
@@ -170,10 +184,12 @@ export class MachinesPage implements Page {
     this.giving = new GiveSheet(options.access);
     this.assistSheet = new AssistSheet(options.access);
     this.moving = new HubMoving({ ...options.moving, words, access: options.access, confirm: options.confirm, changed: () => this.redraw() });
-    this.title = options.focus ?? words.title;
+    this.title = words.title;
     this.selected = options.focus ? `m:${options.focus}` : null;
-    // Come to a machine from elsewhere, what is known of it is open.
+    // Come to one from elsewhere, what is known of it is open; a machine's
+    // own page is where its details are, so it is only chosen.
     this.detailsOpen = !!options.focus;
+    this.focusing = !!options.focus;
     this.element = document.createElement("div");
     this.element.className = "machines-page";
     this.element.innerHTML = `
@@ -224,10 +240,13 @@ export class MachinesPage implements Page {
     this.canvas.prepend(this.map.element);
     this.log = new MachineLog(words, options.log, () => loginsOf(options.store.world.peek()?.accounts), (at) => options.when(at, options.store.clock.peek()));
     this.canvas.append(this.log.button, this.log.panel);
-    // A ring pressed twice opens what is known of it.
+    // A ring pressed twice opens what is known of it: a machine's own page,
+    // or the details of a hub or of a machine whose agent assists.
     this.map.element.addEventListener("dblclick", (event) => {
       const key = (event.target as HTMLElement).closest<HTMLElement>("[data-item]")?.dataset.item;
-      if (key && !key.startsWith("add:")) this.details(key);
+      if (!key || key.startsWith("add:")) return;
+      if (key.startsWith("m:")) location.hash = link({ kind: "machine", name: key.slice("m:".length) });
+      else this.details(key);
     });
     const add = this.element.querySelector<HTMLButtonElement>(".add-device")!;
     // Another device comes into an account: offered where there is one.
@@ -641,6 +660,10 @@ export class MachinesPage implements Page {
     if (this.selected && !spots.has(this.selected)) this.selected = null;
     this.drawMap(world);
     const spot = this.selected ? spots.get(this.selected) : undefined;
+    if (this.focusing && spot) {
+      this.focusing = false;
+      if (spot.kind === "machine") this.detailsOpen = false;
+    }
     // On a narrow page nothing floats beside the one chosen: its sheet rises
     // at once, its actions a row in it.
     const narrow = this.narrow();
@@ -799,11 +822,16 @@ export class MachinesPage implements Page {
     const member = admin ? this.memberOf(spot.machine, admin, world) : undefined;
     const direct: Act[] =
       member?.kind !== "computer" ? [] : member.direct?.length ? [{ act: "direct", label: words.stopDirect, icon: "link" }] : member.reach ? [{ act: "direct", label: words.allowDirect, icon: "link" }] : [];
+    // Its owner and the network's administrator rename it.
+    const rename: Act[] = renamerOf(spot.machine, world, this.options.change, this.options.renaming.here)
+      ? [{ act: "rename", label: this.options.renaming.words.rename, icon: "edit" }]
+      : [];
     return [
       { act: "talk", label: words.talk, icon: "plus" },
       { act: "agents", label: words.hosts, icon: "agents" },
       ...(owners.length ? [{ act: "share", label: words.share, icon: "colleague" as const }] : []),
       ...direct,
+      ...rename,
       details,
       ...(owners.length && !spot.machine.here ? [{ act: "remove", label: words.remove, icon: "close" as const, danger: true }] : []),
     ];
@@ -812,7 +840,8 @@ export class MachinesPage implements Page {
   /** The actions of the one chosen as a row in its sheet, each with its
    *  name, large enough for a finger. */
   private sheetActs(key: string, world: WorldNow): string {
-    const acts = this.actsOf(key, world).filter((act) => act.act !== "details");
+    // The sheet is a hub's details; a machine's are on its own page.
+    const acts = this.actsOf(key, world).filter((act) => act.act !== "details" || key.startsWith("m:"));
     return acts.length
       ? `<div class="sheet-acts">${acts
           .map(
@@ -843,7 +872,11 @@ export class MachinesPage implements Page {
     if (act === "fit") return this.map.fit();
     const spot = this.spots(world).get(key);
     if (!spot) return;
-    if (act === "details") return this.details(key);
+    if (act === "details") {
+      if (spot.kind !== "machine") return this.details(key);
+      location.hash = link({ kind: "machine", name: spot.machine.written });
+      return;
+    }
     if (spot.kind === "hub") {
       const login = this.hubLogin(spot.hub.hub);
       if (act === "invite" && login) this.invite(login);
@@ -881,6 +914,9 @@ export class MachinesPage implements Page {
       case "remove":
         if (login) this.remove(login, machine.name);
         return;
+      case "rename":
+        this.renameCard(key, machine);
+        return;
       case "direct": {
         const admin = this.adminOf(machine, world);
         const member = admin ? this.memberOf(machine, admin, world) : undefined;
@@ -898,9 +934,51 @@ export class MachinesPage implements Page {
     return loginsOf(world.accounts).find((login) => machine.on.some((on) => on.hub === login.hub) && isSuper(world, login));
   }
 
-  /** What `login`'s hub says of `machine`. */
+  /** What `login`'s hub says of `machine`, by its name or one it had. */
   private memberOf(machine: Machine, login: Login, world: WorldNow): MemberSeen | undefined {
-    return world.accounts.hubs.find((hub) => hub.hub === login.hub)?.members.find((member) => member.name === machine.name);
+    return world.accounts.hubs.find((hub) => hub.hub === login.hub)?.members.find((member) => names(member, machine.name));
+  }
+
+  /** A card beside the ring with its name to change. Renamed, it is
+   *  circled under its new name, and for a moment the old name can be given
+   *  back from the drawing's corner: a name a machine had stays its own. */
+  private renameCard(key: string, machine: Machine): void {
+    const world = this.options.store.world.peek();
+    const rename = world ? renamerOf(machine, world, this.options.change, this.options.renaming.here) : null;
+    if (!rename) return;
+    const { words, nameSaid, check } = this.options.renaming;
+    const from = machine.name;
+    this.openCard(key, this.map.screenOf(key) ?? [0, 0], `<p class="map-card-title">${escape(words.renameTitle(machine.written))}</p><div class="map-card-rename"></div>`, async () => {});
+    const field = new RenameField({
+      words,
+      nameSaid,
+      name: from,
+      note: !machine.here && machine.online === false ? words.renameOffline(machine.written) : undefined,
+      check,
+      rename: async (to) => {
+        await rename(to);
+        await this.options.store.refresh();
+      },
+      done: (to) => {
+        field.dispose();
+        this.closeCard();
+        const renamed = `m:${to}`;
+        this.selected = renamed;
+        this.fresh.add(renamed);
+        setTimeout(() => {
+          this.fresh.delete(renamed);
+          this.redraw();
+        }, ARRIVED_MS);
+        this.offerUndo(words.renamed(from, to), () => rename(from, to));
+        this.redraw();
+      },
+      cancel: () => {
+        field.dispose();
+        this.closeCard();
+      },
+    });
+    this.card.querySelector(".map-card-rename")!.append(field.element);
+    field.focus();
   }
 
   /** The card that lets other machines connect to one directly: a small

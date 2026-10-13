@@ -360,6 +360,14 @@ pub enum RemoteCall {
     },
     /// What that machine is like, for `fastctx nodes`.
     Facts,
+    /// How that machine is doing, for its details page: only for an account
+    /// that may work on it (`crate::stats`). With `after`, its lines bring
+    /// only the round trips and changes since then: a page that asks every
+    /// few seconds keeps what it was told.
+    Stats {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<jiff::Timestamp>,
+    },
     /// That machine's network addresses, as a place for the hub
     /// (`crate::hub_move`). A machine that cannot take the hub does not
     /// know this call.
@@ -436,7 +444,8 @@ impl RemoteCall {
             | RemoteCall::AddAgentLogin { .. }
             | RemoteCall::AgentFolder { .. }
             | RemoteCall::PreviewAgentChange { .. }
-            | RemoteCall::ChangeAgentLogin { .. } => Purpose::Hands,
+            | RemoteCall::ChangeAgentLogin { .. }
+            | RemoteCall::Stats { .. } => Purpose::Hands,
             RemoteCall::Composer { .. }
             | RemoteCall::AttachmentThumbnail { .. }
             | RemoteCall::ReadAttachment { .. }
@@ -544,6 +553,7 @@ pub enum RemoteReply {
     /// A conversation's setting there changed as asked.
     Set,
     Facts(MachineFacts),
+    Stats(Box<crate::stats::MachineStats>),
     Interfaces {
         addresses: Vec<crate::hub_move::InterfaceAddress>,
     },

@@ -19,6 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
+use fastctx_net::directory::Directory;
 use fastctx_net::ledger::Entry;
 use fastctx_net::sign::Signed;
 use fastctx_net::wire::{self, Down, Told};
@@ -94,7 +95,8 @@ impl Ledgers {
             return Err(format!("{from} acts for no account that may write in the project {}", project.name));
         }
         let entry = fastctx_net::ledger::open(&signed, &store.hub.id, town)?;
-        if entry.author != *from || entry.key != member.key {
+        // An entry made before its author was renamed is its all the same.
+        if !directory.same(&entry.author, from) || entry.key != member.key {
             return Err(format!("the entry is by {}, sent by {from}", entry.author));
         }
         let ledger = self.towns.get(town);
@@ -143,18 +145,21 @@ impl Ledgers {
             .map_err(|error| format!("the hub could not keep the entry: {error}"))?;
         ledger.add(&entry);
         ledger.next = seq + 1;
-        let mut tell = ledger.machines.clone();
-        tell.push(from.clone());
+        let mut tell: Vec<MachineName> =
+            ledger.machines.iter().map(|machine| directory.canonical(machine).clone()).collect();
+        tell.push(directory.canonical(from).clone());
         tell.sort();
         tell.dedup();
         Ok((seq, tell))
     }
 
-    /// The projects `name` spans, with each one's latest entry.
-    pub fn towns_of(&self, name: &MachineName) -> Vec<(TownId, u64)> {
+    /// The projects `name` spans, with each one's latest entry: a project
+    /// says the machines it spans under the names they had when it was
+    /// written, which still name them.
+    pub fn towns_of(&self, directory: &Directory, name: &MachineName) -> Vec<(TownId, u64)> {
         self.towns
             .iter()
-            .filter(|(_, ledger)| ledger.machines.contains(name))
+            .filter(|(_, ledger)| ledger.machines.iter().any(|machine| directory.same(machine, name)))
             .map(|(town, ledger)| (town.clone(), ledger.next - 1))
             .collect()
     }

@@ -1,0 +1,965 @@
+/* A machine's own page (`machine-page.ts`): what it is and how long it has
+   been up across the top, then its vitals in a row of quiet tiles, each a
+   ring the pen draws round and the trace of the last minutes; under them
+   the lines to its hubs and its cards in the wider column, its disks, who
+   is on it, its sharing and what it is in the narrower one. On a phone the
+   columns fall into one and the vitals sit two by two. Nothing is
+   outlined: tiles and cards are fills a shade off the paper, the drawings
+   are the pen's, and every number is set in figures of one width so it
+   does not jitter as it changes. */
+
+.machine-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  container: machine-page / inline-size;
+}
+
+.mp-body {
+  flex: 1;
+}
+
+.mp-board {
+  --gap: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  width: min(100% - 2 * var(--gutter), 1240px);
+  margin: 0 auto;
+  padding: var(--space-1) 0 calc(var(--space-12) + var(--safe-bottom));
+}
+
+/* The head: a dot for whether it is online, the name, the pencil that
+   renames it, a mark for the names it had, and whose it is. */
+.mp-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mp-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.mp-dot.offline,
+.mp-dot.unknown {
+  background: none;
+  box-shadow: inset 0 0 0 1.4px var(--text-3);
+}
+
+.mp-rename,
+.mp-former,
+.mp-late {
+  flex: none;
+  color: var(--text-3);
+}
+
+.mp-former,
+.mp-late {
+  display: inline-flex;
+  cursor: default;
+}
+
+.mp-tags {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mp-acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mp-act {
+  text-decoration: none;
+}
+
+.mp-act-map {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+/* Renaming in the head: the field takes the name's place, and what the old
+   name goes on doing hangs under it without making the head taller. */
+.rename-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  max-width: 420px;
+}
+
+.rename-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rename-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: 0;
+  background: var(--field);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--size-ui);
+}
+
+/* In the page's head the field stands where the name stood, in its type. */
+.mp-heading .rename-input {
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h2);
+}
+
+.rename-field.busy .rename-input {
+  color: var(--text-3);
+}
+
+.rename-said {
+  margin: 3px 0 0 var(--space-3);
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+  cursor: default;
+}
+
+.rename-said.wrong {
+  color: var(--wrong);
+}
+
+.mp-heading .rename-said {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 2;
+  white-space: nowrap;
+}
+
+/* What it is, and how long it has been up. */
+.mp-id {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-1) 0;
+}
+
+.mp-id-mark {
+  flex: none;
+  display: grid;
+  color: var(--text-3);
+}
+
+.mp-id-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.mp-id-system {
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-size: var(--size-h3);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+}
+
+.mp-id-hardware {
+  margin: 2px 0 0;
+  font-size: var(--size-small);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+.mp-id-hardware .sep,
+.mp-net-at .sep {
+  margin: 0 6px;
+  opacity: 0.6;
+}
+
+.mp-uptime {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  cursor: default;
+}
+
+.mp-uptime-label {
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.mp-uptime.offline .mp-uptime-label {
+  color: var(--caution);
+}
+
+.mp-uptime-value {
+  font-family: var(--font-emphasis);
+  font-size: var(--size-title);
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.mp-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  font-size: var(--size-ui);
+  color: var(--text-2);
+  cursor: default;
+}
+
+/* The vitals: as many to a row as fit, never narrower than a ring and a
+   trace beside it. */
+.mp-vitals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--gap);
+}
+
+.mp-vitals[hidden] {
+  display: none;
+}
+
+.mp-vital {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.mp-vital-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mp-vital-label {
+  flex: none;
+  margin: 0;
+  font-size: var(--size-small);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.mp-vital-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.mp-vital-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.mp-vital-sub {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+/* A ring: the pencil circle under the clay arc, the number in its middle. */
+.mp-ring {
+  position: relative;
+  flex: none;
+  width: 72px;
+  height: 72px;
+}
+
+.mp-ring svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.mp-ring-track {
+  fill: var(--pen-trace);
+}
+
+.mp-ring-arc {
+  fill: var(--pen-clay);
+}
+
+.mp-ring[data-level="high"] .mp-ring-arc {
+  fill: var(--caution);
+}
+
+.mp-ring[data-level="full"] .mp-ring-arc {
+  fill: var(--wrong);
+}
+
+.mp-ring-number {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
+.mp-ring-number small {
+  margin-left: 1px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.mp-ring-figure {
+  white-space: nowrap;
+}
+
+.mp-ring.unread .mp-ring-number {
+  color: var(--text-3);
+}
+
+/* A trace: the last minutes left to right, the newest at the right edge. */
+.mp-spark {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 60px;
+}
+
+.mp-spark svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.mp-spark-line {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mp-spark-line.clay {
+  stroke: var(--pen-clay);
+}
+
+.mp-spark-line.graphite {
+  stroke: var(--pen-graphite);
+}
+
+.mp-spark-area {
+  stroke: none;
+}
+
+.mp-spark-base {
+  stroke: var(--pen-trace);
+  stroke-width: 1;
+  stroke-dasharray: 1 4;
+  stroke-linecap: round;
+}
+
+.mp-spark-area.clay {
+  fill: color-mix(in srgb, var(--pen-clay) 16%, transparent);
+}
+
+.mp-spark-area.graphite {
+  fill: color-mix(in srgb, var(--pen-graphite) 14%, transparent);
+}
+
+/* The card's bytes a second, received above sent. */
+.mp-rates {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 7.2em;
+}
+
+.mp-rate {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mp-rates .mp-rate.down {
+  font-size: 17px;
+  color: var(--text-strong);
+}
+
+.mp-rates .mp-rate.up {
+  font-size: var(--size-ui);
+  color: var(--text-2);
+}
+
+.mp-arrow {
+  color: var(--pen-clay);
+}
+
+.mp-rate.up .mp-arrow {
+  color: var(--pen-graphite);
+}
+
+/* Under the vitals: the lines and the cards in the wider column, the
+   rest in the narrower. */
+.mp-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--gap);
+  align-items: start;
+}
+
+.mp-main,
+.mp-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+}
+
+/* Nothing drawn: no wider column, the cards side by side across the page. */
+.mp-columns.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mp-columns.single .mp-main {
+  display: none;
+}
+
+.mp-columns.single .mp-side {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  align-items: start;
+}
+
+.mp-card {
+  min-width: 0;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.mp-card[hidden] {
+  display: none;
+}
+
+.mp-card-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--size-small);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.mp-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.mp-card-head .mp-card-title {
+  margin: 0;
+}
+
+/* What is drawn from an answer that is no longer new stands back. */
+.mp-board.stale :is(.mp-vitals, .mp-lines, .mp-cards, .mp-disks) {
+  opacity: 0.5;
+}
+
+.mp-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A network card. */
+.mp-net-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mp-net-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.mp-net-rates {
+  display: flex;
+  gap: var(--space-3);
+  margin-left: auto;
+  font-size: var(--size-small);
+  color: var(--text-2);
+}
+
+.mp-net-off {
+  margin-left: auto;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.mp-net.off .mp-net-name {
+  color: var(--text-3);
+}
+
+.tag.mp-tag-quiet {
+  background: none;
+  box-shadow: none;
+  padding: 0;
+  color: var(--text-3);
+}
+
+.mp-net-at {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  color: var(--text-3);
+}
+
+.mp-net-moved {
+  margin: 2px 0 0;
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+/* A disk: where it is, what it is, what is free, and its bar. */
+.mp-disk-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mp-disk-at {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  color: var(--text);
+}
+
+.mp-disk-kind {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.mp-disk-free {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.mp-disk-bar {
+  display: block;
+  width: 100%;
+  height: 14px;
+  margin-top: 4px;
+}
+
+.mp-disk-whole {
+  fill: var(--pen-trace);
+}
+
+.mp-disk-used {
+  fill: var(--pen-clay);
+}
+
+.mp-disk-bar[data-level="high"] .mp-disk-used {
+  fill: var(--caution);
+}
+
+.mp-disk-bar[data-level="full"] .mp-disk-used {
+  fill: var(--wrong);
+}
+
+/* The lines: the span they are drawn over, then each line's head, strip,
+   marks of time and how it held. */
+.mp-ranges {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+}
+
+.mp-range {
+  padding: 1px 10px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--size-small);
+  line-height: 1.6;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.mp-range:hover {
+  color: var(--text-2);
+}
+
+.mp-range.chosen {
+  background: var(--accent-wash);
+  color: var(--text);
+}
+
+.mp-line + .mp-line {
+  margin-top: var(--space-5);
+}
+
+.mp-line-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mp-line-hub {
+  flex: none;
+  font-size: var(--size-ui);
+  color: var(--text);
+}
+
+.mp-line-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.mp-line.down .mp-line-state {
+  color: var(--caution);
+}
+
+.mp-line-trip {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  cursor: default;
+}
+
+.mp-spark.mp-spark-trip {
+  flex: none;
+  width: 96px;
+  height: 22px;
+}
+
+.mp-strip {
+  position: relative;
+  height: 22px;
+  margin-top: var(--space-2);
+}
+
+.mp-strip svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.mp-strip-rule {
+  stroke: var(--pen-trace);
+  stroke-width: 1;
+  stroke-dasharray: 1 4;
+  stroke-linecap: round;
+}
+
+.mp-strip-up {
+  fill: var(--pen-graphite);
+}
+
+.mp-strip-start {
+  fill: var(--text-3);
+}
+
+.mp-strip-drop {
+  fill: var(--wrong);
+}
+
+.mp-strip-hits {
+  position: absolute;
+  inset: 0;
+}
+
+.mp-strip-hit {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  transition: background-color var(--hover) ease;
+}
+
+.mp-strip-hit.mark {
+  width: 10px;
+}
+
+.mp-strip-hit:hover {
+  background: var(--fill-strong);
+}
+
+.mp-axis {
+  position: relative;
+  height: 15px;
+  font-size: 11px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.mp-axis span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.mp-line-held {
+  margin: 2px 0 0;
+  font-size: var(--size-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+/* What it is: one fact a row, the names in a narrow column of their own and
+   the values beside them on one edge; a value of several lines keeps to
+   its column. */
+.mp-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+}
+
+.mp-fact {
+  display: grid;
+  grid-template-columns: 5.5em minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: baseline;
+}
+
+.mp-fact dt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-small);
+  color: var(--text-3);
+}
+
+.mp-fact dd {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--size-ui);
+  line-height: var(--leading-ui);
+  color: var(--text-2);
+}
+
+.mp-fact dd.code {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+}
+
+.mp-fact dd[title] {
+  cursor: default;
+}
+
+.mp-own {
+  margin: var(--space-3) 0 0 calc(-1 * var(--space-3));
+}
+
+.mp-present .machine-agents,
+.mp-present .machine-jobs {
+  padding-left: 0;
+}
+
+.mp-present .machine-agents {
+  margin-top: 0;
+}
+
+.mp-sharing .given-row:first-of-type {
+  margin-top: 0;
+}
+
+.mp-sharing .panel-direct {
+  margin-top: var(--space-3);
+}
+
+/* For a moment after something is taken back: what, and undoing it. */
+.mp-undo {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--space-6) + var(--safe-bottom));
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: calc(100% - 2 * var(--gutter));
+  padding: 6px 6px 6px 14px;
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--size-ui);
+  transform: translateX(-50%);
+}
+
+.mp-undo[hidden] {
+  display: none;
+}
+
+/* Narrower: the columns fall into one, and the head keeps only its icons. */
+@container machine-page (max-width: 900px) {
+  .mp-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container machine-page (max-width: 720px) {
+  .mp-act span,
+  .mp-tags {
+    display: none;
+  }
+}
+
+/* A phone: the name before everything else in the head. The way back keeps
+   its arrow, and of the actions a conversation and the agents stay; sharing
+   is in its card, the drawing behind the way back. */
+@container machine-page (max-width: 560px) {
+  .machine-page .page-back span,
+  .mp-act[data-act="share"],
+  .mp-act-map {
+    display: none;
+  }
+
+  .mp-name {
+    font-size: var(--size-h2);
+  }
+
+  .mp-id {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+  }
+
+  .mp-id-mark {
+    display: none;
+  }
+
+  .mp-uptime {
+    flex-basis: 100%;
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-2);
+  }
+}
+
+/* A phone: the vitals two by two, each a ring over its trace. */
+@container machine-page (max-width: 560px) {
+  .mp-board {
+    --gap: var(--space-3);
+  }
+
+  .mp-vitals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mp-vital {
+    padding: var(--space-3);
+  }
+
+  .mp-vital-body {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .mp-ring {
+    align-self: center;
+    width: 64px;
+    height: 64px;
+  }
+
+  .mp-vital .mp-spark {
+    flex: none;
+    height: 34px;
+  }
+
+  .mp-rates {
+    min-width: 0;
+    padding: 6px 0;
+  }
+
+  .mp-card {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .mp-id {
+    gap: var(--space-3);
+  }
+
+  .mp-uptime-value {
+    font-size: var(--size-h2);
+  }
+
+  .mp-spark.mp-spark-trip {
+    width: 64px;
+  }
+}

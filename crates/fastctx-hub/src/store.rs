@@ -118,6 +118,9 @@ pub struct Letters {
     /// (`fastctx_net::wire::Intent::Session`).
     #[serde(default)]
     pub any_names: bool,
+    /// The member's last session said it takes a new name the hub gives it.
+    #[serde(default)]
+    pub renames: bool,
 }
 
 pub struct Store {
@@ -208,11 +211,75 @@ impl Store {
         };
         let moves = read_or_default(&dir.join(crate::moving::MOVES))?;
         let called_off = read_or_default(&dir.join(crate::moving::CALLED_OFF))?;
-        let store = Self { dir: dir.to_path_buf(), hub, book, letters, worked, upgraded, outgoing, moves, called_off };
+        let mut store =
+            Self { dir: dir.to_path_buf(), hub, book, letters, worked, upgraded, outgoing, moves, called_off };
         if changed {
             store.save_letters()?;
         }
+        // A hub stopped between keeping a rename and moving what it keeps
+        // for the machine finishes that now.
+        let moved = store.settle_names()?;
+        store.upgraded.extend(moved);
         Ok(store)
+    }
+
+    /// Moves what is kept for a member under a name it had to its name now:
+    /// its letters and where they stand, and the work it was called to do.
+    /// A rename does this once the directory that says it is kept, and a
+    /// hub stopped in between does it when it opens. Says what moved.
+    pub fn settle_names(&mut self) -> io::Result<Vec<String>> {
+        let directory = &self.book.directory;
+        let mut said = Vec::new();
+        let renamed: Vec<(MachineName, MachineName)> = self
+            .letters
+            .keys()
+            .filter_map(|kept| {
+                let member = directory.member(kept)?;
+                (member.name != *kept || member.name.as_str() != kept.as_str())
+                    .then(|| (kept.clone(), member.name.clone()))
+            })
+            .collect();
+        for (old, new) in renamed {
+            // The same name spelled anew keeps its records where they are.
+            if old != new {
+                if self.letters.contains_key(&new) {
+                    said.push(format!(
+                        "letters are kept for both {old} and {new}, which it was renamed to; left as they are"
+                    ));
+                    continue;
+                }
+                let from = old.entry_in(&self.dir.join("outbox"))?;
+                if std::fs::exists(&from)? {
+                    let to = new.entry_in(&self.dir.join("outbox"))?;
+                    std::fs::rename(&from, &to)?;
+                }
+            }
+            let entry = self.letters.remove(&old).expect("listed above");
+            self.letters.insert(new.clone(), entry);
+            said.push(format!("the letters for {old} are kept for {new}, as it is called now"));
+        }
+        let worked: std::collections::BTreeSet<(MachineName, fastctx_types::Address)> = self
+            .worked
+            .iter()
+            .map(|(machine, resident)| {
+                let resident = fastctx_types::Address {
+                    machine: directory.canonical(&resident.machine).clone(),
+                    resident: resident.resident.clone(),
+                };
+                (directory.canonical(machine).clone(), resident)
+            })
+            .collect();
+        let worked_moved = worked.iter().zip(&self.worked).any(|(now, before)| {
+            now.0.as_str() != before.0.as_str() || now.1.machine.as_str() != before.1.machine.as_str()
+        }) || worked.len() != self.worked.len();
+        if !said.is_empty() {
+            self.save_letters()?;
+        }
+        if worked_moved {
+            self.worked = worked;
+            publish(&self.dir.join("worked.json"), &json(&self.worked)?, Permissions::Private)?;
+        }
+        Ok(said)
     }
 
     /// The directory as kept; one kept in the shape before sharing and
@@ -299,6 +366,7 @@ impl Store {
                 last_seen: None,
                 connected_at: None,
                 any_names: false,
+                renames: false,
             };
             self.letters.insert(name.clone(), fresh);
         }

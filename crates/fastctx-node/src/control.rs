@@ -21,12 +21,16 @@ pub async fn control(
     control: Control,
 ) -> Result<(Address, Controlled), Failure> {
     let machine = machine_of(node, &resident, machine).await?;
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         let controlled = control_here(node, &resident, control).await?;
         return Ok((Address { machine, resident }, controlled));
     }
     let call = RemoteCall::Control { resident: resident.clone(), control };
-    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
+    match node
+        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .await
+        .map_err(|failure| Failure::new(failure.to_string()))?
+    {
         Ok(RemoteReply::Controlled(controlled)) => Ok((Address { machine, resident }, controlled)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than what was done"))),
         Err(failure) => Err(failure),
@@ -39,12 +43,16 @@ pub async fn offers(
     machine: Option<MachineName>,
 ) -> Result<(Address, Offers), Failure> {
     let machine = machine_of(node, &resident, machine).await?;
-    if machine == node.machine() {
+    if node.is_me(&machine) {
         let offers = offers_here(node, &resident).await?;
         return Ok((Address { machine, resident }, offers));
     }
     let call = RemoteCall::Offers { resident: resident.clone() };
-    match node.call(&Acting::Here, &(&machine).into(), Purpose::Agents, call).await.map_err(|failure| Failure::new(failure.to_string()))? {
+    match node
+        .call(&Acting::Here, &(&machine).into(), Purpose::Agents, call)
+        .await
+        .map_err(|failure| Failure::new(failure.to_string()))?
+    {
         Ok(RemoteReply::Offers(offers)) => Ok((Address { machine, resident }, *offers)),
         Ok(_) => Err(Failure::new(format!("{machine} answered something other than what it offers"))),
         Err(failure) => Err(failure),

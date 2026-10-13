@@ -239,6 +239,9 @@ enum Command {
     Disallow(world::DisallowArgs),
     /// Take a device or a machine out of an account.
     Remove(world::RemoveArgs),
+    /// Rename a machine: this computer, one of an account's machines, or,
+    /// for the network's administrator, any. Its names before still name it.
+    Rename(world::RenameArgs),
     /// Let other machines connect to a machine directly, at addresses you
     /// choose, instead of through the hub; or no longer. The network's
     /// administrator's change.
@@ -433,6 +436,7 @@ fn main() -> ExitCode {
         Command::Assist(args) => world::assist(args),
         Command::Disallow(args) => world::disallow(args),
         Command::Remove(args) => world::remove(args),
+        Command::Rename(args) => world::rename(args),
         Command::Direct(args) => world::direct(args),
         Command::Hub(command) => world::hub(command),
         Command::Apply(args) => apply::apply(args),
@@ -454,7 +458,7 @@ fn print_licenses() -> ExitCode {
 
 /// The commands a person runs on a machine: its node, joining and managing
 /// the World, talking to residents, the TUI.
-const PEOPLE_ONLY: [&str; 22] = [
+const PEOPLE_ONLY: [&str; 23] = [
     "ui",
     "data",
     "node",
@@ -472,6 +476,7 @@ const PEOPLE_ONLY: [&str; 22] = [
     "assist",
     "disallow",
     "remove",
+    "rename",
     "direct",
     "hub",
     "apply",

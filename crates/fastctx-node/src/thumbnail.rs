@@ -34,7 +34,7 @@ pub(crate) async fn call(
     machine: Option<MachineName>,
     request: ThumbnailRequest,
 ) -> Result<Thumbnail, Failure> {
-    if let Some(machine) = machine.filter(|machine| *machine != node.machine()) {
+    if let Some(machine) = machine.filter(|machine| !node.is_me(machine)) {
         return match node
             .call_with_stream(
                 &Acting::Here,
@@ -59,7 +59,7 @@ pub(crate) async fn attachment(
     max: u32,
 ) -> Result<Thumbnail, Failure> {
     let machine = attachment.owner().machine.clone();
-    if machine != node.machine() {
+    if !node.is_me(&machine) {
         return match node
             .call_with_stream(
                 &Acting::Here,

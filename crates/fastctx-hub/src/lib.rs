@@ -23,11 +23,11 @@
 //! directory it runs from then stands by for the move, serves, or, at the
 //! old place, forwards to the new one, as its files say.
 
+mod assists;
 mod control;
 mod data;
 mod direct;
 mod ledger;
-mod assists;
 mod log;
 mod login;
 mod machine_log;
@@ -535,8 +535,11 @@ async fn intended(
         None => None,
     };
     match (path.as_str(), intent) {
-        (wire::CONTROL_PATH, Intent::Session { key, proof, letters, through, direct, interfaces, any_names, dialed }) => {
-            let said = control::Said { through, direct, interfaces, any_names, dialed };
+        (
+            wire::CONTROL_PATH,
+            Intent::Session { key, proof, letters, through, direct, interfaces, any_names, dialed, renames },
+        ) => {
+            let said = control::Said { through, direct, interfaces, any_names, dialed, renames };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }
         (wire::CONTROL_PATH, Intent::Login { account, request }) => {

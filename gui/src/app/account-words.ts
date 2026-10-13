@@ -328,6 +328,8 @@ export interface MachinesWords {
   offline(since: string | null): string;
   unknown: string;
   factsUnknown(why: string): string;
+  /** The names a machine had, each still naming it. */
+  formerly(names: string[]): string;
   /** A hub on the map, by how this computer reaches it; pointed at, its
    *  title and how many machines are registered on it. */
   hubOnline: string;
@@ -555,6 +557,7 @@ export const zhMachines: MachinesWords = {
   offline: (since) => (since ? `${since} 起离线` : "离线"),
   unknown: "状态未知",
   factsUnknown: () => "无法获取状态",
+  formerly: (names) => `曾用名 ${names.join("、")}`,
   hubOnline: "已连接",
   hubConnecting: "连接中",
   hubOff: "未连接",
@@ -754,6 +757,8 @@ export const zhMachines: MachinesWords = {
         return a.at.length ? `允许直接连到 ${a.machine}` : `不再允许直接连到 ${a.machine}`;
       case "remove":
         return `移除 ${a.name}`;
+      case "rename":
+        return `把 ${a.machine} 改名为 ${a.to}`;
       case "token":
         return a.register ? `生成加入命令${a.name ? ` · ${a.name}` : ""}` : "生成登录二维码";
       case "joined":
@@ -781,6 +786,7 @@ export const enMachines: MachinesWords = {
   offline: (since) => (since ? `offline since ${since}` : "offline"),
   unknown: "status unknown",
   factsUnknown: () => "Couldn't load status",
+  formerly: (names) => `formerly ${names.join(", ")}`,
   hubOnline: "connected",
   hubConnecting: "connecting",
   hubOff: "not connected",
@@ -980,6 +986,8 @@ export const enMachines: MachinesWords = {
         return a.at.length ? `Allowed direct connections to ${a.machine}` : `No more direct connections to ${a.machine}`;
       case "remove":
         return `Removed ${a.name}`;
+      case "rename":
+        return `Renamed ${a.machine} to ${a.to}`;
       case "token":
         return a.register ? `Made a join command${a.name ? ` · ${a.name}` : ""}` : "Made a sign-in QR code";
       case "joined":

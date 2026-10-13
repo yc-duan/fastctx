@@ -84,7 +84,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
     // Nothing of a call turned away here ran.
     let refuse = |why: String| Failure::not_run(format!("{here} refused {}: {why}", caller.machine));
     if let RemoteCall::AttachmentThumbnail { attachment, .. } | RemoteCall::ReadAttachment { attachment, .. } = call
-        && attachment.owner().machine != here
+        && !node.is_me(&attachment.owner().machine)
     {
         return Err(refuse("the attachment names a different holding machine".into()));
     }

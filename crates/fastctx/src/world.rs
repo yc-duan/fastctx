@@ -141,6 +141,21 @@ pub struct RemoveArgs {
 }
 
 #[derive(Args)]
+pub struct RenameArgs {
+    /// The machine's name now, or a name it had; with the new name alone,
+    /// this computer.
+    #[arg(value_name = "MACHINE")]
+    first: MachineName,
+    /// Its new name.
+    #[arg(value_name = "NAME")]
+    second: Option<MachineName>,
+    #[arg(long = "as")]
+    account: Option<AccountName>,
+    #[arg(long)]
+    hub: Option<HubName>,
+}
+
+#[derive(Args)]
 pub struct DirectArgs {
     /// The machine other machines are to connect to directly.
     machine: MachineName,
@@ -338,6 +353,20 @@ pub fn remove(args: RemoveArgs) -> anyhow::Result<()> {
     let account = account_or_owner(args.hub.as_ref(), args.account, Some(&args.name))?;
     self::change(args.hub, account.clone(), AccountChange::Remove { name: args.name.clone(), reason: args.reason })?;
     println!("{} is out of {account}", args.name);
+    Ok(())
+}
+
+pub fn rename(args: RenameArgs) -> anyhow::Result<()> {
+    let Some(to) = args.second else {
+        let to = args.first;
+        call(Call::RenameHere { to: to.clone() })?;
+        println!("this computer is {to} now; the names it had still name it");
+        return Ok(());
+    };
+    let machine = args.first;
+    let account = account_or_owner(args.hub.as_ref(), args.account, Some(&machine))?;
+    self::change(args.hub, account, AccountChange::Rename { machine: machine.clone(), to: to.clone() })?;
+    println!("{machine} is {to} now; {machine} still names it");
     Ok(())
 }
 
@@ -659,9 +688,13 @@ fn account_or_owner(
         anyhow::bail!("this computer is on {} hubs; name one with --hub", hubs.len());
     };
     if let Some(machine) = machine
-        && let Some(owner) = seen.members.iter().find(|member| member.name == *machine).and_then(|member| {
-            member.home.clone().or_else(|| member.logins.iter().find(|login| seen.logins.contains(login)).cloned())
-        })
+        && let Some(owner) = seen
+            .members
+            .iter()
+            .find(|member| member.name == *machine || member.was.contains(machine))
+            .and_then(|member| {
+                member.home.clone().or_else(|| member.logins.iter().find(|login| seen.logins.contains(login)).cloned())
+            })
         && seen.logins.contains(&owner)
     {
         return Ok(owner);

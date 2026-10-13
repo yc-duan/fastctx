@@ -23,6 +23,9 @@ export interface MapNode {
   marks: ("busy" | "waiting" | "idle")[];
   /** What it is, said whole, for a pointer resting on it. */
   title: string;
+  /** The keys it had under the names it had: renamed, it keeps the place
+   *  it stood in. */
+  was?: string[];
   /** Where other machines connect to it directly, when the network's
    *  administrator allowed that; others reach the hub through it when their
    *  own line is down. */

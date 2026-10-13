@@ -119,7 +119,7 @@ pub fn no_ledger(node: &Node, town: &TownName) -> Failure {
 
 /// The documents of a canon, read where it is.
 async fn canon(node: &Arc<Node>, location: &Location) -> Result<Vec<CanonHead>, String> {
-    if location.machine == node.machine() {
+    if node.is_me(&location.machine) {
         let path = location.path.clone();
         return tokio::task::spawn_blocking(move || heads(Path::new(&path)))
             .await

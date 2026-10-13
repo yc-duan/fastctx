@@ -33,7 +33,7 @@ pub(crate) async fn resolve(
     source: AttachmentSource,
     cancel: Arc<AtomicBool>,
 ) -> Result<File, Failure> {
-    if source.owner().machine != node.machine() {
+    if !node.is_me(&source.owner().machine) {
         return Err(Failure::not_run("the attachment names another holding machine"));
     }
     if let AttachmentSource::Upload(attachment) = &source {
